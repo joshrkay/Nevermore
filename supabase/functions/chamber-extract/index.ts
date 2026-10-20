@@ -1,9 +1,20 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.100.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
+
+// Caps keep a single request from running up AI costs.
+const MAX_MESSAGE_CHARS = 2000;
+const MAX_CONTEXT_CHARS = 20000;
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 
 const SYSTEM_PROMPT = `You are a data extraction assistant for an HR/PEO underwriting system. 
 Given a user message from a business discovery conversation, extract any structured data fields you can identify.
@@ -35,13 +46,36 @@ serve(async (req) => {
   }
 
   try {
+    // The publishable anon key is a valid JWT too, so require an actual signed-in user.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) return json({ error: "Unauthorized" }, 401);
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return json({ error: "Unauthorized" }, 401);
+
     const { message, context } = await req.json();
+    if (typeof message !== "string" || !message.trim()) {
+      return json({ error: "message is required" }, 400);
+    }
+    if (message.length > MAX_MESSAGE_CHARS) {
+      return json({ error: `message must be at most ${MAX_MESSAGE_CHARS} characters` }, 413);
+    }
+    const contextJson = context ? JSON.stringify(context) : "";
+    if (contextJson.length > MAX_CONTEXT_CHARS) {
+      return json({ error: "context too large" }, 413);
+    }
+
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
-    const userPrompt = context
-      ? `Previous context (already captured data): ${JSON.stringify(context)}\n\nNew user message: "${message}"`
-      : `User message: "${message}"`;
+    // JSON.stringify quotes and escapes the message so it can't break out of its slot.
+    const userPrompt = contextJson
+      ? `Previous context (already captured data): ${contextJson}\n\nNew user message: ${JSON.stringify(message)}`
+      : `User message: ${JSON.stringify(message)}`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -96,50 +130,31 @@ serve(async (req) => {
       const errText = await response.text();
       console.error("AI gateway error:", response.status, errText);
 
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limited, please try again shortly." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      return new Response(JSON.stringify({ error: "AI extraction failed" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      if (response.status === 429) return json({ error: "Rate limited, please try again shortly." }, 429);
+      if (response.status === 402) return json({ error: "AI credits exhausted." }, 402);
+      return json({ error: "AI extraction failed" }, 500);
     }
 
     const data = await response.json();
     const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
 
-    if (!toolCall) {
-      return new Response(JSON.stringify({ extracted: {}, reply: null }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (!toolCall) return json({ extracted: {}, reply: null });
 
     const args = JSON.parse(toolCall.function.arguments);
     const reply = args.reply || null;
     delete args.reply;
 
     // Remove null/undefined values
-    const extracted: Record<string, any> = {};
+    const extracted: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(args)) {
       if (v !== null && v !== undefined && v !== "") {
         extracted[k] = v;
       }
     }
 
-    return new Response(JSON.stringify({ extracted, reply }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return json({ extracted, reply });
   } catch (e) {
     console.error("chamber-extract error:", e);
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return json({ error: "Internal error" }, 500);
   }
 });

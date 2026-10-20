@@ -1,12 +1,24 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { RavenIcon } from "../RavenLogo";
-import { Download } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
+import type { ChamberData } from "@/data/chamberTypes";
+import { fileIdForSession, type ChamberSubmission } from "@/data/manuscript";
 
-const ReckoningTab = () => {
+interface ReckoningTabProps {
+  data: ChamberData;
+  sessionId: string | null;
+  onSubmit: (submission: ChamberSubmission) => Promise<boolean>;
+}
+
+const ReckoningTab = ({ data, sessionId, onSubmit }: ReckoningTabProps) => {
   const [checks, setChecks] = useState([false, false, false]);
-  const [signed, setSigned] = useState(false);
+  const [signerName, setSignerName] = useState("");
+  const [signerTitle, setSignerTitle] = useState("");
+  const [signedAt, setSignedAt] = useState<Date | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   const attestations = [
@@ -15,13 +27,32 @@ const ReckoningTab = () => {
     "I authorize Edgar Allan Advisory to use this information to obtain a PEO quote on my behalf.",
   ];
 
-  const allChecked = checks.every(Boolean) && signed;
+  const fileId = useMemo(() => (sessionId ? fileIdForSession(sessionId) : null), [sessionId]);
+  const signed = signedAt !== null;
+  const allChecked = checks.every(Boolean) && signed && !!fileId;
+  const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";
 
-  const handleSubmit = () => {
-    if (allChecked) setSubmitted(true);
+  const handleSign = () => {
+    if (!signerName.trim()) {
+      toast.error("Type your full name to sign.");
+      return;
+    }
+    setSignedAt(new Date());
   };
 
-  const fileId = `EAA-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+  const handleSubmit = async () => {
+    if (!allChecked || !fileId || !signedAt) return;
+    setSubmitting(true);
+    const ok = await onSubmit({
+      signer_name: signerName.trim(),
+      signer_title: signerTitle.trim(),
+      signed_at: signedAt.toISOString(),
+      file_id: fileId,
+    });
+    setSubmitting(false);
+    if (ok) setSubmitted(true);
+    else toast.error("We couldn't save your submission. Please try again.");
+  };
 
   return (
     <>
@@ -64,30 +95,50 @@ const ReckoningTab = () => {
         <div className="border border-border rounded-xl p-6">
           <p className="text-sm text-muted-foreground mb-3">Digital Signature</p>
           {!signed ? (
-            <button
-              onClick={() => setSigned(true)}
-              className="border border-dashed border-muted-foreground/30 rounded-lg w-full py-8 text-muted-foreground hover:border-primary/40 transition-colors text-sm"
-            >
-              Click to sign digitally
-            </button>
+            <div className="space-y-3">
+              <div className="grid sm:grid-cols-2 gap-3">
+                <input
+                  value={signerName}
+                  onChange={(e) => setSignerName(e.target.value)}
+                  placeholder="Full name"
+                  className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
+                />
+                <input
+                  value={signerTitle}
+                  onChange={(e) => setSignerTitle(e.target.value)}
+                  placeholder="Title (e.g. CEO)"
+                  className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
+                />
+              </div>
+              <button
+                onClick={handleSign}
+                className="border border-dashed border-muted-foreground/30 rounded-lg w-full py-6 text-muted-foreground hover:border-primary/40 transition-colors text-sm"
+              >
+                Click to sign digitally
+              </button>
+            </div>
           ) : (
             <div className="bg-muted rounded-lg py-4 px-6">
-              <p className="font-mono text-foreground">Meridian Creative Group</p>
-              <p className="text-xs text-muted-foreground font-mono mt-1">{new Date().toLocaleString()}</p>
+              <p className="font-mono text-foreground">
+                {signerName.trim()}{signerTitle.trim() && `, ${signerTitle.trim()}`}
+              </p>
+              <p className="text-xs text-muted-foreground font-mono mt-1">
+                {data.company_name ?? "Company name not provided"} · {signedAt.toLocaleString()}
+              </p>
             </div>
           )}
         </div>
 
         <button
           onClick={handleSubmit}
-          disabled={!allChecked}
+          disabled={!allChecked || submitting}
           className={`w-full flex items-center justify-center gap-2 font-medium py-4 rounded-lg text-base transition-colors ${
             allChecked
               ? "bg-primary text-primary-foreground hover:bg-primary/90"
               : "bg-muted text-muted-foreground cursor-not-allowed"
           }`}
         >
-          Generate The Manuscript →
+          {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate The Manuscript →"}
         </button>
       </div>
 
@@ -143,13 +194,13 @@ const ReckoningTab = () => {
                 className="flex flex-col sm:flex-row gap-3 justify-center"
               >
                 <Link
-                  to="/manuscript"
+                  to={manuscriptUrl}
                   className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors"
                 >
                   <Download className="w-4 h-4" /> Download The Manuscript
                 </Link>
                 <Link
-                  to="/manuscript"
+                  to={manuscriptUrl}
                   className="inline-flex items-center justify-center gap-2 border border-border text-foreground font-medium px-6 py-3 rounded-lg hover:bg-muted transition-colors"
                 >
                   View Full Manuscript

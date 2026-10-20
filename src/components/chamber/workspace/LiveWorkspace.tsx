@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
+import type { ChamberSubmission } from "@/data/manuscript";
 import UploadTab from "../UploadTab";
 import CompanyTab from "./CompanyTab";
 import CensusWorkspaceTab from "./CensusWorkspaceTab";
@@ -17,9 +18,11 @@ const WORKSPACE_TABS = [
 interface LiveWorkspaceProps {
   data: ChamberData;
   isDemo: boolean;
+  sessionId: string | null;
+  onSubmit: (submission: ChamberSubmission) => Promise<boolean>;
 }
 
-const LiveWorkspace = ({ data, isDemo }: LiveWorkspaceProps) => {
+const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit }: LiveWorkspaceProps) => {
   const [activeTab, setActiveTab] = useState("upload");
 
   return (
@@ -53,7 +56,7 @@ const LiveWorkspace = ({ data, isDemo }: LiveWorkspaceProps) => {
         {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} />}
         {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} />}
         {activeTab === "review" && <ReviewTab data={data} onProceed={() => setActiveTab("reckoning")} />}
-        {activeTab === "reckoning" && <ReckoningTab />}
+        {activeTab === "reckoning" && <ReckoningTab data={data} sessionId={sessionId} onSubmit={onSubmit} />}
       </div>
     </div>
   );

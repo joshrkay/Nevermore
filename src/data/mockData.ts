@@ -34,6 +34,15 @@ export interface ChatMessage {
   timestamp: string;
 }
 
+export function createChatMessage(sender: ChatMessage["sender"], text: string): ChatMessage {
+  return {
+    id: crypto.randomUUID(),
+    sender,
+    text,
+    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  };
+}
+
 export const MOCK_EMPLOYEES: Employee[] = [
   { id: 1, name: "Sarah Chen", state: "CA", jobClassification: "Senior Designer", annualSalary: 105000, dob: "1988-03-15", dependents: 2, status: "confirmed" },
   { id: 2, name: "Marcus Rivera", state: "CA", jobClassification: "Art Director", annualSalary: 125000, dob: "1985-07-22", dependents: 1, status: "confirmed" },
