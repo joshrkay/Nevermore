@@ -42,6 +42,7 @@ const App = () => (
                 <Route path="/start" element={<RequireAuth><ChamberPage /></RequireAuth>} />
                 <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
                 <Route path="/manuscript" element={<ManuscriptPage />} />
+                <Route path="/manuscript/demo" element={<ManuscriptPage demo />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>

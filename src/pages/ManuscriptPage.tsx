@@ -9,7 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
-import { buildManuscript, fileIdForSession, type ChamberSubmission } from "@/data/manuscript";
+import { buildManuscript, fileIdForSession, NOT_PROVIDED, type ChamberSubmission } from "@/data/manuscript";
 
 const SAMPLE_FILE_ID = "EAA-SAMPLE";
 
@@ -32,22 +32,26 @@ const maskDob = (dob: string) => {
 
 type LoadState =
   | { kind: "sample" }
+  | { kind: "no_session" }
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "unsigned" }
   | { kind: "ready"; data: ChamberData; submission: ChamberSubmission | null; fileId: string };
 
-const ManuscriptPage = () => {
+// `demo` renders the fictional sample; the live route never does.
+const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
   const manuscriptRef = useRef<HTMLDivElement>(null);
   const [showMasked, setShowMasked] = useState(true);
   const [searchParams] = useSearchParams();
-  const sessionId = searchParams.get("session");
+  const sessionId = demo ? null : searchParams.get("session");
   const { user, loading: authLoading } = useAuth();
-  const [state, setState] = useState<LoadState>(sessionId ? { kind: "loading" } : { kind: "sample" });
+  const [state, setState] = useState<LoadState>(
+    sessionId ? { kind: "loading" } : { kind: demo ? "sample" : "no_session" },
+  );
 
   useEffect(() => {
     if (!sessionId) {
-      setState({ kind: "sample" });
+      setState({ kind: demo ? "sample" : "no_session" });
       return;
     }
     if (authLoading) return;
@@ -65,7 +69,7 @@ const ManuscriptPage = () => {
       .then(({ data, error }) => {
         if (cancelled) return;
         if (error || !data) {
-          setState({ kind: "error", message: "We couldn't find that manuscript." });
+          setState({ kind: "error", message: "We couldn't find that Manuscript. The link may be out of date, or it belongs to a different account." });
           return;
         }
         const submission = (data.submission as unknown as ChamberSubmission | null) ?? null;
@@ -83,7 +87,7 @@ const ManuscriptPage = () => {
         });
       });
     return () => { cancelled = true; };
-  }, [sessionId, user, authLoading]);
+  }, [sessionId, demo, user, authLoading]);
 
   const d = useMemo(() => {
     if (state.kind === "ready") return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission });
@@ -126,6 +130,21 @@ const ManuscriptPage = () => {
     );
   }
 
+  if (state.kind === "no_session") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-6">
+        <div className="text-center max-w-md">
+          <p className="text-muted-foreground mb-4">
+            Open your Manuscript from The Reckoning, once you've reviewed and signed your submission.
+          </p>
+          <Link to="/start" className="text-primary underline hover:text-primary/90">
+            Go to The Chamber
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (state.kind === "unsigned") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-6">
@@ -147,7 +166,7 @@ const ManuscriptPage = () => {
         <div className="text-center">
           <p className="text-muted-foreground mb-4">{state.kind === "error" ? state.message : "Something went wrong."}</p>
           <Link to={user ? "/start" : "/login"} className="text-primary underline hover:text-primary/90">
-            {user ? "Back to The Chamber" : "Sign in"}
+            {user ? "Go to The Chamber" : "Sign in"}
           </Link>
         </div>
       </div>
@@ -262,7 +281,7 @@ const ManuscriptPage = () => {
                     <tr key={i} className={`border-b border-border last:border-0 ${emp.flag ? "bg-warning/5" : ""}`}>
                       <td className="px-3 py-2 font-mono text-muted-foreground">{i + 1}</td>
                       <td className="px-3 py-2 font-medium">{emp.name}</td>
-                      <td className="px-3 py-2 font-mono text-muted-foreground">{showMasked && emp.dob !== "—" ? maskDob(emp.dob) : emp.dob}</td>
+                      <td className="px-3 py-2 font-mono text-muted-foreground">{showMasked && emp.dob !== NOT_PROVIDED ? maskDob(emp.dob) : emp.dob}</td>
                       <td className="px-3 py-2 font-mono">{emp.state}</td>
                       <td className="px-3 py-2">{emp.title}</td>
                       <td className="px-3 py-2 font-mono">{emp.salary}</td>

@@ -4,12 +4,18 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 type UpdateResult = { error: { message: string } | null };
 
 const updates: { payload: Record<string, unknown>; resolve: (r: UpdateResult) => void }[] = [];
+let resumeRow: Record<string, unknown> | null = null;
+let inserts = 0;
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" }, session: { access_token: "tok" } }) }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: () => ({
-      insert: () => ({ select: () => ({ single: async () => ({ data: { id: "s1" }, error: null }) }) }),
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: resumeRow, error: null }) }) }),
+      insert: () => {
+        inserts += 1;
+        return { select: () => ({ single: async () => ({ data: { id: "s1" }, error: null }) }) };
+      },
       update: (payload: Record<string, unknown>) => ({
         eq: () => new Promise<UpdateResult>((resolve) => updates.push({ payload, resolve })),
       }),
@@ -27,6 +33,8 @@ const submission = { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-01
 describe("useChamberSession", () => {
   beforeEach(() => {
     updates.length = 0;
+    resumeRow = null;
+    inserts = 0;
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -106,5 +114,23 @@ describe("useChamberSession", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
     expect(JSON.parse(init.body as string).chamber_data.company_name).toBe("Acme");
     fetchSpy.mockRestore();
+  });
+
+  it("does not silently replace a session it was asked to resume but could not open", async () => {
+    const { result } = renderHook(() => useChamberSession("old-session"));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.resumeFailed).toBe(true);
+    expect(result.current.sessionId).toBeNull();
+    expect(inserts).toBe(0);
+  });
+
+  it("starts a fresh session only once the prospect asks for one", async () => {
+    const { result } = renderHook(() => useChamberSession("old-session"));
+    await waitFor(() => expect(result.current.resumeFailed).toBe(true));
+
+    act(() => result.current.startNew());
+    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    expect(result.current.resumeFailed).toBe(false);
+    expect(inserts).toBe(1);
   });
 });

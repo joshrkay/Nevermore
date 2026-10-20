@@ -11,6 +11,10 @@ import type { ChamberSubmission } from "@/data/manuscript";
 
 interface UseChamberSessionReturn {
   sessionId: string | null;
+  /** True when a requested session couldn't be opened; no replacement is created until startNew(). */
+  resumeFailed: boolean;
+  /** Abandons the unopenable session id and starts a fresh intake. */
+  startNew: () => void;
   chamberData: ChamberData;
   messages: ChatMessage[];
   isLoading: boolean;
@@ -37,6 +41,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const userId = user?.id;
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [resumeFailed, setResumeFailed] = useState(false);
+  const [initRun, setInitRun] = useState(0);
   const [chamberData, setChamberDataRaw] = useState<ChamberData>(EMPTY_CHAMBER_DATA);
   const [messages, setMessages] = useState<ChatMessage[]>(() => [createChatMessage("lenore", OPENING_MESSAGE)]);
 
@@ -196,13 +202,26 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       const requested = requestedIdRef.current;
       const resumed = requested ? await resume(requested) : false;
       if (cancelled) return;
+      if (requested && !resumed) {
+        // Don't quietly swap in a blank session: the caller decides what the prospect sees.
+        setResumeFailed(true);
+        setIsLoading(false);
+        return;
+      }
       if (!resumed) await create();
       if (!cancelled) setIsLoading(false);
     };
 
     init();
     return () => { cancelled = true; };
-  }, [userId, scheduleSave]);
+  }, [userId, scheduleSave, initRun]);
+
+  const startNew = useCallback(() => {
+    requestedIdRef.current = null;
+    setResumeFailed(false);
+    setIsLoading(true);
+    setInitRun((n) => n + 1);
+  }, []);
 
   const setChamberData = useCallback((updater: ChamberData | ((prev: ChamberData) => ChamberData)) => {
     setChamberDataRaw(prev => {
@@ -240,5 +259,5 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     return true;
   }, [flush]);
 
-  return { sessionId, chamberData, messages, isLoading, setChamberData, addMessage, setMessages, submit };
+  return { sessionId, resumeFailed, startNew, chamberData, messages, isLoading, setChamberData, addMessage, setMessages, submit };
 }

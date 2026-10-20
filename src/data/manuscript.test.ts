@@ -96,3 +96,50 @@ describe("buildManuscript", () => {
     expect(m.signer).toBeNull();
   });
 });
+
+describe("buildManuscript with missing data", () => {
+  const sectionValues = (m: ReturnType<typeof buildManuscript>) =>
+    [...m.companyRows, ...m.workforceRows, ...m.benefitsRows].map(([, v]) => v);
+
+  it("says 'Not provided' for every field the prospect never gave", () => {
+    const m = buildManuscript(EMPTY_CHAMBER_DATA, { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") });
+    const values = sectionValues(m);
+    expect(values).toContain("Not provided");
+    expect(values).not.toContain("—");
+  });
+});
+
+describe("buildManuscript census and state mix with gaps", () => {
+  it("says 'Not provided' for blank census cells and unknown state counts", () => {
+    const m = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, states: ["TX"], employees: [emp({ dob: "", state: "", title: "", salary: null })] },
+      { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") },
+    );
+    expect(m.census[0]).toMatchObject({ dob: "Not provided", state: "Not provided", title: "Not provided", salary: "Not provided" });
+    expect(m.states).toEqual([{ state: "TX", count: "Not provided", system: "NCCI" }]);
+  });
+
+  it("shows no dependent percentages when there are no W-2 employees to divide by", () => {
+    const m = buildManuscript(EMPTY_CHAMBER_DATA, { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") });
+    expect(m.dependentTiers.every((t) => t.pct === "Not provided")).toBe(true);
+  });
+});
+
+describe("buildManuscript open items for missing core facts", () => {
+  const opts = { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") };
+
+  it("lists each missing core fact as an open item", () => {
+    const { open } = buildManuscript(EMPTY_CHAMBER_DATA, opts);
+    for (const fact of ["Company legal name", "States of operation", "Pay frequency", "Employee census"]) {
+      expect(open).toContain(`${fact} — not provided`);
+    }
+  });
+
+  it("lists nothing for facts that were provided", () => {
+    const { open } = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["TX"], pay_frequency: "bi-weekly", employees: [emp()] },
+      opts,
+    );
+    expect(open.filter((o) => /not provided$/.test(o))).toEqual([]);
+  });
+});
