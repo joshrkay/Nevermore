@@ -9,6 +9,12 @@ export interface ChamberSubmission {
   signed_at: string; // ISO timestamp
   file_id: string;
   peo?: string; // PEO the client chose on PEO Match; absent on older submissions
+  // The consent wording the signer agreed to; absent on older submissions.
+  consent_text_version?: string;
+  consent_text?: string[];
+  // Stamped by the database when the certification is accepted (the server's clock, not the browser's).
+  certified_at?: string;
+  data_hash?: string;
   // Copy of the data as signed, so later edits to the session can't change
   // what the certified manuscript shows. Absent on older submissions.
   chamber_data?: unknown;
