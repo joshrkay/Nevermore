@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, useLocation, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { RavenIcon } from "@/components/RavenLogo";
 import { useAuth } from "@/hooks/useAuth";
@@ -11,15 +11,18 @@ const AuthPage = () => {
   const [password, setPassword] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [loading, setLoading] = useState(false);
-  const { signIn, signUp } = useAuth();
+  const { user, loading: authLoading, signIn, signUp } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const fromLocation = (location.state as { from?: { pathname: string; search?: string } } | null)?.from;
+  const from = fromLocation ? `${fromLocation.pathname}${fromLocation.search ?? ""}` : "/start";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     if (isSignUp) {
-      const { error } = await signUp(email, password);
+      const { error } = await signUp(email, password, companyName.trim() || undefined);
       if (error) {
         toast.error(error.message);
       } else {
@@ -30,11 +33,15 @@ const AuthPage = () => {
       if (error) {
         toast.error(error.message);
       } else {
-        navigate("/start");
+        navigate(from, { replace: true });
       }
     }
     setLoading(false);
   };
+
+  if (!authLoading && user) {
+    return <Navigate to={from} replace />;
+  }
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-6 noise-overlay">
@@ -107,6 +114,7 @@ const AuthPage = () => {
           <p className="text-center text-sm text-muted-foreground mt-6">
             {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
             <button
+              type="button"
               onClick={() => setIsSignUp(!isSignUp)}
               className="text-primary hover:text-primary/80 transition-colors"
             >

@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { Send } from "lucide-react";
-import type { ChatMessage } from "@/data/mockData";
+import type { ChatMessage } from "@/data/chat";
 
 interface TranscriptPanelProps {
   messages: ChatMessage[];
@@ -58,6 +58,7 @@ const TranscriptPanel = ({ messages, onSendMessage, inputRef }: TranscriptPanelP
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
             placeholder="Type a message..."
+            maxLength={2000}
             className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
           />
           <button onClick={handleSend} className="text-primary hover:text-primary/80 transition-colors">

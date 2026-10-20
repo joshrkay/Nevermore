@@ -1,9 +1,12 @@
-import { Navigate } from "react-router-dom";
-import { useAuth } from "@/hooks/useAuth";
+import type { ReactNode } from "react";
+import { Navigate, useLocation } from "react-router-dom";
 import { RavenIcon } from "./RavenLogo";
+import { useAuth } from "@/hooks/useAuth";
 
-const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+// Sends signed-out visitors to /login, remembering where they were headed.
+const RequireAuth = ({ children }: { children: ReactNode }) => {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -17,10 +20,10 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
   return <>{children}</>;
 };
 
-export default ProtectedRoute;
+export default RequireAuth;

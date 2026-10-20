@@ -1,4 +1,6 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLenoreVoice } from "@/hooks/useLenoreVoice";
 import { useChamberSession } from "@/hooks/useChamberSession";
@@ -6,11 +8,10 @@ import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import TranscriptPanel from "@/components/chamber/TranscriptPanel";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
-import type { ChatMessage } from "@/data/mockData";
-import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import type { ChamberData } from "@/data/chamberTypes";
+import { createChatMessage } from "@/data/chat";
+import { mergeChamberData } from "@/data/chamberValidation";
 import { supabase } from "@/integrations/supabase/client";
-import { toast } from "sonner";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 
 const ChamberPage = () => {
   const isMobile = useIsMobile();
@@ -18,23 +19,26 @@ const ChamberPage = () => {
   const [lastSpokenText, setLastSpokenText] = useState("Hi — I'm Lenore. I'll get you through this quickly. Are you here for your own company, or on behalf of a client?");
   const chatInputRef = useRef<HTMLInputElement>(null);
 
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
+    sessionId,
     chamberData,
     messages,
     isLoading: sessionLoading,
     setChamberData,
     addMessage,
-  } = useChamberSession();
+    submit,
+  } = useChamberSession(searchParams.get("session"));
 
-  const displayData = chamberData;
+  // Keep the session in the URL so a refresh or "Back to Review" resumes it.
+  useEffect(() => {
+    if (sessionId && searchParams.get("session") !== sessionId) {
+      setSearchParams({ session: sessionId }, { replace: true });
+    }
+  }, [sessionId, searchParams, setSearchParams]);
 
   const addLenoreMessage = useCallback((text: string) => {
-    addMessage({
-      id: String(Date.now()),
-      sender: "lenore",
-      text,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    });
+    addMessage(createChatMessage("lenore", text));
     setLastSpokenText(text.length > 120 ? text.slice(0, 120) + "..." : text);
   }, [addMessage]);
 
@@ -42,37 +46,38 @@ const ChamberPage = () => {
     onOrbStateChange: setOrbState,
     onNewMessage: addMessage,
     onLastSpokenText: setLastSpokenText,
-    onExtract: (data) => setChamberData((prev: ChamberData) => ({ ...prev, ...data })),
+    onExtract: (data) => setChamberData((prev) => mergeChamberData(prev, data)),
   });
 
   const handleSendMessage = useCallback(async (text: string) => {
-    addMessage({
-      id: String(Date.now()),
-      sender: "user",
-      text,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    });
+    addMessage(createChatMessage("user", text));
 
     setOrbState("thinking");
 
     try {
+      // The roster isn't extracted from chat and can be large, so leave it out of the context.
+      const { employees: _employees, ...context } = chamberData;
       const { data: fnData, error: fnError } = await supabase.functions.invoke("chamber-extract", {
-        body: { message: text, context: chamberData },
+        body: { message: text, context },
       });
 
       if (fnError) throw fnError;
 
-      if (fnData?.extracted && Object.keys(fnData.extracted).length > 0) {
-        setChamberData((prev: ChamberData) => ({ ...prev, ...fnData.extracted }));
+      if (fnData?.extracted) {
+        setChamberData((prev) => mergeChamberData(prev, fnData.extracted));
       }
 
-      const reply = fnData?.reply || "I've noted that. Could you tell me more about your team?";
+      const reply = (typeof fnData?.reply === "string" && fnData.reply.trim()) || "I've noted that. Could you tell me more about your team?";
       setOrbState("speaking");
       addLenoreMessage(reply);
       setTimeout(() => setOrbState("idle"), 2000);
     } catch (err) {
       console.error("Extraction error:", err);
       setOrbState("idle");
+      if (err instanceof FunctionsHttpError && err.context?.status === 429) {
+        addLenoreMessage("Let's take a breath — you're writing faster than I can keep up. Give me a minute, then continue.");
+        return;
+      }
       addLenoreMessage("I caught that. Tell me more — how many employees are you looking to cover?");
     }
   }, [addLenoreMessage, addMessage, chamberData, setChamberData]);
@@ -80,6 +85,14 @@ const ChamberPage = () => {
   const handleTypeInstead = () => {
     chatInputRef.current?.focus();
   };
+
+  if (sessionLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-6 h-6 text-primary animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -115,7 +128,7 @@ const ChamberPage = () => {
 
         {/* Live workspace */}
         <div className={`${isMobile ? "w-full" : "flex-1"}`}>
-          <LiveWorkspace data={displayData} isDemo={false} />
+          <LiveWorkspace data={chamberData} isDemo={false} sessionId={sessionId} onSubmit={submit} />
         </div>
       </div>
 
@@ -127,6 +140,7 @@ const ChamberPage = () => {
               ref={chatInputRef}
               type="text"
               placeholder="Message Lenore..."
+              maxLength={2000}
               className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {

@@ -1,5 +1,6 @@
 import type { ChamberData } from "@/data/chamberTypes";
-import { CheckCircle, AlertTriangle } from "lucide-react";
+import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
+import { CheckCircle, AlertTriangle, HelpCircle } from "lucide-react";
 
 interface ReviewTabProps {
   data: ChamberData;
@@ -7,30 +8,16 @@ interface ReviewTabProps {
 }
 
 const ReviewTab = ({ data, onProceed }: ReviewTabProps) => {
-  const eeCount = data.employee_count ?? data.employees.length;
-  const hasCA1099 = data.ca_contractors || data.employees.some(e => e.classification === "1099" && e.state === "CA");
-  
-  const checks = [
-    { label: `Headcount meets TriNet minimum (${eeCount} employees)`, pass: eeCount >= 5 },
-    { label: "US-based company", pass: !!data.hq_state },
-    { label: "Industry — no exclusions", pass: true },
-    { label: "Workers' comp history clean", pass: true },
-    { label: "No open claims", pass: true },
-    { label: "Renewal increase within range", pass: true },
-    { label: "Dependent data complete", pass: data.employees.some(e => e.dependents.length > 0) || data.employees.length === 0 },
-  ];
-
-  const flaggedEmployees = data.employees.filter(e => {
-    const title = e.title.toLowerCase();
-    return title.includes("account") || title.includes("sales") || title.includes("freelance") || title.includes("contractor");
-  });
+  const eeCount = headcount(data);
+  const checks = eligibilityChecks(data);
+  const flaggedEmployees = data.employees.filter(e => employeeFlag(e) !== null);
 
   return (
     <div className="p-6 space-y-6">
       <div>
         <h2 className="font-display text-2xl font-bold mb-2">Review</h2>
         <p className="text-muted-foreground text-sm">
-          All data collected, organized by section. Every field is editable inline.
+          All data collected so far, organized by section. Tell Lenore about anything that needs correcting.
         </p>
       </div>
 
@@ -39,12 +26,12 @@ const ReviewTab = ({ data, onProceed }: ReviewTabProps) => {
         <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">Eligibility Check</p>
         {checks.map((c, i) => (
           <div key={i} className="flex items-start gap-2.5">
-            {c.pass ? (
-              <CheckCircle className="w-4 h-4 text-success flex-shrink-0 mt-0.5" />
-            ) : (
-              <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
-            )}
-            <span className="text-sm text-foreground">{c.label}</span>
+            {c.status === "pass" && <CheckCircle className="w-4 h-4 text-success flex-shrink-0 mt-0.5" />}
+            {c.status === "fail" && <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />}
+            {c.status === "unknown" && <HelpCircle className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />}
+            <span className={`text-sm ${c.status === "unknown" ? "text-muted-foreground" : "text-foreground"}`}>
+              {c.label}{c.status === "unknown" && " — not yet verified"}
+            </span>
           </div>
         ))}
         {flaggedEmployees.length > 0 && (
@@ -107,6 +94,9 @@ const ReviewTab = ({ data, onProceed }: ReviewTabProps) => {
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
                         emp.classification === "1099" ? "bg-warning/15 text-warning" : "bg-success/15 text-success"
                       }`}>{emp.classification}</span>
+                      {employeeFlag(emp) && (
+                        <span title={employeeFlag(emp) ?? undefined} className="ml-1 text-[10px] text-warning">⚠</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -120,7 +110,7 @@ const ReviewTab = ({ data, onProceed }: ReviewTabProps) => {
         onClick={onProceed}
         className="w-full bg-primary text-primary-foreground font-medium py-3 rounded-lg hover:bg-primary/90 transition-colors"
       >
-        Proceed to The Reckoning →
+        See Your PEO Matches →
       </button>
     </div>
   );

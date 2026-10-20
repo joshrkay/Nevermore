@@ -1,26 +1,42 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { scorePEOs } from "@/data/peoScoring";
 import type { ChamberData } from "@/data/chamberTypes";
+import type { ChamberSubmission } from "@/data/manuscript";
 import UploadTab from "../UploadTab";
 import CompanyTab from "./CompanyTab";
+import PayrollTab from "./PayrollTab";
+import BenefitsTab from "./BenefitsTab";
 import CensusWorkspaceTab from "./CensusWorkspaceTab";
+import DependentsTab from "./DependentsTab";
 import ReviewTab from "./ReviewTab";
+import PEOMatchTab from "../PEOMatchTab";
 import ReckoningTab from "../ReckoningTab";
 
 const WORKSPACE_TABS = [
   { key: "upload", label: "① Upload" },
   { key: "company", label: "② Company" },
-  { key: "team", label: "③ Your Team" },
-  { key: "review", label: "④ Review" },
-  { key: "reckoning", label: "⑤ The Reckoning" },
+  { key: "payroll", label: "③ Payroll" },
+  { key: "benefits", label: "④ Benefits" },
+  { key: "team", label: "⑤ Your Team" },
+  { key: "dependents", label: "⑥ Dependents" },
+  { key: "review", label: "⑦ Review" },
+  { key: "match", label: "⑧ PEO Match" },
+  { key: "reckoning", label: "⑨ The Reckoning" },
 ];
 
 interface LiveWorkspaceProps {
   data: ChamberData;
   isDemo: boolean;
+  sessionId: string | null;
+  onSubmit: (submission: ChamberSubmission) => Promise<boolean>;
 }
 
-const LiveWorkspace = ({ data, isDemo }: LiveWorkspaceProps) => {
+const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit }: LiveWorkspaceProps) => {
   const [activeTab, setActiveTab] = useState("upload");
+  const [chosenPeo, setChosenPeo] = useState<string | null>(null);
+  // Until the client picks one, the best-scoring PEO is the selection.
+  const topPeo = useMemo(() => scorePEOs(data)[0].name, [data]);
+  const selectedPeo = chosenPeo ?? topPeo;
 
   return (
     <div className="flex flex-col h-full">
@@ -51,9 +67,13 @@ const LiveWorkspace = ({ data, isDemo }: LiveWorkspaceProps) => {
       <div className="flex-1 overflow-y-auto">
         {activeTab === "upload" && <UploadTab onFilesUploaded={() => setActiveTab("company")} />}
         {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} />}
+        {activeTab === "payroll" && <PayrollTab data={data} />}
+        {activeTab === "benefits" && <BenefitsTab data={data} />}
         {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} />}
-        {activeTab === "review" && <ReviewTab data={data} onProceed={() => setActiveTab("reckoning")} />}
-        {activeTab === "reckoning" && <ReckoningTab />}
+        {activeTab === "dependents" && <DependentsTab data={data} />}
+        {activeTab === "review" && <ReviewTab data={data} onProceed={() => setActiveTab("match")} />}
+        {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={selectedPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
+        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={selectedPeo} sessionId={sessionId} onSubmit={onSubmit} />}
       </div>
     </div>
   );

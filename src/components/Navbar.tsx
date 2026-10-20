@@ -58,7 +58,7 @@ const Navbar = () => {
             </Link>
           ) : null}
           <Link
-            to="/login"
+            to="/start"
             className="text-sm font-medium bg-primary text-primary-foreground px-5 py-2 rounded-md hover:bg-primary/90 transition-colors"
           >
             Begin →
@@ -85,7 +85,7 @@ const Navbar = () => {
               </Link>
             )
           )}
-          <Link to="/login" onClick={() => setMobileOpen(false)} className="block text-sm font-medium text-primary">
+          <Link to="/start" onClick={() => setMobileOpen(false)} className="block text-sm font-medium text-primary">
             Begin →
           </Link>
         </div>
