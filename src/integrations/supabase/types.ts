@@ -32,10 +32,29 @@ export type Database = {
         }
         Relationships: []
       }
+      chamber_certifications: {
+        Row: {
+          certified_at: string
+          consent_text: Json
+          consent_text_version: string
+          data_hash: string
+          id: string
+          session_id: string
+          signed_at: string
+          signer_name: string
+          signer_title: string
+          user_id: string
+        }
+        // Written only by the database when an intake is certified; clients can read, never write.
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       chamber_sessions: {
         Row: {
           chamber_data: Json
           created_at: string
+          field_provenance: Json
           id: string
           status: string
           submission: Json | null
@@ -46,6 +65,7 @@ export type Database = {
         Insert: {
           chamber_data?: Json
           created_at?: string
+          field_provenance?: Json
           id?: string
           status?: string
           submission?: Json | null
@@ -56,6 +76,7 @@ export type Database = {
         Update: {
           chamber_data?: Json
           created_at?: string
+          field_provenance?: Json
           id?: string
           status?: string
           submission?: Json | null

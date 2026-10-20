@@ -24,6 +24,7 @@ vi.mock("@/integrations/supabase/client", () => ({
 }));
 
 const { useChamberSession } = await import("./useChamberSession");
+const { applyExtraction } = await import("@/data/provenance");
 
 // Lets queued promise callbacks run while fake timers are active (waitFor would hang).
 const drain = () => act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
@@ -116,6 +117,47 @@ describe("useChamberSession", () => {
     fetchSpy.mockRestore();
   });
 
+  it("saves field provenance with the data and snapshots it on submission", async () => {
+    const { result } = renderHook(() => useChamberSession());
+    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    act(() =>
+      result.current.updateIntake((prev) =>
+        applyExtraction(prev, { employee_count: 40 }, { source: { kind: "transcript", message_id: "m1" } }),
+      ),
+    );
+    expect(result.current.chamberData.employee_count).toBe(40);
+    expect(result.current.provenance.employee_count?.status).toBe("inferred");
+
+    const pending = result.current.submit(submission);
+    await waitFor(() => expect(updates).toHaveLength(1));
+    expect(updates[0].payload.field_provenance).toMatchObject({ employee_count: { status: "inferred" } });
+    updates[0].resolve({ error: null });
+    await waitFor(() => expect(updates).toHaveLength(2));
+    expect(updates[1].payload.submission).toMatchObject({
+      chamber_data: { employee_count: 40 },
+      field_provenance: { employee_count: { source: { kind: "transcript", message_id: "m1" } } },
+    });
+    updates[1].resolve({ error: null });
+    await act(async () => { await pending; });
+  });
+
+  it("restores field provenance when resuming a session", async () => {
+    resumeRow = {
+      id: "s9",
+      chamber_data: { employee_count: 40 },
+      field_provenance: {
+        employee_count: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-20T00:00:00Z" },
+        bogus: { status: "confirmed" },
+      },
+      transcript: [],
+    };
+    const { result } = renderHook(() => useChamberSession("s9"));
+    await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+    expect(result.current.provenance).toEqual({
+      employee_count: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-20T00:00:00Z" },
+    });
+  });
+
   it("does not silently replace a session it was asked to resume but could not open", async () => {
     const { result } = renderHook(() => useChamberSession("old-session"));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -132,5 +174,81 @@ describe("useChamberSession", () => {
     await waitFor(() => expect(result.current.sessionId).toBe("s1"));
     expect(result.current.resumeFailed).toBe(false);
     expect(inserts).toBe(1);
+  });
+
+  describe("certification", () => {
+    const certifiedRow = (status: string) => ({
+      id: "s9",
+      chamber_data: { company_name: "Acme" },
+      transcript: [],
+      status,
+      submission,
+    });
+
+    it("reports nothing certified for a new intake", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(result.current.certification).toEqual({ status: "none" });
+    });
+
+    it("loads a certified session as certified, and keeps it so when nothing actually changes", async () => {
+      resumeRow = certifiedRow("submitted");
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.certification.status).toBe("certified"));
+
+      act(() => result.current.setChamberData((prev) => ({ ...prev })));
+      expect(result.current.certification.status).toBe("certified");
+    });
+
+    it("requires re-certification as soon as certified answers change", async () => {
+      resumeRow = certifiedRow("submitted");
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.certification.status).toBe("certified"));
+
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme Inc" })));
+      expect(result.current.certification).toEqual({ status: "stale", submission });
+    });
+
+    it("loads a session whose certification the database withdrew as needing re-certification", async () => {
+      resumeRow = certifiedRow("in_progress");
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.certification.status).toBe("stale"));
+    });
+
+    it("becomes certified once the submission is saved, and not before", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+
+      let ok: boolean | undefined;
+      const pending = result.current.submit(submission).then((r) => { ok = r; });
+      await waitFor(() => expect(updates).toHaveLength(1));
+      expect(result.current.certification.status).toBe("none");
+
+      await act(async () => { updates[0].resolve({ error: null }); await pending; });
+      expect(ok).toBe(true);
+      expect(result.current.certification.status).toBe("certified");
+    });
+
+    it("certifies the exact answers on screen, even if the saved row was never re-written", async () => {
+      resumeRow = { ...certifiedRow("in_progress"), submission: null, chamber_data: { company_name: "Acme" } };
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+
+      const pending = result.current.submit(submission);
+      await waitFor(() => expect(updates).toHaveLength(1));
+      const payload = updates[0].payload as { chamber_data: unknown; submission: { chamber_data: unknown } };
+      expect(payload.chamber_data).toEqual(payload.submission.chamber_data);
+      expect(payload.chamber_data).toMatchObject({ company_name: "Acme", employees: [] }); // normalized, not the sparse row
+      await act(async () => { updates[0].resolve({ error: null }); await pending; });
+    });
+
+    it("stays uncertified when the submission fails to save", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      const pending = result.current.submit(submission);
+      await waitFor(() => expect(updates).toHaveLength(1));
+      await act(async () => { updates[0].resolve({ error: { message: "refused" } }); await pending; });
+      expect(result.current.certification.status).toBe("none");
+    });
   });
 });

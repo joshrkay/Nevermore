@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { ChamberSubmission } from "@/data/manuscript";
+import type { FieldAction, ProvenanceMap } from "@/data/provenance";
+import type { CertificationState, ChamberSubmission } from "@/data/manuscript";
 import UploadTab from "../UploadTab";
 import CompanyTab from "./CompanyTab";
 import PayrollTab from "./PayrollTab";
@@ -28,9 +30,17 @@ interface LiveWorkspaceProps {
   isDemo: boolean;
   sessionId: string | null;
   onSubmit: (submission: ChamberSubmission) => Promise<boolean>;
+  provenance?: ProvenanceMap;
+  /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
+  onFieldAction?: (action: FieldAction) => void;
 }
 
-const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit }: LiveWorkspaceProps) => {
+const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, provenance = {}, onFieldAction }: LiveWorkspaceProps) => {
+  const onAction = isDemo ? undefined : onFieldAction;
+  certification?: CertificationState;
+}
+
+const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, certification }: LiveWorkspaceProps) => {
   const [activeTab, setActiveTab] = useState("upload");
   // Optional, and never defaulted: we don't rank PEOs, so the prospect picks one or none.
   const [chosenPeo, setChosenPeo] = useState<string | null>(null);
@@ -63,14 +73,14 @@ const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit }: LiveWorkspaceProps
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto">
         {activeTab === "upload" && <UploadTab onFilesUploaded={() => setActiveTab("company")} />}
-        {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} />}
-        {activeTab === "payroll" && <PayrollTab data={data} />}
-        {activeTab === "benefits" && <BenefitsTab data={data} />}
+        {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
+        {activeTab === "payroll" && <PayrollTab data={data} provenance={provenance} onAction={onAction} />}
+        {activeTab === "benefits" && <BenefitsTab data={data} provenance={provenance} onAction={onAction} />}
         {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} />}
         {activeTab === "dependents" && <DependentsTab data={data} />}
-        {activeTab === "review" && <ReviewTab data={data} onProceed={() => setActiveTab("match")} />}
+        {activeTab === "review" && <ReviewTab data={data} provenance={provenance} onAction={onAction} onProceed={() => setActiveTab("match")} />}
         {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
-        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={chosenPeo} sessionId={sessionId} onSubmit={onSubmit} />}
+        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={chosenPeo} sessionId={sessionId} onSubmit={onSubmit} certification={certification} />}
       </div>
     </div>
   );

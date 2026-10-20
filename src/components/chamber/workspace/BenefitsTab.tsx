@@ -1,30 +1,20 @@
 import type { ChamberData } from "@/data/chamberTypes";
+import type { FieldAction, FieldKey, ProvenanceMap } from "@/data/provenance";
 import { motion } from "framer-motion";
+import ProvenanceField from "./ProvenanceField";
 
 interface BenefitsTabProps {
   data: ChamberData;
+  provenance?: ProvenanceMap;
+  onAction?: (action: FieldAction) => void;
 }
 
-const GhostField = ({ label }: { label: string }) => (
-  <div>
-    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
-    <p className="text-xs text-muted-foreground/50 italic">Lenore will fill this in...</p>
-  </div>
-);
-
-const DataField = ({ label, value }: { label: string; value: string }) => (
-  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
-    <p className="text-sm font-medium">{value}</p>
-  </motion.div>
-);
-
-const BenefitsTab = ({ data }: BenefitsTabProps) => {
-  const fields = [
-    { label: "Current Carrier", value: data.current_carrier },
-    { label: "Renewal Date", value: data.renewal_date },
-    { label: "Waiting Period", value: data.benefits_waiting_period },
-    { label: "Rate History", value: data.rate_history },
+const BenefitsTab = ({ data, provenance = {}, onAction }: BenefitsTabProps) => {
+  const fields: { label: string; field: FieldKey; value: string | null }[] = [
+    { label: "Current Carrier", field: "current_carrier", value: data.current_carrier },
+    { label: "Renewal Date", field: "renewal_date", value: data.renewal_date },
+    { label: "Waiting Period", field: "benefits_waiting_period", value: data.benefits_waiting_period },
+    { label: "Rate History", field: "rate_history", value: data.rate_history },
   ];
 
   const filledCount = fields.filter(f => f.value).length +
@@ -54,40 +44,50 @@ const BenefitsTab = ({ data }: BenefitsTabProps) => {
       )}
 
       <div className="grid grid-cols-2 gap-4">
-        {fields.map(f =>
-          f.value
-            ? <DataField key={f.label} label={f.label} value={f.value} />
-            : <GhostField key={f.label} label={f.label} />
-        )}
+        {fields.map(f => (
+          <ProvenanceField
+            key={f.label}
+            label={f.label}
+            field={f.field}
+            display={f.value}
+            raw={data[f.field]}
+            provenance={provenance[f.field]}
+            onAction={onAction}
+          />
+        ))}
       </div>
 
       {/* Ancillary */}
-      <div>
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Ancillary Benefits</p>
-        {data.ancillary_benefits.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {data.ancillary_benefits.map(b => (
-              <span key={b} className="text-[10px] bg-muted px-2 py-1 rounded-full">{b}</span>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground/50 italic">Lenore will fill this in...</p>
-        )}
-      </div>
+      <ProvenanceField
+        label="Ancillary Benefits"
+        field="ancillary_benefits"
+        display={data.ancillary_benefits.length > 0 ? data.ancillary_benefits.join(", ") : null}
+        raw={data.ancillary_benefits}
+        provenance={provenance.ancillary_benefits}
+        onAction={onAction}
+      >
+        <div className="flex flex-wrap gap-1.5">
+          {data.ancillary_benefits.map(b => (
+            <span key={b} className="text-[10px] bg-muted px-2 py-1 rounded-full">{b}</span>
+          ))}
+        </div>
+      </ProvenanceField>
 
       {/* 401k */}
-      <div>
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Retirement Plan</p>
-        {data.has_401k !== null ? (
-          <p className="text-sm font-medium">
-            {data.has_401k
+      <ProvenanceField
+        label="Retirement Plan"
+        field="has_401k"
+        display={
+          data.has_401k === null
+            ? null
+            : data.has_401k
               ? `${data.retirement_type || "401k"} · ${data.employer_contributes ? "Employer contributes" : "No employer match"}`
-              : "No retirement plan"}
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground/50 italic">Lenore will fill this in...</p>
-        )}
-      </div>
+              : "No retirement plan"
+        }
+        raw={data.has_401k}
+        provenance={provenance.has_401k}
+        onAction={onAction}
+      />
     </div>
   );
 };

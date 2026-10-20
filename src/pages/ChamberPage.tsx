@@ -12,6 +12,9 @@ import ChatFailureNotice from "@/components/chamber/ChatFailureNotice";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import { createChatMessage } from "@/data/chat";
 import { mergeChamberData } from "@/data/chamberValidation";
+import { applyExtraction, applyFieldAction, transcriptExtraction, type FieldAction } from "@/data/provenance";
+import { supabase } from "@/integrations/supabase/client";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 
 const ChamberPage = () => {
   const isMobile = useIsMobile();
@@ -25,11 +28,14 @@ const ChamberPage = () => {
     resumeFailed,
     startNew,
     chamberData,
+    provenance,
     messages,
     isLoading: sessionLoading,
     setChamberData,
+    updateIntake,
     addMessage,
     submit,
+    certification,
   } = useChamberSession(searchParams.get("session"));
 
   // Keep the session in the URL so a refresh or "Back to Review" resumes it.
@@ -48,7 +54,11 @@ const ChamberPage = () => {
     onOrbStateChange: setOrbState,
     onNewMessage: addMessage,
     onLastSpokenText: setLastSpokenText,
-    onExtract: (data) => setChamberData((prev) => mergeChamberData(prev, data)),
+    // Voice extractions with no prospect message to point to keep the old, untracked merge.
+    onExtract: (data, message) =>
+      message
+        ? updateIntake((prev) => applyExtraction(prev, data, transcriptExtraction(message, data)))
+        : setChamberData((prev) => mergeChamberData(prev, data)),
   });
 
   const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
@@ -61,6 +71,43 @@ const ChamberPage = () => {
 
   const failureNotice = failure && (
     <ChatFailureNotice failure={failure} pending={pending} onRetry={retry} onDismiss={dismissFailure} />
+  const handleSendMessage = useCallback(async (text: string) => {
+    const userMessage = createChatMessage("user", text);
+    addMessage(userMessage);
+
+    setOrbState("thinking");
+
+    try {
+      // The roster isn't extracted from chat and can be large, so leave it out of the context.
+      const { employees: _employees, ...context } = chamberData;
+      const { data: fnData, error: fnError } = await supabase.functions.invoke("chamber-extract", {
+        body: { message: text, context },
+      });
+
+      if (fnError) throw fnError;
+
+      if (fnData?.extracted) {
+        updateIntake((prev) => applyExtraction(prev, fnData.extracted, transcriptExtraction(userMessage, fnData)));
+      }
+
+      const reply = (typeof fnData?.reply === "string" && fnData.reply.trim()) || "I've noted that. Could you tell me more about your team?";
+      setOrbState("speaking");
+      addLenoreMessage(reply);
+      setTimeout(() => setOrbState("idle"), 2000);
+    } catch (err) {
+      console.error("Extraction error:", err);
+      setOrbState("idle");
+      if (err instanceof FunctionsHttpError && err.context?.status === 429) {
+        addLenoreMessage("Let's take a breath — you're writing faster than I can keep up. Give me a minute, then continue.");
+        return;
+      }
+      addLenoreMessage("I caught that. Tell me more — how many employees are you looking to cover?");
+    }
+  }, [addLenoreMessage, addMessage, chamberData, updateIntake]);
+
+  const handleFieldAction = useCallback(
+    (action: FieldAction) => updateIntake((prev) => applyFieldAction(prev, action)),
+    [updateIntake],
   );
 
   const handleTypeInstead = () => {
@@ -130,7 +177,17 @@ const ChamberPage = () => {
 
         {/* Live workspace */}
         <div className={`${isMobile ? "w-full" : "flex-1"}`}>
-          <LiveWorkspace data={chamberData} isDemo={false} sessionId={sessionId} onSubmit={submit} />
+          <LiveWorkspace
+            data={chamberData}
+            isDemo={false}
+            sessionId={sessionId}
+            onSubmit={submit}
+            provenance={provenance}
+            onFieldAction={handleFieldAction}
+          />
+        {/* On mobile, keep the workspace clear of the fixed chat bar so its last button stays tappable. */}
+        <div className={`${isMobile ? "w-full pb-16" : "flex-1"}`}>
+          <LiveWorkspace data={chamberData} isDemo={false} sessionId={sessionId} onSubmit={submit} certification={certification} />
         </div>
       </div>
 
