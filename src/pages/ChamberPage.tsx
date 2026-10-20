@@ -3,10 +3,12 @@ import { useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLenoreVoice } from "@/hooks/useLenoreVoice";
+import { useLenoreChat } from "@/hooks/useLenoreChat";
 import { useChamberSession } from "@/hooks/useChamberSession";
 import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import TranscriptPanel from "@/components/chamber/TranscriptPanel";
+import ChatFailureNotice from "@/components/chamber/ChatFailureNotice";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import { createChatMessage } from "@/data/chat";
 import { mergeChamberData } from "@/data/chamberValidation";
@@ -59,6 +61,16 @@ const ChamberPage = () => {
         : setChamberData((prev) => mergeChamberData(prev, data)),
   });
 
+  const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
+    chamberData,
+    setChamberData,
+    addUserMessage: (text) => addMessage(createChatMessage("user", text)),
+    addLenoreMessage,
+    onOrbStateChange: setOrbState,
+  });
+
+  const failureNotice = failure && (
+    <ChatFailureNotice failure={failure} pending={pending} onRetry={retry} onDismiss={dismissFailure} />
   const handleSendMessage = useCallback(async (text: string) => {
     const userMessage = createChatMessage("user", text);
     addMessage(userMessage);
@@ -159,6 +171,7 @@ const ChamberPage = () => {
             messages={messages}
             onSendMessage={handleSendMessage}
             inputRef={chatInputRef}
+            notice={failureNotice}
           />
         </div>
 
@@ -181,6 +194,7 @@ const ChamberPage = () => {
       {/* Mobile: floating chat input */}
       {isMobile && (
         <div className="fixed bottom-0 left-0 right-0 p-3 bg-card border-t border-border z-30">
+          {failureNotice}
           <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
             <input
               ref={chatInputRef}

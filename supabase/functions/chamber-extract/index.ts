@@ -1,5 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.100.0";
+import { checkAiAllowance, clientIp, hashIp } from "./allowance.ts";
+import { callModel, failureLogLine, failureResponse, unexpectedErrorLine } from "./model.ts";
+import { selectAdapter } from "./providers.ts";
+import { SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,6 +15,16 @@ const MAX_MESSAGE_CHARS = 2000;
 const MAX_CONTEXT_CHARS = 20000;
 const REQUESTS_PER_MINUTE = 15;
 const REQUESTS_PER_DAY = 300;
+
+// Guest sessions are free to create, so spend is also bounded per IP and globally. Counts, not
+// dollars; override with function secrets.
+const intFromEnv = (name: string, fallback: number) => {
+  const n = Number.parseInt(Deno.env.get(name) ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+const IP_REQUESTS_PER_MINUTE = intFromEnv("AI_IP_PER_MINUTE", 20);
+const IP_REQUESTS_PER_DAY = intFromEnv("AI_IP_PER_DAY", 400);
+const GLOBAL_CALLS_PER_DAY = intFromEnv("AI_GLOBAL_DAILY_CALLS", 2000);
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -87,6 +101,7 @@ function pickPerField<T>(raw: unknown, extracted: Record<string, unknown>, ok: (
 }
 
 serve(async (req) => {
+  const requestId = crypto.randomUUID();
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -103,12 +118,53 @@ serve(async (req) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return json({ error: "Unauthorized" }, 401);
 
-    const { data: allowed, error: quotaError } = await supabase.rpc("consume_ai_quota", {
-      per_minute: REQUESTS_PER_MINUTE,
-      per_day: REQUESTS_PER_DAY,
-    });
-    if (quotaError) throw quotaError;
-    if (!allowed) return json({ error: "Rate limited, please try again shortly." }, 429);
+    // Check provider configuration before spending any budget on the request.
+    const chosen = selectAdapter((name) => Deno.env.get(name));
+    if (!chosen.ok) {
+      console.error(`AI_CONFIG_MISSING: ${chosen.problem}`);
+      return json({ error: "Lenore is unavailable right now. Please try again in a few minutes." }, 503);
+    }
+
+    // The per-IP and global budgets are service-role only, so they use a separate client.
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const ipHashSecret = Deno.env.get("IP_HASH_SECRET");
+    if (!serviceRoleKey || !ipHashSecret) {
+      console.error("AI_CONFIG_MISSING: SUPABASE_SERVICE_ROLE_KEY and IP_HASH_SECRET must both be set");
+      return json({ error: "Lenore is unavailable right now. Please try again in a few minutes." }, 503);
+    }
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceRoleKey);
+    const ip = clientIp(req.headers);
+    const ipHash = ip ? await hashIp(ip, ipHashSecret) : null;
+
+    const allowance = await checkAiAllowance(
+      {
+        consumeUserQuota: async () => {
+          const { data, error } = await supabase.rpc("consume_ai_quota", {
+            per_minute: REQUESTS_PER_MINUTE,
+            per_day: REQUESTS_PER_DAY,
+          });
+          if (error) throw error;
+          return data === true;
+        },
+        consumeIpQuota: async (hash) => {
+          const { data, error } = await admin.rpc("consume_ip_quota", {
+            p_ip_hash: hash,
+            per_minute: IP_REQUESTS_PER_MINUTE,
+            per_day: IP_REQUESTS_PER_DAY,
+          });
+          if (error) throw error;
+          return data === true;
+        },
+        consumeGlobalBudget: async () => {
+          const { data, error } = await admin.rpc("consume_global_ai_budget", { max_calls: GLOBAL_CALLS_PER_DAY });
+          if (error) throw error;
+          return data === true;
+        },
+        log: (message) => console.error(message),
+      },
+      ipHash,
+    );
+    if (!allowance.allowed) return json({ error: allowance.error }, allowance.status);
 
     const { message, context } = await req.json();
     if (typeof message !== "string" || !message.trim()) {
@@ -121,9 +177,6 @@ serve(async (req) => {
     if (contextJson.length > MAX_CONTEXT_CHARS) {
       return json({ error: "context too large" }, 413);
     }
-
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
     // JSON.stringify quotes and escapes the message so it can't break out of its slot.
     const userPrompt = contextJson
@@ -201,7 +254,7 @@ serve(async (req) => {
 
     return json({ extracted, field_status, evidence, corrected_fields, reply });
   } catch (e) {
-    console.error("chamber-extract error:", e);
+    console.error(unexpectedErrorLine(requestId, e));
     return json({ error: "Internal error" }, 500);
   }
 });

@@ -1,14 +1,17 @@
 import { useRef, useEffect, useState } from "react";
 import { Send } from "lucide-react";
+import type { ReactNode } from "react";
 import type { ChatMessage } from "@/data/chat";
 
 interface TranscriptPanelProps {
   messages: ChatMessage[];
   onSendMessage: (text: string) => void;
   inputRef?: React.RefObject<HTMLInputElement>;
+  /** Shown between the conversation and the input, e.g. when Lenore couldn't respond. */
+  notice?: ReactNode;
 }
 
-const TranscriptPanel = ({ messages, onSendMessage, inputRef }: TranscriptPanelProps) => {
+const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice }: TranscriptPanelProps) => {
   const [input, setInput] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -47,6 +50,8 @@ const TranscriptPanel = ({ messages, onSendMessage, inputRef }: TranscriptPanelP
         ))}
         <div ref={endRef} />
       </div>
+
+      {notice}
 
       {/* Input */}
       <div className="p-2 border-t border-border">
