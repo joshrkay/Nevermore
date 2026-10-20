@@ -31,7 +31,7 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
 | `kind` | Fields | Produced by |
 | --- | --- | --- |
 | `transcript` | `message_id` (the `ChatMessage.id` in `transcript`), optional `quote` (≤ 200 chars) | Chat extraction (`chamber-extract`) and voice `<extract>` tags |
-| `document` | `document_id`, optional `document_name`, `location` (e.g. sheet/row or page) | Reserved for document extraction. Nothing produces it yet. |
+| `document` | `document_id`, optional `document_name`, `location` (e.g. sheet/row or page) | A value the prospect applied from an uploaded document (see "Document candidates" below) |
 | `prospect_edit` | — | Confirm, Edit, Add, or "Use this" in the workspace |
 
 ## Merge rules (`applyExtraction`)
@@ -48,6 +48,20 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
 ## Extraction contract (`chamber-extract`)
 
 The response is `{ extracted, field_status, evidence, corrected_fields, reply }`. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`.
+
+## Document candidates (`document-extract`)
+
+Uploads live in `documents`, linked to their intake by `session_id`. RLS requires the caller to own both the row and the intake. The function reads one document as the calling user and writes the result to that row only: `status` and `extraction`.
+
+- `status` is one of `uploaded`, `processing`, `extracted`, `no_data`, `unsupported`, `encrypted`, `unreadable`, `too_large` or `failed`.
+- `extraction` is `{ message, candidates: [{ field, value, location }], applied: { field: timestamp }, extracted_at }`.
+
+Census sheets (CSV/XLSX) are mapped column by column, and their rows never go to the model. Text PDFs and other sheets are read by the model for company-level fields only.
+
+Candidates never change `chamber_data` by themselves. In the Upload tab the prospect can:
+
+- **Apply** a candidate (`applyDocumentCandidates` in `src/data/documentCandidates.ts`). The candidate goes through `applyExtraction` with status `confirmed` and a `document` source, so a prospect's own value is never changed and a different AI value becomes `conflicting`.
+- **Replace** an existing value, which is the explicit way to overwrite one. The field becomes `confirmed` with the document as its source.
 
 ## Submission
 

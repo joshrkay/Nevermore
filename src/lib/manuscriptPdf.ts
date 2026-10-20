@@ -188,13 +188,13 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     y += 3;
   };
 
-  const keyValues = (rows: [string, string][]) =>
+  const keyValues = (rows: [string, string, ...unknown[]][]) =>
     table(
       [
         { header: "", width: 58 },
         { header: "", width: CONTENT_W - 58 },
       ],
-      rows,
+      rows.map(([label, value]) => [label, value]),
       { header: false },
     );
 

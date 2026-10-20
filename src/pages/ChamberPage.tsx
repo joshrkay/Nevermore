@@ -176,7 +176,8 @@ const ChamberPage = () => {
         </div>
 
         {/* Live workspace */}
-        <div className={`${isMobile ? "w-full" : "flex-1"}`}>
+        {/* On mobile, keep the workspace clear of the fixed chat bar so its last button stays tappable. */}
+        <div className={`${isMobile ? "w-full pb-16" : "flex-1"}`}>
           <LiveWorkspace
             data={chamberData}
             isDemo={false}
@@ -184,10 +185,9 @@ const ChamberPage = () => {
             onSubmit={submit}
             provenance={provenance}
             onFieldAction={handleFieldAction}
+            certification={certification}
+            updateIntake={updateIntake}
           />
-        {/* On mobile, keep the workspace clear of the fixed chat bar so its last button stays tappable. */}
-        <div className={`${isMobile ? "w-full pb-16" : "flex-1"}`}>
-          <LiveWorkspace data={chamberData} isDemo={false} sessionId={sessionId} onSubmit={submit} certification={certification} />
         </div>
       </div>
 

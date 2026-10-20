@@ -10,18 +10,21 @@ export interface ChamberSubmission {
   signed_at: string; // ISO timestamp, as captured in the signer's browser
   file_id: string;
   peo?: string; // PEO the client chose on PEO Match; absent on older submissions
-  // The consent wording the signer agreed to; absent on older submissions.
+  // The consent wording the signer agreed to, one statement per entry; absent on older submissions.
+  // `consent_version` carries the same version for the database's certification check, and
+  // submissions from before the statements were stored separately hold `consent_text` as one string.
   consent_text_version?: string;
-  consent_text?: string[];
+  consent_version?: string;
+  consent_text?: string[] | string;
   // Stamped by the database when the certification is accepted (the server's clock, not the browser's).
   certified_at?: string;
   data_hash?: string;
+  data_sha256?: string;
   // Copy of the data as signed, so later edits to the session can't change
   // what the certified manuscript shows. Absent on older submissions.
   chamber_data?: unknown;
-  // Stamped by the database when it records the certification; never trusted from the client.
-  certified_at?: string;
-  data_sha256?: string;
+  // Field status and source as signed. Absent on older submissions.
+  field_provenance?: unknown;
 }
 
 // ---------- Certification ----------
@@ -222,6 +225,8 @@ export interface Manuscript {
   benefitsRows: ManuscriptRow[];
   resolved: string[];
   open: string[];
+  /** Status and source of each field, as shown beside its row. */
+  provenance: ProvenanceMap;
   signer: ManuscriptSigner | null;
 }
 
@@ -332,7 +337,10 @@ export function buildManuscript(
           title: opts.submission.signer_title,
           signedAt: fmtDate(new Date(opts.submission.signed_at)),
           signedAtFull: fmtDateTime(new Date(opts.submission.signed_at)),
-          consent: opts.submission.consent_text || LEGACY_CONSENT_TEXT,
+          consent:
+            (Array.isArray(opts.submission.consent_text)
+              ? opts.submission.consent_text.join("\n")
+              : opts.submission.consent_text) || LEGACY_CONSENT_TEXT,
         }
       : null,
   };

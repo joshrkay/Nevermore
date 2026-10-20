@@ -8,7 +8,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
-import { buildManuscript, fileIdForSession, maskDob, NOT_PROVIDED, type ChamberSubmission } from "@/data/manuscript";
+import { buildManuscript, fileIdForSession, maskDob, NOT_PROVIDED, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
+import { describeSource, parseProvenance, STATUS_LABELS, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
 
@@ -50,11 +51,6 @@ const renderRows = (rows: ManuscriptRow[], provenance: ProvenanceMap) =>
     <DataRow key={label} label={label} value={value} provenance={field ? provenance[field] : undefined} />
   ));
 
-// Masks month/day of a date of birth, keeping the year.
-const maskDob = (dob: string) => {
-  const year = dob.match(/\d{4}/)?.[0];
-  return year ? `••/••/${year}` : "••/••/••••";
-};
 
 type LoadState =
   | { kind: "sample" }
@@ -63,7 +59,7 @@ type LoadState =
   | { kind: "error"; message: string }
   | { kind: "unsigned" }
   | { kind: "recertify" }
-  | { kind: "ready"; data: ChamberData; submission: ChamberSubmission | null; fileId: string };
+  | { kind: "ready"; data: ChamberData; provenance: ProvenanceMap; submission: ChamberSubmission | null; fileId: string };
 
 // `demo` renders the fictional sample; the live route never does.
 const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {

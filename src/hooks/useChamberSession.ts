@@ -7,7 +7,6 @@ import type { ChatMessage } from "@/data/chat";
 import { createChatMessage, parseTranscript } from "@/data/chat";
 import { parseChamberData } from "@/data/chamberValidation";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import type { ChamberSubmission } from "@/data/manuscript";
 import { parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import {
   certificationFromRow,
@@ -183,7 +182,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       // RLS only returns the user's own sessions.
       const { data, error } = await supabase
         .from("chamber_sessions")
-        .select("id, chamber_data, transcript, status, submission")
+        .select("id, chamber_data, field_provenance, transcript, status, submission")
         .eq("id", id)
         .maybeSingle();
       if (error) console.error("Failed to load session:", error);
@@ -254,31 +253,37 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     setInitRun((n) => n + 1);
   }, []);
 
-  const setChamberData = useCallback((updater: ChamberData | ((prev: ChamberData) => ChamberData)) => {
-    const prev = dataRef.current;
-    const next = typeof updater === "function" ? updater(prev) : updater;
-    dataRef.current = next;
-    setChamberDataRaw(next);
-    // Certification covers the answers as they were signed. The database withdraws it the
-    // moment the saved answers differ; mirror that here so the prospect sees it right away.
+  // Certification covers the answers as they were signed. The database withdraws it the
+  // moment the saved answers differ; mirror that here so the prospect sees it right away.
+  const withdrawIfChanged = useCallback((prev: ChamberData, next: ChamberData) => {
     const current = certificationRef.current;
     if (current.status === "certified" && JSON.stringify(next) !== JSON.stringify(prev)) {
       const stale: CertificationState = { status: "stale", submission: current.submission };
       certificationRef.current = stale;
       setCertification(stale);
     }
+  }, []);
+
+  const setChamberData = useCallback((updater: ChamberData | ((prev: ChamberData) => ChamberData)) => {
+    const prev = dataRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    dataRef.current = next;
+    setChamberDataRaw(next);
+    withdrawIfChanged(prev, next);
     scheduleSave();
-  }, [scheduleSave]);
+  }, [scheduleSave, withdrawIfChanged]);
 
   const updateIntake = useCallback((updater: (prev: IntakeState) => IntakeState) => {
     // Read and write through the refs so data and provenance never come from different renders.
-    const next = updater({ data: dataRef.current, provenance: provenanceRef.current });
+    const prev = dataRef.current;
+    const next = updater({ data: prev, provenance: provenanceRef.current });
     dataRef.current = next.data;
     provenanceRef.current = next.provenance;
     setChamberDataRaw(next.data);
     setProvenanceRaw(next.provenance);
+    withdrawIfChanged(prev, next.data);
     scheduleSave();
-  }, [scheduleSave]);
+  }, [scheduleSave, withdrawIfChanged]);
 
   const addMessage = useCallback((msg: ChatMessage) => {
     setMessages(prev => {
@@ -300,7 +305,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         // Written alongside the certified copy so the two always agree, even when the saved row
         // predates fields that loading fills in (the database requires them to be identical).
         chamber_data: dataRef.current as unknown as Json,
-        submission: { ...submission, chamber_data: dataRef.current } as unknown as Json,
+        submission: {
+          ...submission,
+          chamber_data: dataRef.current,
+          field_provenance: provenanceRef.current,
+        } as unknown as Json,
       })
       .eq("id", sid);
     if (error) {
@@ -309,12 +318,26 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     }
     const certified: CertificationState = {
       status: "certified",
-      submission: { ...submission, chamber_data: dataRef.current },
+      submission: { ...submission, chamber_data: dataRef.current, field_provenance: provenanceRef.current },
     };
     certificationRef.current = certified;
     setCertification(certified);
     return true;
   }, [flush]);
 
-  return { sessionId, resumeFailed, startNew, chamberData, messages, isLoading, setChamberData, addMessage, setMessages, submit, certification };
+  return {
+    sessionId,
+    resumeFailed,
+    startNew,
+    chamberData,
+    provenance,
+    messages,
+    isLoading,
+    setChamberData,
+    updateIntake,
+    addMessage,
+    setMessages,
+    submit,
+    certification,
+  };
 }
