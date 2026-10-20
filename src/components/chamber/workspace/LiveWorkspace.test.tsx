@@ -58,8 +58,8 @@ describe("LiveWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Choose Rippling" }));
     expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("Rippling");
     fireEvent.click(screen.getByRole("button", { name: "Proceed with Rippling →" }));
-    expect(screen.getByText(/ships to Rippling/)).toBeInTheDocument();
-    expect(screen.getByText(/obtain a quote from Rippling/)).toBeInTheDocument();
+    expect(screen.getByText(/prepared for Rippling/)).toBeInTheDocument();
+    expect(screen.getByText(/send to Rippling myself/)).toBeInTheDocument();
     expect(screen.queryByText(/TriNet/)).not.toBeInTheDocument();
   });
 });
