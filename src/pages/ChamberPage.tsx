@@ -33,6 +33,7 @@ const ChamberPage = () => {
     updateIntake,
     addMessage,
     submit,
+    certification,
   } = useChamberSession(searchParams.get("session"));
 
   // Keep the session in the URL so a refresh or "Back to Review" resumes it.
@@ -171,6 +172,9 @@ const ChamberPage = () => {
             provenance={provenance}
             onFieldAction={handleFieldAction}
           />
+        {/* On mobile, keep the workspace clear of the fixed chat bar so its last button stays tappable. */}
+        <div className={`${isMobile ? "w-full pb-16" : "flex-1"}`}>
+          <LiveWorkspace data={chamberData} isDemo={false} sessionId={sessionId} onSubmit={submit} certification={certification} />
         </div>
       </div>
 

@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import type { ChamberEmployee } from "./chamberTypes";
-import { buildManuscript, coverageTier, eligibilityChecks, employeeFlag, fileIdForSession, wcSystem } from "./manuscript";
+import {
+  buildManuscript,
+  CERTIFICATION_CONSENT_VERSION,
+  certificationConsent,
+  certificationFromRow,
+  coverageTier,
+  eligibilityChecks,
+  employeeFlag,
+  fileIdForSession,
+  LEGACY_CONSENT_TEXT,
+  manuscriptFilename,
+  maskDob,
+  wcSystem,
+} from "./manuscript";
 
 const emp = (overrides: Partial<ChamberEmployee> = {}): ChamberEmployee => ({
   first_name: "A",
@@ -172,5 +185,72 @@ describe("buildManuscript open items for missing core facts", () => {
       "Industry — please confirm",
     ]));
     expect(open.some((o) => o.startsWith("Company legal name — please"))).toBe(false);
+  });
+});
+
+describe("certification helpers", () => {
+  it("states the consent wording, including the re-certification rule", () => {
+    const c = certificationConsent({ companyName: "Acme", peo: "Some PEO" });
+    expect(c.statements).toHaveLength(3);
+    expect(c.statements[2]).toContain("Some PEO");
+    expect(c.signing).toContain("authorized representative of Acme");
+    expect(c.signing).toContain("requires me to certify again");
+    expect(c.text).toBe([...c.statements, c.signing].join("\n"));
+    expect(c.version).toBe(CERTIFICATION_CONSENT_VERSION);
+  });
+
+  it("falls back to neutral wording when the company or PEO isn't known yet", () => {
+    const c = certificationConsent({ companyName: " ", peo: null });
+    expect(c.statements[2]).toContain("the PEO I choose");
+    expect(c.signing).toContain("representative of my company");
+  });
+
+  it("reads a stored row into a certification state", () => {
+    const sub = { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1" };
+    expect(certificationFromRow("in_progress", null)).toEqual({ status: "none" });
+    expect(certificationFromRow("submitted", {})).toEqual({ status: "none" });
+    expect(certificationFromRow("submitted", sub)).toEqual({ status: "certified", submission: sub });
+    // The database withdraws a certification by flipping status; the signed record stays for the banner.
+    expect(certificationFromRow("in_progress", sub)).toEqual({ status: "stale", submission: sub });
+  });
+
+  it("carries the signer's role, full signing time and consent into the manuscript", () => {
+    const m = buildManuscript(EMPTY_CHAMBER_DATA, {
+      fileId: "EAA-1",
+      submission: { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-05-01T12:34:00Z", file_id: "EAA-1", consent_text: "I agree." },
+    });
+    expect(m.signer).toMatchObject({ name: "Jo", title: "CEO", consent: "I agree." });
+    expect(m.signer?.signedAtFull).toMatch(/May 1, 2026.*\d{1,2}:\d{2}/);
+  });
+
+  it("shows the original consent line for submissions certified before wording was stored", () => {
+    const m = buildManuscript(EMPTY_CHAMBER_DATA, {
+      fileId: "EAA-1",
+      submission: { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1" },
+    });
+    expect(m.signer?.consent).toBe(LEGACY_CONSENT_TEXT);
+  });
+});
+
+describe("manuscriptFilename", () => {
+  it("includes the submission id and the company name", () => {
+    expect(manuscriptFilename("EAA-2026-AB12", "Meridian Creative Group")).toBe("The_Manuscript_EAA-2026-AB12_Meridian_Creative_Group.pdf");
+  });
+
+  it("strips characters that are unsafe in filenames and folds accents", () => {
+    expect(manuscriptFilename("EAA-1", 'Acme / "Beta" <Co>: Ünïcode Søn?')).toBe("The_Manuscript_EAA-1_Acme_Beta_Co_Unicode_Son.pdf");
+  });
+
+  it("caps very long names and falls back when there is no usable company name", () => {
+    expect(manuscriptFilename("EAA-1", "A".repeat(200)).length).toBeLessThan(80);
+    expect(manuscriptFilename("EAA-1", null)).toBe("The_Manuscript_EAA-1_Company.pdf");
+    expect(manuscriptFilename("EAA-1", "株式会社")).toBe("The_Manuscript_EAA-1_Company.pdf");
+  });
+});
+
+describe("maskDob", () => {
+  it("keeps only the year", () => {
+    expect(maskDob("1990-05-17")).toBe("••/••/1990");
+    expect(maskDob("unknown")).toBe("••/••/••••");
   });
 });

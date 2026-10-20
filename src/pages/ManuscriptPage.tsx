@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RavenIcon } from "@/components/RavenLogo";
 import { CheckCircle, AlertTriangle, Download, Eye, EyeOff, ArrowLeft, Loader2 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
-import { buildManuscript, fileIdForSession, NOT_PROVIDED, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
-import { describeSource, parseProvenance, STATUS_LABELS, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
+import { buildManuscript, fileIdForSession, maskDob, NOT_PROVIDED, type ChamberSubmission } from "@/data/manuscript";
+import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
+import { downloadBlob } from "@/lib/downloadFile";
 
 const SAMPLE_FILE_ID = "EAA-SAMPLE";
 
@@ -62,12 +62,14 @@ type LoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "unsigned" }
-  | { kind: "ready"; data: ChamberData; provenance: ProvenanceMap; submission: ChamberSubmission | null; fileId: string };
+  | { kind: "recertify" }
+  | { kind: "ready"; data: ChamberData; submission: ChamberSubmission | null; fileId: string };
 
 // `demo` renders the fictional sample; the live route never does.
 const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
-  const manuscriptRef = useRef<HTMLDivElement>(null);
+  // Sensitive fields stay masked, on screen and in the PDF, until the signed-in owner reveals them.
   const [showMasked, setShowMasked] = useState(true);
+  const [downloading, setDownloading] = useState(false);
   const [searchParams] = useSearchParams();
   const sessionId = demo ? null : searchParams.get("session");
   const { user, loading: authLoading } = useAuth();
@@ -99,7 +101,12 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           return;
         }
         const submission = (data.submission as unknown as ChamberSubmission | null) ?? null;
-        // Only a signed submission becomes a certified manuscript.
+        // Only a signed submission becomes a certified manuscript. A signed one whose status
+        // moved back means the information changed after certification.
+        if (data.status !== "submitted" && submission?.signer_name) {
+          setState({ kind: "recertify" });
+          return;
+        }
         if (data.status !== "submitted" || !submission?.signer_name) {
           setState({ kind: "unsigned" });
           return;
@@ -127,27 +134,18 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
   const backUrl = state.kind === "ready" && sessionId ? `/start?session=${sessionId}` : "/start";
 
   const handleDownloadPDF = async () => {
-    if (!manuscriptRef.current || !d) return;
-    const canvas = await html2canvas(manuscriptRef.current, {
-      backgroundColor: "#07080D",
-      scale: 2,
-      useCORS: true,
-    });
-    const imgData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "letter" });
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-    let heightLeft = pdfHeight;
-    let position = 0;
-    pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
-    heightLeft -= pdf.internal.pageSize.getHeight();
-    while (heightLeft > 0) {
-      position -= pdf.internal.pageSize.getHeight();
-      pdf.addPage();
-      pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
-      heightLeft -= pdf.internal.pageSize.getHeight();
+    if (!d || downloading) return;
+    setDownloading(true);
+    try {
+      // Built from the same data as the page, not a screenshot of it, so the text stays selectable.
+      const pdf = buildManuscriptPdf(d, { revealSensitive: !showMasked, sample: isSample });
+      downloadBlob(pdf.blob, pdf.filename);
+    } catch (err) {
+      console.error("Failed to generate manuscript PDF:", err);
+      toast.error("We couldn't generate the PDF. Please try again.");
+    } finally {
+      setDownloading(false);
     }
-    pdf.save(`The_Manuscript_${d.fileId}.pdf`);
   };
 
   if (state.kind === "loading" || (state.kind !== "sample" && authLoading)) {
@@ -188,6 +186,22 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
     );
   }
 
+  if (state.kind === "recertify") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-6">
+        <div className="text-center max-w-md">
+          <p className="text-muted-foreground mb-4">
+            Your information changed after you certified it, so that certification no longer applies. Review it and
+            certify again in The Reckoning to get an up-to-date Manuscript.
+          </p>
+          <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
+            Back to The Chamber
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (state.kind === "error" || !d) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-6">
@@ -215,15 +229,17 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               {showMasked ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
               {showMasked ? "Data masked" : "Data visible"}
             </button>
-            <button onClick={handleDownloadPDF}
-              className="inline-flex items-center gap-2 text-sm bg-primary text-primary-foreground px-4 py-1.5 rounded-md hover:bg-primary/90 transition-colors">
-              <Download className="w-4 h-4" /> Download The Manuscript (PDF)
+            <button onClick={handleDownloadPDF} disabled={downloading}
+              className="inline-flex items-center gap-2 text-sm whitespace-nowrap bg-primary text-primary-foreground px-3 sm:px-4 py-1.5 rounded-md hover:bg-primary/90 transition-colors disabled:opacity-60">
+              {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              <span className="sm:hidden">Download PDF</span>
+              <span className="hidden sm:inline">Download The Manuscript (PDF)</span>
             </button>
           </div>
         </div>
       </div>
 
-      <div ref={manuscriptRef} className="container mx-auto max-w-5xl px-6 py-12 space-y-10">
+      <div className="container mx-auto max-w-5xl px-6 py-12 space-y-10">
         {isSample && (
           <div className="bg-warning/15 border border-warning/40 rounded-xl p-4 text-sm text-foreground">
             🪶 This is a sample manuscript built from fictional data. Yours is generated from your conversation with Lenore.
@@ -407,18 +423,18 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               </p>
               <div className="grid grid-cols-2 gap-4 text-sm mb-8">
                 <div><span className="text-muted-foreground text-xs">Name</span><br /><span className="font-mono">{d.signer?.name || "[Full Name]"}</span></div>
-                <div><span className="text-muted-foreground text-xs">Title</span><br /><span className="font-mono">{d.signer?.title || "[Title]"}</span></div>
+                <div><span className="text-muted-foreground text-xs">Role</span><br /><span className="font-mono">{d.signer?.title || "[Role]"}</span></div>
                 <div><span className="text-muted-foreground text-xs">Company</span><br /><span className="font-mono">{d.companyName}</span></div>
-                <div><span className="text-muted-foreground text-xs">Date Signed</span><br /><span className="font-mono">{d.signer?.signedAt ?? "—"}</span></div>
+                <div><span className="text-muted-foreground text-xs">Signed</span><br /><span className="font-mono">{d.signer?.signedAtFull ?? "—"}</span></div>
                 <div><span className="text-muted-foreground text-xs">File ID</span><br /><span className="font-mono text-primary">{d.fileId}</span></div>
               </div>
               <div className="border border-border rounded-lg p-4 mb-8">
-                <p className="text-foreground text-sm italic">
-                  "I confirm the information in this submission is accurate and complete to the best of my knowledge."
+                <p className="text-foreground text-sm italic whitespace-pre-line">
+                  {d.signer ? d.signer.consent : "I confirm the information in this submission is accurate and complete to the best of my knowledge."}
                 </p>
                 <div className="mt-4 flex gap-8 text-sm text-muted-foreground">
                   {d.signer ? (
-                    <span>Signed electronically by {d.signer.name} on {d.signer.signedAt}</span>
+                    <span>Signed electronically by {d.signer.name} on {d.signer.signedAtFull}</span>
                   ) : (
                     <>
                       <span>Signed: ________________________</span>
@@ -449,9 +465,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Bottom Actions */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center py-8">
-          <button onClick={handleDownloadPDF}
-            className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors">
-            <Download className="w-5 h-5" /> Download The Manuscript (PDF)
+          <button onClick={handleDownloadPDF} disabled={downloading}
+            className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-60">
+            {downloading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download The Manuscript (PDF)
           </button>
           <Link to={backUrl}
             className="inline-flex items-center justify-center gap-2 border border-border text-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-muted transition-colors">
