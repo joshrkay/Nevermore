@@ -10,15 +10,14 @@ export interface ChamberSubmission {
   signed_at: string; // ISO timestamp, as captured in the signer's browser
   file_id: string;
   peo?: string; // PEO the client chose on PEO Match; absent on older submissions
-  // The consent wording the signer agreed to; absent on older submissions.
-  consent_text_version?: string;
-  consent_text?: string[];
-  // Stamped by the database when the certification is accepted (the server's clock, not the browser's).
-  certified_at?: string;
-  data_hash?: string;
+  // Exact consent wording the signer agreed to. Absent on older submissions.
+  consent_version?: string;
+  consent_text?: string;
   // Copy of the data as signed, so later edits to the session can't change
   // what the certified manuscript shows. Absent on older submissions.
   chamber_data?: unknown;
+  // Field status and source as signed. Absent on older submissions.
+  field_provenance?: unknown;
   // Stamped by the database when it records the certification; never trusted from the client.
   certified_at?: string;
   data_sha256?: string;
@@ -222,6 +221,7 @@ export interface Manuscript {
   benefitsRows: ManuscriptRow[];
   resolved: string[];
   open: string[];
+  provenance: ProvenanceMap;
   signer: ManuscriptSigner | null;
 }
 

@@ -1,8 +1,7 @@
 import { useState } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
-import type { ChamberSubmission } from "@/data/manuscript";
-import type { FieldAction, ProvenanceMap } from "@/data/provenance";
 import type { CertificationState, ChamberSubmission } from "@/data/manuscript";
+import type { FieldAction, ProvenanceMap } from "@/data/provenance";
 import UploadTab from "../UploadTab";
 import CompanyTab from "./CompanyTab";
 import PayrollTab from "./PayrollTab";
@@ -33,14 +32,11 @@ interface LiveWorkspaceProps {
   provenance?: ProvenanceMap;
   /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
   onFieldAction?: (action: FieldAction) => void;
-}
-
-const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, provenance = {}, onFieldAction }: LiveWorkspaceProps) => {
-  const onAction = isDemo ? undefined : onFieldAction;
   certification?: CertificationState;
 }
 
-const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, certification }: LiveWorkspaceProps) => {
+const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, provenance = {}, onFieldAction, certification }: LiveWorkspaceProps) => {
+  const onAction = isDemo ? undefined : onFieldAction;
   const [activeTab, setActiveTab] = useState("upload");
   // Optional, and never defaulted: we don't rank PEOs, so the prospect picks one or none.
   const [chosenPeo, setChosenPeo] = useState<string | null>(null);
