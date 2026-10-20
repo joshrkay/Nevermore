@@ -5,7 +5,7 @@ import { CheckCircle2, Download, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
-import { fileIdForSession, type ChamberSubmission } from "@/data/manuscript";
+import { fileIdForSession, NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
 import {
   CONSENT_IS_DRAFT,
   CONSENT_SIGNING_STATEMENT,
@@ -29,18 +29,12 @@ interface ReckoningTabProps {
 const formatSigned = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
-const inputClass =
-  "w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors";
-
 const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certification = NO_CERTIFICATION }: ReckoningTabProps) => {
   const peoName = chosenPeo ?? "your PEO";
   const { isAnonymous } = useAuth();
+  const [checks, setChecks] = useState([false, false, false]);
+  // After a withdrawn certification, start from who signed last time.
   const previous = certification.status === "none" ? null : certification.submission;
-  const consent = useMemo(
-    () => certificationConsent({ companyName: data.company_name, peo: chosenPeo }),
-    [data.company_name, chosenPeo],
-  );
-  const [checks, setChecks] = useState(() => consent.statements.map(() => false));
   const [signerName, setSignerName] = useState(previous?.signer_name ?? "");
   const [signerTitle, setSignerTitle] = useState(previous?.signer_title ?? "");
   const [signedAt, setSignedAt] = useState<Date | null>(null);
@@ -75,27 +69,8 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
     isGuest: isAnonymous,
   });
   const allChecked = blockers.length === 0;
+  const alreadyCertified = certification.status === "certified" && !submitted;
   const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";
-
-  // A signature covers the answers as they were when it was made.
-  const dataRef = useRef(data);
-  useEffect(() => {
-    if (dataRef.current === data) return;
-    dataRef.current = data;
-    if (signedAt) {
-      setSignedAt(null);
-      toast.message("Your answers changed, so please sign again.");
-    }
-  }, [data, signedAt]);
-
-  const missing = [
-    !checks.every(Boolean) && "tick each statement above",
-    !signerName.trim() && "your full name",
-    !signerTitle.trim() && "your role",
-    signerName.trim() && signerTitle.trim() && !signed && "sign",
-    !fileId && "wait for your intake to finish saving",
-  ].filter((m): m is string => typeof m === "string");
-  const canSubmit = missing.length === 0 && !isAnonymous;
 
   const handleSign = () => {
     if (!checks.every(Boolean)) {
@@ -118,7 +93,7 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
   const handleSubmit = async () => {
     if (!allChecked || !fileId || !signedAt || signedDataKey !== dataKey) return;
     setSubmitting(true);
-    const submission: ChamberSubmission = {
+    const ok = await onSubmit({
       signer_name: signerName.trim(),
       signer_title: signerTitle.trim(),
       signed_at: signedAt.toISOString(),
@@ -126,8 +101,7 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
       consent_text_version: CONSENT_TEXT_VERSION,
       consent_text: [...attestations, CONSENT_SIGNING_STATEMENT],
       ...(chosenPeo ? { peo: chosenPeo } : {}),
-    };
-    const ok = await onSubmit(submission);
+    });
     setSubmitting(false);
     if (ok) {
       setSubmitted({ name: signerName.trim(), title: signerTitle.trim(), at: signedAt });
@@ -146,6 +120,30 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
             Confirm what you've shared before The Manuscript is prepared for {peoName}.
           </p>
         </div>
+
+        {alreadyCertified && certification.status === "certified" && (
+          <div className="border border-success/40 bg-success/5 rounded-xl p-6 space-y-3" role="status">
+            <p className="flex items-center gap-2 font-medium">
+              <CheckCircle2 className="w-5 h-5 text-success" /> Certified and submitted
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Signed by {certification.submission.signer_name}, {certification.submission.signer_title}, on{" "}
+              {formatSigned(certification.submission.signed_at)}. File ID: {certification.submission.file_id}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              If you change any of your answers, you'll be asked to certify again.
+            </p>
+            <Link
+              to={manuscriptUrl}
+              className="inline-flex items-center gap-2 bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors text-sm"
+            >
+              <Download className="w-4 h-4" /> Open The Manuscript
+            </Link>
+          </div>
+        )}
+
+        {!alreadyCertified && (
+        <>
 
         <fieldset className="space-y-4">
           <legend className="sr-only">Certification statements</legend>
@@ -184,6 +182,12 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
             and certify again.
           </div>
         )}
+        {!needsRecertify && certification.status === "stale" && (
+          <div role="alert" className="border border-primary/40 bg-primary/5 rounded-xl p-4 text-sm">
+            Your information changed after you certified on {formatSigned(certification.submission.signed_at)}, so that
+            certification no longer applies. Review the statements and certify again.
+          </div>
+        )}
 
         {isAnonymous ? (
           <VerifyEmailGate />
@@ -192,14 +196,11 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
         {/* Signature */}
         <div className="border border-border rounded-xl p-6">
           <p className="text-sm text-muted-foreground mb-3">Digital Signature</p>
-          <p className="text-sm leading-relaxed mb-4">{consent.signing}</p>
           {!signed ? (
             <div className="space-y-3">
               <p className="text-xs text-muted-foreground leading-relaxed">{CONSENT_SIGNING_STATEMENT}</p>
               <div className="grid sm:grid-cols-2 gap-3">
                 <input
-                  aria-label="Full name"
-                  autoComplete="name"
                   value={signerName}
                   onChange={(e) => setSignerName(e.target.value)}
                   aria-label="Full name"
@@ -208,8 +209,6 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
                   className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
                 />
                 <input
-                  aria-label="Role"
-                  autoComplete="organization-title"
                   value={signerTitle}
                   onChange={(e) => setSignerTitle(e.target.value)}
                   aria-label="Role"
@@ -248,16 +247,11 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
           )}
         </div>
 
-        {!canSubmit && (
-          <p className="text-xs text-muted-foreground" aria-live="polite">
-            Still needed: {missing.join(", ")}.
-          </p>
-        )}
         <button
           onClick={handleSubmit}
-          disabled={!canSubmit || submitting}
+          disabled={!allChecked || submitting}
           className={`w-full flex items-center justify-center gap-2 font-medium py-4 rounded-lg text-base transition-colors ${
-            canSubmit
+            allChecked
               ? "bg-primary text-primary-foreground hover:bg-primary/90"
               : "bg-muted text-muted-foreground cursor-not-allowed"
           }`}
@@ -297,7 +291,6 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
                 initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: 0.5 }}
-                id="certified-heading"
                 className="font-display text-4xl md:text-5xl font-bold mb-4"
               >
                 The Raven has spoken.

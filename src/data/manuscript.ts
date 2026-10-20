@@ -18,9 +18,6 @@ export interface ChamberSubmission {
   // Copy of the data as signed, so later edits to the session can't change
   // what the certified manuscript shows. Absent on older submissions.
   chamber_data?: unknown;
-  // Stamped by the database when it records the certification; never trusted from the client.
-  certified_at?: string;
-  data_sha256?: string;
 }
 
 // ---------- Certification ----------
@@ -43,39 +40,9 @@ export function certificationFromRow(status: string | null, submission: unknown)
   return status === "submitted" ? { status: "certified", submission: sub } : { status: "stale", submission: sub };
 }
 
-export const CERTIFICATION_CONSENT_VERSION = "2026-10-v1";
-
 /** Shown for submissions certified before the consent wording was stored. */
 export const LEGACY_CONSENT_TEXT =
   "I confirm the information in this submission is accurate and complete to the best of my knowledge.";
-
-export interface CertificationConsent {
-  version: string;
-  /** One checkbox each; every one must be ticked before signing. */
-  statements: string[];
-  /** The sentence the signature itself affirms. */
-  signing: string;
-  /** Everything above as one string, stored verbatim with the submission. */
-  text: string;
-}
-
-export function certificationConsent(opts: { companyName: string | null; peo: string | null }): CertificationConsent {
-  const statements = [
-    "The information I've provided is accurate and complete to the best of my knowledge.",
-    "All employees listed are W-2. Any K-1 owners or 1099 contractors have been identified separately.",
-    `I understand this packet is prepared for me to send to ${opts.peo ?? "the PEO I choose"} myself. Edgar Allan Advisory does not submit it or request a quote for me.`,
-  ];
-  const signing =
-    `By signing, I certify as an authorized representative of ${opts.companyName?.trim() || "my company"} ` +
-    "that the information in this submission is accurate and complete, and I consent to Edgar Allan Advisory " +
-    "preparing it as The Manuscript. I understand that changing my answers after signing requires me to certify again.";
-  return {
-    version: CERTIFICATION_CONSENT_VERSION,
-    statements,
-    signing,
-    text: [...statements, signing].join("\n"),
-  };
-}
 
 // ---------- Masking & filenames ----------
 
@@ -324,7 +291,7 @@ export function buildManuscript(
           title: opts.submission.signer_title,
           signedAt: fmtDate(new Date(opts.submission.signed_at)),
           signedAtFull: fmtDateTime(new Date(opts.submission.signed_at)),
-          consent: opts.submission.consent_text || LEGACY_CONSENT_TEXT,
+          consent: opts.submission.consent_text?.length ? opts.submission.consent_text.join("\n") : LEGACY_CONSENT_TEXT,
         }
       : null,
   };

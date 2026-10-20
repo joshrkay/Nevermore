@@ -12,8 +12,8 @@ const submission: ChamberSubmission = {
   signed_at: "2026-05-01T12:00:00Z",
   file_id: FILE_ID,
   peo: "Acme PEO",
-  consent_version: "v1",
-  consent_text: "I certify the answers are accurate.\nBy signing, I consent to this packet being prepared.",
+  consent_text_version: "v1",
+  consent_text: ["I certify the answers are accurate.", "By signing, I consent to this packet being prepared."],
 };
 
 // jsdom's Blob has no arrayBuffer(); read it the old way. latin1 keeps bytes 1:1 so text is greppable.

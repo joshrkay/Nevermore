@@ -216,3 +216,31 @@ describe("ReckoningTab certification", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/certify again/);
   });
 });
+
+describe("ReckoningTab saved certification state", () => {
+  const signed = { signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1" };
+  const renderWithState = (certification: React.ComponentProps<typeof ReckoningTab>["certification"]) => {
+    auth.isAnonymous = false;
+    return render(
+      <MemoryRouter>
+        <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={null} sessionId="s1" onSubmit={async () => true} certification={certification} />
+      </MemoryRouter>,
+    );
+  };
+
+  it("shows an already-certified intake as certified instead of asking again", () => {
+    renderWithState({ status: "certified", submission: signed });
+    expect(screen.getByText("Certified and submitted")).toBeInTheDocument();
+    expect(screen.getByText(/Signed by Jo Doe, CEO/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open The Manuscript/ })).toHaveAttribute("href", "/manuscript?session=s1");
+    expect(screen.queryByRole("button", { name: /Generate The Manuscript/ })).not.toBeInTheDocument();
+  });
+
+  it("asks for re-certification after a reload when the saved certification was withdrawn, prefilling the signer", () => {
+    renderWithState({ status: "stale", submission: signed });
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed after you certified/);
+    expect(screen.getByLabelText("Full name")).toHaveValue("Jo Doe");
+    expect(screen.getByLabelText("Role")).toHaveValue("CEO");
+    expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeDisabled(); // fresh consent + signature still required
+  });
+});

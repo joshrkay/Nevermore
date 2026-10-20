@@ -3,8 +3,6 @@ import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import type { ChamberEmployee } from "./chamberTypes";
 import {
   buildManuscript,
-  CERTIFICATION_CONSENT_VERSION,
-  certificationConsent,
   certificationFromRow,
   coverageTier,
   eligibilityChecks,
@@ -166,22 +164,6 @@ describe("buildManuscript open items for missing core facts", () => {
 });
 
 describe("certification helpers", () => {
-  it("states the consent wording, including the re-certification rule", () => {
-    const c = certificationConsent({ companyName: "Acme", peo: "Some PEO" });
-    expect(c.statements).toHaveLength(3);
-    expect(c.statements[2]).toContain("Some PEO");
-    expect(c.signing).toContain("authorized representative of Acme");
-    expect(c.signing).toContain("requires me to certify again");
-    expect(c.text).toBe([...c.statements, c.signing].join("\n"));
-    expect(c.version).toBe(CERTIFICATION_CONSENT_VERSION);
-  });
-
-  it("falls back to neutral wording when the company or PEO isn't known yet", () => {
-    const c = certificationConsent({ companyName: " ", peo: null });
-    expect(c.statements[2]).toContain("the PEO I choose");
-    expect(c.signing).toContain("representative of my company");
-  });
-
   it("reads a stored row into a certification state", () => {
     const sub = { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1" };
     expect(certificationFromRow("in_progress", null)).toEqual({ status: "none" });
@@ -194,9 +176,9 @@ describe("certification helpers", () => {
   it("carries the signer's role, full signing time and consent into the manuscript", () => {
     const m = buildManuscript(EMPTY_CHAMBER_DATA, {
       fileId: "EAA-1",
-      submission: { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-05-01T12:34:00Z", file_id: "EAA-1", consent_text: "I agree." },
+      submission: { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-05-01T12:34:00Z", file_id: "EAA-1", consent_text: ["I agree.", "Second statement."] },
     });
-    expect(m.signer).toMatchObject({ name: "Jo", title: "CEO", consent: "I agree." });
+    expect(m.signer).toMatchObject({ name: "Jo", title: "CEO", consent: "I agree.\nSecond statement." });
     expect(m.signer?.signedAtFull).toMatch(/May 1, 2026.*\d{1,2}:\d{2}/);
   });
 
