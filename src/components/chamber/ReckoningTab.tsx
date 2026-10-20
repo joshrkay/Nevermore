@@ -9,12 +9,14 @@ import { fileIdForSession, type ChamberSubmission } from "@/data/manuscript";
 
 interface ReckoningTabProps {
   data: ChamberData;
-  peoName: string;
+  /** The PEO the packet is prepared for, if the prospect chose one. */
+  peoName: string | null;
   sessionId: string | null;
   onSubmit: (submission: ChamberSubmission) => Promise<boolean>;
 }
 
-const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps) => {
+const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit }: ReckoningTabProps) => {
+  const peoName = chosenPeo ?? "your PEO";
   const [checks, setChecks] = useState([false, false, false]);
   const [signerName, setSignerName] = useState("");
   const [signerTitle, setSignerTitle] = useState("");
@@ -25,7 +27,7 @@ const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps)
   const attestations = [
     "The information I've provided is accurate and complete to the best of my knowledge.",
     "All employees listed are W-2. Any K-1 owners or 1099 contractors have been identified separately.",
-    `I authorize Edgar Allan Advisory to use this information to obtain a quote from ${peoName} on my behalf.`,
+    `I understand this packet is prepared for me to send to ${peoName} myself. Edgar Allan Advisory does not submit it or request a quote for me.`,
   ];
 
   const fileId = useMemo(() => (sessionId ? fileIdForSession(sessionId) : null), [sessionId]);
@@ -49,7 +51,7 @@ const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps)
       signer_title: signerTitle.trim(),
       signed_at: signedAt.toISOString(),
       file_id: fileId,
-      peo: peoName,
+      ...(chosenPeo ? { peo: chosenPeo } : {}),
     });
     setSubmitting(false);
     if (ok) setSubmitted(true);
@@ -62,7 +64,7 @@ const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps)
         <div>
           <h2 className="font-display text-3xl font-bold mb-2">The Reckoning</h2>
           <p className="text-muted-foreground text-sm">
-            Confirm what you've shared before The Manuscript ships to {peoName}.
+            Confirm what you've shared before The Manuscript is prepared for {peoName}.
           </p>
         </div>
 
@@ -185,8 +187,8 @@ const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps)
                 <p className="text-sm text-muted-foreground mb-3">What's next:</p>
                 <ul className="text-sm text-foreground space-y-2">
                   <li>• Download The Manuscript below.</li>
-                  <li>• Send it to {peoName}, or have it sent on your behalf.</li>
-                  <li>• {peoName} follows up directly with pricing — typically 24–48 hours.</li>
+                  <li>• Send it to {peoName} yourself.</li>
+                  <li>• Ask {peoName} for pricing and how long their review takes.</li>
                 </ul>
               </motion.div>
               <motion.div

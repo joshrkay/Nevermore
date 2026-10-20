@@ -30,9 +30,17 @@ describe("eligibilityChecks", () => {
     expect(checks.every((c) => c.status === "unknown")).toBe(true);
   });
 
-  it("fails headcount below the minimum", () => {
+  it("doesn't pass or fail headcount against a minimum nobody has sourced", () => {
     const [headcount] = eligibilityChecks({ ...EMPTY_CHAMBER_DATA, employee_count: 3 });
+    expect(headcount.status).toBe("unknown");
+    expect(headcount.label).toMatch(/not yet confirmed/);
+  });
+
+  it("fails headcount below the chosen PEO's sourced minimum, naming the PEO", () => {
+    const peo = { name: "Example PEO", minHeadcount: 10, statesServed: null, lastVerified: "2026-10-01" };
+    const [headcount] = eligibilityChecks({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, peo);
     expect(headcount.status).toBe("fail");
+    expect(headcount.label).toBe("Headcount meets Example PEO minimum (3 of 10 employees)");
   });
 });
 
