@@ -1,5 +1,4 @@
-import { useMemo, useState } from "react";
-import { scorePEOs } from "@/data/peoScoring";
+import { useState } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { ChamberSubmission } from "@/data/manuscript";
 import UploadTab from "../UploadTab";
@@ -33,10 +32,8 @@ interface LiveWorkspaceProps {
 
 const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit }: LiveWorkspaceProps) => {
   const [activeTab, setActiveTab] = useState("upload");
+  // Optional, and never defaulted: we don't rank PEOs, so the prospect picks one or none.
   const [chosenPeo, setChosenPeo] = useState<string | null>(null);
-  // Until the client picks one, the best-scoring PEO is the selection.
-  const topPeo = useMemo(() => scorePEOs(data)[0].name, [data]);
-  const selectedPeo = chosenPeo ?? topPeo;
 
   return (
     <div className="flex flex-col h-full">
@@ -72,8 +69,8 @@ const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit }: LiveWorkspaceProps
         {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} />}
         {activeTab === "dependents" && <DependentsTab data={data} />}
         {activeTab === "review" && <ReviewTab data={data} onProceed={() => setActiveTab("match")} />}
-        {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={selectedPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
-        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={selectedPeo} sessionId={sessionId} onSubmit={onSubmit} />}
+        {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
+        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={chosenPeo} sessionId={sessionId} onSubmit={onSubmit} />}
       </div>
     </div>
   );

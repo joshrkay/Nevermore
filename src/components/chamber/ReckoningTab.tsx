@@ -6,15 +6,20 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
 import { fileIdForSession, type ChamberSubmission } from "@/data/manuscript";
+import { useAuth } from "@/hooks/useAuth";
+import VerifyEmailGate from "./VerifyEmailGate";
 
 interface ReckoningTabProps {
   data: ChamberData;
-  peoName: string;
+  /** The PEO the packet is prepared for, if the prospect chose one. */
+  peoName: string | null;
   sessionId: string | null;
   onSubmit: (submission: ChamberSubmission) => Promise<boolean>;
 }
 
-const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps) => {
+const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit }: ReckoningTabProps) => {
+  const peoName = chosenPeo ?? "your PEO";
+  const { isAnonymous } = useAuth();
   const [checks, setChecks] = useState([false, false, false]);
   const [signerName, setSignerName] = useState("");
   const [signerTitle, setSignerTitle] = useState("");
@@ -25,12 +30,12 @@ const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps)
   const attestations = [
     "The information I've provided is accurate and complete to the best of my knowledge.",
     "All employees listed are W-2. Any K-1 owners or 1099 contractors have been identified separately.",
-    `I understand this packet is prepared for me to send to ${peoName} myself. Edgar Allan Advisory does not submit it or request a quote for me.`,
+    `I understand this packet is prepared for me to send to ${chosenPeo ?? "the PEO I choose"} myself. Edgar Allan Advisory does not submit it or request a quote for me.`,
   ];
 
   const fileId = useMemo(() => (sessionId ? fileIdForSession(sessionId) : null), [sessionId]);
   const signed = signedAt !== null;
-  const allChecked = checks.every(Boolean) && signed && !!fileId;
+  const allChecked = checks.every(Boolean) && signed && !!fileId && !isAnonymous;
   const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";
 
   const handleSign = () => {
@@ -49,7 +54,7 @@ const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps)
       signer_title: signerTitle.trim(),
       signed_at: signedAt.toISOString(),
       file_id: fileId,
-      peo: peoName,
+      ...(chosenPeo ? { peo: chosenPeo } : {}),
     });
     setSubmitting(false);
     if (ok) setSubmitted(true);
@@ -93,6 +98,10 @@ const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps)
           ))}
         </div>
 
+        {isAnonymous ? (
+          <VerifyEmailGate />
+        ) : (
+        <>
         {/* Signature */}
         <div className="border border-border rounded-xl p-6">
           <p className="text-sm text-muted-foreground mb-3">Digital Signature</p>
@@ -142,6 +151,8 @@ const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps)
         >
           {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate The Manuscript →"}
         </button>
+        </>
+        )}
       </div>
 
       {/* Confirmation Overlay */}
@@ -186,7 +197,7 @@ const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps)
                 <ul className="text-sm text-foreground space-y-2">
                   <li>• Download The Manuscript below.</li>
                   <li>• Send it to {peoName} yourself.</li>
-                  <li>• {peoName} follows up directly with pricing — typically 24–48 hours.</li>
+                  <li>• Ask {peoName} for pricing and how long their review takes.</li>
                 </ul>
               </motion.div>
               <motion.div

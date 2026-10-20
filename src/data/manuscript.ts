@@ -1,4 +1,6 @@
 import type { ChamberData, ChamberEmployee } from "./chamberTypes";
+import { headcount } from "./headcount";
+import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
 
 /** Signed attestation stored on chamber_sessions.submission. */
 export interface ChamberSubmission {
@@ -26,20 +28,24 @@ export interface EligibilityCheck {
   status: CheckStatus;
 }
 
-export const MIN_HEADCOUNT = 5;
+export { headcount } from "./headcount";
 
-export function headcount(data: ChamberData): number {
-  return data.employee_count ?? data.employees.filter((e) => e.classification === "W2").length;
+function headcountCheck(data: ChamberData, peo?: PeoRecord): EligibilityCheck {
+  const count = headcount(data);
+  if (!peo || peo.minHeadcount === null) {
+    return { label: `Headcount meets PEO minimum (${count || "?"} employees) — minimum not yet confirmed`, status: "unknown" };
+  }
+  const [fit] = peoFit(data, peo);
+  return {
+    label: `Headcount meets ${peo.name} minimum (${count || "?"} of ${peo.minHeadcount} employees)`,
+    status: fit.status === "meets" ? "pass" : fit.status === "does_not_meet" ? "fail" : "unknown",
+  };
 }
 
 /** Only reports pass/fail for what was actually collected; everything else is "unknown". */
-export function eligibilityChecks(data: ChamberData): EligibilityCheck[] {
-  const count = headcount(data);
+export function eligibilityChecks(data: ChamberData, peo?: PeoRecord): EligibilityCheck[] {
   return [
-    {
-      label: `Headcount meets PEO minimum (${count || "?"} of ${MIN_HEADCOUNT} employees)`,
-      status: count === 0 ? "unknown" : count >= MIN_HEADCOUNT ? "pass" : "fail",
-    },
+    headcountCheck(data, peo),
     { label: "US headquarters", status: data.hq_state ? "pass" : "unknown" },
     {
       label: `Employee census captured${data.employees.length ? ` (${data.employees.length} employees)` : ""}`,

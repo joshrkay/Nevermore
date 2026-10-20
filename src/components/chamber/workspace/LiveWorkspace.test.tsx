@@ -44,7 +44,7 @@ describe("LiveWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
     fireEvent.click(screen.getByRole("button", { name: "See Your PEO Matches →" }));
     expect(screen.getByRole("heading", { name: "PEO Match" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^Proceed with .+ →$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue without choosing a PEO →" }));
     expect(screen.getByRole("heading", { name: "The Reckoning" })).toBeInTheDocument();
   });
 
@@ -61,5 +61,31 @@ describe("LiveWorkspace", () => {
     expect(screen.getByText(/prepared for Rippling/)).toBeInTheDocument();
     expect(screen.getByText(/send to Rippling myself/)).toBeInTheDocument();
     expect(screen.queryByText(/TriNet/)).not.toBeInTheDocument();
+  });
+
+  it("carries a PEO the prospect typed in, not just the listed ones, into The Reckoning", () => {
+    render(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
+    fireEvent.change(screen.getByLabelText("Another PEO"), { target: { value: "Acme PEO" } });
+    fireEvent.click(screen.getByRole("button", { name: "Use this PEO" }));
+    fireEvent.click(screen.getByRole("button", { name: "Proceed with Acme PEO →" }));
+    expect(screen.getByText(/prepared for Acme PEO/)).toBeInTheDocument();
+    expect(screen.getByText(/send to Acme PEO myself/)).toBeInTheDocument();
+  });
+
+  it("reaches The Reckoning with no PEO chosen without naming or inventing one", () => {
+    render(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    expect(screen.getByText(/prepared for your PEO/)).toBeInTheDocument();
+    expect(screen.getByText(/send to the PEO I choose myself/)).toBeInTheDocument();
+    expect(screen.queryByText(/null|undefined|TriNet|Justworks|Rippling/)).not.toBeInTheDocument();
   });
 });
