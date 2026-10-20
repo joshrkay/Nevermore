@@ -34,6 +34,7 @@ type LoadState =
   | { kind: "sample" }
   | { kind: "loading" }
   | { kind: "error"; message: string }
+  | { kind: "unsigned" }
   | { kind: "ready"; data: ChamberData; submission: ChamberSubmission | null; fileId: string };
 
 const ManuscriptPage = () => {
@@ -58,7 +59,7 @@ const ManuscriptPage = () => {
     setState({ kind: "loading" });
     supabase
       .from("chamber_sessions")
-      .select("chamber_data, submission, created_at")
+      .select("chamber_data, submission, status, created_at")
       .eq("id", sessionId)
       .maybeSingle()
       .then(({ data, error }) => {
@@ -68,11 +69,17 @@ const ManuscriptPage = () => {
           return;
         }
         const submission = (data.submission as unknown as ChamberSubmission | null) ?? null;
+        // Only a signed submission becomes a certified manuscript.
+        if (data.status !== "submitted" || !submission?.signer_name) {
+          setState({ kind: "unsigned" });
+          return;
+        }
         setState({
           kind: "ready",
-          data: parseChamberData(data.chamber_data),
+          // Render what was signed, not whatever the session holds now.
+          data: parseChamberData(submission.chamber_data ?? data.chamber_data),
           submission,
-          fileId: submission?.file_id ?? fileIdForSession(sessionId, new Date(data.created_at)),
+          fileId: submission.file_id || fileIdForSession(sessionId, new Date(data.created_at)),
         });
       });
     return () => { cancelled = true; };
@@ -115,6 +122,21 @@ const ManuscriptPage = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="w-6 h-6 text-primary animate-spin" />
+      </div>
+    );
+  }
+
+  if (state.kind === "unsigned") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-6">
+        <div className="text-center max-w-md">
+          <p className="text-muted-foreground mb-4">
+            This manuscript hasn't been signed yet. Complete The Reckoning to certify and generate it.
+          </p>
+          <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
+            Back to The Chamber
+          </Link>
+        </div>
       </div>
     );
   }

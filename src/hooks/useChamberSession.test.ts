@@ -5,7 +5,7 @@ type UpdateResult = { error: { message: string } | null };
 
 const updates: { payload: Record<string, unknown>; resolve: (r: UpdateResult) => void }[] = [];
 
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" }, session: { access_token: "tok" } }) }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: () => ({
@@ -74,5 +74,37 @@ describe("useChamberSession", () => {
     await act(async () => { updates[1].resolve({ error: { message: "offline" } }); await pending; });
     expect(submitted).toBe(false);
     expect(updates.some((u) => u.payload.status === "submitted")).toBe(false);
+  });
+
+  it("snapshots the signed data on submission", async () => {
+    const { result } = renderHook(() => useChamberSession());
+    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+
+    const pending = result.current.submit(submission);
+    await waitFor(() => expect(updates).toHaveLength(1));
+    updates[0].resolve({ error: null });
+    await waitFor(() => expect(updates).toHaveLength(2));
+    const signed = updates[1].payload.submission as { chamber_data: { company_name: string } };
+    expect(signed.chamber_data.company_name).toBe("Acme");
+    updates[1].resolve({ error: null });
+    await act(async () => { await pending; });
+  });
+
+  it("saves pending edits with a keepalive request when the page unloads", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+    const { result } = renderHook(() => useChamberSession());
+    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+
+    window.dispatchEvent(new Event("beforeunload"));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/rest/v1/chamber_sessions?id=eq.s1");
+    expect(init).toMatchObject({ method: "PATCH", keepalive: true });
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+    expect(JSON.parse(init.body as string).chamber_data.company_name).toBe("Acme");
+    fetchSpy.mockRestore();
   });
 });

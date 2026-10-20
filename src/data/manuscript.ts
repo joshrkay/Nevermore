@@ -7,6 +7,9 @@ export interface ChamberSubmission {
   signed_at: string; // ISO timestamp
   file_id: string;
   peo?: string; // PEO the client chose on PEO Match; absent on older submissions
+  // Copy of the data as signed, so later edits to the session can't change
+  // what the certified manuscript shows. Absent on older submissions.
+  chamber_data?: unknown;
 }
 
 /** Stable, human-readable file id derived from the session id. */

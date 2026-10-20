@@ -147,18 +147,32 @@ const UploadTab = ({ onFilesUploaded }: UploadTabProps) => {
   );
 
   const handleDelete = async (doc: UploadedDoc) => {
-    // Remove the file first so a failure never leaves an orphaned object without a row pointing at it.
-    if (doc.storage_path) {
-      const { error: storageError } = await supabase.storage.from("documents").remove([doc.storage_path]);
-      if (storageError) {
-        toast.error("Failed to delete document.");
-        return;
-      }
-    }
+    if (!user) return;
+    // Delete the row first, then the file. If the file can't be removed, put the
+    // row back so the document stays listed and the delete can be retried —
+    // never leave a row pointing at a missing file.
     const { error } = await supabase.from("documents").delete().eq("id", doc.id);
     if (error) {
       toast.error("Failed to delete document.");
       return;
+    }
+    if (doc.storage_path) {
+      const { error: storageError } = await supabase.storage.from("documents").remove([doc.storage_path]);
+      if (storageError) {
+        const { error: restoreError } = await supabase.from("documents").insert({
+          id: doc.id,
+          user_id: user.id,
+          file_name: doc.file_name,
+          file_size: doc.file_size,
+          doc_type: doc.doc_type,
+          storage_path: doc.storage_path,
+          status: doc.status,
+          metadata: doc.metadata,
+        });
+        if (restoreError) console.error("Failed to restore document row:", restoreError);
+        toast.error("Failed to delete document.");
+        return;
+      }
     }
     setDocs((prev) => prev.filter((d) => d.id !== doc.id));
     toast.success("Document removed.");

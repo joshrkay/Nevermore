@@ -24,13 +24,15 @@ const OPENING_MESSAGE = "Good evening. I'm Lenore — your guide through The Cha
 
 const SAVE_DELAY_MS = 2000;
 const SAVE_RETRY_MS = 10000;
+// Browsers cap the total body size of keepalive requests at 64 KiB.
+const KEEPALIVE_MAX_BYTES = 60_000;
 
 /**
  * Resumes `requestedSessionId` when it belongs to the signed-in user, otherwise
  * starts a fresh session. Only the id present on first render is used.
  */
 export function useChamberSession(requestedSessionId?: string | null): UseChamberSessionReturn {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   // Depend on the id, not the object: token refreshes hand out a new User object.
   const userId = user?.id;
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -42,6 +44,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const dirtyRef = useRef(false);
   const inFlightRef = useRef<Promise<boolean> | null>(null);
   const mountedRef = useRef(true);
+  const accessTokenRef = useRef<string | null>(null);
+  useEffect(() => { accessTokenRef.current = session?.access_token ?? null; }, [session]);
   const dataRef = useRef(chamberData);
   const messagesRef = useRef(messages);
   const sessionIdRef = useRef(sessionId);
@@ -99,7 +103,38 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
 
   // Don't lose the last few seconds of edits when leaving the page.
   useEffect(() => {
-    const onBeforeUnload = () => { void flush(); };
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      const sid = sessionIdRef.current;
+      if (!sid || !dirtyRef.current) return;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      // A normal request can be cancelled as the page unloads; a keepalive one is
+      // allowed to finish, so send the pending changes straight to PostgREST.
+      const body = JSON.stringify({ chamber_data: dataRef.current, transcript: messagesRef.current });
+      const token = accessTokenRef.current;
+      if (token && new Blob([body]).size <= KEEPALIVE_MAX_BYTES) {
+        dirtyRef.current = false;
+        fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/chamber_sessions?id=eq.${encodeURIComponent(sid)}`, {
+          method: "PATCH",
+          keepalive: true,
+          headers: {
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+          },
+          body,
+        }).catch(() => {});
+        return;
+      }
+      // Too large for keepalive: start a normal save and ask the browser to
+      // confirm leaving, which gives that save time to finish.
+      void flush();
+      e.preventDefault();
+      e.returnValue = "";
+    };
     window.addEventListener("beforeunload", onBeforeUnload);
     mountedRef.current = true;
     return () => {
@@ -193,7 +228,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     if (!(await flush())) return false;
     const { error } = await supabase
       .from("chamber_sessions")
-      .update({ status: "submitted", submission: submission as unknown as Json })
+      .update({
+        status: "submitted",
+        submission: { ...submission, chamber_data: dataRef.current } as unknown as Json,
+      })
       .eq("id", sid);
     if (error) {
       console.error("Failed to submit session:", error);
