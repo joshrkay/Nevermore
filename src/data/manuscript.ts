@@ -6,7 +6,7 @@ import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
 export interface ChamberSubmission {
   signer_name: string;
   signer_title: string;
-  signed_at: string; // ISO timestamp
+  signed_at: string; // ISO timestamp, as captured in the signer's browser
   file_id: string;
   peo?: string; // PEO the client chose on PEO Match; absent on older submissions
   // The consent wording the signer agreed to; absent on older submissions.
@@ -18,6 +18,92 @@ export interface ChamberSubmission {
   // Copy of the data as signed, so later edits to the session can't change
   // what the certified manuscript shows. Absent on older submissions.
   chamber_data?: unknown;
+  // Stamped by the database when it records the certification; never trusted from the client.
+  certified_at?: string;
+  data_sha256?: string;
+}
+
+// ---------- Certification ----------
+
+/**
+ * Where a session stands. "stale" means it was certified, then its answers changed:
+ * the database withdraws the certification, and the prospect has to certify again.
+ */
+export type CertificationState =
+  | { status: "none" }
+  | { status: "certified"; submission: ChamberSubmission }
+  | { status: "stale"; submission: ChamberSubmission };
+
+export const NO_CERTIFICATION: CertificationState = { status: "none" };
+
+/** Reads a stored row's status and submission into a CertificationState. */
+export function certificationFromRow(status: string | null, submission: unknown): CertificationState {
+  const sub = submission as ChamberSubmission | null;
+  if (!sub || typeof sub !== "object" || !sub.signer_name) return NO_CERTIFICATION;
+  return status === "submitted" ? { status: "certified", submission: sub } : { status: "stale", submission: sub };
+}
+
+export const CERTIFICATION_CONSENT_VERSION = "2026-10-v1";
+
+/** Shown for submissions certified before the consent wording was stored. */
+export const LEGACY_CONSENT_TEXT =
+  "I confirm the information in this submission is accurate and complete to the best of my knowledge.";
+
+export interface CertificationConsent {
+  version: string;
+  /** One checkbox each; every one must be ticked before signing. */
+  statements: string[];
+  /** The sentence the signature itself affirms. */
+  signing: string;
+  /** Everything above as one string, stored verbatim with the submission. */
+  text: string;
+}
+
+export function certificationConsent(opts: { companyName: string | null; peo: string | null }): CertificationConsent {
+  const statements = [
+    "The information I've provided is accurate and complete to the best of my knowledge.",
+    "All employees listed are W-2. Any K-1 owners or 1099 contractors have been identified separately.",
+    `I understand this packet is prepared for me to send to ${opts.peo ?? "the PEO I choose"} myself. Edgar Allan Advisory does not submit it or request a quote for me.`,
+  ];
+  const signing =
+    `By signing, I certify as an authorized representative of ${opts.companyName?.trim() || "my company"} ` +
+    "that the information in this submission is accurate and complete, and I consent to Edgar Allan Advisory " +
+    "preparing it as The Manuscript. I understand that changing my answers after signing requires me to certify again.";
+  return {
+    version: CERTIFICATION_CONSENT_VERSION,
+    statements,
+    signing,
+    text: [...statements, signing].join("\n"),
+  };
+}
+
+// ---------- Masking & filenames ----------
+
+/** Masks month/day of a date of birth, keeping the year. */
+export function maskDob(dob: string): string {
+  const year = dob.match(/\d{4}/)?.[0];
+  return year ? `••/••/${year}` : "••/••/••••";
+}
+
+const LATIN_FOLDS: Record<string, string> = {
+  ø: "o", Ø: "O", æ: "ae", Æ: "AE", ß: "ss", ł: "l", Ł: "L", đ: "d", Đ: "D", ð: "d", Ð: "D", þ: "th", Þ: "Th",
+};
+
+/** Letters with no Unicode decomposition (ø, ł, ß...) mapped to their usual ASCII spelling. */
+export function foldLatin(text: string): string {
+  return text.replace(/[øØæÆßłŁđĐðÐþÞ]/g, (ch) => LATIN_FOLDS[ch]);
+}
+
+/** `The_Manuscript_<file id>_<company>.pdf`, safe on every OS and browser. */
+export function manuscriptFilename(fileId: string, companyName: string | null): string {
+  const slug = foldLatin(companyName ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40)
+    .replace(/_+$/, "");
+  return `The_Manuscript_${fileId}_${slug || "Company"}.pdf`;
 }
 
 /** Stable, human-readable file id derived from the session id. */
@@ -132,7 +218,17 @@ export interface Manuscript {
   benefitsRows: [string, string][];
   resolved: string[];
   open: string[];
-  signer: { name: string; title: string; signedAt: string } | null;
+  signer: ManuscriptSigner | null;
+}
+
+export interface ManuscriptSigner {
+  name: string;
+  title: string;
+  /** Date only. */
+  signedAt: string;
+  /** Date and time with zone, as recorded for the certification. */
+  signedAtFull: string;
+  consent: string;
 }
 
 export function buildManuscript(
@@ -141,6 +237,8 @@ export function buildManuscript(
 ): Manuscript {
   const date = opts.date ?? (opts.submission ? new Date(opts.submission.signed_at) : new Date());
   const fmtDate = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const fmtDateTime = (d: Date) =>
+    d.toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
   const w2 = data.employees.filter((e) => e.classification === "W2");
   const contractors = data.employees.filter((e) => e.classification === "1099");
@@ -221,7 +319,13 @@ export function buildManuscript(
       ...flags,
     ],
     signer: opts.submission
-      ? { name: opts.submission.signer_name, title: opts.submission.signer_title, signedAt: fmtDate(new Date(opts.submission.signed_at)) }
+      ? {
+          name: opts.submission.signer_name,
+          title: opts.submission.signer_title,
+          signedAt: fmtDate(new Date(opts.submission.signed_at)),
+          signedAtFull: fmtDateTime(new Date(opts.submission.signed_at)),
+          consent: opts.submission.consent_text || LEGACY_CONSENT_TEXT,
+        }
       : null,
   };
 }

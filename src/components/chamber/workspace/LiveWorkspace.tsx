@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
-import type { ChamberSubmission } from "@/data/manuscript";
+import type { CertificationState, ChamberSubmission } from "@/data/manuscript";
 import UploadTab from "../UploadTab";
 import CompanyTab from "./CompanyTab";
 import PayrollTab from "./PayrollTab";
@@ -28,9 +28,10 @@ interface LiveWorkspaceProps {
   isDemo: boolean;
   sessionId: string | null;
   onSubmit: (submission: ChamberSubmission) => Promise<boolean>;
+  certification?: CertificationState;
 }
 
-const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit }: LiveWorkspaceProps) => {
+const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, certification }: LiveWorkspaceProps) => {
   const [activeTab, setActiveTab] = useState("upload");
   // Optional, and never defaulted: we don't rank PEOs, so the prospect picks one or none.
   const [chosenPeo, setChosenPeo] = useState<string | null>(null);
@@ -70,7 +71,7 @@ const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit }: LiveWorkspaceProps
         {activeTab === "dependents" && <DependentsTab data={data} />}
         {activeTab === "review" && <ReviewTab data={data} onProceed={() => setActiveTab("match")} />}
         {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
-        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={chosenPeo} sessionId={sessionId} onSubmit={onSubmit} />}
+        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={chosenPeo} sessionId={sessionId} onSubmit={onSubmit} certification={certification} />}
       </div>
     </div>
   );
