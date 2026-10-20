@@ -87,6 +87,44 @@ describe("ManuscriptPage", () => {
     expect(screen.getByText("Justworks — Underwriting")).toBeInTheDocument();
   });
 
+  it("marks inferred and conflicting values with their source and lists them as open items", async () => {
+    const at = "2026-05-01T12:00:00Z";
+    row = {
+      chamber_data: EMPTY_CHAMBER_DATA,
+      field_provenance: {},
+      submission: {
+        signer_name: "Jo Doe",
+        signer_title: "CEO",
+        signed_at: at,
+        file_id: "EAA-2026-ABC",
+        chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co", industry: "Retail", employee_count: 40 },
+        field_provenance: {
+          company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: at },
+          industry: { status: "inferred", source: { kind: "transcript", message_id: "m1", quote: "we sell shoes" }, updated_at: at },
+          employee_count: {
+            status: "conflicting",
+            source: { kind: "transcript", message_id: "m1" },
+            updated_at: at,
+            candidates: [
+              { value: 40, source: { kind: "transcript", message_id: "m1" } },
+              { value: 45, source: { kind: "document", document_id: "d1", document_name: "census.csv" } },
+            ],
+          },
+        },
+      },
+      status: "submitted",
+      created_at: "2026-05-01T00:00:00Z",
+    };
+    renderAt("/manuscript?session=s1");
+    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(screen.getByText("Entered or confirmed by the prospect")).toBeInTheDocument();
+    expect(screen.getByText("From the conversation: “we sell shoes”")).toBeInTheDocument();
+    expect(screen.getByText("Inferred")).toBeInTheDocument();
+    expect(screen.getByText("Conflicting")).toBeInTheDocument();
+    expect(screen.getByText("Industry — please confirm")).toBeInTheDocument();
+    expect(screen.getByText("Employee count — conflicting answers")).toBeInTheDocument();
+  });
+
   it("never shows sample data on the live route when no session is given", async () => {
     renderAt("/manuscript");
     expect(await screen.findByText(/Open your Manuscript from The Reckoning/)).toBeInTheDocument();

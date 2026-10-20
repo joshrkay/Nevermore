@@ -10,6 +10,7 @@ import TranscriptPanel from "@/components/chamber/TranscriptPanel";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import { createChatMessage } from "@/data/chat";
 import { mergeChamberData } from "@/data/chamberValidation";
+import { applyExtraction, applyFieldAction, transcriptExtraction, type FieldAction } from "@/data/provenance";
 import { supabase } from "@/integrations/supabase/client";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 
@@ -25,9 +26,11 @@ const ChamberPage = () => {
     resumeFailed,
     startNew,
     chamberData,
+    provenance,
     messages,
     isLoading: sessionLoading,
     setChamberData,
+    updateIntake,
     addMessage,
     submit,
     certification,
@@ -49,11 +52,16 @@ const ChamberPage = () => {
     onOrbStateChange: setOrbState,
     onNewMessage: addMessage,
     onLastSpokenText: setLastSpokenText,
-    onExtract: (data) => setChamberData((prev) => mergeChamberData(prev, data)),
+    // Voice extractions with no prospect message to point to keep the old, untracked merge.
+    onExtract: (data, message) =>
+      message
+        ? updateIntake((prev) => applyExtraction(prev, data, transcriptExtraction(message, data)))
+        : setChamberData((prev) => mergeChamberData(prev, data)),
   });
 
   const handleSendMessage = useCallback(async (text: string) => {
-    addMessage(createChatMessage("user", text));
+    const userMessage = createChatMessage("user", text);
+    addMessage(userMessage);
 
     setOrbState("thinking");
 
@@ -67,7 +75,7 @@ const ChamberPage = () => {
       if (fnError) throw fnError;
 
       if (fnData?.extracted) {
-        setChamberData((prev) => mergeChamberData(prev, fnData.extracted));
+        updateIntake((prev) => applyExtraction(prev, fnData.extracted, transcriptExtraction(userMessage, fnData)));
       }
 
       const reply = (typeof fnData?.reply === "string" && fnData.reply.trim()) || "I've noted that. Could you tell me more about your team?";
@@ -83,7 +91,12 @@ const ChamberPage = () => {
       }
       addLenoreMessage("I caught that. Tell me more — how many employees are you looking to cover?");
     }
-  }, [addLenoreMessage, addMessage, chamberData, setChamberData]);
+  }, [addLenoreMessage, addMessage, chamberData, updateIntake]);
+
+  const handleFieldAction = useCallback(
+    (action: FieldAction) => updateIntake((prev) => applyFieldAction(prev, action)),
+    [updateIntake],
+  );
 
   const handleTypeInstead = () => {
     chatInputRef.current?.focus();
@@ -150,6 +163,15 @@ const ChamberPage = () => {
         </div>
 
         {/* Live workspace */}
+        <div className={`${isMobile ? "w-full" : "flex-1"}`}>
+          <LiveWorkspace
+            data={chamberData}
+            isDemo={false}
+            sessionId={sessionId}
+            onSubmit={submit}
+            provenance={provenance}
+            onFieldAction={handleFieldAction}
+          />
         {/* On mobile, keep the workspace clear of the fixed chat bar so its last button stays tappable. */}
         <div className={`${isMobile ? "w-full pb-16" : "flex-1"}`}>
           <LiveWorkspace data={chamberData} isDemo={false} sessionId={sessionId} onSubmit={submit} certification={certification} />

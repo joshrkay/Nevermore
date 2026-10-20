@@ -1,31 +1,20 @@
 import type { ChamberData } from "@/data/chamberTypes";
-import { motion } from "framer-motion";
+import type { FieldAction, FieldKey, ProvenanceMap } from "@/data/provenance";
+import ProvenanceField from "./ProvenanceField";
 
 interface PayrollTabProps {
   data: ChamberData;
+  provenance?: ProvenanceMap;
+  onAction?: (action: FieldAction) => void;
 }
 
-const GhostField = ({ label }: { label: string }) => (
-  <div>
-    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
-    <p className="text-xs text-muted-foreground/50 italic">Lenore will fill this in...</p>
-  </div>
-);
-
-const DataField = ({ label, value }: { label: string; value: string }) => (
-  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
-    <p className="text-sm font-medium">{value}</p>
-  </motion.div>
-);
-
-const PayrollTab = ({ data }: PayrollTabProps) => {
-  const fields = [
-    { label: "Payroll Vendor", value: data.payroll_vendor },
-    { label: "Pay Frequency", value: data.pay_frequency },
-    { label: "Funding Lead Time", value: data.funding_days !== null ? `${data.funding_days} days` : null },
-    { label: "Nonexempt / Exempt", value: data.has_nonexempt !== null ? `${data.nonexempt_count ?? 0} nonexempt · ${data.exempt_count ?? 0} exempt` : null },
-    { label: "Accrual Method", value: data.accrual_method },
+const PayrollTab = ({ data, provenance = {}, onAction }: PayrollTabProps) => {
+  const fields: { label: string; field: FieldKey; value: string | null; editable?: boolean }[] = [
+    { label: "Payroll Vendor", field: "payroll_vendor", value: data.payroll_vendor },
+    { label: "Pay Frequency", field: "pay_frequency", value: data.pay_frequency },
+    { label: "Funding Lead Time", field: "funding_days", value: data.funding_days !== null ? `${data.funding_days} days` : null },
+    { label: "Nonexempt / Exempt", field: "has_nonexempt", value: data.has_nonexempt !== null ? `${data.nonexempt_count ?? 0} nonexempt · ${data.exempt_count ?? 0} exempt` : null, editable: false },
+    { label: "Accrual Method", field: "accrual_method", value: data.accrual_method },
   ];
 
   const filledCount = fields.filter(f => f.value).length + (data.pto_types.length > 0 ? 1 : 0);
@@ -38,25 +27,34 @@ const PayrollTab = ({ data }: PayrollTabProps) => {
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        {fields.map(f =>
-          f.value
-            ? <DataField key={f.label} label={f.label} value={f.value} />
-            : <GhostField key={f.label} label={f.label} />
-        )}
+        {fields.map(f => (
+          <ProvenanceField
+            key={f.label}
+            label={f.label}
+            field={f.field}
+            display={f.value}
+            raw={data[f.field]}
+            provenance={provenance[f.field]}
+            onAction={onAction}
+            editable={f.editable}
+          />
+        ))}
       </div>
 
-      <div>
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">PTO Types</p>
-        {data.pto_types.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {data.pto_types.map(t => (
-              <span key={t} className="text-[10px] bg-muted px-2 py-1 rounded-full">{t}</span>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground/50 italic">Lenore will fill this in...</p>
-        )}
-      </div>
+      <ProvenanceField
+        label="PTO Types"
+        field="pto_types"
+        display={data.pto_types.length > 0 ? data.pto_types.join(", ") : null}
+        raw={data.pto_types}
+        provenance={provenance.pto_types}
+        onAction={onAction}
+      >
+        <div className="flex flex-wrap gap-1.5">
+          {data.pto_types.map(t => (
+            <span key={t} className="text-[10px] bg-muted px-2 py-1 rounded-full">{t}</span>
+          ))}
+        </div>
+      </ProvenanceField>
 
       {/* TLM Method */}
       <div>

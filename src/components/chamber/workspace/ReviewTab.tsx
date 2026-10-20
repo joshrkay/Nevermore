@@ -1,14 +1,19 @@
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
+import { fieldOpenItems, formatFieldValue, type FieldAction, type ProvenanceMap } from "@/data/provenance";
 import { CheckCircle, AlertTriangle, HelpCircle } from "lucide-react";
+import ProvenanceField from "./ProvenanceField";
 
 interface ReviewTabProps {
   data: ChamberData;
+  provenance?: ProvenanceMap;
+  onAction?: (action: FieldAction) => void;
   onProceed: () => void;
 }
 
-const ReviewTab = ({ data, onProceed }: ReviewTabProps) => {
+const ReviewTab = ({ data, provenance = {}, onAction, onProceed }: ReviewTabProps) => {
   const eeCount = headcount(data);
+  const needsReview = fieldOpenItems(provenance);
   const checks = eligibilityChecks(data);
   const flaggedEmployees = data.employees.filter(e => employeeFlag(e) !== null);
 
@@ -17,9 +22,31 @@ const ReviewTab = ({ data, onProceed }: ReviewTabProps) => {
       <div>
         <h2 className="font-display text-2xl font-bold mb-2">Review</h2>
         <p className="text-muted-foreground text-sm">
-          All data collected so far, organized by section. Tell Lenore about anything that needs correcting.
+          All data collected so far, organized by section. Confirm or correct anything Lenore inferred, or tell her about it.
         </p>
       </div>
+
+      {/* Inferred, incomplete, and conflicting values */}
+      {needsReview.length > 0 && (
+        <div className="bg-card border border-warning/40 rounded-xl p-6 space-y-4">
+          <p className="text-xs font-mono text-warning uppercase tracking-wider">
+            Needs your review — {needsReview.length} item{needsReview.length === 1 ? "" : "s"}
+          </p>
+          {needsReview.map((item) => (
+            <div key={item.field}>
+              <p className="text-[10px] text-muted-foreground mb-0.5">{item.reason}</p>
+              <ProvenanceField
+                label={item.label}
+                field={item.field}
+                display={formatFieldValue(data[item.field])}
+                raw={data[item.field]}
+                provenance={provenance[item.field]}
+                onAction={onAction}
+              />
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Eligibility check */}
       <div className="bg-card border border-border rounded-xl p-6 space-y-3">

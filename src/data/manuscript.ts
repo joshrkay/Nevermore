@@ -1,6 +1,7 @@
 import type { ChamberData, ChamberEmployee } from "./chamberTypes";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
+import { fieldOpenItems, type FieldKey, type ProvenanceMap } from "./provenance";
 
 /** Signed attestation stored on chamber_sessions.submission. */
 export interface ChamberSubmission {
@@ -204,18 +205,21 @@ export interface ManuscriptCensusRow {
   flag: string | null;
 }
 
+/** Label, display value, and the field whose status and source the row shows. */
+export type ManuscriptRow = [label: string, value: string, field?: FieldKey];
+
 export interface Manuscript {
   fileId: string;
   date: string;
   companyName: string;
   submittedTo: string | null;
-  companyRows: [string, string][];
-  workforceRows: [string, string][];
+  companyRows: ManuscriptRow[];
+  workforceRows: ManuscriptRow[];
   states: { state: string; count: string; system: string }[];
   census: ManuscriptCensusRow[];
   dependentTiers: { tier: string; count: number; pct: string }[];
   totalDependents: number;
-  benefitsRows: [string, string][];
+  benefitsRows: ManuscriptRow[];
   resolved: string[];
   open: string[];
   signer: ManuscriptSigner | null;
@@ -233,7 +237,7 @@ export interface ManuscriptSigner {
 
 export function buildManuscript(
   data: ChamberData,
-  opts: { fileId: string; submission?: ChamberSubmission | null; date?: Date },
+  opts: { fileId: string; submission?: ChamberSubmission | null; date?: Date; provenance?: ProvenanceMap },
 ): Manuscript {
   const date = opts.date ?? (opts.submission ? new Date(opts.submission.signed_at) : new Date());
   const fmtDate = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
@@ -259,6 +263,8 @@ export function buildManuscript(
     ["Pay frequency", !data.pay_frequency],
     ["Employee census", data.employees.length === 0],
   ].flatMap(([label, missing]) => (missing ? [`${label} — not provided`] : []));
+  const provenance = opts.provenance ?? {};
+  const fieldItems = fieldOpenItems(provenance).map((i) => `${i.label} — ${i.reason.toLowerCase()}`);
   const flags = data.employees.flatMap((e) => {
     const flag = employeeFlag(e);
     return flag ? [`${e.first_name} ${e.last_name}: ${flag}`] : [];
@@ -270,22 +276,22 @@ export function buildManuscript(
     companyName: data.company_name ?? "[Company name not provided]",
     submittedTo: opts.submission?.peo ?? null,
     companyRows: [
-      ["Legal Name", orNotProvided(data.company_name)],
-      ["HQ State", orNotProvided(data.hq_state)],
-      ["Industry", orNotProvided(data.industry)],
-      ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? `Multiple (${orNotProvided(data.fein_count)} FEINs)` : "Single entity"],
-      ["Target Start", orNotProvided(data.start_month)],
-      ["Current Payroll", orNotProvided(data.payroll_vendor)],
-      ["Pay Frequency", orNotProvided(data.pay_frequency)],
-      ["Coverage Status", data.virgin_medical === null ? NOT_PROVIDED : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage"],
+      ["Legal Name", orNotProvided(data.company_name), "company_name"],
+      ["HQ State", orNotProvided(data.hq_state), "hq_state"],
+      ["Industry", orNotProvided(data.industry), "industry"],
+      ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? `Multiple (${orNotProvided(data.fein_count)} FEINs)` : "Single entity", "multiple_entities"],
+      ["Target Start", orNotProvided(data.start_month), "start_month"],
+      ["Current Payroll", orNotProvided(data.payroll_vendor), "payroll_vendor"],
+      ["Pay Frequency", orNotProvided(data.pay_frequency), "pay_frequency"],
+      ["Coverage Status", data.virgin_medical === null ? NOT_PROVIDED : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage", "virgin_medical"],
     ],
     workforceRows: [
-      ["Reported Headcount", orNotProvided(data.employee_count)],
+      ["Reported Headcount", orNotProvided(data.employee_count), "employee_count"],
       ["W-2 Employees on Census", String(w2.length)],
       ["1099 Contractors on Census", data.employees.length ? String(contractors.length) : yesNo(data.has_1099)],
       ["Exempt / Nonexempt", data.exempt_count === null && data.nonexempt_count === null ? NOT_PROVIDED : `${orNotProvided(data.exempt_count)} / ${orNotProvided(data.nonexempt_count)}`],
-      ["In-house HR Staff", orNotProvided(data.hr_staff_count)],
-      ["Employee Handbook", yesNo(data.has_handbook)],
+      ["In-house HR Staff", orNotProvided(data.hr_staff_count), "hr_staff_count"],
+      ["Employee Handbook", yesNo(data.has_handbook), "has_handbook"],
     ],
     states: allStates.map((s) => ({ state: s, count: stateCounts.has(s) ? String(stateCounts.get(s)) : NOT_PROVIDED, system: wcSystem(s) })),
     census: data.employees.map((e) => ({
@@ -304,20 +310,22 @@ export function buildManuscript(
     }),
     totalDependents: w2.reduce((sum, e) => sum + e.dependents.length, 0),
     benefitsRows: [
-      ["Current Carrier", orNotProvided(data.current_carrier)],
-      ["Renewal Date", orNotProvided(data.renewal_date)],
-      ["Rate History", orNotProvided(data.rate_history)],
-      ["Waiting Period", orNotProvided(data.benefits_waiting_period)],
-      ["Ancillary Benefits", data.ancillary_benefits.length ? data.ancillary_benefits.join(", ") : NOT_PROVIDED],
-      ["Retirement", data.has_401k === null ? NOT_PROVIDED : data.has_401k ? `${data.retirement_type || "401(k)"}${data.employer_contributes ? " · employer contributes" : ""}` : "None"],
+      ["Current Carrier", orNotProvided(data.current_carrier), "current_carrier"],
+      ["Renewal Date", orNotProvided(data.renewal_date), "renewal_date"],
+      ["Rate History", orNotProvided(data.rate_history), "rate_history"],
+      ["Waiting Period", orNotProvided(data.benefits_waiting_period), "benefits_waiting_period"],
+      ["Ancillary Benefits", data.ancillary_benefits.length ? data.ancillary_benefits.join(", ") : NOT_PROVIDED, "ancillary_benefits"],
+      ["Retirement", data.has_401k === null ? NOT_PROVIDED : data.has_401k ? `${data.retirement_type || "401(k)"}${data.employer_contributes ? " · employer contributes" : ""}` : "None", "has_401k"],
     ],
     resolved: checks.filter((c) => c.status === "pass").map((c) => c.label),
     open: [
       ...missingCore,
+      ...fieldItems,
       ...checks.filter((c) => c.status === "fail").map((c) => `${c.label} — not met`),
       ...checks.filter((c) => c.status === "unknown").map((c) => `${c.label} — not yet verified`),
       ...flags,
     ],
+    provenance,
     signer: opts.submission
       ? {
           name: opts.submission.signer_name,

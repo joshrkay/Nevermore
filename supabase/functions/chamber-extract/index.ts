@@ -40,7 +40,51 @@ Field definitions:
 - ca_contractors: Whether they have contractors in California
 - has_handbook: Whether they have an employee handbook
 - key_challenges: Main HR/compliance challenges described
-- business_goals: Business goals mentioned`;
+- business_goals: Business goals mentioned
+
+For every field you return, also report:
+- field_status: "confirmed" if the user stated it explicitly, "inferred" if you derived or assumed it from what they said, "incomplete" if they gave only part of the answer (e.g. "a few states, mainly CA").
+- evidence: the short phrase from the user's message that supports it (at most 200 characters, quoted verbatim).
+- corrected_fields: list a field only when the user explicitly corrects a value already in the previous context ("actually it's 45 people, not 40").`;
+
+const FIELD_TYPES: Record<string, unknown> = {
+  company_name: { type: "string" },
+  industry: { type: "string" },
+  hq_state: { type: "string" },
+  states: { type: "array", items: { type: "string" } },
+  employee_count: { type: "integer" },
+  start_month: { type: "string" },
+  virgin_medical: { type: "boolean" },
+  current_carrier: { type: "string" },
+  renewal_date: { type: "string" },
+  payroll_vendor: { type: "string" },
+  pay_frequency: { type: "string" },
+  has_401k: { type: "boolean" },
+  has_1099: { type: "boolean" },
+  ca_contractors: { type: "boolean" },
+  has_handbook: { type: "boolean" },
+  key_challenges: { type: "string" },
+  business_goals: { type: "string" },
+};
+const FIELDS = Object.keys(FIELD_TYPES);
+const FIELD_STATUSES = ["confirmed", "inferred", "incomplete"];
+const MAX_EVIDENCE_CHARS = 200;
+
+const perField = (schema: unknown) => ({
+  type: "object",
+  properties: Object.fromEntries(FIELDS.map((f) => [f, schema])),
+  additionalProperties: false,
+});
+
+// Keeps only entries for fields that were actually extracted.
+function pickPerField<T>(raw: unknown, extracted: Record<string, unknown>, ok: (v: unknown) => v is T): Record<string, T> {
+  const out: Record<string, T> = {};
+  if (typeof raw !== "object" || raw === null) return out;
+  for (const [k, v] of Object.entries(raw)) {
+    if (k in extracted && ok(v)) out[k] = v;
+  }
+  return out;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -107,23 +151,10 @@ serve(async (req) => {
               parameters: {
                 type: "object",
                 properties: {
-                  company_name: { type: "string" },
-                  industry: { type: "string" },
-                  hq_state: { type: "string" },
-                  states: { type: "array", items: { type: "string" } },
-                  employee_count: { type: "integer" },
-                  start_month: { type: "string" },
-                  virgin_medical: { type: "boolean" },
-                  current_carrier: { type: "string" },
-                  renewal_date: { type: "string" },
-                  payroll_vendor: { type: "string" },
-                  pay_frequency: { type: "string" },
-                  has_401k: { type: "boolean" },
-                  has_1099: { type: "boolean" },
-                  ca_contractors: { type: "boolean" },
-                  has_handbook: { type: "boolean" },
-                  key_challenges: { type: "string" },
-                  business_goals: { type: "string" },
+                  ...FIELD_TYPES,
+                  field_status: perField({ type: "string", enum: FIELD_STATUSES }),
+                  evidence: perField({ type: "string" }),
+                  corrected_fields: { type: "array", items: { type: "string", enum: FIELDS } },
                   reply: { type: "string", description: "A natural conversational reply from Lenore, the gothic HR advisor. Keep her tone intelligent, warm, and slightly literary. Ask a follow-up question to continue the discovery." },
                 },
                 additionalProperties: false,
@@ -147,21 +178,28 @@ serve(async (req) => {
     const data = await response.json();
     const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
 
-    if (!toolCall) return json({ extracted: {}, reply: null });
+    if (!toolCall) return json({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null });
 
     const args = JSON.parse(toolCall.function.arguments);
     const reply = args.reply || null;
-    delete args.reply;
 
-    // Remove null/undefined values
+    // Keep known fields only, without null/empty values.
     const extracted: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(args)) {
-      if (v !== null && v !== undefined && v !== "") {
-        extracted[k] = v;
-      }
+    for (const k of FIELDS) {
+      const v = args[k];
+      if (v !== null && v !== undefined && v !== "") extracted[k] = v;
     }
+    const field_status = pickPerField(args.field_status, extracted, (v): v is string =>
+      typeof v === "string" && FIELD_STATUSES.includes(v));
+    const evidence = Object.fromEntries(
+      Object.entries(pickPerField(args.evidence, extracted, (v): v is string => typeof v === "string" && v.trim() !== ""))
+        .map(([k, v]) => [k, v.trim().slice(0, MAX_EVIDENCE_CHARS)]),
+    );
+    const corrected_fields = Array.isArray(args.corrected_fields)
+      ? args.corrected_fields.filter((f: unknown) => typeof f === "string" && f in extracted)
+      : [];
 
-    return json({ extracted, reply });
+    return json({ extracted, field_status, evidence, corrected_fields, reply });
   } catch (e) {
     console.error("chamber-extract error:", e);
     return json({ error: "Internal error" }, 500);

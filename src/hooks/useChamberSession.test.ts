@@ -24,6 +24,7 @@ vi.mock("@/integrations/supabase/client", () => ({
 }));
 
 const { useChamberSession } = await import("./useChamberSession");
+const { applyExtraction } = await import("@/data/provenance");
 
 // Lets queued promise callbacks run while fake timers are active (waitFor would hang).
 const drain = () => act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
@@ -114,6 +115,47 @@ describe("useChamberSession", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
     expect(JSON.parse(init.body as string).chamber_data.company_name).toBe("Acme");
     fetchSpy.mockRestore();
+  });
+
+  it("saves field provenance with the data and snapshots it on submission", async () => {
+    const { result } = renderHook(() => useChamberSession());
+    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    act(() =>
+      result.current.updateIntake((prev) =>
+        applyExtraction(prev, { employee_count: 40 }, { source: { kind: "transcript", message_id: "m1" } }),
+      ),
+    );
+    expect(result.current.chamberData.employee_count).toBe(40);
+    expect(result.current.provenance.employee_count?.status).toBe("inferred");
+
+    const pending = result.current.submit(submission);
+    await waitFor(() => expect(updates).toHaveLength(1));
+    expect(updates[0].payload.field_provenance).toMatchObject({ employee_count: { status: "inferred" } });
+    updates[0].resolve({ error: null });
+    await waitFor(() => expect(updates).toHaveLength(2));
+    expect(updates[1].payload.submission).toMatchObject({
+      chamber_data: { employee_count: 40 },
+      field_provenance: { employee_count: { source: { kind: "transcript", message_id: "m1" } } },
+    });
+    updates[1].resolve({ error: null });
+    await act(async () => { await pending; });
+  });
+
+  it("restores field provenance when resuming a session", async () => {
+    resumeRow = {
+      id: "s9",
+      chamber_data: { employee_count: 40 },
+      field_provenance: {
+        employee_count: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-20T00:00:00Z" },
+        bogus: { status: "confirmed" },
+      },
+      transcript: [],
+    };
+    const { result } = renderHook(() => useChamberSession("s9"));
+    await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+    expect(result.current.provenance).toEqual({
+      employee_count: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-20T00:00:00Z" },
+    });
   });
 
   it("does not silently replace a session it was asked to resume but could not open", async () => {

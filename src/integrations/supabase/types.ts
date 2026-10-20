@@ -54,6 +54,7 @@ export type Database = {
         Row: {
           chamber_data: Json
           created_at: string
+          field_provenance: Json
           id: string
           status: string
           submission: Json | null
@@ -64,6 +65,7 @@ export type Database = {
         Insert: {
           chamber_data?: Json
           created_at?: string
+          field_provenance?: Json
           id?: string
           status?: string
           submission?: Json | null
@@ -74,6 +76,7 @@ export type Database = {
         Update: {
           chamber_data?: Json
           created_at?: string
+          field_provenance?: Json
           id?: string
           status?: string
           submission?: Json | null

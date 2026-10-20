@@ -1,39 +1,24 @@
 import type { ChamberData } from "@/data/chamberTypes";
+import type { FieldAction, FieldKey, ProvenanceMap } from "@/data/provenance";
 import { motion } from "framer-motion";
+import ProvenanceField from "./ProvenanceField";
 
 interface CompanyTabProps {
   data: ChamberData;
   isDemo: boolean;
+  provenance?: ProvenanceMap;
+  onAction?: (action: FieldAction) => void;
 }
 
-const GhostField = ({ label }: { label: string }) => (
-  <div>
-    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
-    <p className="text-xs text-muted-foreground/50 italic">Lenore will fill this in...</p>
-  </div>
-);
-
-const DataField = ({ label, value, badge }: { label: string; value: string; badge?: { text: string; color: string } }) => (
-  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
-    <div className="flex items-center gap-2">
-      <p className="text-sm font-medium">{value}</p>
-      {badge && (
-        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${badge.color}`}>{badge.text}</span>
-      )}
-    </div>
-  </motion.div>
-);
-
-const CompanyTab = ({ data, isDemo }: CompanyTabProps) => {
-  const fields = [
-    { label: "Business Name", value: data.company_name },
-    { label: "Industry", value: data.industry },
-    { label: "HQ State", value: data.hq_state },
-    { label: "All States", value: data.states.length > 0 ? data.states.join(", ") : null },
-    { label: "Employee Count", value: data.employee_count?.toString() },
-    { label: "Target Start", value: data.start_month },
-    { label: "Entity Structure", value: data.multiple_entities === null ? null : data.multiple_entities ? `Multiple (${data.fein_count} FEINs)` : "Single entity" },
+const CompanyTab = ({ data, isDemo, provenance = {}, onAction }: CompanyTabProps) => {
+  const fields: { label: string; field: FieldKey; value: string | null | undefined }[] = [
+    { label: "Business Name", field: "company_name", value: data.company_name },
+    { label: "Industry", field: "industry", value: data.industry },
+    { label: "HQ State", field: "hq_state", value: data.hq_state },
+    { label: "All States", field: "states", value: data.states.length > 0 ? data.states.join(", ") : null },
+    { label: "Employee Count", field: "employee_count", value: data.employee_count?.toString() },
+    { label: "Target Start", field: "start_month", value: data.start_month },
+    { label: "Entity Structure", field: "multiple_entities", value: data.multiple_entities === null ? null : data.multiple_entities ? `Multiple (${data.fein_count ?? "?"} FEINs)` : "Single entity" },
   ];
 
   const filledCount = fields.filter(f => f.value).length;
@@ -55,9 +40,15 @@ const CompanyTab = ({ data, isDemo }: CompanyTabProps) => {
 
       <div className="grid grid-cols-2 gap-4">
         {fields.map(f => (
-          f.value
-            ? <DataField key={f.label} label={f.label} value={f.value} />
-            : <GhostField key={f.label} label={f.label} />
+          <ProvenanceField
+            key={f.label}
+            label={f.label}
+            field={f.field}
+            display={f.value || null}
+            raw={data[f.field]}
+            provenance={provenance[f.field]}
+            onAction={isDemo ? undefined : onAction}
+          />
         ))}
       </div>
 
