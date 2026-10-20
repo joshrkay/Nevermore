@@ -1,17 +1,24 @@
-import { useMemo } from "react";
+import { useState } from "react";
 import { Users, UserPlus, DollarSign, MapPin, Shield, Zap } from "lucide-react";
 import type { ChamberData } from "@/data/chamberTypes";
-import { scorePEOs } from "@/data/peoScoring";
+import { PEO_CATALOG, findPeo, peoFit, type FitStatus } from "@/data/peoCatalog";
 
 interface PEOMatchTabProps {
   data: ChamberData;
-  selectedPeo: string;
+  /** The PEO the packet is prepared for; null until the prospect picks or names one. */
+  selectedPeo: string | null;
   onSelect: (name: string) => void;
   onProceed: () => void;
 }
 
+const FIT_TEXT: Record<FitStatus, string> = {
+  meets: "✓ Meets",
+  does_not_meet: "✗ Doesn't meet",
+  unknown: "Not yet confirmed",
+};
+
 const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProps) => {
-  const peoResults = useMemo(() => scorePEOs(data), [data]);
+  const [otherName, setOtherName] = useState("");
 
   const totalDependents = data.employees.reduce((sum, e) => sum + e.dependents.length, 0);
   const avgSalary = data.employees.length > 0
@@ -25,16 +32,16 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
     { icon: <MapPin className="w-5 h-5" />, label: "States", value: data.states.length > 0 ? data.states.join(", ") : "—" },
   ];
 
-  const hasEnoughData = (data.employee_count ?? 0) > 0 || data.company_name;
+  const selectedIsListed = selectedPeo !== null && findPeo(selectedPeo) !== undefined;
+  const trimmedOther = otherName.trim();
 
   return (
     <div className="p-6 space-y-8">
       <div>
         <h2 className="font-display text-2xl font-bold mb-2">PEO Match</h2>
         <p className="text-muted-foreground text-sm">
-          {hasEnoughData
-            ? "Scored and ranked based on your company profile. More data = more accurate recommendations."
-            : "Continue your conversation with Lenore to populate your profile. Scores will update in real time."}
+          Choose the PEO this packet is prepared for, or name another. We don't rank PEOs or estimate their prices;
+          the checks below compare only what you've told us with what the PEO has published.
         </p>
       </div>
 
@@ -49,7 +56,7 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
         ))}
       </div>
 
-      {/* Scoring Factors */}
+      {/* Facts that matter for fit */}
       {data.virgin_medical !== null && (
         <div className="flex flex-wrap gap-2">
           {data.virgin_medical && (
@@ -72,43 +79,12 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
 
       {/* PEO Cards */}
       <div className="space-y-4">
-        {peoResults.map((peo, i) => (
+        {PEO_CATALOG.map((peo) => (
           <div key={peo.name} className={`bg-card border rounded-xl p-6 transition-colors ${
             peo.name === selectedPeo ? "border-primary" : "border-border hover:border-primary/30"
           }`}>
-            <div className="flex items-start justify-between mb-3">
-              <div>
-                <h3 className="font-display text-xl font-bold">{peo.name}</h3>
-                <span className={`text-xs px-2.5 py-1 rounded-full mt-1 inline-block ${
-                  i === 0 ? "bg-primary/15 text-primary" :
-                  i === 1 ? "bg-emerald-500/15 text-emerald-400" :
-                  "bg-muted text-muted-foreground"
-                }`}>
-                  {peo.label}
-                </span>
-              </div>
-              <span className={`font-mono text-2xl font-bold ${
-                peo.score >= 85 ? "text-primary" :
-                peo.score >= 75 ? "text-emerald-400" :
-                "text-foreground"
-              }`}>{peo.score}%</span>
-            </div>
-            <div className="w-full bg-muted rounded-full h-2 mb-3">
-              <div
-                className={`h-2 rounded-full transition-all duration-1000 ${
-                  i === 0 ? "bg-primary" : i === 1 ? "bg-emerald-500" : "bg-muted-foreground"
-                }`}
-                style={{ width: `${peo.score}%` }}
-              />
-            </div>
-            <p className="text-sm text-muted-foreground mb-3">{peo.rationale}</p>
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {peo.strengths.map(s => (
-                <span key={s} className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground">{s}</span>
-              ))}
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-mono text-foreground">Estimated PEPM: {peo.pepmRange}</p>
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <h3 className="font-display text-xl font-bold">{peo.name}</h3>
               {peo.name === selectedPeo ? (
                 <span className="text-xs font-medium px-3 py-1.5 rounded-full bg-primary/15 text-primary">✓ Selected</span>
               ) : (
@@ -120,15 +96,53 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
                 </button>
               )}
             </div>
+            <ul className="text-sm text-muted-foreground space-y-1">
+              {peoFit(data, peo).map((check) => (
+                <li key={check.label} className="flex justify-between gap-4">
+                  <span>{check.label}</span>
+                  <span className="font-mono text-foreground">{FIT_TEXT[check.status]}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-muted-foreground mt-3">
+              {peo.lastVerified ? `Facts checked ${peo.lastVerified}.` : "Not yet checked against this PEO's own materials."}
+            </p>
           </div>
         ))}
+
+        <div className={`bg-card border rounded-xl p-6 ${selectedPeo && !selectedIsListed ? "border-primary" : "border-border"}`}>
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <h3 className="font-display text-xl font-bold">Another PEO</h3>
+            {selectedPeo && !selectedIsListed && (
+              <span className="text-xs font-medium px-3 py-1.5 rounded-full bg-primary/15 text-primary">✓ Selected</span>
+            )}
+          </div>
+          {selectedPeo && !selectedIsListed && <p className="text-sm mb-3">Prepared for {selectedPeo}.</p>}
+          <label htmlFor="other-peo" className="text-sm text-muted-foreground block mb-2">Another PEO</label>
+          <div className="flex gap-2">
+            <input
+              id="other-peo"
+              value={otherName}
+              onChange={(e) => setOtherName(e.target.value)}
+              maxLength={80}
+              className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm"
+            />
+            <button
+              disabled={trimmedOther === ""}
+              onClick={() => onSelect(trimmedOther)}
+              className="text-sm font-medium px-4 py-2 rounded-lg border border-border hover:border-primary/40 transition-colors disabled:opacity-40"
+            >
+              Use this PEO
+            </button>
+          </div>
+        </div>
       </div>
 
       <button
         onClick={onProceed}
         className="w-full bg-primary text-primary-foreground font-medium py-3 rounded-lg hover:bg-primary/90 transition-colors"
       >
-        Proceed with {selectedPeo} →
+        {selectedPeo ? `Proceed with ${selectedPeo} →` : "Continue without choosing a PEO →"}
       </button>
     </div>
   );

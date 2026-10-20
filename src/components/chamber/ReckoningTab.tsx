@@ -9,12 +9,14 @@ import { fileIdForSession, type ChamberSubmission } from "@/data/manuscript";
 
 interface ReckoningTabProps {
   data: ChamberData;
-  peoName: string;
+  /** The PEO the packet is prepared for, if the prospect chose one. */
+  peoName: string | null;
   sessionId: string | null;
   onSubmit: (submission: ChamberSubmission) => Promise<boolean>;
 }
 
-const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps) => {
+const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit }: ReckoningTabProps) => {
+  const peoName = chosenPeo ?? "your PEO";
   const [checks, setChecks] = useState([false, false, false]);
   const [signerName, setSignerName] = useState("");
   const [signerTitle, setSignerTitle] = useState("");
@@ -49,7 +51,7 @@ const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps)
       signer_title: signerTitle.trim(),
       signed_at: signedAt.toISOString(),
       file_id: fileId,
-      peo: peoName,
+      ...(chosenPeo ? { peo: chosenPeo } : {}),
     });
     setSubmitting(false);
     if (ok) setSubmitted(true);
@@ -186,7 +188,7 @@ const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps)
                 <ul className="text-sm text-foreground space-y-2">
                   <li>• Download The Manuscript below.</li>
                   <li>• Send it to {peoName} yourself.</li>
-                  <li>• {peoName} follows up directly with pricing — typically 24–48 hours.</li>
+                  <li>• Ask {peoName} for pricing and how long their review takes.</li>
                 </ul>
               </motion.div>
               <motion.div
