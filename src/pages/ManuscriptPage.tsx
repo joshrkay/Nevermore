@@ -9,7 +9,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
-import { buildManuscript, fileIdForSession, NOT_PROVIDED, type ChamberSubmission } from "@/data/manuscript";
+import { buildManuscript, fileIdForSession, NOT_PROVIDED, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
+import { describeSource, parseProvenance, STATUS_LABELS, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 
 const SAMPLE_FILE_ID = "EAA-SAMPLE";
 
@@ -17,12 +18,37 @@ const SectionHeader = ({ children }: { children: React.ReactNode }) => (
   <h3 className="font-display text-lg font-bold mb-4 pl-4 border-l-4 border-primary">{children}</h3>
 );
 
-const DataRow = ({ label, value }: { label: string; value: string }) => (
-  <div className="flex justify-between gap-4 py-2 border-b border-border last:border-0">
-    <span className="text-muted-foreground text-sm">{label}</span>
-    <span className="font-mono text-sm text-foreground text-right">{value}</span>
+const STATUS_MARKER_CLASS: Record<FieldProvenance["status"], string> = {
+  confirmed: "bg-success/15 text-success",
+  inferred: "bg-warning/15 text-warning",
+  incomplete: "bg-warning/15 text-warning",
+  conflicting: "bg-destructive/15 text-destructive",
+};
+
+// Shows whether a value was confirmed or only inferred, and where it came from.
+const DataRow = ({ label, value, provenance }: { label: string; value: string; provenance?: FieldProvenance }) => (
+  <div className="py-2 border-b border-border last:border-0">
+    <div className="flex justify-between gap-4">
+      <span className="text-muted-foreground text-sm">{label}</span>
+      <span className="font-mono text-sm text-foreground text-right">
+        {value}
+        {provenance && value !== NOT_PROVIDED && (
+          <span className={`ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded-full ${STATUS_MARKER_CLASS[provenance.status]}`}>
+            {STATUS_LABELS[provenance.status]}
+          </span>
+        )}
+      </span>
+    </div>
+    {provenance && value !== NOT_PROVIDED && (
+      <p className="text-[11px] text-muted-foreground text-right mt-0.5">{describeSource(provenance.source)}</p>
+    )}
   </div>
 );
+
+const renderRows = (rows: ManuscriptRow[], provenance: ProvenanceMap) =>
+  rows.map(([label, value, field]) => (
+    <DataRow key={label} label={label} value={value} provenance={field ? provenance[field] : undefined} />
+  ));
 
 // Masks month/day of a date of birth, keeping the year.
 const maskDob = (dob: string) => {
@@ -36,7 +62,7 @@ type LoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "unsigned" }
-  | { kind: "ready"; data: ChamberData; submission: ChamberSubmission | null; fileId: string };
+  | { kind: "ready"; data: ChamberData; provenance: ProvenanceMap; submission: ChamberSubmission | null; fileId: string };
 
 // `demo` renders the fictional sample; the live route never does.
 const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
@@ -63,7 +89,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
     setState({ kind: "loading" });
     supabase
       .from("chamber_sessions")
-      .select("chamber_data, submission, status, created_at")
+      .select("chamber_data, field_provenance, submission, status, created_at")
       .eq("id", sessionId)
       .maybeSingle()
       .then(({ data, error }) => {
@@ -82,6 +108,8 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           kind: "ready",
           // Render what was signed, not whatever the session holds now.
           data: parseChamberData(submission.chamber_data ?? data.chamber_data),
+          // Pair provenance with whichever copy of the data is shown, so it never describes other values.
+          provenance: parseProvenance(submission.chamber_data ? submission.field_provenance : data.field_provenance),
           submission,
           fileId: submission.file_id || fileIdForSession(sessionId, new Date(data.created_at)),
         });
@@ -90,7 +118,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
   }, [sessionId, demo, user, authLoading]);
 
   const d = useMemo(() => {
-    if (state.kind === "ready") return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission });
+    if (state.kind === "ready") return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, provenance: state.provenance });
     if (state.kind === "sample") return buildManuscript(DEMO_CHAMBER_DATA, { fileId: SAMPLE_FILE_ID });
     return null;
   }, [state]);
@@ -226,7 +254,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         <section>
           <SectionHeader>1 — Company Profile</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6">
-            {d.companyRows.map(([k, v]) => <DataRow key={k} label={k} value={v} />)}
+            {renderRows(d.companyRows, d.provenance)}
           </div>
         </section>
 
@@ -235,7 +263,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <SectionHeader>2 — Workforce Summary</SectionHeader>
           <div className="grid md:grid-cols-2 gap-6">
             <div className="bg-card border border-border rounded-xl p-6">
-              {d.workforceRows.map(([k, v]) => <DataRow key={k} label={k} value={v} />)}
+              {renderRows(d.workforceRows, d.provenance)}
             </div>
             <div className="bg-card border border-border rounded-xl p-6">
               <p className="text-xs text-muted-foreground font-mono mb-3">STATE BREAKDOWN</p>
@@ -331,7 +359,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         <section>
           <SectionHeader>5 — Current Benefits</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6">
-            {d.benefitsRows.map(([k, v]) => <DataRow key={k} label={k} value={v} />)}
+            {renderRows(d.benefitsRows, d.provenance)}
           </div>
         </section>
 

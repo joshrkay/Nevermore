@@ -10,7 +10,8 @@ interface UseLenoreVoiceOptions {
   onOrbStateChange: (state: OrbState) => void;
   onNewMessage: (msg: ChatMessage) => void;
   onLastSpokenText: (text: string) => void;
-  onExtract: (data: unknown) => void;
+  /** `message` is the prospect's message the extraction answers, when there is one. */
+  onExtract: (data: unknown, message: ChatMessage | null) => void;
 }
 
 export function useLenoreVoice({
@@ -21,6 +22,7 @@ export function useLenoreVoice({
 }: UseLenoreVoiceOptions) {
   const [isConnected, setIsConnected] = useState(false);
   const callbacksRef = useRef({ onOrbStateChange, onNewMessage, onLastSpokenText, onExtract });
+  const lastUserMessageRef = useRef<ChatMessage | null>(null);
 
   // Keep refs fresh without re-creating the hook
   useEffect(() => {
@@ -42,7 +44,9 @@ export function useLenoreVoice({
       if (!message) return;
 
       if (role === "user") {
-        callbacksRef.current.onNewMessage(createChatMessage("user", message));
+        const msg = createChatMessage("user", message);
+        lastUserMessageRef.current = msg;
+        callbacksRef.current.onNewMessage(msg);
         return;
       }
 
@@ -51,7 +55,7 @@ export function useLenoreVoice({
       const extractMatch = message.match(/<extract>([\s\S]*?)<\/extract>/);
       if (extractMatch) {
         try {
-          callbacksRef.current.onExtract(JSON.parse(extractMatch[1]));
+          callbacksRef.current.onExtract(JSON.parse(extractMatch[1]), lastUserMessageRef.current);
         } catch (e) {
           console.warn("Failed to parse extract:", e);
         }

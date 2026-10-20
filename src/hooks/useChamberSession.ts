@@ -8,6 +8,7 @@ import { createChatMessage, parseTranscript } from "@/data/chat";
 import { parseChamberData } from "@/data/chamberValidation";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberSubmission } from "@/data/manuscript";
+import { parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 
 interface UseChamberSessionReturn {
   sessionId: string | null;
@@ -16,9 +17,13 @@ interface UseChamberSessionReturn {
   /** Abandons the unopenable session id and starts a fresh intake. */
   startNew: () => void;
   chamberData: ChamberData;
+  /** Status and source of each captured field. */
+  provenance: ProvenanceMap;
   messages: ChatMessage[];
   isLoading: boolean;
   setChamberData: (updater: ChamberData | ((prev: ChamberData) => ChamberData)) => void;
+  /** Updates the data and its provenance together. */
+  updateIntake: (updater: (prev: IntakeState) => IntakeState) => void;
   addMessage: (msg: ChatMessage) => void;
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   submit: (submission: ChamberSubmission) => Promise<boolean>;
@@ -44,6 +49,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [resumeFailed, setResumeFailed] = useState(false);
   const [initRun, setInitRun] = useState(0);
   const [chamberData, setChamberDataRaw] = useState<ChamberData>(EMPTY_CHAMBER_DATA);
+  const [provenance, setProvenanceRaw] = useState<ProvenanceMap>({});
   const [messages, setMessages] = useState<ChatMessage[]>(() => [createChatMessage("lenore", OPENING_MESSAGE)]);
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,12 +59,14 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const accessTokenRef = useRef<string | null>(null);
   useEffect(() => { accessTokenRef.current = session?.access_token ?? null; }, [session]);
   const dataRef = useRef(chamberData);
+  const provenanceRef = useRef(provenance);
   const messagesRef = useRef(messages);
   const sessionIdRef = useRef(sessionId);
   const requestedIdRef = useRef(requestedSessionId ?? null);
 
   // Keep refs fresh
   useEffect(() => { dataRef.current = chamberData; }, [chamberData]);
+  useEffect(() => { provenanceRef.current = provenance; }, [provenance]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
 
@@ -80,6 +88,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         .from("chamber_sessions")
         .update({
           chamber_data: dataRef.current as unknown as Json,
+          field_provenance: provenanceRef.current as unknown as Json,
           transcript: messagesRef.current as unknown as Json,
         })
         .eq("id", sid);
@@ -118,7 +127,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       }
       // A normal request can be cancelled as the page unloads; a keepalive one is
       // allowed to finish, so send the pending changes straight to PostgREST.
-      const body = JSON.stringify({ chamber_data: dataRef.current, transcript: messagesRef.current });
+      const body = JSON.stringify({
+        chamber_data: dataRef.current,
+        field_provenance: provenanceRef.current,
+        transcript: messagesRef.current,
+      });
       const token = accessTokenRef.current;
       if (token && new Blob([body]).size <= KEEPALIVE_MAX_BYTES) {
         dirtyRef.current = false;
@@ -159,7 +172,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       // RLS only returns the user's own sessions.
       const { data, error } = await supabase
         .from("chamber_sessions")
-        .select("id, chamber_data, transcript")
+        .select("id, chamber_data, field_provenance, transcript")
         .eq("id", id)
         .maybeSingle();
       if (error) console.error("Failed to load session:", error);
@@ -168,6 +181,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       const loadedMessages = parseTranscript(data.transcript);
       dataRef.current = loadedData;
       setChamberDataRaw(loadedData);
+      const loadedProvenance = parseProvenance(data.field_provenance);
+      provenanceRef.current = loadedProvenance;
+      setProvenanceRaw(loadedProvenance);
       if (loadedMessages.length > 0) {
         messagesRef.current = loadedMessages;
         setMessages(loadedMessages);
@@ -183,6 +199,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         .insert({
           user_id: userId,
           chamber_data: dataRef.current as unknown as Json,
+          field_provenance: provenanceRef.current as unknown as Json,
           transcript: messagesRef.current as unknown as Json,
         })
         .select("id")
@@ -232,6 +249,16 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     scheduleSave();
   }, [scheduleSave]);
 
+  const updateIntake = useCallback((updater: (prev: IntakeState) => IntakeState) => {
+    // Read and write through the refs so data and provenance never come from different renders.
+    const next = updater({ data: dataRef.current, provenance: provenanceRef.current });
+    dataRef.current = next.data;
+    provenanceRef.current = next.provenance;
+    setChamberDataRaw(next.data);
+    setProvenanceRaw(next.provenance);
+    scheduleSave();
+  }, [scheduleSave]);
+
   const addMessage = useCallback((msg: ChatMessage) => {
     setMessages(prev => {
       const next = [...prev, msg];
@@ -249,7 +276,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       .from("chamber_sessions")
       .update({
         status: "submitted",
-        submission: { ...submission, chamber_data: dataRef.current } as unknown as Json,
+        submission: {
+          ...submission,
+          chamber_data: dataRef.current,
+          field_provenance: provenanceRef.current,
+        } as unknown as Json,
       })
       .eq("id", sid);
     if (error) {
@@ -259,5 +290,5 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     return true;
   }, [flush]);
 
-  return { sessionId, resumeFailed, startNew, chamberData, messages, isLoading, setChamberData, addMessage, setMessages, submit };
+  return { sessionId, resumeFailed, startNew, chamberData, provenance, messages, isLoading, setChamberData, updateIntake, addMessage, setMessages, submit };
 }

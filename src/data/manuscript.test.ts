@@ -150,4 +150,27 @@ describe("buildManuscript open items for missing core facts", () => {
     );
     expect(open.filter((o) => /not provided$/.test(o))).toEqual([]);
   });
+
+  it("lists inferred, incomplete and conflicting fields as open items until resolved", () => {
+    const at = "2026-05-01T00:00:00Z";
+    const source = { kind: "transcript" as const, message_id: "m1" };
+    const { open } = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, industry: "Retail", states: ["CA"], employee_count: 40 },
+      {
+        fileId: "EAA-1",
+        provenance: {
+          industry: { status: "inferred", source, updated_at: at },
+          states: { status: "incomplete", source, updated_at: at },
+          employee_count: { status: "conflicting", source, updated_at: at, candidates: [] },
+          company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: at },
+        },
+      },
+    );
+    expect(open).toEqual(expect.arrayContaining([
+      "Employee count — conflicting answers",
+      "States of operation — incomplete",
+      "Industry — please confirm",
+    ]));
+    expect(open.some((o) => o.startsWith("Company legal name — please"))).toBe(false);
+  });
 });
