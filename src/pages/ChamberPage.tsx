@@ -3,15 +3,15 @@ import { useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLenoreVoice } from "@/hooks/useLenoreVoice";
+import { useLenoreChat } from "@/hooks/useLenoreChat";
 import { useChamberSession } from "@/hooks/useChamberSession";
 import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import TranscriptPanel from "@/components/chamber/TranscriptPanel";
+import ChatFailureNotice from "@/components/chamber/ChatFailureNotice";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import { createChatMessage } from "@/data/chat";
 import { mergeChamberData } from "@/data/chamberValidation";
-import { supabase } from "@/integrations/supabase/client";
-import { FunctionsHttpError } from "@supabase/supabase-js";
 
 const ChamberPage = () => {
   const isMobile = useIsMobile();
@@ -51,38 +51,17 @@ const ChamberPage = () => {
     onExtract: (data) => setChamberData((prev) => mergeChamberData(prev, data)),
   });
 
-  const handleSendMessage = useCallback(async (text: string) => {
-    addMessage(createChatMessage("user", text));
+  const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
+    chamberData,
+    setChamberData,
+    addUserMessage: (text) => addMessage(createChatMessage("user", text)),
+    addLenoreMessage,
+    onOrbStateChange: setOrbState,
+  });
 
-    setOrbState("thinking");
-
-    try {
-      // The roster isn't extracted from chat and can be large, so leave it out of the context.
-      const { employees: _employees, ...context } = chamberData;
-      const { data: fnData, error: fnError } = await supabase.functions.invoke("chamber-extract", {
-        body: { message: text, context },
-      });
-
-      if (fnError) throw fnError;
-
-      if (fnData?.extracted) {
-        setChamberData((prev) => mergeChamberData(prev, fnData.extracted));
-      }
-
-      const reply = (typeof fnData?.reply === "string" && fnData.reply.trim()) || "I've noted that. Could you tell me more about your team?";
-      setOrbState("speaking");
-      addLenoreMessage(reply);
-      setTimeout(() => setOrbState("idle"), 2000);
-    } catch (err) {
-      console.error("Extraction error:", err);
-      setOrbState("idle");
-      if (err instanceof FunctionsHttpError && err.context?.status === 429) {
-        addLenoreMessage("Let's take a breath — you're writing faster than I can keep up. Give me a minute, then continue.");
-        return;
-      }
-      addLenoreMessage("I caught that. Tell me more — how many employees are you looking to cover?");
-    }
-  }, [addLenoreMessage, addMessage, chamberData, setChamberData]);
+  const failureNotice = failure && (
+    <ChatFailureNotice failure={failure} pending={pending} onRetry={retry} onDismiss={dismissFailure} />
+  );
 
   const handleTypeInstead = () => {
     chatInputRef.current?.focus();
@@ -145,6 +124,7 @@ const ChamberPage = () => {
             messages={messages}
             onSendMessage={handleSendMessage}
             inputRef={chatInputRef}
+            notice={failureNotice}
           />
         </div>
 
@@ -157,6 +137,7 @@ const ChamberPage = () => {
       {/* Mobile: floating chat input */}
       {isMobile && (
         <div className="fixed bottom-0 left-0 right-0 p-3 bg-card border-t border-border z-30">
+          {failureNotice}
           <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
             <input
               ref={chatInputRef}
