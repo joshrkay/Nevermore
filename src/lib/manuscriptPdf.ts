@@ -125,13 +125,28 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     y += 6;
   };
 
+  const TABLE_FONT = 8.5;
+  const rowCells = (columns: Column[], row: string[]) => {
+    font("normal", TABLE_FONT);
+    return row.map((text, i) => wrap(text, columns[i].width - CELL_PAD_X * 2));
+  };
+  const tableHeight = (columns: Column[], rows: string[][]) =>
+    rows.reduce((sum, row) => {
+      const lines = Math.max(...rowCells(columns, row).map((c) => c.length));
+      return sum + lines * lineHeight(TABLE_FONT) + CELL_PAD_Y * 2;
+    }, 3);
+  const paragraphHeight = (text: string, size: number, style: "normal" | "bold" | "italic", gap: number) => {
+    font(style, size);
+    return wrap(text, CONTENT_W).length * lineHeight(size) + gap;
+  };
+
   /**
-   * Draws a table whose rows never split across pages and whose header repeats on each new page.
-   * Cell text wraps inside its column, so nothing is clipped or overlaps its neighbour.
+   * Draws a table whose rows stay on one page where they can, and whose header repeats on each new page and whose header repeats on each new page.
+   * Cell text wraps inside its column, so nothing is clipped or overlaps its neighbour. A row taller than a page continues onto the next one.
    */
   const table = (columns: Column[], rows: string[][], opts: { header?: boolean; flagged?: Set<number> } = {}) => {
     const showHeader = opts.header !== false;
-    const size = 8.5;
+    const size = TABLE_FONT;
     const lh = lineHeight(size);
 
     const drawHeader = () => {
@@ -156,16 +171,14 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
       drawHeader();
     }
 
-    rows.forEach((row, rowIndex) => {
-      font("normal", size);
-      const cells = row.map((text, i) => wrap(text, columns[i].width - CELL_PAD_X * 2));
-      const lines = Math.max(...cells.map((c) => c.length));
-      const h = lines * lh + CELL_PAD_Y * 2;
-      if (y + h > BOTTOM) {
-        newPage();
-        if (showHeader) drawHeader();
-      }
-      if (opts.flagged?.has(rowIndex)) {
+    const rule = () => {
+      pdf.setDrawColor(...RULE);
+      pdf.setLineWidth(0.15);
+      pdf.line(MARGIN, y, MARGIN + CONTENT_W, y);
+    };
+    const drawRow = (cells: string[][], flagged: boolean) => {
+      const h = Math.max(...cells.map((c) => c.length)) * lh + CELL_PAD_Y * 2;
+      if (flagged) {
         pdf.setFillColor(255, 247, 230);
         pdf.rect(MARGIN, y, CONTENT_W, h, "F");
       }
@@ -181,9 +194,35 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
         x += col.width;
       });
       y += h;
-      pdf.setDrawColor(...RULE);
-      pdf.setLineWidth(0.15);
-      pdf.line(MARGIN, y, MARGIN + CONTENT_W, y);
+      rule();
+    };
+    const headerH = showHeader ? lh + CELL_PAD_Y * 2 : 0;
+    const pageLines = Math.floor((BOTTOM - TOP - headerH - CELL_PAD_Y * 2) / lh);
+    const nextPage = () => {
+      newPage();
+      if (showHeader) drawHeader();
+    };
+
+    rows.forEach((row, rowIndex) => {
+      const flagged = opts.flagged?.has(rowIndex) === true;
+      let cells = rowCells(columns, row);
+      for (;;) {
+        const lines = Math.max(...cells.map((c) => c.length));
+        const room = Math.floor((BOTTOM - y - CELL_PAD_Y * 2) / lh);
+        if (lines <= room) {
+          drawRow(cells, flagged);
+          break;
+        }
+        if (lines <= pageLines || room < 1) {
+          // Fits on a page of its own (or not even one line fits here): start a fresh page.
+          nextPage();
+          continue;
+        }
+        // Taller than a whole page: continue it over as many pages as it needs rather than clip it.
+        drawRow(cells.map((c) => c.slice(0, room)), flagged);
+        cells = cells.map((c) => c.slice(room));
+        nextPage();
+      }
     });
     y += 3;
   };
@@ -310,8 +349,31 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
 
   // ---------- 7 Certification ----------
   // Kept together on one page: a signature block split across pages isn't a signature block.
-  const consentLines = m.signer ? wrap(m.signer.consent.replace(/\n+/g, " "), CONTENT_W - 8) : [];
-  const certHeight = 78 + consentLines.length * lineHeight(9);
+  const CERT_COLUMNS: Column[] = [
+    { header: "", width: 58 },
+    { header: "", width: CONTENT_W - 58 },
+  ];
+  const certIntro = `Authorized representative of ${m.companyName} has reviewed and confirmed accuracy of this submission through Edgar Allan Advisory's intake process.`;
+  const certRows: [string, string][] = [
+    ["Name", m.signer?.name || "[Full Name]"],
+    ["Role", m.signer?.title || "[Role]"],
+    ["Company", m.companyName],
+    ["Signed", m.signer?.signedAtFull ?? "—"],
+    ["File ID", m.fileId],
+  ];
+  const consentText = m.signer?.consent.replace(/\n+/g, " ") ?? "";
+  const signedLine = m.signer
+    ? `Signed electronically by ${m.signer.name} on ${m.signer.signedAtFull}.`
+    : "Signed: ________________________      Date: _______________";
+  const dataNote =
+    "Data note: Information collected here constitutes employer HR records, not Protected Health Information under HIPAA. PHI protections apply upon enrollment submission to a health plan carrier.";
+  const certHeight =
+    4 + 6 + 9 + // rule, gap, heading
+    paragraphHeight(certIntro, 9, "normal", 3) +
+    tableHeight(CERT_COLUMNS, certRows) +
+    (m.signer ? 6 + paragraphHeight(consentText, 9, "italic", 3) : 0) +
+    paragraphHeight(signedLine, 9, "normal", 3) +
+    paragraphHeight(dataNote, 8, "normal", 0);
   ensure(certHeight);
   y += 4;
   pdf.setDrawColor(...ACCENT);
@@ -322,33 +384,14 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   setInk(INK);
   pdf.text("7 — Submission Certification", MARGIN, y + 3);
   y += 9;
-  paragraph(
-    `Authorized representative of ${m.companyName} has reviewed and confirmed accuracy of this submission through Edgar Allan Advisory's intake process.`,
-    9,
-    "normal",
-    MUTED,
-    3,
-  );
-  keyValues([
-    ["Name", m.signer?.name || "[Full Name]"],
-    ["Role", m.signer?.title || "[Role]"],
-    ["Company", m.companyName],
-    ["Signed", m.signer?.signedAtFull ?? "—"],
-    ["File ID", m.fileId],
-  ]);
+  paragraph(certIntro, 9, "normal", MUTED, 3);
+  table(CERT_COLUMNS, certRows, { header: false });
   if (m.signer) {
     subheading("Consent");
-    paragraph(m.signer.consent.replace(/\n+/g, " "), 9, "italic", INK, 3);
-    paragraph(`Signed electronically by ${m.signer.name} on ${m.signer.signedAtFull}.`, 9, "normal", MUTED, 3);
-  } else {
-    paragraph("Signed: ________________________      Date: _______________", 9, "normal", MUTED, 3);
+    paragraph(consentText, 9, "italic", INK, 3);
   }
-  paragraph(
-    "Data note: Information collected here constitutes employer HR records, not Protected Health Information under HIPAA. PHI protections apply upon enrollment submission to a health plan carrier.",
-    8,
-    "normal",
-    MUTED,
-  );
+  paragraph(signedLine, 9, "normal", MUTED, 3);
+  paragraph(dataNote, 8, "normal", MUTED);
 
   // ---------- Running header and footer ----------
   const pageCount = pdf.getNumberOfPages();

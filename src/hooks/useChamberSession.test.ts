@@ -200,6 +200,44 @@ describe("useChamberSession", () => {
       await act(async () => { updates[0].resolve({ error: null }); await pending; });
     });
 
+    it("certifies the snapshot that was submitted, not answers that changed while it was in flight", async () => {
+      resumeRow = { ...certifiedRow("in_progress"), submission: null };
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+
+      const pending = result.current.submit(submission);
+      await waitFor(() => expect(updates).toHaveLength(1));
+      // A pending extraction lands while the certification request is still out.
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Changed Mid-Flight" })));
+      const payload = updates[0].payload as { submission: { chamber_data: { company_name: string } } };
+      expect(payload.submission.chamber_data.company_name).toBe("Acme");
+
+      await act(async () => { updates[0].resolve({ error: null }); await pending; });
+      // The newer answers weren't covered, so the prospect is asked to certify again.
+      expect(result.current.certification.status).toBe("stale");
+    });
+
+    it("re-saves answers that changed in flight so a late certified write can't replace them", async () => {
+      resumeRow = { ...certifiedRow("in_progress"), submission: null };
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+
+      vi.useFakeTimers();
+      const pending = result.current.submit(submission);
+      await drain();
+      expect(updates).toHaveLength(1); // the certification write, still out
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Newer" })));
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      expect(updates).toHaveLength(2); // autosave of the newer answers overtakes it
+      await act(async () => { updates[1].resolve({ error: null }); });
+      await drain();
+      await act(async () => { updates[0].resolve({ error: null }); await pending; }); // the older snapshot lands last
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      await drain();
+      expect(updates).toHaveLength(3);
+      expect(updates[2].payload).toMatchObject({ chamber_data: { company_name: "Newer" } });
+    });
+
     it("stays uncertified when the submission fails to save", async () => {
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.sessionId).toBe("s1"));

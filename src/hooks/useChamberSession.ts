@@ -265,28 +265,37 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     const sid = sessionIdRef.current;
     if (!sid) return false;
     if (!(await flush())) return false;
+    // Certify exactly this snapshot: answers can still change (e.g. a pending extraction lands)
+    // while the request is in flight, and those newer answers were not what the signer saw.
+    const snapshot = dataRef.current;
     const { error } = await supabase
       .from("chamber_sessions")
       .update({
         status: "submitted",
         // Written alongside the certified copy so the two always agree, even when the saved row
         // predates fields that loading fills in (the database requires them to be identical).
-        chamber_data: dataRef.current as unknown as Json,
-        submission: { ...submission, chamber_data: dataRef.current } as unknown as Json,
+        chamber_data: snapshot as unknown as Json,
+        submission: { ...submission, chamber_data: snapshot } as unknown as Json,
       })
       .eq("id", sid);
     if (error) {
       console.error("Failed to submit session:", error);
       return false;
     }
-    const certified: CertificationState = {
-      status: "certified",
-      submission: { ...submission, chamber_data: dataRef.current },
+    const moved = dataRef.current !== snapshot;
+    const state: CertificationState = {
+      status: moved ? "stale" : "certified",
+      submission: { ...submission, chamber_data: snapshot },
     };
-    certificationRef.current = certified;
-    setCertification(certified);
+    certificationRef.current = state;
+    setCertification(state);
+    if (moved) {
+      // The certified write may have landed after a newer autosave; write the newer answers again.
+      dirtyRef.current = true;
+      scheduleSave();
+    }
     return true;
-  }, [flush]);
+  }, [flush, scheduleSave]);
 
   return { sessionId, resumeFailed, startNew, chamberData, messages, isLoading, setChamberData, addMessage, setMessages, submit, certification };
 }

@@ -117,6 +117,43 @@ describe("buildManuscriptPdf", () => {
   });
 });
 
+describe("buildManuscriptPdf pagination limits", () => {
+  const pageOf = (text: string, needle: string) => {
+    const at = text.indexOf(needle);
+    expect(at).toBeGreaterThan(-1);
+    // Each page's stream ends with its "Page n of N" footer, so footers before a match count its page.
+    return 1 + (text.slice(0, at).match(/\(Page \d+ of \d+\)/g) ?? []).length;
+  };
+
+  it("continues a row taller than a page onto the next pages instead of clipping it", async () => {
+    const words = Array.from({ length: 400 }, (_, i) => `w${i}`).join(" ");
+    const data = { ...DEMO_CHAMBER_DATA, employees: [{ ...DEMO_CHAMBER_DATA.employees[0], first_name: words }] };
+    const { text, pageCount } = await render(data);
+    expect(pageCount).toBeGreaterThanOrEqual(4);
+    for (const w of ["w0", "w199", "w399"]) expect(text).toMatch(new RegExp(`[ (]${w}[ )]`));
+    expect(occurrences(text, "(Coverage Tier)")).toBeGreaterThan(1); // header repeats on the continuation
+
+    // Clipped text is still in the file, just drawn past the page's bottom margin; check where it sits.
+    const MIN_BODY_Y_PT = 85; // body text ends at 32 mm from the bottom edge (90.7 pt); the footer sits at ~55 pt
+    const lows = [...text.matchAll(/([\d.]+) ([\d.]+) Td\s*\(([^)]*)\) Tj/g)]
+      .map((m) => ({ y: Number(m[2]), t: m[3] }))
+      .filter((l) => !/^Page \d+ of \d+$/.test(l.t) && !/ Generated [A-Z][a-z]+ \d+, \d{4}$/.test(l.t) && l.y < MIN_BODY_Y_PT);
+    expect(lows).toEqual([]);
+  });
+
+  it("keeps the whole certification block on one page wherever the previous section ends", async () => {
+    for (let n = 0; n <= 40; n++) {
+      const data = { ...DEMO_CHAMBER_DATA, employees: bigCensus.employees.slice(0, n) };
+      const { text } = await render(data);
+      const pages = ["7 \\227 Submission Certification", "(Role)", "Signed electronically by Jo Doe", "Data note: Information"].map((t) => {
+        const needle = t.startsWith("7") ? "Submission Certification" : t;
+        return pageOf(text, needle);
+      });
+      expect(new Set(pages).size, `employees=${n} pages=${pages}`).toBe(1);
+    }
+  });
+});
+
 describe("pdfSafe", () => {
   it("keeps Latin text and common typographic marks", () => {
     expect(pdfSafe("Café — “Ünïcode” • 100%")).toBe("Café — “Ünïcode” • 100%");
