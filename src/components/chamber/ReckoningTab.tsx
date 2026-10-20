@@ -9,11 +9,12 @@ import { fileIdForSession, type ChamberSubmission } from "@/data/manuscript";
 
 interface ReckoningTabProps {
   data: ChamberData;
+  peoName: string;
   sessionId: string | null;
   onSubmit: (submission: ChamberSubmission) => Promise<boolean>;
 }
 
-const ReckoningTab = ({ data, sessionId, onSubmit }: ReckoningTabProps) => {
+const ReckoningTab = ({ data, peoName, sessionId, onSubmit }: ReckoningTabProps) => {
   const [checks, setChecks] = useState([false, false, false]);
   const [signerName, setSignerName] = useState("");
   const [signerTitle, setSignerTitle] = useState("");
@@ -24,7 +25,7 @@ const ReckoningTab = ({ data, sessionId, onSubmit }: ReckoningTabProps) => {
   const attestations = [
     "The information I've provided is accurate and complete to the best of my knowledge.",
     "All employees listed are W-2. Any K-1 owners or 1099 contractors have been identified separately.",
-    "I authorize Edgar Allan Advisory to use this information to obtain a PEO quote on my behalf.",
+    `I authorize Edgar Allan Advisory to use this information to obtain a quote from ${peoName} on my behalf.`,
   ];
 
   const fileId = useMemo(() => (sessionId ? fileIdForSession(sessionId) : null), [sessionId]);
@@ -48,6 +49,7 @@ const ReckoningTab = ({ data, sessionId, onSubmit }: ReckoningTabProps) => {
       signer_title: signerTitle.trim(),
       signed_at: signedAt.toISOString(),
       file_id: fileId,
+      peo: peoName,
     });
     setSubmitting(false);
     if (ok) setSubmitted(true);
@@ -60,7 +62,7 @@ const ReckoningTab = ({ data, sessionId, onSubmit }: ReckoningTabProps) => {
         <div>
           <h2 className="font-display text-3xl font-bold mb-2">The Reckoning</h2>
           <p className="text-muted-foreground text-sm">
-            Confirm what you've shared before The Manuscript ships.
+            Confirm what you've shared before The Manuscript ships to {peoName}.
           </p>
         </div>
 
@@ -183,8 +185,8 @@ const ReckoningTab = ({ data, sessionId, onSubmit }: ReckoningTabProps) => {
                 <p className="text-sm text-muted-foreground mb-3">What's next:</p>
                 <ul className="text-sm text-foreground space-y-2">
                   <li>• Download The Manuscript below.</li>
-                  <li>• Send it to TriNet, or have it sent on your behalf.</li>
-                  <li>• TriNet follows up directly with pricing — typically 24–48 hours.</li>
+                  <li>• Send it to {peoName}, or have it sent on your behalf.</li>
+                  <li>• {peoName} follows up directly with pricing — typically 24–48 hours.</li>
                 </ul>
               </motion.div>
               <motion.div

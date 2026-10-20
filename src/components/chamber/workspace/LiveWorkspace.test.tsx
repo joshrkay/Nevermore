@@ -44,7 +44,22 @@ describe("LiveWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
     fireEvent.click(screen.getByRole("button", { name: "See Your PEO Matches →" }));
     expect(screen.getByRole("heading", { name: "PEO Match" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Proceed to The Reckoning →" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Proceed with .+ →$/ }));
     expect(screen.getByRole("heading", { name: "The Reckoning" })).toBeInTheDocument();
+  });
+
+  it("carries the chosen PEO into The Reckoning", () => {
+    render(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose Rippling" }));
+    expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("Rippling");
+    fireEvent.click(screen.getByRole("button", { name: "Proceed with Rippling →" }));
+    expect(screen.getByText(/ships to Rippling/)).toBeInTheDocument();
+    expect(screen.getByText(/obtain a quote from Rippling/)).toBeInTheDocument();
+    expect(screen.queryByText(/TriNet/)).not.toBeInTheDocument();
   });
 });

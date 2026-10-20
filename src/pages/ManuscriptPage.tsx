@@ -171,6 +171,9 @@ const ManuscriptPage = () => {
             </div>
           </div>
           <div className="border-t border-border pt-6 grid grid-cols-2 md:grid-cols-3 gap-y-4 gap-x-8 text-sm font-mono">
+            {d.submittedTo && (
+              <div><span className="text-muted-foreground text-xs block mb-0.5">SUBMITTED TO</span>{d.submittedTo} — Underwriting</div>
+            )}
             <div><span className="text-muted-foreground text-xs block mb-0.5">PREPARED BY</span>Edgar Allan Advisory · Lenore</div>
             <div><span className="text-muted-foreground text-xs block mb-0.5">DATE</span>{d.date}</div>
             <div><span className="text-muted-foreground text-xs block mb-0.5">FILE ID</span><span className="text-primary">{d.fileId}</span></div>

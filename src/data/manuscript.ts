@@ -6,6 +6,7 @@ export interface ChamberSubmission {
   signer_title: string;
   signed_at: string; // ISO timestamp
   file_id: string;
+  peo?: string; // PEO the client chose on PEO Match; absent on older submissions
 }
 
 /** Stable, human-readable file id derived from the session id. */
@@ -104,6 +105,7 @@ export interface Manuscript {
   fileId: string;
   date: string;
   companyName: string;
+  submittedTo: string | null;
   companyRows: [string, string][];
   workforceRows: [string, string][];
   states: { state: string; count: string; system: string }[];
@@ -145,6 +147,7 @@ export function buildManuscript(
     fileId: opts.fileId,
     date: fmtDate(date),
     companyName: data.company_name ?? "[Company name not provided]",
+    submittedTo: opts.submission?.peo ?? null,
     companyRows: [
       ["Legal Name", orDash(data.company_name)],
       ["HQ State", orDash(data.hq_state)],

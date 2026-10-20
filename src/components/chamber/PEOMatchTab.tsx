@@ -5,10 +5,12 @@ import { scorePEOs } from "@/data/peoScoring";
 
 interface PEOMatchTabProps {
   data: ChamberData;
+  selectedPeo: string;
+  onSelect: (name: string) => void;
   onProceed: () => void;
 }
 
-const PEOMatchTab = ({ data, onProceed }: PEOMatchTabProps) => {
+const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProps) => {
   const peoResults = useMemo(() => scorePEOs(data), [data]);
 
   const totalDependents = data.employees.reduce((sum, e) => sum + e.dependents.length, 0);
@@ -71,7 +73,9 @@ const PEOMatchTab = ({ data, onProceed }: PEOMatchTabProps) => {
       {/* PEO Cards */}
       <div className="space-y-4">
         {peoResults.map((peo, i) => (
-          <div key={peo.name} className="bg-card border border-border rounded-xl p-6 hover:border-primary/30 transition-colors">
+          <div key={peo.name} className={`bg-card border rounded-xl p-6 transition-colors ${
+            peo.name === selectedPeo ? "border-primary" : "border-border hover:border-primary/30"
+          }`}>
             <div className="flex items-start justify-between mb-3">
               <div>
                 <h3 className="font-display text-xl font-bold">{peo.name}</h3>
@@ -103,7 +107,19 @@ const PEOMatchTab = ({ data, onProceed }: PEOMatchTabProps) => {
                 <span key={s} className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground">{s}</span>
               ))}
             </div>
-            <p className="text-sm font-mono text-foreground">Estimated PEPM: {peo.pepmRange}</p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-mono text-foreground">Estimated PEPM: {peo.pepmRange}</p>
+              {peo.name === selectedPeo ? (
+                <span className="text-xs font-medium px-3 py-1.5 rounded-full bg-primary/15 text-primary">✓ Selected</span>
+              ) : (
+                <button
+                  onClick={() => onSelect(peo.name)}
+                  className="text-xs font-medium px-3 py-1.5 rounded-full border border-border hover:border-primary/40 transition-colors"
+                >
+                  Choose {peo.name}
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -112,7 +128,7 @@ const PEOMatchTab = ({ data, onProceed }: PEOMatchTabProps) => {
         onClick={onProceed}
         className="w-full bg-primary text-primary-foreground font-medium py-3 rounded-lg hover:bg-primary/90 transition-colors"
       >
-        Proceed to The Reckoning →
+        Proceed with {selectedPeo} →
       </button>
     </div>
   );

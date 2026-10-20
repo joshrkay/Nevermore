@@ -75,7 +75,16 @@ describe("buildManuscript", () => {
     expect(m.companyName).toBe("Acme Robotics");
     expect(m.states).toEqual([{ state: "OH", count: "1", system: "State fund" }]);
     expect(m.signer?.name).toBe("Jo Doe");
+    expect(m.submittedTo).toBeNull(); // older submissions have no PEO recorded
     expect(JSON.stringify(m)).not.toMatch(/Meridian/);
+  });
+
+  it("names the PEO chosen at submission", () => {
+    const m = buildManuscript(EMPTY_CHAMBER_DATA, {
+      fileId: "EAA-1",
+      submission: { signer_name: "Jo", signer_title: "", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1", peo: "Justworks" },
+    });
+    expect(m.submittedTo).toBe("Justworks");
   });
 
   it("counts dependent tiers and lists open items for the demo data", () => {
