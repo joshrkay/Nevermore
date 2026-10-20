@@ -3,8 +3,9 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { useAuth } from "@/hooks/useAuth";
 import type { ChamberData } from "@/data/chamberTypes";
-import type { ChatMessage } from "@/data/mockData";
-import { createChatMessage } from "@/data/mockData";
+import type { ChatMessage } from "@/data/chat";
+import { createChatMessage, parseTranscript } from "@/data/chat";
+import { parseChamberData } from "@/data/chamberValidation";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberSubmission } from "@/data/manuscript";
 
@@ -23,7 +24,11 @@ const OPENING_MESSAGE = "Good evening. I'm Lenore — your guide through The Cha
 
 const SAVE_DELAY_MS = 2000;
 
-export function useChamberSession(): UseChamberSessionReturn {
+/**
+ * Resumes `requestedSessionId` when it belongs to the signed-in user, otherwise
+ * starts a fresh session. Only the id present on first render is used.
+ */
+export function useChamberSession(requestedSessionId?: string | null): UseChamberSessionReturn {
   const { user } = useAuth();
   // Depend on the id, not the object: token refreshes hand out a new User object.
   const userId = user?.id;
@@ -37,6 +42,7 @@ export function useChamberSession(): UseChamberSessionReturn {
   const dataRef = useRef(chamberData);
   const messagesRef = useRef(messages);
   const sessionIdRef = useRef(sessionId);
+  const requestedIdRef = useRef(requestedSessionId ?? null);
 
   // Keep refs fresh
   useEffect(() => { dataRef.current = chamberData; }, [chamberData]);
@@ -84,12 +90,34 @@ export function useChamberSession(): UseChamberSessionReturn {
     };
   }, [flush]);
 
-  // Create a session
+  // Resume or create a session
   useEffect(() => {
     if (!userId) { setIsLoading(false); return; }
+    let cancelled = false;
 
-    const init = async () => {
-      // Always start a fresh session
+    const resume = async (id: string) => {
+      // RLS only returns the user's own sessions.
+      const { data, error } = await supabase
+        .from("chamber_sessions")
+        .select("id, chamber_data, transcript")
+        .eq("id", id)
+        .maybeSingle();
+      if (error) console.error("Failed to load session:", error);
+      if (!data) return false;
+      const loadedData = parseChamberData(data.chamber_data);
+      const loadedMessages = parseTranscript(data.transcript);
+      dataRef.current = loadedData;
+      setChamberDataRaw(loadedData);
+      if (loadedMessages.length > 0) {
+        messagesRef.current = loadedMessages;
+        setMessages(loadedMessages);
+      }
+      sessionIdRef.current = data.id;
+      setSessionId(data.id);
+      return true;
+    };
+
+    const create = async () => {
       const { data: newSession, error } = await supabase
         .from("chamber_sessions")
         .insert({
@@ -102,16 +130,24 @@ export function useChamberSession(): UseChamberSessionReturn {
 
       if (error) {
         console.error("Failed to create session:", error);
-      } else if (newSession) {
+      } else if (newSession && !cancelled) {
         sessionIdRef.current = newSession.id;
         setSessionId(newSession.id);
         // Anything captured while the row was being created still needs saving.
         if (dirtyRef.current) scheduleSave();
       }
-      setIsLoading(false);
+    };
+
+    const init = async () => {
+      const requested = requestedIdRef.current;
+      const resumed = requested ? await resume(requested) : false;
+      if (cancelled) return;
+      if (!resumed) await create();
+      if (!cancelled) setIsLoading(false);
     };
 
     init();
+    return () => { cancelled = true; };
   }, [userId, scheduleSave]);
 
   const setChamberData = useCallback((updater: ChamberData | ((prev: ChamberData) => ChamberData)) => {

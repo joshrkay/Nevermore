@@ -12,6 +12,7 @@ interface UploadedDoc {
   doc_type: string;
   status: string;
   metadata: string | null;
+  storage_path: string | null; // null while the upload is in flight
 }
 
 interface UploadTabProps {
@@ -49,7 +50,7 @@ const UploadTab = ({ onFilesUploaded }: UploadTabProps) => {
     const loadDocs = async () => {
       const { data } = await supabase
         .from("documents")
-        .select("id, file_name, file_size, doc_type, status, metadata")
+        .select("id, file_name, file_size, doc_type, status, metadata, storage_path")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
       if (data && data.length > 0) {
@@ -69,20 +70,24 @@ const UploadTab = ({ onFilesUploaded }: UploadTabProps) => {
 
       setUploading(true);
 
-      const pendingDocs: UploadedDoc[] = acceptedFiles.map((f, i) => ({
-        id: `pending-${i}`,
+      const pendingDocs: UploadedDoc[] = acceptedFiles.map((f) => ({
+        id: `pending-${crypto.randomUUID()}`,
         file_name: f.name,
         file_size: formatFileSize(f.size),
         doc_type: guessDocType(f.name),
         status: "uploading",
         metadata: null,
+        storage_path: null,
       }));
+      const pendingIds = new Set(pendingDocs.map((d) => d.id));
       setDocs((prev) => [...prev, ...pendingDocs]);
 
       const uploaded: UploadedDoc[] = [];
 
       for (const file of acceptedFiles) {
-        const storagePath = `${user.id}/${Date.now()}_${file.name}`;
+        // Unique prefix avoids collisions; strip characters storage keys don't allow.
+        const safeName = file.name.replace(/[^\w.-]+/g, "_");
+        const storagePath = `${user.id}/${crypto.randomUUID()}_${safeName}`;
 
         const { error: storageError } = await supabase.storage
           .from("documents")
@@ -110,6 +115,8 @@ const UploadTab = ({ onFilesUploaded }: UploadTabProps) => {
 
         if (dbError) {
           toast.error(`Failed to save ${file.name}: ${dbError.message}`);
+          // Don't leave an untracked file behind.
+          await supabase.storage.from("documents").remove([storagePath]);
           continue;
         }
 
@@ -120,11 +127,12 @@ const UploadTab = ({ onFilesUploaded }: UploadTabProps) => {
           doc_type: data.doc_type,
           status: data.status,
           metadata: data.metadata,
+          storage_path: data.storage_path,
         });
       }
 
       setDocs((prev) => [
-        ...prev.filter((d) => !d.id.startsWith("pending-")),
+        ...prev.filter((d) => !pendingIds.has(d.id)),
         ...uploaded,
       ]);
 
@@ -139,6 +147,14 @@ const UploadTab = ({ onFilesUploaded }: UploadTabProps) => {
   );
 
   const handleDelete = async (doc: UploadedDoc) => {
+    // Remove the file first so a failure never leaves an orphaned object without a row pointing at it.
+    if (doc.storage_path) {
+      const { error: storageError } = await supabase.storage.from("documents").remove([doc.storage_path]);
+      if (storageError) {
+        toast.error("Failed to delete document.");
+        return;
+      }
+    }
     const { error } = await supabase.from("documents").delete().eq("id", doc.id);
     if (error) {
       toast.error("Failed to delete document.");

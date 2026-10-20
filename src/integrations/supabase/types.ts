@@ -14,6 +14,24 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_request_log: {
+        Row: {
+          created_at: string
+          id: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: never
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: never
+          user_id?: string
+        }
+        Relationships: []
+      }
       chamber_sessions: {
         Row: {
           chamber_data: Json
@@ -121,7 +139,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      consume_ai_quota: {
+        Args: { per_day: number; per_minute: number }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never

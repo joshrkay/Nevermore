@@ -14,7 +14,8 @@ const AuthPage = () => {
   const { user, loading: authLoading, signIn, signUp } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? "/start";
+  const fromLocation = (location.state as { from?: { pathname: string; search?: string } } | null)?.from;
+  const from = fromLocation ? `${fromLocation.pathname}${fromLocation.search ?? ""}` : "/start";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

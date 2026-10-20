@@ -9,6 +9,8 @@ const corsHeaders = {
 // Caps keep a single request from running up AI costs.
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_CONTEXT_CHARS = 20000;
+const REQUESTS_PER_MINUTE = 15;
+const REQUESTS_PER_DAY = 300;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -56,6 +58,13 @@ serve(async (req) => {
     );
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return json({ error: "Unauthorized" }, 401);
+
+    const { data: allowed, error: quotaError } = await supabase.rpc("consume_ai_quota", {
+      per_minute: REQUESTS_PER_MINUTE,
+      per_day: REQUESTS_PER_DAY,
+    });
+    if (quotaError) throw quotaError;
+    if (!allowed) return json({ error: "Rate limited, please try again shortly." }, 429);
 
     const { message, context } = await req.json();
     if (typeof message !== "string" || !message.trim()) {

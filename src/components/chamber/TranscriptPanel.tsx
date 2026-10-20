@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { Send } from "lucide-react";
-import type { ChatMessage } from "@/data/mockData";
+import type { ChatMessage } from "@/data/chat";
 
 interface TranscriptPanelProps {
   messages: ChatMessage[];

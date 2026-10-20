@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { RavenIcon } from "./RavenLogo";
 import { useAuth } from "@/hooks/useAuth";
 
 // Sends signed-out visitors to /login, remembering where they were headed.
@@ -11,7 +11,10 @@ const RequireAuth = ({ children }: { children: ReactNode }) => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-6 h-6 text-primary animate-spin" />
+        <div className="text-center">
+          <RavenIcon className="w-10 h-10 text-primary mx-auto mb-4 animate-pulse" />
+          <p className="text-sm text-muted-foreground">Entering The Chamber...</p>
+        </div>
       </div>
     );
   }

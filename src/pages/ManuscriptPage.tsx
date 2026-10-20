@@ -85,6 +85,7 @@ const ManuscriptPage = () => {
   }, [state]);
 
   const isSample = state.kind === "sample";
+  const backUrl = state.kind === "ready" && sessionId ? `/start?session=${sessionId}` : "/start";
 
   const handleDownloadPDF = async () => {
     if (!manuscriptRef.current || !d) return;
@@ -136,7 +137,7 @@ const ManuscriptPage = () => {
       {/* Sticky actions bar */}
       <div className="sticky top-0 z-40 bg-background/95 backdrop-blur-md border-b border-border">
         <div className="container mx-auto max-w-5xl px-6 h-14 flex items-center justify-between">
-          <Link to="/start" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition-colors">
+          <Link to={backUrl} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition-colors">
             <ArrowLeft className="w-4 h-4" /> {isSample ? "Start Yours" : "Back to Review"}
           </Link>
           <div className="flex items-center gap-3">
@@ -380,7 +381,7 @@ const ManuscriptPage = () => {
             className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors">
             <Download className="w-5 h-5" /> Download The Manuscript (PDF)
           </button>
-          <Link to="/start"
+          <Link to={backUrl}
             className="inline-flex items-center justify-center gap-2 border border-border text-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-muted transition-colors">
             <ArrowLeft className="w-5 h-5" /> {isSample ? "Start Yours" : "Back to Review"}
           </Link>

@@ -110,7 +110,7 @@ const ReviewTab = ({ data, onProceed }: ReviewTabProps) => {
         onClick={onProceed}
         className="w-full bg-primary text-primary-foreground font-medium py-3 rounded-lg hover:bg-primary/90 transition-colors"
       >
-        Proceed to The Reckoning →
+        See Your PEO Matches →
       </button>
     </div>
   );

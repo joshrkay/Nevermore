@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useConversation } from "@elevenlabs/react";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
-import type { ChatMessage } from "@/data/mockData";
-import { createChatMessage } from "@/data/mockData";
+import type { ChatMessage } from "@/data/chat";
+import { createChatMessage } from "@/data/chat";
 
 const AGENT_ID: string | undefined = import.meta.env.VITE_ELEVENLABS_AGENT_ID;
 

@@ -1,4 +1,6 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLenoreVoice } from "@/hooks/useLenoreVoice";
 import { useChamberSession } from "@/hooks/useChamberSession";
@@ -6,9 +8,10 @@ import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import TranscriptPanel from "@/components/chamber/TranscriptPanel";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
-import { createChatMessage } from "@/data/mockData";
+import { createChatMessage } from "@/data/chat";
 import { mergeChamberData } from "@/data/chamberValidation";
 import { supabase } from "@/integrations/supabase/client";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 
 const ChamberPage = () => {
   const isMobile = useIsMobile();
@@ -16,14 +19,23 @@ const ChamberPage = () => {
   const [lastSpokenText, setLastSpokenText] = useState("Hi — I'm Lenore. I'll get you through this quickly. Are you here for your own company, or on behalf of a client?");
   const chatInputRef = useRef<HTMLInputElement>(null);
 
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     sessionId,
     chamberData,
     messages,
+    isLoading: sessionLoading,
     setChamberData,
     addMessage,
     submit,
-  } = useChamberSession();
+  } = useChamberSession(searchParams.get("session"));
+
+  // Keep the session in the URL so a refresh or "Back to Review" resumes it.
+  useEffect(() => {
+    if (sessionId && searchParams.get("session") !== sessionId) {
+      setSearchParams({ session: sessionId }, { replace: true });
+    }
+  }, [sessionId, searchParams, setSearchParams]);
 
   const addLenoreMessage = useCallback((text: string) => {
     addMessage(createChatMessage("lenore", text));
@@ -62,6 +74,10 @@ const ChamberPage = () => {
     } catch (err) {
       console.error("Extraction error:", err);
       setOrbState("idle");
+      if (err instanceof FunctionsHttpError && err.context?.status === 429) {
+        addLenoreMessage("Let's take a breath — you're writing faster than I can keep up. Give me a minute, then continue.");
+        return;
+      }
       addLenoreMessage("I caught that. Tell me more — how many employees are you looking to cover?");
     }
   }, [addLenoreMessage, addMessage, chamberData, setChamberData]);
@@ -69,6 +85,14 @@ const ChamberPage = () => {
   const handleTypeInstead = () => {
     chatInputRef.current?.focus();
   };
+
+  if (sessionLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-6 h-6 text-primary animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen flex flex-col bg-background">
