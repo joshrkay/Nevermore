@@ -23,6 +23,7 @@ interface UseChamberSessionReturn {
 const OPENING_MESSAGE = "Good evening. I'm Lenore — your guide through The Chamber. Before we begin, I want to be transparent: what you see in the workspace beside us is a demonstration. By the time our conversation is complete, it will hold your company's information instead. Shall we begin with something simple — tell me a little about your business and what you do.";
 
 const SAVE_DELAY_MS = 2000;
+const SAVE_RETRY_MS = 10000;
 
 /**
  * Resumes `requestedSessionId` when it belongs to the signed-in user, otherwise
@@ -39,6 +40,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyRef = useRef(false);
+  const inFlightRef = useRef<Promise<boolean> | null>(null);
+  const mountedRef = useRef(true);
   const dataRef = useRef(chamberData);
   const messagesRef = useRef(messages);
   const sessionIdRef = useRef(sessionId);
@@ -50,27 +53,41 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
 
   // Writes pending changes immediately. Safe to call when nothing is pending.
-  const flush = useCallback(async () => {
+  // Resolves true once everything captured so far is saved.
+  const flush = useCallback(async (): Promise<boolean> => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
+    // A save already in flight has cleared the dirty flag; wait for its outcome
+    // so callers (e.g. submit) don't treat an unconfirmed write as saved.
+    if (inFlightRef.current) await inFlightRef.current;
     const sid = sessionIdRef.current;
     if (!sid || !dirtyRef.current) return true;
     dirtyRef.current = false;
-    const { error } = await supabase
-      .from("chamber_sessions")
-      .update({
-        chamber_data: dataRef.current as unknown as Json,
-        transcript: messagesRef.current as unknown as Json,
-      })
-      .eq("id", sid);
-    if (error) {
+    const save = (async () => {
+      const { error } = await supabase
+        .from("chamber_sessions")
+        .update({
+          chamber_data: dataRef.current as unknown as Json,
+          transcript: messagesRef.current as unknown as Json,
+        })
+        .eq("id", sid);
+      if (!error) return true;
       dirtyRef.current = true;
       console.error("Failed to save session:", error);
+      // Retry later so a transient failure isn't lost when no further edits arrive.
+      if (mountedRef.current && !saveTimerRef.current) {
+        saveTimerRef.current = setTimeout(flush, SAVE_RETRY_MS);
+      }
       return false;
+    })();
+    inFlightRef.current = save;
+    try {
+      return await save;
+    } finally {
+      if (inFlightRef.current === save) inFlightRef.current = null;
     }
-    return true;
   }, []);
 
   // Debounced save
@@ -84,7 +101,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   useEffect(() => {
     const onBeforeUnload = () => { void flush(); };
     window.addEventListener("beforeunload", onBeforeUnload);
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       window.removeEventListener("beforeunload", onBeforeUnload);
       void flush();
     };

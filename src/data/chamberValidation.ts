@@ -32,6 +32,21 @@ const count = z.preprocess(
   z.number().int().nonnegative().max(1_000_000),
 );
 
+// Maps common spellings to the two classifications. A missing label means a regular
+// employee (rosters rarely label W-2s), but an unrecognized label is rejected rather
+// than guessed: miscounting a contractor as W-2 corrupts headcount and AB5 flags.
+const classification = z.preprocess(
+  (v) => {
+    if (v === undefined || v === null || v === "") return "W2";
+    if (typeof v !== "string") return v;
+    const key = v.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+    if (/^(w ?2|w ?2 employee|employee|full time|part time)$/.test(key)) return "W2";
+    if (/^(1099|1099 contractor|contractor|independent contractor|freelance|freelancer)$/.test(key)) return "1099";
+    return v;
+  },
+  z.enum(["W2", "1099"]),
+);
+
 // Cast because the app tsconfig is non-strict, which makes zod infer every key as optional.
 const employeeSchema = z.object({
   first_name: text,
@@ -40,7 +55,7 @@ const employeeSchema = z.object({
   state: z.string().trim().max(2).transform((s) => s.toUpperCase()).catch(""),
   title: z.string().trim().max(200).catch(""),
   salary: count.nullable().catch(null),
-  classification: z.enum(["W2", "1099"]).catch("W2"),
+  classification,
   dependents: listOf(
     z.object({
       first_name: text,

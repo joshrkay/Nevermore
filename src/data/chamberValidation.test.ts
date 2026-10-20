@@ -36,7 +36,7 @@ describe("sanitizeChamberPatch", () => {
   it("keeps valid employees, fills defaults, and drops nameless ones", () => {
     const patch = sanitizeChamberPatch({
       employees: [
-        { first_name: "Ada", state: "ca", classification: "contractor", dependents: [{ first_name: "Bo", relationship: "kid" }] },
+        { first_name: "Ada", state: "ca", dependents: [{ first_name: "Bo", relationship: "kid" }] },
         { last_name: "No first name" },
         "garbage",
       ],
@@ -53,6 +53,28 @@ describe("sanitizeChamberPatch", () => {
         dependents: [{ first_name: "Bo", last_name: "", dob: "", relationship: "other" }],
       },
     ]);
+  });
+});
+
+describe("worker classification", () => {
+  const classify = (classification: unknown) =>
+    sanitizeChamberPatch({ employees: [{ first_name: "Ada", classification }] }).employees?.map((e) => e.classification);
+
+  it("normalizes common spellings", () => {
+    expect(classify("w-2")).toEqual(["W2"]);
+    expect(classify("Employee")).toEqual(["W2"]);
+    expect(classify("1099 Contractor")).toEqual(["1099"]);
+    expect(classify("independent_contractor")).toEqual(["1099"]);
+    expect(classify("freelancer")).toEqual(["1099"]);
+  });
+
+  it("treats a missing label as W-2", () => {
+    expect(classify(undefined)).toEqual(["W2"]);
+  });
+
+  it("drops workers whose label can't be recognized instead of counting them as W-2", () => {
+    expect(classify("K-1 owner")).toEqual([]);
+    expect(classify(42)).toEqual([]);
   });
 });
 
