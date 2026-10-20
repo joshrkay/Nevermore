@@ -1,21 +1,33 @@
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { fieldOpenItems, formatFieldValue, type FieldAction, type ProvenanceMap } from "@/data/provenance";
-import { CheckCircle, AlertTriangle, HelpCircle } from "lucide-react";
+import { categoryInfo, missingRecommended } from "@/data/documentCategories";
+import { documentStatusInfo } from "@/data/documentStatus";
+import { CheckCircle, AlertTriangle, HelpCircle, FileText } from "lucide-react";
 import ProvenanceField from "./ProvenanceField";
+
+interface ReviewDocument {
+  id: string;
+  file_name: string;
+  category: string;
+  status: string;
+}
 
 interface ReviewTabProps {
   data: ChamberData;
   provenance?: ProvenanceMap;
   onAction?: (action: FieldAction) => void;
   onProceed: () => void;
+  documents?: ReviewDocument[];
 }
 
-const ReviewTab = ({ data, provenance = {}, onAction, onProceed }: ReviewTabProps) => {
+const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] }: ReviewTabProps) => {
   const eeCount = headcount(data);
   const needsReview = fieldOpenItems(provenance);
   const checks = eligibilityChecks(data);
   const flaggedEmployees = data.employees.filter(e => employeeFlag(e) !== null);
+  const uploaded = documents.filter((d) => d.status !== "uploading");
+  const missing = missingRecommended(uploaded);
 
   return (
     <div className="p-6 space-y-6">
@@ -132,6 +144,37 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed }: ReviewTabProp
           </div>
         </div>
       )}
+
+      {/* Documents — informational only; missing ones never block moving on */}
+      <div className="bg-card border border-border rounded-xl p-6">
+        <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">
+          Documents — {uploaded.length} uploaded
+        </p>
+        {uploaded.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No documents uploaded. That's fine — you can still continue.</p>
+        ) : (
+          <ul className="space-y-2">
+            {uploaded.map((d) => {
+              const status = documentStatusInfo(d.status);
+              return (
+                <li key={d.id} className="flex items-center gap-2.5 text-sm">
+                  <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                  <span className="flex-1 min-w-0 truncate">{d.file_name}</span>
+                  <span className="text-xs text-muted-foreground">{categoryInfo(d.category).label}</span>
+                  <span className={`text-xs ${status.tone === "warn" ? "text-warning" : "text-muted-foreground"}`}>
+                    {status.label}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {missing.length > 0 && (
+          <p className="text-sm text-muted-foreground mt-4">
+            Helpful if you have them: {missing.map((c) => c.label.toLowerCase()).join(", ")}.
+          </p>
+        )}
+      </div>
 
       <button
         onClick={onProceed}

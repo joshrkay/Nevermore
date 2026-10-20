@@ -36,6 +36,18 @@ describe("useAuth guest accounts", () => {
     expect(outcome?.error).toBeNull();
   });
 
+  it("passes the CAPTCHA token to Supabase when a guest session is requested", async () => {
+    const { result } = await mountAuth();
+    await act(async () => { await result.current.signInAnonymously("turnstile-token"); });
+    expect(authApi.signInAnonymously).toHaveBeenCalledWith({ options: { captchaToken: "turnstile-token" } });
+  });
+
+  it("asks for a guest session without a CAPTCHA option when there is no token", async () => {
+    const { result } = await mountAuth();
+    await act(async () => { await result.current.signInAnonymously(); });
+    expect(authApi.signInAnonymously).toHaveBeenCalledWith(undefined);
+  });
+
   it("reports whether the current user is still a guest", async () => {
     currentSession = { user: { id: "g1", is_anonymous: true } };
     const guest = await mountAuth();

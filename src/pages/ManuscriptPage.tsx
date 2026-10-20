@@ -52,6 +52,7 @@ const renderRows = (rows: ManuscriptRow[], provenance: ProvenanceMap) =>
     <DataRow key={label} label={label} value={value} provenance={field ? provenance[field] : undefined} />
   ));
 
+
 type LoadState =
   | { kind: "sample" }
   | { kind: "no_session" }

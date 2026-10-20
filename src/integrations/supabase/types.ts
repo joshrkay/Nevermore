@@ -129,39 +129,59 @@ export type Database = {
       }
       documents: {
         Row: {
+          category: string
           created_at: string
-          doc_type: string
+          extraction: Json | null
           file_name: string
           file_size: string
           id: string
           metadata: string | null
+          mime_type: string | null
+          session_id: string | null
+          size_bytes: number | null
           status: string
           storage_path: string
           user_id: string
         }
         Insert: {
+          category?: string
           created_at?: string
-          doc_type: string
+          extraction?: Json | null
           file_name: string
           file_size: string
           id?: string
           metadata?: string | null
+          mime_type?: string | null
+          session_id?: string | null
+          size_bytes?: number | null
           status?: string
           storage_path: string
           user_id: string
         }
         Update: {
+          category?: string
           created_at?: string
-          doc_type?: string
+          extraction?: Json | null
           file_name?: string
           file_size?: string
           id?: string
           metadata?: string | null
+          mime_type?: string | null
+          session_id?: string | null
+          size_bytes?: number | null
           status?: string
           storage_path?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "documents_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "chamber_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       manuscript_versions: {
         Row: {

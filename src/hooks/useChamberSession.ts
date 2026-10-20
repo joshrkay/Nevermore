@@ -7,6 +7,7 @@ import type { ChatMessage } from "@/data/chat";
 import { createChatMessage, parseTranscript } from "@/data/chat";
 import { parseChamberData } from "@/data/chamberValidation";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import {
   certificationFromRow,
   NO_CERTIFICATION,
@@ -255,7 +256,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
 
   // Certification covers the answers as they were signed. The database withdraws it the
   // moment the saved answers differ; mirror that here so the prospect sees it right away.
-  const markStaleIfChanged = useCallback((prev: ChamberData, next: ChamberData) => {
+  const withdrawIfChanged = useCallback((prev: ChamberData, next: ChamberData) => {
     const current = certificationRef.current;
     if (current.status === "certified" && JSON.stringify(next) !== JSON.stringify(prev)) {
       const stale: CertificationState = { status: "stale", submission: current.submission };
@@ -269,21 +270,21 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     const next = typeof updater === "function" ? updater(prev) : updater;
     dataRef.current = next;
     setChamberDataRaw(next);
-    markStaleIfChanged(prev, next);
+    withdrawIfChanged(prev, next);
     scheduleSave();
-  }, [scheduleSave, markStaleIfChanged]);
+  }, [scheduleSave, withdrawIfChanged]);
 
   const updateIntake = useCallback((updater: (prev: IntakeState) => IntakeState) => {
     // Read and write through the refs so data and provenance never come from different renders.
-    const prevData = dataRef.current;
-    const next = updater({ data: prevData, provenance: provenanceRef.current });
+    const prev = dataRef.current;
+    const next = updater({ data: prev, provenance: provenanceRef.current });
     dataRef.current = next.data;
     provenanceRef.current = next.provenance;
     setChamberDataRaw(next.data);
     setProvenanceRaw(next.provenance);
-    markStaleIfChanged(prevData, next.data);
+    withdrawIfChanged(prev, next.data);
     scheduleSave();
-  }, [scheduleSave, markStaleIfChanged]);
+  }, [scheduleSave, withdrawIfChanged]);
 
   const addMessage = useCallback((msg: ChatMessage) => {
     setMessages(prev => {
@@ -318,12 +319,26 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     }
     const certified: CertificationState = {
       status: "certified",
-      submission: { ...submission, chamber_data: dataRef.current },
+      submission: { ...submission, chamber_data: dataRef.current, field_provenance: provenanceRef.current },
     };
     certificationRef.current = certified;
     setCertification(certified);
     return true;
   }, [flush]);
 
-  return { sessionId, resumeFailed, startNew, chamberData, provenance, messages, isLoading, setChamberData, updateIntake, addMessage, setMessages, submit, certification };
+  return {
+    sessionId,
+    resumeFailed,
+    startNew,
+    chamberData,
+    provenance,
+    messages,
+    isLoading,
+    setChamberData,
+    updateIntake,
+    addMessage,
+    setMessages,
+    submit,
+    certification,
+  };
 }

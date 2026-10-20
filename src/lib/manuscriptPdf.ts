@@ -188,8 +188,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     y += 3;
   };
 
-  // Rows may carry a field key after the label and value; only those two are printed.
-  const keyValues = (rows: readonly (readonly [string, string, ...unknown[]])[]) =>
+  const keyValues = (rows: [string, string, ...unknown[]][]) =>
     table(
       [
         { header: "", width: 58 },
