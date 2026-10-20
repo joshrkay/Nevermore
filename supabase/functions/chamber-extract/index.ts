@@ -1,0 +1,145 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
+
+const SYSTEM_PROMPT = `You are a data extraction assistant for an HR/PEO underwriting system. 
+Given a user message from a business discovery conversation, extract any structured data fields you can identify.
+
+You MUST use the extract_chamber_data tool to return the extracted fields. Only include fields that are clearly stated or strongly implied. Do not guess.
+
+Field definitions:
+- company_name: Company or business name
+- industry: Industry or business type
+- hq_state: Two-letter US state code for headquarters
+- states: Array of two-letter state codes where employees work
+- employee_count: Total number of employees (integer)
+- start_month: Desired benefits start date
+- virgin_medical: true if they've never had employer-sponsored health insurance, false if switching
+- current_carrier: Current insurance carrier name
+- renewal_date: Current policy renewal date
+- payroll_vendor: Current payroll provider
+- pay_frequency: How often they run payroll (weekly, bi-weekly, semi-monthly, monthly)
+- has_401k: Whether they offer 401k
+- has_1099: Whether they have 1099 contractors
+- ca_contractors: Whether they have contractors in California
+- has_handbook: Whether they have an employee handbook
+- key_challenges: Main HR/compliance challenges described
+- business_goals: Business goals mentioned`;
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const { message, context } = await req.json();
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+
+    const userPrompt = context
+      ? `Previous context (already captured data): ${JSON.stringify(context)}\n\nNew user message: "${message}"`
+      : `User message: "${message}"`;
+
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "extract_chamber_data",
+              description: "Extract structured business data fields from the user message",
+              parameters: {
+                type: "object",
+                properties: {
+                  company_name: { type: "string" },
+                  industry: { type: "string" },
+                  hq_state: { type: "string" },
+                  states: { type: "array", items: { type: "string" } },
+                  employee_count: { type: "integer" },
+                  start_month: { type: "string" },
+                  virgin_medical: { type: "boolean" },
+                  current_carrier: { type: "string" },
+                  renewal_date: { type: "string" },
+                  payroll_vendor: { type: "string" },
+                  pay_frequency: { type: "string" },
+                  has_401k: { type: "boolean" },
+                  has_1099: { type: "boolean" },
+                  ca_contractors: { type: "boolean" },
+                  has_handbook: { type: "boolean" },
+                  key_challenges: { type: "string" },
+                  business_goals: { type: "string" },
+                  reply: { type: "string", description: "A natural conversational reply from Lenore, the gothic HR advisor. Keep her tone intelligent, warm, and slightly literary. Ask a follow-up question to continue the discovery." },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+        ],
+        tool_choice: { type: "function", function: { name: "extract_chamber_data" } },
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("AI gateway error:", response.status, errText);
+
+      if (response.status === 429) {
+        return new Response(JSON.stringify({ error: "Rate limited, please try again shortly." }), {
+          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (response.status === 402) {
+        return new Response(JSON.stringify({ error: "AI credits exhausted." }), {
+          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ error: "AI extraction failed" }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const data = await response.json();
+    const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+
+    if (!toolCall) {
+      return new Response(JSON.stringify({ extracted: {}, reply: null }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const args = JSON.parse(toolCall.function.arguments);
+    const reply = args.reply || null;
+    delete args.reply;
+
+    // Remove null/undefined values
+    const extracted: Record<string, any> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (v !== null && v !== undefined && v !== "") {
+        extracted[k] = v;
+      }
+    }
+
+    return new Response(JSON.stringify({ extracted, reply }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (e) {
+    console.error("chamber-extract error:", e);
+    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+});
