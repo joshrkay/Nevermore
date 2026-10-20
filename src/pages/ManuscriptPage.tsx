@@ -36,6 +36,7 @@ type LoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "unsigned" }
+  | { kind: "recertify" }
   | { kind: "ready"; data: ChamberData; submission: ChamberSubmission | null; fileId: string };
 
 // `demo` renders the fictional sample; the live route never does.
@@ -73,7 +74,12 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           return;
         }
         const submission = (data.submission as unknown as ChamberSubmission | null) ?? null;
-        // Only a signed submission becomes a certified manuscript.
+        // Only a signed submission becomes a certified manuscript. A signed one whose status
+        // moved back means the information changed after certification.
+        if (data.status !== "submitted" && submission?.signer_name) {
+          setState({ kind: "recertify" });
+          return;
+        }
         if (data.status !== "submitted" || !submission?.signer_name) {
           setState({ kind: "unsigned" });
           return;
@@ -151,6 +157,22 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         <div className="text-center max-w-md">
           <p className="text-muted-foreground mb-4">
             This manuscript hasn't been signed yet. Complete The Reckoning to certify and generate it.
+          </p>
+          <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
+            Back to The Chamber
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.kind === "recertify") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-6">
+        <div className="text-center max-w-md">
+          <p className="text-muted-foreground mb-4">
+            Your information changed after you certified it, so that certification no longer applies. Review it and
+            certify again in The Reckoning to get an up-to-date Manuscript.
           </p>
           <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
             Back to The Chamber

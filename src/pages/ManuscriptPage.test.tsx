@@ -38,6 +38,25 @@ describe("ManuscriptPage", () => {
     expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
   });
 
+  it("says the certification no longer applies when the information changed after it", async () => {
+    row = {
+      chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Edited Later Inc" },
+      submission: {
+        signer_name: "Jo Doe",
+        signer_title: "CEO",
+        signed_at: "2026-05-01T12:00:00Z",
+        file_id: "EAA-2026-ABC",
+        chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co" },
+      },
+      status: "in_progress",
+      created_at: "2026-05-01T00:00:00Z",
+    };
+    renderAt("/manuscript?session=s1");
+    expect(await screen.findByText(/changed after you certified it/)).toBeInTheDocument();
+    expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Back to The Chamber/ })).toHaveAttribute("href", "/start?session=s1");
+  });
+
   it("renders the data as signed, not later edits", async () => {
     row = {
       chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Edited Later Inc" },
