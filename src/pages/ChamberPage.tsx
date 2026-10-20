@@ -22,6 +22,8 @@ const ChamberPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
     sessionId,
+    resumeFailed,
+    startNew,
     chamberData,
     messages,
     isLoading: sessionLoading,
@@ -85,6 +87,26 @@ const ChamberPage = () => {
   const handleTypeInstead = () => {
     chatInputRef.current?.focus();
   };
+
+  if (resumeFailed) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background px-6">
+        <div className="text-center max-w-md">
+          <h1 className="font-display text-xl font-bold mb-3">We couldn't open that intake</h1>
+          <p className="text-muted-foreground mb-6">
+            The link may be out of date, or it belongs to a different account. Nothing has been changed.
+            You can start a new intake, or sign in with the account you started it on.
+          </p>
+          <button
+            onClick={startNew}
+            className="bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors"
+          >
+            Start a new intake
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (sessionLoading) {
     return (

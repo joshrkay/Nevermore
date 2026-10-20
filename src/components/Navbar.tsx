@@ -21,7 +21,7 @@ const Navbar = () => {
   const navLinks = [
     { label: "How It Works", href: isLanding ? "#how-it-works" : "/#how-it-works", isAnchor: true },
     { label: "For PEO Partners", href: isLanding ? "#peo-partners" : "/#peo-partners", isAnchor: true },
-    { label: "The Manuscript", href: "/manuscript", isAnchor: false },
+    { label: "Sample Manuscript", href: "/manuscript/demo", isAnchor: false },
   ];
 
   return (

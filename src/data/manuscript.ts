@@ -88,10 +88,12 @@ export function coverageTier(emp: ChamberEmployee): string {
 
 const TIERS = ["Employee Only", "Employee + Spouse", "Employee + Child(ren)", "Employee + Family"];
 
-const orDash = (v: string | number | null | undefined) =>
-  v === null || v === undefined || v === "" ? "—" : String(v);
+export const NOT_PROVIDED = "Not provided";
 
-const yesNo = (v: boolean | null) => (v === null ? "—" : v ? "Yes" : "No");
+const orNotProvided = (v: string | number | null | undefined) =>
+  v === null || v === undefined || v === "" ? NOT_PROVIDED : String(v);
+
+const yesNo = (v: boolean | null) => (v === null ? NOT_PROVIDED : v ? "Yes" : "No");
 
 export interface ManuscriptCensusRow {
   name: string;
@@ -141,6 +143,12 @@ export function buildManuscript(
   for (const emp of w2) tierCounts.set(coverageTier(emp), (tierCounts.get(coverageTier(emp)) ?? 0) + 1);
 
   const checks = eligibilityChecks(data);
+  const missingCore = [
+    ["Company legal name", !data.company_name],
+    ["States of operation", allStates.length === 0],
+    ["Pay frequency", !data.pay_frequency],
+    ["Employee census", data.employees.length === 0],
+  ].flatMap(([label, missing]) => (missing ? [`${label} — not provided`] : []));
   const flags = data.employees.flatMap((e) => {
     const flag = employeeFlag(e);
     return flag ? [`${e.first_name} ${e.last_name}: ${flag}`] : [];
@@ -152,49 +160,50 @@ export function buildManuscript(
     companyName: data.company_name ?? "[Company name not provided]",
     submittedTo: opts.submission?.peo ?? null,
     companyRows: [
-      ["Legal Name", orDash(data.company_name)],
-      ["HQ State", orDash(data.hq_state)],
-      ["Industry", orDash(data.industry)],
-      ["Entity Structure", data.multiple_entities === null ? "—" : data.multiple_entities ? `Multiple (${orDash(data.fein_count)} FEINs)` : "Single entity"],
-      ["Target Start", orDash(data.start_month)],
-      ["Current Payroll", orDash(data.payroll_vendor)],
-      ["Pay Frequency", orDash(data.pay_frequency)],
-      ["Coverage Status", data.virgin_medical === null ? "—" : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage"],
+      ["Legal Name", orNotProvided(data.company_name)],
+      ["HQ State", orNotProvided(data.hq_state)],
+      ["Industry", orNotProvided(data.industry)],
+      ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? `Multiple (${orNotProvided(data.fein_count)} FEINs)` : "Single entity"],
+      ["Target Start", orNotProvided(data.start_month)],
+      ["Current Payroll", orNotProvided(data.payroll_vendor)],
+      ["Pay Frequency", orNotProvided(data.pay_frequency)],
+      ["Coverage Status", data.virgin_medical === null ? NOT_PROVIDED : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage"],
     ],
     workforceRows: [
-      ["Reported Headcount", orDash(data.employee_count)],
+      ["Reported Headcount", orNotProvided(data.employee_count)],
       ["W-2 Employees on Census", String(w2.length)],
       ["1099 Contractors on Census", data.employees.length ? String(contractors.length) : yesNo(data.has_1099)],
-      ["Exempt / Nonexempt", data.exempt_count === null && data.nonexempt_count === null ? "—" : `${orDash(data.exempt_count)} / ${orDash(data.nonexempt_count)}`],
-      ["In-house HR Staff", orDash(data.hr_staff_count)],
+      ["Exempt / Nonexempt", data.exempt_count === null && data.nonexempt_count === null ? NOT_PROVIDED : `${orNotProvided(data.exempt_count)} / ${orNotProvided(data.nonexempt_count)}`],
+      ["In-house HR Staff", orNotProvided(data.hr_staff_count)],
       ["Employee Handbook", yesNo(data.has_handbook)],
     ],
-    states: allStates.map((s) => ({ state: s, count: stateCounts.has(s) ? String(stateCounts.get(s)) : "—", system: wcSystem(s) })),
+    states: allStates.map((s) => ({ state: s, count: stateCounts.has(s) ? String(stateCounts.get(s)) : NOT_PROVIDED, system: wcSystem(s) })),
     census: data.employees.map((e) => ({
       name: `${e.first_name} ${e.last_name}`.trim(),
-      dob: e.dob || "—",
-      state: e.state || "—",
-      title: e.title || "—",
-      salary: e.salary ? `$${e.salary.toLocaleString()}` : "—",
+      dob: e.dob || NOT_PROVIDED,
+      state: e.state || NOT_PROVIDED,
+      title: e.title || NOT_PROVIDED,
+      salary: e.salary ? `$${e.salary.toLocaleString()}` : NOT_PROVIDED,
       classification: e.classification,
-      tier: e.classification === "W2" ? coverageTier(e) : "—",
+      tier: e.classification === "W2" ? coverageTier(e) : "Not applicable",
       flag: employeeFlag(e),
     })),
     dependentTiers: TIERS.map((tier) => {
       const count = tierCounts.get(tier) ?? 0;
-      return { tier, count, pct: w2.length ? `${Math.round((count / w2.length) * 100)}%` : "—" };
+      return { tier, count, pct: w2.length ? `${Math.round((count / w2.length) * 100)}%` : NOT_PROVIDED };
     }),
     totalDependents: w2.reduce((sum, e) => sum + e.dependents.length, 0),
     benefitsRows: [
-      ["Current Carrier", orDash(data.current_carrier)],
-      ["Renewal Date", orDash(data.renewal_date)],
-      ["Rate History", orDash(data.rate_history)],
-      ["Waiting Period", orDash(data.benefits_waiting_period)],
-      ["Ancillary Benefits", data.ancillary_benefits.length ? data.ancillary_benefits.join(", ") : "—"],
-      ["Retirement", data.has_401k === null ? "—" : data.has_401k ? `${data.retirement_type || "401(k)"}${data.employer_contributes ? " · employer contributes" : ""}` : "None"],
+      ["Current Carrier", orNotProvided(data.current_carrier)],
+      ["Renewal Date", orNotProvided(data.renewal_date)],
+      ["Rate History", orNotProvided(data.rate_history)],
+      ["Waiting Period", orNotProvided(data.benefits_waiting_period)],
+      ["Ancillary Benefits", data.ancillary_benefits.length ? data.ancillary_benefits.join(", ") : NOT_PROVIDED],
+      ["Retirement", data.has_401k === null ? NOT_PROVIDED : data.has_401k ? `${data.retirement_type || "401(k)"}${data.employer_contributes ? " · employer contributes" : ""}` : "None"],
     ],
     resolved: checks.filter((c) => c.status === "pass").map((c) => c.label),
     open: [
+      ...missingCore,
       ...checks.filter((c) => c.status === "fail").map((c) => `${c.label} — not met`),
       ...checks.filter((c) => c.status === "unknown").map((c) => `${c.label} — not yet verified`),
       ...flags,
