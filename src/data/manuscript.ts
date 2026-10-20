@@ -223,6 +223,13 @@ export interface Manuscript {
   open: string[];
   provenance: ProvenanceMap;
   signer: ManuscriptSigner | null;
+  /** Present on a packet an advisor generated: its version and the corrections it applies. */
+  advisorReview: ManuscriptAdvisorReview | null;
+}
+
+export interface ManuscriptAdvisorReview {
+  version: number;
+  corrections: { label: string; prospectValue: string; advisorValue: string; reason: string }[];
 }
 
 export interface ManuscriptSigner {
@@ -237,7 +244,14 @@ export interface ManuscriptSigner {
 
 export function buildManuscript(
   data: ChamberData,
-  opts: { fileId: string; submission?: ChamberSubmission | null; date?: Date; provenance?: ProvenanceMap },
+  opts: {
+    fileId: string;
+    submission?: ChamberSubmission | null;
+    date?: Date;
+    provenance?: ProvenanceMap;
+    /** For an advisor-generated packet; `followUps` are added to the open items. */
+    advisor?: ManuscriptAdvisorReview & { followUps: string[] };
+  },
 ): Manuscript {
   const date = opts.date ?? (opts.submission ? new Date(opts.submission.signed_at) : new Date());
   const fmtDate = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
@@ -324,6 +338,7 @@ export function buildManuscript(
       ...checks.filter((c) => c.status === "fail").map((c) => `${c.label} — not met`),
       ...checks.filter((c) => c.status === "unknown").map((c) => `${c.label} — not yet verified`),
       ...flags,
+      ...(opts.advisor?.followUps ?? []),
     ],
     provenance,
     signer: opts.submission
@@ -335,5 +350,6 @@ export function buildManuscript(
           consent: opts.submission.consent_text || LEGACY_CONSENT_TEXT,
         }
       : null,
+    advisorReview: opts.advisor ? { version: opts.advisor.version, corrections: opts.advisor.corrections } : null,
   };
 }

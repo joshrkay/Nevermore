@@ -12,6 +12,7 @@ import { buildManuscript, fileIdForSession, maskDob, NOT_PROVIDED, type ChamberS
 import { describeSource, parseProvenance, STATUS_LABELS, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
+import ProspectStatusNote from "@/components/ProspectStatusNote";
 
 const SAMPLE_FILE_ID = "EAA-SAMPLE";
 
@@ -240,6 +241,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             🪶 This is a sample manuscript built from fictional data. Yours is generated from your conversation with Lenore.
           </div>
         )}
+        {state.kind === "ready" && sessionId && <ProspectStatusNote sessionId={sessionId} />}
 
         {/* Header */}
         <div className="bg-card border border-border rounded-xl p-8 md:p-10">

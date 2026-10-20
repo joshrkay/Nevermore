@@ -8,8 +8,10 @@ let row: Record<string, unknown> | null = null;
 // Stable object: the page's effect depends on `user`, as the real provider's state is stable.
 const auth = { user: { id: "u1" }, loading: false };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
+let sharedStatus: string | null = null;
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
+    rpc: async () => ({ data: sharedStatus, error: null }),
     from: () => ({
       select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }),
     }),
@@ -85,6 +87,34 @@ describe("ManuscriptPage", () => {
     expect(screen.getAllByText(/Signed Co/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Edited Later Inc/)).not.toBeInTheDocument();
     expect(screen.getByText("Justworks — Underwriting")).toBeInTheDocument();
+  });
+
+  describe("advisor status shared with the prospect", () => {
+    const certified = () => ({
+      chamber_data: EMPTY_CHAMBER_DATA,
+      submission: { signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1" },
+      status: "submitted",
+      created_at: "2026-05-01T00:00:00Z",
+    });
+
+    it("shows a status the advisor chose to share", async () => {
+      row = certified();
+      sharedStatus = "information_requested";
+      renderAt("/manuscript?session=s1");
+      expect(await screen.findByRole("status")).toHaveTextContent(/needs a little more information/);
+      sharedStatus = null;
+    });
+
+    it("shows nothing for a status that isn't meant for the prospect", async () => {
+      row = certified();
+      sharedStatus = "lost";
+      renderAt("/manuscript?session=s1");
+      expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(screen.queryByText(/^Status:/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/lost/i)).not.toBeInTheDocument();
+      sharedStatus = null;
+    });
   });
 
   it("marks inferred and conflicting values with their source and lists them as open items", async () => {

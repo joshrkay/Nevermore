@@ -219,6 +219,9 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     [m.signer ? "Certified" : "Date", m.date],
     ["Generated", generated],
     ["File ID", m.fileId],
+    ...(m.advisorReview
+      ? ([["Version", `v${m.advisorReview.version} · reviewed by Edgar Allan Advisory`]] as [string, string][])
+      : []),
     ["Prospect", m.companyName],
     ["Sensitive Fields", reveal ? "Shown in full" : "Masked (dates of birth show year only)"],
   ]);
@@ -307,6 +310,28 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     y += 2;
     subheading("Open items");
     m.open.forEach((item) => paragraph(`•  ${item}`, 9, "normal", WARN, 1));
+  }
+
+  // The prospect certified their own values; say plainly which ones an advisor changed since.
+  if (m.advisorReview && m.advisorReview.corrections.length > 0) {
+    y += 2;
+    subheading("Advisor corrections");
+    paragraph(
+      "These values were corrected and verified by Edgar Allan Advisory after the prospect certified this submission. The prospect certified the original values shown.",
+      8.5,
+      "italic",
+      MUTED,
+      2,
+    );
+    table(
+      [
+        { header: "Field", width: 40 },
+        { header: "Certified by prospect", width: 42 },
+        { header: "Corrected to", width: 42 },
+        { header: "Reason", width: CONTENT_W - 124 },
+      ],
+      m.advisorReview.corrections.map((c) => [c.label, c.prospectValue, c.advisorValue, c.reason || "—"]),
+    );
   }
 
   // ---------- 7 Certification ----------
