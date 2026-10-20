@@ -148,7 +148,7 @@ export function buildManuscript(
   const tierCounts = new Map<string, number>(TIERS.map((t) => [t, 0]));
   for (const emp of w2) tierCounts.set(coverageTier(emp), (tierCounts.get(coverageTier(emp)) ?? 0) + 1);
 
-  const checks = eligibilityChecks(data, findPeo(opts.submission?.peo ?? ""));
+  const checks = eligibilityChecks(data);
   const missingCore = [
     ["Company legal name", !data.company_name],
     ["States of operation", allStates.length === 0],
