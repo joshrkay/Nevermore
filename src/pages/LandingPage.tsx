@@ -36,7 +36,7 @@ const LandingPage = () => {
             className="text-lg text-muted-foreground max-w-[520px] mx-auto mb-10 leading-relaxed"
           >
             Upload your census. Talk to Lenore. Get a complete, submission-ready
-            package for TriNet — same session, no follow-up required.
+            package for your PEO — same session, no follow-up required.
           </motion.p>
           <motion.div {...fadeUp(0.4)}>
             <Link
@@ -64,35 +64,6 @@ const LandingPage = () => {
         </motion.div>
       </section>
 
-      {/* PEO Partners */}
-      <section className="py-12 relative z-10 border-b border-border">
-        <div className="container mx-auto px-6 max-w-3xl">
-          <motion.p {...sectionFade} className="text-center text-xs text-muted-foreground uppercase tracking-widest mb-8">
-            Submission-ready for leading PEOs
-          </motion.p>
-          <motion.div {...sectionFade} className="flex flex-wrap items-center justify-center gap-10 md:gap-14">
-            {[
-              { name: "TriNet", style: "font-sans font-extrabold tracking-tight text-xl md:text-2xl" },
-              { name: "Justworks", style: "font-sans font-medium tracking-wide text-lg md:text-xl" },
-              { name: "Rippling", style: "font-sans font-bold tracking-tight text-xl md:text-2xl italic" },
-              { name: "ADP", style: "font-sans font-black tracking-tighter text-xl md:text-2xl", sub: "TotalSource" },
-              { name: "Insperity", style: "font-display font-semibold tracking-normal text-lg md:text-xl" },
-            ].map((peo, i) => (
-              <motion.div
-                key={peo.name}
-                initial={{ opacity: 0, y: 8 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.08 }}
-                className="flex items-baseline gap-1 text-muted-foreground/30 hover:text-muted-foreground/60 transition-colors select-none"
-              >
-                <span className={peo.style}>{peo.name}</span>
-                {peo.sub && <span className="text-xs font-normal tracking-normal">{peo.sub}</span>}
-              </motion.div>
-            ))}
-          </motion.div>
-        </div>
-      </section>
 
       {/* Commiseration */}
       <section className="py-24 relative z-10">
@@ -149,7 +120,7 @@ const LandingPage = () => {
               {
                 step: "③",
                 title: "The Manuscript",
-                desc: "A clean, complete submission package. Ready for TriNet underwriting. Download it. Send it. Done.",
+                desc: "A clean, complete submission package. Ready for PEO underwriting. Download it. Send it. Done.",
               },
             ].map((item, i) => (
               <motion.div
