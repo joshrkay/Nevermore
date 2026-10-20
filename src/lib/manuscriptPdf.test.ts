@@ -126,4 +126,29 @@ describe("pdfSafe", () => {
     expect(pdfSafe("Acme 株式会社")).toBe("Acme ????");
     expect(pdfSafe("Łódź")).toBe("Lódz"); // ó is Latin-1 and stays; Ł and ź fold
   });
+
+  it("prints an advisor version and its corrections beside the values the prospect certified", async () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, {
+      fileId: FILE_ID,
+      submission,
+      advisor: {
+        version: 3,
+        corrections: [{ label: "Company legal name", prospectValue: "Meridian Creative", advisorValue: "Meridian LLC", reason: "Per W-9" }],
+        followUps: ["Employee count — advisor follow-up needed"],
+      },
+    });
+    const pdf = buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false });
+    const text = await readPdf(pdf.blob);
+    expect(text).toContain("v3");
+    expect(text).toContain("ADVISOR CORRECTIONS");
+    expect(text).toContain("Meridian LLC");
+    expect(text).toContain("Per W-9");
+    expect(text).toContain("corrected and verified by Edgar Allan Advisory");
+    expect(text).toContain("Employee count");
+  });
+
+  it("leaves the advisor section out of the prospect's own packet", async () => {
+    const { text } = await render();
+    expect(text).not.toContain("ADVISOR CORRECTIONS");
+  });
 });

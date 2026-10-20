@@ -14,6 +14,65 @@ export type Database = {
   }
   public: {
     Tables: {
+      advisor_field_reviews: {
+        Row: {
+          corrected_value: Json | null
+          field: string
+          has_correction: boolean
+          reason: string | null
+          review_state: string | null
+          session_id: string
+          updated_at: string
+          updated_by: string
+          updated_by_email: string | null
+        }
+        // Written only through review_submission_field().
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      advisor_notes: {
+        Row: {
+          author_email: string | null
+          author_id: string
+          body: string
+          created_at: string
+          id: string
+          session_id: string
+        }
+        Insert: {
+          author_email?: string | null
+          author_id?: string
+          body: string
+          created_at?: string
+          id?: string
+          session_id: string
+        }
+        // Notes are a record: never edited.
+        Update: never
+        Relationships: []
+      }
+      advisor_review_events: {
+        Row: {
+          actor_email: string | null
+          actor_id: string
+          correction_changed: boolean
+          created_at: string
+          field: string
+          from_state: string | null
+          from_value: Json | null
+          had_correction: boolean
+          has_correction: boolean
+          id: number
+          reason: string | null
+          session_id: string
+          to_state: string | null
+          to_value: Json | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       ai_request_log: {
         Row: {
           created_at: string
@@ -30,24 +89,6 @@ export type Database = {
           id?: never
           user_id?: string
         }
-        Relationships: []
-      }
-      chamber_certifications: {
-        Row: {
-          certified_at: string
-          consent_text: Json
-          consent_text_version: string
-          data_hash: string
-          id: string
-          session_id: string
-          signed_at: string
-          signer_name: string
-          signer_title: string
-          user_id: string
-        }
-        // Written only by the database when an intake is certified; clients can read, never write.
-        Insert: never
-        Update: never
         Relationships: []
       }
       chamber_sessions: {
@@ -142,6 +183,28 @@ export type Database = {
           },
         ]
       }
+      manuscript_versions: {
+        Row: {
+          certified_data_hash: string
+          certified_signed_at: string
+          corrections_applied: number
+          file_id: string
+          generated_at: string
+          generated_by: string
+          generated_by_email: string | null
+          id: string
+          pdf_sha256: string
+          review_event_id: number
+          sensitive_revealed: boolean
+          session_id: string
+          storage_path: string
+          version: number
+        }
+        // Written only through record_manuscript_version().
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       profiles: {
         Row: {
           company_name: string | null
@@ -175,18 +238,113 @@ export type Database = {
         }
         Relationships: []
       }
+      submission_status_history: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          changed_by_email: string | null
+          from_status: string | null
+          id: number
+          note: string | null
+          session_id: string
+          to_status: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      submission_workflow: {
+        Row: {
+          session_id: string
+          status: string
+          updated_at: string
+          updated_by: string | null
+        }
+        // Changed only through set_submission_status().
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          granted_at: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      advisor_list_submissions: {
+        Args: { p_status?: string | null }
+        Returns: {
+          company_name: string | null
+          contact_name: string | null
+          created_at: string
+          employee_count: number | null
+          flagged_fields: number
+          intake_status: string
+          missing_required: string[]
+          open_fields: number
+          pipeline_status: string
+          session_id: string
+          signer_name: string | null
+          submitted_at: string | null
+          updated_at: string
+          verified_fields: number
+        }[]
+      }
       consume_ai_quota: {
         Args: { per_day: number; per_minute: number }
         Returns: boolean
       }
+      has_role: {
+        Args: { _role: Database["public"]["Enums"]["app_role"] }
+        Returns: boolean
+      }
+      is_advisor: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
+      prospect_submission_status: {
+        Args: { p_session_id: string }
+        Returns: string | null
+      }
+      record_manuscript_version: {
+        Args: {
+          p_corrections_applied: number
+          p_pdf_sha256: string
+          p_review_event_id: number
+          p_sensitive_revealed: boolean
+          p_session_id: string
+          p_storage_path: string
+          p_version: number
+        }
+        Returns: Database["public"]["Tables"]["manuscript_versions"]["Row"]
+      }
+      review_submission_field: {
+        Args: {
+          p_correction?: string
+          p_field: string
+          p_reason?: string | null
+          p_review_state: string | null
+          p_session_id: string
+          p_value?: Json | null
+        }
+        Returns: Database["public"]["Tables"]["advisor_field_reviews"]["Row"]
+      }
+      set_submission_status: {
+        Args: { p_note?: string | null; p_session_id: string; p_status: string }
+        Returns: Database["public"]["Tables"]["submission_workflow"]["Row"]
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "advisor" | "admin"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -313,6 +471,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["advisor", "admin"],
+    },
   },
 } as const

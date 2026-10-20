@@ -20,6 +20,10 @@ npm run lint && npm test && npm run build
 
 CI runs the same three on every pull request. Make the `verify` check required on `main` (repo Settings → Branches).
 
+## Advisors
+
+Advisor tools are at `/advisor`. Roles, access rules and how to grant access: `docs/ADVISOR_ACCESS.md`.
+
 ## Plan
 
 Backlog and decisions: `docs/PRODUCTION_READINESS_PLAN.md`.
