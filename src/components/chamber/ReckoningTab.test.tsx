@@ -70,3 +70,124 @@ describe("ReckoningTab account gate", () => {
     expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeInTheDocument();
   });
 });
+
+describe("ReckoningTab certification", () => {
+  beforeEach(() => {
+    auth.isAnonymous = false;
+  });
+
+  const renderWith = (props: Partial<React.ComponentProps<typeof ReckoningTab>> = {}) =>
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={null} sessionId="s1" onSubmit={async () => true} {...props} />
+      </MemoryRouter>,
+    );
+
+  const tickAll = () => screen.getAllByRole("checkbox").forEach((box) => fireEvent.click(box));
+  const submitButton = () => screen.getByRole("button", { name: /Generate The Manuscript/ });
+  const fill = (name: string, role: string) => {
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: name } });
+    fireEvent.change(screen.getByLabelText("Role"), { target: { value: role } });
+  };
+
+  it("blocks submission until every part of the certification is complete, and says what's missing", () => {
+    renderWith();
+    expect(submitButton()).toBeDisabled();
+    expect(screen.getByText(/Still needed: tick each statement above, your full name, your role/)).toBeInTheDocument();
+
+    tickAll();
+    expect(submitButton()).toBeDisabled();
+
+    fill("Jo Doe", "");
+    fireEvent.click(screen.getByText("Click to sign digitally"));
+    expect(submitButton()).toBeDisabled(); // a role is required to sign
+    expect(screen.queryByText(/Jo Doe,/)).not.toBeInTheDocument();
+
+    fill("Jo Doe", "CEO");
+    expect(screen.getByText(/Still needed: sign/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Click to sign digitally"));
+    expect(submitButton()).toBeEnabled();
+  });
+
+  it("won't submit when a consent statement is unticked", () => {
+    renderWith();
+    tickAll();
+    fill("Jo Doe", "CEO");
+    fireEvent.click(screen.getByText("Click to sign digitally"));
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    expect(submitButton()).toBeDisabled();
+  });
+
+  it("submits the signer, role, signing time and the exact consent wording, then confirms", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    renderWith({ onSubmit, peoName: "Some PEO" });
+    tickAll();
+    fill("  Jo Doe ", " CEO ");
+    fireEvent.click(screen.getByText("Click to sign digitally"));
+    fireEvent.click(submitButton());
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const sent = onSubmit.mock.calls[0][0];
+    expect(sent).toMatchObject({ signer_name: "Jo Doe", signer_title: "CEO", peo: "Some PEO", consent_version: expect.any(String) });
+    expect(new Date(sent.signed_at).toString()).not.toBe("Invalid Date");
+    expect(sent.consent_text).toContain("accurate and complete");
+    expect(sent.consent_text).toContain("Some PEO");
+    expect(sent.consent_text).toContain("requires me to certify again");
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Your certification is recorded");
+    expect(dialog).toHaveTextContent("Certified by Jo Doe, CEO");
+  });
+
+  it("keeps the form and explains when the certification couldn't be saved", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(false);
+    renderWith({ onSubmit });
+    tickAll();
+    fill("Jo Doe", "CEO");
+    fireEvent.click(screen.getByText("Click to sign digitally"));
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(submitButton()).toBeEnabled();
+  });
+
+  it("shows an already-certified intake as certified instead of asking again", () => {
+    renderWith({
+      certification: {
+        status: "certified",
+        submission: { signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1" },
+      },
+    });
+    expect(screen.getByText("Certified and submitted")).toBeInTheDocument();
+    expect(screen.getByText(/Signed by Jo Doe, CEO/)).toBeInTheDocument();
+    expect(screen.getByText(/you'll be asked to certify again/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Generate The Manuscript/ })).not.toBeInTheDocument();
+  });
+
+  it("asks for re-certification when answers changed after certifying, prefilling the signer", () => {
+    renderWith({
+      certification: {
+        status: "stale",
+        submission: { signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1" },
+      },
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed after you certified/);
+    expect(screen.getByLabelText("Full name")).toHaveValue("Jo Doe");
+    expect(submitButton()).toBeDisabled(); // a fresh signature and consent are still required
+  });
+
+  it("drops a signature when the answers change after signing", () => {
+    const { rerender } = renderWith();
+    tickAll();
+    fill("Jo Doe", "CEO");
+    fireEvent.click(screen.getByText("Click to sign digitally"));
+    expect(submitButton()).toBeEnabled();
+    rerender(
+      <MemoryRouter>
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, company_name: "Changed Co" }} peoName={null} sessionId="s1" onSubmit={async () => true} />
+      </MemoryRouter>,
+    );
+    expect(submitButton()).toBeDisabled();
+    expect(screen.getByText("Click to sign digitally")).toBeInTheDocument();
+  });
+});

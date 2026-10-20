@@ -30,6 +30,7 @@ const ChamberPage = () => {
     setChamberData,
     addMessage,
     submit,
+    certification,
   } = useChamberSession(searchParams.get("session"));
 
   // Keep the session in the URL so a refresh or "Back to Review" resumes it.
@@ -150,7 +151,7 @@ const ChamberPage = () => {
 
         {/* Live workspace */}
         <div className={`${isMobile ? "w-full" : "flex-1"}`}>
-          <LiveWorkspace data={chamberData} isDemo={false} sessionId={sessionId} onSubmit={submit} />
+          <LiveWorkspace data={chamberData} isDemo={false} sessionId={sessionId} onSubmit={submit} certification={certification} />
         </div>
       </div>
 

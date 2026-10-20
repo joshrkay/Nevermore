@@ -7,7 +7,12 @@ import type { ChatMessage } from "@/data/chat";
 import { createChatMessage, parseTranscript } from "@/data/chat";
 import { parseChamberData } from "@/data/chamberValidation";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import type { ChamberSubmission } from "@/data/manuscript";
+import {
+  certificationFromRow,
+  NO_CERTIFICATION,
+  type CertificationState,
+  type ChamberSubmission,
+} from "@/data/manuscript";
 
 interface UseChamberSessionReturn {
   sessionId: string | null;
@@ -22,6 +27,8 @@ interface UseChamberSessionReturn {
   addMessage: (msg: ChatMessage) => void;
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   submit: (submission: ChamberSubmission) => Promise<boolean>;
+  /** Whether the answers are certified, or were changed after being certified. */
+  certification: CertificationState;
 }
 
 const OPENING_MESSAGE = "Good evening. I'm Lenore — your guide through The Chamber. Before we begin, I want to be transparent: what you see in the workspace beside us is a demonstration. By the time our conversation is complete, it will hold your company's information instead. Shall we begin with something simple — tell me a little about your business and what you do.";
@@ -45,6 +52,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [initRun, setInitRun] = useState(0);
   const [chamberData, setChamberDataRaw] = useState<ChamberData>(EMPTY_CHAMBER_DATA);
   const [messages, setMessages] = useState<ChatMessage[]>(() => [createChatMessage("lenore", OPENING_MESSAGE)]);
+  const [certification, setCertification] = useState<CertificationState>(NO_CERTIFICATION);
+  const certificationRef = useRef(certification);
+  useEffect(() => { certificationRef.current = certification; }, [certification]);
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyRef = useRef(false);
@@ -159,7 +169,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       // RLS only returns the user's own sessions.
       const { data, error } = await supabase
         .from("chamber_sessions")
-        .select("id, chamber_data, transcript")
+        .select("id, chamber_data, transcript, status, submission")
         .eq("id", id)
         .maybeSingle();
       if (error) console.error("Failed to load session:", error);
@@ -172,6 +182,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         messagesRef.current = loadedMessages;
         setMessages(loadedMessages);
       }
+      const loadedCertification = certificationFromRow(data.status, data.submission);
+      certificationRef.current = loadedCertification;
+      setCertification(loadedCertification);
       sessionIdRef.current = data.id;
       setSessionId(data.id);
       return true;
@@ -224,11 +237,18 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   }, []);
 
   const setChamberData = useCallback((updater: ChamberData | ((prev: ChamberData) => ChamberData)) => {
-    setChamberDataRaw(prev => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      dataRef.current = next;
-      return next;
-    });
+    const prev = dataRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    dataRef.current = next;
+    setChamberDataRaw(next);
+    // Certification covers the answers as they were signed. The database withdraws it the
+    // moment the saved answers differ; mirror that here so the prospect sees it right away.
+    const current = certificationRef.current;
+    if (current.status === "certified" && JSON.stringify(next) !== JSON.stringify(prev)) {
+      const stale: CertificationState = { status: "stale", submission: current.submission };
+      certificationRef.current = stale;
+      setCertification(stale);
+    }
     scheduleSave();
   }, [scheduleSave]);
 
@@ -256,8 +276,14 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       console.error("Failed to submit session:", error);
       return false;
     }
+    const certified: CertificationState = {
+      status: "certified",
+      submission: { ...submission, chamber_data: dataRef.current },
+    };
+    certificationRef.current = certified;
+    setCertification(certified);
     return true;
   }, [flush]);
 
-  return { sessionId, resumeFailed, startNew, chamberData, messages, isLoading, setChamberData, addMessage, setMessages, submit };
+  return { sessionId, resumeFailed, startNew, chamberData, messages, isLoading, setChamberData, addMessage, setMessages, submit, certification };
 }
