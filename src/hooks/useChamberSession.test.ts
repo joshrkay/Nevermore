@@ -187,6 +187,19 @@ describe("useChamberSession", () => {
       expect(result.current.certification.status).toBe("certified");
     });
 
+    it("certifies the exact answers on screen, even if the saved row was never re-written", async () => {
+      resumeRow = { ...certifiedRow("in_progress"), submission: null, chamber_data: { company_name: "Acme" } };
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+
+      const pending = result.current.submit(submission);
+      await waitFor(() => expect(updates).toHaveLength(1));
+      const payload = updates[0].payload as { chamber_data: unknown; submission: { chamber_data: unknown } };
+      expect(payload.chamber_data).toEqual(payload.submission.chamber_data);
+      expect(payload.chamber_data).toMatchObject({ company_name: "Acme", employees: [] }); // normalized, not the sparse row
+      await act(async () => { updates[0].resolve({ error: null }); await pending; });
+    });
+
     it("stays uncertified when the submission fails to save", async () => {
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.sessionId).toBe("s1"));

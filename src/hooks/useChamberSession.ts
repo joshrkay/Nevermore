@@ -269,6 +269,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       .from("chamber_sessions")
       .update({
         status: "submitted",
+        // Written alongside the certified copy so the two always agree, even when the saved row
+        // predates fields that loading fills in (the database requires them to be identical).
+        chamber_data: dataRef.current as unknown as Json,
         submission: { ...submission, chamber_data: dataRef.current } as unknown as Json,
       })
       .eq("id", sid);
