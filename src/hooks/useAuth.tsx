@@ -8,7 +8,8 @@ interface AuthContextType {
   loading: boolean;
   /** True for a guest session that hasn't been upgraded to a verified email account. */
   isAnonymous: boolean;
-  signInAnonymously: () => Promise<{ error: Error | null }>;
+  /** `captchaToken` is the Turnstile token when CAPTCHA protection is on. */
+  signInAnonymously: (captchaToken?: string) => Promise<{ error: Error | null }>;
   /** Attaches an email to the current guest and emails a code. `emailInUse` means that address already has an account. */
   requestEmailCode: (email: string) => Promise<{ error: Error | null; emailInUse: boolean }>;
   /** Confirms the emailed code, turning the guest into a verified account in place. */
@@ -61,8 +62,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return { error: error as Error | null };
   };
 
-  const signInAnonymously = async () => {
-    const { error } = await supabase.auth.signInAnonymously();
+  const signInAnonymously = async (captchaToken?: string) => {
+    const { error } = await supabase.auth.signInAnonymously(captchaToken ? { options: { captchaToken } } : undefined);
     return { error: error as Error | null };
   };
 

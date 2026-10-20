@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.100.0";
+import { checkAiAllowance, clientIp, hashIp } from "./allowance.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,6 +12,16 @@ const MAX_MESSAGE_CHARS = 2000;
 const MAX_CONTEXT_CHARS = 20000;
 const REQUESTS_PER_MINUTE = 15;
 const REQUESTS_PER_DAY = 300;
+
+// Guest sessions are free to create, so spend is also bounded per IP and globally. Counts, not
+// dollars; override with function secrets.
+const intFromEnv = (name: string, fallback: number) => {
+  const n = Number.parseInt(Deno.env.get(name) ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+const IP_REQUESTS_PER_MINUTE = intFromEnv("AI_IP_PER_MINUTE", 20);
+const IP_REQUESTS_PER_DAY = intFromEnv("AI_IP_PER_DAY", 400);
+const GLOBAL_CALLS_PER_DAY = intFromEnv("AI_GLOBAL_DAILY_CALLS", 2000);
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -59,12 +70,46 @@ serve(async (req) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return json({ error: "Unauthorized" }, 401);
 
-    const { data: allowed, error: quotaError } = await supabase.rpc("consume_ai_quota", {
-      per_minute: REQUESTS_PER_MINUTE,
-      per_day: REQUESTS_PER_DAY,
-    });
-    if (quotaError) throw quotaError;
-    if (!allowed) return json({ error: "Rate limited, please try again shortly." }, 429);
+    // The per-IP and global budgets are service-role only, so they use a separate client.
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const ipHashSecret = Deno.env.get("IP_HASH_SECRET");
+    if (!serviceRoleKey || !ipHashSecret) {
+      console.error("AI_CONFIG_MISSING: SUPABASE_SERVICE_ROLE_KEY and IP_HASH_SECRET must both be set");
+      return json({ error: "Lenore is unavailable right now. Please try again in a few minutes." }, 503);
+    }
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceRoleKey);
+    const ip = clientIp(req.headers);
+    const ipHash = ip ? await hashIp(ip, ipHashSecret) : null;
+
+    const allowance = await checkAiAllowance(
+      {
+        consumeUserQuota: async () => {
+          const { data, error } = await supabase.rpc("consume_ai_quota", {
+            per_minute: REQUESTS_PER_MINUTE,
+            per_day: REQUESTS_PER_DAY,
+          });
+          if (error) throw error;
+          return data === true;
+        },
+        consumeIpQuota: async (hash) => {
+          const { data, error } = await admin.rpc("consume_ip_quota", {
+            p_ip_hash: hash,
+            per_minute: IP_REQUESTS_PER_MINUTE,
+            per_day: IP_REQUESTS_PER_DAY,
+          });
+          if (error) throw error;
+          return data === true;
+        },
+        consumeGlobalBudget: async () => {
+          const { data, error } = await admin.rpc("consume_global_ai_budget", { max_calls: GLOBAL_CALLS_PER_DAY });
+          if (error) throw error;
+          return data === true;
+        },
+        log: (message) => console.error(message),
+      },
+      ipHash,
+    );
+    if (!allowance.allowed) return json({ error: allowance.error }, allowance.status);
 
     const { message, context } = await req.json();
     if (typeof message !== "string" || !message.trim()) {
