@@ -6,6 +6,13 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  /** True for a guest session that hasn't been upgraded to a verified email account. */
+  isAnonymous: boolean;
+  signInAnonymously: () => Promise<{ error: Error | null }>;
+  /** Attaches an email to the current guest and emails a code. `emailInUse` means that address already has an account. */
+  requestEmailCode: (email: string) => Promise<{ error: Error | null; emailInUse: boolean }>;
+  /** Confirms the emailed code, turning the guest into a verified account in place. */
+  verifyEmailCode: (email: string, code: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, companyName?: string) => Promise<{ error: Error | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
@@ -54,12 +61,32 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return { error: error as Error | null };
   };
 
+  const signInAnonymously = async () => {
+    const { error } = await supabase.auth.signInAnonymously();
+    return { error: error as Error | null };
+  };
+
+  const requestEmailCode = async (email: string) => {
+    const { error } = await supabase.auth.updateUser({ email });
+    const code = (error as { code?: string } | null)?.code;
+    const emailInUse = code === "email_exists" || /already (been )?registered/i.test(error?.message ?? "");
+    return { error: error as Error | null, emailInUse };
+  };
+
+  const verifyEmailCode = async (email: string, code: string) => {
+    const { error } = await supabase.auth.verifyOtp({ email, token: code, type: "email_change" });
+    return { error: error as Error | null };
+  };
+
   const signOut = async () => {
     await supabase.auth.signOut();
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{
+        user, session, loading, isAnonymous: user?.is_anonymous === true,
+        signInAnonymously, requestEmailCode, verifyEmailCode, signUp, signIn, signOut,
+      }}>
       {children}
     </AuthContext.Provider>
   );

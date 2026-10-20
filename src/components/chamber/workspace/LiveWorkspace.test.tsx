@@ -85,6 +85,7 @@ describe("LiveWorkspace", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
     expect(screen.getByText(/prepared for your PEO/)).toBeInTheDocument();
+    expect(screen.getByText(/send to the PEO I choose myself/)).toBeInTheDocument();
     expect(screen.queryByText(/null|undefined|TriNet|Justworks|Rippling/)).not.toBeInTheDocument();
   });
 });

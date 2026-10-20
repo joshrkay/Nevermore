@@ -1,14 +1,26 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { RavenIcon } from "./RavenLogo";
 import { useAuth } from "@/hooks/useAuth";
 
-// Sends signed-out visitors to /login, remembering where they were headed.
+// Signed-out visitors get an anonymous guest session so they can fill in the intake without an
+// account; an email-verified account is required later, at certification. If guest sessions
+// aren't available, fall back to /login, remembering where they were headed.
 const RequireAuth = ({ children }: { children: ReactNode }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, signInAnonymously } = useAuth();
   const location = useLocation();
+  const [guestFailed, setGuestFailed] = useState(false);
+  const requestedGuest = useRef(false);
 
-  if (loading) {
+  useEffect(() => {
+    if (loading || user || requestedGuest.current) return;
+    requestedGuest.current = true;
+    signInAnonymously().then(({ error }) => {
+      if (error) setGuestFailed(true);
+    });
+  }, [loading, user, signInAnonymously]);
+
+  if (loading || (!user && !guestFailed)) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
