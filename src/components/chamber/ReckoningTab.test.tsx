@@ -150,6 +150,7 @@ describe("ReckoningTab certification", () => {
       signer_name: "Jo Doe",
       signer_title: "CEO",
       consent_text_version: CONSENT_TEXT_VERSION,
+      consent_version: CONSENT_TEXT_VERSION,
     });
     expect(Number.isNaN(Date.parse(sent.signed_at))).toBe(false);
     expect(sent.consent_text).toHaveLength(4);
