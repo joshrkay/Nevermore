@@ -1,7 +1,9 @@
 import { useState } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { CertificationState, ChamberSubmission } from "@/data/manuscript";
-import type { FieldAction, ProvenanceMap } from "@/data/provenance";
+import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance";
+import { applyDocumentCandidates, type DocumentCandidate } from "@/data/documentCandidates";
+import { useSessionDocuments, type SessionDocument } from "@/hooks/useSessionDocuments";
 import UploadTab from "../UploadTab";
 import CompanyTab from "./CompanyTab";
 import PayrollTab from "./PayrollTab";
@@ -33,11 +35,22 @@ interface LiveWorkspaceProps {
   /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
   onFieldAction?: (action: FieldAction) => void;
   certification?: CertificationState;
+  /** Lets the prospect apply what Lenore read from their documents. Omit for read-only. */
+  updateIntake?: (updater: (prev: IntakeState) => IntakeState) => void;
 }
 
-const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, provenance = {}, onFieldAction, certification }: LiveWorkspaceProps) => {
+const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, provenance = {}, onFieldAction, certification, updateIntake }: LiveWorkspaceProps) => {
   const onAction = isDemo ? undefined : onFieldAction;
   const [activeTab, setActiveTab] = useState("upload");
+  const documentSessionId = isDemo ? null : sessionId;
+  const documents = useSessionDocuments(documentSessionId);
+  const handleApply =
+    !isDemo && updateIntake
+      ? (doc: SessionDocument, candidates: DocumentCandidate[], opts: { replace: boolean }) => {
+          updateIntake((prev) => applyDocumentCandidates(prev, doc, candidates, opts));
+          void documents.markApplied(doc, candidates.map((c) => c.field));
+        }
+      : undefined;
   // Optional, and never defaulted: we don't rank PEOs, so the prospect picks one or none.
   const [chosenPeo, setChosenPeo] = useState<string | null>(null);
 
@@ -68,13 +81,13 @@ const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, provenance = {}, onF
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto">
-        {activeTab === "upload" && <UploadTab onFilesUploaded={() => setActiveTab("company")} />}
+        {activeTab === "upload" && <UploadTab documents={documents} sessionId={documentSessionId} data={data} onApplyCandidates={handleApply} />}
         {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
         {activeTab === "payroll" && <PayrollTab data={data} provenance={provenance} onAction={onAction} />}
         {activeTab === "benefits" && <BenefitsTab data={data} provenance={provenance} onAction={onAction} />}
         {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} />}
         {activeTab === "dependents" && <DependentsTab data={data} />}
-        {activeTab === "review" && <ReviewTab data={data} provenance={provenance} onAction={onAction} onProceed={() => setActiveTab("match")} />}
+        {activeTab === "review" && <ReviewTab data={data} provenance={provenance} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} />}
         {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
         {activeTab === "reckoning" && <ReckoningTab data={data} peoName={chosenPeo} sessionId={sessionId} onSubmit={onSubmit} certification={certification} />}
       </div>

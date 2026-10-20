@@ -173,6 +173,7 @@ const ChamberPage = () => {
             provenance={provenance}
             onFieldAction={handleFieldAction}
             certification={certification}
+            updateIntake={updateIntake}
           />
         </div>
       </div>
