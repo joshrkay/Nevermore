@@ -251,10 +251,10 @@ describe("ReckoningTab on an intake that is already certified", () => {
     consent_version: CONSENT_TEXT_VERSION,
     consent_text: ["x"],
   };
-  const mountWith = (certification: React.ComponentProps<typeof ReckoningTab>["certification"]) =>
+  const mountWith = (certification: React.ComponentProps<typeof ReckoningTab>["certification"], peoName: string | null = null) =>
     render(
       <MemoryRouter>
-        <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={null} sessionId="s1" onSubmit={onSubmit} certification={certification} />
+        <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={peoName} sessionId="s1" onSubmit={onSubmit} certification={certification} />
       </MemoryRouter>,
     );
 
@@ -296,6 +296,56 @@ describe("ReckoningTab on an intake that is already certified", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/changed after you signed/);
     expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeDisabled();
+  });
+
+  describe("when the chosen PEO changes", () => {
+    const certifiedFor = { status: "certified" as const, submission: { ...submission, peo: "Acme PEO" } };
+
+    it("stays read-only on a fresh visit, when no PEO has been chosen yet", () => {
+      mountWith(certifiedFor, null);
+      expect(screen.getByRole("status")).toHaveTextContent(/Certified by Jo Doe, CEO/);
+      expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    });
+
+    it("stays read-only when the same PEO is chosen again", () => {
+      mountWith(certifiedFor, "Acme PEO");
+      expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+      expect(screen.queryByRole("button", { name: /Generate The Manuscript/ })).not.toBeInTheDocument();
+    });
+
+    it("asks for certification again when a different PEO is chosen, and says why", () => {
+      mountWith(certifiedFor, "Other PEO");
+      expect(screen.getByRole("status")).toHaveTextContent(/certified for Acme PEO/);
+      expect(screen.getByRole("status")).toHaveTextContent(/Other PEO/);
+      expect(screen.queryByText(/Certified by Jo Doe/)).not.toBeInTheDocument();
+      expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeInTheDocument();
+    });
+
+    it("asks for certification again when a PEO is chosen for an intake certified without one", () => {
+      mountWith({ status: "certified", submission }, "Other PEO");
+      expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
+      expect(screen.getByRole("status")).toHaveTextContent(/You certified before choosing a PEO, and you've since chosen Other PEO/);
+    });
+
+    it("gives one reason, not two, when the answers have also changed", () => {
+      mountWith({ status: "stale", submission: { ...submission, peo: "Acme PEO" } }, "Other PEO");
+      // getByRole throws if more than one notice is showing.
+      expect(screen.getByRole("status")).toHaveTextContent(/Your answers changed after you certified/);
+      expect(screen.queryByText(/you've since chosen/)).not.toBeInTheDocument();
+      expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
+    });
+
+    it("hands the new PEO to the save, so certifying again records it", async () => {
+      mountWith(certifiedFor, "Other PEO");
+      screen.getAllByRole("checkbox").forEach((c) => fireEvent.click(c));
+      fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Jo Doe" } });
+      fireEvent.change(screen.getByLabelText("Role"), { target: { value: "CEO" } });
+      fireEvent.click(screen.getByText("Click to sign digitally"));
+      fireEvent.click(screen.getByRole("button", { name: /Generate The Manuscript/ }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(onSubmit.mock.calls[0][0]).toMatchObject({ peo: "Other PEO" });
+    });
   });
 
   it("offers certification to an intake that has never been certified", () => {

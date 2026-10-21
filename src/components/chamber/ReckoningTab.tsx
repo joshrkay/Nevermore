@@ -76,7 +76,12 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
   const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";
   // A certification that still covers these answers is final: offering the form again would let a
   // second signature replace it (and move the intake in the advisor queue) with nothing new certified.
-  const certifiedAndCurrent = certification.status === "certified" && !needsRecertify;
+  // The Manuscript names the PEO stored in the certification, and choosing a different PEO leaves the
+  // answers untouched. So a PEO chosen this visit that differs from the certified one needs certifying
+  // again. Nothing chosen yet (a fresh visit) keeps the certified one.
+  const certifiedPeo = certification.status === "certified" ? certification.submission.peo : undefined;
+  const peoChanged = certification.status === "certified" && chosenPeo !== null && chosenPeo !== certifiedPeo;
+  const certifiedAndCurrent = certification.status === "certified" && !needsRecertify && !peoChanged;
 
   const handleSign = () => {
     if (!checks.every(Boolean)) {
@@ -138,11 +143,17 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
         </div>
 
         {/* What's already on record for this intake */}
-        {certification.status === "certified" && !needsRecertify && !submitted && (
+        {certification.status === "certified" && !needsRecertify && !peoChanged && !submitted && (
           <div role="status" className="border border-success/40 bg-success/5 rounded-xl p-4 text-sm">
             Certified by {certification.submission.signer_name}, {certification.submission.signer_title}, on{" "}
             {formatSigned(certification.submission.signed_at)}. File ID: {certification.submission.file_id}.{" "}
             <Link to={manuscriptUrl} className="underline">View The Manuscript</Link>
+          </div>
+        )}
+        {peoChanged && !needsRecertify && !submitted && (
+          <div role="status" className="border border-primary/40 bg-primary/5 rounded-xl p-4 text-sm">
+            {certifiedPeo ? `You certified for ${certifiedPeo}` : "You certified before choosing a PEO"}, and you've since
+            chosen {chosenPeo}. Certify again so your Manuscript names {chosenPeo}.
           </div>
         )}
         {certification.status === "stale" && !needsRecertify && !submitted && (
