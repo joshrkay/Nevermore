@@ -18,7 +18,19 @@ describe("ReviewTab documents", () => {
     expect(screen.getByText("Documents — 2 uploaded")).toBeInTheDocument();
     expect(screen.getByText("census.xlsx").closest("li")).toHaveTextContent("Employee census");
     expect(screen.getByText("sbc.pdf").closest("li")).toHaveTextContent("Password-protected");
-    expect(screen.getByText(/Helpful if you have them: payroll report, workers' comp\./)).toBeInTheDocument();
+    expect(screen.getByText("Employee census, Benefits summary")).toBeInTheDocument();
+    expect(screen.getByText("payroll report, workers' comp history")).toBeInTheDocument();
+  });
+
+  it("summarizes zero, some, and all of the recommended categories", () => {
+    const doc = (category: string, i: number) => ({ id: String(i), file_name: `${category}.pdf`, category, status: "uploaded" });
+    const { rerender } = render(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} documents={[]} />);
+    expect(screen.getByText("none yet")).toBeInTheDocument();
+    expect(screen.getByText(/Still helpful, if you have them:/)).toBeInTheDocument();
+
+    rerender(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} documents={["census", "benefits", "payroll", "workers_comp"].map(doc)} />);
+    expect(screen.queryByText(/Still helpful, if you have them:/)).not.toBeInTheDocument();
+    expect(screen.getByText("Employee census, Benefits summary, Payroll report, Workers' comp history")).toBeInTheDocument();
   });
 
   it("never blocks moving on when documents are missing", () => {

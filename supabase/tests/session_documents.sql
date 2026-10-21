@@ -28,6 +28,7 @@ CREATE POLICY "own sessions" ON public.chamber_sessions FOR ALL TO authenticated
 
 \i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql
 \i supabase/migrations/20261021100000_session_documents.sql
+\i supabase/migrations/20261023090000_document_categories_and_storage_access.sql
 
 GRANT USAGE ON SCHEMA auth, storage TO authenticated;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth, storage TO authenticated;
@@ -40,6 +41,11 @@ GRANT SELECT ON ids TO authenticated;
 INSERT INTO auth.users SELECT a FROM ids UNION ALL SELECT b FROM ids;
 INSERT INTO public.chamber_sessions (id, user_id)
   SELECT a1, a FROM ids UNION ALL SELECT a2, a FROM ids UNION ALL SELECT b1, b FROM ids;
+-- A file under A's folder but another user's session (never creatable through the policies), and
+-- a file from before intakes existed, stored directly under A's folder.
+INSERT INTO storage.objects (bucket_id, name)
+  SELECT 'documents', a || '/' || b1 || '/stray.csv' FROM ids
+  UNION ALL SELECT 'documents', a || '/legacy.csv' FROM ids;
 
 SET ROLE authenticated;
 
@@ -88,6 +94,15 @@ BEGIN
     RAISE EXCEPTION 'FAIL: document moved to another session';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
 
+  -- Reading or deleting a file requires owning the intake it is stored under.
+  SELECT count(*) INTO n FROM storage.objects WHERE name = r.a || '/' || r.b1 || '/stray.csv';
+  IF n <> 0 THEN RAISE EXCEPTION 'FAIL: object under another user''s session is readable'; END IF;
+  DELETE FROM storage.objects WHERE name = r.a || '/' || r.b1 || '/stray.csv';
+  SELECT count(*) INTO n FROM storage.objects WHERE name = r.a || '/legacy.csv';
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: owner cannot read a file from before intakes existed'; END IF;
+  SELECT count(*) INTO n FROM storage.objects WHERE name = r.a || '/' || r.a1 || '/x_census.csv';
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: owner cannot read a file in their own session'; END IF;
+
   -- User B sees, changes, and deletes nothing of A's.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', r.b)::text, false);
   SELECT count(*) INTO n FROM public.documents;
@@ -116,6 +131,15 @@ BEGIN
     INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
       VALUES (r.a, r.a1, 'x', '1 B', 'p', 'tax_returns');
     RAISE EXCEPTION 'FAIL: unknown category accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+
+  -- The intake's own categories are accepted; the retired one is not.
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
+    VALUES (r.a, r.a1, 'inv.pdf', '1 B', 'p1', 'peo_invoice'), (r.a, r.a1, 'prop.pdf', '1 B', 'p2', 'prior_proposal');
+  BEGIN
+    INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
+      VALUES (r.a, r.a1, 'x', '1 B', 'p', 'prior_invoices');
+    RAISE EXCEPTION 'FAIL: retired category accepted';
   EXCEPTION WHEN check_violation THEN NULL; END;
 
   RAISE NOTICE 'session_documents: all checks passed';

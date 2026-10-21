@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { categoryInfo } from "@/data/documentCategories";
 import { documentUrl, type UploadedDocument } from "@/lib/advisorApi";
 import { formatDateTime } from "./format";
 
@@ -31,7 +32,7 @@ const DocumentsPanel = ({ documents }: { documents: UploadedDocument[] }) => {
               <div className="min-w-0">
                 <p className="truncate">{doc.file_name}</p>
                 <p className="text-xs text-muted-foreground">
-                  {doc.doc_type} · {doc.file_size} · {formatDateTime(doc.created_at)}
+                  {categoryInfo(doc.category).label} · {doc.file_size} · {formatDateTime(doc.created_at)}
                 </p>
               </div>
               <button

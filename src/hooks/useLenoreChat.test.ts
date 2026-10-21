@@ -120,4 +120,19 @@ describe("useLenoreChat", () => {
     await act(async () => { finish({ data: { extracted: {}, reply: "hi" }, error: null }); });
     await waitFor(() => expect(result.current.pending).toBe(false));
   });
+
+  it("hands extracted values to onExtracted with the message they came from, and on retry too", async () => {
+    invoke.mockResolvedValueOnce({ data: null, error: httpError(502) });
+    invoke.mockResolvedValueOnce({ data: { extracted: { employee_count: 12 }, reply: "ok" }, error: null });
+    const onExtracted = vi.fn();
+    const addUserMessage = vi.fn(() => ({ id: "m1", text: "We have 12 staff" }));
+    const setChamberData = vi.fn();
+    const { result } = renderHook(() =>
+      useLenoreChat({ chamberData: EMPTY_CHAMBER_DATA, setChamberData, addUserMessage, addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted }),
+    );
+    await act(async () => { await result.current.send("We have 12 staff"); });
+    await act(async () => { await result.current.retry(); });
+    expect(onExtracted).toHaveBeenCalledWith({ employee_count: 12 }, expect.anything(), { id: "m1", text: "We have 12 staff" });
+    expect(setChamberData).not.toHaveBeenCalled();
+  });
 });

@@ -1,7 +1,7 @@
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { fieldOpenItems, formatFieldValue, type FieldAction, type ProvenanceMap } from "@/data/provenance";
-import { categoryInfo, missingRecommended } from "@/data/documentCategories";
+import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
 import { CheckCircle, AlertTriangle, HelpCircle, FileText } from "lucide-react";
 import ProvenanceField from "./ProvenanceField";
@@ -28,6 +28,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
   const flaggedEmployees = data.employees.filter(e => employeeFlag(e) !== null);
   const uploaded = documents.filter((d) => d.status !== "uploading");
   const missing = missingRecommended(uploaded);
+  const submitted = submittedCategories(uploaded);
 
   return (
     <div className="p-6 space-y-6">
@@ -169,11 +170,18 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
             })}
           </ul>
         )}
-        {missing.length > 0 && (
-          <p className="text-sm text-muted-foreground mt-4">
-            Helpful if you have them: {missing.map((c) => c.label.toLowerCase()).join(", ")}.
-          </p>
-        )}
+        <dl className="mt-4 space-y-1 text-sm">
+          <div className="flex gap-2">
+            <dt className="text-muted-foreground">Submitted:</dt>
+            <dd>{submitted.length > 0 ? submitted.map((c) => c.label).join(", ") : "none yet"}</dd>
+          </div>
+          {missing.length > 0 && (
+            <div className="flex gap-2">
+              <dt className="text-muted-foreground">Still helpful, if you have them:</dt>
+              <dd>{missing.map((c) => c.label.toLowerCase()).join(", ")}</dd>
+            </div>
+          )}
+        </dl>
       </div>
 
       <button
