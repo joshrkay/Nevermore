@@ -200,7 +200,11 @@ const AdvisorDashboardPage = () => {
                             formatDate(row.submitted_at)
                           ) : (
                             <span className="text-muted-foreground">
-                              {row.signer_name ? "Needs re-certification" : "Not certified"}
+                              {row.intake_status === "submitted"
+                                ? "Date not recorded"
+                                : row.signer_name
+                                  ? "Needs re-certification"
+                                  : "Not certified"}
                             </span>
                           )}
                         </TableCell>

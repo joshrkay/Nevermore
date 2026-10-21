@@ -5,8 +5,9 @@
 -- payroll, DOB, EIN or transcript content.
 --
 -- Order is fixed and explained on the dashboard: certified submissions first, newest certification
--- first; everything not (or no longer) certified after them, most recently touched first; session id
--- breaks any tie, so two loads of the same data always list the same way. (Previously a draft being
+-- first (those submitted before certifications were stamped have no date and follow the dated ones);
+-- everything not (or no longer) certified after them, most recently touched first; session id breaks
+-- any tie, so two loads of the same data always list the same way. (Previously a draft being
 -- edited sorted above older submissions, which made the queue jump around.)
 
 DROP FUNCTION IF EXISTS public.advisor_list_submissions(text);
@@ -107,7 +108,9 @@ BEGIN
     )
   FROM base b
   LEFT JOIN public.profiles p ON p.user_id = b.user_id
-  ORDER BY b.certified_at DESC NULLS LAST, b.updated_at DESC, b.id;
+  -- Certified is the intake's status; its date only orders the group. Rows submitted before the
+  -- server stamped certifications have no certified_at: they stay in the group, after the stamped ones.
+  ORDER BY (b.status = 'submitted') DESC, b.certified_at DESC NULLS LAST, b.updated_at DESC, b.id;
 END;
 $$;
 

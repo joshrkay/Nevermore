@@ -577,15 +577,16 @@ BEGIN
   INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor');
   PERFORM set_config('test.advisor', adv::text, false);
 
-  -- Seven intakes. Ids are chosen so that sorting by id alone would give the wrong order.
-  --   certified: ...0a newest (Apr), ...0b (Mar), ...0c and ...0d tie (Feb), so the id decides
+  -- Eight intakes. Ids are chosen so that sorting by id alone would give the wrong order.
+  --   certified: ...0a newest (Apr), ...0b (Mar), ...0c and ...0d tie (Feb), so the id decides;
+  --     then ...ab, certified before dates were stamped (no certified_at), after the stamped ones
   --   not certified: ...ff touched most recently (Jun), ...ee (May), ...dd withdrawn (Apr; its
   --   old certification is dated Jul, the newest of all, but it no longer counts)
   INSERT INTO public.chamber_sessions (id, user_id) VALUES
     ('00000000-0000-0000-0000-00000000000a', owner), ('00000000-0000-0000-0000-00000000000b', owner),
     ('00000000-0000-0000-0000-00000000000c', owner), ('00000000-0000-0000-0000-00000000000d', owner),
     ('00000000-0000-0000-0000-0000000000ff', owner), ('00000000-0000-0000-0000-0000000000ee', owner),
-    ('00000000-0000-0000-0000-0000000000dd', owner);
+    ('00000000-0000-0000-0000-0000000000dd', owner), ('00000000-0000-0000-0000-0000000000ab', owner);
 
   SET LOCAL session_replication_role = replica;
   FOR sess IN SELECT * FROM (VALUES
@@ -606,6 +607,12 @@ BEGIN
      SET updated_at = '2026-04-15T00:00:00Z', status = 'in_progress',
          submission = jsonb_build_object('signer_name', 'Jo', 'certified_at', '2026-07-01T00:00:00Z')
    WHERE id = '00000000-0000-0000-0000-0000000000dd';
+  -- Submitted before certifications were stamped by the server: certified as far as the prospect is
+  -- concerned, but no certified_at. Older than every draft, so only its status can keep it in the group.
+  UPDATE public.chamber_sessions
+     SET updated_at = '2026-01-01T00:00:00Z', status = 'submitted', submission = jsonb_build_object('signer_name', 'Jo')
+   WHERE id = '00000000-0000-0000-0000-0000000000ab';
+  UPDATE public.submission_workflow SET status = 'submitted' WHERE session_id = '00000000-0000-0000-0000-0000000000ab';
   SET LOCAL session_replication_role = origin;
 
   PERFORM pg_temp.become('advisor');
@@ -615,6 +622,7 @@ BEGIN
   expected := ARRAY[
     '00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000000b',
     '00000000-0000-0000-0000-00000000000c', '00000000-0000-0000-0000-00000000000d',
+    '00000000-0000-0000-0000-0000000000ab',
     '00000000-0000-0000-0000-0000000000ff', '00000000-0000-0000-0000-0000000000ee',
     '00000000-0000-0000-0000-0000000000dd']::uuid[];
   IF ids IS DISTINCT FROM expected THEN
@@ -628,7 +636,7 @@ BEGIN
   END IF;
   -- The status filter keeps the same order.
   SELECT array_agg(session_id) INTO ids FROM public.advisor_list_submissions('submitted');
-  IF ids IS DISTINCT FROM expected[1:4] THEN RAISE EXCEPTION 'FAIL: filtered queue order was %', ids; END IF;
+  IF ids IS DISTINCT FROM expected[1:5] THEN RAISE EXCEPTION 'FAIL: filtered queue order was %', ids; END IF;
 
   -- ---------- State footprint: operating states plus census states, upper-cased, sorted, distinct ----------
   RESET ROLE;

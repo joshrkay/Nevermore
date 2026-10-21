@@ -102,6 +102,21 @@ describe("AdvisorDashboardPage", () => {
     expect(within(beta).getByText("Needs review")).toBeInTheDocument();
   });
 
+  it("says what is true when there is no submission date", async () => {
+    listSubmissions.mockResolvedValue([
+      // Submitted before the server stamped certification dates: certified, date unknown.
+      row({ session_id: "legacy", company_name: "Legacy Co", submitted_at: null, intake_status: "submitted", signer_name: "Jo Doe" }),
+      // Certified once, then the prospect changed their answers.
+      row({ session_id: "withdrawn", company_name: "Changed Co", submitted_at: null, intake_status: "in_progress", signer_name: "Jo Doe", pipeline_status: "draft" }),
+      row({ session_id: "never", company_name: "Never Co", submitted_at: null, intake_status: "in_progress", signer_name: null, pipeline_status: "draft" }),
+    ]);
+    renderAt();
+    const cell = async (name: string) => (await screen.findByRole("link", { name })).closest("tr")!;
+    expect(within(await cell("Legacy Co")).getByText("Date not recorded")).toBeInTheDocument();
+    expect(within(await cell("Changed Co")).getByText("Needs re-certification")).toBeInTheDocument();
+    expect(within(await cell("Never Co")).getByText("Not certified")).toBeInTheDocument();
+  });
+
   it("only lists what an advisor needs to triage, nothing sensitive", async () => {
     listSubmissions.mockResolvedValue([row()]);
     renderAt();
