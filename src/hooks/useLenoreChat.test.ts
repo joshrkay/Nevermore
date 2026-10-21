@@ -10,14 +10,14 @@ const { useLenoreChat } = await import("./useLenoreChat");
 
 const httpError = (status: number) => new FunctionsHttpError(new Response("{}", { status }));
 
-const setup = () => {
+const setup = (extra: Record<string, unknown> = {}) => {
   const addUserMessage = vi.fn();
   const addLenoreMessage = vi.fn();
   const setChamberData = vi.fn();
   const onOrbStateChange = vi.fn();
   const data = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", employees: [{ first_name: "Ada", last_name: "L", dob: "1990-01-01", state: "TX", title: "Eng", salary: 1, classification: "W2" as const, dependents: [] }] };
   const hook = renderHook(() =>
-    useLenoreChat({ chamberData: data, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange }),
+    useLenoreChat({ chamberData: data, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, ...extra }),
   );
   return { ...hook, addUserMessage, addLenoreMessage, setChamberData, onOrbStateChange };
 };
@@ -119,5 +119,47 @@ describe("useLenoreChat", () => {
     await waitFor(() => expect(result.current.pending).toBe(true));
     await act(async () => { finish({ data: { extracted: {}, reply: "hi" }, error: null }); });
     await waitFor(() => expect(result.current.pending).toBe(false));
+  });
+
+  describe("tracking where extracted values came from", () => {
+    const response = { extracted: { employee_count: 12 }, reply: "Twelve.", field_status: { employee_count: "confirmed" } };
+
+    it("hands the extraction to the page with the prospect's message, instead of merging it blindly", async () => {
+      invoke.mockResolvedValue({ data: response, error: null });
+      const onExtract = vi.fn();
+      const { result, addUserMessage, setChamberData } = setup({ onExtract });
+      addUserMessage.mockReturnValue({ id: "m1", text: "We have 12 staff" });
+      await act(async () => { await result.current.send("We have 12 staff"); });
+
+      expect(onExtract).toHaveBeenCalledWith(response.extracted, response, { id: "m1", text: "We have 12 staff" });
+      expect(setChamberData).not.toHaveBeenCalled();
+    });
+
+    it("still extracts when the page doesn't say which message it recorded", async () => {
+      invoke.mockResolvedValue({ data: response, error: null });
+      const onExtract = vi.fn();
+      const { result } = setup({ onExtract });
+      await act(async () => { await result.current.send("We have 12 staff"); });
+      expect(onExtract).toHaveBeenCalledWith(response.extracted, response, null);
+    });
+
+    it("keeps pointing at the original message when a failed send is retried", async () => {
+      invoke.mockRejectedValueOnce(httpError(504)).mockResolvedValueOnce({ data: response, error: null });
+      const onExtract = vi.fn();
+      const { result, addUserMessage } = setup({ onExtract });
+      addUserMessage.mockReturnValue({ id: "m1", text: "We have 12 staff" });
+      await act(async () => { await result.current.send("We have 12 staff"); });
+      expect(onExtract).not.toHaveBeenCalled();
+      await act(async () => { await result.current.retry(); });
+      expect(onExtract).toHaveBeenCalledWith(response.extracted, response, { id: "m1", text: "We have 12 staff" });
+    });
+
+    it("doesn't extract from a reply that carried nothing", async () => {
+      invoke.mockResolvedValue({ data: { reply: "Tell me more." }, error: null });
+      const onExtract = vi.fn();
+      const { result } = setup({ onExtract });
+      await act(async () => { await result.current.send("hello"); });
+      expect(onExtract).not.toHaveBeenCalled();
+    });
   });
 });

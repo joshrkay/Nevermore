@@ -68,7 +68,7 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   reviewEvents: [],
   versions: [],
   documents: [
-    { id: "d1", file_name: "census.xlsx", file_size: "12 KB", doc_type: "census", status: "uploaded", storage_path: "prospect-1/x_census.xlsx", created_at: "2026-10-01T00:00:00Z" },
+    { id: "d1", file_name: "census.xlsx", file_size: "12 KB", category: "census", status: "uploaded", storage_path: "prospect-1/x_census.xlsx", created_at: "2026-10-01T00:00:00Z" },
   ],
   ...over,
 });
@@ -100,6 +100,7 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(count).getByText(/about a dozen people/)).toBeInTheDocument();
     expect(screen.getByTestId("field-hris_system")).toHaveTextContent("No source recorded");
     expect(screen.getByText("census.xlsx")).toBeInTheDocument();
+    expect(screen.getByText(/Employee census · 12 KB/)).toBeInTheDocument();
 
     fireEvent.click(within(count).getByRole("button", { name: "View in transcript" }));
     expect(screen.getByText("We're about a dozen people.").closest("li")).toHaveAttribute("aria-current", "true");
