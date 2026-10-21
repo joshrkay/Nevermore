@@ -18,7 +18,16 @@ Only publishable values go in `.env`; it is git-ignored. Secrets (AI provider ke
 npm run lint && npm test && npm run build
 ```
 
-CI runs the same three on every pull request. Make the `verify` check required on `main` (repo Settings → Branches).
+The SQL tests (access control, certification, abuse limits) need a scratch Postgres you can create
+databases on. Each file runs in its own throwaway database:
+
+```sh
+PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh
+```
+
+CI (`.github/workflows/ci.yml`) runs both on every pull request and on pushes to `main`, as two
+checks: `verify` (lint, test, build) and `sql-tests`. Make both required on `main` (repo Settings →
+Branches).
 
 ## Advisors
 

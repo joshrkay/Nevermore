@@ -75,10 +75,11 @@ themselves).
 ## Tests
 
 `supabase/tests/advisor_operations.sql` runs against a scratch Postgres (it drops `public`,
-`auth` and `storage`):
+`auth` and `storage`). `supabase/tests/run.sh` gives every SQL test its own throwaway database and
+is what CI runs (the `sql-tests` check):
 
 ```sh
-createdb scratch && psql -d scratch -v ON_ERROR_STOP=1 -f supabase/tests/advisor_operations.sql
+PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh advisor_operations
 ```
 
 It has two parts. The first walks the advisor workflow (roles, status, notes, reviews, versions).
