@@ -14,7 +14,6 @@ import {
   type CertificationState,
   type ChamberSubmission,
 } from "@/data/manuscript";
-import { parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 
 interface UseChamberSessionReturn {
   sessionId: string | null;

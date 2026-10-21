@@ -31,7 +31,7 @@ const DocumentsPanel = ({ documents }: { documents: UploadedDocument[] }) => {
               <div className="min-w-0">
                 <p className="truncate">{doc.file_name}</p>
                 <p className="text-xs text-muted-foreground">
-                  {doc.doc_type} · {doc.file_size} · {formatDateTime(doc.created_at)}
+                  {doc.category} · {doc.file_size} · {formatDateTime(doc.created_at)}
                 </p>
               </div>
               <button

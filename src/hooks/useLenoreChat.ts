@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import { mergeChamberData } from "@/data/chamberValidation";
 import type { ChamberData } from "@/data/chamberTypes";
+import type { ChatMessage } from "@/data/chat";
+import { applyExtraction, transcriptExtraction, type IntakeState } from "@/data/provenance";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 
 export interface ChatFailure {
@@ -13,8 +14,10 @@ export interface ChatFailure {
 
 interface UseLenoreChatOptions {
   chamberData: ChamberData;
-  setChamberData: (updater: (prev: ChamberData) => ChamberData) => void;
-  addUserMessage: (text: string) => void;
+  /** Applies an update to the intake; extractions go through here so each field records its source. */
+  updateIntake: (updater: (prev: IntakeState) => IntakeState) => void;
+  /** Adds the prospect's message to the transcript and returns it, so extracted fields can cite it. */
+  addUserMessage: (text: string) => ChatMessage;
   addLenoreMessage: (text: string) => void;
   onOrbStateChange: (state: OrbState) => void;
 }
@@ -25,15 +28,17 @@ const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
  */
-export function useLenoreChat({ chamberData, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange }: UseLenoreChatOptions) {
+export function useLenoreChat({ chamberData, updateIntake, addUserMessage, addLenoreMessage, onOrbStateChange }: UseLenoreChatOptions) {
   const [failure, setFailure] = useState<ChatFailure | null>(null);
   const [pending, setPending] = useState(false);
   const dataRef = useRef(chamberData);
   dataRef.current = chamberData;
+  const failedMessage = useRef<ChatMessage | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (idleTimer.current) clearTimeout(idleTimer.current); }, []);
 
-  const ask = useCallback(async (text: string): Promise<boolean> => {
+  const ask = useCallback(async (message: ChatMessage): Promise<boolean> => {
+    const text = message.text;
     setPending(true);
     onOrbStateChange("thinking");
     try {
@@ -42,33 +47,36 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
       const { data, error } = await supabase.functions.invoke("chamber-extract", { body: { message: text, context } });
       if (error) throw error;
 
-      if (data?.extracted) setChamberData((prev) => mergeChamberData(prev, data.extracted));
+      if (data?.extracted) {
+        updateIntake((prev) => applyExtraction(prev, data.extracted, transcriptExtraction(message, data)));
+      }
       const reply = (typeof data?.reply === "string" && data.reply.trim()) || FALLBACK_REPLY;
       onOrbStateChange("speaking");
       addLenoreMessage(reply);
       idleTimer.current = setTimeout(() => onOrbStateChange("idle"), 2000);
+      failedMessage.current = null;
       setFailure(null);
       return true;
     } catch (err) {
       onOrbStateChange("idle");
       const rateLimited = err instanceof FunctionsHttpError && err.context?.status === 429;
+      failedMessage.current = message;
       setFailure({ text, kind: rateLimited ? "rate_limited" : "failed" });
       return false;
     } finally {
       setPending(false);
     }
-  }, [addLenoreMessage, onOrbStateChange, setChamberData]);
+  }, [addLenoreMessage, onOrbStateChange, updateIntake]);
 
   const send = useCallback(async (text: string) => {
     setFailure(null);
-    addUserMessage(text);
-    await ask(text);
+    await ask(addUserMessage(text));
   }, [addUserMessage, ask]);
 
   /** Resends the message that failed, without adding it to the conversation a second time. */
   const retry = useCallback(async () => {
-    if (!failure) return;
-    await ask(failure.text);
+    if (!failure || !failedMessage.current) return;
+    await ask(failedMessage.current);
   }, [ask, failure]);
 
   /** "Continue manually": drop the notice and let the prospect fill in the workspace themselves. */

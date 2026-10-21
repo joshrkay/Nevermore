@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { createChatMessage } from "@/data/chat";
+import type { IntakeState } from "@/data/provenance";
 
 const invoke = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { functions: { invoke: (...args: unknown[]) => invoke(...args) } } }));
@@ -11,30 +13,33 @@ const { useLenoreChat } = await import("./useLenoreChat");
 const httpError = (status: number) => new FunctionsHttpError(new Response("{}", { status }));
 
 const setup = () => {
-  const addUserMessage = vi.fn();
+  const addUserMessage = vi.fn((text: string) => createChatMessage("user", text));
   const addLenoreMessage = vi.fn();
-  const setChamberData = vi.fn();
+  const updateIntake = vi.fn();
   const onOrbStateChange = vi.fn();
   const data = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", employees: [{ first_name: "Ada", last_name: "L", dob: "1990-01-01", state: "TX", title: "Eng", salary: 1, classification: "W2" as const, dependents: [] }] };
   const hook = renderHook(() =>
-    useLenoreChat({ chamberData: data, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange }),
+    useLenoreChat({ chamberData: data, updateIntake, addUserMessage, addLenoreMessage, onOrbStateChange }),
   );
-  return { ...hook, addUserMessage, addLenoreMessage, setChamberData, onOrbStateChange };
+  return { ...hook, addUserMessage, addLenoreMessage, updateIntake, onOrbStateChange };
 };
 
 describe("useLenoreChat", () => {
   beforeEach(() => invoke.mockReset());
 
-  it("records the prospect's message, merges what Lenore extracted, and shows her reply", async () => {
+  it("records the prospect's message, merges what Lenore extracted with its source, and shows her reply", async () => {
     invoke.mockResolvedValue({ data: { extracted: { employee_count: 12 }, reply: "Twelve — lovely." }, error: null });
-    const { result, addUserMessage, addLenoreMessage, setChamberData } = setup();
+    const { result, addUserMessage, addLenoreMessage, updateIntake } = setup();
     await act(async () => { await result.current.send("We have 12 staff"); });
 
     expect(addUserMessage).toHaveBeenCalledWith("We have 12 staff");
     expect(addLenoreMessage).toHaveBeenCalledWith("Twelve — lovely.");
-    expect(setChamberData).toHaveBeenCalledTimes(1);
-    const merged = (setChamberData.mock.calls[0][0] as (prev: typeof EMPTY_CHAMBER_DATA) => typeof EMPTY_CHAMBER_DATA)(EMPTY_CHAMBER_DATA);
-    expect(merged.employee_count).toBe(12);
+    expect(updateIntake).toHaveBeenCalledTimes(1);
+    const prev: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
+    const next = (updateIntake.mock.calls[0][0] as (p: IntakeState) => IntakeState)(prev);
+    const message = addUserMessage.mock.results[0].value;
+    expect(next.data.employee_count).toBe(12);
+    expect(next.provenance.employee_count?.source).toMatchObject({ kind: "transcript", message_id: message.id });
     expect(result.current.failure).toBeNull();
   });
 

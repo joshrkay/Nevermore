@@ -67,7 +67,7 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   reviewEvents: [],
   versions: [],
   documents: [
-    { id: "d1", file_name: "census.xlsx", file_size: "12 KB", doc_type: "census", status: "uploaded", storage_path: "prospect-1/x_census.xlsx", created_at: "2026-10-01T00:00:00Z" },
+    { id: "d1", file_name: "census.xlsx", file_size: "12 KB", category: "census", status: "uploaded", storage_path: "prospect-1/x_census.xlsx", created_at: "2026-10-01T00:00:00Z" },
   ],
   ...over,
 });
