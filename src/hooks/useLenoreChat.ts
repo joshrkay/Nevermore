@@ -12,15 +12,8 @@ export interface ChatFailure {
   kind: "rate_limited" | "failed";
 }
 
-/** The prospect's message as it was recorded in the transcript, for pointing extracted values back to it. */
-export interface SourceMessage {
-  id: string;
-  text: string;
-}
-
 interface UseLenoreChatOptions {
   chamberData: ChamberData;
-  /** Merges extracted values with no record of where they came from; used when `onExtract` isn't given. */
   setChamberData: (updater: (prev: ChamberData) => ChamberData) => void;
   /** May return the stored message so extracted values can point back to it. */
   addUserMessage: (text: string) => { id: string; text: string } | void;

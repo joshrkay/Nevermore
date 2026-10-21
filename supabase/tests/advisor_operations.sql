@@ -33,9 +33,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO anon, authenticated;
 -- Supabase's helper: the folder segments of an object path, without the file name.
 CREATE FUNCTION storage.foldername(name text) RETURNS text[] LANGUAGE sql IMMUTABLE AS
   $$ SELECT string_to_array(regexp_replace(name, '/?[^/]*$', ''), '/') $$;
--- Mirrors "Users can view their own documents" from 20260323224722 (the migration itself also
--- creates the stubbed `documents` table, so it can't be loaded here).
-CREATE POLICY "own documents bucket" ON storage.objects FOR SELECT TO authenticated
+-- Mirrors "Users can view their own documents" from 20260323224722, under the same name so that
+-- 20261023090000 replaces it as it does in production (the original migration also creates the
+-- stubbed `documents` table, so it can't be loaded here).
+CREATE POLICY "Users can view their own documents" ON storage.objects FOR SELECT TO authenticated
   USING (bucket_id = 'documents' AND (storage.foldername(name))[1] = auth.uid()::text);
 
 CREATE TABLE public.profiles (
@@ -83,7 +84,7 @@ CREATE POLICY "own update" ON public.chamber_sessions FOR UPDATE TO authenticate
 \i supabase/migrations/20261020190000_ai_rate_limit.sql
 \i supabase/migrations/20261020200000_block_guest_submission.sql
 \i supabase/migrations/20261020210000_certification_events.sql
-\i supabase/migrations/20261020210000_guest_abuse_limits.sql
+\i supabase/migrations/20261020220000_guest_abuse_limits.sql
 \i supabase/migrations/20261021090000_chamber_field_provenance.sql
 \i supabase/migrations/20261021100000_session_documents.sql
 
@@ -91,7 +92,9 @@ CREATE POLICY "own update" ON public.chamber_sessions FOR UPDATE TO authenticate
 INSERT INTO public.chamber_sessions (id, user_id) VALUES ('00000000-0000-0000-0000-0000000000aa', gen_random_uuid());
 
 \i supabase/migrations/20261022090000_advisor_operations.sql
-\i supabase/migrations/20261023090000_advisor_queue.sql
+\i supabase/migrations/20261023090000_document_categories_and_storage_access.sql
+\i supabase/migrations/20261024090000_document_processing_started.sql
+\i supabase/migrations/20261024100000_advisor_queue.sql
 
 -- Runs `stmt` as `who` and fails the run unless it's refused (permission, row security or a
 -- deliberate check).
@@ -403,7 +406,7 @@ DECLARE
     {"t":"public.chamber_certifications",                           "a":1, "b":0},
     {"t":"public.profiles",                                         "a":1, "b":1},
     {"t":"public.documents",                                        "a":1, "b":1},
-    {"t":"storage.objects WHERE bucket_id = 'documents'",           "a":1, "b":1},
+    {"t":"storage.objects WHERE bucket_id = 'documents'",           "a":2, "b":2},
     {"t":"public.user_roles",                                       "a":0, "b":0, "adv":1, "g":1},
     {"t":"public.submission_workflow",                              "a":0, "b":0},
     {"t":"public.submission_status_history",                        "a":0, "b":0},
@@ -449,6 +452,14 @@ BEGIN
   SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = sid_a;
   INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', sid_a || '/v1.pdf');
   PERFORM public.record_manuscript_version(sid_a, 1, sid_a || '/v1.pdf', repeat('c', 64), latest, 0, false);
+
+  -- Stored files live at {user_id}/{session_id}/{file}: the folder and the intake must both be the
+  -- reader's. The third file sits in B's folder under A's intake, so neither prospect may read it.
+  RESET ROLE;
+  INSERT INTO storage.objects (bucket_id, name) VALUES
+    ('documents', a || '/' || sid_a || '/f.pdf'),
+    ('documents', b || '/' || sid_b || '/f.pdf'),
+    ('documents', b || '/' || sid_a || '/forged.pdf');
 
   -- ---------- Reads: each data type, each caller ----------
   FOR spec IN SELECT jsonb_array_elements(specs) LOOP

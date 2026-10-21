@@ -313,8 +313,6 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
         )}
         </>
         )}
-        </>
-        )}
       </div>
 
       {/* Confirmation Overlay */}
