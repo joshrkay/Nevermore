@@ -74,6 +74,9 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
   });
   const allChecked = blockers.length === 0;
   const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";
+  // A certification that still covers these answers is final: offering the form again would let a
+  // second signature replace it (and move the intake in the advisor queue) with nothing new certified.
+  const certifiedAndCurrent = certification.status === "certified" && !needsRecertify;
 
   const handleSign = () => {
     if (!checks.every(Boolean)) {
@@ -149,6 +152,8 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
           </div>
         )}
 
+        {!certifiedAndCurrent && (
+        <>
         <fieldset className="space-y-4">
           <legend className="sr-only">Certification statements</legend>
           {attestations.map((text, i) => (
@@ -260,6 +265,8 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
           <p className="text-xs text-muted-foreground -mt-4" data-testid="certification-blockers">
             Before you can submit: {blockers.join(" · ")}
           </p>
+        )}
+        </>
         )}
         </>
         )}
