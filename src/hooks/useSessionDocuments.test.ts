@@ -8,6 +8,7 @@ let listRows: Record<string, unknown>[] = [];
 let insertResult: Result = { data: null, error: null };
 let deleteResult: Result = { error: null };
 let storageRemoveResult: Result = { error: null };
+let uploadGate: Promise<void> | null = null;
 
 const row = (over: Record<string, unknown> = {}) => ({
   id: "d1", file_name: "census.csv", file_size: "1 KB", size_bytes: 1024, mime_type: "text/csv",
@@ -39,7 +40,7 @@ vi.mock("@/integrations/supabase/client", () => {
       }),
       storage: {
         from: () => ({
-          upload: async (path: string) => { log("storage.upload", path); return { error: null }; },
+          upload: async (path: string) => { log("storage.upload", path); await uploadGate; return { error: null }; },
           remove: async (paths: string[]) => { log("storage.remove", paths); return storageRemoveResult; },
         }),
       },
@@ -57,6 +58,7 @@ describe("useSessionDocuments", () => {
     insertResult = { data: null, error: null };
     deleteResult = { error: null };
     storageRemoveResult = { error: null };
+    uploadGate = null;
   });
 
   it("lists only the open intake's documents", async () => {
@@ -129,6 +131,43 @@ describe("useSessionDocuments", () => {
     listRows = [];
     rerender({ sid: "s2" });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.docs).toEqual([]);
+  });
+
+  it("shows a read that stopped long ago as retryable, not as reading forever", async () => {
+    const longAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    listRows = [row({ status: "processing", processing_started_at: longAgo }), row({ id: "d2", status: "processing" })];
+    const { result } = renderHook(() => useSessionDocuments("s1"));
+    await waitFor(() => expect(result.current.docs).toHaveLength(2));
+    expect(result.current.docs.map((d) => d.status)).toEqual(["failed", "failed"]);
+  });
+
+  it("leaves a read that just started alone, and picks up its result when it finishes", async () => {
+    listRows = [row({ status: "processing", processing_started_at: new Date().toISOString() })];
+    const { result } = renderHook(() => useSessionDocuments("s1"));
+    await waitFor(() => expect(result.current.docs).toHaveLength(1));
+    expect(result.current.docs[0].status).toBe("processing");
+
+    // Another tab's read completes; this tab notices without a reload.
+    listRows = [row({ status: "extracted" })];
+    await waitFor(() => expect(result.current.docs[0].status).toBe("extracted"), { timeout: 6000 });
+  }, 10000);
+
+  it("keeps an upload with the intake it started in, even if another intake is opened meanwhile", async () => {
+    let release!: () => void;
+    uploadGate = new Promise<void>((r) => { release = r; });
+    insertResult = { data: row({ id: "d9" }), error: null };
+    const { result, rerender } = renderHook(({ sid }) => useSessionDocuments(sid), { initialProps: { sid: "s1" as string | null } });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    let pending!: Promise<unknown>;
+    act(() => { pending = result.current.upload([new File(["x"], "census.csv", { type: "text/csv" })]); });
+    rerender({ sid: "s2" });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    await act(async () => { release(); await pending; });
+
+    const path = calls.find((c) => c.op === "storage.upload")!.args[0] as string;
+    expect(path).toMatch(/^u1\/s1\//);
+    expect(calls.find((c) => c.op === "insert")!.args[0]).toMatchObject({ session_id: "s1" });
     expect(result.current.docs).toEqual([]);
   });
 });

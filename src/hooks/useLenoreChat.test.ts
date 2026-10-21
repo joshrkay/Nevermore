@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { createChatMessage } from "@/data/chat";
+import type { IntakeState } from "@/data/provenance";
 
 const invoke = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { functions: { invoke: (...args: unknown[]) => invoke(...args) } } }));
@@ -10,31 +12,34 @@ const { useLenoreChat } = await import("./useLenoreChat");
 
 const httpError = (status: number) => new FunctionsHttpError(new Response("{}", { status }));
 
-const setup = (extra: Record<string, unknown> = {}) => {
-  const addUserMessage = vi.fn();
+const setup = () => {
+  const addUserMessage = vi.fn((text: string) => createChatMessage("user", text));
   const addLenoreMessage = vi.fn();
-  const setChamberData = vi.fn();
+  const updateIntake = vi.fn();
   const onOrbStateChange = vi.fn();
   const data = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", employees: [{ first_name: "Ada", last_name: "L", dob: "1990-01-01", state: "TX", title: "Eng", salary: 1, classification: "W2" as const, dependents: [] }] };
   const hook = renderHook(() =>
-    useLenoreChat({ chamberData: data, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, ...extra }),
+    useLenoreChat({ chamberData: data, updateIntake, addUserMessage, addLenoreMessage, onOrbStateChange }),
   );
-  return { ...hook, addUserMessage, addLenoreMessage, setChamberData, onOrbStateChange };
+  return { ...hook, addUserMessage, addLenoreMessage, updateIntake, onOrbStateChange };
 };
 
 describe("useLenoreChat", () => {
-  beforeEach(() => invoke.mockReset());
+  beforeEach(() => { invoke.mockReset(); });
 
-  it("records the prospect's message, merges what Lenore extracted, and shows her reply", async () => {
+  it("records the prospect's message, merges what Lenore extracted with its source, and shows her reply", async () => {
     invoke.mockResolvedValue({ data: { extracted: { employee_count: 12 }, reply: "Twelve — lovely." }, error: null });
-    const { result, addUserMessage, addLenoreMessage, setChamberData } = setup();
+    const { result, addUserMessage, addLenoreMessage, updateIntake } = setup();
     await act(async () => { await result.current.send("We have 12 staff"); });
 
     expect(addUserMessage).toHaveBeenCalledWith("We have 12 staff");
     expect(addLenoreMessage).toHaveBeenCalledWith("Twelve — lovely.");
-    expect(setChamberData).toHaveBeenCalledTimes(1);
-    const merged = (setChamberData.mock.calls[0][0] as (prev: typeof EMPTY_CHAMBER_DATA) => typeof EMPTY_CHAMBER_DATA)(EMPTY_CHAMBER_DATA);
-    expect(merged.employee_count).toBe(12);
+    expect(updateIntake).toHaveBeenCalledTimes(1);
+    const prev: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
+    const next = (updateIntake.mock.calls[0][0] as (p: IntakeState) => IntakeState)(prev);
+    const message = addUserMessage.mock.results[0].value;
+    expect(next.data.employee_count).toBe(12);
+    expect(next.provenance.employee_count?.source).toMatchObject({ kind: "transcript", message_id: message.id });
     expect(result.current.failure).toBeNull();
   });
 
@@ -121,45 +126,39 @@ describe("useLenoreChat", () => {
     await waitFor(() => expect(result.current.pending).toBe(false));
   });
 
-  describe("tracking where extracted values came from", () => {
-    const response = { extracted: { employee_count: 12 }, reply: "Twelve.", field_status: { employee_count: "confirmed" } };
+  it("hands extracted values to onExtracted with the message they came from, and on retry too", async () => {
+    invoke.mockResolvedValueOnce({ data: null, error: httpError(502) });
+    invoke.mockResolvedValueOnce({ data: { extracted: { employee_count: 12 }, reply: "ok" }, error: null });
+    const onExtracted = vi.fn();
+    const addUserMessage = vi.fn(() => ({ id: "m1", text: "We have 12 staff" }));
+    const setChamberData = vi.fn();
+    const { result } = renderHook(() =>
+      useLenoreChat({ chamberData: EMPTY_CHAMBER_DATA, setChamberData, addUserMessage, addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted }),
+    );
+    await act(async () => { await result.current.send("We have 12 staff"); });
+    await act(async () => { await result.current.retry(); });
+    expect(onExtracted).toHaveBeenCalledWith({ employee_count: 12 }, expect.anything(), { id: "m1", text: "We have 12 staff" });
+    expect(setChamberData).not.toHaveBeenCalled();
+  });
 
-    it("hands the extraction to the page with the prospect's message, instead of merging it blindly", async () => {
-      invoke.mockResolvedValue({ data: response, error: null });
-      const onExtract = vi.fn();
-      const { result, addUserMessage, setChamberData } = setup({ onExtract });
-      addUserMessage.mockReturnValue({ id: "m1", text: "We have 12 staff" });
-      await act(async () => { await result.current.send("We have 12 staff"); });
-
-      expect(onExtract).toHaveBeenCalledWith(response.extracted, response, { id: "m1", text: "We have 12 staff" });
-      expect(setChamberData).not.toHaveBeenCalled();
+  it("cites the message each answer belongs to when sends overlap", async () => {
+    const resolvers: ((v: unknown) => void)[] = [];
+    invoke.mockImplementation(() => new Promise((r) => resolvers.push(r)));
+    const onExtracted = vi.fn();
+    let n = 0;
+    const addUserMessage = vi.fn((text: string) => ({ id: `m${++n}`, text }));
+    const { result } = renderHook(() =>
+      useLenoreChat({ chamberData: EMPTY_CHAMBER_DATA, setChamberData: vi.fn(), addUserMessage, addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted }),
+    );
+    let first!: Promise<void>, second!: Promise<void>;
+    act(() => { first = result.current.send("We have 12 staff"); });
+    act(() => { second = result.current.send("We have 12 staff"); }); // same text, sent again before the first answer
+    await act(async () => {
+      resolvers[0]({ data: { extracted: { employee_count: 12 }, reply: "a" }, error: null });
+      resolvers[1]({ data: { extracted: { employee_count: 13 }, reply: "b" }, error: null });
+      await Promise.all([first, second]);
     });
-
-    it("still extracts when the page doesn't say which message it recorded", async () => {
-      invoke.mockResolvedValue({ data: response, error: null });
-      const onExtract = vi.fn();
-      const { result } = setup({ onExtract });
-      await act(async () => { await result.current.send("We have 12 staff"); });
-      expect(onExtract).toHaveBeenCalledWith(response.extracted, response, null);
-    });
-
-    it("keeps pointing at the original message when a failed send is retried", async () => {
-      invoke.mockRejectedValueOnce(httpError(504)).mockResolvedValueOnce({ data: response, error: null });
-      const onExtract = vi.fn();
-      const { result, addUserMessage } = setup({ onExtract });
-      addUserMessage.mockReturnValue({ id: "m1", text: "We have 12 staff" });
-      await act(async () => { await result.current.send("We have 12 staff"); });
-      expect(onExtract).not.toHaveBeenCalled();
-      await act(async () => { await result.current.retry(); });
-      expect(onExtract).toHaveBeenCalledWith(response.extracted, response, { id: "m1", text: "We have 12 staff" });
-    });
-
-    it("doesn't extract from a reply that carried nothing", async () => {
-      invoke.mockResolvedValue({ data: { reply: "Tell me more." }, error: null });
-      const onExtract = vi.fn();
-      const { result } = setup({ onExtract });
-      await act(async () => { await result.current.send("hello"); });
-      expect(onExtract).not.toHaveBeenCalled();
-    });
+    expect(onExtracted).toHaveBeenCalledWith({ employee_count: 12 }, expect.anything(), { id: "m1", text: "We have 12 staff" });
+    expect(onExtracted).toHaveBeenCalledWith({ employee_count: 13 }, expect.anything(), { id: "m2", text: "We have 12 staff" });
   });
 });

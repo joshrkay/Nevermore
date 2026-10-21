@@ -6,7 +6,7 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN; END IF;
 END $$;
-\i supabase/migrations/20261020210000_guest_abuse_limits.sql
+\i supabase/migrations/20261020220000_guest_abuse_limits.sql
 
 DO $$
 DECLARE ok boolean;

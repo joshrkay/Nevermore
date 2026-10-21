@@ -69,13 +69,8 @@ const ChamberPage = () => {
     },
     addLenoreMessage,
     onOrbStateChange: setOrbState,
-    // Extracted values record the prospect's message as their source.
-    onExtract: (extracted, response, source) =>
-      updateIntake((prev) =>
-        source
-          ? applyExtraction(prev, extracted, transcriptExtraction(source, response))
-          : { ...prev, data: mergeChamberData(prev.data, extracted) },
-      ),
+    onExtracted: (extracted, response, message) =>
+      updateIntake((prev) => applyExtraction(prev, extracted, transcriptExtraction(message, response))),
   });
 
   const failureNotice = failure && (

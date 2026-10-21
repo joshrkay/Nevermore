@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import { mergeChamberData } from "@/data/chamberValidation";
 import type { ChamberData } from "@/data/chamberTypes";
+import type { ChatMessage } from "@/data/chat";
+import { applyExtraction, transcriptExtraction, type IntakeState } from "@/data/provenance";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 
 export interface ChatFailure {
@@ -21,12 +22,15 @@ interface UseLenoreChatOptions {
   chamberData: ChamberData;
   /** Merges extracted values with no record of where they came from; used when `onExtract` isn't given. */
   setChamberData: (updater: (prev: ChamberData) => ChamberData) => void;
-  /** Records the message in the transcript; returning it lets extracted values cite it as their source. */
-  addUserMessage: (text: string) => SourceMessage | undefined;
-  /** Applies what Lenore extracted, with the full response and the message it answers (null if unknown). */
-  onExtract?: (extracted: unknown, response: unknown, source: SourceMessage | null) => void;
+  /** May return the stored message so extracted values can point back to it. */
+  addUserMessage: (text: string) => { id: string; text: string } | void;
   addLenoreMessage: (text: string) => void;
   onOrbStateChange: (state: OrbState) => void;
+  /**
+   * Handles what Lenore extracted from a message (with her full response, for field status and
+   * evidence). Without it, or when the message wasn't recorded, the plain merge is used.
+   */
+  onExtracted?: (extracted: Partial<ChamberData>, response: unknown, message: { id: string; text: string }) => void;
 }
 
 const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?";
@@ -35,17 +39,19 @@ const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
  */
-export function useLenoreChat({ chamberData, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtract }: UseLenoreChatOptions) {
+export function useLenoreChat({ chamberData, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted }: UseLenoreChatOptions) {
   const [failure, setFailure] = useState<ChatFailure | null>(null);
   const [pending, setPending] = useState(false);
   const dataRef = useRef(chamberData);
   dataRef.current = chamberData;
-  // The message behind the last send, so a retry cites it too rather than the prospect's latest.
-  const sourceRef = useRef<SourceMessage | null>(null);
+  // The recorded message behind the current failure, so a retry still cites it. Each request
+  // otherwise carries its own message, so overlapping sends can't be attributed to each other.
+  const failedMessageRef = useRef<{ id: string; text: string } | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (idleTimer.current) clearTimeout(idleTimer.current); }, []);
 
-  const ask = useCallback(async (text: string): Promise<boolean> => {
+  const ask = useCallback(async (message: ChatMessage): Promise<boolean> => {
+    const text = message.text;
     setPending(true);
     onOrbStateChange("thinking");
     try {
@@ -55,35 +61,36 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
       if (error) throw error;
 
       if (data?.extracted) {
-        if (onExtract) onExtract(data.extracted, data, sourceRef.current);
+        if (onExtracted && message) onExtracted(data.extracted, data, message);
         else setChamberData((prev) => mergeChamberData(prev, data.extracted));
       }
       const reply = (typeof data?.reply === "string" && data.reply.trim()) || FALLBACK_REPLY;
       onOrbStateChange("speaking");
       addLenoreMessage(reply);
       idleTimer.current = setTimeout(() => onOrbStateChange("idle"), 2000);
+      failedMessage.current = null;
       setFailure(null);
       return true;
     } catch (err) {
       onOrbStateChange("idle");
       const rateLimited = err instanceof FunctionsHttpError && err.context?.status === 429;
+      failedMessage.current = message;
       setFailure({ text, kind: rateLimited ? "rate_limited" : "failed" });
       return false;
     } finally {
       setPending(false);
     }
-  }, [addLenoreMessage, onExtract, onOrbStateChange, setChamberData]);
+  }, [addLenoreMessage, onOrbStateChange, setChamberData, onExtracted]);
 
   const send = useCallback(async (text: string) => {
     setFailure(null);
-    sourceRef.current = addUserMessage(text) ?? null;
-    await ask(text);
+    await ask(text, addUserMessage(text) || null);
   }, [addUserMessage, ask]);
 
   /** Resends the message that failed, without adding it to the conversation a second time. */
   const retry = useCallback(async () => {
-    if (!failure) return;
-    await ask(failure.text);
+    if (!failure || !failedMessage.current) return;
+    await ask(failedMessage.current);
   }, [ask, failure]);
 
   /** "Continue manually": drop the notice and let the prospect fill in the workspace themselves. */

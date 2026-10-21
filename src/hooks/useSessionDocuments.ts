@@ -33,7 +33,7 @@ export interface UseSessionDocumentsReturn {
   extract: (doc: SessionDocument) => Promise<void>;
 }
 
-const COLUMNS = "id, file_name, file_size, size_bytes, mime_type, category, status, created_at, storage_path, extraction";
+const COLUMNS = "id, file_name, file_size, size_bytes, mime_type, category, status, created_at, storage_path, extraction, processing_started_at";
 const BUCKET = "documents";
 
 export function formatFileSize(bytes: number): string {
@@ -42,8 +42,25 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type Row = Omit<SessionDocument, "extraction"> & { extraction: unknown };
-const fromRow = (row: Row): SessionDocument => ({ ...row, extraction: parseExtraction(row.extraction) });
+type Row = Omit<SessionDocument, "extraction"> & { extraction: unknown; processing_started_at?: string | null };
+const fromRow = ({ processing_started_at: _startedAt, ...row }: Row): SessionDocument => ({
+  ...row,
+  extraction: parseExtraction(row.extraction),
+});
+
+// A read that has been going longer than this has stopped (the function's own limit is shorter).
+const STALE_PROCESSING_MS = 5 * 60 * 1000;
+// How often to look again at a read that another tab or an earlier visit started.
+const PROCESSING_POLL_MS = 4000;
+
+// A file still marked "processing" may be mid-read elsewhere (another tab, or before the page was
+// left and reopened), so it stays "processing" until it has gone stale; then it is offered a retry.
+const fromLoadedRow = (row: Row): SessionDocument => {
+  const doc = fromRow(row);
+  if (doc.status !== "processing") return doc;
+  const started = row.processing_started_at ? Date.parse(row.processing_started_at) : NaN;
+  return Number.isFinite(started) && Date.now() - started < STALE_PROCESSING_MS ? doc : { ...doc, status: "failed" };
+};
 
 /** The uploaded documents of one intake. Lists, uploads, and removals are scoped to `sessionId`. */
 export function useSessionDocuments(sessionId: string | null): UseSessionDocumentsReturn {
@@ -55,6 +72,8 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
   // Responses for an intake that's no longer open must not land in this one's list.
   const sessionRef = useRef(sessionId);
   useEffect(() => { sessionRef.current = sessionId; }, [sessionId]);
+  // Documents this tab is reading itself; their status comes from extract(), not from re-fetching.
+  const activeRef = useRef(new Set<string>());
   const docsRef = useRef(docs);
   useEffect(() => { docsRef.current = docs; }, [docs]);
 
@@ -77,24 +96,46 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         .eq("session_id", sessionId)
         .order("created_at", { ascending: true });
       if (cancelled) return;
-      if (error) console.error("Failed to load documents:", error);
-      setDocs(((data ?? []) as Row[]).map(fromRow));
+      if (error) console.error("Failed to load documents:", error.message);
+      setDocs(((data ?? []) as Row[]).map(fromLoadedRow));
       setIsLoading(false);
     })();
     return () => { cancelled = true; };
   }, [userId, sessionId]);
 
+  // Reads another tab (or an earlier visit) started: look again until they finish or go stale.
+  const hasForeignRead = docs.some((d) => d.status === "processing" && !activeRef.current.has(d.id));
+  useEffect(() => {
+    if (!userId || !sessionId || !hasForeignRead) return;
+    const timer = setTimeout(async () => {
+      const { data } = await supabase
+        .from("documents")
+        .select(COLUMNS)
+        .eq("session_id", sessionId)
+        .order("created_at", { ascending: true });
+      if (!data || sessionRef.current !== sessionId) return;
+      const fresh = new Map((data as Row[]).map((r) => [r.id, fromLoadedRow(r)]));
+      setDocs((prev) => prev.map((d) => (fresh.has(d.id) && !activeRef.current.has(d.id) ? fresh.get(d.id)! : d)));
+    }, PROCESSING_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [userId, sessionId, hasForeignRead, docs]);
+
   const extract = useCallback(async (doc: SessionDocument) => {
     const sid = sessionRef.current;
+    activeRef.current.add(doc.id);
     patchDoc(doc.id, { status: "processing" });
-    const { error } = await supabase.functions.invoke("document-extract", { body: { document_id: doc.id } });
-    if (error) console.error("Document extraction failed:", error);
-    // The function records its outcome on the row (or leaves it untouched if it never ran),
-    // so the row is the source of truth either way.
-    const { data } = await supabase.from("documents").select(COLUMNS).eq("id", doc.id).maybeSingle();
-    if (sessionRef.current !== sid) return;
-    if (data) patchDoc(doc.id, fromRow(data as Row));
-    else patchDoc(doc.id, { status: "failed" });
+    try {
+      const { error } = await supabase.functions.invoke("document-extract", { body: { document_id: doc.id } });
+      if (error) console.error("Document extraction failed:", error.message);
+      // The function records its outcome on the row (or leaves it untouched if it never ran),
+      // so the row is the source of truth either way.
+      const { data } = await supabase.from("documents").select(COLUMNS).eq("id", doc.id).maybeSingle();
+      if (sessionRef.current !== sid) return;
+      if (data) patchDoc(doc.id, fromRow(data as Row));
+      else patchDoc(doc.id, { status: "failed" });
+    } finally {
+      activeRef.current.delete(doc.id);
+    }
   }, [patchDoc]);
 
   const upload = useCallback(async (files: File[]) => {
@@ -132,7 +173,7 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         .from(BUCKET)
         .upload(storagePath, file, { contentType: file.type || undefined });
       if (storageError) {
-        console.error(`Failed to upload ${file.name}:`, storageError);
+        console.error("Failed to upload a document:", storageError.message);
         dropPending();
         continue;
       }
@@ -153,7 +194,7 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         .select(COLUMNS)
         .single();
       if (dbError || !data) {
-        console.error(`Failed to save ${file.name}:`, dbError);
+        console.error("Failed to save a document record:", dbError?.message);
         // Don't leave an untracked file behind.
         await supabase.storage.from(BUCKET).remove([storagePath]);
         dropPending();
