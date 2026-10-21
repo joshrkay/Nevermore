@@ -53,6 +53,9 @@ The response is `{ extracted, field_status, evidence, corrected_fields, reply }`
 
 Uploads live in `documents`, linked to their intake by `session_id`. RLS requires the caller to own both the row and the intake. The function reads one document as the calling user and writes the result to that row only: `status` and `extraction`.
 
+- `category` is one of `census`, `benefits`, `payroll`, `workers_comp`, `peo_invoice`, `prior_proposal` or `other`. It is suggested from the file name and the prospect can change it. The first four are "still helpful to provide" when missing; none is ever required.
+- Stored files sit at `{user_id}/{session_id}/{file}` in the private `documents` bucket. Reading or deleting one requires owning that intake, the same as its row; advisors read through short-lived signed links.
+- An interrupted read (`processing` when an intake opens) is shown as `failed` so the prospect can retry it.
 - `status` is one of `uploaded`, `processing`, `extracted`, `no_data`, `unsupported`, `encrypted`, `unreadable`, `too_large` or `failed`.
 - `extraction` is `{ message, candidates: [{ field, value, location }], applied: { field: timestamp }, extracted_at }`.
 

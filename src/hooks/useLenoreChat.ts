@@ -14,12 +14,16 @@ export interface ChatFailure {
 
 interface UseLenoreChatOptions {
   chamberData: ChamberData;
-  /** Applies an update to the intake; extractions go through here so each field records its source. */
-  updateIntake: (updater: (prev: IntakeState) => IntakeState) => void;
-  /** Adds the prospect's message to the transcript and returns it, so extracted fields can cite it. */
-  addUserMessage: (text: string) => ChatMessage;
+  setChamberData: (updater: (prev: ChamberData) => ChamberData) => void;
+  /** May return the stored message so extracted values can point back to it. */
+  addUserMessage: (text: string) => { id: string; text: string } | void;
   addLenoreMessage: (text: string) => void;
   onOrbStateChange: (state: OrbState) => void;
+  /**
+   * Handles what Lenore extracted from a message (with her full response, for field status and
+   * evidence). Without it, or when the message wasn't recorded, the plain merge is used.
+   */
+  onExtracted?: (extracted: Partial<ChamberData>, response: unknown, message: { id: string; text: string }) => void;
 }
 
 const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?";
@@ -28,12 +32,13 @@ const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
  */
-export function useLenoreChat({ chamberData, updateIntake, addUserMessage, addLenoreMessage, onOrbStateChange }: UseLenoreChatOptions) {
+export function useLenoreChat({ chamberData, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted }: UseLenoreChatOptions) {
   const [failure, setFailure] = useState<ChatFailure | null>(null);
   const [pending, setPending] = useState(false);
   const dataRef = useRef(chamberData);
   dataRef.current = chamberData;
-  const failedMessage = useRef<ChatMessage | null>(null);
+  // The prospect's message each answer belongs to, so extracted values cite it (also on retry).
+  const messageRef = useRef<{ id: string; text: string } | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (idleTimer.current) clearTimeout(idleTimer.current); }, []);
 
@@ -48,7 +53,9 @@ export function useLenoreChat({ chamberData, updateIntake, addUserMessage, addLe
       if (error) throw error;
 
       if (data?.extracted) {
-        updateIntake((prev) => applyExtraction(prev, data.extracted, transcriptExtraction(message, data)));
+        const message = messageRef.current?.text === text ? messageRef.current : null;
+        if (onExtracted && message) onExtracted(data.extracted, data, message);
+        else setChamberData((prev) => mergeChamberData(prev, data.extracted));
       }
       const reply = (typeof data?.reply === "string" && data.reply.trim()) || FALLBACK_REPLY;
       onOrbStateChange("speaking");
@@ -66,11 +73,12 @@ export function useLenoreChat({ chamberData, updateIntake, addUserMessage, addLe
     } finally {
       setPending(false);
     }
-  }, [addLenoreMessage, onOrbStateChange, updateIntake]);
+  }, [addLenoreMessage, onOrbStateChange, setChamberData, onExtracted]);
 
   const send = useCallback(async (text: string) => {
     setFailure(null);
-    await ask(addUserMessage(text));
+    messageRef.current = addUserMessage(text) || null;
+    await ask(text);
   }, [addUserMessage, ask]);
 
   /** Resends the message that failed, without adding it to the conversation a second time. */

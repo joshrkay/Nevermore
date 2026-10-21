@@ -61,7 +61,7 @@ const ChamberPage = () => {
 
   const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
     chamberData,
-    updateIntake,
+    setChamberData,
     addUserMessage: (text) => {
       const message = createChatMessage("user", text);
       addMessage(message);
@@ -69,6 +69,8 @@ const ChamberPage = () => {
     },
     addLenoreMessage,
     onOrbStateChange: setOrbState,
+    onExtracted: (extracted, response, message) =>
+      updateIntake((prev) => applyExtraction(prev, extracted, transcriptExtraction(message, response))),
   });
 
   const failureNotice = failure && (

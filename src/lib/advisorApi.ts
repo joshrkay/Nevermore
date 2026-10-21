@@ -102,7 +102,8 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     supabase
       .from("documents")
       .select("id, file_name, file_size, category, status, storage_path, created_at")
-      .eq("user_id", row.user_id)
+      // This intake's uploads only, not everything the same prospect has ever uploaded.
+      .eq("session_id", id)
       .order("created_at", { ascending: false }),
     supabase.from("profiles").select("contact_name, phone").eq("user_id", row.user_id).maybeSingle(),
   ]);

@@ -44,6 +44,12 @@ export function formatFileSize(bytes: number): string {
 
 type Row = Omit<SessionDocument, "extraction"> & { extraction: unknown };
 const fromRow = (row: Row): SessionDocument => ({ ...row, extraction: parseExtraction(row.extraction) });
+// Nothing is reading a file the moment an intake opens, so one still marked "processing" was
+// interrupted (the tab closed, or the reader stopped). Offer a retry rather than a spinner forever.
+const fromLoadedRow = (row: Row): SessionDocument => {
+  const doc = fromRow(row);
+  return doc.status === "processing" ? { ...doc, status: "failed" } : doc;
+};
 
 /** The uploaded documents of one intake. Lists, uploads, and removals are scoped to `sessionId`. */
 export function useSessionDocuments(sessionId: string | null): UseSessionDocumentsReturn {
@@ -77,8 +83,8 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         .eq("session_id", sessionId)
         .order("created_at", { ascending: true });
       if (cancelled) return;
-      if (error) console.error("Failed to load documents:", error);
-      setDocs(((data ?? []) as Row[]).map(fromRow));
+      if (error) console.error("Failed to load documents:", error.message);
+      setDocs(((data ?? []) as Row[]).map(fromLoadedRow));
       setIsLoading(false);
     })();
     return () => { cancelled = true; };
@@ -88,7 +94,7 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
     const sid = sessionRef.current;
     patchDoc(doc.id, { status: "processing" });
     const { error } = await supabase.functions.invoke("document-extract", { body: { document_id: doc.id } });
-    if (error) console.error("Document extraction failed:", error);
+    if (error) console.error("Document extraction failed:", error.message);
     // The function records its outcome on the row (or leaves it untouched if it never ran),
     // so the row is the source of truth either way.
     const { data } = await supabase.from("documents").select(COLUMNS).eq("id", doc.id).maybeSingle();
@@ -132,7 +138,7 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         .from(BUCKET)
         .upload(storagePath, file, { contentType: file.type || undefined });
       if (storageError) {
-        console.error(`Failed to upload ${file.name}:`, storageError);
+        console.error("Failed to upload a document:", storageError.message);
         dropPending();
         continue;
       }
@@ -153,7 +159,7 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         .select(COLUMNS)
         .single();
       if (dbError || !data) {
-        console.error(`Failed to save ${file.name}:`, dbError);
+        console.error("Failed to save a document record:", dbError?.message);
         // Don't leave an untracked file behind.
         await supabase.storage.from(BUCKET).remove([storagePath]);
         dropPending();
