@@ -8,6 +8,7 @@ let resumeRow: Record<string, unknown> | null = null;
 let inserts = 0;
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" }, session: { access_token: "tok" } }) }));
+vi.mock("@/lib/dispatchOutbox", () => ({ dispatchOutbox: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: () => ({
@@ -24,6 +25,7 @@ vi.mock("@/integrations/supabase/client", () => ({
 }));
 
 const { useChamberSession } = await import("./useChamberSession");
+const { dispatchOutbox } = await import("@/lib/dispatchOutbox");
 const { applyExtraction } = await import("@/data/provenance");
 
 // Lets queued promise callbacks run while fake timers are active (waitFor would hang).
@@ -36,6 +38,7 @@ describe("useChamberSession", () => {
     updates.length = 0;
     resumeRow = null;
     inserts = 0;
+    vi.mocked(dispatchOutbox).mockClear();
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -280,5 +283,47 @@ describe("useChamberSession", () => {
     await act(async () => { updates[1].resolve({ error: null }); await pending; });
     expect(submitted).toBe(true);
     expect(updates[1].payload).toMatchObject({ status: "submitted" });
+  });
+  describe("sending the submission notifications", () => {
+    it("asks for them to be sent once the submission is confirmed", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+
+      const pending = result.current.submit(submission);
+      await drain();
+      await act(async () => { updates[0].resolve({ error: null }); });
+      await drain();
+      expect(dispatchOutbox).not.toHaveBeenCalled(); // not before the server confirms
+      await act(async () => { updates[1].resolve({ error: null }); await pending; });
+      expect(dispatchOutbox).toHaveBeenCalledTimes(1);
+    });
+
+    it("does nothing when the submission fails", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+
+      let ok: boolean | undefined;
+      const pending = result.current.submit(submission).then((r) => { ok = r; });
+      await drain();
+      await act(async () => { updates[0].resolve({ error: null }); });
+      await drain();
+      await act(async () => { updates[1].resolve({ error: { message: "boom" } }); await pending; });
+      expect(ok).toBe(false);
+      expect(dispatchOutbox).not.toHaveBeenCalled();
+    });
+
+    it("does nothing when the answers changed after they were signed", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      const signedKey = JSON.stringify(result.current.chamberData);
+
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Changed Inc" })));
+      const pending = result.current.submit(submission, signedKey);
+      await drain();
+      await act(async () => { updates[0].resolve({ error: null }); await pending; });
+      expect(dispatchOutbox).not.toHaveBeenCalled();
+    });
   });
 });

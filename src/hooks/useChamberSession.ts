@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { useAuth } from "@/hooks/useAuth";
+import { dispatchOutbox } from "@/lib/dispatchOutbox";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
 import { createChatMessage, parseTranscript } from "@/data/chat";
@@ -325,6 +326,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     };
     certificationRef.current = certified;
     setCertification(certified);
+    // The notifications were queued with the submission; this just sends them promptly.
+    dispatchOutbox();
     return true;
   }, [flush]);
 

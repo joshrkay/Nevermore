@@ -24,6 +24,11 @@ CI runs the same three on every pull request. Make the `verify` check required o
 
 Advisor tools are at `/advisor`. Roles, access rules and how to grant access: `docs/ADVISOR_ACCESS.md`.
 
+## Notifications
+
+Submitting an intake queues an advisor alert and a prospect confirmation email. Setup, scheduling,
+failure handling and the pre-launch checklist: `docs/NOTIFICATIONS.md`.
+
 ## Plan
 
 Backlog and decisions: `docs/PRODUCTION_READINESS_PLAN.md`.
