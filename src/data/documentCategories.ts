@@ -1,7 +1,14 @@
 // What prospects can upload, and what each kind of document is good for. None is required:
 // recommended categories are suggestions, and a missing one never blocks submission.
 
-export type DocumentCategory = "census" | "benefits" | "payroll" | "workers_comp" | "prior_invoices" | "other";
+export type DocumentCategory =
+  | "census"
+  | "benefits"
+  | "payroll"
+  | "workers_comp"
+  | "peo_invoice"
+  | "prior_proposal"
+  | "other";
 
 export interface DocumentCategoryInfo {
   key: DocumentCategory;
@@ -35,23 +42,30 @@ export const DOCUMENT_CATEGORIES: DocumentCategoryInfo[] = [
   },
   {
     key: "workers_comp",
-    label: "Workers' comp",
+    label: "Workers' comp history",
     guidance: "Your policy declarations and claims history, used to price workers' comp.",
     example: "A W/C declarations page or loss runs from your carrier.",
     recommended: true,
   },
   {
-    key: "prior_invoices",
-    label: "Prior invoices",
-    guidance: "What you pay a current PEO or benefits provider today.",
-    example: "A recent PEO invoice or benefits bill.",
+    key: "peo_invoice",
+    label: "Current PEO invoice",
+    guidance: "What you pay a current PEO today, if you have one. Skip this if you don't use a PEO.",
+    example: "A recent PEO invoice or billing statement.",
+    recommended: false,
+  },
+  {
+    key: "prior_proposal",
+    label: "Prior proposal",
+    guidance: "A quote or proposal you've already received, so your advisor can compare it.",
+    example: "A PEO or broker proposal, or a renewal quote.",
     recommended: false,
   },
   {
     key: "other",
     label: "Other",
     guidance: "Anything else you'd like your advisor to see.",
-    example: "An employee handbook or a prior proposal.",
+    example: "An employee handbook or a company overview.",
     recommended: false,
   },
 ];
@@ -72,9 +86,16 @@ export function guessCategory(fileName: string): DocumentCategory {
   if (/census|employee|roster/.test(lower)) return "census";
   if (/loss.?run|\bw.?c\b|work.*comp|dec.?page/.test(lower)) return "workers_comp";
   if (/payroll|register|wage/.test(lower)) return "payroll";
-  if (/invoice|bill|statement/.test(lower)) return "prior_invoices";
+  if (/proposal|quote/.test(lower)) return "prior_proposal";
+  if (/invoice|bill|statement/.test(lower)) return "peo_invoice";
   if (/benefit|plan|sbc|renewal|medical/.test(lower)) return "benefits";
   return "other";
+}
+
+/** Categories with at least one uploaded document, in display order. */
+export function submittedCategories(docs: { category: string }[]): DocumentCategoryInfo[] {
+  const present = new Set(docs.map((d) => d.category));
+  return DOCUMENT_CATEGORIES.filter((c) => present.has(c.key));
 }
 
 /** Recommended categories with no uploaded document yet, in display order. */

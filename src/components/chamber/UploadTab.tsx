@@ -4,7 +4,7 @@ import { Upload, FileText, CheckCircle, AlertTriangle, Trash2 } from "lucide-rea
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ChamberData } from "@/data/chamberTypes";
-import { DOCUMENT_CATEGORIES, isDocumentCategory } from "@/data/documentCategories";
+import { DOCUMENT_CATEGORIES, isDocumentCategory, missingRecommended } from "@/data/documentCategories";
 import type { DocumentCandidate } from "@/data/documentCandidates";
 import { canRetryExtraction, documentStatusInfo } from "@/data/documentStatus";
 import type { SessionDocument, UseSessionDocumentsReturn } from "@/hooks/useSessionDocuments";
@@ -25,7 +25,9 @@ const uploadedAt = (iso: string) =>
 
 const UploadTab = ({ documents, sessionId, data, onApplyCandidates }: UploadTabProps) => {
   const { docs, upload, remove, setCategory, extract, uploading } = documents;
-  const present = new Set(docs.map((d) => d.category));
+  const uploaded = docs.filter((d) => d.status !== "uploading");
+  const present = new Set(uploaded.map((d) => d.category));
+  const missing = missingRecommended(uploaded);
 
   const onDrop = useCallback(
     async (accepted: File[], rejected: FileRejection[]) => {
@@ -84,25 +86,38 @@ const UploadTab = ({ documents, sessionId, data, onApplyCandidates }: UploadTabP
         <p className="text-sm text-muted-foreground">PDF, Excel, CSV, or Word · Max 20 MB</p>
       </div>
 
-      {/* What's useful to share */}
-      <div className="grid gap-2 sm:grid-cols-2">
-        {DOCUMENT_CATEGORIES.filter((c) => c.key !== "other").map((c) => (
-          <div key={c.key} className="rounded-lg border border-border p-3">
-            <p className="text-sm font-medium flex items-center gap-1.5">
-              {present.has(c.key) && <CheckCircle className="w-3.5 h-3.5 text-success" aria-label="Uploaded" />}
-              {c.label}
-              {c.recommended && !present.has(c.key) && (
-                <span className="text-[10px] font-normal text-muted-foreground">· helpful</span>
-              )}
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">{c.guidance}</p>
-            <p className="text-xs text-muted-foreground/80 mt-0.5 italic">e.g. {c.example}</p>
-          </div>
-        ))}
-      </div>
+      {/* What's useful to share: a checklist, never a gate */}
+      <section aria-labelledby="helpful-heading" className="space-y-2">
+        <div>
+          <h3 id="helpful-heading" className="text-sm font-medium">
+            {missing.length > 0 ? "Still helpful to provide" : "That covers the documents we'd most like to see"}
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            All optional — skip anything that doesn't apply to you. You can continue without uploading.
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {DOCUMENT_CATEGORIES.filter((c) => c.key !== "other").map((c) => (
+            <div key={c.key} className="rounded-lg border border-border p-3">
+              <p className="text-sm font-medium flex items-center gap-1.5">
+                {present.has(c.key) && <CheckCircle className="w-3.5 h-3.5 text-success" aria-label="Uploaded" />}
+                {c.label}
+                {c.recommended && !present.has(c.key) && (
+                  <span className="text-[10px] font-normal text-muted-foreground">· helpful</span>
+                )}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">{c.guidance}</p>
+              <p className="text-xs text-muted-foreground/80 mt-0.5 italic">e.g. {c.example}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {docs.length > 0 && (
         <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Categories are suggested from file names — change any that are off.
+          </p>
           {docs.map((doc) => {
             const status = documentStatusInfo(doc.status);
             const busy = doc.status === "uploading" || doc.status === "processing";
