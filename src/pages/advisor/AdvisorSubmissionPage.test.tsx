@@ -5,7 +5,8 @@ import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { Manuscript } from "@/data/manuscript";
 import type { SubmissionDetail } from "@/lib/advisorApi";
 
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut: vi.fn() }) }));
+const signOut = vi.fn();
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const api = {
@@ -257,10 +258,25 @@ describe("AdvisorSubmissionPage", () => {
   });
 
   it("shows an error and retries", async () => {
-    api.loadSubmission.mockRejectedValueOnce(new Error("You don't have advisor access."));
+    api.loadSubmission.mockRejectedValueOnce(new Error("Network request failed"));
     renderPage();
-    expect(await screen.findByRole("alert")).toHaveTextContent("You don't have advisor access.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Network request failed");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+  });
+
+  it("ends the session when the server says it has expired", async () => {
+    signOut.mockReset().mockResolvedValue(undefined);
+    api.loadSubmission.mockRejectedValueOnce(Object.assign(new Error("Your session has expired."), { unauthenticated: true }));
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired");
+    expect(signOut).toHaveBeenCalledWith("expired");
+  });
+
+  it("tells an account that has lost advisor access, and doesn't offer a retry", async () => {
+    api.loadSubmission.mockRejectedValueOnce(Object.assign(new Error("You don't have advisor access."), { forbidden: true }));
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("You no longer have advisor access");
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
 });

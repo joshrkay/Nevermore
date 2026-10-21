@@ -1,6 +1,9 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User, Session } from "@supabase/supabase-js";
+
+/** Why a signed-in session is gone: the person signed out, or it ended on its own (expiry, another tab). */
+export type SessionEnded = "signed_out" | "expired";
 
 interface AuthContextType {
   user: User | null;
@@ -16,7 +19,10 @@ interface AuthContextType {
   verifyEmailCode: (email: string, code: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, companyName?: string) => Promise<{ error: Error | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signOut: () => Promise<void>;
+  /** Why the last signed-in session ended; null while signed in, and until someone has signed in. */
+  sessionEnded: SessionEnded | null;
+  /** `"expired"` records that the app is ending a session the server no longer accepts. */
+  signOut: (reason?: SessionEnded) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -25,10 +31,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionEnded, setSessionEnded] = useState<SessionEnded | null>(null);
+  // Supabase reports a deliberate sign-out and a lapsed session with the same SIGNED_OUT event, so
+  // remember which one we asked for.
+  const requestedEnd = useRef<SessionEnded | null>(null);
+  const hadUser = useRef(false);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
+        if (session?.user) {
+          hadUser.current = true;
+          setSessionEnded(null);
+        } else if (event === "SIGNED_OUT" && hadUser.current) {
+          hadUser.current = false;
+          setSessionEnded(requestedEnd.current ?? "expired");
+          requestedEnd.current = null;
+        }
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
@@ -36,6 +55,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     );
 
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) hadUser.current = true;
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
@@ -79,13 +99,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return { error: error as Error | null };
   };
 
-  const signOut = async () => {
+  const signOut = async (reason: SessionEnded = "signed_out") => {
+    requestedEnd.current = reason;
     await supabase.auth.signOut();
   };
 
   return (
     <AuthContext.Provider value={{
-        user, session, loading, isAnonymous: user?.is_anonymous === true,
+        user, session, loading, isAnonymous: user?.is_anonymous === true, sessionEnded,
         signInAnonymously, requestEmailCode, verifyEmailCode, signUp, signIn, signOut,
       }}>
       {children}

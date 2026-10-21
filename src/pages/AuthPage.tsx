@@ -14,11 +14,21 @@ const AuthPage = () => {
   const { user, loading: authLoading, isAnonymous, signIn, signUp } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const routeState = location.state as { from?: { pathname: string; search?: string }; audience?: string } | null;
+  const routeState = location.state as {
+    from?: { pathname: string; search?: string };
+    audience?: string;
+    reason?: string;
+  } | null;
   const fromLocation = routeState?.from;
-  const from = fromLocation ? `${fromLocation.pathname}${fromLocation.search ?? ""}` : "/start";
   // Advisors are given accounts; they don't sign up here.
   const forAdvisor = routeState?.audience === "advisor";
+  const from = fromLocation ? `${fromLocation.pathname}${fromLocation.search ?? ""}` : forAdvisor ? "/advisor" : "/start";
+  const notice =
+    routeState?.reason === "expired"
+      ? "Your session expired. Sign in again to continue."
+      : routeState?.reason === "signed_out"
+        ? "You've been signed out."
+        : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,6 +80,12 @@ const AuthPage = () => {
                 ? "Create your account to begin underwriting."
                 : "Sign in to continue your session."}
           </p>
+
+          {notice && (
+            <p role="status" className="text-sm text-center bg-muted border border-border rounded-lg px-4 py-2.5 mb-6">
+              {notice}
+            </p>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {isSignUp && (

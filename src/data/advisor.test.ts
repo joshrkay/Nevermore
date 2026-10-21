@@ -5,10 +5,13 @@ import {
   ADVISOR_SETTABLE_STATUSES,
   applyAdvisorReview,
   completenessOf,
+  formatStates,
   manuscriptStoragePath,
+  matchesSearch,
   parseCorrection,
   PIPELINE_STATUSES,
   prospectStatusMessage,
+  referenceOf,
   reviewMap,
   sha256Hex,
   type FieldReview,
@@ -120,5 +123,71 @@ describe("manuscript storage", () => {
   it("hashes the file", async () => {
     // jsdom's Blob predates arrayBuffer(); browsers and Node have it.
     expect(await sha256Hex(new NodeBlob(["abc"]) as unknown as Blob)).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  });
+});
+
+describe("referenceOf", () => {
+  it("uses the certified file id", () => {
+    expect(referenceOf({ session_id: "a1b2c3d4-0000-0000-0000-000000000000", file_id: "EAA-2026-TEST", created_at: "2026-03-01T12:00:00Z" })).toBe("EAA-2026-TEST");
+  });
+
+  it("derives the same id the detail page shows for an intake that isn't certified yet", () => {
+    expect(referenceOf({ session_id: "a1b2c3d4-0000-0000-0000-000000000000", file_id: null, created_at: "2026-03-01T12:00:00Z" })).toBe("EAA-2026-A1B2C3D4");
+  });
+});
+
+describe("matchesSearch", () => {
+  const row = {
+    session_id: "a1b2c3d4-0000-0000-0000-000000000000",
+    company_name: "Acme Holdings LLC",
+    contact_name: "Pat Prospect",
+    file_id: "EAA-2026-A1B2C3D4",
+    created_at: "2026-03-01T12:00:00Z",
+  };
+
+  it("matches everything when there is no search", () => {
+    expect(matchesSearch(row, "")).toBe(true);
+    expect(matchesSearch(row, "   ")).toBe(true);
+  });
+
+  it("finds a row by company, contact or reference, ignoring case", () => {
+    expect(matchesSearch(row, "acme")).toBe(true);
+    expect(matchesSearch(row, "PROSPECT")).toBe(true);
+    expect(matchesSearch(row, "eaa-2026-a1b2")).toBe(true);
+    expect(matchesSearch(row, "a1b2c3d4")).toBe(true);
+  });
+
+  it("needs every word to match, in any of the three fields", () => {
+    expect(matchesSearch(row, "acme pat")).toBe(true);
+    expect(matchesSearch(row, "acme  a1b2")).toBe(true);
+    expect(matchesSearch(row, "acme nobody")).toBe(false);
+  });
+
+  it("matches a draft by the reference the app derives for it", () => {
+    expect(matchesSearch({ ...row, file_id: null }, "EAA-2026-A1B2C3D4")).toBe(true);
+  });
+
+  it("copes with missing company and contact", () => {
+    const blank = { ...row, company_name: null, contact_name: null };
+    expect(matchesSearch(blank, "acme")).toBe(false);
+    expect(matchesSearch(blank, "a1b2")).toBe(true);
+  });
+
+  it("doesn't search anything a row doesn't show, such as the session id's other digits", () => {
+    expect(matchesSearch(row, "0000-0000")).toBe(false);
+  });
+});
+
+describe("formatStates", () => {
+  it("is null when no state is known", () => {
+    expect(formatStates([])).toBeNull();
+  });
+
+  it("lists a short footprint in full", () => {
+    expect(formatStates(["CA", "NY", "TX"])).toBe("CA, NY, TX");
+  });
+
+  it("summarises a long one", () => {
+    expect(formatStates(["AZ", "CA", "CO", "FL", "NY", "TX", "WA"])).toBe("AZ, CA, CO, FL +3 more");
   });
 });

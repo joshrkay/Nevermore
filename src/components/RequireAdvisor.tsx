@@ -9,7 +9,7 @@ type Access = "checking" | "allowed" | "denied" | "error";
 // Advisor pages need a signed-in (not guest) account that holds the advisor or admin role.
 // This only decides what to render: the database refuses advisor data to everyone else anyway.
 const RequireAdvisor = ({ children }: { children: ReactNode }) => {
-  const { user, loading, isAnonymous, signOut } = useAuth();
+  const { user, loading, isAnonymous, signOut, sessionEnded } = useAuth();
   const location = useLocation();
   const userId = user?.id;
   const [access, setAccess] = useState<Access>("checking");
@@ -27,7 +27,12 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
 
   if (loading) return <Checking />;
   if (!user || isAnonymous) {
-    return <Navigate to="/login" replace state={{ from: location, audience: "advisor" }} />;
+    // After a deliberate sign-out, don't remember the page: whoever signs in next may be someone else.
+    const state =
+      sessionEnded === "signed_out"
+        ? { audience: "advisor", reason: sessionEnded }
+        : { from: location, audience: "advisor", reason: sessionEnded ?? undefined };
+    return <Navigate to="/login" replace state={state} />;
   }
   if (access === "checking") return <Checking />;
   if (access === "error") {
