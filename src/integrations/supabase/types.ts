@@ -137,6 +137,7 @@ export type Database = {
           id: string
           metadata: string | null
           mime_type: string | null
+          processing_started_at: string | null
           session_id: string | null
           size_bytes: number | null
           status: string
@@ -152,6 +153,7 @@ export type Database = {
           id?: string
           metadata?: string | null
           mime_type?: string | null
+          processing_started_at?: string | null
           session_id?: string | null
           size_bytes?: number | null
           status?: string
@@ -167,6 +169,7 @@ export type Database = {
           id?: string
           metadata?: string | null
           mime_type?: string | null
+          processing_started_at?: string | null
           session_id?: string | null
           size_bytes?: number | null
           status?: string

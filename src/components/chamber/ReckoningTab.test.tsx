@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
 import { MemoryRouter } from "react-router-dom";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
@@ -181,6 +181,25 @@ describe("ReckoningTab certification", () => {
     expect(screen.queryByText("Certification recorded")).not.toBeInTheDocument();
     expect(toast.success).not.toHaveBeenCalled();
     expect(submitButton()).toBeEnabled(); // can retry
+  });
+
+  it("passes the signed answers to the save, and doesn't confirm if they changed while it was pending", async () => {
+    let finish!: (ok: boolean) => void;
+    onSubmit.mockImplementation(() => new Promise<boolean>((r) => { finish = r; }));
+    const { rerenderWith } = mount();
+    checkAll();
+    fillSigner();
+    sign();
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][1]).toBe(JSON.stringify(DEMO_CHAMBER_DATA));
+
+    rerenderWith({ ...DEMO_CHAMBER_DATA, employee_count: 99 }); // Lenore's late answer lands mid-save
+    await act(async () => { finish(true); });
+    expect(screen.queryByText("Certification recorded")).not.toBeInTheDocument();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith("Your information changed while we were saving. Review it and certify again.");
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed after you signed/);
   });
 
   it("voids the signature when the information changes after signing", () => {

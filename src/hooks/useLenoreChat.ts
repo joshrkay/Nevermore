@@ -36,12 +36,13 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
   const [pending, setPending] = useState(false);
   const dataRef = useRef(chamberData);
   dataRef.current = chamberData;
-  // The prospect's message each answer belongs to, so extracted values cite it (also on retry).
-  const messageRef = useRef<{ id: string; text: string } | null>(null);
+  // The recorded message behind the current failure, so a retry still cites it. Each request
+  // otherwise carries its own message, so overlapping sends can't be attributed to each other.
+  const failedMessageRef = useRef<{ id: string; text: string } | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (idleTimer.current) clearTimeout(idleTimer.current); }, []);
 
-  const ask = useCallback(async (text: string): Promise<boolean> => {
+  const ask = useCallback(async (text: string, message: { id: string; text: string } | null): Promise<boolean> => {
     setPending(true);
     onOrbStateChange("thinking");
     try {
@@ -51,7 +52,6 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
       if (error) throw error;
 
       if (data?.extracted) {
-        const message = messageRef.current?.text === text ? messageRef.current : null;
         if (onExtracted && message) onExtracted(data.extracted, data, message);
         else setChamberData((prev) => mergeChamberData(prev, data.extracted));
       }
@@ -64,6 +64,7 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
     } catch (err) {
       onOrbStateChange("idle");
       const rateLimited = err instanceof FunctionsHttpError && err.context?.status === 429;
+      failedMessageRef.current = message;
       setFailure({ text, kind: rateLimited ? "rate_limited" : "failed" });
       return false;
     } finally {
@@ -73,14 +74,13 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
 
   const send = useCallback(async (text: string) => {
     setFailure(null);
-    messageRef.current = addUserMessage(text) || null;
-    await ask(text);
+    await ask(text, addUserMessage(text) || null);
   }, [addUserMessage, ask]);
 
   /** Resends the message that failed, without adding it to the conversation a second time. */
   const retry = useCallback(async () => {
     if (!failure) return;
-    await ask(failure.text);
+    await ask(failure.text, failedMessageRef.current);
   }, [ask, failure]);
 
   /** "Continue manually": drop the notice and let the prospect fill in the workspace themselves. */

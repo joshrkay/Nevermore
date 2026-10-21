@@ -251,4 +251,34 @@ describe("useChamberSession", () => {
       expect(result.current.certification.status).toBe("none");
     });
   });
+
+  it("refuses to certify answers that changed after they were signed", async () => {
+    const { result } = renderHook(() => useChamberSession());
+    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    const signedKey = JSON.stringify(result.current.chamberData);
+
+    act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Changed Inc" })));
+    let submitted: boolean | undefined;
+    const pending = result.current.submit(submission, signedKey).then((ok) => { submitted = ok; });
+    await drain();
+    await act(async () => { updates[0].resolve({ error: null }); await pending; });
+    expect(submitted).toBe(false);
+    expect(updates.some((u) => u.payload.status === "submitted")).toBe(false);
+  });
+
+  it("certifies when the answers still match what was signed", async () => {
+    const { result } = renderHook(() => useChamberSession());
+    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+    const signedKey = JSON.stringify(result.current.chamberData);
+
+    let submitted: boolean | undefined;
+    const pending = result.current.submit(submission, signedKey).then((ok) => { submitted = ok; });
+    await drain();
+    await act(async () => { updates[0].resolve({ error: null }); });
+    await drain();
+    await act(async () => { updates[1].resolve({ error: null }); await pending; });
+    expect(submitted).toBe(true);
+    expect(updates[1].payload).toMatchObject({ status: "submitted" });
+  });
 });

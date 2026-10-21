@@ -134,12 +134,24 @@ describe("useSessionDocuments", () => {
     expect(result.current.docs).toEqual([]);
   });
 
-  it("shows a file that was still being read when the page closed as retryable, not as reading forever", async () => {
-    listRows = [row({ status: "processing" })];
+  it("shows a read that stopped long ago as retryable, not as reading forever", async () => {
+    const longAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    listRows = [row({ status: "processing", processing_started_at: longAgo }), row({ id: "d2", status: "processing" })];
+    const { result } = renderHook(() => useSessionDocuments("s1"));
+    await waitFor(() => expect(result.current.docs).toHaveLength(2));
+    expect(result.current.docs.map((d) => d.status)).toEqual(["failed", "failed"]);
+  });
+
+  it("leaves a read that just started alone, and picks up its result when it finishes", async () => {
+    listRows = [row({ status: "processing", processing_started_at: new Date().toISOString() })];
     const { result } = renderHook(() => useSessionDocuments("s1"));
     await waitFor(() => expect(result.current.docs).toHaveLength(1));
-    expect(result.current.docs[0].status).toBe("failed");
-  });
+    expect(result.current.docs[0].status).toBe("processing");
+
+    // Another tab's read completes; this tab notices without a reload.
+    listRows = [row({ status: "extracted" })];
+    await waitFor(() => expect(result.current.docs[0].status).toBe("extracted"), { timeout: 6000 });
+  }, 10000);
 
   it("keeps an upload with the intake it started in, even if another intake is opened meanwhile", async () => {
     let release!: () => void;

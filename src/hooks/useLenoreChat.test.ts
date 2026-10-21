@@ -23,7 +23,7 @@ const setup = () => {
 };
 
 describe("useLenoreChat", () => {
-  beforeEach(() => invoke.mockReset());
+  beforeEach(() => { invoke.mockReset(); });
 
   it("records the prospect's message, merges what Lenore extracted, and shows her reply", async () => {
     invoke.mockResolvedValue({ data: { extracted: { employee_count: 12 }, reply: "Twelve — lovely." }, error: null });
@@ -134,5 +134,26 @@ describe("useLenoreChat", () => {
     await act(async () => { await result.current.retry(); });
     expect(onExtracted).toHaveBeenCalledWith({ employee_count: 12 }, expect.anything(), { id: "m1", text: "We have 12 staff" });
     expect(setChamberData).not.toHaveBeenCalled();
+  });
+
+  it("cites the message each answer belongs to when sends overlap", async () => {
+    const resolvers: ((v: unknown) => void)[] = [];
+    invoke.mockImplementation(() => new Promise((r) => resolvers.push(r)));
+    const onExtracted = vi.fn();
+    let n = 0;
+    const addUserMessage = vi.fn((text: string) => ({ id: `m${++n}`, text }));
+    const { result } = renderHook(() =>
+      useLenoreChat({ chamberData: EMPTY_CHAMBER_DATA, setChamberData: vi.fn(), addUserMessage, addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted }),
+    );
+    let first!: Promise<void>, second!: Promise<void>;
+    act(() => { first = result.current.send("We have 12 staff"); });
+    act(() => { second = result.current.send("We have 12 staff"); }); // same text, sent again before the first answer
+    await act(async () => {
+      resolvers[0]({ data: { extracted: { employee_count: 12 }, reply: "a" }, error: null });
+      resolvers[1]({ data: { extracted: { employee_count: 13 }, reply: "b" }, error: null });
+      await Promise.all([first, second]);
+    });
+    expect(onExtracted).toHaveBeenCalledWith({ employee_count: 12 }, expect.anything(), { id: "m1", text: "We have 12 staff" });
+    expect(onExtracted).toHaveBeenCalledWith({ employee_count: 13 }, expect.anything(), { id: "m2", text: "We have 12 staff" });
   });
 });

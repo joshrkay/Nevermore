@@ -29,6 +29,7 @@ CREATE POLICY "own sessions" ON public.chamber_sessions FOR ALL TO authenticated
 \i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql
 \i supabase/migrations/20261021100000_session_documents.sql
 \i supabase/migrations/20261023090000_document_categories_and_storage_access.sql
+\i supabase/migrations/20261024090000_document_processing_started.sql
 
 GRANT USAGE ON SCHEMA auth, storage TO authenticated;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth, storage TO authenticated;
@@ -141,6 +142,13 @@ BEGIN
       VALUES (r.a, r.a1, 'x', '1 B', 'p', 'prior_invoices');
     RAISE EXCEPTION 'FAIL: retired category accepted';
   EXCEPTION WHEN check_violation THEN NULL; END;
+
+  -- The owner can record when a read started; the column is unset until then.
+  SELECT count(*) INTO n FROM public.documents WHERE processing_started_at IS NOT NULL;
+  IF n <> 0 THEN RAISE EXCEPTION 'FAIL: processing_started_at set without a read'; END IF;
+  UPDATE public.documents SET status = 'processing', processing_started_at = now() WHERE file_name = 'inv.pdf';
+  SELECT count(*) INTO n FROM public.documents WHERE processing_started_at IS NOT NULL AND status = 'processing';
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: owner could not record the start of a read'; END IF;
 
   RAISE NOTICE 'session_documents: all checks passed';
 END $$;

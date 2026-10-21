@@ -92,7 +92,10 @@ serve(async (req) => {
 
     if ((doc.size_bytes ?? 0) > MAX_EXTRACT_BYTES) return await save({ status: "too_large" });
 
-    await supabase.from("documents").update({ status: "processing" }).eq("id", doc.id);
+    await supabase
+      .from("documents")
+      .update({ status: "processing", processing_started_at: new Date().toISOString() })
+      .eq("id", doc.id);
 
     let outcome: Outcome;
     try {
