@@ -146,15 +146,19 @@ describe("ReckoningTab certification", () => {
     fireEvent.click(submitButton());
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const sent = onSubmit.mock.calls[0][0];
-    expect(sent).toMatchObject({ signer_name: "Jo Doe", signer_title: "CEO", peo: "Some PEO", consent_version: expect.any(String) });
-    expect(new Date(sent.signed_at).toString()).not.toBe("Invalid Date");
-    expect(sent.consent_text).toContain("accurate and complete");
-    expect(sent.consent_text).toContain("Some PEO");
-    expect(sent.consent_text).toContain("requires me to certify again");
-
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent("Your certification is recorded");
-    expect(dialog).toHaveTextContent("Certified by Jo Doe, CEO");
+    expect(sent).toMatchObject({
+      signer_name: "Jo Doe",
+      signer_title: "CEO",
+      // One version, under both names: the app's and the one the database's certification check reads.
+      consent_text_version: CONSENT_TEXT_VERSION,
+      consent_version: CONSENT_TEXT_VERSION,
+    });
+    expect(Number.isNaN(Date.parse(sent.signed_at))).toBe(false);
+    // Each statement as shown, then the signing statement, so the record is exactly what was agreed to.
+    expect(sent.consent_text).toHaveLength(4);
+    expect(sent.consent_text[0]).toMatch(/accurate and complete/);
+    expect(sent.consent_text[3]).toMatch(/By signing, I certify/);
+    expect(sent).not.toHaveProperty("peo");
   });
 
   it("confirms clearly after a successful submission", async () => {
