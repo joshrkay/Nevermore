@@ -37,8 +37,9 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
   const [pending, setPending] = useState(false);
   const dataRef = useRef(chamberData);
   dataRef.current = chamberData;
-  // The prospect's message each answer belongs to, so extracted values cite it (also on retry).
-  const messageRef = useRef<{ id: string; text: string } | null>(null);
+  // The recorded message behind the current failure, so a retry still cites it. Each request
+  // otherwise carries its own message, so overlapping sends can't be attributed to each other.
+  const failedMessageRef = useRef<{ id: string; text: string } | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (idleTimer.current) clearTimeout(idleTimer.current); }, []);
 
@@ -53,7 +54,6 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
       if (error) throw error;
 
       if (data?.extracted) {
-        const message = messageRef.current?.text === text ? messageRef.current : null;
         if (onExtracted && message) onExtracted(data.extracted, data, message);
         else setChamberData((prev) => mergeChamberData(prev, data.extracted));
       }
@@ -77,8 +77,7 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
 
   const send = useCallback(async (text: string) => {
     setFailure(null);
-    messageRef.current = addUserMessage(text) || null;
-    await ask(text);
+    await ask(text, addUserMessage(text) || null);
   }, [addUserMessage, ask]);
 
   /** Resends the message that failed, without adding it to the conversation a second time. */

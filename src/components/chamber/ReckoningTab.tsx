@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { RavenIcon } from "../RavenLogo";
 import { CheckCircle2, Download, Loader2 } from "lucide-react";
@@ -20,7 +20,8 @@ interface ReckoningTabProps {
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
   sessionId: string | null;
-  onSubmit: (submission: ChamberSubmission) => Promise<boolean>;
+  /** `signedDataKey` is the answers as signed; the save is refused if they have moved on. */
+  onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean>;
   /** Whether this intake is already certified, or was changed after it was. */
   certification?: CertificationState;
 }
@@ -51,6 +52,9 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
 
   const attestations = consentStatements(chosenPeo);
   const dataKey = useMemo(() => JSON.stringify(data), [data]);
+  // What the answers are now, for checking after a save that they are still the ones that were signed.
+  const dataKeyRef = useRef(dataKey);
+  dataKeyRef.current = dataKey;
 
   // Any change after signing (an edit in a tab, or Lenore updating a field) voids the signature,
   // even after a successful submit: the prospect certified the earlier version, not this one.
@@ -126,8 +130,15 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
       consent_text: consent.text,
       ...(chosenPeo ? { peo: chosenPeo } : {}),
     };
-    const ok = await onSubmit(submission);
+    const signedKey = dataKey;
+    const ok = await onSubmit(submission, signedKey);
     setSubmitting(false);
+    // The answers can change while the save is pending. The effect above has then already voided
+    // the signature, so don't report a certification of answers that were not signed.
+    if (dataKeyRef.current !== signedKey) {
+      toast.error("Your information changed while we were saving. Review it and certify again.");
+      return;
+    }
     if (ok) {
       setSubmitted({ name: signerName.trim(), title: signerTitle.trim(), at: signedAt });
       toast.success("Your certification was recorded and your submission is saved.");

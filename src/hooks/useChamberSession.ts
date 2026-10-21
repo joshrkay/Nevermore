@@ -31,7 +31,8 @@ interface UseChamberSessionReturn {
   updateIntake: (updater: (prev: IntakeState) => IntakeState) => void;
   addMessage: (msg: ChatMessage) => void;
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
-  submit: (submission: ChamberSubmission) => Promise<boolean>;
+  /** With `signedDataKey` (the answers as signed, JSON), refuses to save if the answers have since changed. */
+  submit: (submission: ChamberSubmission, signedDataKey?: string) => Promise<boolean>;
   /** Whether the answers are certified, or were changed after being certified. */
   certification: CertificationState;
 }
@@ -294,10 +295,12 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     scheduleSave();
   }, [scheduleSave]);
 
-  const submit = useCallback(async (submission: ChamberSubmission) => {
+  const submit = useCallback(async (submission: ChamberSubmission, signedDataKey?: string) => {
     const sid = sessionIdRef.current;
     if (!sid) return false;
     if (!(await flush())) return false;
+    // Answers edited while the autosave was finishing were not what the prospect signed.
+    if (signedDataKey !== undefined && JSON.stringify(dataRef.current) !== signedDataKey) return false;
     const { error } = await supabase
       .from("chamber_sessions")
       .update({

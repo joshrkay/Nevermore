@@ -30,7 +30,7 @@ interface LiveWorkspaceProps {
   data: ChamberData;
   isDemo: boolean;
   sessionId: string | null;
-  onSubmit: (submission: ChamberSubmission) => Promise<boolean>;
+  onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean>;
   provenance?: ProvenanceMap;
   /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
   onFieldAction?: (action: FieldAction) => void;
