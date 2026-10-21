@@ -69,6 +69,8 @@ describe("ChamberPage chat", () => {
     const next = session.updateIntake.mock.calls[0][0]({ data: EMPTY_CHAMBER_DATA, provenance: {} }) as IntakeState;
     expect(next.data.employee_count).toBe(12);
     expect(next.provenance.employee_count?.source).toMatchObject({ kind: "transcript", message_id: user.id });
+    // How sure Lenore said she was travels with the value.
+    expect(next.provenance.employee_count?.status).toBe("confirmed");
   });
 
   it("says so, and offers to retry, when Lenore can't answer, rather than replying as if she had", async () => {

@@ -540,3 +540,97 @@ BEGIN
 
   RAISE NOTICE 'advisor access matrix: all cases passed';
 END $$;
+
+-- ====================================================================================
+-- Queue (F-2): the order is fixed, and the state footprint is normalised.
+-- Timestamps are set directly (triggers off) so ties and recency can be controlled.
+-- ====================================================================================
+
+DO $$
+DECLARE
+  adv uuid := gen_random_uuid();
+  owner uuid := gen_random_uuid();
+  s text;
+  ids uuid[];
+  expected uuid[];
+  states text[];
+  r record;
+  sess record;
+BEGIN
+  FOR s IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+    EXECUTE format('TRUNCATE public.%I CASCADE', s);
+  END LOOP;
+  TRUNCATE storage.objects;
+  TRUNCATE auth.users CASCADE;
+  INSERT INTO auth.users (id) VALUES (adv), (owner);
+  INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor');
+  PERFORM set_config('test.advisor', adv::text, false);
+
+  -- Seven intakes. Ids are chosen so that sorting by id alone would give the wrong order.
+  --   certified: ...0a newest (Apr), ...0b (Mar), ...0c and ...0d tie (Feb), so the id decides
+  --   not certified: ...ff touched most recently (Jun), ...ee (May), ...dd withdrawn (Apr; its
+  --   old certification is dated Jul, the newest of all, but it no longer counts)
+  INSERT INTO public.chamber_sessions (id, user_id) VALUES
+    ('00000000-0000-0000-0000-00000000000a', owner), ('00000000-0000-0000-0000-00000000000b', owner),
+    ('00000000-0000-0000-0000-00000000000c', owner), ('00000000-0000-0000-0000-00000000000d', owner),
+    ('00000000-0000-0000-0000-0000000000ff', owner), ('00000000-0000-0000-0000-0000000000ee', owner),
+    ('00000000-0000-0000-0000-0000000000dd', owner);
+
+  SET LOCAL session_replication_role = replica;
+  FOR sess IN SELECT * FROM (VALUES
+    ('00000000-0000-0000-0000-00000000000a'::uuid, 'submitted', '2026-04-01T00:00:00Z'::timestamptz, '2026-04-01T00:00:00Z'::timestamptz),
+    ('00000000-0000-0000-0000-00000000000b'::uuid, 'submitted', '2026-03-01T00:00:00Z', '2026-03-01T00:00:00Z'),
+    ('00000000-0000-0000-0000-00000000000c'::uuid, 'submitted', '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z'),
+    ('00000000-0000-0000-0000-00000000000d'::uuid, 'submitted', '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z')
+  ) AS v(id, status, certified, touched) LOOP
+    UPDATE public.chamber_sessions
+       SET status = 'submitted', updated_at = sess.touched,
+           submission = jsonb_build_object('signer_name', 'Jo', 'certified_at', sess.certified, 'file_id', 'EAA-' || right(sess.id::text, 4))
+     WHERE id = sess.id;
+    UPDATE public.submission_workflow SET status = 'submitted' WHERE session_id = sess.id;
+  END LOOP;
+  UPDATE public.chamber_sessions SET updated_at = '2026-06-01T00:00:00Z' WHERE id = '00000000-0000-0000-0000-0000000000ff';
+  UPDATE public.chamber_sessions SET updated_at = '2026-05-01T00:00:00Z' WHERE id = '00000000-0000-0000-0000-0000000000ee';
+  UPDATE public.chamber_sessions
+     SET updated_at = '2026-04-15T00:00:00Z', status = 'in_progress',
+         submission = jsonb_build_object('signer_name', 'Jo', 'certified_at', '2026-07-01T00:00:00Z')
+   WHERE id = '00000000-0000-0000-0000-0000000000dd';
+  SET LOCAL session_replication_role = origin;
+
+  PERFORM pg_temp.become('advisor');
+
+  SELECT array_agg(q.session_id ORDER BY q.rn) INTO ids
+    FROM (SELECT l.session_id, row_number() OVER () AS rn FROM public.advisor_list_submissions() l) q;
+  expected := ARRAY[
+    '00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000000b',
+    '00000000-0000-0000-0000-00000000000c', '00000000-0000-0000-0000-00000000000d',
+    '00000000-0000-0000-0000-0000000000ff', '00000000-0000-0000-0000-0000000000ee',
+    '00000000-0000-0000-0000-0000000000dd']::uuid[];
+  IF ids IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'FAIL: queue order was %, expected %', ids, expected;
+  END IF;
+
+  -- A withdrawn certification has no submission date, even though it was certified once.
+  SELECT * INTO r FROM public.advisor_list_submissions() WHERE session_id = '00000000-0000-0000-0000-0000000000dd';
+  IF r.submitted_at IS NOT NULL OR r.signer_name IS NULL OR r.file_id IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: withdrawn certification row was %', r;
+  END IF;
+  -- The status filter keeps the same order.
+  SELECT array_agg(session_id) INTO ids FROM public.advisor_list_submissions('submitted');
+  IF ids IS DISTINCT FROM expected[1:4] THEN RAISE EXCEPTION 'FAIL: filtered queue order was %', ids; END IF;
+
+  -- ---------- State footprint: operating states plus census states, upper-cased, sorted, distinct ----------
+  RESET ROLE;
+  UPDATE public.chamber_sessions
+     SET chamber_data = '{"states":["tx","CA"," ca ",""],"employees":[{"state":"ny"},{"state":"CA"},{"state":""},{"state":null},"junk",5]}'
+   WHERE id = '00000000-0000-0000-0000-00000000000a';
+  UPDATE public.chamber_sessions SET chamber_data = '{"states":"CA","employees":{"state":"NY"}}'
+   WHERE id = '00000000-0000-0000-0000-00000000000b';
+  PERFORM pg_temp.become('advisor');
+  SELECT l.states INTO states FROM public.advisor_list_submissions() l WHERE l.session_id = '00000000-0000-0000-0000-00000000000a';
+  IF states IS DISTINCT FROM ARRAY['CA', 'NY', 'TX'] THEN RAISE EXCEPTION 'FAIL: footprint was %', states; END IF;
+  SELECT l.states INTO states FROM public.advisor_list_submissions() l WHERE l.session_id = '00000000-0000-0000-0000-00000000000b';
+  IF states IS DISTINCT FROM ARRAY[]::text[] THEN RAISE EXCEPTION 'FAIL: malformed footprint was %', states; END IF;
+
+  RAISE NOTICE 'advisor queue: all cases passed';
+END $$;

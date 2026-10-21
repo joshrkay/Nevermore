@@ -39,6 +39,8 @@ describe("advisor API errors", () => {
     ["an expired token reported without a code", { message: "JWT expired" }],
     ["an invalid token", { code: "PGRST303", message: "JWT cryptographic operation failed" }],
     ["storage's wording for an expired token", { message: "exp claim timestamp check failed" }],
+    ["PostgREST's no-suitable-key code, whatever its wording", { code: "PGRST301", message: "No suitable key or wrong key type" }],
+    ["PostgREST's anonymous-access code, whatever its wording", { code: "PGRST302", message: "Anonymous access is disabled" }],
   ])("calls %s an ended session", async (_label, error) => {
     failWith(error);
     const err = await caught(() => listSubmissions(null));

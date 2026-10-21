@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import type { SubmissionSummary } from "@/lib/advisorApi";
 
 const signOut = vi.fn();
@@ -138,6 +138,25 @@ describe("AdvisorDashboardPage", () => {
     );
     fireEvent.click(await screen.findByText("Bo Buyer"));
     expect(await screen.findByText("Detail page for s2")).toBeInTheDocument();
+  });
+
+  it("opens a submission once from its link, so Back returns to the queue", async () => {
+    listSubmissions.mockResolvedValue([row({ session_id: "s1" })]);
+    const Detail = () => {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate(-1)}>Back</button>;
+    };
+    render(
+      <MemoryRouter initialEntries={["/advisor"]}>
+        <Routes>
+          <Route path="/advisor" element={<AdvisorDashboardPage />} />
+          <Route path="/advisor/submissions/:id" element={<Detail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByRole("link", { name: "Acme" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Back" }));
+    expect(await screen.findByRole("heading", { name: "Submissions" })).toBeInTheDocument();
   });
 
   it("filters by status", async () => {

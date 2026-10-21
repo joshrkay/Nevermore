@@ -187,6 +187,10 @@ describe("formatStates", () => {
     expect(formatStates(["CA", "NY", "TX"])).toBe("CA, NY, TX");
   });
 
+  it("lists a footprint exactly as long as the limit in full, without a count", () => {
+    expect(formatStates(["AZ", "CA", "CO", "FL"])).toBe("AZ, CA, CO, FL");
+  });
+
   it("summarises a long one", () => {
     expect(formatStates(["AZ", "CA", "CO", "FL", "NY", "TX", "WA"])).toBe("AZ, CA, CO, FL +3 more");
   });
