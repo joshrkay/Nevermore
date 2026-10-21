@@ -93,6 +93,25 @@ describe("RequireAdvisor", () => {
     expect(await screen.findByText("Advisor tools")).toBeInTheDocument();
   });
 
+  it("ends a session the server rejects, rather than offering a retry that can't work", async () => {
+    auth.signOut.mockReset().mockResolvedValue(undefined);
+    fetchIsAdvisor.mockRejectedValue(Object.assign(new Error("Your session has expired."), { unauthenticated: true }));
+    renderGuarded();
+    expect(await screen.findByText("Your session has expired.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Advisor tools")).not.toBeInTheDocument();
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
+    expect(auth.signOut).toHaveBeenCalledWith("expired");
+  });
+
+  it("doesn't end the session for an ordinary failure", async () => {
+    auth.signOut.mockReset();
+    fetchIsAdvisor.mockRejectedValue(new Error("offline"));
+    renderGuarded();
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(auth.signOut).not.toHaveBeenCalled();
+  });
+
   it("offers a retry when access can't be checked", async () => {
     fetchIsAdvisor.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(true);
     renderGuarded();

@@ -1,10 +1,10 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchIsAdvisor } from "@/lib/advisorApi";
 
-type Access = "checking" | "allowed" | "denied" | "error";
+type Access = "checking" | "allowed" | "denied" | "error" | "ended";
 
 // Advisor pages need a signed-in (not guest) account that holds the advisor or admin role.
 // This only decides what to render: the database refuses advisor data to everyone else anyway.
@@ -14,6 +14,9 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
   const userId = user?.id;
   const [access, setAccess] = useState<Access>("checking");
   const [attempt, setAttempt] = useState(0);
+  // signOut changes identity on every render; the effect below must not re-run (and re-check) for it.
+  const signOutRef = useRef(signOut);
+  signOutRef.current = signOut;
 
   useEffect(() => {
     if (!userId || isAnonymous) return;
@@ -21,7 +24,17 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
     setAccess("checking");
     fetchIsAdvisor()
       .then((ok) => !cancelled && setAccess(ok ? "allowed" : "denied"))
-      .catch(() => !cancelled && setAccess("error"));
+      .catch((err: { unauthenticated?: boolean }) => {
+        if (cancelled) return;
+        // The server won't accept this session, so a retry can't help: end it, and the redirect
+        // below sends the advisor to sign in.
+        if (err.unauthenticated) {
+          setAccess("ended");
+          void signOutRef.current("expired");
+        } else {
+          setAccess("error");
+        }
+      });
     return () => { cancelled = true; };
   }, [userId, isAnonymous, attempt]);
 
@@ -35,6 +48,13 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
     return <Navigate to="/login" replace state={state} />;
   }
   if (access === "checking") return <Checking />;
+  if (access === "ended") {
+    return (
+      <Message title="Your session has expired.">
+        <p className="text-muted-foreground">Taking you to sign in again…</p>
+      </Message>
+    );
+  }
   if (access === "error") {
     return (
       <Message title="We couldn't check your access">
