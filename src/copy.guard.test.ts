@@ -9,6 +9,8 @@ const PUBLIC_COPY_FILES = [
   "src/pages/LandingPage.tsx",
   "src/pages/ChamberPage.tsx",
   "src/components/chamber/ReckoningTab.tsx",
+  // The emails sent to prospects and advisors are public-facing copy too.
+  "supabase/functions/dispatch-outbox/messages.ts",
 ];
 
 const NAMED_PEOS = /trinet|justworks|rippling|insperity|totalsource/i;
@@ -20,7 +22,8 @@ describe("public copy", () => {
   });
 
   it("never promises to act or send on the prospect's behalf", () => {
-    const reckoning = readFileSync("src/components/chamber/ReckoningTab.tsx", "utf8");
-    expect(reckoning).not.toMatch(ON_BEHALF);
+    for (const file of ["src/components/chamber/ReckoningTab.tsx", "supabase/functions/dispatch-outbox/messages.ts"]) {
+      expect(readFileSync(file, "utf8")).not.toMatch(ON_BEHALF);
+    }
   });
 });
