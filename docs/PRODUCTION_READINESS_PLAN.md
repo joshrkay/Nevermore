@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Version** | 2.1 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed) |
+| **Version** | 2.2 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed and `document-extract` moved onto the adapter) |
 | **Date** | 2026-10-22 |
-| **Verified against** | `main` at commit `6f2bf5c` (merge of pull request 21), plus the `chamber-extract` fix and the edge-function type check on branch `claude/peaceful-albattani-neiujl`. v1.0 was verified against `04503c3` (2026-10-20) |
+| **Verified against** | `main` at commit `6f2bf5c` (merge of pull request 21), plus the `chamber-extract` fix, the move of `document-extract` onto the shared adapter and the edge-function type check on branch `claude/peaceful-albattani-neiujl`. v1.0 was verified against `04503c3` (2026-10-20) |
 | **Scope** | Everything between the current build and a supervised private pilot (M2) and a public launch (M3) |
-| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (584 tests in 42 files) and `npm run build` all pass. The fixed `chamber-extract` handler was also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 39857171390) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. **Not run:** any end-to-end test (none exist), and `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. |
+| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (603 tests in 43 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 39857171390, before the `document-extract` change) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. **Not run:** any end-to-end test (none exist), and `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. |
 
 ---
 
@@ -66,7 +66,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | Lenore chat | `chamber-extract` (`handler.ts`, behind a thin `index.ts`) extracts 17 allow-listed fields with a per-field status and evidence quote, and writes a reply. It requires a signed-in user, caps a message at 2,000 characters and context at 20,000, and enforces per-user (15 a minute, 300 a day), per-IP (20 a minute, 400 a day) and global (2,000 a day) call limits that fail closed. Voice (ElevenLabs) is an opt-in beta behind `VITE_ELEVENLABS_AGENT_ID`. |
 | Workspace | Nine tabs: Upload, Company, Payroll, Benefits, Your Team (census), Dependents, Review, PEO Match, The Reckoning. Autosave runs 2 seconds after the last change with a 10-second retry. A session survives refresh through `?session=`. |
 | Provenance | Each captured field is `confirmed`, `inferred`, `incomplete` or `conflicting`, with a source. The prospect can confirm, edit, or choose between conflicting candidates. An AI value never overwrites a prospect edit. |
-| Documents | PDF, Excel, CSV and Word uploads (20 MB, enforced in the browser only) in a private bucket, with seven categories. `document-extract` reads CSV, XLSX/XLS and text PDF into candidate values that the prospect reviews and applies. Word files are saved but not read. |
+| Documents | PDF, Excel, CSV and Word uploads (20 MB, enforced in the browser only) in a private bucket, with seven categories. `document-extract` reads CSV, XLSX/XLS and text PDF into candidate values that the prospect reviews and applies, using the same AI provider setting as chat. Word files are saved but not read. |
 | PEO match | A sourced PEO catalog. It does not rank PEOs. Every fact is null until sourced, and unknowns show as unknown. The choice is stored in the submission. |
 | Certification | Signer name and role, three acknowledgements and a separate sign step, with DRAFT consent text. A database trigger records `chamber_certifications` (server-stamped time, `data_sha256`, consent text and version) and refuses a missing, stale or guest certification. Any later change to the answers, or choosing a different PEO, withdraws it. |
 | Manuscript | Rendered from the signed snapshot at `/manuscript?session=<id>` for the signed-in owner. A vector-text PDF (jsPDF) with repeating table headers and page numbers. Date of birth is masked by default. `/manuscript/demo` is a labelled sample. |
@@ -84,7 +84,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | `certify` and `submit` endpoints, idempotency keys, reference `EAA-YYYY-NNNN`. | A trigger on the status update records the certification and the snapshot. The reference is `EAA-<year>-<8 hex of the session id>`, built in the browser. | The reference is not unique or server-assigned, and a repeat submit adds another certification row (C-3.1). |
 | Manuscript at `/manuscript/:reference#t=`, review at `/review`. | `/manuscript?session=<id>` with a JWT and owner RLS. Review is a tab inside the Chamber. | Viewing needs sign-in. Safe error states exist, but not expired or revoked ones. |
 | Advisor access through endpoints with `has_role`. | `user_roles`, `has_role`, `require_advisor()` and RLS on every advisor table and function. | Matches the intent. Tests assert SQL refusals (42501), not HTTP 403s. |
-| AI provider behind an adapter. | Built, tested, and now used by `chamber-extract` (it was not, until the fix in section 1.3). | `AI_PROVIDER`, the 20-second timeout, the retry and redacted logs apply. `document-extract` is still Lovable-only. |
+| AI provider behind an adapter. | Built, tested, and now used by both AI functions (`chamber-extract` after the fix in section 1.3, and `document-extract`). The shared code is in `supabase/functions/_shared/ai`. | `AI_PROVIDER`, the timeout, the retry and redacted logs apply to both. Chat gets 20 seconds per attempt and document reads 30. |
 | Text PDF with `html2canvas` removed (D12). | jsPDF vector text. `html2canvas` is never imported. | Matches. |
 | No `.github/`. | `ci.yml` with `verify` and `sql-tests`. | Matches the intent of I-4.4. Required-for-merge is a repository setting this refresh could not see. |
 
@@ -103,7 +103,9 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 
 **What changed (F-0.2, F-0.4):** the request handling moved to `handler.ts` and calls the model through `callModel` and the selected adapter. `schema.ts` is the single copy of the prompt and tool schema, and `extraction.ts` shapes the response. `handler.test.ts` and `extraction.test.ts` cover the handler and the contract. `npm run typecheck:functions` runs in the CI `verify` job, and against the previous `index.ts` it fails with the same two errors. The fix was exercised under Deno 2.9.6 with fakes, not against a live provider.
 
-**Still to do:** check which `chamber-extract` build is deployed (it may predate the merge), deploy the fix, and make one real Lenore exchange in a preview environment. Until then the failure and the fix are established from the code, the tests and a Deno run, not from a live call.
+**Follow-up in 2.2:** `document-extract` had the same hard-coded gateway, key and model, so `AI_PROVIDER`, `AI_MODEL` and the provider key applied to chat only. It now calls the model through the same adapters (`ask.ts`). Behavior changes: a document read has a 30-second timeout and one retry on a transient error where before it had no limit, an Anthropic reply is capped at 4,096 tokens, a provider rate limit still leaves the document ready to read later, and a provider's response body is no longer logged.
+
+**Still to do:** check which `chamber-extract` and `document-extract` builds are deployed (`chamber-extract` may predate the merge), deploy both, confirm the deploy bundles `supabase/functions/_shared`, and make one real Lenore exchange and one real document read in a preview environment. Until then the failure and the fix are established from the code, the tests and a Deno run, not from a live call.
 
 #### Other defects
 
@@ -113,6 +115,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | The reference is not unique or server-assigned, and a repeat submit adds another certification row. | `manuscript.ts`, `useChamberSession.ts` | C-3.1 |
 | The owner's update policy lets a prospect write `documents.status`, so it cannot carry a scan verdict. | `20261021100000_session_documents.sql` | E-4.3 |
 | Upload limits (20 MB, file types) are enforced only in the browser. The bucket has no size or type limit. | `UploadTab.tsx`, `config.toml` | E-4.1 |
+| Document reads are limited per user only. The per-IP and global call ceilings that guard chat do not apply to `document-extract`, so free guest sessions can drive AI document reads without a bound in aggregate. | `document-extract/index.ts` | B-3.1 |
 | A save can fail without the prospect knowing: the update has no `.select()` so a zero-row update looks like success, there is no status indicator, and no local backup. | `useChamberSession.ts` | A-1.4 |
 | A bare `/start` always inserts a new session, so a returning guest is never resumed and orphan rows accumulate. | `useChamberSession.ts` | A-1.3 |
 | An upgraded guest cannot sign back in: nothing sets a password or signs in by emailed code. | `useAuth.tsx` | D1, A-1.3 |
@@ -180,7 +183,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | D8 | Is voice launch-critical? | **Recommended default stands:** an opt-in beta behind a flag, with text always available. | PM | I-5.x scope |
 | D9 | Carrier or PEO routing | **Unchanged:** out of scope for M1 to M3. The product tells prospects they send the packet themselves. | PM | none |
 | D10 | Legal reviewer for policy, terms and disclosures | **Not recorded in the repo.** | LEGAL | H-2.1, H-2.3 |
-| D11 | AI provider for Lenore and document extraction | **Partly decided:** the adapter supports Lovable (default) and Anthropic, and neither is chosen. `document-extract` is Lovable-only with Gemini hard-coded. Voice uses ElevenLabs. No data-processing terms are recorded. | PM + BE | F-0.2, E-3.1 |
+| D11 | AI provider for Lenore and document extraction | **Partly decided:** the adapter supports Lovable (default) and Anthropic, and neither is chosen. Both AI functions use the one adapter, so a single `AI_PROVIDER` secret switches them. Voice uses ElevenLabs. No data-processing terms are recorded. | PM + BE | F-0.2, E-3.1 |
 | D12 | PDF rendering approach | **Decided and implemented:** browser jsPDF with vector text, lazy-loaded. Server-side rendering has not been revisited. | BE + FE | none |
 | D13 | Malware-scanning provider for uploads | **Open.** | OPS | E-4.3 |
 | D14 | **New.** Intake access model: keep Supabase Auth with owner RLS, or move to continuation tokens (v1.0 D1)? | **Recommended: keep as built.** It isolates sessions today and is covered by SQL tests. Drop the token stories (A-1.6), amend the envelope AC in A-2.1, and close the gaps it leaves: a return path for upgraded guests, resume of the latest session, and database validation with a version check (A-2.2). | PM + BE | A-1.3, A-2.1, H-3.3 |
@@ -202,8 +205,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### F-0.2 Put the AI provider behind an adapter
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** D11 · **Milestone:** M1
-- **Built:** `providers.ts` has a Lovable adapter and an Anthropic adapter, and `selectAdapter` reads `AI_PROVIDER`, `AI_MODEL` and the provider's key (default Lovable with `google/gemini-3-flash-preview`; Anthropic default `claude-haiku-5-5`). `chamber-extract` now goes through it: `handler.ts` calls `callModel` with the selected adapter, so the timeout, retry and redacted failure logs apply, and `schema.ts` is the one copy of the prompt and tool schema. Tested with fakes for both providers, and run under Deno 2.9.6 with the network denied.
-- **Remaining:** Errors are still `{error}` with no `code` field (the AC asks for a code and a message). `document-extract` still hard-codes `LOVABLE_API_KEY`, the gateway and Gemini. The one manual Lenore exchange in a preview environment has not been done, and the fixed function has not been deployed or called live.
+- **Built:** `providers.ts` has a Lovable adapter and an Anthropic adapter, and `selectAdapter` reads `AI_PROVIDER`, `AI_MODEL` and the provider's key (default Lovable with `google/gemini-3-flash-preview`; Anthropic default `claude-haiku-5-5`). The adapters, `model.ts` and `providers.ts` now live in `supabase/functions/_shared/ai` and take the tool to force as a parameter. `chamber-extract` goes through them (`handler.ts` calls `callModel` with the selected adapter, and `schema.ts` is the one copy of its prompt and tool schema), and so does `document-extract` (`ask.ts`, with its own prompt and `report_document_fields` tool), so one `AI_PROVIDER` secret switches both. Tested with fakes for both providers and both functions, and run under Deno 2.9.6 with the network denied.
+- **Remaining:** Errors are still `{error}` with no `code` field (the AC asks for a code and a message). The one manual Lenore exchange in a preview environment has not been done, and neither fixed function has been deployed or called live. The functions now import from `supabase/functions/_shared`, so confirm the deploy mechanism bundles it.
 
 #### F-0.3 Document the route access map
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** Highest · **Owner:** PM + FS · **Depends:** none · **Milestone:** M1
@@ -213,7 +216,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### F-0.4 Type-check and import-check edge functions in CI
 - **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** BE · **Depends:** F-0.2 · **Milestone:** M1
 - **Built:** `npm run typecheck:functions` runs `tsc` over `supabase/functions` (`tsconfig.functions.json`, strict, with `types/functions-shims.d.ts` declaring the URL imports) and is a step in the CI `verify` job. Run against the previous `chamber-extract/index.ts` it fails with the two errors that broke the function (TS2440 and TS2304), and it also fails on a bad named import (TS2305), a missing file (TS2307) and an undefined name in another function. `chamber-extract/handler.test.ts` loads and exercises that function's handler.
-- **Notes:** It passed on a GitHub runner in a manual CI run of this branch (run 39857171390, where `sql-tests` also passed). The failing case was shown locally with the same command, not on GitHub. The URL imports are declarations, not fetched modules, so a wrong remote URL or a wrong call into a remote package is not caught (the SheetJS declaration covers only what `document-extract/read.ts` uses). Only `chamber-extract` has a handler test; the other functions rely on the type check.
+- **Notes:** It passed on a GitHub runner in a manual CI run of this branch (run 39857171390, where `sql-tests` also passed). The failing case was shown locally with the same command, not on GitHub. The URL imports are declarations, not fetched modules, so a wrong remote URL or a wrong call into a remote package is not caught (the SheetJS declaration covers only what `document-extract/read.ts` uses). `chamber-extract` has a handler test and `document-extract` has a test of its model call; every function's `index.ts` otherwise relies on the type check.
 
 ---
 
@@ -338,7 +341,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### B-3.1 Timeouts, retries, and rate limits
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** B-1.1, F-0.2 · **Milestone:** M1
 - **Built:** `model.ts` has a 20-second timeout and one retry after 1 second on 429, 5xx or a network error (none on 402 or other 4xx). The handler now calls it, and `handler.test.ts` covers a retry that succeeds, a persistent 429, a 500, a 402 and a stalled provider (504). Quotas exist: per user 15 a minute and 300 a day, per IP 20 a minute and 400 a day, and a global 2,000 a day that fails closed with a 503.
-- **Remaining:** The limits differ from the plan's 30 per session per 10 minutes, and no session-level limit exists: decide whether the per-user, per-IP and global quotas replace it. Errors are `{error}` with no `code`.
+- **Remaining:** The limits differ from the plan's 30 per session per 10 minutes, and no session-level limit exists: decide whether the per-user, per-IP and global quotas replace it. Errors are `{error}` with no `code`. `document-extract` enforces only the per-user quota (`consume_ai_quota`): there is no per-IP or global ceiling on document reads, so free guest sessions can drive them without a bound in aggregate.
 
 #### B-3.2 User-facing failure states
 - **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** B-3.1 · **Milestone:** M1
@@ -528,7 +531,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### E-3.1 Text extraction for CSV, XLSX, and text PDF
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** E-1.1, B-1.1 · **Milestone:** M2
 - **Built:** `document-extract` reads CSV, XLSX/XLS and text PDF (10 MiB, 50 pages). Locations read 'Sheet..., rows' or 'Page N'. A PDF with under 200 characters of text returns `unreadable`. The document id is carried into provenance on apply.
-- **Notes:** Word files are saved but not read. Census rows never go to the model; free text does. `read.ts` has no tests (Deno-only imports) and the scanned-PDF path is untested. Still Lovable/Gemini only (F-0.2).
+- **Notes:** Word files are saved but not read. Census rows never go to the model; free text does. `read.ts` (the file-format handling) has no tests (Deno-only imports) and the scanned-PDF path is untested. Its model call now goes through the shared provider adapter (`ask.ts`, tested for both providers) with a 30-second timeout and one retry.
 
 #### E-3.2 Candidate review and merge policy
 - **Status:** **SUPERSEDED** · **Size:** M · **Priority:** High · **Owner:** FS · **Depends:** E-3.1, B-1.2 · **Milestone:** M2
@@ -850,7 +853,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### I-4.1 Unit tests for validation and schema
 - **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** FE · **Depends:** A-2.2 · **Milestone:** M1
-- **Built:** `npm test` runs Vitest with 584 tests in 42 files, including `chamberValidation.test.ts` and `provenance.test.ts`. `src/test` holds only `setup.ts`, so the placeholder is gone.
+- **Built:** `npm test` runs Vitest with 603 tests in 43 files, including `chamberValidation.test.ts` and `provenance.test.ts`. `src/test` holds only `setup.ts`, so the placeholder is gone.
 
 #### I-4.2 Integration test harness on local Supabase
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** J-1.1, A-1.2 · **Milestone:** M1
@@ -970,7 +973,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Tier | Stories | Why |
 |---|---|---|
-| 0: put the fix in front of users | Confirm which build of `chamber-extract` is deployed, deploy the fixed one, and make one real Lenore exchange in preview (the open part of F-0.2). | The fix is verified in code, tests, a Deno run and a CI run, not live. |
+| 0: put the fixes in front of users | Confirm which builds of `chamber-extract` and `document-extract` are deployed, deploy both (and check the deploy bundles `supabase/functions/_shared`), and make one real Lenore exchange and one real document read in preview (the open part of F-0.2). | The fixes are verified in code, tests, a Deno run and a CI run, not live. |
 | 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, A-1.3, A-1.4, A-2.2, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.3, I-4.4 (add the function check), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus the end-to-end test that proves it. C-1.3, C-2.1 and B-1.3 wait for D2. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
 | 2: gate the private pilot (M2) | All M2 stories, plus the M1-tagged hardening stories that do not block the demo path: A-1.5, A-3.2, B-1.1, B-1.3, B-1.4, B-2.2, D-1.1 to D-1.4, D-2.2, D-3.1 to D-3.3, E-4.1, I-4.2. In practice: E-4.1, E-4.3, E-4.2, F-2.1, F-4.1, F-4.3, G-1.1 (schedule in a migration), G-1.3, H-1.1 to H-1.3, H-2.1, H-2.3, H-3.1, H-3.3, H-4.1 to H-4.3, I-1.x, I-2.x | Retention, deletion, upload hardening, an admin view of failed emails, legal pages, alerting, a runbook, and accessibility. Most wait on D3, D4, D10 and D13. |
 | 3: public launch (M3) | G-2.2, G-3.x, I-5.x, J-1.2, J-2.x, J-3.x | Bounces, CRM, voice reliability, domain, analytics and the launch checklist. G-3.x waits for D6. |
@@ -1137,6 +1140,9 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 - Three decisions: **D14** (intake access model), **D15** (reference format), **D16** (advisor visibility), and a status on D1 to D13.
 - Milestone exit criteria with a status against each criterion (section 6).
 
+**Updated in 2.2** (after `document-extract` moved onto the adapter)
+- F-0.2 no longer lists `document-extract`; what remains is error codes and one live exchange. E-3.1's model call is on the shared adapter. B-3.1 and section 1.3 record that document reads have no per-IP or global ceiling.
+
 **Updated in 2.1** (after the `chamber-extract` fix and the CI check)
 - F-0.4 is DONE. F-0.2 stays PARTIAL (error codes, `document-extract`, one live exchange). B-1.1, B-3.1 and B-3.3 lose the 'does not load' remainder. I-4.4 gains the type-check step. Section 1.3 records the defect as fixed, and section 5 no longer lists it as a blocker.
 
@@ -1219,6 +1225,7 @@ A story is done only when all of the following are true:
 |---|---|---|
 | Edge-function type check uses declarations for URL imports, so a wrong remote URL or a wrong call into a remote package is not caught. A broken merge reached `main` with green CI before the check existed. | A function can still fail at deploy or run time on a dependency the check cannot see. | F-0.4 catches local faults. Smoke-test each function after deploy. |
 | The browser writes intake data directly, with no server validation or version check. | Bad or overwritten data, with two tabs overwriting each other. | A-2.2 (database validation and a version column). |
+| The AI functions now import shared code from `supabase/functions/_shared`. A deploy that uploads only a function's own folder would fail to resolve it. | Both AI functions fail to start. | Deploy through the Supabase CLI, which bundles relative imports, and smoke-test a preview deploy first. |
 | Deployed environments may differ from `main`. This refresh could not see them. | Statuses here could be wrong about production in either direction. | Confirm deployed function versions, secrets, the cron schedule and Turnstile before the demo. |
 | Repeated 'repair main after merge' commits. | Overlapping branches keep breaking `main`. | Smaller pull requests, F-0.4, and required checks on `main`. |
 | Decisions D2, D3, D4, D14, D15 stay open. | Blocks the M1 critical path. | Start on the recommended defaults. Revisit at the next review. |
@@ -1238,5 +1245,6 @@ A story is done only when all of the following are true:
 3. Is there a required retention period from an insurer, PEO partner, or regulation that overrides D4?
 4. Which `chamber-extract` build is deployed (the fix is on the branch, not necessarily live), and is Turnstile enabled in every deployed environment?
 5. Are the CI checks required for merge on `main`? The README asks the owner to set it, and the repo cannot show whether they did.
-6. Should an advisor `admin` be able to do more than an `advisor` (delete an intake, grant a role through the app), or is SQL-only management the intent (D5)?
+6. Should document reads share chat's per-IP and global call ceilings? Adding them needs `SUPABASE_SERVICE_ROLE_KEY` and `IP_HASH_SECRET` on `document-extract`, and refuses when they are missing.
+7. Should an advisor `admin` be able to do more than an `advisor` (delete an intake, grant a role through the app), or is SQL-only management the intent (D5)?
 
