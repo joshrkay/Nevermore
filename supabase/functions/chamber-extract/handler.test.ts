@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleRequest, type HandlerDeps, type SupabaseLike } from "./handler";
-import { SYSTEM_PROMPT } from "./schema";
+import { EXTRACT_TOOL, SYSTEM_PROMPT } from "./schema";
 
 const ENV: Record<string, string | undefined> = {
   SUPABASE_URL: "https://project.test",
@@ -160,6 +160,8 @@ describe("chamber-extract handler: the request", () => {
     expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer lovable-key");
     const sent = JSON.parse(init?.body as string);
     expect(sent.messages[0]).toEqual({ role: "system", content: SYSTEM_PROMPT });
+    expect(sent.tools).toEqual([{ type: "function", function: EXTRACT_TOOL }]);
+    expect(sent.tool_choice).toEqual({ type: "function", function: { name: "extract_chamber_data" } });
     expect(sent.messages[1].content).toBe(
       `Previous context (already captured data): {"company_name":"Acme"}\n\nNew user message: ${JSON.stringify('We have 40 "full time" people')}`,
     );
@@ -179,6 +181,9 @@ describe("chamber-extract handler: the request", () => {
     });
     const { status, body } = await read(await handleRequest(post({ message: "hi" }), t.deps));
     expect(t.fetchFn.mock.calls[0][0]).toBe("https://api.anthropic.com/v1/messages");
+    const sent = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string);
+    expect(sent.tool_choice).toEqual({ type: "tool", name: "extract_chamber_data" });
+    expect(sent.tools[0].input_schema).toEqual(EXTRACT_TOOL.parameters);
     expect(status).toBe(200);
     expect(body.extracted).toEqual({ company_name: "Acme" });
   });

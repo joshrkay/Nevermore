@@ -1,10 +1,18 @@
 // Calls the AI provider with a timeout and one retry, and reports failures as structured kinds
-// (never as provider response bodies, which can echo the prospect's text). No imports, so it
-// runs under Deno and Vitest alike.
+// (never as provider response bodies, which can echo the prospect's text). Shared by every
+// function that reads text with the model. No imports, so it runs under Deno and Vitest alike.
 
 export interface ModelRequest {
   system: string;
   user: string;
+}
+
+/** The one tool the model is forced to call, so its answer comes back as structured arguments. */
+export interface ExtractionTool {
+  name: string;
+  description: string;
+  /** JSON Schema for the arguments. */
+  parameters: Record<string, unknown>;
 }
 
 /** Maps our request and the provider's response to and from one provider's wire format. */

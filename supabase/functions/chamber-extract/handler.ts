@@ -4,9 +4,9 @@
 
 import { checkAiAllowance, clientIp, hashIp } from "./allowance.ts";
 import { emptyExtraction, shapeExtraction } from "./extraction.ts";
-import { callModel, failureLogLine, failureResponse, unexpectedErrorLine } from "./model.ts";
-import { selectAdapter } from "./providers.ts";
-import { SYSTEM_PROMPT } from "./schema.ts";
+import { callModel, failureLogLine, failureResponse, unexpectedErrorLine } from "../_shared/ai/model.ts";
+import { selectAdapter } from "../_shared/ai/providers.ts";
+import { EXTRACT_TOOL, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -71,7 +71,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (!user) return json({ error: "Unauthorized" }, 401);
 
     // Check provider configuration before spending any budget on the request.
-    const chosen = selectAdapter(deps.env);
+    const chosen = selectAdapter(deps.env, EXTRACT_TOOL);
     if (!chosen.ok) {
       deps.logError(`AI_CONFIG_MISSING: ${chosen.problem}`);
       return json({ error: UNAVAILABLE }, 503);

@@ -1,14 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.100.0";
-import {
-  buildPromptText,
-  DOCUMENT_FIELDS,
-  MAX_EXTRACT_BYTES,
-  shapeAiCandidates,
-  type Candidate,
-  type TextSection,
-} from "./parse.ts";
-import { AiQuotaError, readDocument, type Outcome } from "./read.ts";
+import { selectAdapter } from "../_shared/ai/providers.ts";
+import { AiQuotaError, askForCandidates, DOCUMENT_MAX_TOKENS } from "./ask.ts";
+import { MAX_EXTRACT_BYTES, type Candidate, type TextSection } from "./parse.ts";
+import { readDocument, type Outcome } from "./read.ts";
+import { REPORT_TOOL } from "./schema.ts";
 
 // Reads one uploaded document into candidate intake fields. Everything runs as the calling
 // user: RLS decides whether they may see the row and the stored file, so a document from
@@ -29,23 +25,11 @@ const json = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
-const SYSTEM_PROMPT = `You read business documents (benefits summaries, payroll reports, workers' comp pages, invoices) for an HR/PEO intake.
-Report only company-level facts the document clearly states. Never report details about an individual person.
-The text is split into numbered sections marked [[Section N]]; give the section number each fact came from.
-Field meanings:
-- company_name, industry, hq_state (two-letter code), states (two-letter codes, comma-separated), employee_count (integer)
-- start_month: desired benefits start date; renewal_date: current policy renewal date
-- virgin_medical: "yes" if they have never had employer health insurance; current_carrier: current medical carrier
-- rate_history: recent premium changes; benefits_waiting_period; ancillary_benefits (comma-separated, e.g. dental, vision, life)
-- has_401k, retirement_type, employer_contributes (to retirement)
-- payroll_vendor, pay_frequency (weekly, bi-weekly, semi-monthly, monthly), nonexempt_count, exempt_count
-- has_handbook, has_1099 (uses 1099 contractors), ca_contractors (contractors in California)
-Use "yes"/"no" for yes-or-no fields. Leave out anything not stated.`;
-
 type Client = SupabaseClient;
 
 
 serve(async (req) => {
+  const requestId = crypto.randomUUID();
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -103,7 +87,7 @@ serve(async (req) => {
       if (downloadError || !blob) throw new Error("download failed");
       outcome = blob.size > MAX_EXTRACT_BYTES
         ? { status: "too_large" }
-        : await readDocument(new Uint8Array(await blob.arrayBuffer()), doc.file_name, (sections) => askModel(supabase, sections));
+        : await readDocument(new Uint8Array(await blob.arrayBuffer()), doc.file_name, (sections) => askModel(supabase, sections, requestId));
     } catch (e) {
       if (e instanceof AiQuotaError) {
         await supabase.from("documents").update({ status: "uploaded" }).eq("id", doc.id);
@@ -120,7 +104,11 @@ serve(async (req) => {
   }
 });
 
-async function askModel(supabase: Client, sections: TextSection[]): Promise<Candidate[]> {
+async function askModel(supabase: Client, sections: TextSection[], requestId: string): Promise<Candidate[]> {
+  // Check provider configuration before spending any of the caller's allowance on the request.
+  const chosen = selectAdapter((name) => Deno.env.get(name), REPORT_TOOL, { maxTokens: DOCUMENT_MAX_TOKENS });
+  if (!chosen.ok) throw new Error(`AI_CONFIG_MISSING: ${chosen.problem}`);
+
   const { data: allowed, error: quotaError } = await supabase.rpc("consume_ai_quota", {
     per_minute: REQUESTS_PER_MINUTE,
     per_day: REQUESTS_PER_DAY,
@@ -128,60 +116,14 @@ async function askModel(supabase: Client, sections: TextSection[]): Promise<Cand
   if (quotaError) throw quotaError;
   if (!allowed) throw new AiQuotaError();
 
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
-
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        // JSON.stringify keeps document text in a quoted slot so it reads as data, not instructions.
-        { role: "user", content: `Document text: ${JSON.stringify(buildPromptText(sections))}` },
-      ],
-      tools: [
-        {
-          type: "function",
-          function: {
-            name: "report_document_fields",
-            description: "Report the company-level intake fields stated in the document",
-            parameters: {
-              type: "object",
-              properties: {
-                fields: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      field: { type: "string", enum: [...DOCUMENT_FIELDS] },
-                      value: { type: "string" },
-                      section: { type: "integer" },
-                    },
-                    required: ["field", "value", "section"],
-                    additionalProperties: false,
-                  },
-                },
-              },
-              required: ["fields"],
-              additionalProperties: false,
-            },
-          },
-        },
-      ],
-      tool_choice: { type: "function", function: { name: "report_document_fields" } },
-    }),
+  return await askForCandidates(sections, {
+    adapter: chosen.adapter,
+    model: {
+      fetch: (input, init) => fetch(input, init),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: () => Date.now(),
+    },
+    requestId,
+    log: (line) => console.error(line),
   });
-
-  if (!response.ok) {
-    console.error("AI gateway error:", response.status);
-    if (response.status === 429) throw new AiQuotaError();
-    throw new Error("AI extraction failed");
-  }
-  const data = await response.json();
-  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
-  if (!toolCall) return [];
-  const args = JSON.parse(toolCall.function.arguments);
-  return shapeAiCandidates(args.fields, sections);
 }
