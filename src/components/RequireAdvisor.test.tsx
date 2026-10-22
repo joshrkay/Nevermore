@@ -6,6 +6,7 @@ const auth = {
   user: null as { id: string; email?: string } | null,
   loading: false,
   isAnonymous: false,
+  sessionEnded: null as "signed_out" | "expired" | null,
   signOut: vi.fn(),
 };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
@@ -15,8 +16,13 @@ vi.mock("@/lib/advisorApi", () => ({ fetchIsAdvisor: () => fetchIsAdvisor() }));
 const { default: RequireAdvisor } = await import("./RequireAdvisor");
 
 const Login = () => {
-  const state = useLocation().state as { from: { pathname: string }; audience: string };
-  return <p>Login page for {state.audience} returning to {state.from.pathname}</p>;
+  const state = useLocation().state as { from?: { pathname: string }; audience: string; reason?: string };
+  return (
+    <p>
+      Login page for {state.audience} returning to {state.from?.pathname ?? "nowhere"}
+      {state.reason ? ` (${state.reason})` : ""}
+    </p>
+  );
 };
 
 const renderGuarded = () =>
@@ -34,6 +40,7 @@ describe("RequireAdvisor", () => {
     auth.user = { id: "u1", email: "pat@example.com" };
     auth.loading = false;
     auth.isAnonymous = false;
+    auth.sessionEnded = null;
     fetchIsAdvisor.mockReset();
   });
 
@@ -42,6 +49,20 @@ describe("RequireAdvisor", () => {
     renderGuarded();
     expect(screen.getByText("Login page for advisor returning to /advisor/submissions/s1")).toBeInTheDocument();
     expect(fetchIsAdvisor).not.toHaveBeenCalled();
+  });
+
+  it("tells the sign-in page when the session expired, and still returns to the same page", () => {
+    auth.user = null;
+    auth.sessionEnded = "expired";
+    renderGuarded();
+    expect(screen.getByText("Login page for advisor returning to /advisor/submissions/s1 (expired)")).toBeInTheDocument();
+  });
+
+  it("after a deliberate sign-out says so, and doesn't remember the page for the next person", () => {
+    auth.user = null;
+    auth.sessionEnded = "signed_out";
+    renderGuarded();
+    expect(screen.getByText("Login page for advisor returning to nowhere (signed_out)")).toBeInTheDocument();
   });
 
   it("treats a guest session as signed out", () => {
@@ -70,6 +91,25 @@ describe("RequireAdvisor", () => {
     fetchIsAdvisor.mockResolvedValue(true);
     renderGuarded();
     expect(await screen.findByText("Advisor tools")).toBeInTheDocument();
+  });
+
+  it("ends a session the server rejects, rather than offering a retry that can't work", async () => {
+    auth.signOut.mockReset().mockResolvedValue(undefined);
+    fetchIsAdvisor.mockRejectedValue(Object.assign(new Error("Your session has expired."), { unauthenticated: true }));
+    renderGuarded();
+    expect(await screen.findByText("Your session has expired.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Advisor tools")).not.toBeInTheDocument();
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
+    expect(auth.signOut).toHaveBeenCalledWith("expired");
+  });
+
+  it("doesn't end the session for an ordinary failure", async () => {
+    auth.signOut.mockReset();
+    fetchIsAdvisor.mockRejectedValue(new Error("offline"));
+    renderGuarded();
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(auth.signOut).not.toHaveBeenCalled();
   });
 
   it("offers a retry when access can't be checked", async () => {

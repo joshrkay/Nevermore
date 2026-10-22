@@ -3,8 +3,14 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 let currentSession: { user: { id: string; is_anonymous?: boolean } } | null = null;
+type AuthListener = (event: string, session: { user: { id: string; is_anonymous?: boolean } } | null) => void;
+let listener: AuthListener | null = null;
 const authApi = {
-  onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
+  onAuthStateChange: vi.fn((cb: AuthListener) => {
+    listener = cb;
+    return { data: { subscription: { unsubscribe: vi.fn() } } };
+  }),
+  signOut: vi.fn(async () => ({ error: null })),
   getSession: vi.fn(async () => ({ data: { session: currentSession } })),
   signInAnonymously: vi.fn(),
   updateUser: vi.fn(),
@@ -89,5 +95,65 @@ describe("useAuth guest accounts", () => {
     let outcome: { error: Error | null } | undefined;
     await act(async () => { outcome = await result.current.verifyEmailCode("jo@acme.com", "000000"); });
     expect(outcome?.error?.message).toMatch(/expired or is invalid/);
+  });
+});
+
+describe("useAuth session ending", () => {
+  const account = { user: { id: "adv1", is_anonymous: false } };
+
+  beforeEach(() => {
+    listener = null;
+    currentSession = account;
+    authApi.signOut.mockClear();
+  });
+
+  it("has no ended session while signed in or before anyone has signed in", async () => {
+    const { result } = await mountAuth();
+    expect(result.current.sessionEnded).toBeNull();
+
+    currentSession = null;
+    const fresh = await mountAuth();
+    act(() => listener?.("SIGNED_OUT", null));
+    expect(fresh.result.current.sessionEnded).toBeNull();
+  });
+
+  it("calls a deliberate sign-out a sign-out", async () => {
+    const { result } = await mountAuth();
+    await act(async () => { await result.current.signOut(); });
+    act(() => listener?.("SIGNED_OUT", null));
+    expect(authApi.signOut).toHaveBeenCalledTimes(1);
+    expect(result.current.sessionEnded).toBe("signed_out");
+  });
+
+  it("calls a session that ended without a sign-out an expired one", async () => {
+    const { result } = await mountAuth();
+    act(() => listener?.("SIGNED_OUT", null));
+    expect(result.current.sessionEnded).toBe("expired");
+    expect(result.current.user).toBeNull();
+  });
+
+  it("lets the app end a session it found to be expired and say why", async () => {
+    const { result } = await mountAuth();
+    await act(async () => { await result.current.signOut("expired"); });
+    act(() => listener?.("SIGNED_OUT", null));
+    expect(result.current.sessionEnded).toBe("expired");
+  });
+
+  it("forgets the reason once someone signs in again", async () => {
+    const { result } = await mountAuth();
+    act(() => listener?.("SIGNED_OUT", null));
+    expect(result.current.sessionEnded).toBe("expired");
+    act(() => listener?.("SIGNED_IN", account));
+    expect(result.current.sessionEnded).toBeNull();
+    expect(result.current.user?.id).toBe("adv1");
+  });
+
+  it("doesn't let one sign-out's reason colour the next ended session", async () => {
+    const { result } = await mountAuth();
+    await act(async () => { await result.current.signOut(); });
+    act(() => listener?.("SIGNED_OUT", null));
+    act(() => listener?.("SIGNED_IN", account));
+    act(() => listener?.("SIGNED_OUT", null));
+    expect(result.current.sessionEnded).toBe("expired");
   });
 });

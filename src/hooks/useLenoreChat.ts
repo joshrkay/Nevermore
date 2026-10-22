@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { mergeChamberData } from "@/data/chamberValidation";
 import type { ChamberData } from "@/data/chamberTypes";
-import type { ChatMessage } from "@/data/chat";
-import { applyExtraction, transcriptExtraction, type IntakeState } from "@/data/provenance";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 
 export interface ChatFailure {
@@ -43,8 +42,7 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (idleTimer.current) clearTimeout(idleTimer.current); }, []);
 
-  const ask = useCallback(async (message: ChatMessage): Promise<boolean> => {
-    const text = message.text;
+  const ask = useCallback(async (text: string, message: { id: string; text: string } | null): Promise<boolean> => {
     setPending(true);
     onOrbStateChange("thinking");
     try {
@@ -61,13 +59,12 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
       onOrbStateChange("speaking");
       addLenoreMessage(reply);
       idleTimer.current = setTimeout(() => onOrbStateChange("idle"), 2000);
-      failedMessage.current = null;
       setFailure(null);
       return true;
     } catch (err) {
       onOrbStateChange("idle");
       const rateLimited = err instanceof FunctionsHttpError && err.context?.status === 429;
-      failedMessage.current = message;
+      failedMessageRef.current = message;
       setFailure({ text, kind: rateLimited ? "rate_limited" : "failed" });
       return false;
     } finally {
@@ -82,8 +79,8 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
 
   /** Resends the message that failed, without adding it to the conversation a second time. */
   const retry = useCallback(async () => {
-    if (!failure || !failedMessage.current) return;
-    await ask(failedMessage.current);
+    if (!failure) return;
+    await ask(failure.text, failedMessageRef.current);
   }, [ask, failure]);
 
   /** "Continue manually": drop the notice and let the prospect fill in the workspace themselves. */

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
+import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import AuditTrail from "@/components/advisor/AuditTrail";
 import DocumentsPanel from "@/components/advisor/DocumentsPanel";
 import FieldReviewPanel from "@/components/advisor/FieldReviewPanel";
@@ -14,7 +15,7 @@ import { loadSubmission, type SubmissionDetail } from "@/lib/advisorApi";
 
 type Load =
   | { kind: "loading" }
-  | { kind: "error"; message: string }
+  | { kind: "error"; error: Error }
   | { kind: "not_found" }
   | { kind: "ready"; detail: SubmissionDetail };
 
@@ -30,7 +31,7 @@ const AdvisorSubmissionPage = () => {
     setLoad((prev) => (prev.kind === "ready" && prev.detail.id === id ? prev : { kind: "loading" }));
     loadSubmission(id)
       .then((detail) => !cancelled && setLoad(detail ? { kind: "ready", detail } : { kind: "not_found" }))
-      .catch((err: Error) => !cancelled && setLoad({ kind: "error", message: err.message }));
+      .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => { cancelled = true; };
   }, [id, attempt]);
 
@@ -60,14 +61,7 @@ const AdvisorSubmissionPage = () => {
           </div>
         )}
 
-        {load.kind === "error" && (
-          <div role="alert" className="border border-destructive/40 bg-destructive/5 rounded-xl p-6 text-center">
-            <AlertTriangle className="w-6 h-6 text-destructive mx-auto mb-2" aria-hidden="true" />
-            <p className="font-medium mb-1">We couldn't load this submission.</p>
-            <p className="text-sm text-muted-foreground mb-4">{load.message}</p>
-            <button onClick={reload} className="text-primary underline hover:text-primary/90">Try again</button>
-          </div>
-        )}
+        {load.kind === "error" && <AdvisorLoadError error={load.error} what="this submission" onRetry={reload} />}
 
         {load.kind === "not_found" && (
           <div className="border border-dashed border-border rounded-xl p-12 text-center">

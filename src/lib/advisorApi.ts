@@ -28,16 +28,25 @@ export type ManuscriptVersion = Tables["manuscript_versions"]["Row"];
 export type UploadedDocument = Pick<Tables["documents"]["Row"], "id" | "file_name" | "file_size" | "category" | "status" | "storage_path" | "created_at">;
 
 export class AdvisorApiError extends Error {
-  constructor(message: string, readonly code?: string) {
+  constructor(message: string, readonly code?: string, readonly unauthenticated = false) {
     super(message);
   }
+  /** The database refused: the account isn't (or is no longer) an advisor. */
   get forbidden() {
     return this.code === "42501";
   }
 }
 
+// The API reports a lapsed or unusable token as PostgREST's PGRST301-303; storage words it differently.
+const isEndedSession = (error: { message: string; code?: string }) =>
+  ["PGRST301", "PGRST302", "PGRST303"].includes(error.code ?? "") || /\bjwt\b|exp claim/i.test(error.message);
+
 const fail = (error: { message: string; code?: string } | null, fallback: string): never => {
-  throw new AdvisorApiError(error?.code === "42501" ? "You don't have advisor access." : error?.message || fallback, error?.code);
+  if (error?.code === "42501") throw new AdvisorApiError("You don't have advisor access.", error.code);
+  if (error && isEndedSession(error)) {
+    throw new AdvisorApiError("Your session has expired. Sign in again to continue.", error.code, true);
+  }
+  throw new AdvisorApiError(error?.message || fallback, error?.code);
 };
 
 export async function fetchIsAdvisor(): Promise<boolean> {

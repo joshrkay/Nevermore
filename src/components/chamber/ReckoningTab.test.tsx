@@ -146,15 +146,19 @@ describe("ReckoningTab certification", () => {
     fireEvent.click(submitButton());
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const sent = onSubmit.mock.calls[0][0];
-    expect(sent).toMatchObject({ signer_name: "Jo Doe", signer_title: "CEO", peo: "Some PEO", consent_version: expect.any(String) });
-    expect(new Date(sent.signed_at).toString()).not.toBe("Invalid Date");
-    expect(sent.consent_text).toContain("accurate and complete");
-    expect(sent.consent_text).toContain("Some PEO");
-    expect(sent.consent_text).toContain("requires me to certify again");
-
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent("Your certification is recorded");
-    expect(dialog).toHaveTextContent("Certified by Jo Doe, CEO");
+    expect(sent).toMatchObject({
+      signer_name: "Jo Doe",
+      signer_title: "CEO",
+      // One version, under both names: the app's and the one the database's certification check reads.
+      consent_text_version: CONSENT_TEXT_VERSION,
+      consent_version: CONSENT_TEXT_VERSION,
+    });
+    expect(Number.isNaN(Date.parse(sent.signed_at))).toBe(false);
+    // Each statement as shown, then the signing statement, so the record is exactly what was agreed to.
+    expect(sent.consent_text).toHaveLength(4);
+    expect(sent.consent_text[0]).toMatch(/accurate and complete/);
+    expect(sent.consent_text[3]).toMatch(/By signing, I certify/);
+    expect(sent).not.toHaveProperty("peo");
   });
 
   it("confirms clearly after a successful submission", async () => {
@@ -234,5 +238,119 @@ describe("ReckoningTab certification", () => {
     rerenderWith({ ...DEMO_CHAMBER_DATA, company_name: "Renamed Inc" });
     await waitFor(() => expect(screen.queryByText("Certification recorded")).not.toBeInTheDocument());
     expect(screen.getByRole("alert")).toHaveTextContent(/certify again/);
+  });
+});
+
+describe("ReckoningTab on an intake that is already certified", () => {
+  const onSubmit = vi.fn();
+  const submission = {
+    signer_name: "Jo Doe",
+    signer_title: "CEO",
+    signed_at: "2026-10-01T12:00:00Z",
+    file_id: "EAA-2026-S1",
+    consent_version: CONSENT_TEXT_VERSION,
+    consent_text: ["x"],
+  };
+  const mountWith = (certification: React.ComponentProps<typeof ReckoningTab>["certification"], peoName: string | null = null) =>
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={peoName} sessionId="s1" onSubmit={onSubmit} certification={certification} />
+      </MemoryRouter>,
+    );
+
+  beforeEach(() => {
+    auth.isAnonymous = false;
+    onSubmit.mockReset().mockResolvedValue(true);
+  });
+
+  it("is read-only while nothing has changed, so it can't be certified again by accident", () => {
+    mountWith({ status: "certified", submission });
+    expect(screen.getByRole("status")).toHaveTextContent(/Certified by Jo Doe, CEO/);
+    expect(screen.getByRole("link", { name: "View The Manuscript" })).toHaveAttribute("href", "/manuscript?session=s1");
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    expect(screen.queryByText("Click to sign digitally")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Generate The Manuscript/ })).not.toBeInTheDocument();
+  });
+
+  it("offers certification again once the answers have changed", () => {
+    mountWith({ status: "stale", submission });
+    expect(screen.getByRole("status")).toHaveTextContent(/Your answers changed after you certified/);
+    expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeInTheDocument();
+  });
+
+  it("brings the form back if a signature made this visit is voided, even before the saved state catches up", () => {
+    const tree = (d: typeof DEMO_CHAMBER_DATA, certification: React.ComponentProps<typeof ReckoningTab>["certification"]) => (
+      <MemoryRouter>
+        <ReckoningTab data={d} peoName={null} sessionId="s1" onSubmit={onSubmit} certification={certification} />
+      </MemoryRouter>
+    );
+    const view = render(tree(DEMO_CHAMBER_DATA, { status: "none" }));
+    screen.getAllByRole("checkbox").forEach((c) => fireEvent.click(c));
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Jo Doe" } });
+    fireEvent.change(screen.getByLabelText("Role"), { target: { value: "CEO" } });
+    fireEvent.click(screen.getByText("Click to sign digitally"));
+
+    // The answers move on, while the saved certification still reads "certified".
+    view.rerender(tree({ ...DEMO_CHAMBER_DATA, employee_count: 99 }, { status: "certified", submission }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed after you signed/);
+    expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeDisabled();
+  });
+
+  describe("when the chosen PEO changes", () => {
+    const certifiedFor = { status: "certified" as const, submission: { ...submission, peo: "Acme PEO" } };
+
+    it("stays read-only on a fresh visit, when no PEO has been chosen yet", () => {
+      mountWith(certifiedFor, null);
+      expect(screen.getByRole("status")).toHaveTextContent(/Certified by Jo Doe, CEO/);
+      expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    });
+
+    it("stays read-only when the same PEO is chosen again", () => {
+      mountWith(certifiedFor, "Acme PEO");
+      expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+      expect(screen.queryByRole("button", { name: /Generate The Manuscript/ })).not.toBeInTheDocument();
+    });
+
+    it("asks for certification again when a different PEO is chosen, and says why", () => {
+      mountWith(certifiedFor, "Other PEO");
+      expect(screen.getByRole("status")).toHaveTextContent(/certified for Acme PEO/);
+      expect(screen.getByRole("status")).toHaveTextContent(/Other PEO/);
+      expect(screen.queryByText(/Certified by Jo Doe/)).not.toBeInTheDocument();
+      expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeInTheDocument();
+    });
+
+    it("asks for certification again when a PEO is chosen for an intake certified without one", () => {
+      mountWith({ status: "certified", submission }, "Other PEO");
+      expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
+      expect(screen.getByRole("status")).toHaveTextContent(/You certified before choosing a PEO, and you've since chosen Other PEO/);
+    });
+
+    it("gives one reason, not two, when the answers have also changed", () => {
+      mountWith({ status: "stale", submission: { ...submission, peo: "Acme PEO" } }, "Other PEO");
+      // getByRole throws if more than one notice is showing.
+      expect(screen.getByRole("status")).toHaveTextContent(/Your answers changed after you certified/);
+      expect(screen.queryByText(/you've since chosen/)).not.toBeInTheDocument();
+      expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
+    });
+
+    it("hands the new PEO to the save, so certifying again records it", async () => {
+      mountWith(certifiedFor, "Other PEO");
+      screen.getAllByRole("checkbox").forEach((c) => fireEvent.click(c));
+      fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Jo Doe" } });
+      fireEvent.change(screen.getByLabelText("Role"), { target: { value: "CEO" } });
+      fireEvent.click(screen.getByText("Click to sign digitally"));
+      fireEvent.click(screen.getByRole("button", { name: /Generate The Manuscript/ }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(onSubmit.mock.calls[0][0]).toMatchObject({ peo: "Other PEO" });
+    });
+  });
+
+  it("offers certification to an intake that has never been certified", () => {
+    mountWith({ status: "none" });
+    expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeInTheDocument();
   });
 });
