@@ -69,20 +69,68 @@ describe("sendEmail", () => {
   });
 
   it.each([
-    [429, "rate_limited"],
-    [401, "auth"],
-    [403, "auth"],
-    [422, "provider_error"],
-    [500, "provider_error"],
-    [503, "provider_error"],
-  ])("maps HTTP %i to %s without exposing the response body", async (status, kind) => {
+    [429, "rate_limited", false],
+    [401, "auth", false],
+    [403, "auth", false],
+    [422, "provider_error", false],
+    [500, "provider_error", true],
+    [503, "provider_error", true],
+  ])("maps HTTP %i to %s without exposing the response body", async (status, kind, ambiguous) => {
     const result = await sendEmail(adapter, message, "k", { fetch: respond(status, { message: "echoes jo@acme.example" }) });
-    expect(result).toEqual({ ok: false, kind, httpStatus: status });
+    expect(result).toEqual({ ok: false, kind, httpStatus: status, ambiguous });
+  });
+
+  // Only an answer that proves nothing was sent is definitive; the retry may then rebuild the
+  // message under a new key. Anything else might follow an accepted message, so the frozen message
+  // and key must be kept.
+  describe("whether a failure is ambiguous", () => {
+    it.each([400, 401, 403, 404, 405, 413, 422, 429])("HTTP %i is definitive", async (status) => {
+      const result = await sendEmail(adapter, message, "k", { fetch: respond(status) });
+      expect(result).toMatchObject({ ok: false, httpStatus: status, ambiguous: false });
+    });
+
+    it.each([
+      [408, "request timeout"],
+      [409, "idempotency conflict"],
+      [425, "too early"],
+      [300, "multiple choices"],
+      [301, "redirect"],
+      [302, "redirect"],
+      [307, "redirect"],
+      [308, "redirect"],
+      [402, "unlisted 4xx"],
+      [406, "unlisted 4xx"],
+      [410, "unlisted 4xx"],
+      [418, "unlisted 4xx"],
+      [451, "unlisted 4xx"],
+      [500, "5xx"],
+      [502, "5xx"],
+      [503, "5xx"],
+      [504, "5xx"],
+      [599, "5xx"],
+    ])("HTTP %i (%s) is ambiguous", async (status) => {
+      const result = await sendEmail(adapter, message, "k", { fetch: respond(status) });
+      expect(result).toMatchObject({ ok: false, kind: "provider_error", httpStatus: status, ambiguous: true });
+    });
+
+    it("shows a 409 as provider_error:409, not as something it is not", async () => {
+      expect(await sendEmail(adapter, message, "k", { fetch: respond(409) })).toEqual({ ok: false, kind: "provider_error", httpStatus: 409, ambiguous: true });
+    });
+  });
+
+  it("refuses to follow a redirect, so one surfaces as an ambiguous network failure and not a status", async () => {
+    const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.redirect === "error") throw new TypeError("redirect mode is set to error");
+      return new Response(null, { status: 302 });
+    });
+    const result = await sendEmail(adapter, message, "k", { fetch: fetch as unknown as typeof globalThis.fetch });
+    expect(result).toEqual({ ok: false, kind: "network", httpStatus: null, ambiguous: true });
+    expect((fetch.mock.calls[0][1] as RequestInit).redirect).toBe("error");
   });
 
   it("reports a network error", async () => {
     const fetch = vi.fn(async () => { throw new TypeError("connection reset"); });
-    expect(await sendEmail(adapter, message, "k", { fetch })).toEqual({ ok: false, kind: "network", httpStatus: null });
+    expect(await sendEmail(adapter, message, "k", { fetch })).toEqual({ ok: false, kind: "network", httpStatus: null, ambiguous: true });
   });
 
   it("gives up on a provider that never answers", async () => {
@@ -91,6 +139,6 @@ describe("sendEmail", () => {
         init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
       }));
     const result = await sendEmail(adapter, message, "k", { fetch: fetch as unknown as typeof globalThis.fetch, timeoutMs: 20 });
-    expect(result).toEqual({ ok: false, kind: "timeout", httpStatus: null });
+    expect(result).toEqual({ ok: false, kind: "timeout", httpStatus: null, ambiguous: true });
   });
 });

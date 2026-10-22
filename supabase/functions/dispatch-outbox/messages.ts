@@ -38,12 +38,22 @@ export const EMAIL_PATTERN = /^[^\s@<>,;"()[\]\\]+@[^\s@<>,;"()[\]\\]+\.[^\s@<>,
 // eslint-disable-next-line no-control-regex
 const INVISIBLE = /[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]+/g;
 
-/** Prospect-entered text as a single capped line, or null if nothing is left. */
+// A UTF-16 surrogate with no partner. Without the `u` flag the pattern reads code units, which is
+// what makes it able to see one.
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+
+/**
+ * Prospect-entered text as a single capped line, or null if nothing is left. `max` counts code
+ * points, and a stray surrogate is dropped like any other invisible character: the line ends up in
+ * the frozen message, and Postgres refuses jsonb text with a lone surrogate (or NUL), which would
+ * leave the event impossible to freeze.
+ */
 export function oneLine(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
-  const flat = value.replace(INVISIBLE, " ").replace(/\s+/g, " ").trim();
+  const flat = value.replace(LONE_SURROGATE, " ").replace(INVISIBLE, " ").replace(/\s+/g, " ").trim();
   if (!flat) return null;
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+  const points = Array.from(flat);
+  return points.length > max ? `${points.slice(0, max - 1).join("")}…` : flat;
 }
 
 const asObject = (raw: unknown): Record<string, unknown> | null =>

@@ -16,3 +16,6 @@ certify() { # token session_id data-json signed_at file_id  (what the browser's 
     -d "{\"status\":\"submitted\",\"chamber_data\":$3,\"submission\":{\"signer_name\":\"Jo Doe\",\"signer_title\":\"CEO\",\"signed_at\":\"$4\",\"file_id\":\"$5\",\"consent_version\":\"v1\",\"consent_text\":\"I certify.\",\"chamber_data\":$3}}"; }
 stats() { curl -s http://127.0.0.1:54400/__stats; echo; }
 mode() { curl -s -X POST http://127.0.0.1:54400/__mode -d "{\"mode\":\"$1\"}" >/dev/null; }   # ok | 503 | 429 | 403 | slow | accept_then_hang
+due() { sql "update outbox_events set next_attempt_at = now() - interval '1 second' where status = 'pending'" >/dev/null; }   # skip the backoff wait
+provider() { # [n]: the last n requests the fake provider got (default 4): status, delivered or replayed, key tail, sender
+  node -e 'const ls=require("fs").readFileSync(process.argv[2],"utf8").trim().split("\n").filter(Boolean).slice(-Number(process.argv[1])); for (const l of ls) { const e=JSON.parse(l); console.log(`#${e.n} mode=${e.mode} status=${e.status} delivered=${e.delivered} replay=${e.replay} key=..${(e.key||"").slice(-12)} from=${e.body.from}`); }' "${1:-4}" $RUN/resend.jsonl; }

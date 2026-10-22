@@ -28,6 +28,7 @@ CREATE POLICY own_update ON public.chamber_sessions FOR UPDATE TO authenticated 
 \i supabase/migrations/20261020200000_block_guest_submission.sql
 \i supabase/migrations/20261020210000_certification_events.sql
 \i supabase/migrations/20261025090000_submission_outbox.sql
+\i supabase/migrations/20261026090000_outbox_reliability.sql
 
 -- Seed: a verified prospect (with a profile), a guest, and one fixed session per scenario.
 INSERT INTO auth.users VALUES

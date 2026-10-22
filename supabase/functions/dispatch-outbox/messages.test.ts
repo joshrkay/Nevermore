@@ -172,6 +172,68 @@ describe("prospect-entered text", () => {
     expect(oneLine(42, 10)).toBeNull();
   });
 
+  // The line goes into the frozen message, which is stored as jsonb. Postgres refuses jsonb text
+  // holding a lone surrogate, so a prospect who could plant one would make their event unfreezable.
+  describe("cap and well-formedness", () => {
+    const codePoints = (s: string) => Array.from(s).length;
+    // The UTF-8 round trip is what the database sees: a lone surrogate would not survive it.
+    const utf8 = (s: string) => new TextDecoder().decode(new TextEncoder().encode(s));
+    // JSON.stringify writes a lone surrogate as an escape, and that escape is what jsonb rejects.
+    const hasSurrogateEscape = (s: string) => /\\ud[89a-f][0-9a-f]{2}/i.test(JSON.stringify(s));
+
+    it("counts the cap in code points, so an emoji at the boundary is kept whole or dropped whole", () => {
+      // UTF-16 index 8 and 9 are the two halves of the emoji, so a cut at 9 code units splits it.
+      const out = oneLine(`${"a".repeat(8)}\u{1F600}tail`, 10)!;
+      expect(out).toBe(`${"a".repeat(8)}\u{1F600}\u2026`);
+      expect(codePoints(out)).toBe(10);
+      expect(hasSurrogateEscape(out)).toBe(false);
+      expect(utf8(out)).toBe(out);
+    });
+
+    it("drops an emoji that does not fit rather than cutting it in half", () => {
+      const out = oneLine(`${"a".repeat(9)}\u{1F600}tail`, 10)!;
+      expect(out).toBe(`${"a".repeat(9)}\u2026`);
+      expect(hasSurrogateEscape(out)).toBe(false);
+    });
+
+    it("leaves text of exactly the cap untouched, counting an emoji once", () => {
+      const exact = `${"a".repeat(9)}\u{1F600}`;
+      expect(oneLine(exact, 10)).toBe(exact);
+      expect(oneLine(`${exact}b`, 10)).toBe(`${"a".repeat(9)}\u2026`);
+    });
+
+    it("removes a lone surrogate wherever it sits, keeping valid pairs", () => {
+      expect(oneLine("ab\ud800cd", 50)).toBe("ab cd");
+      expect(oneLine("abc\ud83d", 50)).toBe("abc");
+      expect(oneLine("\udc00abc", 50)).toBe("abc");
+      expect(oneLine("\u{1F600}\ud83d", 50)).toBe("\u{1F600}");
+      expect(oneLine("x\ude00\u{1F600}\ud800\ud800y", 50)).toBe("x \u{1F600} y");
+      expect(oneLine("\ud800".repeat(100), 50)).toBeNull();
+    });
+
+    it("always yields text that survives JSON and UTF-8 unchanged", () => {
+      const hostile = ["a\ud83d", "\ude00b", "\ud83d\ud83d\ude00\ude00", `${"z".repeat(8)}\ud83d\u{1F600}`, "x\u0000y", "\u{1F600}".repeat(30)];
+      for (const input of hostile) {
+        const out = oneLine(input, 12);
+        if (out === null) continue;
+        expect(JSON.parse(JSON.stringify(out))).toBe(out);
+        expect(hasSurrogateEscape(out)).toBe(false);
+        expect(utf8(out)).toBe(out);
+        expect(codePoints(out)).toBeLessThanOrEqual(12);
+      }
+    });
+
+    it("keeps a prospect's stray surrogate out of the rendered email", () => {
+      const stray = "Jo\ud83d Doe\ude00";
+      const email = renderProspectConfirmation(
+        parseProspectConfirmation({ reference: "EAA-1", company_name: `Acme${stray}`, recipient_name: stray, recipient_email: "a@b.example" })!,
+        { supportEmail: "s@b.example", responseTime: "a day" },
+      );
+      expect(hasSurrogateEscape(JSON.stringify(email))).toBe(false);
+      expect(JSON.parse(JSON.stringify(email))).toEqual(email);
+    });
+  });
+
   it("escapes the five HTML-significant characters", () => {
     expect(escapeHtml(`<>&"'`)).toBe("&lt;&gt;&amp;&quot;&#39;");
   });
