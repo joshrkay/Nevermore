@@ -1,5 +1,6 @@
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
+import { fileIdForSession } from "./manuscript";
 import { FIELD_KINDS, FIELD_LABELS, formatFieldValue, type FieldKey, type ProvenanceMap } from "./provenance";
 
 // Advisor-side view of an intake: where it is in the pipeline, how complete it is, and the
@@ -72,6 +73,41 @@ export function completenessOf(row: { missing_required: string[]; open_fields: n
     return { state: "needs_review", label: "Needs review", detail: parts.join(", ") };
   }
   return { state: "complete", label: "Complete", detail: "Every required item captured and confirmed" };
+}
+
+// ---------- Queue: reference, search, footprint ----------
+
+/** What the dashboard lists for an intake; a subset of the database's list row. */
+export interface QueueRow {
+  session_id: string;
+  company_name: string | null;
+  contact_name: string | null;
+  /** The certified file id; null until the prospect certifies. */
+  file_id: string | null;
+  created_at: string;
+}
+
+/** The reference an advisor quotes for an intake: the certified file id, or the one the detail page derives. */
+export function referenceOf(row: Pick<QueueRow, "session_id" | "file_id" | "created_at">): string {
+  return row.file_id ?? fileIdForSession(row.session_id, new Date(row.created_at));
+}
+
+/**
+ * True when every word typed appears in the company, contact or reference the row shows. Nothing
+ * else is searched, so a search can't surface (or be matched against) a detail the list hides.
+ */
+export function matchesSearch(row: QueueRow, query: string): boolean {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  const haystack = [row.company_name, row.contact_name, referenceOf(row)].filter(Boolean).join("\n").toLowerCase();
+  return terms.every((t) => haystack.includes(t));
+}
+
+/** The state footprint for a list cell: "CA, NY, TX", or the first few and a count. Null when unknown. */
+export function formatStates(states: readonly string[], limit = 4): string | null {
+  if (states.length === 0) return null;
+  if (states.length <= limit) return states.join(", ");
+  return `${states.slice(0, limit).join(", ")} +${states.length - limit} more`;
 }
 
 // ---------- Field review ----------

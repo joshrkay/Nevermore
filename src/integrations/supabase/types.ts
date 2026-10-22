@@ -290,6 +290,7 @@ export type Database = {
           contact_name: string | null
           created_at: string
           employee_count: number | null
+          file_id: string | null
           flagged_fields: number
           intake_status: string
           missing_required: string[]
@@ -297,6 +298,7 @@ export type Database = {
           pipeline_status: string
           session_id: string
           signer_name: string | null
+          states: string[]
           submitted_at: string | null
           updated_at: string
           verified_fields: number

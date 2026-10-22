@@ -41,6 +41,7 @@ DECLARE
   row_ public.chamber_sessions;
   events int;
   active int;
+  sid2 uuid;
 BEGIN
   PERFORM set_config('request.jwt.claims', format('{"sub":"%s","is_anonymous":false}', uid), false);
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, data) RETURNING id INTO sid;
@@ -59,6 +60,19 @@ BEGIN
   PERFORM pg_temp.must_refuse(format('UPDATE public.chamber_sessions SET status = ''submitted'', submission = %L WHERE id = %L', good || jsonb_build_object('chamber_data', edited), sid), 'certified data that differs from the saved session');
   SELECT count(*) INTO events FROM public.chamber_certifications;
   IF events <> 0 THEN RAISE EXCEPTION 'FAIL: refused attempts left % events', events; END IF;
+
+  -- The app stores the consent as the list of statements shown, then the signing statement. A list is
+  -- accepted and recorded in that order, so the record is exactly what the signer agreed to.
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, data) RETURNING id INTO sid2;
+  UPDATE public.chamber_sessions SET status = 'submitted',
+    submission = good || jsonb_build_object('file_id', 'EAA-2', 'consent_text', jsonb_build_array('First statement.', 'By signing, I certify.'))
+   WHERE id = sid2;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.chamber_certifications
+     WHERE session_id = sid2 AND consent_text::jsonb = '["First statement.","By signing, I certify."]'::jsonb
+  ) THEN RAISE EXCEPTION 'FAIL: a list of consent statements was not recorded as given'; END IF;
+  DELETE FROM public.chamber_sessions WHERE id = sid2;
+  DELETE FROM public.chamber_certifications WHERE session_id = sid2;
 
   -- A complete certification goes through, is recorded, and is stamped server-side.
   UPDATE public.chamber_sessions SET status = 'submitted', submission = good || '{"certified_at":"1999-01-01T00:00:00Z","data_sha256":"forged"}' WHERE id = sid;
