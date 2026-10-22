@@ -6,7 +6,7 @@
 | **Date** | 2026-10-22 |
 | **Verified against** | `main` at commit `6f2bf5c` (merge of pull request 21), plus the `chamber-extract` fix and the edge-function type check on branch `claude/peaceful-albattani-neiujl`. v1.0 was verified against `04503c3` (2026-10-20) |
 | **Scope** | Everything between the current build and a supervised private pilot (M2) and a public launch (M3) |
-| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (584 tests in 42 files) and `npm run build` all pass. The fixed `chamber-extract` handler was also type-checked and run under Deno 2.9.6 with the network denied. **Not run:** the SQL tests (`supabase/tests/run.sh`), any end-to-end test (none exist), `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment), or CI itself. Nothing was deployed or tested live, so statuses describe the repository, not a running environment. |
+| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (584 tests in 42 files) and `npm run build` all pass. The fixed `chamber-extract` handler was also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 39857171390) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. **Not run:** any end-to-end test (none exist), and `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. |
 
 ---
 
@@ -213,7 +213,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### F-0.4 Type-check and import-check edge functions in CI
 - **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** BE · **Depends:** F-0.2 · **Milestone:** M1
 - **Built:** `npm run typecheck:functions` runs `tsc` over `supabase/functions` (`tsconfig.functions.json`, strict, with `types/functions-shims.d.ts` declaring the URL imports) and is a step in the CI `verify` job. Run against the previous `chamber-extract/index.ts` it fails with the two errors that broke the function (TS2440 and TS2304), and it also fails on a bad named import (TS2305), a missing file (TS2307) and an undefined name in another function. `chamber-extract/handler.test.ts` loads and exercises that function's handler.
-- **Notes:** Verified by running the same command locally; it has not yet run on a GitHub runner. The URL imports are declarations, not fetched modules, so a wrong remote URL or a wrong call into a remote package is not caught (the SheetJS declaration covers only what `document-extract/read.ts` uses). Only `chamber-extract` has a handler test; the other functions rely on the type check.
+- **Notes:** It passed on a GitHub runner in a manual CI run of this branch (run 39857171390, where `sql-tests` also passed). The failing case was shown locally with the same command, not on GitHub. The URL imports are declarations, not fetched modules, so a wrong remote URL or a wrong call into a remote package is not caught (the SheetJS declaration covers only what `document-extract/read.ts` uses). Only `chamber-extract` has a handler test; the other functions rely on the type check.
 
 ---
 
@@ -869,7 +869,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### I-4.4 CI pipeline that gates releases
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** Highest · **Owner:** OPS · **Depends:** I-4.1, I-4.2, I-4.3 · **Milestone:** M1
 - **Built:** `ci.yml` runs `verify` (lint, edge-function type check, test, build) and `sql-tests` on every pull request and on pushes to `main`.
-- **Remaining:** No end-to-end job. Whether the checks are required for merge is not verifiable from the repo: `README.md` asks the owner to set it. The edge-function type check (F-0.4) is in `verify` but has not yet run on GitHub.
+- **Remaining:** No end-to-end job. Whether the checks are required for merge is not verifiable from the repo: `README.md` asks the owner to set it. The edge-function type check (F-0.4) is in `verify` and passed in a manual run on this branch.
 
 #### I-5.1 Voice reliability diagnosis and state machine
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** Medium · **Owner:** FE · **Depends:** A-3.1, D8 · **Milestone:** M3
@@ -970,7 +970,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Tier | Stories | Why |
 |---|---|---|
-| 0: put the fix in front of users | Confirm which build of `chamber-extract` is deployed, deploy the fixed one, and make one real Lenore exchange in preview (the open part of F-0.2). Confirm the new `typecheck:functions` step passes on GitHub. | The fix is verified in code, tests and a Deno run, not live. |
+| 0: put the fix in front of users | Confirm which build of `chamber-extract` is deployed, deploy the fixed one, and make one real Lenore exchange in preview (the open part of F-0.2). | The fix is verified in code, tests, a Deno run and a CI run, not live. |
 | 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, A-1.3, A-1.4, A-2.2, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.3, I-4.4 (add the function check), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus the end-to-end test that proves it. C-1.3, C-2.1 and B-1.3 wait for D2. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
 | 2: gate the private pilot (M2) | All M2 stories, plus the M1-tagged hardening stories that do not block the demo path: A-1.5, A-3.2, B-1.1, B-1.3, B-1.4, B-2.2, D-1.1 to D-1.4, D-2.2, D-3.1 to D-3.3, E-4.1, I-4.2. In practice: E-4.1, E-4.3, E-4.2, F-2.1, F-4.1, F-4.3, G-1.1 (schedule in a migration), G-1.3, H-1.1 to H-1.3, H-2.1, H-2.3, H-3.1, H-3.3, H-4.1 to H-4.3, I-1.x, I-2.x | Retention, deletion, upload hardening, an admin view of failed emails, legal pages, alerting, a runbook, and accessibility. Most wait on D3, D4, D10 and D13. |
 | 3: public launch (M3) | G-2.2, G-3.x, I-5.x, J-1.2, J-2.x, J-3.x | Bounces, CRM, voice reliability, domain, analytics and the launch checklist. G-3.x waits for D6. |
