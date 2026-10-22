@@ -15,7 +15,8 @@ permissions:
   contents: read
 
 jobs:
-  # The front end: the same three commands as `npm run lint && npm test && npm run build`.
+  # The front end: the same four commands as
+  # `npm run lint && npm run typecheck:functions && npm test && npm run build`.
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -27,6 +28,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # Tests only load the function modules they import, and Vitest does not type-check, so a
+      # function whose entry point cannot load (a duplicate declaration, an undefined name, a bad
+      # import) would otherwise pass every other check.
+      - run: npm run typecheck:functions
       - run: npm test
       - run: npm run build
 
