@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Version** | 2.2 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed and `document-extract` moved onto the adapter) |
+| **Version** | 2.3 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings) |
 | **Date** | 2026-10-22 |
-| **Verified against** | `main` at commit `6f2bf5c` (merge of pull request 21), plus the `chamber-extract` fix, the move of `document-extract` onto the shared adapter and the edge-function type check on branch `claude/peaceful-albattani-neiujl`. v1.0 was verified against `04503c3` (2026-10-20) |
+| **Verified against** | `main` at commit `6f2bf5c` (merge of pull request 21), plus the `chamber-extract` fix, the move of `document-extract` onto the shared adapter, the per-address and global ceilings on document reads and the edge-function type check on branch `claude/peaceful-albattani-neiujl`. v1.0 was verified against `04503c3` (2026-10-20) |
 | **Scope** | Everything between the current build and a supervised private pilot (M2) and a public launch (M3) |
-| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (603 tests in 43 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch after the `document-extract` change (run 39859505690) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. **Not run:** any end-to-end test (none exist), and `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. |
+| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (624 tests in 44 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. **Not run:** any end-to-end test (none exist), and `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. |
 
 ---
 
@@ -105,6 +105,8 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 
 **Follow-up in 2.2:** `document-extract` had the same hard-coded gateway, key and model, so `AI_PROVIDER`, `AI_MODEL` and the provider key applied to chat only. It now calls the model through the same adapters (`ask.ts`). Behavior changes: a document read has a 30-second timeout and one retry on a transient error where before it had no limit, an Anthropic reply is capped at 4,096 tokens, a provider rate limit still leaves the document ready to read later, and a provider's response body is no longer logged.
 
+**Follow-up in 2.3:** `document-extract` spent only the caller's own quota, so each new guest session (free to create) got a fresh allowance and AI document reads were not bounded in aggregate. The three counts now live in `_shared/ai/budget.ts` and both functions spend from them, so chat and document reads share the per-address and global ceilings (20 a minute and 400 a day per address, 2,000 a day overall, unless the `AI_IP_*` and `AI_GLOBAL_DAILY_CALLS` secrets override them). A refused read never reaches the provider and the document goes back to 'ready to read'; the daily ceiling, an unreachable budget and missing configuration now do the same (a 503), where a missing provider key used to mark the document failed. Chat's behavior and limits are unchanged. Function secrets are project-wide, so the secrets chat already needs (`IP_HASH_SECRET`, and the service-role key Supabase provides) are the ones document reads need; no new secret is required.
+
 **Still to do:** check which `chamber-extract` and `document-extract` builds are deployed (`chamber-extract` may predate the merge), deploy both, confirm the deploy bundles `supabase/functions/_shared`, and make one real Lenore exchange and one real document read in a preview environment. Until then the failure and the fix are established from the code, the tests and a Deno run, not from a live call.
 
 #### Other defects
@@ -115,7 +117,6 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | The reference is not unique or server-assigned, and a repeat submit adds another certification row. | `manuscript.ts`, `useChamberSession.ts` | C-3.1 |
 | The owner's update policy lets a prospect write `documents.status`, so it cannot carry a scan verdict. | `20261021100000_session_documents.sql` | E-4.3 |
 | Upload limits (20 MB, file types) are enforced only in the browser. The bucket has no size or type limit. | `UploadTab.tsx`, `config.toml` | E-4.1 |
-| Document reads are limited per user only. The per-IP and global call ceilings that guard chat do not apply to `document-extract`, so free guest sessions can drive AI document reads without a bound in aggregate. | `document-extract/index.ts` | B-3.1 |
 | A save can fail without the prospect knowing: the update has no `.select()` so a zero-row update looks like success, there is no status indicator, and no local backup. | `useChamberSession.ts` | A-1.4 |
 | A bare `/start` always inserts a new session, so a returning guest is never resumed and orphan rows accumulate. | `useChamberSession.ts` | A-1.3 |
 | An upgraded guest cannot sign back in: nothing sets a password or signs in by emailed code. | `useAuth.tsx` | D1, A-1.3 |
@@ -340,8 +341,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### B-3.1 Timeouts, retries, and rate limits
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** B-1.1, F-0.2 · **Milestone:** M1
-- **Built:** `model.ts` has a 20-second timeout and one retry after 1 second on 429, 5xx or a network error (none on 402 or other 4xx). The handler now calls it, and `handler.test.ts` covers a retry that succeeds, a persistent 429, a 500, a 402 and a stalled provider (504). Quotas exist: per user 15 a minute and 300 a day, per IP 20 a minute and 400 a day, and a global 2,000 a day that fails closed with a 503.
-- **Remaining:** The limits differ from the plan's 30 per session per 10 minutes, and no session-level limit exists: decide whether the per-user, per-IP and global quotas replace it. Errors are `{error}` with no `code`. `document-extract` enforces only the per-user quota (`consume_ai_quota`): there is no per-IP or global ceiling on document reads, so free guest sessions can drive them without a bound in aggregate.
+- **Built:** `model.ts` has a 20-second timeout and one retry after 1 second on 429, 5xx or a network error (none on 402 or other 4xx). The handler now calls it, and `handler.test.ts` covers a retry that succeeds, a persistent 429, a 500, a 402 and a stalled provider (504). Quotas exist: per user 15 a minute and 300 a day, per IP 20 a minute and 400 a day, and a global 2,000 a day that fails closed with a 503. They live in `_shared/ai/budget.ts` and both AI functions spend from them, so chat and document reads share the per-address and global counts (a refused document read goes back to 'ready to read' and never reaches the provider).
+- **Remaining:** The limits differ from the plan's 30 per session per 10 minutes, and no session-level limit exists: decide whether the per-user, per-IP and global quotas replace it. Errors are `{error}` with no `code`.
 
 #### B-3.2 User-facing failure states
 - **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** B-3.1 · **Milestone:** M1
@@ -531,7 +532,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### E-3.1 Text extraction for CSV, XLSX, and text PDF
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** E-1.1, B-1.1 · **Milestone:** M2
 - **Built:** `document-extract` reads CSV, XLSX/XLS and text PDF (10 MiB, 50 pages). Locations read 'Sheet..., rows' or 'Page N'. A PDF with under 200 characters of text returns `unreadable`. The document id is carried into provenance on apply.
-- **Notes:** Word files are saved but not read. Census rows never go to the model; free text does. `read.ts` (the file-format handling) has no tests (Deno-only imports) and the scanned-PDF path is untested. Its model call now goes through the shared provider adapter (`ask.ts`, tested for both providers) with a 30-second timeout and one retry.
+- **Notes:** Word files are saved but not read. Census rows never go to the model; free text does. `read.ts` (the file-format handling) has no tests (Deno-only imports) and the scanned-PDF path is untested. Its model call now goes through the shared provider adapter (`ask.ts`, tested for both providers) with a 30-second timeout and one retry, after spending the shared AI budget.
 
 #### E-3.2 Candidate review and merge policy
 - **Status:** **SUPERSEDED** · **Size:** M · **Priority:** High · **Owner:** FS · **Depends:** E-3.1, B-1.2 · **Milestone:** M2
@@ -853,7 +854,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### I-4.1 Unit tests for validation and schema
 - **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** FE · **Depends:** A-2.2 · **Milestone:** M1
-- **Built:** `npm test` runs Vitest with 603 tests in 43 files, including `chamberValidation.test.ts` and `provenance.test.ts`. `src/test` holds only `setup.ts`, so the placeholder is gone.
+- **Built:** `npm test` runs Vitest with 624 tests in 44 files, including `chamberValidation.test.ts` and `provenance.test.ts`. `src/test` holds only `setup.ts`, so the placeholder is gone.
 
 #### I-4.2 Integration test harness on local Supabase
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** J-1.1, A-1.2 · **Milestone:** M1
@@ -1140,6 +1141,9 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 - Three decisions: **D14** (intake access model), **D15** (reference format), **D16** (advisor visibility), and a status on D1 to D13.
 - Milestone exit criteria with a status against each criterion (section 6).
 
+**Updated in 2.3** (after the ceilings reached `document-extract`)
+- B-3.1 no longer lists the missing ceilings on document reads, and the matching defect and open question are removed. One shared budget serves both functions.
+
 **Updated in 2.2** (after `document-extract` moved onto the adapter)
 - F-0.2 no longer lists `document-extract`; what remains is error codes and one live exchange. E-3.1's model call is on the shared adapter. B-3.1 and section 1.3 record that document reads have no per-IP or global ceiling.
 
@@ -1245,6 +1249,5 @@ A story is done only when all of the following are true:
 3. Is there a required retention period from an insurer, PEO partner, or regulation that overrides D4?
 4. Which `chamber-extract` build is deployed (the fix is on the branch, not necessarily live), and is Turnstile enabled in every deployed environment?
 5. Are the CI checks required for merge on `main`? The README asks the owner to set it, and the repo cannot show whether they did.
-6. Should document reads share chat's per-IP and global call ceilings? Adding them needs `SUPABASE_SERVICE_ROLE_KEY` and `IP_HASH_SECRET` on `document-extract`, and refuses when they are missing.
-7. Should an advisor `admin` be able to do more than an `advisor` (delete an intake, grant a role through the app), or is SQL-only management the intent (D5)?
+6. Should an advisor `admin` be able to do more than an `advisor` (delete an intake, grant a role through the app), or is SQL-only management the intent (D5)?
 
