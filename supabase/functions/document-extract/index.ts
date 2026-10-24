@@ -1,7 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.100.0";
+import { UNAVAILABLE } from "../_shared/ai/allowance.ts";
+import { checkAiBudget } from "../_shared/ai/budget.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
-import { AiQuotaError, askForCandidates, DOCUMENT_MAX_TOKENS } from "./ask.ts";
+import { AiUnavailableError, askWithinBudget, DOCUMENT_MAX_TOKENS, retryLater } from "./ask.ts";
 import { MAX_EXTRACT_BYTES, type Candidate, type TextSection } from "./parse.ts";
 import { readDocument, type Outcome } from "./read.ts";
 import { REPORT_TOOL } from "./schema.ts";
@@ -15,9 +17,6 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-const REQUESTS_PER_MINUTE = 15;
-const REQUESTS_PER_DAY = 300;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -87,11 +86,13 @@ serve(async (req) => {
       if (downloadError || !blob) throw new Error("download failed");
       outcome = blob.size > MAX_EXTRACT_BYTES
         ? { status: "too_large" }
-        : await readDocument(new Uint8Array(await blob.arrayBuffer()), doc.file_name, (sections) => askModel(supabase, sections, requestId));
+        : await readDocument(new Uint8Array(await blob.arrayBuffer()), doc.file_name, (sections) => askModel(supabase, sections, requestId, req));
     } catch (e) {
-      if (e instanceof AiQuotaError) {
+      // Not the document's fault: leave it ready to read again rather than marking it failed.
+      const later = retryLater(e);
+      if (later) {
         await supabase.from("documents").update({ status: "uploaded" }).eq("id", doc.id);
-        return json({ error: "Rate limited, please try again shortly." }, 429);
+        return json({ error: later.message }, later.status);
       }
       console.error("document-extract read error:", e instanceof Error ? e.message : "unknown");
       outcome = { status: "failed" };
@@ -104,19 +105,15 @@ serve(async (req) => {
   }
 });
 
-async function askModel(supabase: Client, sections: TextSection[], requestId: string): Promise<Candidate[]> {
-  // Check provider configuration before spending any of the caller's allowance on the request.
+async function askModel(supabase: Client, sections: TextSection[], requestId: string, req: Request): Promise<Candidate[]> {
+  // Check provider configuration before spending any of the budget on the request.
   const chosen = selectAdapter((name) => Deno.env.get(name), REPORT_TOOL, { maxTokens: DOCUMENT_MAX_TOKENS });
-  if (!chosen.ok) throw new Error(`AI_CONFIG_MISSING: ${chosen.problem}`);
+  if (!chosen.ok) {
+    console.error(`AI_CONFIG_MISSING: ${chosen.problem}`);
+    throw new AiUnavailableError(UNAVAILABLE);
+  }
 
-  const { data: allowed, error: quotaError } = await supabase.rpc("consume_ai_quota", {
-    per_minute: REQUESTS_PER_MINUTE,
-    per_day: REQUESTS_PER_DAY,
-  });
-  if (quotaError) throw quotaError;
-  if (!allowed) throw new AiQuotaError();
-
-  return await askForCandidates(sections, {
+  return await askWithinBudget(sections, {
     adapter: chosen.adapter,
     model: {
       fetch: (input, init) => fetch(input, init),
@@ -125,5 +122,14 @@ async function askModel(supabase: Client, sections: TextSection[], requestId: st
     },
     requestId,
     log: (line) => console.error(line),
+    // The same budget chat spends from: the caller's quota, their address's, and the daily ceiling for everyone.
+    checkBudget: () =>
+      checkAiBudget({
+        headers: req.headers,
+        env: (name) => Deno.env.get(name),
+        user: supabase,
+        createAdmin: (serviceRoleKey) => createClient(Deno.env.get("SUPABASE_URL")!, serviceRoleKey),
+        log: (line) => console.error(line),
+      }),
   });
 }

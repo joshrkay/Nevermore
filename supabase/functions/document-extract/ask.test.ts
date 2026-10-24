@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { selectAdapter } from "../_shared/ai/providers";
-import { AiQuotaError, askForCandidates, DOCUMENT_MAX_TOKENS, DOCUMENT_TIMEOUT_MS, type AskDeps } from "./ask";
+import type { AllowanceResult, Refusal } from "../_shared/ai/allowance";
+import { AiQuotaError, AiUnavailableError, askForCandidates, askWithinBudget, DOCUMENT_MAX_TOKENS, DOCUMENT_TIMEOUT_MS, refusalError, retryLater, type AskDeps } from "./ask";
 import { buildPromptText, DOCUMENT_FIELDS, type TextSection } from "./parse";
 import { REPORT_TOOL, SYSTEM_PROMPT } from "./schema";
 
@@ -158,6 +159,76 @@ describe("askForCandidates: when the provider fails", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+const refusal = (status: 429 | 503, reason: Refusal["reason"], error = "refused"): Refusal => ({ allowed: false, status, error, reason });
+
+describe("refusalError", () => {
+  it("treats a rate limit as the retry-later case a provider rate limit already is", () => {
+    expect(refusalError(refusal(429, "user_quota"))).toBeInstanceOf(AiQuotaError);
+    expect(refusalError(refusal(429, "ip_quota"))).toBeInstanceOf(AiQuotaError);
+  });
+
+  it("treats the daily ceiling and an unavailable budget as unavailable, keeping the message for the response", () => {
+    const error = refusalError(refusal(503, "global_ceiling", "Lenore is resting for the day."));
+    expect(error).toBeInstanceOf(AiUnavailableError);
+    expect(error).not.toBeInstanceOf(AiQuotaError);
+    expect(error.message).toBe("Lenore is resting for the day.");
+    expect(refusalError(refusal(503, "config_missing"))).toBeInstanceOf(AiUnavailableError);
+    expect(refusalError(refusal(503, "budget_unavailable"))).toBeInstanceOf(AiUnavailableError);
+  });
+});
+
+describe("retryLater", () => {
+  it("answers a rate limit with a 429 so the document can be read again", () => {
+    expect(retryLater(new AiQuotaError())).toEqual({ status: 429, message: "Rate limited, please try again shortly." });
+  });
+
+  it("answers an unavailable AI with a 503 and the reason it was given", () => {
+    expect(retryLater(new AiUnavailableError("Lenore is resting for the day."))).toEqual({ status: 503, message: "Lenore is resting for the day." });
+  });
+
+  it("leaves every other error to mark the document failed", () => {
+    expect(retryLater(new Error("AI extraction failed"))).toBeNull();
+    expect(retryLater("a string")).toBeNull();
+    expect(retryLater(undefined)).toBeNull();
+  });
+});
+
+describe("askWithinBudget", () => {
+  const allowed: AllowanceResult = { allowed: true };
+
+  it("spends the budget first, then reads the document", async () => {
+    const t = setup({ responses: [gatewayReply({ fields: [{ field: "industry", value: "Retail", section: 1 }] })] });
+    const order: string[] = [];
+    const checkBudget = vi.fn(async () => { order.push("budget"); return allowed; });
+    const fetchFn = t.deps.model.fetch;
+    t.deps.model.fetch = (async (...args: Parameters<typeof fetch>) => { order.push("model"); return fetchFn(...args); }) as typeof fetch;
+    expect(await askWithinBudget(sections, { ...t.deps, checkBudget })).toEqual([{ field: "industry", value: "Retail", location: "Page 1" }]);
+    expect(order).toEqual(["budget", "model"]);
+  });
+
+  it("never calls the provider when the caller or their address is over quota", async () => {
+    for (const reason of ["user_quota", "ip_quota"] as const) {
+      const t = setup();
+      await expect(askWithinBudget(sections, { ...t.deps, checkBudget: async () => refusal(429, reason) })).rejects.toBeInstanceOf(AiQuotaError);
+      expect(t.fetchFn).not.toHaveBeenCalled();
+    }
+  });
+
+  it("never calls the provider once the daily ceiling is reached, and passes on why", async () => {
+    const t = setup();
+    const failure = await askWithinBudget(sections, { ...t.deps, checkBudget: async () => refusal(503, "global_ceiling", "Lenore is resting for the day.") }).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(AiUnavailableError);
+    expect((failure as Error).message).toBe("Lenore is resting for the day.");
+    expect(t.fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("does not swallow a failure of the budget check itself", async () => {
+    const t = setup();
+    await expect(askWithinBudget(sections, { ...t.deps, checkBudget: async () => { throw new Error("rpc exploded"); } })).rejects.toThrow("rpc exploded");
+    expect(t.fetchFn).not.toHaveBeenCalled();
   });
 });
 
