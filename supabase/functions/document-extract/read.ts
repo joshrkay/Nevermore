@@ -20,9 +20,6 @@ import {
 export type Outcome = { status: ExtractionStatus; message?: string; candidates?: Candidate[] };
 export type AskModel = (sections: TextSection[]) => Promise<Candidate[]>;
 
-/** The model call was refused by the rate limit; the document stays ready to read later. */
-export class AiQuotaError extends Error {}
-
 /** Reads a stored document's bytes into candidates. `ask` reads free text with the model. */
 export async function readDocument(bytes: Uint8Array, fileName: string, ask: AskModel): Promise<Outcome> {
   if (bytes.length > MAX_EXTRACT_BYTES) return { status: "too_large" };

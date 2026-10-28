@@ -1,5 +1,5 @@
-// Decides whether an AI request may proceed. No imports, so it runs under Deno (the edge
-// function) and under Vitest alike.
+// Decides whether an AI request may proceed. Shared by every function that calls the model. No
+// imports, so it runs under Deno (the edge functions) and under Vitest alike.
 
 export interface AllowanceDeps {
   /** Per-user rate limit. */
@@ -17,10 +17,13 @@ export type AllowanceResult =
       allowed: false;
       status: 429 | 503;
       error: string;
-      reason: "user_quota" | "ip_quota" | "global_ceiling" | "budget_unavailable";
+      reason: "user_quota" | "ip_quota" | "global_ceiling" | "budget_unavailable" | "config_missing";
     };
 
+export type Refusal = Extract<AllowanceResult, { allowed: false }>;
+
 const RATE_LIMITED = "Rate limited, please try again shortly.";
+export const UNAVAILABLE = "Lenore is unavailable right now. Please try again in a few minutes.";
 
 /**
  * Cheapest check first, and each later budget is only spent once the earlier ones pass, so a
@@ -51,7 +54,7 @@ export async function checkAiAllowance(deps: AllowanceDeps, ipHash: string | nul
     return {
       allowed: false,
       status: 503,
-      error: "Lenore is unavailable right now. Please try again in a few minutes.",
+      error: UNAVAILABLE,
       reason: "budget_unavailable",
     };
   }
