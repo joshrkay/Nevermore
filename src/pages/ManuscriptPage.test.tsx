@@ -86,7 +86,8 @@ describe("ManuscriptPage", () => {
     expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
     expect(screen.getAllByText(/Signed Co/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Edited Later Inc/)).not.toBeInTheDocument();
-    expect(screen.getByText("Justworks — Underwriting")).toBeInTheDocument();
+    // The packet is prepared for the PEO the prospect chose; nothing says it was submitted to them.
+    expect(screen.getByText("PREPARED FOR").parentElement).toHaveTextContent("PREPARED FORJustworks");
   });
 
   describe("advisor status shared with the prospect", () => {

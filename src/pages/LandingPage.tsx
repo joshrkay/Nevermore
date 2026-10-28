@@ -35,19 +35,19 @@ const LandingPage = () => {
             {...fadeUp(0.3)}
             className="text-lg text-muted-foreground max-w-[520px] mx-auto mb-10 leading-relaxed"
           >
-            Upload your census. Talk to Lenore. Get a complete, submission-ready
-            package for your PEO — same session, no follow-up required.
+            Upload your census. Talk to Lenore. Leave with a complete underwriting
+            packet to send to the PEO you choose — prepared in the same session.
           </motion.p>
           <motion.div {...fadeUp(0.4)}>
             <Link
               to="/start"
               className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors text-base"
             >
-              Get Your Quote →
+              Start Your Intake →
             </Link>
           </motion.div>
           <motion.div {...fadeUp(0.5)} className="flex items-center justify-center gap-6 mt-8 text-sm text-muted-foreground">
-            <span>No account required</span>
+            <span>Start as a guest</span>
             <span className="text-border">·</span>
             <span>15–20 minutes</span>
             <span className="text-border">·</span>
@@ -167,7 +167,7 @@ const LandingPage = () => {
             to="/start"
             className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors text-base"
           >
-            Get Your Quote →
+            Start Your Intake →
           </Link>
         </div>
       </section>
@@ -185,7 +185,7 @@ const LandingPage = () => {
             </p>
             <div className="flex items-center gap-6 text-sm text-muted-foreground">
               <a href="#how-it-works" className="hover:text-foreground transition-colors">How It Works</a>
-              <Link to="/start" className="hover:text-foreground transition-colors">Get Your Quote</Link>
+              <Link to="/start" className="hover:text-foreground transition-colors">Start Your Intake</Link>
             </div>
             <p className="text-xs text-muted-foreground mt-4">© Edgar Allan Advisory.</p>
           </div>

@@ -16,7 +16,35 @@ const PUBLIC_COPY_FILES = [
 const NAMED_PEOS = /trinet|justworks|rippling|insperity|totalsource/i;
 const ON_BEHALF = /on my behalf|sent on your behalf|obtain a quote/i;
 
+// Claims the product doesn't keep: it prepares a packet the prospect sends, certifying needs a
+// verified email, and the workspace holds the prospect's own answers from the start.
+const OVERPROMISES: [string, RegExp][] = [
+  ["a quote from us", /get your quote/i],
+  ["brokering", /brokerage/i],
+  ["submitting the packet", /submitted to|certified submission|sample submission/i],
+  ["no account at all", /no account required/i],
+  ["no follow-up", /no follow-up required/i],
+  ["a demonstration workspace", /is a demonstration/i],
+];
+const PACKET_COPY_FILES = [
+  ...PUBLIC_COPY_FILES,
+  "src/pages/ManuscriptPage.tsx",
+  "src/lib/manuscriptPdf.ts",
+  "src/hooks/useChamberSession.ts",
+];
+
 describe("public copy", () => {
+  it.each(PACKET_COPY_FILES)("%s promises nothing the product doesn't do", (file) => {
+    const text = readFileSync(file, "utf8");
+    for (const [claim, pattern] of OVERPROMISES) {
+      expect(text, `implies ${claim}`).not.toMatch(pattern);
+    }
+  });
+
+  it("uses no sample company as the sign-up placeholder", () => {
+    expect(readFileSync("src/pages/AuthPage.tsx", "utf8")).not.toMatch(/Meridian/);
+  });
+
   it.each(PUBLIC_COPY_FILES)("%s names no specific PEO", (file) => {
     expect(readFileSync(file, "utf8")).not.toMatch(NAMED_PEOS);
   });

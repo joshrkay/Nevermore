@@ -250,12 +250,12 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             <RavenIcon className="w-10 h-10 text-primary flex-shrink-0" />
             <div>
               <h1 className="font-display text-3xl md:text-4xl font-bold tracking-tight">THE MANUSCRIPT</h1>
-              <p className="text-muted-foreground text-sm mt-1">Edgar Allan Advisory · {isSample ? "Sample" : "Certified"} Submission</p>
+              <p className="text-muted-foreground text-sm mt-1">Edgar Allan Advisory · {isSample ? "Sample" : "Certified"} Underwriting Packet</p>
             </div>
           </div>
           <div className="border-t border-border pt-6 grid grid-cols-2 md:grid-cols-3 gap-y-4 gap-x-8 text-sm font-mono">
             {d.submittedTo && (
-              <div><span className="text-muted-foreground text-xs block mb-0.5">SUBMITTED TO</span>{d.submittedTo} — Underwriting</div>
+              <div><span className="text-muted-foreground text-xs block mb-0.5">PREPARED FOR</span>{d.submittedTo}</div>
             )}
             <div><span className="text-muted-foreground text-xs block mb-0.5">PREPARED BY</span>Edgar Allan Advisory · Lenore</div>
             <div><span className="text-muted-foreground text-xs block mb-0.5">DATE</span>{d.date}</div>
