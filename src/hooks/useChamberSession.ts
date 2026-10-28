@@ -25,6 +25,13 @@ interface UseChamberSessionReturn {
   resumeFailed: boolean;
   /** Starts a fresh intake. Never resumes an existing one. */
   startNew: () => void;
+  /**
+   * True when the prospect's latest unfinished intake couldn't be looked up or opened. Nothing is
+   * created on top of it (that would hide it from later visits) until retryLoad() or startNew().
+   */
+  loadFailed: boolean;
+  /** Looks for the prospect's latest unfinished intake again. */
+  retryLoad: () => void;
   chamberData: ChamberData;
   /** Status and source of each captured field. */
   provenance: ProvenanceMap;
@@ -63,6 +70,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [resumeFailed, setResumeFailed] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [initRun, setInitRun] = useState(0);
   const [chamberData, setChamberDataRaw] = useState<ChamberData>(EMPTY_CHAMBER_DATA);
   const [provenance, setProvenanceRaw] = useState<ProvenanceMap>({});
@@ -263,7 +271,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     };
 
     // A returning prospect picks up their latest unfinished intake instead of starting over.
-    const latestOpen = async (): Promise<string | null> => {
+    const latestOpen = async (): Promise<{ ok: true; id: string | null } | { ok: false }> => {
       const { data, error } = await supabase
         .from("chamber_sessions")
         .select("id")
@@ -273,8 +281,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (error) console.error("Failed to look up an open session:", error);
-      return data?.id ?? null;
+      if (error) {
+        console.error("Failed to look up an open session:", error);
+        return { ok: false };
+      }
+      return { ok: true, id: data?.id ?? null };
     };
 
     const init = async () => {
@@ -292,8 +303,17 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       if (!resumed && !forceNew) {
         const latest = await latestOpen();
         if (cancelled) return;
-        if (latest) resumed = await resume(latest);
-        if (cancelled) return;
+        if (latest.ok && latest.id) {
+          resumed = await resume(latest.id);
+          if (cancelled) return;
+        }
+        // Couldn't check, or found it but couldn't open it. A new intake would become the latest one
+        // and hide the prospect's answers from every later visit, so offer to try again instead.
+        if (!latest.ok || (latest.id && !resumed)) {
+          setLoadFailed(true);
+          setIsLoading(false);
+          return;
+        }
       }
       if (!resumed) await create();
       if (!cancelled) setIsLoading(false);
@@ -307,6 +327,13 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     requestedIdRef.current = null;
     forceNewRef.current = true;
     setResumeFailed(false);
+    setLoadFailed(false);
+    setIsLoading(true);
+    setInitRun((n) => n + 1);
+  }, []);
+
+  const retryLoad = useCallback(() => {
+    setLoadFailed(false);
     setIsLoading(true);
     setInitRun((n) => n + 1);
   }, []);
@@ -403,6 +430,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     sessionId,
     resumeFailed,
     startNew,
+    loadFailed,
+    retryLoad,
     chamberData,
     provenance,
     messages,
