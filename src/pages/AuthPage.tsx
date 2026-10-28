@@ -95,7 +95,7 @@ const AuthPage = () => {
                   type="text"
                   value={companyName}
                   onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="Meridian Creative Group"
+                  placeholder="Your company's legal name"
                   className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
                 />
               </div>
