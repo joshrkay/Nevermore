@@ -27,3 +27,6 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# End-to-end test output: the app build, Playwright results and report (see e2e/)
+e2e/.output/
