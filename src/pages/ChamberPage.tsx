@@ -9,6 +9,7 @@ import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import TranscriptPanel from "@/components/chamber/TranscriptPanel";
 import ChatFailureNotice from "@/components/chamber/ChatFailureNotice";
+import SaveStatus from "@/components/chamber/SaveStatus";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import { createChatMessage } from "@/data/chat";
 import { mergeChamberData } from "@/data/chamberValidation";
@@ -25,6 +26,8 @@ const ChamberPage = () => {
     sessionId,
     resumeFailed,
     startNew,
+    loadFailed,
+    retryLoad,
     chamberData,
     provenance,
     messages,
@@ -34,6 +37,8 @@ const ChamberPage = () => {
     addMessage,
     submit,
     certification,
+    saveStatus,
+    retrySave,
   } = useChamberSession(searchParams.get("session"));
 
   // Keep the session in the URL so a refresh or "Back to Review" resumes it.
@@ -106,6 +111,34 @@ const ChamberPage = () => {
     );
   }
 
+  if (loadFailed) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background px-6">
+        <div className="text-center max-w-md">
+          <h1 className="font-display text-xl font-bold mb-3">We couldn't load your intake</h1>
+          <p className="text-muted-foreground mb-6">
+            Something went wrong reaching your saved answers. Nothing has been changed. Try again in a moment,
+            or start a new intake.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={retryLoad}
+              className="bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors"
+            >
+              Try again
+            </button>
+            <button
+              onClick={startNew}
+              className="border border-border font-medium px-5 py-2.5 rounded-lg hover:bg-muted transition-colors"
+            >
+              Start a new intake
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (sessionLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
@@ -123,6 +156,7 @@ const ChamberPage = () => {
         </a>
         <span className="text-muted-foreground">/</span>
         <span className="text-sm text-muted-foreground">The Chamber</span>
+        <SaveStatus status={saveStatus} onRetry={retrySave} />
       </div>
 
       {/* Voice Orb */}

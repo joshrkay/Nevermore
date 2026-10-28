@@ -205,7 +205,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   y += 11;
   font("normal", 9);
   setInk(MUTED);
-  pdf.text(pdfSafe(`Edgar Allan Advisory · ${opts.sample ? "Sample" : "Certified"} Submission`), MARGIN, y + 3);
+  pdf.text(pdfSafe(`Edgar Allan Advisory · ${opts.sample ? "Sample" : "Certified"} Underwriting Packet`), MARGIN, y + 3);
   y += 9;
 
   if (opts.sample) {
@@ -213,7 +213,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   }
 
   keyValues([
-    ...(m.submittedTo ? ([["Submitted To", `${m.submittedTo} — Underwriting`]] as [string, string][]) : []),
+    ...(m.submittedTo ? ([["Prepared For", m.submittedTo]] as [string, string][]) : []),
     ["Prepared By", "Edgar Allan Advisory · Lenore"],
     [m.signer ? "Certified" : "Date", m.date],
     ["Generated", generated],

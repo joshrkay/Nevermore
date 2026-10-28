@@ -1,24 +1,59 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
-type UpdateResult = { error: { message: string } | null };
+// `data` is the rows the update returned; left out, a successful update returns the row it changed.
+type UpdateResult = { error: { message: string } | null; data?: { id: string }[] };
 
 const updates: { payload: Record<string, unknown>; resolve: (r: UpdateResult) => void }[] = [];
 let resumeRow: Record<string, unknown> | null = null;
 let inserts = 0;
+const insertedRows: Record<string, unknown>[] = [];
+let insertError: { message: string } | null = null;
+// The prospect's latest unfinished intake, as the lookup on a bare /start finds it.
+let latestRow: { id: string } | null = null;
+let latestError: { message: string } | null = null;
+const latestQueries: unknown[][] = [];
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" }, session: { access_token: "tok" } }) }));
 vi.mock("@/lib/dispatchOutbox", () => ({ dispatchOutbox: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: () => ({
-      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: resumeRow, error: null }) }) }),
-      insert: () => {
+      select: () => ({
+        eq: (column: string, value: unknown) =>
+          column === "id"
+            ? { maybeSingle: async () => ({ data: resumeRow, error: null }) }
+            : {
+                neq: (notColumn: string, notValue: unknown) => ({
+                  order: (orderColumn: string, order: unknown) => ({
+                    limit: (n: number) => ({
+                      maybeSingle: async () => {
+                        latestQueries.push([column, value, notColumn, notValue, orderColumn, order, n]);
+                        return latestError ? { data: null, error: latestError } : { data: latestRow, error: null };
+                      },
+                    }),
+                  }),
+                }),
+              },
+      }),
+      insert: (row: Record<string, unknown>) => {
         inserts += 1;
-        return { select: () => ({ single: async () => ({ data: { id: "s1" }, error: null }) }) };
+        insertedRows.push(row);
+        return {
+          select: () => ({
+            single: async () => (insertError ? { data: null, error: insertError } : { data: { id: "s1" }, error: null }),
+          }),
+        };
       },
       update: (payload: Record<string, unknown>) => ({
-        eq: () => new Promise<UpdateResult>((resolve) => updates.push({ payload, resolve })),
+        eq: () => ({
+          select: () =>
+            new Promise<{ data: { id: string }[] | null; error: UpdateResult["error"] }>((resolve) =>
+              updates.push({
+                payload,
+                resolve: (r) => resolve({ error: r.error, data: r.error ? null : (r.data ?? [{ id: "s1" }]) }),
+              })),
+        }),
       }),
     }),
   },
@@ -38,6 +73,11 @@ describe("useChamberSession", () => {
     updates.length = 0;
     resumeRow = null;
     inserts = 0;
+    insertedRows.length = 0;
+    insertError = null;
+    latestRow = null;
+    latestError = null;
+    latestQueries.length = 0;
     vi.mocked(dispatchOutbox).mockClear();
   });
   afterEach(() => {
@@ -324,6 +364,176 @@ describe("useChamberSession", () => {
       await drain();
       await act(async () => { updates[0].resolve({ error: null }); await pending; });
       expect(dispatchOutbox).not.toHaveBeenCalled();
+    });
+  });
+  describe("picking up where the prospect left off", () => {
+    const openRow = { id: "s7", chamber_data: { company_name: "Acme" }, field_provenance: {}, transcript: [], status: "in_progress", submission: null };
+
+    it("resumes their latest unfinished intake when no session is named", async () => {
+      latestRow = { id: "s7" };
+      resumeRow = openRow;
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(result.current.chamberData.company_name).toBe("Acme");
+      expect(inserts).toBe(0);
+    });
+
+    it("looks only at the prospect's own intakes that aren't submitted, most recently changed first", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(latestQueries).toEqual([["user_id", "u1", "status", "submitted", "updated_at", { ascending: false }, 1]]);
+    });
+
+    it("starts a new intake when they have no unfinished one", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(inserts).toBe(1);
+    });
+
+    it("opens the named intake without looking for another", async () => {
+      resumeRow = openRow;
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(latestQueries).toEqual([]);
+    });
+
+    it("offers to try again, and creates nothing, when it can't look for the prospect's intake", async () => {
+      latestError = { message: "network down" };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.loadFailed).toBe(true));
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.sessionId).toBeNull();
+      expect(inserts).toBe(0);
+    });
+
+    it("offers to try again, and creates nothing, when the intake is found but won't open", async () => {
+      latestRow = { id: "s7" }; // resumeRow stays null: the load fails
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.loadFailed).toBe(true));
+      expect(result.current.sessionId).toBeNull();
+      expect(inserts).toBe(0);
+    });
+
+    it("picks the intake up on Try again once the lookup works", async () => {
+      latestError = { message: "network down" };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.loadFailed).toBe(true));
+      latestError = null;
+      latestRow = { id: "s7" };
+      resumeRow = openRow;
+      act(() => result.current.retryLoad());
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(result.current.loadFailed).toBe(false);
+      expect(result.current.chamberData.company_name).toBe("Acme");
+      expect(inserts).toBe(0);
+    });
+
+    it("starts a new intake from there when the prospect asks for one", async () => {
+      latestError = { message: "network down" };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.loadFailed).toBe(true));
+      act(() => result.current.startNew());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(result.current.loadFailed).toBe(false);
+      expect(inserts).toBe(1);
+    });
+
+    it("starts a new intake, not the unfinished one, when the prospect asks for a new one", async () => {
+      const { result } = renderHook(() => useChamberSession("missing"));
+      await waitFor(() => expect(result.current.resumeFailed).toBe(true));
+      latestRow = { id: "s7" };
+      resumeRow = openRow;
+      act(() => result.current.startNew());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(inserts).toBe(1);
+    });
+  });
+
+  describe("save status", () => {
+    const edit = (result: { current: ReturnType<typeof useChamberSession> }) =>
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+
+    it("says nothing until something changes, then saving, then saved once the row comes back", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(result.current.saveStatus).toBe("idle");
+
+      vi.useFakeTimers();
+      edit(result);
+      expect(result.current.saveStatus).toBe("saving");
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      expect(result.current.saveStatus).toBe("saving");
+      updates[0].resolve({ error: null });
+      await drain();
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("says not saved when a save fails, and Retry saves again", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      vi.useFakeTimers();
+      edit(result);
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      updates[0].resolve({ error: { message: "offline" } });
+      await drain();
+      expect(result.current.saveStatus).toBe("failed");
+
+      act(() => result.current.retrySave());
+      await drain();
+      expect(updates).toHaveLength(2);
+      expect(updates[1].payload).toHaveProperty("chamber_data.company_name", "Acme");
+      updates[1].resolve({ error: null });
+      await drain();
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("treats an update that changed no row as not saved, rather than trusting the missing error", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      vi.useFakeTimers();
+      edit(result);
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      updates[0].resolve({ error: null, data: [] });
+      await drain();
+      expect(result.current.saveStatus).toBe("failed");
+    });
+
+    it("refuses to certify when the submission changed no row", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      let ok: boolean | undefined;
+      const pending = result.current.submit(submission).then((r) => { ok = r; });
+      await waitFor(() => expect(updates).toHaveLength(1));
+      await act(async () => { updates[0].resolve({ error: null, data: [] }); await pending; });
+      expect(ok).toBe(false);
+      expect(result.current.certification.status).not.toBe("certified");
+    });
+
+    it("says not saved when the intake can't be created, and Retry creates it from what's on screen", async () => {
+      insertError = { message: "offline" };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.sessionId).toBeNull();
+      expect(result.current.saveStatus).toBe("failed");
+
+      vi.useFakeTimers();
+      edit(result);
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      await drain();
+      // Without an intake row nothing was written, and the indicator doesn't pretend otherwise.
+      expect(updates).toHaveLength(0);
+      expect(result.current.saveStatus).toBe("failed");
+
+      insertError = null;
+      // An older draft must not be loaded over what was just typed.
+      latestRow = { id: "s7" };
+      resumeRow = { id: "s7", chamber_data: { company_name: "Older Co" }, field_provenance: {}, transcript: [], status: "in_progress", submission: null };
+      act(() => result.current.retrySave());
+      await drain();
+      expect(result.current.sessionId).toBe("s1");
+      expect(inserts).toBe(2);
+      expect(insertedRows[1]).toHaveProperty("chamber_data.company_name", "Acme");
+      expect(result.current.chamberData.company_name).toBe("Acme");
     });
   });
 });
