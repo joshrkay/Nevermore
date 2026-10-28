@@ -20,7 +20,9 @@ INSERT INTO public.user_roles (user_id, role)
 SELECT id, 'advisor' FROM auth.users WHERE email = 'advisor@example.com';
 ```
 
-Revoke it with the matching `DELETE`. Guest (anonymous) sessions never count as advisors.
+Or, once the account has signed up and confirmed its email:
+`npm run setup:supabase -- --project-ref <ref> --grant-advisor advisor@example.com`
+(`docs/SUPABASE_SETUP.md`). Revoke it with the matching `DELETE`. Guest (anonymous) sessions never count as advisors.
 
 ## Sign-in, sign-out and session states
 

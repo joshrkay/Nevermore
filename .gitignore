@@ -27,3 +27,7 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Supabase CLI state written by `supabase link` (scripts/supabase-setup.mjs)
+supabase/.temp/
+supabase/.branches/

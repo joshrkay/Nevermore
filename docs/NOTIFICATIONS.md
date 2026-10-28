@@ -127,7 +127,8 @@ earlier changes in place and a rerun then fails on them.
 The browser nudges the function right after a submit, but a closed tab, a provider outage or a retry
 all need a scheduler, and so does healing: **only scheduled runs queue what the trigger missed and
 reap lost claims**, never a browser's nudge. Run the function every minute with the service-role key
-(a run with nothing to do is a few cheap queries). With `pg_cron` and `pg_net`:
+(a run with nothing to do is a few cheap queries). `scripts/supabase-setup.mjs` sets this up
+(`docs/SUPABASE_SETUP.md`); by hand, with `pg_cron` and `pg_net`:
 
 ```sql
 select cron.schedule('dispatch-outbox', '* * * * *', $$

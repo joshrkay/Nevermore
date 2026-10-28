@@ -33,6 +33,12 @@ CI (`.github/workflows/ci.yml`) runs both on every pull request and on pushes to
 checks: `verify` (lint, edge-function type check, test, build) and `sql-tests`. Make both required
 on `main` (repo Settings → Branches).
 
+## Supabase project
+
+`npm run setup:supabase -- --project-ref <ref>` applies the migrations, sets function secrets,
+deploys the edge functions, configures auth and schedules email delivery on a Supabase project, then
+checks the result. What it needs and what to do after: `docs/SUPABASE_SETUP.md`.
+
 ## Advisors
 
 Advisor tools are at `/advisor`. Roles, access rules and how to grant access: `docs/ADVISOR_ACCESS.md`.

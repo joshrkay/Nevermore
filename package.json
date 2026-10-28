@@ -11,7 +11,8 @@
     "typecheck:functions": "tsc -p tsconfig.functions.json",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "setup:supabase": "node scripts/supabase-setup.mjs"
   },
   "dependencies": {
     "@elevenlabs/react": "^0.14.3",
