@@ -244,7 +244,7 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(page.getByText(fileId, { exact: true }).first()).toBeVisible();
     await expect(page.getByText(COMPANY_NAME, { exact: true }).first()).toBeVisible();
     await expect(page.getByText(`Signed electronically by ${SIGNER.name}`)).toBeVisible();
-    await expect(page.getByText(`${PEO} — Underwriting`)).toBeVisible();
+    await expect(page.getByText(new RegExp(`^PREPARED FOR\\s*${PEO}$`))).toBeVisible();
   });
 
   await test.step("Download the PDF", async () => {
