@@ -60,3 +60,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: supabase/tests/run.sh
+
+  # The prospect's path in a real browser: guest text intake, review, PEO choice, email verification,
+  # certification, submission, then the Manuscript page and PDF download (see e2e/). Postgres runs every
+  # migration, so row security and triggers are the real ones. A small gateway stands in for Supabase's
+  # auth and REST APIs and for the AI provider, and runs the real chamber-extract handler, so the job
+  # needs no Supabase project and no secrets.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      # The gateway loads the chamber-extract handler (TypeScript) with plain `node`, which strips
+      # types by default from 22.18. `22` resolves to the latest 22.x, so this holds without a pin.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      # The HTML report, traces and screenshots of a failed run. The app build beside them is left out.
+      # include-hidden-files is needed because the folder name starts with a dot, which the action skips
+      # by default; without it nothing would upload and if-no-files-found would hide that.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-output
+          path: |
+            e2e/.output
+            !e2e/.output/app
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore
