@@ -11,6 +11,7 @@ const insertedRows: Record<string, unknown>[] = [];
 let insertError: { message: string } | null = null;
 // The prospect's latest unfinished intake, as the lookup on a bare /start finds it.
 let latestRow: { id: string } | null = null;
+let latestError: { message: string } | null = null;
 const latestQueries: unknown[][] = [];
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" }, session: { access_token: "tok" } }) }));
@@ -28,7 +29,7 @@ vi.mock("@/integrations/supabase/client", () => ({
                     limit: (n: number) => ({
                       maybeSingle: async () => {
                         latestQueries.push([column, value, notColumn, notValue, orderColumn, order, n]);
-                        return { data: latestRow, error: null };
+                        return latestError ? { data: null, error: latestError } : { data: latestRow, error: null };
                       },
                     }),
                   }),
@@ -75,6 +76,7 @@ describe("useChamberSession", () => {
     insertedRows.length = 0;
     insertError = null;
     latestRow = null;
+    latestError = null;
     latestQueries.length = 0;
     vi.mocked(dispatchOutbox).mockClear();
   });
@@ -393,6 +395,47 @@ describe("useChamberSession", () => {
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(result.current.sessionId).toBe("s7"));
       expect(latestQueries).toEqual([]);
+    });
+
+    it("offers to try again, and creates nothing, when it can't look for the prospect's intake", async () => {
+      latestError = { message: "network down" };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.loadFailed).toBe(true));
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.sessionId).toBeNull();
+      expect(inserts).toBe(0);
+    });
+
+    it("offers to try again, and creates nothing, when the intake is found but won't open", async () => {
+      latestRow = { id: "s7" }; // resumeRow stays null: the load fails
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.loadFailed).toBe(true));
+      expect(result.current.sessionId).toBeNull();
+      expect(inserts).toBe(0);
+    });
+
+    it("picks the intake up on Try again once the lookup works", async () => {
+      latestError = { message: "network down" };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.loadFailed).toBe(true));
+      latestError = null;
+      latestRow = { id: "s7" };
+      resumeRow = openRow;
+      act(() => result.current.retryLoad());
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(result.current.loadFailed).toBe(false);
+      expect(result.current.chamberData.company_name).toBe("Acme");
+      expect(inserts).toBe(0);
+    });
+
+    it("starts a new intake from there when the prospect asks for one", async () => {
+      latestError = { message: "network down" };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.loadFailed).toBe(true));
+      act(() => result.current.startNew());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(result.current.loadFailed).toBe(false);
+      expect(inserts).toBe(1);
     });
 
     it("starts a new intake, not the unfinished one, when the prospect asks for a new one", async () => {

@@ -26,6 +26,8 @@ const ChamberPage = () => {
     sessionId,
     resumeFailed,
     startNew,
+    loadFailed,
+    retryLoad,
     chamberData,
     provenance,
     messages,
@@ -104,6 +106,34 @@ const ChamberPage = () => {
           >
             Start a new intake
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background px-6">
+        <div className="text-center max-w-md">
+          <h1 className="font-display text-xl font-bold mb-3">We couldn't load your intake</h1>
+          <p className="text-muted-foreground mb-6">
+            Something went wrong reaching your saved answers. Nothing has been changed. Try again in a moment,
+            or start a new intake.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={retryLoad}
+              className="bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors"
+            >
+              Try again
+            </button>
+            <button
+              onClick={startNew}
+              className="border border-border font-medium px-5 py-2.5 rounded-lg hover:bg-muted transition-colors"
+            >
+              Start a new intake
+            </button>
+          </div>
         </div>
       </div>
     );
