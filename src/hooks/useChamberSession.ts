@@ -16,11 +16,14 @@ import {
   type ChamberSubmission,
 } from "@/data/manuscript";
 
+/** Whether the prospect's latest changes are on the server. "idle" until anything changes. */
+export type SaveStatus = "idle" | "saving" | "saved" | "failed";
+
 interface UseChamberSessionReturn {
   sessionId: string | null;
   /** True when a requested session couldn't be opened; no replacement is created until startNew(). */
   resumeFailed: boolean;
-  /** Abandons the unopenable session id and starts a fresh intake. */
+  /** Starts a fresh intake. Never resumes an existing one. */
   startNew: () => void;
   chamberData: ChamberData;
   /** Status and source of each captured field. */
@@ -36,9 +39,12 @@ interface UseChamberSessionReturn {
   submit: (submission: ChamberSubmission, signedDataKey?: string) => Promise<boolean>;
   /** Whether the answers are certified, or were changed after being certified. */
   certification: CertificationState;
+  saveStatus: SaveStatus;
+  /** Saves now, or creates the intake again if creating it failed. */
+  retrySave: () => void;
 }
 
-const OPENING_MESSAGE = "Good evening. I'm Lenore — your guide through The Chamber. Before we begin, I want to be transparent: what you see in the workspace beside us is a demonstration. By the time our conversation is complete, it will hold your company's information instead. Shall we begin with something simple — tell me a little about your business and what you do.";
+const OPENING_MESSAGE = "Good evening. I'm Lenore — your guide through The Chamber. As we talk, I'll fill in the workspace beside us, and you can check or correct anything there. Shall we begin with something simple — tell me a little about your business and what you do.";
 
 const SAVE_DELAY_MS = 2000;
 const SAVE_RETRY_MS = 10000;
@@ -46,8 +52,9 @@ const SAVE_RETRY_MS = 10000;
 const KEEPALIVE_MAX_BYTES = 60_000;
 
 /**
- * Resumes `requestedSessionId` when it belongs to the signed-in user, otherwise
- * starts a fresh session. Only the id present on first render is used.
+ * Resumes `requestedSessionId` when it belongs to the signed-in user. Without one, resumes their
+ * latest intake that isn't submitted yet, and only starts a fresh session when there is none.
+ * Only the id present on first render is used.
  */
 export function useChamberSession(requestedSessionId?: string | null): UseChamberSessionReturn {
   const { user, session } = useAuth();
@@ -61,6 +68,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [provenance, setProvenanceRaw] = useState<ProvenanceMap>({});
   const [messages, setMessages] = useState<ChatMessage[]>(() => [createChatMessage("lenore", OPENING_MESSAGE)]);
   const [certification, setCertification] = useState<CertificationState>(NO_CERTIFICATION);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const certificationRef = useRef(certification);
   useEffect(() => { certificationRef.current = certification; }, [certification]);
 
@@ -75,6 +83,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const messagesRef = useRef(messages);
   const sessionIdRef = useRef(sessionId);
   const requestedIdRef = useRef(requestedSessionId ?? null);
+  // Set by startNew (and by a retry after the intake couldn't be created): create, never resume.
+  const forceNewRef = useRef(false);
+  // Until the intake row exists nothing can be saved; this says whether creating it failed.
+  const createFailedRef = useRef(false);
 
   // Keep refs fresh
   useEffect(() => { dataRef.current = chamberData; }, [chamberData]);
@@ -93,20 +105,34 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     // so callers (e.g. submit) don't treat an unconfirmed write as saved.
     if (inFlightRef.current) await inFlightRef.current;
     const sid = sessionIdRef.current;
-    if (!sid || !dirtyRef.current) return true;
+    if (!sid) {
+      // The intake row is still being created (its creation saves what's pending), or creating it failed.
+      if (!dirtyRef.current || !createFailedRef.current) return true;
+      setSaveStatus("failed");
+      return false;
+    }
+    if (!dirtyRef.current) return true;
     dirtyRef.current = false;
+    if (mountedRef.current) setSaveStatus("saving");
     const save = (async () => {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("chamber_sessions")
         .update({
           chamber_data: dataRef.current as unknown as Json,
           field_provenance: provenanceRef.current as unknown as Json,
           transcript: messagesRef.current as unknown as Json,
         })
-        .eq("id", sid);
-      if (!error) return true;
+        .eq("id", sid)
+        .select("id");
+      // An update that matched no row (filtered out, or the row is gone) reports no error, so only
+      // a returned row counts as saved.
+      if (!error && data && data.length > 0) {
+        if (mountedRef.current && !dirtyRef.current) setSaveStatus("saved");
+        return true;
+      }
       dirtyRef.current = true;
-      console.error("Failed to save session:", error);
+      console.error("Failed to save session:", error ?? "no row was updated");
+      if (mountedRef.current) setSaveStatus("failed");
       // Retry later so a transient failure isn't lost when no further edits arrive.
       if (mountedRef.current && !saveTimerRef.current) {
         saveTimerRef.current = setTimeout(flush, SAVE_RETRY_MS);
@@ -124,6 +150,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // Debounced save
   const scheduleSave = useCallback(() => {
     dirtyRef.current = true;
+    setSaveStatus("saving");
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(flush, SAVE_DELAY_MS);
   }, [flush]);
@@ -220,25 +247,53 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         .select("id")
         .single();
 
-      if (error) {
+      if (error || !newSession) {
         console.error("Failed to create session:", error);
-      } else if (newSession && !cancelled) {
+        createFailedRef.current = true;
+        // Nothing the prospect enters can be saved until the intake exists: say so, and offer Retry.
+        if (!cancelled) setSaveStatus("failed");
+      } else if (!cancelled) {
+        createFailedRef.current = false;
         sessionIdRef.current = newSession.id;
         setSessionId(newSession.id);
         // Anything captured while the row was being created still needs saving.
         if (dirtyRef.current) scheduleSave();
+        else setSaveStatus((s) => (s === "idle" ? s : "saved"));
       }
+    };
+
+    // A returning prospect picks up their latest unfinished intake instead of starting over.
+    const latestOpen = async (): Promise<string | null> => {
+      const { data, error } = await supabase
+        .from("chamber_sessions")
+        .select("id")
+        // Advisors can read every intake; only the prospect's own count here.
+        .eq("user_id", userId)
+        .neq("status", "submitted")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) console.error("Failed to look up an open session:", error);
+      return data?.id ?? null;
     };
 
     const init = async () => {
       const requested = requestedIdRef.current;
-      const resumed = requested ? await resume(requested) : false;
+      const forceNew = forceNewRef.current;
+      forceNewRef.current = false;
+      let resumed = requested ? await resume(requested) : false;
       if (cancelled) return;
       if (requested && !resumed) {
         // Don't quietly swap in a blank session: the caller decides what the prospect sees.
         setResumeFailed(true);
         setIsLoading(false);
         return;
+      }
+      if (!resumed && !forceNew) {
+        const latest = await latestOpen();
+        if (cancelled) return;
+        if (latest) resumed = await resume(latest);
+        if (cancelled) return;
       }
       if (!resumed) await create();
       if (!cancelled) setIsLoading(false);
@@ -250,10 +305,22 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
 
   const startNew = useCallback(() => {
     requestedIdRef.current = null;
+    forceNewRef.current = true;
     setResumeFailed(false);
     setIsLoading(true);
     setInitRun((n) => n + 1);
   }, []);
+
+  const retrySave = useCallback(() => {
+    if (sessionIdRef.current) {
+      void flush();
+    } else if (createFailedRef.current) {
+      // Create the intake again from what's on screen, rather than resuming an older one over it.
+      forceNewRef.current = true;
+      setSaveStatus("saving");
+      setInitRun((n) => n + 1);
+    }
+  }, [flush]);
 
   // Certification covers the answers as they were signed. The database withdraws it the
   // moment the saved answers differ; mirror that here so the prospect sees it right away.
@@ -302,7 +369,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     if (!(await flush())) return false;
     // Answers edited while the autosave was finishing were not what the prospect signed.
     if (signedDataKey !== undefined && JSON.stringify(dataRef.current) !== signedDataKey) return false;
-    const { error } = await supabase
+    const { data: updated, error } = await supabase
       .from("chamber_sessions")
       .update({
         status: "submitted",
@@ -315,9 +382,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           field_provenance: provenanceRef.current,
         } as unknown as Json,
       })
-      .eq("id", sid);
-    if (error) {
-      console.error("Failed to submit session:", error);
+      .eq("id", sid)
+      .select("id");
+    if (error || !updated || updated.length === 0) {
+      console.error("Failed to submit session:", error ?? "no row was updated");
       return false;
     }
     const certified: CertificationState = {
@@ -345,5 +413,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     setMessages,
     submit,
     certification,
+    saveStatus,
+    retrySave,
   };
 }

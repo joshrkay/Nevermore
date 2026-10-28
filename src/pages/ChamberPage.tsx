@@ -9,6 +9,7 @@ import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import TranscriptPanel from "@/components/chamber/TranscriptPanel";
 import ChatFailureNotice from "@/components/chamber/ChatFailureNotice";
+import SaveStatus from "@/components/chamber/SaveStatus";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import { createChatMessage } from "@/data/chat";
 import { mergeChamberData } from "@/data/chamberValidation";
@@ -34,6 +35,8 @@ const ChamberPage = () => {
     addMessage,
     submit,
     certification,
+    saveStatus,
+    retrySave,
   } = useChamberSession(searchParams.get("session"));
 
   // Keep the session in the URL so a refresh or "Back to Review" resumes it.
@@ -123,6 +126,7 @@ const ChamberPage = () => {
         </a>
         <span className="text-muted-foreground">/</span>
         <span className="text-sm text-muted-foreground">The Chamber</span>
+        <SaveStatus status={saveStatus} onRetry={retrySave} />
       </div>
 
       {/* Voice Orb */}
