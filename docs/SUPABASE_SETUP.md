@@ -7,11 +7,16 @@ Supabase API and your secrets file and never prints them.
 The production site (Vercel, `nevermore-gamma.vercel.app`) already points at project
 `dvfwrjpkltqdkfudbahe` through the Vercel Supabase integration, so nothing changes on Vercel.
 
+Vercel deploys the front end separately from `supabase db push`, so push first: a front end that
+reads a column the database does not have yet cannot load, create or save an intake. For example,
+`20261027090000_intake_validation_and_versioning.sql` (`data_version`) must be pushed before the
+front end that uses it is deployed.
+
 ## What it does
 
 | Step | How | Done by hand instead |
 |---|---|---|
-| Apply the 16 migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push` | SQL editor, file by file |
+| Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push` | SQL editor, file by file |
 | Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set` from a private temporary file | Edge Functions → Secrets |
 | Deploy `chamber-extract`, `document-extract`, `dispatch-outbox` | `supabase functions deploy` | (CLI only) |
 | Auth: guest sign-in on, email confirmation on, site URL and redirect, the email-change message carries the 6-digit code, sign-in emails through Resend's SMTP | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
@@ -54,7 +59,7 @@ It shows the project's name and status, asks you to type the project ref back, t
 and prints the checks:
 
 ```
-  ✓ Migrations applied: 16 of 16
+  ✓ Migrations applied: N of N   (N = the files in supabase/migrations)
   ✓ Guest (anonymous) sign-in: anonymous_users=true
   ✓ Function chamber-extract: answered 401 from the function itself
   …

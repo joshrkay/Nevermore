@@ -4,9 +4,9 @@
 |---|---|
 | **Version** | 2.5 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings, and A-2.2 added database validation and versioned writes) |
 | **Date** | 2026-10-29 |
-| **Verified against** | `main` at commit `2a5e9af` (merge of pull request 27). That includes the `chamber-extract` fix, the move of `document-extract` onto the shared adapter, the per-address and global ceilings on document reads and the edge-function type check (pull request 26), and the end-to-end test (pull request 25). Version 2.3 was verified against `6f2bf5c` plus branch `claude/peaceful-albattani-neiujl`; v1.0 against `04503c3` (2026-10-20) A-2.2 (version 2.5) was verified on a branch cut from `2a5e9af`, before pull request 28's review fixes to the end-to-end test. |
+| **Verified against** | `main` at commit `2a5e9af` (merge of pull request 27). That includes the `chamber-extract` fix, the move of `document-extract` onto the shared adapter, the per-address and global ceilings on document reads and the edge-function type check (pull request 26), and the end-to-end test (pull request 25). Version 2.3 was verified against `6f2bf5c` plus branch `claude/peaceful-albattani-neiujl`; v1.0 against `04503c3` (2026-10-20). A-2.2 (version 2.5) was verified on a branch cut from `2a5e9af`, before pull request 28's review fixes to the end-to-end test. |
 | **Scope** | Everything between the current build and a supervised private pilot (M2) and a public launch (M3) |
-| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (685 tests in 48 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. The `e2e` job has run green in CI: pull request 25's run 40774885703 on its final commit, and pull request 27's run 40812758403. This refresh read the test and its stand-ins and did not re-run the end-to-end test. **Not run:** `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. A-2.2 was checked separately on `a22-local` with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (784 tests in 49 files), `npm run build`, all eight SQL tests and `npm run test:e2e` (four tests, run three times in a row). The new two-tab test fails when the client's version condition is removed. Two real database connections saving from one version were checked by hand, not in CI. |
+| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (685 tests in 48 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. The `e2e` job has run green in CI: pull request 25's run 40774885703 on its final commit, and pull request 27's run 40812758403. This refresh read the test and its stand-ins and did not re-run the end-to-end test. **Not run:** `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. A-2.2 was checked separately on `a22-local` with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (806 tests in 50 files), `npm run build`, all eight SQL tests and `npm run test:e2e` (four tests, run three times in a row). The new two-tab test fails when the client's version condition is removed. Two real database connections saving from one version were checked by hand, not in CI. |
 
 ---
 
@@ -117,8 +117,8 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | The reference is not unique or server-assigned, and a repeat submit adds another certification row. | `manuscript.ts`, `useChamberSession.ts` | C-3.1 |
 | The owner's update policy lets a prospect write `documents.status`, so it cannot carry a scan verdict. | `20261021100000_session_documents.sql` | E-4.3 |
 | Upload limits (20 MB, file types) are enforced only in the browser. The bucket has no size or type limit. | `UploadTab.tsx`, `config.toml` | E-4.1 |
-| A save can fail without the prospect knowing: there is no status indicator, and no local backup. | `useChamberSession.ts` | A-1.4 |
-| A bare `/start` always inserts a new session, so a returning guest is never resumed and orphan rows accumulate. | `useChamberSession.ts` | A-1.3 |
+| A failed save is shown as 'Not saved' with Retry, but there is no local backup, so it is lost on reload. | `useChamberSession.ts` | A-1.4 |
+| Two rapid loads or two tabs can still create two sessions, and orphan rows accumulate (a bare `/start` now resumes the latest open one). | `useChamberSession.ts` | A-1.3 |
 | An upgraded guest cannot sign back in: nothing sets a password or signs in by emailed code. | `useAuth.tsx` | D1, A-1.3 |
 | The advisor queue has no `LIMIT` and the page loads every row. | `20261024100000_advisor_queue.sql` | F-2.1 |
 | The opening message tells the prospect the workspace is 'a demonstration'. | `useChamberSession.ts` | A-2.3 |
@@ -188,7 +188,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | D11 | AI provider for Lenore and document extraction | **Partly decided:** the adapter supports Lovable (default) and Anthropic, and neither is chosen. Both AI functions use the one adapter, so a single `AI_PROVIDER` secret switches them. Voice uses ElevenLabs. No data-processing terms are recorded. | PM + BE | F-0.2, E-3.1 |
 | D12 | PDF rendering approach | **Decided and implemented:** browser jsPDF with vector text, lazy-loaded. Server-side rendering has not been revisited. | BE + FE | none |
 | D13 | Malware-scanning provider for uploads | **Open.** | OPS | E-4.3 |
-| D14 | **New.** Intake access model: keep Supabase Auth with owner RLS, or move to continuation tokens (v1.0 D1)? | **Recommended: keep as built.** It isolates sessions today and is covered by SQL tests. Drop the token stories (A-1.6), amend the envelope AC in A-2.1, and close the gaps it leaves: a return path for upgraded guests, resume of the latest session, and database validation with a version check (A-2.2). | PM + BE | A-1.3, A-2.1, H-3.3 |
+| D14 | **New.** Intake access model: keep Supabase Auth with owner RLS, or move to continuation tokens (v1.0 D1)? | **Recommended: keep as built.** It isolates sessions today and is covered by SQL tests. Drop the token stories (A-1.6), amend the envelope AC in A-2.1, and close the gaps it leaves: a return path for upgraded guests, and database validation with a version check (A-2.2). | PM + BE | A-1.3, A-2.1, H-3.3 |
 | D15 | **New.** Reference format and assignment | **Recommended:** server-assigned `EAA-YYYY-NNNN` from a per-year sequence, recorded with the certification and unique. Today it is `EAA-<year>-<8 hex of the session id>` built in the browser. | PM + BE | C-3.1, D-3.2 |
 | D16 | **New.** Advisor visibility: does every advisor see every intake? | **As built: yes**, with no assignment. **Recommended:** keep for a pilot with a small named advisory team and revisit before M3. | PM | F-2.1 |
 
@@ -224,7 +224,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic A: Durable Intake Session
 
-*As built:* Sessions live in `chamber_sessions` under Supabase Auth and owner RLS (D14), not in token-gated edge-function tables. Isolation is in place and tested. What is missing is a visible save state, resume of the latest session, and expiry. Validation and versioned writes are done (A-2.2).
+*As built:* Sessions live in `chamber_sessions` under Supabase Auth and owner RLS (D14), not in token-gated edge-function tables. Isolation is in place and tested. What is missing is expiry and a local backup of a failed save. Validation and versioned writes are done (A-2.2).
 
 #### A-1.1 Intake session data model
 - **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** D1, D4 · **Milestone:** M1
@@ -239,12 +239,12 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### A-1.3 Restore a session after refresh, with a recovery screen
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** A-1.2, A-2.3, A-3.2 · **Milestone:** M1
 - **Built:** The Supabase auth session persists in browser storage and the session id travels in `?session=` (`ChamberPage.tsx`). Resume is gated by RLS. When a session cannot be opened, a recovery screen offers 'Start a new intake' and shows no data. Both are tested.
-- **Remaining:** A bare `/start` (landing CTA, navbar, Manuscript link) always inserts a new row, so a returning guest is never resumed and orphan rows accumulate: resume the user's latest open session instead. Two rapid loads or two tabs can create two rows. No warning when browser storage is blocked. The chosen PEO is local state and is lost on refresh. A guest upgraded by email has no cross-device or cleared-storage return path: nothing in `src` sets a password or signs in by emailed code, and `signIn` is password-only (D1).
+- **Remaining:** A bare `/start` (landing CTA, navbar, Manuscript link) resumes the user's latest open session (`latestOpen()` in `useChamberSession.ts`), and offers a retry rather than a new intake when it cannot be checked or opened, so a returning guest is resumed. Rows created before that fix can still be orphans. Two rapid loads or two tabs can create two rows. No warning when browser storage is blocked. The chosen PEO is local state and is lost on refresh. A guest upgraded by email has no cross-device or cleared-storage return path: nothing in `src` sets a password or signs in by emailed code, and `signIn` is password-only (D1).
 
 #### A-1.4 Autosave with visible status and local backup
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** A-1.2, A-2.2 · **Milestone:** M1
-- **Built:** 2-second debounced autosave, a 10-second retry, an in-flight save awaited before the next, and a keepalive request on page unload (up to 60,000 bytes, otherwise a leave-confirm prompt) in `useChamberSession.ts`. Submit waits for pending saves. Tested.
-- **Remaining:** No 'Saving / Saved / Not saved' indicator and no Retry action: a failure reaches only `console.error`. No `localStorage` backup, so a failed save is lost on reload. A-2.2 added the `.select()`: 'Saved' now means the update returned the row, and zero rows is a conflict, not a success. Add the other two.
+- **Built:** 2-second debounced autosave, a 10-second retry, an in-flight save awaited before the next, and a keepalive request on page unload (up to 60,000 bytes, otherwise a leave-confirm prompt) in `useChamberSession.ts`. Submit waits for pending saves. `SaveStatus.tsx` shows Saving / Saved / Not saved with a Retry action, and A-2.2 added conflict, invalid-field and missing-row states. 'Saved' means the versioned update returned the row, and zero rows is a conflict, not a success. Tested.
+- **Remaining:** No `localStorage` backup, so a failed save is lost on reload.
 
 #### A-1.5 Expiry, archive, and revocation
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** A-1.2, D4 · **Milestone:** M1
@@ -274,9 +274,9 @@ Status is the state of each decision in the code today. Engineering proceeds on 
   - **Unknown keys:** an unknown top-level key in `chamber_data` is refused (unknown keys inside an employee or dependent are tolerated), so a new field needs its migration before the front end that sends it.
   - **Existing rows:** nothing is backfilled or re-validated. A row that already holds invalid data stays editable until its `chamber_data` changes or it is certified.
   - **Concurrency:** the SQL test and the browser test save from one version one after the other. That proves the version condition and the server-owned version. Two real connections (the second waits on the first's row lock, then matches no row) were checked by hand with two `psql` sessions and are not run in CI.
-  - **Keepalive:** the save on page unload carries the version condition and cannot read the response, so a tab that is behind and is closed with unsaved edits loses them, and says nothing. While a conflict, a refused answer or a deleted row is showing, closing the page asks the prospect to confirm.
+  - **Keepalive:** the save on page unload carries the version condition and cannot read the response, so a tab that is behind and is closed with unsaved edits loses them, and says nothing. While a conflict, a refused answer or a deleted row is showing, or while a save is in flight or has failed (it may have landed and moved the version on), closing the page asks the prospect to confirm instead.
   - **Not covered:** the transcript, `field_provenance` and `documents.extraction` (only the existing is-object checks), `status`, and advisor edits. Dates stay free text.
-  - **Deploy order:** the migration must reach production before the front end, which selects `data_version`.
+  - **Deploy order:** the migration must reach production before the front end, which selects and filters on `data_version`. Without the column every load, create and save fails. Deploy the front end and `document-extract` right after the migration: a tab still running the old bundle sends data the new database refuses (a state code outside the list, an employee state such as 'NA', a list over its cap), so every save from that tab fails with `EA001`, retries every 10 seconds, and loses its edits when the prospect leaves. Prospects with an intake open should reload after the deploy. An old tab also keeps last-write-wins, because it sends no version. A safer order, if the risk matters: ship a front end with the tightened `chamberValidation.ts` and the new `document-extract` first, then the migration.
   - The state list, the caps, refusing unknown keys, validating inserts and putting the phone rule on `profiles` are product choices made on recommended defaults: confirm them (open question 7).
 - *Revised scope, AC and tests:*
   - **Scope:** The browser writes whole-row jsonb straight to `chamber_sessions`, so nothing validates it on the server and saves are last-write-wins. Add a `data_version` column that a trigger increments, and a `BEFORE UPDATE` trigger that validates `chamber_data` (field types, state codes, count ranges). The client sends its last-seen version with each save (`.eq("data_version", n)` plus `.select()`), and treats zero matched rows as a conflict.
@@ -285,7 +285,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
     - A save made from a stale version is refused and the client is told the current version.
     - Invalid numbers, malformed phone numbers, counts below 0 or above 1,000,000, and unsupported state codes are rejected (`stateCode` currently accepts any two letters).
     - A successful save increments `data_version`.
-  - **Tests:** One SQL test per rejection type. Two concurrent saves from the same version produce one success and one conflict.
+  - **Tests:** One SQL test per rejection type. Two saves from the same version produce one success and one conflict: run one after the other in `intake_validation.sql` and `e2e/two-tabs-conflict.spec.ts`, which proves the version condition. The two-connection row-lock wait was checked by hand, not in CI (see Notes, Concurrency).
 
 #### A-2.3 Hydrate the Chamber workspace from saved data
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** A-2.1, A-2.2 · **Milestone:** M1
@@ -379,7 +379,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### C-1.2 Inline editing that writes to the canonical record
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** C-1.1, A-2.2 · **Milestone:** M1
 - **Built:** Company, Payroll and Benefits edits go through `ProvenanceField` and `applyFieldAction` (source `prospect_edit`). Invalid input is refused. Autosave writes through supabase-js.
-- **Remaining:** The edit is local and optimistic: the prospect does not see it after server confirmation, and there is no save status (A-1.4). Census and dependents are read-only. The Review tab edits only flagged items. No edit, reload, confirm test.
+- **Remaining:** The edit is local and optimistic: the prospect does not see it after server confirmation, and the save status (A-1.4) reports the server's answer, not the field. Census and dependents are read-only. The Review tab edits only flagged items. No edit, reload, confirm test.
 
 #### C-1.3 Readiness gate with jump links
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** C-1.1, B-2.2, D2 · **Milestone:** M1
@@ -846,7 +846,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### I-2.2 Live-region announcements
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** I-2.1, B-3.2 · **Milestone:** M2
 - **Built:** Validation errors use `role="alert"` (`ProvenanceField`, `VerifyEmailGate`, `ChatFailureNotice`, Reckoning) and the success overlay has `aria-live`.
-- **Remaining:** AI replies have no live region. There is no save status to announce. Upload progress is not announced. Sonner toast announcements are unverified. No screen-reader run.
+- **Remaining:** AI replies have no live region. The save status is a polite live region (`SaveStatus.tsx`), and conflict and invalid states use `role="alert"`. Upload progress is not announced. Sonner toast announcements are unverified. No screen-reader run.
 
 #### I-2.3 Contrast and focus-style audit
 - **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** DES + FE · **Depends:** I-1.1 · **Milestone:** M2
@@ -1160,7 +1160,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 **Updated in 2.4** (after the intake-to-PDF end-to-end test landed)
 - I-4.3 is DONE: the test, its stand-ins and `npm run test:e2e` exist, and the `e2e` CI job has run green (runs 40774885703 and 40812758403). I-4.4 now lists the `e2e` job as built, and only whether the checks are required for merge remains. I-4.2 notes that create, save, certify and submit run through a PostgREST and GoTrue stand-in under real row security.
 - Sections 1.1, 1.2, 1.4, 1.5, 5 and 6 and the Definition of Done no longer say no end-to-end test exists. The M1 'test prospect completes the path' criterion is met in CI against stand-ins and still not shown live. The test does not cover document upload, voice, the advisor path or real Supabase, so those stay open under their own stories.
-- Not re-verified: main's other changes since 2.3 (save-status indicator and resume of the latest intake, public-copy changes, the Supabase setup script). They may change A-1.3, A-1.4, I-2.2, I-3.1 and H-2.3 and the matching rows in section 1.3; those statuses are as of 2.3.
+- Not re-verified: main's other changes since 2.3 (save-status indicator and resume of the latest intake, public-copy changes, the Supabase setup script). They may change A-1.3, A-1.4, I-2.2, I-3.1 and H-2.3 and the matching rows in section 1.3; those statuses are as of 2.3. Version 2.5 re-read A-1.3, A-1.4, C-1.2 and I-2.2 and their risk rows against `SaveStatus.tsx` and `latestOpen()` and corrected their text; no status changed. I-3.1 and H-2.3 are still as of 2.3.
 
 **Updated in 2.3** (after the ceilings reached `document-extract`)
 - B-3.1 no longer lists the missing ceilings on document reads, and the matching defect and open question are removed. One shared budget serves both functions.

@@ -21,6 +21,8 @@ export const MAX_LIST_ITEMS = 100;
 export const COUNT_MAX = 1_000_000;
 export const SALARY_MAX = 1_000_000;
 export const TEXT_MAX = 1000;
+export const NAME_MAX = 200;
+export const DOB_MAX = 40;
 
 const STATE_CODE_SET: ReadonlySet<string> = new Set(US_STATE_CODES);
 
@@ -80,18 +82,18 @@ const classification = z.preprocess(
 // Cast because the app tsconfig is non-strict, which makes zod infer every key as optional.
 const employeeSchema = z.object({
   first_name: text,
-  last_name: str(z.string().trim().max(200)).catch(""),
-  dob: str(z.string().trim().max(40)).catch(""),
+  last_name: str(z.string().trim().max(NAME_MAX)).catch(""),
+  dob: str(z.string().trim().max(DOB_MAX)).catch(""),
   // An unlisted state becomes blank rather than dropping the employee, as an over-long one always did.
   state: z.string().trim().transform((s) => s.toUpperCase()).transform((s) => (STATE_CODE_SET.has(s) ? s : "")).catch(""),
-  title: str(z.string().trim().max(200)).catch(""),
+  title: str(z.string().trim().max(NAME_MAX)).catch(""),
   salary: countUpTo(SALARY_MAX).nullable().catch(null),
   classification,
   dependents: listOf(
     z.object({
       first_name: text,
-      last_name: str(z.string().trim().max(200)).catch(""),
-      dob: str(z.string().trim().max(40)).catch(""),
+      last_name: str(z.string().trim().max(NAME_MAX)).catch(""),
+      dob: str(z.string().trim().max(DOB_MAX)).catch(""),
       relationship: z.enum(["spouse", "domestic_partner", "child", "other"]).catch("other"),
     }),
     MAX_DEPENDENTS,

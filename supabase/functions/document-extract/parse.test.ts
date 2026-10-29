@@ -92,7 +92,10 @@ describe("findCensus", () => {
     expect(census.employees).toHaveLength(total);
     const [roster, headcount] = censusCandidates(census);
     expect(roster.value as unknown[]).toHaveLength(MAX_EMPLOYEES);
-    expect((roster.value as { first_name: string }[])[0].first_name).toBe("Person");
+    // "Person i" splits into last_name "i", so the index shows which end of the roster was kept
+    const kept = roster.value as { last_name: string }[];
+    expect(kept[0].last_name).toBe("0");
+    expect(kept[MAX_EMPLOYEES - 1].last_name).toBe(String(MAX_EMPLOYEES - 1));
     expect(roster.location).toBe(`CSV, rows 2–${total + 1}; first 5,000 of 7,500 people kept`);
     // the headcount is still the whole company's, not the truncated roster's
     expect(headcount).toMatchObject({ field: "employee_count", value: total - total / 10, location: `CSV, rows 2–${total + 1}` });

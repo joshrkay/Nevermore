@@ -76,7 +76,7 @@ describe("ChamberPage", () => {
       session.saveStatus = "invalid";
       session.invalidField = "Employee count";
       renderPage();
-      expect(screen.getByRole("alert")).toHaveTextContent("Employee count isn't valid");
+      expect(screen.getByRole("alert")).toHaveTextContent("Please check: Employee count.");
       fireEvent.click(screen.getByRole("button", { name: "Discard my changes" }));
       expect(session.discardChanges).toHaveBeenCalledTimes(1);
     });

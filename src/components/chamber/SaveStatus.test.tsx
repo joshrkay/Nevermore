@@ -44,7 +44,7 @@ describe("SaveStatus", () => {
   it("names the answer the server refused, and offers to discard rather than retry", () => {
     const onDiscard = vi.fn();
     render(<SaveStatus status="invalid" onRetry={() => {}} onDiscard={onDiscard} invalidField="HQ state" />);
-    expect(screen.getByRole("alert")).toHaveTextContent("Not saved: HQ state isn't valid.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Not saved. Please check: HQ state.");
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Discard my changes" }));
     expect(onDiscard).toHaveBeenCalledTimes(1);
@@ -52,7 +52,7 @@ describe("SaveStatus", () => {
 
   it("still reads sensibly when it can't say which answer", () => {
     render(<SaveStatus status="invalid" onRetry={() => {}} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("Not saved: an answer isn't valid.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Not saved. Please check: one of your answers.");
   });
 
   it("offers a new intake when the saved one no longer exists", () => {

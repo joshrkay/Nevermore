@@ -114,8 +114,43 @@ function sameJson(a: unknown, b: unknown): boolean {
 // What a write sent, as the server would store it, for recognising our own write afterwards.
 const asStored = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
 
+// Whether a saved row is the result of an autosave that sent `stored`.
+const matchesSave = (stored: { chamber_data: unknown; field_provenance: unknown; transcript: unknown }) => (row: ServerRow) =>
+  sameJson(row.chamber_data, stored.chamber_data) &&
+  sameJson(row.field_provenance, stored.field_provenance) &&
+  sameJson(row.transcript, stored.transcript);
+
+// Whether a saved row is the result of certifying `submission` over `signedData` (as stored).
+const matchesSubmission = (submission: ChamberSubmission, signedData: unknown) => (row: ServerRow) => {
+  const saved = row.submission as Partial<ChamberSubmission> | null;
+  return row.status === "submitted" &&
+    saved?.signer_name === submission.signer_name &&
+    saved?.signed_at === submission.signed_at &&
+    saved?.file_id === submission.file_id &&
+    sameJson(row.chamber_data, signedData);
+};
+
+// A write that failed with an error may still have landed. Remember what it sent, so the row it
+// left behind (one version on) is recognised later instead of being taken for another tab's save.
+// Several can be pending: after repeated errors any one of them may be the one that landed.
+/** The certification as the server will hold it once `data` is saved over `row`: saving different answers over a certified row withdraws it. */
+function certificationAfterSaving(row: ServerRow, data: ChamberData): CertificationState {
+  const fromServer = certificationFromRow(row.status, row.submission);
+  return fromServer.status === "certified" && !sameJson(asStored(data), row.chamber_data)
+    ? { status: "stale", submission: fromServer.submission }
+    : fromServer;
+}
+
+interface Unconfirmed {
+  version: number;
+  writes: { stored: unknown; matches: (row: ServerRow) => boolean }[];
+}
+const MAX_UNCONFIRMED_WRITES = 5;
+
 type Reconciled =
   | { kind: "own"; row: ServerRow }
+  // Not the write just sent, but an earlier one whose response was lost: the newer edits still need sending.
+  | { kind: "earlier"; row: ServerRow }
   | { kind: "conflict"; row: ServerRow }
   | { kind: "missing" }
   | { kind: "unreadable"; error: unknown }
@@ -149,8 +184,12 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // Every write to the row (autosave, submit) runs one after another, so each starts from the version
   // the one before it returned.
   const queueRef = useRef<Promise<unknown>>(Promise.resolve());
-  // True while a write request is out, for the unload request to allow for it.
-  const writingRef = useRef(false);
+  // True from the moment a write is sent until its outcome is settled, including the read-back after
+  // a write that matched no row. The unload request can't know which version such a write leaves.
+  const savingRef = useRef(false);
+  // True after a write failed without a clear answer (see unconfirmedRef), until a write settles it.
+  const outcomeUnknownRef = useRef(false);
+  const unconfirmedRef = useRef<Unconfirmed | null>(null);
   // The version of the saved row this tab last saw. Every write is conditional on it.
   const versionRef = useRef<number | null>(null);
   // Why saving has stopped until the prospect acts. Mirrors saveStatus so a new edit can't undo it.
@@ -200,6 +239,24 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     setInvalidField(null);
   }, []);
 
+  // The version is known again (a write succeeded or was refused, or a row was loaded), so no earlier
+  // write can still be waiting to show up.
+  const settleOutcome = useCallback(() => {
+    unconfirmedRef.current = null;
+    outcomeUnknownRef.current = false;
+  }, []);
+
+  const rememberUnconfirmed = useCallback((version: number, stored: unknown, matches: (row: ServerRow) => boolean) => {
+    const current = unconfirmedRef.current?.version === version ? unconfirmedRef.current : { version, writes: [] };
+    if (!current.writes.some((write) => sameJson(write.stored, stored))) {
+      const writes = [...current.writes, { stored, matches }];
+      // Once the first write may have landed, every later one at that version is refused, so a long outage
+      // only adds writes that did not land. Keep the first for good and drop the oldest of the rest.
+      current.writes = writes.length > MAX_UNCONFIRMED_WRITES ? [writes[0], ...writes.slice(-(MAX_UNCONFIRMED_WRITES - 1))] : writes;
+    }
+    unconfirmedRef.current = current;
+  }, []);
+
   // Shows a loaded row exactly as the server has it. Never put the raw row in state: loading
   // rebuilds the answers in a stable key order, which the signature check depends on.
   const applyRow = useCallback((row: ServerRow) => {
@@ -214,21 +271,29 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       messagesRef.current = loadedMessages;
       setMessages(loadedMessages);
     }
-    const loadedCertification = certificationFromRow(row.status, row.submission);
+    let loadedCertification = certificationFromRow(row.status, row.submission);
+    // Rows certified under looser rules can hold answers the sanitiser now changes. Saving them back would
+    // make the database withdraw the certification, so show it as withdrawn rather than as certified.
+    if (loadedCertification.status === "certified" && !sameJson(loadedData, row.chamber_data)) {
+      loadedCertification = { status: "stale", submission: loadedCertification.submission };
+    }
     certificationRef.current = loadedCertification;
     setCertification(loadedCertification);
     versionRef.current = typeof row.data_version === "number" ? row.data_version : null;
+    settleOutcome();
     sessionIdRef.current = row.id;
     setSessionId(row.id);
-  }, []);
+  }, [settleOutcome]);
 
   const adoptVersion = useCallback((sid: string, version: unknown) => {
     if (sessionIdRef.current === sid) versionRef.current = typeof version === "number" ? version : null;
-  }, []);
+    settleOutcome();
+  }, [settleOutcome]);
 
   // Nothing was saved and retrying may help: keep the changes and try again shortly.
   const failTransient = useCallback((reason: unknown) => {
     dirtyRef.current = true;
+    outcomeUnknownRef.current = true;
     clearBlock();
     console.error("Failed to save session:", reason);
     report("failed");
@@ -241,31 +306,34 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // The server refused an answer. Retrying the same payload would fail the same way, so wait for an edit.
   const markInvalid = useCallback((error: { message?: string; details?: string | null }) => {
     dirtyRef.current = true;
+    settleOutcome();
     conflictRef.current = null;
     blockRef.current = "invalid";
     const path = error.details ?? /Invalid [a-z]+ data at ([^:]+):/.exec(error.message ?? "")?.[1];
     console.error("Failed to save session: the server refused an answer:", error);
     if (mountedRef.current) setInvalidField(describeInvalidPath(path));
     report("invalid");
-  }, [report]);
+  }, [report, settleOutcome]);
 
   const markConflict = useCallback((row: ServerRow) => {
     dirtyRef.current = true;
+    settleOutcome();
     stopTimer();
     blockRef.current = "conflict";
     conflictRef.current = row;
     console.error("Failed to save session: it was changed elsewhere", { savedVersion: row.data_version });
     report("conflict");
-  }, [report, stopTimer]);
+  }, [report, settleOutcome, stopTimer]);
 
   const markMissing = useCallback(() => {
     dirtyRef.current = true;
+    settleOutcome();
     stopTimer();
     blockRef.current = "missing";
     conflictRef.current = null;
     console.error("Failed to save session: the intake no longer exists");
     report("missing");
-  }, [report, stopTimer]);
+  }, [report, settleOutcome, stopTimer]);
 
   // A write matched no row. That can mean another tab saved first, but also that our own write landed
   // and its response was lost, or that the row is gone. The row as it stands tells which.
@@ -282,12 +350,19 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     if (error) return { kind: "unreadable", error };
     if (!row) return { kind: "missing" };
     if (row.data_version === sentVersion) return { kind: "unchanged" };
-    return isOwnWrite(row) ? { kind: "own", row } : { kind: "conflict", row };
+    if (isOwnWrite(row)) return { kind: "own", row };
+    // An earlier write that errored may have landed after all, leaving the row one version on. Any edits
+    // typed since went out with this write, at the old version, so they still have to be sent.
+    const unconfirmed = unconfirmedRef.current;
+    if (unconfirmed && row.data_version === unconfirmed.version + 1 && unconfirmed.writes.some((write) => write.matches(row))) {
+      return { kind: "earlier", row };
+    }
+    return { kind: "conflict", row };
   }, []);
 
-  // Writes pending changes now. Must run inside the write queue. Resolves true once everything
-  // captured so far is saved.
-  const saveNow = useCallback(async (): Promise<boolean> => {
+  // One write of the pending changes. Resolves "again" when an earlier write turned out to have landed:
+  // the row is now at the version it left, and the changes made since still have to go out.
+  const saveOnce = useCallback(async (): Promise<boolean | "again"> => {
     const sid = sessionIdRef.current;
     if (!sid) {
       // The intake row is still being created (its creation saves what's pending), or creating it failed.
@@ -312,7 +387,6 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       field_provenance: provenanceRef.current,
       transcript: messagesRef.current,
     };
-    writingRef.current = true;
     let result;
     try {
       result = await supabase
@@ -327,8 +401,6 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         .select("id, data_version");
     } catch (error) {
       result = { data: null, error };
-    } finally {
-      writingRef.current = false;
     }
     const { data, error } = result as { data: { data_version: number }[] | null; error: (Error & { code?: string; details?: string | null }) | null };
     // An update that matched no row (stale version, or the row is gone) reports no error, so only a
@@ -343,15 +415,15 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       markInvalid(error);
       return false;
     }
+    const stored = asStored(sent) as typeof sent;
+    const isOwnWrite = matchesSave(stored);
     if (error) {
+      // The request may have reached the server even though its response never reached us.
+      rememberUnconfirmed(version, stored, isOwnWrite);
       failTransient(error);
       return false;
     }
-    const stored = asStored(sent) as typeof sent;
-    const outcome = await reconcile(sid, version, (row) =>
-      sameJson(row.chamber_data, stored.chamber_data) &&
-      sameJson(row.field_provenance, stored.field_provenance) &&
-      sameJson(row.transcript, stored.transcript));
+    const outcome = await reconcile(sid, version, isOwnWrite);
     switch (outcome.kind) {
       case "own":
         // Our write did land; only its response was lost. Take the version, keep what is on screen.
@@ -359,6 +431,17 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         clearBlock();
         if (mountedRef.current) setSaveStatus(dirtyRef.current ? "saving" : "saved");
         return true;
+      case "earlier": {
+        adoptVersion(sid, outcome.row.data_version);
+        clearBlock();
+        // The earlier write may have been a certification whose response was lost; show what the server holds
+        // once the newer answers land on top of it.
+        const kept = certificationAfterSaving(outcome.row, dataRef.current);
+        certificationRef.current = kept;
+        setCertification(kept);
+        dirtyRef.current = true;
+        return "again";
+      }
       case "conflict":
         markConflict(outcome.row);
         return false;
@@ -372,7 +455,19 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         failTransient("no row was updated");
         return false;
     }
-  }, [adoptVersion, clearBlock, failTransient, markConflict, markInvalid, markMissing, reconcile, report]);
+  }, [adoptVersion, clearBlock, failTransient, markConflict, markInvalid, markMissing, reconcile, rememberUnconfirmed, report]);
+
+  // Writes pending changes now. Must run inside the write queue. Resolves true once everything
+  // captured so far is saved.
+  const saveNow = useCallback(async (): Promise<boolean> => {
+    savingRef.current = true;
+    try {
+      const first = await saveOnce();
+      return first === "again" ? (await saveOnce()) === true : first;
+    } finally {
+      savingRef.current = false;
+    }
+  }, [saveOnce]);
 
   // Writes pending changes immediately. Safe to call when nothing is pending.
   // Resolves true once everything captured so far is saved.
@@ -409,13 +504,14 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       });
       const token = accessTokenRef.current;
       const version = versionRef.current;
-      // The response can't be read, so a request that can't win (a conflict, a refused answer, an
-      // unknown version) would silently lose the edits: ask the prospect instead.
-      if (token && version !== null && !blockRef.current && new Blob([body]).size <= KEEPALIVE_MAX_BYTES) {
+      // The response can't be read, so a request that can't win would silently lose the edits: ask the
+      // prospect instead. That is a conflict, a refused answer, an unknown version, and any moment the
+      // version is in doubt: a save still out (it may move the version on, and `v + 1` could just as well
+      // be another tab's save) or a write that failed after possibly landing.
+      if (token && version !== null && !blockRef.current && !savingRef.current && !outcomeUnknownRef.current
+        && new Blob([body]).size <= KEEPALIVE_MAX_BYTES) {
         dirtyRef.current = false;
-        // A save already out will have moved the version on by the time this request arrives.
-        const versionFilter = writingRef.current ? `in.(${version},${version + 1})` : `eq.${version}`;
-        fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/chamber_sessions?id=eq.${encodeURIComponent(sid)}&data_version=${versionFilter}`, {
+        fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/chamber_sessions?id=eq.${encodeURIComponent(sid)}&data_version=eq.${version}`, {
           method: "PATCH",
           keepalive: true,
           headers: {
@@ -547,13 +643,14 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     forceNewRef.current = true;
     // A new row starts with its own version, and the old one's trouble doesn't follow it.
     clearBlock();
+    settleOutcome();
     versionRef.current = null;
     sessionIdRef.current = null;
     setResumeFailed(false);
     setLoadFailed(false);
     setIsLoading(true);
     setInitRun((n) => n + 1);
-  }, [clearBlock]);
+  }, [clearBlock, settleOutcome]);
 
   const retryLoad = useCallback(() => {
     setLoadFailed(false);
@@ -587,11 +684,17 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     if (!row) return;
     // Save over what the other tab saved. If it has moved on again meanwhile, this conflicts again.
     versionRef.current = row.data_version;
+    settleOutcome();
+    // The other tab may have withdrawn the certification, and saving different answers over a certified row
+    // withdraws it too, so show what the server will hold once this save lands.
+    const kept = certificationAfterSaving(row, dataRef.current);
+    certificationRef.current = kept;
+    setCertification(kept);
     clearBlock();
     dirtyRef.current = true;
     report("saving");
     void flush();
-  }, [clearBlock, flush, report]);
+  }, [clearBlock, flush, report, settleOutcome]);
 
   const discardChanges = useCallback(() => {
     stopTimer();
@@ -682,65 +785,70 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       return false;
     }
     const signedData = dataRef.current;
-    const certifiedSubmission = { ...submission, chamber_data: signedData, field_provenance: provenanceRef.current };
-    writingRef.current = true;
-    let result;
+    let certifiedSubmission = { ...submission, chamber_data: signedData, field_provenance: provenanceRef.current };
+    const storedData = asStored(signedData);
+    const isOwnSubmission = matchesSubmission(submission, storedData);
+    savingRef.current = true;
+    let outcome: Reconciled | null = null;
+    let updated: { data_version: number; status: string }[] | null = null;
+    let error: (Error & { code?: string; details?: string | null }) | null = null;
     try {
-      result = await supabase
-        .from("chamber_sessions")
-        .update({
-          status: "submitted",
-          // Written alongside the certified copy so the two always agree, even when the saved row
-          // predates fields that loading fills in (the database requires them to be identical).
-          chamber_data: signedData as unknown as Json,
-          submission: certifiedSubmission as unknown as Json,
-        })
-        .eq("id", sid)
-        .eq("data_version", version)
-        .select("id, data_version, status");
-    } catch (error) {
-      result = { data: null, error };
+      try {
+        ({ data: updated, error } = await supabase
+          .from("chamber_sessions")
+          .update({
+            status: "submitted",
+            // Written alongside the certified copy so the two always agree, even when the saved row
+            // predates fields that loading fills in (the database requires them to be identical).
+            chamber_data: signedData as unknown as Json,
+            submission: certifiedSubmission as unknown as Json,
+          })
+          .eq("id", sid)
+          .eq("data_version", version)
+          .select("id, data_version, status") as unknown as { data: typeof updated; error: typeof error });
+      } catch (thrown) {
+        error = thrown as typeof error;
+      }
+      if (!error && (!updated || updated.length === 0)) {
+        // Matched no row: someone else saved first, or our own submission landed and its response was lost.
+        outcome = await reconcile(sid, version, isOwnSubmission);
+      }
     } finally {
-      writingRef.current = false;
+      savingRef.current = false;
     }
-    const { data: updated, error } = result as { data: { data_version: number; status: string }[] | null; error: (Error & { code?: string; details?: string | null }) | null };
-    let recorded = !error && !!updated && updated.length > 0;
-    if (recorded && updated![0].status !== "submitted") {
-      console.error("Failed to submit session: the server did not record it as submitted", updated![0].status);
-      return false;
-    }
-    if (recorded) {
-      adoptVersion(sid, updated![0].data_version);
+    if (!error && updated && updated.length > 0) {
+      if (updated[0].status !== "submitted") {
+        console.error("Failed to submit session: the server did not record it as submitted", updated[0].status);
+        return false;
+      }
+      adoptVersion(sid, updated[0].data_version);
     } else if (error?.code === INVALID_DATA_CODE) {
       markInvalid(error);
       return blockedMessage();
     } else if (error) {
+      // It may have landed anyway; a later write has to be able to tell.
+      rememberUnconfirmed(version, { submitted: submission, chamber_data: storedData }, isOwnSubmission);
+      outcomeUnknownRef.current = true;
       console.error("Failed to submit session:", error);
       return false;
-    } else {
-      // Matched no row: someone else saved first, or our own submission landed and its response was lost.
-      const stored = asStored({ chamber_data: signedData }) as { chamber_data: unknown };
-      const outcome = await reconcile(sid, version, (row) => {
-        const saved = row.submission as Partial<ChamberSubmission> | null;
-        return row.status === "submitted" &&
-          saved?.signer_name === submission.signer_name &&
-          saved?.signed_at === submission.signed_at &&
-          saved?.file_id === submission.file_id &&
-          sameJson(row.chamber_data, stored.chamber_data);
-      });
-      if (outcome.kind === "own") {
-        adoptVersion(sid, outcome.row.data_version);
-        recorded = true;
-      } else if (outcome.kind === "conflict") {
-        markConflict(outcome.row);
-        return blockedMessage();
-      } else if (outcome.kind === "missing") {
-        markMissing();
-        return blockedMessage();
-      } else {
-        console.error("Failed to submit session:", outcome.kind === "unreadable" ? outcome.error : "no row was updated");
-        return false;
+    } else if (outcome?.kind === "own" || outcome?.kind === "earlier") {
+      adoptVersion(sid, outcome.row.data_version);
+      if (outcome.kind === "earlier") {
+        // A certification from before a lost response is the one on record; show it, not the one just signed.
+        const recorded = certificationFromRow(outcome.row.status, outcome.row.submission);
+        if (recorded.status !== "certified") return false; // not a certification: certifying again, from the new version, works
+        certifiedSubmission = recorded.submission as typeof certifiedSubmission;
       }
+    } else if (outcome?.kind === "conflict") {
+      markConflict(outcome.row);
+      return blockedMessage();
+    } else if (outcome?.kind === "missing") {
+      markMissing();
+      return blockedMessage();
+    } else {
+      outcomeUnknownRef.current = true;
+      console.error("Failed to submit session:", outcome?.kind === "unreadable" ? outcome.error : "no row was updated");
+      return false;
     }
     const certified: CertificationState = { status: "certified", submission: certifiedSubmission };
     certificationRef.current = certified;
@@ -748,7 +856,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     // The notifications were queued with the submission; this just sends them promptly.
     dispatchOutbox();
     return true;
-  }), [adoptVersion, blockedMessage, enqueue, markConflict, markInvalid, markMissing, reconcile, saveNow]);
+  }), [adoptVersion, blockedMessage, enqueue, markConflict, markInvalid, markMissing, reconcile, rememberUnconfirmed, saveNow]);
 
   return {
     sessionId,

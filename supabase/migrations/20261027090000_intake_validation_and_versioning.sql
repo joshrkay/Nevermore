@@ -102,9 +102,9 @@ AS $$
 DECLARE
   -- sync:begin caps_person
   max_text constant integer := 1000;
-  -- sync:end caps_person
   max_name constant integer := 200;
   max_dob constant integer := 40;
+  -- sync:end caps_person
 BEGIN
   IF jsonb_typeof(person) <> 'object' THEN
     path := base; reason := 'must be an object'; RETURN;
@@ -142,8 +142,8 @@ DECLARE
   max_text constant integer := 1000;
   max_count constant integer := 1000000;
   max_salary constant integer := 1000000;
-  -- sync:end caps
   max_name constant integer := 200;
+  -- sync:end caps
   count_reason constant text := 'must be a whole number from 0 to 1,000,000';
   state_reason constant text := 'must be a US state or territory code such as CA';
   key text;

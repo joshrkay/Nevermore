@@ -50,6 +50,12 @@ INSERT INTO public.chamber_sessions (id, user_id, chamber_data) VALUES
 INSERT INTO public.chamber_sessions (id, user_id, chamber_data, status) VALUES
   ('00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-00000000000a',
    '{"company_name":"Clean Legacy Co","hq_state":"CA"}', 'in_progress');
+-- A session certified before the migration, still holding the invalid value (the certification trigger loaded
+-- above stamps it, as it did then).
+INSERT INTO public.chamber_sessions (id, user_id, chamber_data, status, submission) VALUES
+  ('00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-00000000000a',
+   '{"company_name":"Legacy Co","hq_state":"California"}', 'submitted',
+   '{"signer_name":"Jo Doe","signer_title":"CEO","signed_at":"2026-04-01T12:00:00Z","file_id":"EAA-L0","consent_version":"v1","consent_text":"I certify.","chamber_data":{"company_name":"Legacy Co","hq_state":"California"}}');
 UPDATE public.profiles SET phone = 'call me', company_name = 'Legacy Co' WHERE user_id = '00000000-0000-0000-0000-00000000000a';
 
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
@@ -275,6 +281,8 @@ BEGIN
       ('dependent that is not an object',  false, '{"employees":[{"first_name":"A","dependents":[5]}]}', 'employees[0].dependents[0]'),
       ('dependents given an object',       false, '{"employees":[{"first_name":"A","dependents":{"first_name":"B"}}]}', 'employees[0].dependents'),
       ('text list item not text',          false, '{"pto_types":["Vacation",5]}',        'pto_types[1]'),
+      ('text list item null',              false, '{"pto_types":["Vacation",null]}',     'pto_types[1]'),
+      ('benefits list item null',          false, '{"ancillary_benefits":[null]}',       'ancillary_benefits[0]'),
       ('chamber_data a list',              true,  '[]',                                  'chamber_data'),
       ('chamber_data a string',            true,  '"{}"',                                'chamber_data'),
       ('chamber_data JSON null',           true,  'null',                                'chamber_data'),
@@ -455,6 +463,7 @@ DO $$
 DECLARE
   uid uuid := '00000000-0000-0000-0000-00000000000a';
   legacy uuid := '00000000-0000-0000-0000-0000000000a1';
+  certified uuid := '00000000-0000-0000-0000-0000000000a3';
   dirty jsonb := '{"company_name":"Legacy Co","hq_state":"California","employee_count":12}';
   row_ public.chamber_sessions;
   sub jsonb;
@@ -478,6 +487,14 @@ BEGIN
     'consent_version', 'v1', 'consent_text', 'I certify.', 'chamber_data', dirty);
   PERFORM pg_temp.must_reject(legacy, format('UPDATE public.chamber_sessions SET status = ''submitted'', submission = %L WHERE id = %L', sub, legacy), 'EA001', 'hq_state', 'certifying invalid data');
   IF EXISTS (SELECT 1 FROM public.chamber_certifications WHERE session_id = legacy) THEN RAISE EXCEPTION 'FAIL: invalid data was certified'; END IF;
+
+  -- So is signing again a row that is already certified with invalid data (a new submission, same data):
+  -- that is a fresh certification, not a save that leaves the old one standing.
+  IF (SELECT count(*) FROM public.chamber_certifications WHERE session_id = certified AND superseded_at IS NULL) <> 1 THEN RAISE EXCEPTION 'FAIL: the pre-migration certification is not recorded'; END IF;
+  PERFORM pg_temp.must_reject(certified, format('UPDATE public.chamber_sessions SET submission = %L WHERE id = %L', (SELECT submission || jsonb_build_object('signed_at', '2026-05-02T09:30:00Z') FROM public.chamber_sessions WHERE id = certified), certified), 'EA001', 'hq_state', 're-certifying a submitted row holding invalid data');
+  IF (SELECT count(*) FROM public.chamber_certifications WHERE session_id = certified) <> 1 THEN RAISE EXCEPTION 'FAIL: a refused re-certification was recorded'; END IF;
+  -- Saves that do not touch the data or the signature still go through on it.
+  UPDATE public.chamber_sessions SET transcript = '[]' WHERE id = certified;
 
   -- Fixing the data (what the app sends once the user corrects it) goes through.
   UPDATE public.chamber_sessions SET chamber_data = dirty || '{"hq_state":"CA"}' WHERE id = legacy AND data_version = 4;
@@ -599,13 +616,15 @@ BEGIN
   PERFORM pg_temp.as_user(uid);
   SET LOCAL ROLE authenticated;
   FOREACH phone_ IN ARRAY ARRAY['555-0100', '(555) 123-4567', '+1 (555) 123-4567', '555.123.4567', '5551234567', '+44 20 7946 0958',
-      '555-123-4567 x123', '555-123-4567 ext. 12', '555-123-4567 EXT 12', ' 555-0100 ', repeat('5', 15), '', NULL] LOOP
+      '555-123-4567 x123', '555-123-4567 ext. 12', '555-123-4567 EXT 12', ' 555-0100 ', repeat('5', 15),
+      '555' || repeat(' ', 40) || '1234567', '', NULL] LOOP
     UPDATE public.profiles SET phone = phone_ WHERE user_id = uid;
     IF (SELECT phone FROM public.profiles WHERE user_id = uid) IS DISTINCT FROM phone_ THEN RAISE EXCEPTION 'FAIL: phone % was not saved', phone_; END IF;
   END LOOP;
 
-  FOREACH bad IN ARRAY ARRAY['call me', '123', '++1555', '+', '12345678901234567890', '<script>1234567</script>', '555-123-4567; DROP TABLE x',
-      '555 1234 abc', '555-123-4567 x1234567', '555-123-4567 x', repeat('5', 16), repeat('5 ', 26), '   '] LOOP
+  FOREACH bad IN ARRAY ARRAY['call me', '123', '555-123', '++1555', '+', '12345678901234567890', '<script>1234567</script>', '555-123-4567; DROP TABLE x',
+      '555 1234 abc', '555-123-4567 x1234567', '555-123-4567 x', repeat('5', 16), repeat('5 ', 26),
+      '555' || repeat(' ', 41) || '1234567', '   '] LOOP
     PERFORM pg_temp.must_reject_phone(uid, format('UPDATE public.profiles SET phone = %L WHERE user_id = %L', bad, uid), 'phone ' || quote_literal(bad));
   END LOOP;
   -- With other columns in the same statement, and on insert.

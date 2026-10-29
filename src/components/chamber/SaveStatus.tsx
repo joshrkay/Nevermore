@@ -27,7 +27,7 @@ const SaveStatus = ({ status, onRetry, onLoadLatest, onKeepMine, onDiscard, onSt
         <span className="flex items-center gap-1.5 text-destructive">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
           {status === "conflict" && "Not saved: this intake was changed in another tab or device."}
-          {status === "invalid" && `Not saved: ${invalidField ?? "an answer"} isn't valid.`}
+          {status === "invalid" && `Not saved. Please check: ${invalidField ?? "one of your answers"}.`}
           {status === "missing" && "Not saved: this intake can no longer be saved."}
         </span>
         {status === "conflict" && (

@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import {
   COUNT_MAX,
+  DOB_MAX,
   MAX_DEPENDENTS,
   MAX_EMPLOYEES,
   MAX_LIST_ITEMS,
   MAX_STATES,
+  NAME_MAX,
   SALARY_MAX,
   TEXT_MAX,
   US_STATE_CODES,
@@ -64,7 +66,7 @@ describe("server and client intake rules agree", () => {
 
   it("holds the same caps and limits", () => {
     const server = new Map<string, number>();
-    for (const sql of blocks("caps")) {
+    for (const sql of [...blocks("caps"), ...blocks("caps_person")]) {
       for (const m of sql.matchAll(/(max_\w+)\s+constant\s+integer\s*:=\s*(\d+)/g)) {
         const value = Number(m[2]);
         // A cap declared in two functions must say the same thing in both.
@@ -78,6 +80,8 @@ describe("server and client intake rules agree", () => {
       max_states: MAX_STATES,
       max_list_items: MAX_LIST_ITEMS,
       max_text: TEXT_MAX,
+      max_name: NAME_MAX,
+      max_dob: DOB_MAX,
       max_count: COUNT_MAX,
       max_salary: SALARY_MAX,
     });

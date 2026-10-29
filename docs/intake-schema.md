@@ -106,7 +106,7 @@ The database refuses a list over its cap. The client truncates (keeping the firs
 | --- | --- |
 | Insert | Always |
 | Update that changes `chamber_data` | Yes |
-| Update that certifies the session (status becomes `submitted`, or `submission` changes) | Yes |
+| Update that certifies the session (status becomes `submitted`, or `submission` changes while status is `submitted`) | Yes |
 | Any other update | No, so a row that was invalid before this rule still saves its other columns |
 
 Nothing is rewritten or backfilled, and there is no table CHECK constraint. `profiles.phone` is checked the same way when set to a new non-empty value: at most 50 characters, digits with spaces, parentheses, dots and dashes, an optional leading `+` and an optional extension (`x`, `ext`, `ext.`), 7 to 15 digits excluding the extension.

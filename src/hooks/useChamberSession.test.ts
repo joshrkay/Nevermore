@@ -96,6 +96,8 @@ vi.mock("@/integrations/supabase/client", () => ({
 const { useChamberSession, describeInvalidPath } = await import("./useChamberSession");
 const { dispatchOutbox } = await import("@/lib/dispatchOutbox");
 const { applyExtraction } = await import("@/data/provenance");
+const { parseChamberData } = await import("@/data/chamberValidation");
+const { createChatMessage } = await import("@/data/chat");
 
 // Lets queued promise callbacks run while fake timers are active (waitFor would hang).
 const drain = () => act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
@@ -113,6 +115,8 @@ const serverRow = (over: Record<string, unknown> = {}) => ({
   submission: null,
   ...over,
 });
+
+const networkError: MockError = { message: "Failed to fetch" };
 
 const submission = { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-01-01T00:00:00Z", file_id: "EAA-1" };
 
@@ -275,7 +279,8 @@ describe("useChamberSession", () => {
     const certifiedRow = (status: string) => ({
       id: "s9",
       data_version: 3,
-      chamber_data: { company_name: "Acme" },
+      // What certifying stores: the answers in full, as loading would rebuild them.
+      chamber_data: parseChamberData({ company_name: "Acme" }),
       transcript: [],
       status,
       submission,
@@ -294,6 +299,22 @@ describe("useChamberSession", () => {
 
       act(() => result.current.setChamberData((prev) => ({ ...prev })));
       expect(result.current.certification.status).toBe("certified");
+    });
+
+    it("still calls a row certified when the database hands its answers back in another key order", async () => {
+      const row = certifiedRow("submitted");
+      resumeRow = { ...row, chamber_data: Object.fromEntries(Object.entries(row.chamber_data).reverse()) };
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.certification.status).toBe("certified"));
+    });
+
+    it("loads a row certified under looser rules as needing re-certification, as saving it would withdraw it", async () => {
+      // Certified before the state list was enforced; loading drops what no longer passes.
+      resumeRow = { ...certifiedRow("submitted"), chamber_data: { ...parseChamberData({ company_name: "Acme" }), states: ["WA", "BC"] } };
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+      expect(result.current.chamberData.states).toEqual(["WA"]);
+      expect(result.current.certification).toEqual({ status: "stale", submission });
     });
 
     it("requires re-certification as soon as certified answers change", async () => {
@@ -721,7 +742,7 @@ describe("useChamberSession", () => {
         resumeRow = serverRow({
           status: "submitted",
           submission,
-          chamber_data: { company_name: "Elsewhere Inc" },
+          chamber_data: parseChamberData({ company_name: "Elsewhere Inc" }),
           field_provenance: { company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-20T00:00:00Z" } },
           transcript: [{ id: "m9", sender: "user", text: "hello from the other tab", timestamp: "10:00 AM" }],
         });
@@ -777,38 +798,174 @@ describe("useChamberSession", () => {
         expect(updates[2].filters.data_version).toBe(6);
       });
 
-      it("recognises its own write when only the response was lost, and leaves what's on screen alone", async () => {
-        const { result } = await staleSave();
-        const before = result.current.chamberData;
+      // A write that landed but whose response was lost reaches the client as an error, never as zero rows.
+      const landedButLost = async (hook: Awaited<ReturnType<typeof staleSave>>, over: Record<string, unknown> = {}) => {
         const sent = JSON.parse(JSON.stringify(updates[0].payload));
-        // jsonb hands the keys back in a different order.
-        resumeRow = serverRow({
-          data_version: 2,
-          chamber_data: Object.fromEntries(Object.entries(sent.chamber_data).reverse()),
-          field_provenance: sent.field_provenance,
-          transcript: sent.transcript,
+        resumeRow = serverRow({ data_version: 2, ...sent, ...over });
+        updates[0].resolve({ error: networkError });
+        await drain();
+        expect(hook.result.current.saveStatus).toBe("failed");
+        return sent;
+      };
+
+      describe("keeping the prospect's changes on a certified intake", () => {
+        const certifiedData = parseChamberData({ company_name: "Acme" });
+        const certifiedTab = async (serverOver: Record<string, unknown>) => {
+          resumeRow = serverRow({ id: "s9", data_version: 4, status: "submitted", submission, chamber_data: certifiedData });
+          const hook = renderHook(() => useChamberSession("s9"));
+          await waitFor(() => expect(hook.result.current.certification.status).toBe("certified"));
+          vi.useFakeTimers();
+          // A chat message isn't an answer, so the tab still shows the intake as certified.
+          act(() => hook.result.current.addMessage(createChatMessage("user", "hello")));
+          await autosave();
+          resumeRow = serverRow({ id: "s9", data_version: 5, status: "submitted", submission, chamber_data: certifiedData, ...serverOver });
+          updates[0].resolve({ error: null, data: [] });
+          await drain();
+          expect(hook.result.current.saveStatus).toBe("conflict");
+          return hook;
+        };
+
+        it("shows the certification as withdrawn when the other tab changed an answer", async () => {
+          const { result } = await certifiedTab({ status: "in_progress", chamber_data: parseChamberData({ company_name: "Elsewhere Inc" }) });
+          act(() => result.current.keepMine());
+          await drain();
+          expect(result.current.certification).toEqual({ status: "stale", submission });
         });
-        updates[0].resolve({ error: null, data: [] });
+
+        it("shows it as withdrawn when the answers being kept differ from the certified ones", async () => {
+          const { result } = await certifiedTab({}); // the server still holds the certified answers
+          act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme Inc" })));
+          act(() => result.current.keepMine());
+          await drain();
+          expect(result.current.certification).toEqual({ status: "stale", submission });
+        });
+
+        it("keeps it certified when the server still holds those answers", async () => {
+          const { result } = await certifiedTab({});
+          act(() => result.current.keepMine());
+          await drain();
+          expect(result.current.certification).toEqual({ status: "certified", submission });
+        });
+      });
+
+      it("recognises its own write when only the response was lost, and leaves what's on screen alone", async () => {
+        const hook = await staleSave();
+        const { result } = hook;
+        const before = result.current.chamberData;
+        // jsonb hands the keys back in a different order.
+        const sent = JSON.parse(JSON.stringify(updates[0].payload));
+        await landedButLost(hook, { chamber_data: Object.fromEntries(Object.entries(sent.chamber_data).reverse()) });
+
+        await act(async () => { vi.advanceTimersByTime(10_000); });
+        expect(updates[1].filters.data_version).toBe(1); // the version it last saw
+        updates[1].resolve({ error: null, data: [] });
         await drain();
 
         expect(result.current.saveStatus).toBe("saved");
         expect(result.current.chamberData).toBe(before);
         edit(result, "Acme 2");
         await autosave();
-        expect(updates[1].filters.data_version).toBe(2);
+        expect(updates[2].filters.data_version).toBe(2);
       });
 
       it("compares with what that write sent, not with what was typed since", async () => {
-        const { result } = await staleSave();
-        const sent = JSON.parse(JSON.stringify(updates[0].payload));
-        edit(result, "Acme 2"); // typed while the write was out
-        resumeRow = serverRow({ data_version: 2, ...sent });
-        updates[0].resolve({ error: null, data: [] });
+        const hook = await staleSave();
+        const { result } = hook;
+        await landedButLost(hook);
+        await act(async () => { vi.advanceTimersByTime(10_000); }); // the retry carries the same answers
+        edit(result, "Acme 2"); // typed while the retry was out
+        updates[1].resolve({ error: null, data: [] });
         await drain();
         expect(result.current.saveStatus).not.toBe("conflict");
         await act(async () => { vi.advanceTimersByTime(2000); });
-        expect(updates[1].filters.data_version).toBe(2);
-        expect(updates[1].payload).toHaveProperty("chamber_data.company_name", "Acme 2");
+        expect(updates[2].filters.data_version).toBe(2);
+        expect(updates[2].payload).toHaveProperty("chamber_data.company_name", "Acme 2");
+      });
+
+      it("doesn't call it a conflict when a lost write was followed by more edits: it sends them at the new version", async () => {
+        const hook = await staleSave();
+        const { result } = hook;
+        await landedButLost(hook); // the server now holds "Acme", at version 2
+        edit(result, "Acme Corp"); // typed before the retry
+        await autosave();
+        expect(updates[1].filters.data_version).toBe(1);
+        expect(updates[1].payload).toHaveProperty("chamber_data.company_name", "Acme Corp");
+        updates[1].resolve({ error: null, data: [] });
+        await drain();
+
+        expect(result.current.saveStatus).toBe("saving"); // not "conflict", and not "saved" yet
+        expect(updates).toHaveLength(3);
+        expect(updates[2].filters.data_version).toBe(2);
+        expect(updates[2].payload).toHaveProperty("chamber_data.company_name", "Acme Corp");
+        updates[2].resolve({ error: null });
+        await drain();
+        expect(result.current.saveStatus).toBe("saved");
+        expect(result.current.chamberData.company_name).toBe("Acme Corp");
+      });
+
+      it("recognises the write that landed even when the ones after it errored too", async () => {
+        const { result } = await staleSave();
+        // The first write landed; the connection was still down for the second.
+        resumeRow = serverRow({ data_version: 2, ...JSON.parse(JSON.stringify(updates[0].payload)) });
+        updates[0].resolve({ error: networkError });
+        await drain();
+        edit(result, "Acme Corp");
+        await autosave();
+        updates[1].resolve({ error: networkError });
+        await drain();
+        edit(result, "Acme Corp 3");
+        await autosave();
+        updates[2].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).not.toBe("conflict");
+        expect(updates[3].filters.data_version).toBe(2);
+        expect(updates[3].payload).toHaveProperty("chamber_data.company_name", "Acme Corp 3");
+      });
+
+      it("still recognises the write that landed after a long outage of failed saves", async () => {
+        const { result } = await staleSave();
+        resumeRow = serverRow({ data_version: 2, ...JSON.parse(JSON.stringify(updates[0].payload)) });
+        updates[0].resolve({ error: networkError });
+        await drain();
+        // Far more failures than the memory holds, every one at the same version.
+        for (let i = 1; i <= 8; i++) {
+          edit(result, `Acme ${i}`);
+          await autosave();
+          updates[i].resolve({ error: networkError });
+          await drain();
+        }
+        edit(result, "Acme final");
+        await autosave();
+        updates[9].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).not.toBe("conflict");
+        expect(updates[10].filters.data_version).toBe(2);
+        expect(updates[10].payload).toHaveProperty("chamber_data.company_name", "Acme final");
+      });
+
+      it("still reports a conflict when the row at the next version isn't what the failed write sent", async () => {
+        const hook = await staleSave();
+        const { result } = hook;
+        await landedButLost(hook, { chamber_data: { company_name: "Elsewhere Inc" } }); // another tab got there first
+        edit(result, "Acme Corp");
+        await autosave();
+        updates[1].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).toBe("conflict");
+      });
+
+      it("reports a conflict when only the transcript differs from what was sent", async () => {
+        const { result } = await staleSave();
+        const sent = JSON.parse(JSON.stringify(updates[0].payload));
+        resumeRow = serverRow({
+          data_version: 2,
+          chamber_data: sent.chamber_data,
+          field_provenance: sent.field_provenance,
+          transcript: [{ id: "m9", sender: "user", text: "other tab", timestamp: "10:00 AM" }],
+        });
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).toBe("conflict");
       });
 
       it("says the intake can no longer be saved when the row is gone, and doesn't retry", async () => {
@@ -925,6 +1082,14 @@ describe("useChamberSession", () => {
         expect(result.current.invalidField).toBeNull();
         await act(async () => { vi.advanceTimersByTime(60_000); });
         expect(updates).toHaveLength(1);
+
+        // Nothing is left unsaved, so leaving neither sends the discarded changes nor asks to stay.
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(event.defaultPrevented).toBe(false);
+        fetchSpy.mockRestore();
       });
 
       it("keeps the refused state, and the changes, when the reload fails", async () => {
@@ -981,14 +1146,66 @@ describe("useChamberSession", () => {
         fetchSpy.mockRestore();
       });
 
-      it("allows for a save that is still out, which will have moved the version on", async () => {
+      it("asks the prospect to stay while a save is still out, as the version it leaves can't be known", async () => {
+        // `version + 1` could as well be another tab's save, which a keepalive request must not overwrite.
         const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
         const { result } = await open();
         edit(result, "One");
         await autosave();
         edit(result, "Two");
-        leave();
-        expect(fetchSpy.mock.calls[0][0]).toMatch(/\?id=eq\.s1&data_version=in\.\(1,2\)$/);
+        const event = leave();
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(event.defaultPrevented).toBe(true);
+
+        // The save queued by leaving goes out behind the one in flight, at the version that returns.
+        updates[0].resolve({ error: null });
+        await drain();
+        expect(updates[1].filters.data_version).toBe(2);
+        expect(updates[1].payload).toHaveProperty("chamber_data.company_name", "Two");
+        fetchSpy.mockRestore();
+      });
+
+      it("asks the prospect to stay after a save failed, as it may have landed and moved the version on", async () => {
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+        const { result } = await open();
+        edit(result, "One");
+        await autosave();
+        updates[0].resolve({ error: networkError });
+        await drain();
+        edit(result, "Two");
+        const event = leave();
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(event.defaultPrevented).toBe(true);
+        fetchSpy.mockRestore();
+      });
+
+      it("asks the prospect to stay while the row is being read back after a write that matched nothing", async () => {
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+        const { result } = await open();
+        edit(result, "One");
+        await autosave();
+        resumeRow = serverRow();
+        updates[0].resolve({ error: null, data: [] });
+        edit(result, "Two"); // before the read-back has been looked at
+        const event = leave();
+        await drain();
+        expect(result.current.saveStatus).toBe("conflict");
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(event.defaultPrevented).toBe(true);
+        fetchSpy.mockRestore();
+      });
+
+      it("asks the prospect to stay, rather than sending a request that can't win, while an answer is refused", async () => {
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+        const { result } = await open();
+        edit(result);
+        await autosave();
+        updates[0].resolve({ error: { message: "Invalid intake data at hq_state: unknown", code: "EA001", details: "hq_state" } });
+        await drain();
+        expect(result.current.saveStatus).toBe("invalid");
+        const event = leave();
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(event.defaultPrevented).toBe(true);
         fetchSpy.mockRestore();
       });
 
@@ -1074,22 +1291,126 @@ describe("useChamberSession", () => {
         expect(result.current.certification.status).toBe("certified");
       });
 
-      it("recognises its own certification when only the response was lost", async () => {
-        const { result } = await open();
-        const pending = result.current.submit(submission);
-        await drain();
-        const sent = JSON.parse(JSON.stringify(updates[0].payload));
-        resumeRow = serverRow({
-          data_version: 2,
-          status: "submitted",
-          chamber_data: sent.chamber_data,
-          submission: { ...sent.submission, certified_at: "2026-10-27T00:00:00Z", data_sha256: "abc" },
+      describe("when the response to a certification was lost", () => {
+        // The write landed: the row is a version on and submitted, but the client only saw an error.
+        const landedButLost = async (hook: Awaited<ReturnType<typeof open>>, certifiedAt = "2026-10-27T00:00:00Z") => {
+          const first = hook.result.current.submit(submission).then((r) => r);
+          await drain();
+          const sent = JSON.parse(JSON.stringify(updates[0].payload));
+          resumeRow = serverRow({
+            data_version: 2,
+            status: "submitted",
+            chamber_data: sent.chamber_data,
+            submission: { ...sent.submission, certified_at: certifiedAt, data_sha256: "abc" },
+          });
+          updates[0].resolve({ error: networkError });
+          expect(await first).toBe(false);
+          expect(hook.result.current.certification.status).toBe("none");
+        };
+
+        it("recognises the certification when the same one is sent again", async () => {
+          const hook = await open();
+          await landedButLost(hook);
+          let ok: SubmitResult | undefined;
+          await act(async () => {
+            const pending = hook.result.current.submit(submission);
+            await drain();
+            updates[1].resolve({ error: null, data: [] });
+            ok = await pending;
+          });
+          expect(updates[1].filters.data_version).toBe(1);
+          expect(ok).toBe(true);
+          expect(hook.result.current.certification.status).toBe("certified");
+          expect(dispatchOutbox).toHaveBeenCalledTimes(1);
         });
+
+        it("recognises it when certifying again with a new signature time, and shows the one on record", async () => {
+          const hook = await open();
+          await landedButLost(hook);
+          let ok: SubmitResult | undefined;
+          await act(async () => {
+            const pending = hook.result.current.submit({ ...submission, signed_at: "2026-01-01T00:05:00Z" });
+            await drain();
+            updates[1].resolve({ error: null, data: [] });
+            ok = await pending;
+          });
+          expect(ok).toBe(true);
+          expect(hook.result.current.saveStatus).not.toBe("conflict");
+          expect(hook.result.current.certification).toMatchObject({ status: "certified", submission: { signed_at: submission.signed_at } });
+          // The next write starts from the version the certification left.
+          edit(hook.result, "Acme 2");
+          await autosave();
+          expect(updates[2].filters.data_version).toBe(2);
+        });
+
+        it("sends answers edited since to the saved intake instead of calling it a conflict", async () => {
+          const hook = await open();
+          await landedButLost(hook);
+          edit(hook.result, "Acme Corp");
+          let pending: Promise<boolean | { message: string }> | undefined;
+          act(() => { pending = hook.result.current.submit({ ...submission, signed_at: "2026-01-01T00:05:00Z" }); });
+          await drain();
+          // The autosave at the old version matches nothing; the row is the earlier certification.
+          updates[1].resolve({ error: null, data: [] });
+          await drain();
+          expect(hook.result.current.saveStatus).not.toBe("conflict");
+          expect(updates[2].filters.data_version).toBe(2);
+          expect(updates[2].payload).toHaveProperty("chamber_data.company_name", "Acme Corp");
+        });
+      });
+
+      describe("when an autosave finds the certification whose response was lost", () => {
+        const certificationLostThenAutosave = async (change: (hook: Awaited<ReturnType<typeof open>>) => void) => {
+          const hook = await open();
+          const first = hook.result.current.submit(submission).then((r) => r);
+          await drain();
+          const sent = JSON.parse(JSON.stringify(updates[0].payload));
+          resumeRow = serverRow({
+            data_version: 2,
+            status: "submitted",
+            chamber_data: sent.chamber_data,
+            submission: { ...sent.submission, certified_at: "2026-10-27T00:00:00Z", data_sha256: "abc" },
+          });
+          updates[0].resolve({ error: networkError });
+          expect(await first).toBe(false);
+          expect(hook.result.current.certification.status).toBe("none");
+          change(hook);
+          await autosave();
+          updates[1].resolve({ error: null, data: [] });
+          await drain();
+          return hook;
+        };
+
+        it("shows the intake as certified when the answers have not changed since", async () => {
+          const hook = await certificationLostThenAutosave((h) =>
+            act(() => h.result.current.addMessage(createChatMessage("user", "did that go through?"))));
+          expect(hook.result.current.certification.status).toBe("certified");
+          expect(hook.result.current.saveStatus).not.toBe("conflict");
+        });
+
+        it("shows it as withdrawn when answers were edited since, because saving them withdraws it", async () => {
+          const hook = await certificationLostThenAutosave((h) => edit(h.result, "Acme Corp"));
+          expect(hook.result.current.certification.status).toBe("stale");
+        });
+      });
+
+      it("says which answer was refused when the submission write itself is refused", async () => {
+        // Certifying re-checks the answers even when nothing was edited, so an older row can fail here.
+        const { result } = await open();
+        edit(result);
+        await autosave();
+        updates[0].resolve({ error: null });
+        await drain();
         let ok: SubmitResult | undefined;
-        await act(async () => { updates[0].resolve({ error: null, data: [] }); ok = await pending; });
-        expect(ok).toBe(true);
-        expect(result.current.certification.status).toBe("certified");
-        expect(dispatchOutbox).toHaveBeenCalledTimes(1);
+        const pending = result.current.submit(submission).then((r) => { ok = r; });
+        await drain();
+        expect(updates[1].payload).toMatchObject({ status: "submitted" });
+        updates[1].resolve({ error: { message: "Invalid intake data at employees[3].dob: too long", code: "EA001", details: "employees[3].dob" } });
+        await act(async () => { await pending; });
+        expect(ok).toEqual({ message: expect.stringContaining("couldn't be saved") });
+        expect(result.current.saveStatus).toBe("invalid");
+        expect(result.current.invalidField).toBe("Employee 4 in your census");
+        expect(result.current.certification.status).toBe("none");
       });
 
       it("reports that the intake is gone, not a retryable failure, when the row is missing", async () => {
