@@ -31,6 +31,9 @@ jobs:
       # Tests only load the function modules they import, and Vitest does not type-check, so a
       # function whose entry point cannot load (a duplicate declaration, an undefined name, a bad
       # import) would otherwise pass every other check.
+      # The e2e gateway loads chamber-extract/handler.ts and _shared/ai with Node's type
+      # stripping, so tsconfig.functions.json bans what stripping cannot run (enums, namespaces,
+      # parameter properties, a type imported without `type`).
       - run: npm run typecheck:functions
       - run: npm test
       - run: npm run build
@@ -89,7 +92,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The gateway loads the chamber-extract handler (TypeScript) with plain `node`, which strips
-      # types by default from 22.18. `22` resolves to the latest 22.x, so this holds without a pin.
+      # types by default from 22.18. `22` takes the runner's cached 22.x, which is 22.18 or later on current images.
       - uses: actions/setup-node@v4
         with:
           node-version: 22

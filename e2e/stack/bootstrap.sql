@@ -4,18 +4,22 @@
 -- migrations: Supabase runs migrations as `postgres`, and the default privileges below are
 -- registered FOR ROLE postgres, so another applying role would not hand out Supabase's grants.
 --
--- Mirrored from Supabase (its postgres image, GoTrue and storage-api migrations) because behaviour
--- depends on it:
+-- Mirrored from Supabase (its postgres image, GoTrue and storage-api migrations). What the migrations
+-- and the stand-in depend on:
 --   * Roles: anon / authenticated (NOLOGIN NOINHERIT), service_role (NOLOGIN NOINHERIT BYPASSRLS),
---     authenticator, supabase_auth_admin (owns schema auth), supabase_storage_admin (owns storage).
+--     supabase_auth_admin (owns schema auth) and supabase_storage_admin (owns storage), both NOLOGIN:
+--     requests switch role from the superuser connection, so nothing logs in as any of them.
 --   * Default privileges in public: everything postgres creates goes to the API roles. The
 --     migrations rely on that and REVOKE what they close; row security does the rest.
 --   * auth.users with GoTrue's columns, types and defaults (is_anonymous, email, email_confirmed_at,
---     raw_*_meta_data, generated confirmed_at), plus identities / sessions / refresh_tokens.
---     id, aud, role, created_at and updated_at have no defaults, as in GoTrue: the gateway sets them.
---   * auth.uid() / auth.role() / auth.email() / auth.jwt(), reading the request.jwt.claims setting.
---     The API roles can call them but never read auth.users.
---   * storage.buckets / storage.objects with row security on, and storage.foldername and friends.
+--     raw_*_meta_data, generated confirmed_at). id, aud, role, created_at and updated_at have no
+--     defaults, as in GoTrue: the gateway sets them.
+--   * auth.uid() / auth.jwt(), reading the request.jwt.claims setting. The API roles can call them
+--     but never read auth.users.
+--   * storage.buckets / storage.objects with row security on, and storage.foldername.
+-- Kept for parity with Supabase although nothing here uses them: auth.identities, auth.sessions,
+-- auth.refresh_tokens, auth.aal_level, auth.role(), auth.email(), storage.filename and
+-- storage.extension.
 -- Not stubbed because no migration needs them: pg_cron, pg_net, vault, pgsodium, realtime.
 
 SET client_min_messages = warning;
@@ -45,9 +49,8 @@ BEGIN
       ('anon',                   false, false, false, false),
       ('authenticated',          false, false, false, false),
       ('service_role',           false, false, true,  false),
-      ('authenticator',          true,  false, false, false),
-      ('supabase_auth_admin',    true,  false, false, true),
-      ('supabase_storage_admin', true,  false, false, true)
+      ('supabase_auth_admin',    false, false, false, true),
+      ('supabase_storage_admin', false, false, false, true)
     ) AS t(name, can_login, inherit, bypassrls, createrole)
   LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = spec.name) THEN
@@ -65,22 +68,6 @@ BEGIN
         CASE WHEN spec.inherit THEN 'INHERIT' ELSE 'NOINHERIT' END,
         CASE WHEN spec.bypassrls THEN 'BYPASSRLS' ELSE 'NOBYPASSRLS' END,
         CASE WHEN spec.createrole THEN 'CREATEROLE' ELSE 'NOCREATEROLE' END);
-    END IF;
-  END LOOP;
-
-  -- Local-only password so a PostgREST stand-in can log in as authenticator over TCP
-  -- (pg_hba uses scram-sha-256 on localhost). Set only when missing.
-  IF (SELECT rolpassword IS NULL FROM pg_authid WHERE rolname = 'authenticator') THEN
-    ALTER ROLE authenticator PASSWORD 'postgres';
-  END IF;
-
-  -- PostgREST logs in as authenticator and switches to the role named in the JWT.
-  FOR spec IN SELECT unnest(ARRAY['anon', 'authenticated', 'service_role']) AS name LOOP
-    IF NOT pg_has_role('authenticator', spec.name, 'MEMBER') THEN
-      BEGIN
-        EXECUTE format('GRANT %I TO authenticator', spec.name);
-      EXCEPTION WHEN unique_violation THEN NULL;
-      END;
     END IF;
   END LOOP;
 END $$;

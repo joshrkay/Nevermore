@@ -1,6 +1,8 @@
-// The slice of GoTrue (Supabase Auth) the prospect path uses, backed by the real auth.users table:
-// anonymous sign-in, the email-change OTP that turns a guest into a verified user, token refresh.
-// Anything else answers 422 e2e_unsupported so a gap in this stand-in is obvious, not silent.
+// A subset of GoTrue (Supabase Auth), backed by the real auth.users table. The prospect path uses
+// anonymous sign-in and the email-change OTP that turns a guest into a verified user. Token refresh
+// and POST /logout are implemented too, but no spec reaches them: tokens last an hour and signOut is
+// only called from the advisor's pages. An unknown endpoint answers 404 and an unsupported option on a
+// known one 422, both with code e2e_unsupported, so a gap in this stand-in is obvious, not silent.
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import { GATEWAY_URL, JWT_SECRET } from "./config.mjs";
 import { withRequest } from "./db.mjs";

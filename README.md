@@ -38,21 +38,28 @@ on pushes to `main`, as three checks: `verify` (lint, edge-function type check, 
 One Playwright test (`e2e/intake-to-pdf.spec.ts`) walks the prospect's path in a browser: a guest
 tells Lenore about the company in text, reviews the answers, picks a PEO, verifies an email with a
 6-digit code, certifies and signs, submits, then opens the Manuscript and downloads the PDF. It
-asserts the File ID, the PDF's file name and what the database recorded.
+asserts the File ID, that the intake's values (including the confirmed industry and the typed target
+start) reach the database, the Manuscript page and the PDF's text, and the PDF's file name.
 
 It needs no Supabase project. A real Postgres runs every migration in `supabase/migrations`, so row
 security, grants and triggers are the real ones, and the real `chamber-extract` handler answers
 Lenore. The stand-ins live in `e2e/stack/`: a gateway (`gateway.mjs`) that serves subsets of
 Supabase Auth (GoTrue) and the REST API (PostgREST), a scripted AI provider in place of the model,
-and a `dispatch-outbox` that accepts the call and sends no email. There is no Storage, so the path
+and a `dispatch-outbox` that enforces the real function's caller check (the service-role key, or a
+verified non-guest user) and sends no email. There is no Storage, so the path
 uploads no documents. The email code is read from a test-only gateway endpoint.
 
 It needs a Postgres you can create databases on: by default the superuser `postgres` with password
 `postgres` on `localhost:5432`, as for the SQL tests. `PGHOST`, `PGPORT` and `PGPASSWORD` point it
 elsewhere (the role must still be `postgres`). Every run **drops and recreates** the database
-`eaa_e2e`; `E2E_DATABASE` renames it (the name must contain `e2e`). It also creates Supabase's roles
-(`anon`, `authenticated`, `service_role`) in that server, so don't aim it at one that holds anything
-you care about.
+`eaa_e2e`; `E2E_DATABASE` renames it (lowercase letters, digits and underscores only, and it must
+contain `e2e`). It also creates Supabase's roles in that server (`anon`, `authenticated`,
+`service_role`, `supabase_auth_admin` and `supabase_storage_admin`, all NOLOGIN with no password) and
+resets the attributes of any that already exist, so don't aim it at one that holds anything you care
+about.
+
+It needs Node 22.18 or later (or 24), which runs the TypeScript `chamber-extract` handler without a
+build step. On 22.10 to 22.17, set `NODE_OPTIONS=--experimental-strip-types`.
 
 ```sh
 npx playwright install chromium   # once
@@ -60,9 +67,10 @@ npm run test:e2e
 ```
 
 Playwright starts the gateway on port 54399 and a production build of the app (`vite build`, then
-`vite preview`) on 4180; `E2E_GATEWAY_PORT` and `E2E_APP_PORT` change them. Locally it reuses a
-server already running on either port, so stop a stale one. A machine whose Chromium is not the
-build Playwright expects points `PLAYWRIGHT_CHROMIUM_EXECUTABLE` at its own.
+`vite preview`) on 4180; `E2E_GATEWAY_PORT` and `E2E_APP_PORT` change them. `E2E_AI_PROVIDER`
+selects which AI provider the scripted fake answers as (`lovable`, the default, or `anthropic`).
+Locally it reuses a server already running on either port, so stop a stale one. A machine whose
+Chromium is not the build Playwright expects points `PLAYWRIGHT_CHROMIUM_EXECUTABLE` at its own.
 
 Everything generated goes to `e2e/.output/` (git-ignored): the app build, traces and screenshots of
 failures in `test-results/`, and the HTML report in `report/`. Open it with

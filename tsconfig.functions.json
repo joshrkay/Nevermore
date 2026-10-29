@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
@@ -8,7 +9,8 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2022",
-    "types": []
+    "types": [],
+    "verbatimModuleSyntax": true
   },
   "include": ["supabase/functions/**/*.ts", "types/functions-shims.d.ts"],
   "exclude": ["supabase/functions/**/*.test.ts"]

@@ -12,7 +12,7 @@ const ADAPTERS = {
 /** The handler ends the user prompt with JSON.stringify(message), after either of two fixed labels. */
 const PROMPT_MESSAGE = /(?:New user message|User message): ("(?:[^"\\]|\\.)*")$/s;
 
-export function messageFromPrompt(prompt) {
+function messageFromPrompt(prompt) {
   const quoted = PROMPT_MESSAGE.exec(prompt)?.[1];
   return quoted === undefined ? null : JSON.parse(quoted);
 }
@@ -24,21 +24,14 @@ function toolArguments(message) {
 
 const requestUrl = (input) => (typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
 
-/**
- * `calls` records each model call (adapter and the prospect's message, null if the prompt did not
- * match the expected shape). `refused` records the requests the fake turned away; the handler turns
- * the thrown error into a generic 502, so `log` is where the offending URL stays visible.
- */
+/** The handler turns a refused call's thrown error into a generic 502, so `log` is where the offending URL stays visible. */
 export function createFakeAi({ log = () => {} } = {}) {
-  const calls = [];
-  const refused = [];
 
   async function fakeFetch(input, init = {}) {
     const url = requestUrl(input);
     const adapter = ADAPTERS[url];
     if (!adapter || (init.method ?? "GET") !== "POST") {
       const attempted = `${init.method ?? "GET"} ${url}`;
-      refused.push(attempted);
       log(`FAKE_AI_REFUSED: unexpected outbound call ${attempted}`);
       throw new Error(`fake AI provider: refusing unexpected outbound call ${attempted}`);
     }
@@ -48,7 +41,7 @@ export function createFakeAi({ log = () => {} } = {}) {
     const toolName = adapter === "lovable" ? body.tool_choice.function.name : body.tool_choice.name;
     const prompt = body.messages.find((m) => m.role === "user").content;
     const message = messageFromPrompt(prompt);
-    calls.push({ adapter, message });
+    if (message === null) log("FAKE_AI_UNRECOGNIZED_PROMPT: answering with FALLBACK_REPLY");
     const args = toolArguments(message);
 
     if (adapter === "lovable") {
@@ -79,5 +72,5 @@ export function createFakeAi({ log = () => {} } = {}) {
     });
   }
 
-  return { fetch: fakeFetch, calls, refused };
+  return { fetch: fakeFetch };
 }
