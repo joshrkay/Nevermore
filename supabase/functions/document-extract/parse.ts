@@ -7,6 +7,16 @@ export const MAX_AI_TEXT_CHARS = 20_000;
 /** Below this much text across the whole PDF, treat it as a scan. */
 export const MIN_PDF_TEXT_CHARS = 200;
 
+// Copies of MAX_EMPLOYEES and US_STATE_CODES in src/data/chamberValidation.ts, which the intake
+// database also enforces. This function can't import from src/, so src/data/schemaSync.test.ts
+// should compare them: a roster or state column past these limits would be refused on save.
+export const MAX_EMPLOYEES = 5000;
+export const US_STATE_CODES: ReadonlySet<string> = new Set([
+  "AK", "AL", "AR", "AS", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "GU", "HI", "IA", "ID", "IL", "IN", "KS", "KY",
+  "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MP", "MS", "MT", "NC", "ND", "NE", "NH", "NJ", "NM", "NV", "NY", "OH", "OK",
+  "OR", "PA", "PR", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VI", "VT", "WA", "WI", "WV", "WY",
+]);
+
 export type SniffedFormat = "pdf" | "xlsx" | "xls" | "docx" | "doc" | "csv" | "encrypted_office" | "unknown";
 
 export type ExtractionStatus = "extracted" | "no_data" | "unsupported" | "encrypted" | "unreadable" | "too_large" | "failed";
@@ -128,6 +138,12 @@ function parseMoney(s: string): number | null {
   return s && Number.isFinite(n) && n > 0 ? Math.round(n) : null;
 }
 
+/** A listed state code, or "" for anything else (a full state name, a typo, a non-US code). */
+const listedState = (raw: string) => {
+  const code = raw.toUpperCase();
+  return US_STATE_CODES.has(code) ? code : "";
+};
+
 export interface CensusEmployee {
   first_name: string;
   last_name: string;
@@ -168,7 +184,7 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1): Cens
         first_name: first,
         last_name: last,
         dob: cellText(row, map.dob),
-        state: cellText(row, map.state).toUpperCase(),
+        state: listedState(cellText(row, map.state)),
         title: cellText(row, map.title),
         salary: parseMoney(cellText(row, map.salary)),
         classification: cellText(row, map.classification),
@@ -186,12 +202,20 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1): Cens
 
 const isW2 = (c: string) => !/1099|contractor|freelanc/i.test(c);
 
-/** Roster plus the headcount, states, and contractor flag it implies. */
+/**
+ * Roster plus the headcount, states, and contractor flag it implies. The roster keeps the first
+ * MAX_EMPLOYEES people, since the intake can't store more; the headcount and states still cover
+ * every row, and the roster's location says how many were kept.
+ */
 export function censusCandidates(census: CensusResult): Candidate[] {
   const { employees, location } = census;
-  const states = [...new Set(employees.map((e) => e.state).filter((s) => /^[A-Z]{2}$/.test(s)))];
+  const states = [...new Set(employees.map((e) => e.state).filter(Boolean))];
+  const truncated = employees.length > MAX_EMPLOYEES;
+  const rosterLocation = truncated
+    ? `${location}; first ${MAX_EMPLOYEES.toLocaleString("en-US")} of ${employees.length.toLocaleString("en-US")} people kept`
+    : location;
   const candidates: Candidate[] = [
-    { field: "employees", value: employees, location },
+    { field: "employees", value: truncated ? employees.slice(0, MAX_EMPLOYEES) : employees, location: rosterLocation },
     { field: "employee_count", value: employees.filter((e) => isW2(e.classification)).length, location },
   ];
   if (states.length > 0) candidates.push({ field: "states", value: states, location });

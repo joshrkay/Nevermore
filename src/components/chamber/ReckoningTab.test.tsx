@@ -187,6 +187,20 @@ describe("ReckoningTab certification", () => {
     expect(submitButton()).toBeEnabled(); // can retry
   });
 
+  it("shows the reason, not the generic message, when the save says why it was refused", async () => {
+    onSubmit.mockResolvedValue({ message: "This intake changed elsewhere. Reload the latest and certify again." });
+    mount();
+    checkAll();
+    fillSigner();
+    sign();
+    fireEvent.click(submitButton());
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("This intake changed elsewhere. Reload the latest and certify again."),
+    );
+    expect(screen.queryByText("Certification recorded")).not.toBeInTheDocument();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
   it("passes the signed answers to the save, and doesn't confirm if they changed while it was pending", async () => {
     let finish!: (ok: boolean) => void;
     onSubmit.mockImplementation(() => new Promise<boolean>((r) => { finish = r; }));

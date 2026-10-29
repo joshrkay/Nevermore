@@ -14,6 +14,7 @@ import {
   consentStatements,
 } from "@/data/certification";
 import { useAuth } from "@/hooks/useAuth";
+import type { SubmitFailure } from "@/hooks/useChamberSession";
 import VerifyEmailGate from "./VerifyEmailGate";
 
 interface ReckoningTabProps {
@@ -21,8 +22,11 @@ interface ReckoningTabProps {
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
   sessionId: string | null;
-  /** `signedDataKey` is the answers as signed; the save is refused if they have moved on. */
-  onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean>;
+  /**
+   * `signedDataKey` is the answers as signed; the save is refused if they have moved on. Resolves
+   * `true` once certified, otherwise `false` or the reason, in words for the prospect.
+   */
+  onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   /** Whether this intake is already certified, or was changed after it was. */
   certification?: CertificationState;
 }
@@ -116,7 +120,7 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
       ...(chosenPeo ? { peo: chosenPeo } : {}),
     };
     const signedKey = dataKey;
-    const ok = await onSubmit(submission, signedKey);
+    const result = await onSubmit(submission, signedKey);
     setSubmitting(false);
     // The answers can change while the save is pending. The effect above has then already voided
     // the signature, so don't report a certification of answers that were not signed.
@@ -124,11 +128,11 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
       toast.error("Your information changed while we were saving. Review it and certify again.");
       return;
     }
-    if (ok) {
+    if (result === true) {
       setSubmitted({ name: signerName.trim(), title: signerTitle.trim(), at: signedAt });
       toast.success("Your certification was recorded and your submission is saved.");
     } else {
-      toast.error("We couldn't save your submission. Please try again.");
+      toast.error(typeof result === "object" ? result.message : "We couldn't save your submission. Please try again.");
     }
   };
 

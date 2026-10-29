@@ -95,6 +95,8 @@ export type Database = {
         Row: {
           chamber_data: Json
           created_at: string
+          // Set by the database: 1 on insert, +1 on every update. Writes name the version they saw.
+          data_version: number
           field_provenance: Json
           id: string
           status: string
@@ -106,6 +108,7 @@ export type Database = {
         Insert: {
           chamber_data?: Json
           created_at?: string
+          data_version?: never
           field_provenance?: Json
           id?: string
           status?: string
@@ -117,6 +120,7 @@ export type Database = {
         Update: {
           chamber_data?: Json
           created_at?: string
+          data_version?: never
           field_provenance?: Json
           id?: string
           status?: string
