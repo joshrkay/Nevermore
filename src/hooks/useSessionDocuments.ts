@@ -4,6 +4,7 @@ import type { Json } from "@/integrations/supabase/types";
 import { useAuth } from "@/hooks/useAuth";
 import { guessCategory, type DocumentCategory } from "@/data/documentCategories";
 import { parseExtraction, type CandidateField, type DocumentExtraction } from "@/data/documentCandidates";
+import { inspectUpload, MAX_DOCUMENTS_PER_INTAKE } from "@/lib/uploadCheck";
 
 export interface SessionDocument {
   id: string;
@@ -11,6 +12,8 @@ export interface SessionDocument {
   file_size: string;
   size_bytes: number | null;
   mime_type: string | null;
+  /** SHA-256 of the file; null for files uploaded before fingerprints were recorded. */
+  file_sha256: string | null;
   category: string;
   status: string;
   created_at: string;
@@ -18,12 +21,26 @@ export interface SessionDocument {
   extraction: DocumentExtraction;
 }
 
+/** Why a file wasn't uploaded, before or as it was stored. */
+export type UploadRejection = "empty" | "mismatch" | "duplicate" | "limit";
+
+export interface UploadOutcome {
+  saved: number;
+  /** Files that couldn't be stored (a network or storage error); they can be tried again. */
+  failed: string[];
+  /** Files that were refused, with why. */
+  rejected: { name: string; reason: UploadRejection }[];
+}
+
 export interface UseSessionDocumentsReturn {
   docs: SessionDocument[];
   isLoading: boolean;
   uploading: boolean;
-  /** Stores the files with this intake, then has Lenore read each one. */
-  upload: (files: File[]) => Promise<{ saved: number; failed: string[] }>;
+  /**
+   * Checks the files (contents match the name, not already in this intake, within the per-intake
+   * limit), stores the rest with this intake, then has Lenore read each one.
+   */
+  upload: (files: File[]) => Promise<UploadOutcome>;
   /** Deletes the record and the stored file. Resolves false if either couldn't be removed. */
   remove: (doc: SessionDocument) => Promise<boolean>;
   setCategory: (doc: SessionDocument, category: DocumentCategory) => Promise<boolean>;
@@ -33,7 +50,7 @@ export interface UseSessionDocumentsReturn {
   extract: (doc: SessionDocument) => Promise<void>;
 }
 
-const COLUMNS = "id, file_name, file_size, size_bytes, mime_type, category, status, created_at, storage_path, extraction, processing_started_at";
+const COLUMNS = "id, file_name, file_size, size_bytes, mime_type, file_sha256, category, status, created_at, storage_path, extraction, processing_started_at";
 const BUCKET = "documents";
 
 export function formatFileSize(bytes: number): string {
@@ -42,9 +59,14 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type Row = Omit<SessionDocument, "extraction"> & { extraction: unknown; processing_started_at?: string | null };
+type Row = Omit<SessionDocument, "extraction" | "file_sha256"> & {
+  extraction: unknown;
+  file_sha256?: string | null;
+  processing_started_at?: string | null;
+};
 const fromRow = ({ processing_started_at: _startedAt, ...row }: Row): SessionDocument => ({
   ...row,
+  file_sha256: row.file_sha256 ?? null,
   extraction: parseExtraction(row.extraction),
 });
 
@@ -138,42 +160,62 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
     }
   }, [patchDoc]);
 
-  const upload = useCallback(async (files: File[]) => {
+  const upload = useCallback(async (files: File[]): Promise<UploadOutcome> => {
     const sid = sessionRef.current;
-    if (!userId || !sid || files.length === 0) return { saved: 0, failed: files.map((f) => f.name) };
+    if (!userId || !sid || files.length === 0) return { saved: 0, failed: files.map((f) => f.name), rejected: [] };
     setUploading(true);
 
-    const pending: SessionDocument[] = files.map((f) => ({
+    // Check every file before storing any, so a refusal is explained before anything moves.
+    const rejected: UploadOutcome["rejected"] = [];
+    const accepted: { file: File; contentType: string; sha256: string | null }[] = [];
+    const known = new Set(docsRef.current.map((d) => d.file_sha256).filter(Boolean));
+    let room = MAX_DOCUMENTS_PER_INTAKE - docsRef.current.length;
+    for (const file of files) {
+      const checked = await inspectUpload(file);
+      if ("reason" in checked) {
+        rejected.push({ name: file.name, reason: checked.reason });
+      } else if (checked.sha256 && known.has(checked.sha256)) {
+        rejected.push({ name: file.name, reason: "duplicate" });
+      } else if (room <= 0) {
+        rejected.push({ name: file.name, reason: "limit" });
+      } else {
+        if (checked.sha256) known.add(checked.sha256);
+        room--;
+        accepted.push({ file, contentType: checked.contentType, sha256: checked.sha256 });
+      }
+    }
+
+    const pending: SessionDocument[] = accepted.map(({ file: f, contentType, sha256 }) => ({
       id: `pending-${crypto.randomUUID()}`,
       file_name: f.name,
       file_size: formatFileSize(f.size),
       size_bytes: f.size,
-      mime_type: f.type || null,
+      mime_type: contentType,
+      file_sha256: sha256,
       category: guessCategory(f.name),
       status: "uploading",
       created_at: new Date().toISOString(),
       storage_path: null,
       extraction: parseExtraction(null),
     }));
-    setDocs((prev) => [...prev, ...pending]);
+    if (sessionRef.current === sid) setDocs((prev) => [...prev, ...pending]);
 
     const saved: SessionDocument[] = [];
     const failed: string[] = [];
-    for (const [i, file] of files.entries()) {
+    for (const [i, { file, contentType, sha256 }] of accepted.entries()) {
       const pendingId = pending[i].id;
-      const dropPending = () => {
-        failed.push(file.name);
-        setDocs((prev) => prev.filter((d) => d.id !== pendingId));
-      };
+      const dropPending = () => setDocs((prev) => prev.filter((d) => d.id !== pendingId));
       // Unique prefix avoids collisions; strip characters storage keys don't allow.
       const safeName = file.name.replace(/[^\w.-]+/g, "_");
       const storagePath = `${userId}/${sid}/${crypto.randomUUID()}_${safeName}`;
 
+      // Stored as the type its contents showed, not the one the browser guessed.
       const { error: storageError } = await supabase.storage
         .from(BUCKET)
-        .upload(storagePath, file, { contentType: file.type || undefined });
+        .upload(storagePath, file, { contentType });
       if (storageError) {
         console.error("Failed to upload a document:", storageError.message);
+        failed.push(file.name);
         dropPending();
         continue;
       }
@@ -186,7 +228,8 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
           file_name: file.name,
           file_size: formatFileSize(file.size),
           size_bytes: file.size,
-          mime_type: file.type || null,
+          mime_type: contentType,
+          file_sha256: sha256,
           category: pending[i].category,
           storage_path: storagePath,
           status: "uploaded",
@@ -197,6 +240,11 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         console.error("Failed to save a document record:", dbError?.message);
         // Don't leave an untracked file behind.
         await supabase.storage.from(BUCKET).remove([storagePath]);
+        // The database refuses a second copy of a file (23505) and a 26th document (23514).
+        const code = (dbError as { code?: string } | null)?.code;
+        if (code === "23505") rejected.push({ name: file.name, reason: "duplicate" });
+        else if (code === "23514") rejected.push({ name: file.name, reason: "limit" });
+        else failed.push(file.name);
         dropPending();
         continue;
       }
@@ -213,7 +261,7 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         await extract(doc);
       }
     })();
-    return { saved: saved.length, failed };
+    return { saved: saved.length, failed, rejected };
   }, [userId, extract]);
 
   const remove = useCallback(async (doc: SessionDocument) => {
@@ -234,6 +282,7 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         file_size: doc.file_size,
         size_bytes: doc.size_bytes,
         mime_type: doc.mime_type,
+        file_sha256: doc.file_sha256,
         category: doc.category,
         storage_path: doc.storage_path,
         status: doc.status,

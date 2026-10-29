@@ -75,13 +75,14 @@ describe("useSessionDocuments", () => {
     const file = new File(["First,Last\nAnn,Lee"], "Employee Census.csv", { type: "text/csv" });
     let outcome: unknown;
     await act(async () => { outcome = await result.current.upload([file]); });
-    expect(outcome).toEqual({ saved: 1, failed: [] });
+    expect(outcome).toEqual({ saved: 1, failed: [], rejected: [] });
 
     const path = calls.find((c) => c.op === "storage.upload")!.args[0] as string;
     expect(path).toMatch(/^u1\/s1\/[0-9a-f-]+_Employee_Census\.csv$/);
     expect(calls.find((c) => c.op === "insert")!.args[0]).toMatchObject({
       user_id: "u1", session_id: "s1", file_name: "Employee Census.csv", size_bytes: file.size,
       mime_type: "text/csv", category: "employee_census", storage_path: path,
+      file_sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     await waitFor(() => expect(calls).toContainEqual({ op: "invoke", args: ["document-extract", { body: { document_id: "d9" } }] }));
     await waitFor(() => expect(result.current.docs[0].status).toBe("extracted"));
@@ -93,11 +94,61 @@ describe("useSessionDocuments", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     let outcome: unknown;
     await act(async () => { outcome = await result.current.upload([new File(["x"], "a.csv")]); });
-    expect(outcome).toEqual({ saved: 0, failed: ["a.csv"] });
+    expect(outcome).toEqual({ saved: 0, failed: ["a.csv"], rejected: [] });
     const path = calls.find((c) => c.op === "storage.upload")!.args[0];
     expect(calls).toContainEqual({ op: "storage.remove", args: [[path]] });
     expect(result.current.docs).toEqual([]);
     expect(calls.some((c) => c.op === "invoke")).toBe(false);
+  });
+
+  it("refuses a file whose contents don't match its name, without storing anything", async () => {
+    const { result } = renderHook(() => useSessionDocuments("s1"));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    let outcome: unknown;
+    const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], "census.pdf");
+    await act(async () => { outcome = await result.current.upload([png]); });
+    expect(outcome).toEqual({ saved: 0, failed: [], rejected: [{ name: "census.pdf", reason: "mismatch" }] });
+    expect(calls.some((c) => c.op === "storage.upload")).toBe(false);
+    expect(result.current.docs).toEqual([]);
+  });
+
+  it("stores a file once per intake, whether it's already there or dropped twice", async () => {
+    const hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"; // sha256("abc")
+    listRows = [row({ file_sha256: hash })];
+    insertResult = { data: row({ id: "d9" }), error: null };
+    const { result } = renderHook(() => useSessionDocuments("s1"));
+    await waitFor(() => expect(result.current.docs).toHaveLength(1));
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await result.current.upload([new File(["abc"], "again.csv"), new File(["x,y"], "new.csv"), new File(["x,y"], "new copy.csv")]);
+    });
+    expect(outcome).toEqual({
+      saved: 1,
+      failed: [],
+      rejected: [{ name: "again.csv", reason: "duplicate" }, { name: "new copy.csv", reason: "duplicate" }],
+    });
+    expect(calls.filter((c) => c.op === "storage.upload")).toHaveLength(1);
+  });
+
+  it("treats the database's refusal of a second copy as a duplicate, and cleans up the stored file", async () => {
+    insertResult = { data: null, error: { message: "duplicate key", code: "23505" } as { message: string } };
+    const { result } = renderHook(() => useSessionDocuments("s1"));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    let outcome: unknown;
+    await act(async () => { outcome = await result.current.upload([new File(["abc"], "a.csv")]); });
+    expect(outcome).toEqual({ saved: 0, failed: [], rejected: [{ name: "a.csv", reason: "duplicate" }] });
+    const path = calls.find((c) => c.op === "storage.upload")!.args[0];
+    expect(calls).toContainEqual({ op: "storage.remove", args: [[path]] });
+  });
+
+  it("stops at 25 documents an intake", async () => {
+    listRows = Array.from({ length: 24 }, (_, i) => row({ id: `d${i}`, file_sha256: null }));
+    insertResult = { data: row({ id: "d99" }), error: null };
+    const { result } = renderHook(() => useSessionDocuments("s1"));
+    await waitFor(() => expect(result.current.docs).toHaveLength(24));
+    let outcome: unknown;
+    await act(async () => { outcome = await result.current.upload([new File(["a"], "one.csv"), new File(["b"], "two.csv")]); });
+    expect(outcome).toEqual({ saved: 1, failed: [], rejected: [{ name: "two.csv", reason: "limit" }] });
   });
 
   it("deletes both the record and the stored file", async () => {
