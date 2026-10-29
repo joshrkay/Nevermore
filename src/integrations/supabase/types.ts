@@ -133,6 +133,7 @@ export type Database = {
           created_at: string
           extraction: Json | null
           file_name: string
+          file_sha256: string | null
           file_size: string
           id: string
           metadata: string | null
@@ -149,6 +150,7 @@ export type Database = {
           created_at?: string
           extraction?: Json | null
           file_name: string
+          file_sha256?: string | null
           file_size: string
           id?: string
           metadata?: string | null
@@ -165,6 +167,7 @@ export type Database = {
           created_at?: string
           extraction?: Json | null
           file_name?: string
+          file_sha256?: string | null
           file_size?: string
           id?: string
           metadata?: string | null

@@ -1,11 +1,12 @@
 // What prospects can upload, and what each kind of document is good for. None is required:
-// recommended categories are suggestions, and a missing one never blocks submission.
+// recommended categories are suggestions, and a missing one never blocks submission. The keys are
+// the values `documents.category` accepts (20261029090000_document_ingestion.sql).
 
 export type DocumentCategory =
-  | "census"
-  | "benefits"
-  | "payroll"
-  | "workers_comp"
+  | "employee_census"
+  | "benefits_summary"
+  | "payroll_report"
+  | "workers_comp_loss_runs"
   | "peo_invoice"
   | "prior_proposal"
   | "other";
@@ -20,29 +21,29 @@ export interface DocumentCategoryInfo {
 
 export const DOCUMENT_CATEGORIES: DocumentCategoryInfo[] = [
   {
-    key: "census",
+    key: "employee_census",
     label: "Employee census",
     guidance: "One row per employee: name, date of birth, work state, title, pay, and W-2 or 1099.",
     example: "An employee export from your payroll system.",
     recommended: true,
   },
   {
-    key: "benefits",
+    key: "benefits_summary",
     label: "Benefits summary",
     guidance: "Your current medical plan and what you pay for it, so plans can be compared like for like.",
     example: "A summary of benefits, plan design sheet, or renewal notice.",
     recommended: true,
   },
   {
-    key: "payroll",
+    key: "payroll_report",
     label: "Payroll report",
     guidance: "Recent wages by employee or by state, and how often you run payroll.",
     example: "A payroll register or year-to-date summary.",
     recommended: true,
   },
   {
-    key: "workers_comp",
-    label: "Workers' comp history",
+    key: "workers_comp_loss_runs",
+    label: "Workers' comp loss runs",
     guidance: "Your policy declarations and claims history, used to price workers' comp.",
     example: "A W/C declarations page or loss runs from your carrier.",
     recommended: true,
@@ -83,12 +84,12 @@ export function categoryInfo(key: string): DocumentCategoryInfo {
 /** A starting category from the file name; the prospect can change it. */
 export function guessCategory(fileName: string): DocumentCategory {
   const lower = fileName.toLowerCase();
-  if (/census|employee|roster/.test(lower)) return "census";
-  if (/loss.?run|\bw.?c\b|work.*comp|dec.?page/.test(lower)) return "workers_comp";
-  if (/payroll|register|wage/.test(lower)) return "payroll";
+  if (/census|employee|roster/.test(lower)) return "employee_census";
+  if (/loss.?run|\bw.?c\b|work.*comp|dec.?page/.test(lower)) return "workers_comp_loss_runs";
+  if (/payroll|register|wage/.test(lower)) return "payroll_report";
   if (/proposal|quote/.test(lower)) return "prior_proposal";
   if (/invoice|bill|statement/.test(lower)) return "peo_invoice";
-  if (/benefit|plan|sbc|renewal|medical/.test(lower)) return "benefits";
+  if (/benefit|plan|sbc|renewal|medical/.test(lower)) return "benefits_summary";
   return "other";
 }
 

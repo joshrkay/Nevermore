@@ -12,7 +12,7 @@ let uploadGate: Promise<void> | null = null;
 
 const row = (over: Record<string, unknown> = {}) => ({
   id: "d1", file_name: "census.csv", file_size: "1 KB", size_bytes: 1024, mime_type: "text/csv",
-  category: "census", status: "uploaded", created_at: "2026-10-20T00:00:00Z",
+  category: "employee_census", status: "uploaded", created_at: "2026-10-20T00:00:00Z",
   storage_path: "u1/s1/x_census.csv", extraction: null, ...over,
 });
 
@@ -81,7 +81,7 @@ describe("useSessionDocuments", () => {
     expect(path).toMatch(/^u1\/s1\/[0-9a-f-]+_Employee_Census\.csv$/);
     expect(calls.find((c) => c.op === "insert")!.args[0]).toMatchObject({
       user_id: "u1", session_id: "s1", file_name: "Employee Census.csv", size_bytes: file.size,
-      mime_type: "text/csv", category: "census", storage_path: path,
+      mime_type: "text/csv", category: "employee_census", storage_path: path,
     });
     await waitFor(() => expect(calls).toContainEqual({ op: "invoke", args: ["document-extract", { body: { document_id: "d9" } }] }));
     await waitFor(() => expect(result.current.docs[0].status).toBe("extracted"));
