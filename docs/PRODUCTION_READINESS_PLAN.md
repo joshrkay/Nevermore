@@ -855,7 +855,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### I-4.1 Unit tests for validation and schema
 - **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** FE · **Depends:** A-2.2 · **Milestone:** M1
-- **Built:** `npm test` runs Vitest with 624 tests in 44 files, including `chamberValidation.test.ts` and `provenance.test.ts`. `src/test` holds only `setup.ts`, so the placeholder is gone.
+- **Built:** `npm test` runs Vitest with 685 tests in 48 files, including `chamberValidation.test.ts` and `provenance.test.ts`. `src/test` holds only `setup.ts`, so the placeholder is gone.
 
 #### I-4.2 Integration test harness on local Supabase
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** J-1.1, A-1.2 · **Milestone:** M1
@@ -991,7 +991,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Criterion | Status |
 |---|---|
-| All M1 stories are done. | **Not met.** 15 of 54 are DONE or SUPERSEDED. |
+| All M1 stories are done. | **Not met.** 16 of 54 are DONE or SUPERSEDED. |
 | A test prospect completes text intake, review, certification, submission, and PDF download with real data. | **Shown in CI against stand-ins, not live.** The end-to-end test (I-4.3) completes text intake, review, certification, submission and PDF download in a browser with a scripted AI model and a Supabase stand-in. It is not shown on a deployed environment, with a real model or real Supabase, or with document upload. |
 | No "Meridian" text appears in the live path. | **Mostly met.** The live Manuscript never renders the sample (tested). 'Meridian Creative Group' remains in `chamberTypes.ts` and an `AuthPage` placeholder (D-1.5). |
 | Two sessions cannot access each other's data (automated test). | **Met at the database level.** The SQL matrix covers cross-user reads and writes and runs in CI (not run in this refresh). There is no HTTP-level test. |

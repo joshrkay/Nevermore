@@ -56,7 +56,8 @@ elsewhere (the role must still be `postgres`). Every run **drops and recreates**
 contain `e2e`). It also creates Supabase's roles in that server (`anon`, `authenticated`,
 `service_role`, `supabase_auth_admin` and `supabase_storage_admin`, all NOLOGIN with no password) and
 resets the attributes of any that already exist, so don't aim it at one that holds anything you care
-about.
+about. Earlier versions of this stack also created an `authenticator` login role with the password
+`postgres`. If one is still in your server, drop it with `DROP ROLE authenticator`.
 
 It needs Node 22.18 or later (or 24), which runs the TypeScript `chamber-extract` handler without a
 build step. On 22.10 to 22.17, set `NODE_OPTIONS=--experimental-strip-types`.
