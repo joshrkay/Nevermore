@@ -3,7 +3,7 @@
 // spent), so finishing setup later releases them. No imports, so it runs under Deno and Vitest
 // alike.
 
-import { EMAIL_PATTERN, oneLine } from "./messages.ts";
+import { EMAIL_PATTERN, oneLine, type OutboxKind } from "./messages.ts";
 
 export type Readiness<T> = ({ ok: true } & T) | { ok: false; problems: string[] };
 
@@ -71,4 +71,24 @@ export function readDispatchConfig(env: Env): DispatchConfig {
         ? { ok: true, from: from!, supportEmail: supportEmail!, responseTime: responseTime! }
         : { ok: false, problems: prospectProblems },
   };
+}
+
+export interface BlockedKind {
+  kind: OutboxKind;
+  /** The settings in the way, by name and never by value: safe to store on an event and show an advisor. */
+  problem: string;
+}
+
+/**
+ * The kinds that cannot be sent right now, each with why. `providerProblem` (no usable email
+ * provider) blocks both. Their events stay queued and go out once it is fixed, and each says why in
+ * the meantime.
+ */
+export function blockedKinds(config: DispatchConfig, providerProblem: string | null): BlockedKind[] {
+  const out: BlockedKind[] = [];
+  for (const [kind, readiness] of [["advisor_notification", config.advisor], ["prospect_confirmation", config.prospect]] as const) {
+    const problems = [...(providerProblem ? [providerProblem] : []), ...(readiness.ok ? [] : readiness.problems)];
+    if (problems.length > 0) out.push({ kind, problem: problems.join("; ") });
+  }
+  return out;
 }

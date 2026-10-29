@@ -20,6 +20,7 @@ const ManuscriptPage = lazy(() => import("./pages/ManuscriptPage"));
 // Advisor tools are only for advisors; keep them out of the prospect's bundle.
 const AdvisorDashboardPage = lazy(() => import("./pages/advisor/AdvisorDashboardPage"));
 const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissionPage"));
+const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
 
 const queryClient = new QueryClient();
 
@@ -49,6 +50,7 @@ const App = () => (
                 <Route path="/manuscript/demo" element={<ManuscriptPage demo />} />
                 <Route path="/advisor" element={<RequireAdvisor><AdvisorDashboardPage /></RequireAdvisor>} />
                 <Route path="/advisor/submissions/:id" element={<RequireAdvisor><AdvisorSubmissionPage /></RequireAdvisor>} />
+                <Route path="/advisor/outbox" element={<RequireAdvisor><AdvisorOutboxPage /></RequireAdvisor>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>

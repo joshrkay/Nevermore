@@ -1,7 +1,9 @@
 // The email provider behind an adapter, as the AI provider is (plan decision D7: a transactional
 // provider on a verified subdomain). Switching providers means adding one adapter here and
-// changing one secret, not touching the dispatcher. No imports, so it runs under Deno and
-// Vitest alike.
+// changing one secret, not touching the dispatcher. No imports beyond a sibling module, so it runs
+// under Deno and Vitest alike.
+
+import { oneLine } from "./messages.ts";
 
 export interface EmailMessage {
   /** Must be on a domain the provider has verified for this account. */
@@ -65,8 +67,9 @@ export function selectEmailAdapter(env: (name: string) => string | undefined): A
 }
 
 /**
- * Why a send failed, as a kind: never the provider's response body, which can echo the message.
- * `auth` covers a bad key and a sender domain the provider has not verified; both need an operator.
+ * Why a send failed, as a kind. `auth` covers a bad key and a sender domain the provider has not
+ * verified; both need an operator. The provider's own explanation travels separately as `detail`,
+ * after being cleaned: see `providerErrorDetail`.
  */
 export type SendFailureKind = "timeout" | "network" | "rate_limited" | "auth" | "provider_error";
 
@@ -74,6 +77,11 @@ export interface SendFailure {
   ok: false;
   kind: SendFailureKind;
   httpStatus: number | null;
+  /**
+   * What the provider said was wrong, cleaned for storage (`providerErrorDetail`); absent when it
+   * said nothing usable. For the event's `last_error` only, never for logs.
+   */
+  detail?: string;
   /**
    * The message may have been accepted anyway. The outbox keeps the frozen message and key of an
    * ambiguous failure, so the retry cannot send a second, different copy.
@@ -89,6 +97,36 @@ export interface SendDeps {
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+const DETAIL_MAX = 140;
+
+// Anything address-shaped, and anything that could be a key, token or idempotency key: long runs of
+// token characters. Error messages are free text and can quote the request they refuse.
+const ADDRESS = /[^\s@<>,;"'()[\]\\]+@[^\s@<>,;"'()[\]\\]+/g;
+const TOKEN = /[A-Za-z0-9_\-+/=]{24,}/g;
+
+/**
+ * The provider's explanation of a refused send, from its JSON error body, cleaned for storage on the
+ * event: the error name and message only, with addresses and token-like strings replaced, flattened
+ * to one line and capped. This is what makes `last_error` say "the sender domain is not verified"
+ * instead of just "auth:403". Anything that is not a JSON object with a message (a proxy's HTML
+ * error page, say) yields nothing. The raw body is never kept.
+ */
+export function providerErrorDetail(body: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+  const { name, message } = parsed as { name?: unknown; message?: unknown };
+  if (typeof message !== "string") return undefined;
+  const clean = oneLine(message.replace(ADDRESS, "[email]").replace(TOKEN, "[redacted]"), DETAIL_MAX);
+  if (clean === null) return undefined;
+  const label = typeof name === "string" && /^[A-Za-z0-9_.-]{1,40}$/.test(name) ? `${name}: ` : "";
+  return oneLine(`${label}${clean}`, DETAIL_MAX) ?? undefined;
+}
 
 /**
  * The only answers that prove the provider did not send. This is an allowlist on purpose: a status
@@ -126,9 +164,14 @@ export async function sendEmail(
     }
     const status = response.status;
     const ambiguous = !DEFINITIVE_STATUSES.has(status);
-    if (status === 429) return { ok: false, kind: "rate_limited", httpStatus: status, ambiguous };
-    if (status === 401 || status === 403) return { ok: false, kind: "auth", httpStatus: status, ambiguous };
-    if (status < 200 || status >= 300) return { ok: false, kind: "provider_error", httpStatus: status, ambiguous };
+    if (status < 200 || status >= 300) {
+      // Read while the timeout is still armed: a body that never ends must not hang the batch.
+      const detail = providerErrorDetail(await response.text().catch(() => ""));
+      const failure = { ok: false, httpStatus: status, ambiguous, ...(detail ? { detail } : {}) } as const;
+      if (status === 429) return { ...failure, kind: "rate_limited" };
+      if (status === 401 || status === 403) return { ...failure, kind: "auth" };
+      return { ...failure, kind: "provider_error" };
+    }
     // Accepted. An unreadable body must not turn an accepted message into a retry (a duplicate).
     const json = await response.json().catch(() => null);
     return { ok: true, messageId: adapter.parseResponse(json) };

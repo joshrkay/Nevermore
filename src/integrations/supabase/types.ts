@@ -283,6 +283,29 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      advisor_list_outbox_events: {
+        Args: { p_limit?: number; p_status?: string | null }
+        Returns: {
+          attempts: number
+          claim_lapsed: boolean
+          claimed_at: string | null
+          company_name: string | null
+          created_at: string
+          frozen: boolean
+          id: string
+          kind: string
+          last_error: string | null
+          last_requeued_at: string | null
+          next_attempt_at: string
+          provider_message_id: string | null
+          reference: string | null
+          requeue_count: number
+          resubmission: boolean
+          sent_at: string | null
+          session_id: string
+          status: string
+        }[]
+      }
       advisor_list_submissions: {
         Args: { p_status?: string | null }
         Returns: {
@@ -303,6 +326,18 @@ export type Database = {
           updated_at: string
           verified_fields: number
         }[]
+      }
+      advisor_outbox_summary: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          events: number
+          oldest_due_at: string | null
+          status: string
+        }[]
+      }
+      advisor_requeue_outbox_event: {
+        Args: { event_id: string; rebuild_payload?: boolean }
+        Returns: boolean
       }
       consume_ai_quota: {
         Args: { per_day: number; per_minute: number }

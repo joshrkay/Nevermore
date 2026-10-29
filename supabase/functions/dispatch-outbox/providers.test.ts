@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createResendAdapter, selectEmailAdapter, sendEmail, type EmailMessage } from "./providers";
+import { createResendAdapter, providerErrorDetail, selectEmailAdapter, sendEmail, type EmailMessage } from "./providers";
 
 const message: EmailMessage = {
   from: "Edgar Allan Advisory <intake@mail.example.com>",
@@ -75,9 +75,40 @@ describe("sendEmail", () => {
     [422, "provider_error", false],
     [500, "provider_error", true],
     [503, "provider_error", true],
-  ])("maps HTTP %i to %s without exposing the response body", async (status, kind, ambiguous) => {
+  ])("maps HTTP %i to %s, keeping the provider's explanation only once cleaned", async (status, kind, ambiguous) => {
     const result = await sendEmail(adapter, message, "k", { fetch: respond(status, { message: "echoes jo@acme.example" }) });
-    expect(result).toEqual({ ok: false, kind, httpStatus: status, ambiguous });
+    expect(result).toEqual({ ok: false, kind, httpStatus: status, ambiguous, detail: "echoes [email]" });
+  });
+
+  it("carries what the provider said was wrong, so an operator can tell a bad sender from a bad key", async () => {
+    const result = await sendEmail(adapter, message, "k", {
+      fetch: respond(403, { statusCode: 403, name: "validation_error", message: "The mail.example.com domain is not verified. Add DNS records." }),
+    });
+    expect(result).toEqual({
+      ok: false, kind: "auth", httpStatus: 403, ambiguous: false,
+      detail: "validation_error: The mail.example.com domain is not verified. Add DNS records.",
+    });
+  });
+
+  it("has no detail when the provider's answer is not a JSON error with a message", async () => {
+    for (const body of ["<html>Bad Gateway</html>", "", "[]", '{"name":"x"}', '{"message":5}']) {
+      const result = await sendEmail(adapter, message, "k", { fetch: respond(502, body) });
+      expect(result).toEqual({ ok: false, kind: "provider_error", httpStatus: 502, ambiguous: true });
+    }
+  });
+
+  it("does not hang on an error body that never ends", async () => {
+    const fetch = vi.fn((_url: string, init: RequestInit) => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"message":"slow'));
+          init.signal?.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")));
+        },
+      });
+      return Promise.resolve(new Response(stream, { status: 500 }));
+    });
+    const result = await sendEmail(adapter, message, "k", { fetch: fetch as unknown as typeof globalThis.fetch, timeoutMs: 30 });
+    expect(result).toEqual({ ok: false, kind: "provider_error", httpStatus: 500, ambiguous: true });
   });
 
   // Only an answer that proves nothing was sent is definitive; the retry may then rebuild the
@@ -113,6 +144,13 @@ describe("sendEmail", () => {
       expect(result).toMatchObject({ ok: false, kind: "provider_error", httpStatus: status, ambiguous: true });
     });
 
+    it("keeps the same classification whether or not there is a detail", async () => {
+      const plain = await sendEmail(adapter, message, "k", { fetch: respond(422) });
+      const detailed = await sendEmail(adapter, message, "k", { fetch: respond(422, { message: "Invalid `to` field" }) });
+      expect(plain).toMatchObject({ kind: "provider_error", ambiguous: false });
+      expect(detailed).toMatchObject({ kind: "provider_error", ambiguous: false });
+    });
+
     it("shows a 409 as provider_error:409, not as something it is not", async () => {
       expect(await sendEmail(adapter, message, "k", { fetch: respond(409) })).toEqual({ ok: false, kind: "provider_error", httpStatus: 409, ambiguous: true });
     });
@@ -140,5 +178,41 @@ describe("sendEmail", () => {
       }));
     const result = await sendEmail(adapter, message, "k", { fetch: fetch as unknown as typeof globalThis.fetch, timeoutMs: 20 });
     expect(result).toEqual({ ok: false, kind: "timeout", httpStatus: null, ambiguous: true });
+  });
+});
+
+describe("providerErrorDetail", () => {
+  const detail = (message: string, name?: string) => providerErrorDetail(JSON.stringify({ name, message }));
+
+  it("prefixes the error name when it is a plain identifier", () => {
+    expect(detail("Missing `to` field.", "missing_required_field")).toBe("missing_required_field: Missing `to` field.");
+    expect(detail("No name")).toBe("No name");
+    expect(detail("Odd name", "has spaces and <markup>")).toBe("Odd name");
+  });
+
+  it("replaces addresses, wherever they sit", () => {
+    expect(detail("Invalid address jo@acme.example in to; cc <a.b+c@d.example>, x@y.example")).toBe("Invalid address [email] in to; cc <[email]>, [email]");
+  });
+
+  it("replaces anything that could be a key, token or idempotency key", () => {
+    const out = detail("Key re_AbCdEfGh12345678_ijklMNOP rejected; Idempotency-Key outbox-2f0c1a7e-3b1d-4c9e-9d5a-0123456789ab-0123456789ab in use")!;
+    expect(out).not.toMatch(/re_AbCd|outbox-2f0c/);
+    expect(out).toContain("[redacted]");
+    expect(out).toContain("rejected");
+  });
+
+  it("is one capped line without control or invisible characters", () => {
+    const out = detail(`line one\r\nBcc: x\u202e${"y ".repeat(200)}`)!;
+    expect(out).not.toMatch(/[\r\n\u202e]/);
+    expect(Array.from(out).length).toBeLessThanOrEqual(140);
+    expect(out.endsWith("…")).toBe(true);
+  });
+
+  it("says nothing for what it cannot use", () => {
+    expect(providerErrorDetail("not json")).toBeUndefined();
+    expect(providerErrorDetail("null")).toBeUndefined();
+    expect(providerErrorDetail("[1]")).toBeUndefined();
+    expect(providerErrorDetail('{"message":"   "}')).toBeUndefined();
+    expect(providerErrorDetail('{"message":{"nested":true}}')).toBeUndefined();
   });
 });

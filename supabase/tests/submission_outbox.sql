@@ -1323,3 +1323,259 @@ BEGIN
   END IF;
   RAISE NOTICE 'submission_outbox: cross-transaction fault cases passed';
 END $$;
+
+-- ====================================================================================
+-- Operations migration (G-1.1 to G-1.3): the claim vocabulary, the richer advisor alert,
+-- config notes and requeue audit. Loaded last, over a queue that has seen every earlier
+-- migration, with events in the old 'sending' state to prove the upgrade path.
+-- (The advisor functions need the advisor role tables; see advisor_outbox.sql.)
+-- ====================================================================================
+DELETE FROM public.chamber_sessions;
+DO $$
+DECLARE
+  u uuid := gen_random_uuid();
+  sid uuid;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', false);
+  INSERT INTO auth.users (id, email) VALUES (u, 'ops@acme.example');
+  sid := pg_temp.new_session(u, 'Ops Co');
+  DELETE FROM public.outbox_events;
+  -- One in flight under the old 5 minute lease, one lapsed with every attempt used.
+  PERFORM pg_temp.mk_event(sid, 'sending', 1, interval '3 minutes');
+  PERFORM pg_temp.mk_event(sid, 'sending', 5, interval '-1 minute');
+  PERFORM pg_temp.mk_event(sid, 'pending', 0);
+  PERFORM pg_temp.mk_event(sid, 'sent', 1);
+  PERFORM pg_temp.mk_event(sid, 'dead', 5);
+END $$;
+
+\i supabase/migrations/20261027090000_outbox_operations.sql
+
+DO $$
+DECLARE
+  u uuid := gen_random_uuid();
+  sid uuid;
+  e1 uuid;
+  e2 uuid;
+  ev public.outbox_events;
+  r record;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', false);
+  IF current_setting('lock_timeout') NOT IN ('0', '0ms') THEN
+    RAISE EXCEPTION 'FAIL: the operations migration left lock_timeout at %', current_setting('lock_timeout');
+  END IF;
+
+  -- ---------- The upgrade: 'sending' became 'claimed', nothing else moved ----------
+  IF EXISTS (SELECT 1 FROM public.outbox_events WHERE status = 'sending') THEN RAISE EXCEPTION 'FAIL: a sending event survived the migration'; END IF;
+  IF (SELECT count(*) FROM public.outbox_events WHERE status = 'claimed') <> 2
+     OR (SELECT count(*) FROM public.outbox_events WHERE status = 'claimed' AND claimed_at IS NOT NULL) <> 2
+     OR (SELECT count(*) FROM public.outbox_events WHERE status IN ('pending', 'sent', 'dead') AND claimed_at IS NOT NULL) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: claimed_at was not backfilled for exactly the in-flight claims';
+  END IF;
+  -- The live claim keeps its lease, so its backfilled claimed_at is before now.
+  IF EXISTS (SELECT 1 FROM public.outbox_events WHERE status = 'claimed' AND claimed_at > now()) THEN RAISE EXCEPTION 'FAIL: claimed_at is in the future'; END IF;
+  PERFORM pg_temp.must_refuse($q$INSERT INTO public.outbox_events (kind, session_id, dedupe_key, payload, status)
+    SELECT 'advisor_notification', id, 'x', '{}', 'sending' FROM public.chamber_sessions LIMIT 1$q$, 'the old status value');
+  IF pg_get_indexdef('public.outbox_events_due_idx'::regclass) NOT LIKE '%WHERE (status = ANY (ARRAY[''pending''::text, ''claimed''::text]))%' THEN
+    RAISE EXCEPTION 'FAIL: the due index still follows the old status: %', pg_get_indexdef('public.outbox_events_due_idx'::regclass);
+  END IF;
+  IF to_regclass('public.outbox_events_status_created_idx') IS NULL THEN RAISE EXCEPTION 'FAIL: the advisor list index is missing'; END IF;
+  IF to_regprocedure('public.requeue_outbox_event(uuid,boolean)') IS NOT NULL THEN RAISE EXCEPTION 'FAIL: the old requeue signature is still there'; END IF;
+
+  -- ---------- Claiming: a 10 minute lease, claimed_at set, released on every outcome ----------
+  DELETE FROM public.outbox_events;
+  INSERT INTO auth.users (id, email) VALUES (u, 'lease@acme.example');
+  sid := pg_temp.new_session(u, 'Lease Co');
+  e1 := pg_temp.mk_event(sid, 'pending', 0);
+  IF pg_temp.svc('SELECT count(*) FROM public.claim_outbox_events(ARRAY[''advisor_notification''], 10, 5)')::int <> 1 THEN
+    RAISE EXCEPTION 'FAIL: the pending event was not claimed';
+  END IF;
+  ev := pg_temp.ev(e1);
+  IF ev.status <> 'claimed' OR ev.attempts <> 1 OR ev.claimed_at IS NULL OR ev.locked_until - ev.claimed_at <> interval '10 minutes' THEN
+    RAISE EXCEPTION 'FAIL: a claim is %/%/claimed_at=%/lease %', ev.status, ev.attempts, ev.claimed_at, ev.locked_until - ev.claimed_at;
+  END IF;
+  -- A 'claimed' event with a live lease is nobody else's to claim.
+  IF pg_temp.svc('SELECT count(*) FROM public.claim_outbox_events(ARRAY[''advisor_notification''], 10, 5)')::int <> 0 THEN
+    RAISE EXCEPTION 'FAIL: a live claim was claimed again';
+  END IF;
+  -- Orphaned for over the lease: the next claim takes it over as attempt 2.
+  UPDATE public.outbox_events SET claimed_at = now() - interval '11 minutes', locked_until = now() - interval '1 minute' WHERE id = e1;
+  IF pg_temp.svc('SELECT count(*) FROM public.claim_outbox_events(ARRAY[''advisor_notification''], 10, 5)')::int <> 1 THEN
+    RAISE EXCEPTION 'FAIL: an orphaned claim was not taken over';
+  END IF;
+  ev := pg_temp.ev(e1);
+  IF ev.attempts <> 2 OR ev.claimed_at < now() - interval '1 minute' THEN RAISE EXCEPTION 'FAIL: the takeover did not refresh claimed_at'; END IF;
+  -- Failing, completing: no longer claimed.
+  PERFORM pg_temp.svc(format('SELECT public.fail_outbox_event(%L, ''provider_error:500'', 60, 2)', e1));
+  ev := pg_temp.ev(e1);
+  IF ev.status <> 'pending' OR ev.claimed_at IS NOT NULL OR ev.locked_until IS NOT NULL OR ev.last_error <> 'provider_error:500' THEN
+    RAISE EXCEPTION 'FAIL: a failed event still looks claimed: %/%', ev.status, ev.claimed_at;
+  END IF;
+  e2 := pg_temp.mk_event(sid, 'claimed', 1, interval '5 minutes');
+  UPDATE public.outbox_events SET claimed_at = now() WHERE id = e2;
+  PERFORM pg_temp.svc(format('SELECT public.complete_outbox_event(%L, ''msg_1'')', e2));
+  ev := pg_temp.ev(e2);
+  IF ev.status <> 'sent' OR ev.claimed_at IS NOT NULL OR ev.locked_until IS NOT NULL THEN RAISE EXCEPTION 'FAIL: a sent event still looks claimed'; END IF;
+
+  -- ---------- Reaping: only an exhausted, lapsed claim dies; claimed_at goes with it ----------
+  DELETE FROM public.outbox_events;
+  e1 := pg_temp.mk_event(sid, 'claimed', 5, interval '-1 minute');
+  e2 := pg_temp.mk_event(sid, 'claimed', 4, interval '-1 minute');
+  UPDATE public.outbox_events SET claimed_at = now() - interval '11 minutes';
+  IF pg_temp.svc('SELECT count(*) FROM public.reap_outbox_events(5)')::int <> 1 THEN RAISE EXCEPTION 'FAIL: reap did not kill exactly the exhausted claim'; END IF;
+  ev := pg_temp.ev(e1);
+  IF ev.status <> 'dead' OR ev.claimed_at IS NOT NULL OR ev.last_error <> 'worker_lost' THEN RAISE EXCEPTION 'FAIL: a reaped event is %/%/%', ev.status, ev.claimed_at, ev.last_error; END IF;
+  ev := pg_temp.ev(e2);
+  IF ev.status <> 'claimed' OR ev.attempts <> 4 THEN RAISE EXCEPTION 'FAIL: reap touched a claim with an attempt left'; END IF;
+
+  -- ---------- A kind that cannot be sent says why, on each waiting event, without spending attempts ----------
+  DELETE FROM public.outbox_events;
+  e1 := pg_temp.mk_event(sid, 'pending', 0);
+  e2 := pg_temp.mk_event(sid, 'pending', 2);
+  UPDATE public.outbox_events SET last_error = 'provider_error:500' WHERE id = e2;
+  PERFORM pg_temp.mk_event(sid, 'claimed', 1, interval '5 minutes');
+  PERFORM pg_temp.mk_event(sid, 'sent', 1);
+  PERFORM pg_temp.mk_event(sid, 'dead', 5);
+  INSERT INTO public.outbox_events (kind, session_id, dedupe_key, payload) VALUES ('prospect_confirmation', sid, 'other', '{}');
+  IF pg_temp.svc('SELECT public.note_outbox_config_problem(''advisor_notification'', ''ADVISORY_NOTIFY_EMAIL is not set to valid address(es)'')')::int <> 2 THEN
+    RAISE EXCEPTION 'FAIL: the config note did not reach exactly the two pending advisor events';
+  END IF;
+  ev := pg_temp.ev(e1);
+  IF ev.status <> 'pending' OR ev.attempts <> 0 OR ev.last_error <> 'not_configured: ADVISORY_NOTIFY_EMAIL is not set to valid address(es)' THEN
+    RAISE EXCEPTION 'FAIL: a noted event is %/%/%', ev.status, ev.attempts, ev.last_error;
+  END IF;
+  IF (pg_temp.ev(e2)).attempts <> 2 OR (pg_temp.ev(e2)).status <> 'pending' THEN RAISE EXCEPTION 'FAIL: the config note spent or changed an attempt'; END IF;
+  IF (SELECT count(*) FROM public.outbox_events WHERE last_error LIKE 'not_configured:%') <> 2 THEN
+    RAISE EXCEPTION 'FAIL: the config note touched a claimed, sent, dead or other-kind event';
+  END IF;
+  -- Idempotent: the every-minute run must not rewrite rows that already say it.
+  IF pg_temp.svc('SELECT public.note_outbox_config_problem(''advisor_notification'', ''ADVISORY_NOTIFY_EMAIL is not set to valid address(es)'')')::int <> 0 THEN
+    RAISE EXCEPTION 'FAIL: the config note rewrote events that already carry it';
+  END IF;
+  -- A later send clears it.
+  PERFORM pg_temp.svc(format('SELECT public.complete_outbox_event(%L, ''msg_2'')', e1));
+  IF (pg_temp.ev(e1)).last_error IS NOT NULL THEN RAISE EXCEPTION 'FAIL: a send did not clear the config note'; END IF;
+
+  -- ---------- Requeue records who, when and how often ----------
+  DELETE FROM public.outbox_events;
+  e1 := pg_temp.mk_event(sid, 'dead', 5);
+  IF NOT pg_temp.svc(format('SELECT public.requeue_outbox_event(%L, false, %L)', e1, u))::boolean THEN RAISE EXCEPTION 'FAIL: requeue with an actor'; END IF;
+  ev := pg_temp.ev(e1);
+  IF ev.requeue_count <> 1 OR ev.last_requeued_by <> u OR ev.last_requeued_at IS NULL OR ev.status <> 'pending' THEN
+    RAISE EXCEPTION 'FAIL: the requeue was not recorded: %/%/%', ev.requeue_count, ev.last_requeued_by, ev.status;
+  END IF;
+  UPDATE public.outbox_events SET status = 'dead', attempts = 5 WHERE id = e1;
+  IF NOT pg_temp.svc(format('SELECT public.requeue_outbox_event(%L)', e1))::boolean THEN RAISE EXCEPTION 'FAIL: requeue by an operator'; END IF;
+  ev := pg_temp.ev(e1);
+  IF ev.requeue_count <> 2 OR ev.last_requeued_by IS NOT NULL THEN RAISE EXCEPTION 'FAIL: an operator requeue is %/%', ev.requeue_count, ev.last_requeued_by; END IF;
+  -- Deleting the account that retried never deletes the event.
+  UPDATE public.outbox_events SET status = 'dead', attempts = 5 WHERE id = e1;
+  PERFORM pg_temp.svc(format('SELECT public.requeue_outbox_event(%L, false, %L)', e1, u));
+  DELETE FROM auth.users WHERE id = u;
+  IF NOT EXISTS (SELECT 1 FROM public.outbox_events WHERE id = e1 AND last_requeued_by IS NULL AND requeue_count = 3) THEN
+    RAISE EXCEPTION 'FAIL: removing the actor lost or changed the event';
+  END IF;
+
+  RAISE NOTICE 'submission_outbox: operations cases passed';
+END $$;
+
+-- ---------- The advisor alert's fields ----------
+DELETE FROM public.chamber_sessions;
+CREATE FUNCTION pg_temp.certify_with(p_email text, p_data jsonb, p_phone text DEFAULT NULL) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  u uuid := gen_random_uuid();
+  sid uuid;
+BEGIN
+  INSERT INTO auth.users (id, email) VALUES (u, p_email);
+  IF p_phone IS NOT NULL THEN
+    INSERT INTO public.profiles (user_id, company_name, contact_name, phone) VALUES (u, 'Profile Co', 'Pat Contact', p_phone);
+  END IF;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (u, p_data) RETURNING id INTO sid;
+  PERFORM pg_temp.submit(sid);
+  -- The certification must have been queued, whatever the data held.
+  IF (SELECT outbox_queued_at IS NULL OR outbox_failures <> 0 FROM public.chamber_certifications WHERE session_id = sid AND superseded_at IS NULL) THEN
+    RAISE EXCEPTION 'FAIL: certifying % was not queued cleanly', p_data;
+  END IF;
+  RETURN (SELECT payload FROM public.outbox_events WHERE session_id = sid AND kind = 'advisor_notification');
+END $$;
+
+DO $$
+DECLARE
+  p jsonb;
+  cert_at timestamptz;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', false);
+
+  p := pg_temp.certify_with('rich@acme.example',
+    '{"company_name":"Acme Corp","hq_state":"ca","employee_count":12,"employees":[{"name":"SECRET PERSON","classification":"W2","salary":987654,"dob":"1980-01-02"}],"health_plan":"GOLD-PLAN-XYZ"}',
+    '555-0100');
+  SELECT recorded_at INTO cert_at FROM public.chamber_certifications ORDER BY recorded_at DESC LIMIT 1;
+  IF p ->> 'company_name' <> 'Acme Corp' OR p ->> 'signer_name' <> 'Jo Doe' OR p ->> 'signer_title' <> 'CEO'
+     OR p ->> 'contact_email' <> 'rich@acme.example' OR p ->> 'contact_phone' <> '555-0100' OR p ->> 'contact_name' <> 'Pat Contact'
+     OR (p ->> 'employee_count')::int <> 12 OR p ->> 'hq_state' <> 'CA' OR p ->> 'resubmission' <> 'false' THEN
+    RAISE EXCEPTION 'FAIL: the advisor payload is %', p;
+  END IF;
+  IF p ->> 'certified_at' <> to_char(cert_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') THEN
+    RAISE EXCEPTION 'FAIL: certified_at % is not the certification''s server stamp %', p ->> 'certified_at', cert_at;
+  END IF;
+  IF (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(p) k) IS DISTINCT FROM
+     ARRAY['certified_at', 'company_name', 'contact_email', 'contact_name', 'contact_phone', 'employee_count', 'hq_state',
+           'reference', 'resubmission', 'signer_name', 'signer_title'] THEN
+    RAISE EXCEPTION 'FAIL: the advisor payload has unexpected keys: %', p;
+  END IF;
+  IF p::text ~* 'SECRET PERSON|987654|1980-01-02|GOLD-PLAN' THEN RAISE EXCEPTION 'FAIL: census, payroll or plan content reached the payload: %', p; END IF;
+
+  -- Headcount: the stated count wins, else the W-2 rows of the roster, else nothing.
+  p := pg_temp.certify_with('w2@acme.example', '{"company_name":"W2 Co","employees":[{"classification":"W2"},{"classification":"1099"},{"classification":"W2"}]}');
+  IF (p ->> 'employee_count')::int <> 2 THEN RAISE EXCEPTION 'FAIL: W-2 roster count is %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('c1099@acme.example', '{"company_name":"1099 Co","employees":[{"classification":"1099"}]}');
+  IF p -> 'employee_count' <> 'null'::jsonb THEN RAISE EXCEPTION 'FAIL: a roster with no W-2 rows gave %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('round@acme.example', '{"company_name":"Round Co","employee_count":12.4}');
+  IF (p ->> 'employee_count')::int <> 12 THEN RAISE EXCEPTION 'FAIL: 12.4 gave %', p -> 'employee_count'; END IF;
+
+  -- Values the app would never accept are left out; they must never keep a certification from being queued.
+  p := pg_temp.certify_with('huge@acme.example', '{"company_name":"Huge Co","employee_count":1000000000000,"hq_state":"California"}');
+  IF p -> 'employee_count' <> 'null'::jsonb OR p -> 'hq_state' <> 'null'::jsonb THEN RAISE EXCEPTION 'FAIL: out-of-range values were kept: %', p; END IF;
+  p := pg_temp.certify_with('neg@acme.example', '{"company_name":"Neg Co","employee_count":-5,"hq_state":42}');
+  IF p -> 'employee_count' <> 'null'::jsonb OR p -> 'hq_state' <> 'null'::jsonb THEN RAISE EXCEPTION 'FAIL: negative or non-text values were kept: %', p; END IF;
+  p := pg_temp.certify_with('str@acme.example', '{"company_name":"Str Co","employee_count":"twelve","employees":"none"}');
+  IF p -> 'employee_count' <> 'null'::jsonb THEN RAISE EXCEPTION 'FAIL: a non-numeric count was kept: %', p; END IF;
+  p := pg_temp.certify_with('nodata@acme.example', '{}');
+  IF p -> 'employee_count' <> 'null'::jsonb OR p -> 'company_name' <> 'null'::jsonb THEN RAISE EXCEPTION 'FAIL: an empty intake gave %', p; END IF;
+
+  RAISE NOTICE 'submission_outbox: advisor payload cases passed';
+END $$;
+
+-- ---------- Privileges after the operations migration ----------
+DO $$
+DECLARE
+  f record;
+  worker text[] := ARRAY['reap_outbox_events', 'claim_outbox_events', 'freeze_outbox_message', 'complete_outbox_event',
+                         'fail_outbox_event', 'note_outbox_config_problem', 'requeue_outbox_event'];
+  advisor text[] := ARRAY['advisor_list_outbox_events', 'advisor_outbox_summary', 'advisor_requeue_outbox_event'];
+  seen integer := 0;
+BEGIN
+  FOR f IN
+    SELECT p.oid, p.proname, p.prosecdef, p.proconfig, COALESCE(p.proacl, acldefault('f', p.proowner)) AS acl
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = ANY (worker || advisor || ARRAY['enqueue_certification_notifications'])
+  LOOP
+    seen := seen + 1;
+    IF EXISTS (SELECT 1 FROM aclexplode(f.acl) a WHERE a.grantee = 0) THEN RAISE EXCEPTION 'FAIL: % can be executed by PUBLIC', f.proname; END IF;
+    IF has_function_privilege('anon', f.oid, 'EXECUTE') THEN RAISE EXCEPTION 'FAIL: anon can execute %', f.proname; END IF;
+    IF NOT f.prosecdef OR NOT ('search_path=public, pg_temp' = ANY (COALESCE(f.proconfig, ARRAY[]::text[]))) THEN
+      RAISE EXCEPTION 'FAIL: % is not SECURITY DEFINER with a pinned search path', f.proname;
+    END IF;
+    IF f.proname = ANY (worker) THEN
+      IF has_function_privilege('authenticated', f.oid, 'EXECUTE') THEN RAISE EXCEPTION 'FAIL: a signed-in user can execute worker function %', f.proname; END IF;
+      IF NOT has_function_privilege('service_role', f.oid, 'EXECUTE') THEN RAISE EXCEPTION 'FAIL: the service role cannot execute %', f.proname; END IF;
+    ELSIF f.proname = ANY (advisor) THEN
+      IF NOT has_function_privilege('authenticated', f.oid, 'EXECUTE') THEN RAISE EXCEPTION 'FAIL: signed-in users cannot reach %', f.proname; END IF;
+    ELSE
+      IF has_function_privilege('authenticated', f.oid, 'EXECUTE') OR has_function_privilege('service_role', f.oid, 'EXECUTE') THEN
+        RAISE EXCEPTION 'FAIL: the enqueue helper is executable by a client or the service role';
+      END IF;
+    END IF;
+  END LOOP;
+  IF seen <> 11 THEN RAISE EXCEPTION 'FAIL: expected 11 outbox functions, found %', seen; END IF;
+  RAISE NOTICE 'submission_outbox: operations privilege cases passed';
+END $$;

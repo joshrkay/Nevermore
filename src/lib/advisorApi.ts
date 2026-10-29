@@ -5,6 +5,7 @@ import { parseChamberData } from "@/data/chamberValidation";
 import { parseTranscript, type ChatMessage } from "@/data/chat";
 import { fileIdForSession, type ChamberSubmission } from "@/data/manuscript";
 import { parseProvenance, type FieldKey, type ProvenanceMap } from "@/data/provenance";
+import type { OutboxStatus } from "@/data/outbox";
 import {
   isPipelineStatus,
   manuscriptStoragePath,
@@ -59,6 +60,36 @@ export async function listSubmissions(status: PipelineStatus | null): Promise<Su
   const { data, error } = await supabase.rpc("advisor_list_submissions", status ? { p_status: status } : {});
   if (error) fail(error, "Couldn't load submissions.");
   return data ?? [];
+}
+
+// ---------- Outbox & notifications (G-1.3) ----------
+
+export type OutboxEvent = Database["public"]["Functions"]["advisor_list_outbox_events"]["Returns"][number];
+export type OutboxSummaryRow = Database["public"]["Functions"]["advisor_outbox_summary"]["Returns"][number];
+
+/** The queue of notification emails, newest first, optionally one status. Never includes the payload or the email itself. */
+export async function listOutboxEvents(status: OutboxStatus | null): Promise<OutboxEvent[]> {
+  const { data, error } = await supabase.rpc("advisor_list_outbox_events", status ? { p_status: status } : {});
+  if (error) fail(error, "Couldn't load the outbox.");
+  return data ?? [];
+}
+
+/** How many events are in each status, and how long the longest-waiting due one has waited. */
+export async function outboxSummary(): Promise<OutboxSummaryRow[]> {
+  const { data, error } = await supabase.rpc("advisor_outbox_summary");
+  if (error) fail(error, "Couldn't load the outbox counts.");
+  return data ?? [];
+}
+
+/**
+ * Puts a dead event back in the queue (attempts reset, due now); the next run of the worker sends
+ * it. `rebuild` discards the email already written for it, so it is rebuilt from the current
+ * settings under a new key. Resolves to false when the event was no longer dead.
+ */
+export async function requeueOutboxEvent(eventId: string, rebuild: boolean): Promise<boolean> {
+  const { data, error } = await supabase.rpc("advisor_requeue_outbox_event", { event_id: eventId, rebuild_payload: rebuild });
+  if (error) fail(error, "Couldn't retry this notification.");
+  return data === true;
 }
 
 export interface SubmissionDetail {
