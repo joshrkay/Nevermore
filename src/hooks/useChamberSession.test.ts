@@ -1,13 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
-// `data` is the rows the update returned; left out, a successful update returns the row it changed.
-type UpdateResult = { error: { message: string } | null; data?: { id: string }[] };
+type MockError = { message: string; code?: string; details?: string | null };
+// `data` is the rows the update returned; left out, a successful update returns the row it changed,
+// one version on from the version it asked for.
+type UpdateResult = { error: MockError | null; data?: Record<string, unknown>[] };
 
-const updates: { payload: Record<string, unknown>; resolve: (r: UpdateResult) => void }[] = [];
+const updates: {
+  payload: Record<string, unknown>;
+  filters: Record<string, unknown>;
+  columns: string;
+  resolve: (r: UpdateResult) => void;
+}[] = [];
+// The row as the server has it: what resuming loads, and what is read back after an update matched nothing.
 let resumeRow: Record<string, unknown> | null = null;
+let readError: MockError | null = null;
+const reads: string[] = [];
 let inserts = 0;
 const insertedRows: Record<string, unknown>[] = [];
+const insertedColumns: string[] = [];
 let insertError: { message: string } | null = null;
 // The prospect's latest unfinished intake, as the lookup on a bare /start finds it.
 let latestRow: { id: string } | null = null;
@@ -19,10 +30,15 @@ vi.mock("@/lib/dispatchOutbox", () => ({ dispatchOutbox: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: () => ({
-      select: () => ({
+      select: (columns: string) => ({
         eq: (column: string, value: unknown) =>
           column === "id"
-            ? { maybeSingle: async () => ({ data: resumeRow, error: null }) }
+            ? {
+                maybeSingle: async () => {
+                  reads.push(columns);
+                  return readError ? { data: null, error: readError } : { data: resumeRow, error: null };
+                },
+              }
             : {
                 neq: (notColumn: string, notValue: unknown) => ({
                   order: (orderColumn: string, order: unknown) => ({
@@ -40,31 +56,63 @@ vi.mock("@/integrations/supabase/client", () => ({
         inserts += 1;
         insertedRows.push(row);
         return {
-          select: () => ({
-            single: async () => (insertError ? { data: null, error: insertError } : { data: { id: "s1" }, error: null }),
-          }),
+          select: (columns: string) => {
+            insertedColumns.push(columns);
+            return {
+              single: async () =>
+                insertError ? { data: null, error: insertError } : { data: { id: "s1", data_version: 1 }, error: null },
+            };
+          },
         };
       },
-      update: (payload: Record<string, unknown>) => ({
-        eq: () => ({
-          select: () =>
-            new Promise<{ data: { id: string }[] | null; error: UpdateResult["error"] }>((resolve) =>
+      update: (payload: Record<string, unknown>) => {
+        const filters: Record<string, unknown> = {};
+        const chain = {
+          eq: (column: string, value: unknown) => {
+            filters[column] = value;
+            return chain;
+          },
+          select: (columns: string) =>
+            new Promise<{ data: Record<string, unknown>[] | null; error: MockError | null }>((resolve) =>
               updates.push({
                 payload,
-                resolve: (r) => resolve({ error: r.error, data: r.error ? null : (r.data ?? [{ id: "s1" }]) }),
+                filters,
+                columns,
+                resolve: (r) =>
+                  resolve({
+                    error: r.error,
+                    data: r.error
+                      ? null
+                      : (r.data ?? [{ id: filters.id, data_version: (filters.data_version as number) + 1, status: payload.status ?? "in_progress" }]),
+                  }),
               })),
-        }),
-      }),
+        };
+        return chain;
+      },
     }),
   },
 }));
 
-const { useChamberSession } = await import("./useChamberSession");
+const { useChamberSession, describeInvalidPath } = await import("./useChamberSession");
 const { dispatchOutbox } = await import("@/lib/dispatchOutbox");
 const { applyExtraction } = await import("@/data/provenance");
 
 // Lets queued promise callbacks run while fake timers are active (waitFor would hang).
 const drain = () => act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
+
+type SubmitResult = boolean | { message: string };
+
+// The saved row as another tab (or the server) has it.
+const serverRow = (over: Record<string, unknown> = {}) => ({
+  id: "s1",
+  data_version: 5,
+  status: "in_progress",
+  chamber_data: { company_name: "Elsewhere Inc" },
+  field_provenance: {},
+  transcript: [],
+  submission: null,
+  ...over,
+});
 
 const submission = { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-01-01T00:00:00Z", file_id: "EAA-1" };
 
@@ -72,6 +120,9 @@ describe("useChamberSession", () => {
   beforeEach(() => {
     updates.length = 0;
     resumeRow = null;
+    readError = null;
+    reads.length = 0;
+    insertedColumns.length = 0;
     inserts = 0;
     insertedRows.length = 0;
     insertError = null;
@@ -93,7 +144,7 @@ describe("useChamberSession", () => {
     await act(async () => { vi.advanceTimersByTime(2000); });
     expect(updates).toHaveLength(1); // autosave started, still pending
 
-    let submitted: boolean | undefined;
+    let submitted: SubmitResult | undefined;
     const pending = result.current.submit(submission).then((ok) => { submitted = ok; });
     await drain();
     expect(updates).toHaveLength(1); // submit is waiting, not racing ahead
@@ -114,7 +165,7 @@ describe("useChamberSession", () => {
     act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
     await act(async () => { vi.advanceTimersByTime(2000); });
 
-    let submitted: boolean | undefined;
+    let submitted: SubmitResult | undefined;
     const pending = result.current.submit(submission).then((ok) => { submitted = ok; });
     await drain();
     updates[0].resolve({ error: { message: "offline" } });
@@ -153,7 +204,7 @@ describe("useChamberSession", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/rest/v1/chamber_sessions?id=eq.s1");
+    expect(url).toContain("/rest/v1/chamber_sessions?id=eq.s1&data_version=eq.1");
     expect(init).toMatchObject({ method: "PATCH", keepalive: true });
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
     expect(JSON.parse(init.body as string).chamber_data.company_name).toBe("Acme");
@@ -187,6 +238,7 @@ describe("useChamberSession", () => {
   it("restores field provenance when resuming a session", async () => {
     resumeRow = {
       id: "s9",
+      data_version: 3,
       chamber_data: { employee_count: 40 },
       field_provenance: {
         employee_count: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-20T00:00:00Z" },
@@ -222,6 +274,7 @@ describe("useChamberSession", () => {
   describe("certification", () => {
     const certifiedRow = (status: string) => ({
       id: "s9",
+      data_version: 3,
       chamber_data: { company_name: "Acme" },
       transcript: [],
       status,
@@ -262,7 +315,7 @@ describe("useChamberSession", () => {
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.sessionId).toBe("s1"));
 
-      let ok: boolean | undefined;
+      let ok: SubmitResult | undefined;
       const pending = result.current.submit(submission).then((r) => { ok = r; });
       await waitFor(() => expect(updates).toHaveLength(1));
       expect(result.current.certification.status).toBe("none");
@@ -301,7 +354,7 @@ describe("useChamberSession", () => {
     const signedKey = JSON.stringify(result.current.chamberData);
 
     act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Changed Inc" })));
-    let submitted: boolean | undefined;
+    let submitted: SubmitResult | undefined;
     const pending = result.current.submit(submission, signedKey).then((ok) => { submitted = ok; });
     await drain();
     await act(async () => { updates[0].resolve({ error: null }); await pending; });
@@ -315,7 +368,7 @@ describe("useChamberSession", () => {
     act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
     const signedKey = JSON.stringify(result.current.chamberData);
 
-    let submitted: boolean | undefined;
+    let submitted: SubmitResult | undefined;
     const pending = result.current.submit(submission, signedKey).then((ok) => { submitted = ok; });
     await drain();
     await act(async () => { updates[0].resolve({ error: null }); });
@@ -344,7 +397,7 @@ describe("useChamberSession", () => {
       await waitFor(() => expect(result.current.sessionId).toBe("s1"));
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
 
-      let ok: boolean | undefined;
+      let ok: SubmitResult | undefined;
       const pending = result.current.submit(submission).then((r) => { ok = r; });
       await drain();
       await act(async () => { updates[0].resolve({ error: null }); });
@@ -367,7 +420,7 @@ describe("useChamberSession", () => {
     });
   });
   describe("picking up where the prospect left off", () => {
-    const openRow = { id: "s7", chamber_data: { company_name: "Acme" }, field_provenance: {}, transcript: [], status: "in_progress", submission: null };
+    const openRow = { id: "s7", data_version: 2, chamber_data: { company_name: "Acme" }, field_provenance: {}, transcript: [], status: "in_progress", submission: null };
 
     it("resumes their latest unfinished intake when no session is named", async () => {
       latestRow = { id: "s7" };
@@ -490,6 +543,8 @@ describe("useChamberSession", () => {
     it("treats an update that changed no row as not saved, rather than trusting the missing error", async () => {
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      // The row is still at the version the update asked for, so nothing explains the empty result.
+      resumeRow = serverRow({ data_version: 1 });
       vi.useFakeTimers();
       edit(result);
       await act(async () => { vi.advanceTimersByTime(2000); });
@@ -501,7 +556,8 @@ describe("useChamberSession", () => {
     it("refuses to certify when the submission changed no row", async () => {
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.sessionId).toBe("s1"));
-      let ok: boolean | undefined;
+      resumeRow = serverRow({ data_version: 1 });
+      let ok: SubmitResult | undefined;
       const pending = result.current.submit(submission).then((r) => { ok = r; });
       await waitFor(() => expect(updates).toHaveLength(1));
       await act(async () => { updates[0].resolve({ error: null, data: [] }); await pending; });
@@ -527,13 +583,525 @@ describe("useChamberSession", () => {
       insertError = null;
       // An older draft must not be loaded over what was just typed.
       latestRow = { id: "s7" };
-      resumeRow = { id: "s7", chamber_data: { company_name: "Older Co" }, field_provenance: {}, transcript: [], status: "in_progress", submission: null };
+      resumeRow = { id: "s7", data_version: 2, chamber_data: { company_name: "Older Co" }, field_provenance: {}, transcript: [], status: "in_progress", submission: null };
       act(() => result.current.retrySave());
       await drain();
       expect(result.current.sessionId).toBe("s1");
       expect(inserts).toBe(2);
       expect(insertedRows[1]).toHaveProperty("chamber_data.company_name", "Acme");
       expect(result.current.chamberData.company_name).toBe("Acme");
+    });
+  });
+  describe("versioned writes", () => {
+    const edit = (result: { current: ReturnType<typeof useChamberSession> }, name = "Acme") =>
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: name })));
+    // Waits out the debounce so the autosave goes out.
+    const autosave = async () => { await act(async () => { vi.advanceTimersByTime(2000); }); };
+    const open = async () => {
+      const hook = renderHook(() => useChamberSession());
+      await waitFor(() => expect(hook.result.current.sessionId).toBe("s1"));
+      vi.useFakeTimers();
+      return hook;
+    };
+
+    it("writes against the version the server gave a new intake, naming only the row and the version", async () => {
+      const { result } = await open();
+      expect(insertedColumns).toEqual(["id, data_version"]);
+      edit(result);
+      await autosave();
+      expect(updates[0].filters).toEqual({ id: "s1", data_version: 1 });
+      expect(updates[0].columns).toBe("id, data_version");
+      expect(updates[0].payload).not.toHaveProperty("data_version");
+    });
+
+    it("writes against the version it loaded when resuming an intake", async () => {
+      resumeRow = serverRow({ id: "s9", data_version: 4, chamber_data: { company_name: "Acme" } });
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+      expect(reads[0]).toContain("data_version");
+      vi.useFakeTimers();
+      edit(result, "Acme 2");
+      await autosave();
+      expect(updates[0].filters).toEqual({ id: "s9", data_version: 4 });
+    });
+
+    it("takes the next version from each response rather than counting", async () => {
+      const { result } = await open();
+      edit(result, "One");
+      await autosave();
+      updates[0].resolve({ error: null, data: [{ id: "s1", data_version: 7 }] });
+      await drain();
+      edit(result, "Two");
+      await autosave();
+      expect(updates[1].filters.data_version).toBe(7);
+    });
+
+    it("resends the same version when a save is retried", async () => {
+      const { result } = await open();
+      edit(result);
+      await autosave();
+      updates[0].resolve({ error: { message: "offline" } });
+      await drain();
+      await act(async () => { vi.advanceTimersByTime(10_000); });
+      expect(updates).toHaveLength(2);
+      expect(updates[1].filters.data_version).toBe(1);
+    });
+
+    it("refuses to save, and says so, when it doesn't know the version", async () => {
+      resumeRow = serverRow({ id: "s9", data_version: undefined, chamber_data: {} });
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+      vi.useFakeTimers();
+      edit(result);
+      await autosave();
+      await drain();
+      expect(updates).toHaveLength(0);
+      expect(result.current.saveStatus).toBe("failed");
+    });
+
+    it("sends one write at a time, each at the version the one before returned, even when submit waits behind them", async () => {
+      const { result } = await open();
+      edit(result, "One");
+      await autosave(); // write 1 is out
+      edit(result, "Two");
+      await autosave(); // its timer fires and waits behind write 1
+      let submitted: SubmitResult | undefined;
+      const pending = result.current.submit(submission).then((r) => { submitted = r; });
+      await drain();
+      expect(updates).toHaveLength(1);
+
+      updates[0].resolve({ error: null });
+      await drain();
+      expect(updates).toHaveLength(2); // write 2, with submit still waiting
+      expect(updates[1].filters.data_version).toBe(2);
+      updates[1].resolve({ error: null });
+      await drain();
+      expect(updates).toHaveLength(3);
+      expect(updates[2].payload).toMatchObject({ status: "submitted" });
+      expect(updates[2].filters.data_version).toBe(3);
+      await act(async () => { updates[2].resolve({ error: null }); await pending; });
+      expect(submitted).toBe(true);
+    });
+
+    describe("when the save matched no row", () => {
+      const staleSave = async () => {
+        const hook = await open();
+        edit(hook.result);
+        await autosave();
+        return hook;
+      };
+
+      it("reads the row back and reports a conflict, with every timer stopped", async () => {
+        const { result } = await staleSave();
+        resumeRow = serverRow();
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+        expect(reads[0]).toContain("chamber_data");
+        expect(result.current.saveStatus).toBe("conflict");
+
+        await act(async () => { vi.advanceTimersByTime(60_000); });
+        expect(updates).toHaveLength(1);
+        expect(result.current.chamberData.company_name).toBe("Acme"); // the prospect's edit is still on screen
+      });
+
+      it("keeps showing the conflict when the prospect keeps typing, and still sends nothing", async () => {
+        const { result } = await staleSave();
+        resumeRow = serverRow();
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+
+        edit(result, "Acme 2");
+        expect(result.current.saveStatus).toBe("conflict");
+        await act(async () => { vi.advanceTimersByTime(60_000); });
+        expect(updates).toHaveLength(1);
+      });
+
+      it("loads the latest: the server's answers, version and certification replace what was typed", async () => {
+        const { result } = await staleSave();
+        resumeRow = serverRow({
+          status: "submitted",
+          submission,
+          chamber_data: { company_name: "Elsewhere Inc" },
+          field_provenance: { company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-20T00:00:00Z" } },
+          transcript: [{ id: "m9", sender: "user", text: "hello from the other tab", timestamp: "10:00 AM" }],
+        });
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+
+        act(() => result.current.loadLatest());
+        expect(result.current.chamberData.company_name).toBe("Elsewhere Inc");
+        expect(result.current.provenance.company_name?.status).toBe("confirmed");
+        expect(result.current.messages.map((m) => m.text)).toEqual(["hello from the other tab"]);
+        expect(result.current.certification.status).toBe("certified");
+        expect(result.current.saveStatus).toBe("saved");
+
+        // Nothing left to save, and the next edit goes out at the version that was loaded.
+        await act(async () => { vi.advanceTimersByTime(60_000); });
+        expect(updates).toHaveLength(1);
+        edit(result, "Elsewhere Inc 2");
+        await autosave();
+        expect(updates[1].filters.data_version).toBe(5);
+      });
+
+      it("keeps the prospect's changes: sends them at the version the server has now", async () => {
+        const { result } = await staleSave();
+        resumeRow = serverRow();
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+
+        act(() => result.current.keepMine());
+        await drain();
+        expect(updates).toHaveLength(2);
+        expect(updates[1].filters.data_version).toBe(5);
+        expect(updates[1].payload).toHaveProperty("chamber_data.company_name", "Acme");
+        updates[1].resolve({ error: null });
+        await drain();
+        expect(result.current.saveStatus).toBe("saved");
+        expect(result.current.chamberData.company_name).toBe("Acme");
+      });
+
+      it("reports a conflict again when the server moved on while the prospect decided", async () => {
+        const { result } = await staleSave();
+        resumeRow = serverRow({ data_version: 5 });
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+
+        act(() => result.current.keepMine());
+        await drain();
+        resumeRow = serverRow({ data_version: 6, chamber_data: { company_name: "Elsewhere again" } });
+        updates[1].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).toBe("conflict");
+        act(() => result.current.keepMine());
+        await drain();
+        expect(updates[2].filters.data_version).toBe(6);
+      });
+
+      it("recognises its own write when only the response was lost, and leaves what's on screen alone", async () => {
+        const { result } = await staleSave();
+        const before = result.current.chamberData;
+        const sent = JSON.parse(JSON.stringify(updates[0].payload));
+        // jsonb hands the keys back in a different order.
+        resumeRow = serverRow({
+          data_version: 2,
+          chamber_data: Object.fromEntries(Object.entries(sent.chamber_data).reverse()),
+          field_provenance: sent.field_provenance,
+          transcript: sent.transcript,
+        });
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+
+        expect(result.current.saveStatus).toBe("saved");
+        expect(result.current.chamberData).toBe(before);
+        edit(result, "Acme 2");
+        await autosave();
+        expect(updates[1].filters.data_version).toBe(2);
+      });
+
+      it("compares with what that write sent, not with what was typed since", async () => {
+        const { result } = await staleSave();
+        const sent = JSON.parse(JSON.stringify(updates[0].payload));
+        edit(result, "Acme 2"); // typed while the write was out
+        resumeRow = serverRow({ data_version: 2, ...sent });
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).not.toBe("conflict");
+        await act(async () => { vi.advanceTimersByTime(2000); });
+        expect(updates[1].filters.data_version).toBe(2);
+        expect(updates[1].payload).toHaveProperty("chamber_data.company_name", "Acme 2");
+      });
+
+      it("says the intake can no longer be saved when the row is gone, and doesn't retry", async () => {
+        const { result } = await staleSave();
+        resumeRow = null;
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).toBe("missing");
+        act(() => result.current.retrySave());
+        await act(async () => { vi.advanceTimersByTime(60_000); });
+        expect(updates).toHaveLength(1);
+      });
+
+      it("starts a new intake from what's on screen when the row is gone", async () => {
+        const { result } = await staleSave();
+        resumeRow = null;
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+        vi.useRealTimers();
+
+        act(() => result.current.startNew());
+        await waitFor(() => expect(inserts).toBe(2));
+        expect(insertedRows[1]).toHaveProperty("chamber_data.company_name", "Acme");
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
+        expect(result.current.saveStatus).not.toBe("missing");
+      });
+
+      it("fails and retries when the row can't be read back", async () => {
+        const { result } = await staleSave();
+        readError = { message: "offline" };
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).toBe("failed");
+        await act(async () => { vi.advanceTimersByTime(10_000); });
+        expect(updates).toHaveLength(2);
+        expect(updates[1].filters.data_version).toBe(1);
+      });
+
+      it("fails and retries, rather than calling it a conflict, when the row hasn't moved", async () => {
+        const { result } = await staleSave();
+        resumeRow = serverRow({ data_version: 1 });
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).toBe("failed");
+        await act(async () => { vi.advanceTimersByTime(10_000); });
+        expect(updates).toHaveLength(2);
+      });
+    });
+
+    describe("when the server refuses an answer", () => {
+      const refused: MockError = {
+        message: "Invalid intake data at employees[3].dob: too long",
+        code: "EA001",
+        details: "employees[3].dob",
+      };
+      const refusedSave = async () => {
+        const hook = await open();
+        edit(hook.result);
+        await autosave();
+        updates[0].resolve({ error: refused });
+        await drain();
+        return hook;
+      };
+
+      it("says which answer, and doesn't retry the same payload", async () => {
+        const { result } = await refusedSave();
+        expect(result.current.saveStatus).toBe("invalid");
+        expect(result.current.invalidField).toBe("Employee 4 in your census");
+        await act(async () => { vi.advanceTimersByTime(60_000); });
+        expect(updates).toHaveLength(1);
+      });
+
+      it("tries again on the next edit, and clears the message once a save works", async () => {
+        const { result } = await refusedSave();
+        edit(result, "Acme 2");
+        expect(result.current.saveStatus).toBe("invalid"); // not downgraded by the edit
+        await autosave();
+        expect(updates).toHaveLength(2);
+        expect(updates[1].filters.data_version).toBe(1); // the refused write changed nothing
+        updates[1].resolve({ error: null });
+        await drain();
+        expect(result.current.saveStatus).toBe("saved");
+        expect(result.current.invalidField).toBeNull();
+      });
+
+      it("shows the invalid answer again when the next attempt is refused too", async () => {
+        const { result } = await refusedSave();
+        edit(result, "Acme 2");
+        await autosave();
+        updates[1].resolve({ error: { ...refused, details: "hq_state" } });
+        await drain();
+        expect(result.current.saveStatus).toBe("invalid");
+        expect(result.current.invalidField).toBe("HQ state");
+      });
+
+      it("treats other failures as transient even while an answer is refused", async () => {
+        const { result } = await refusedSave();
+        edit(result, "Acme 2");
+        await autosave();
+        updates[1].resolve({ error: { message: "offline" } });
+        await drain();
+        expect(result.current.saveStatus).toBe("failed");
+        await act(async () => { vi.advanceTimersByTime(10_000); });
+        expect(updates).toHaveLength(3);
+      });
+
+      it("reloads what the server has when the prospect discards their changes", async () => {
+        const { result } = await refusedSave();
+        resumeRow = serverRow({ data_version: 1, chamber_data: { company_name: "Saved Co" } });
+        act(() => result.current.discardChanges());
+        await drain();
+        expect(result.current.chamberData.company_name).toBe("Saved Co");
+        expect(result.current.saveStatus).toBe("saved");
+        expect(result.current.invalidField).toBeNull();
+        await act(async () => { vi.advanceTimersByTime(60_000); });
+        expect(updates).toHaveLength(1);
+      });
+
+      it("keeps the refused state, and the changes, when the reload fails", async () => {
+        const { result } = await refusedSave();
+        readError = { message: "offline" };
+        act(() => result.current.discardChanges());
+        await drain();
+        expect(result.current.saveStatus).toBe("invalid");
+        expect(result.current.chamberData.company_name).toBe("Acme");
+      });
+
+      it("refuses to certify, and says why", async () => {
+        const { result } = await refusedSave();
+        let ok: SubmitResult | undefined;
+        const pending = result.current.submit(submission).then((r) => { ok = r; });
+        await drain();
+        updates[1].resolve({ error: refused });
+        await act(async () => { await pending; });
+        expect(ok).toEqual({ message: expect.stringContaining("couldn't be saved") });
+        expect(updates.some((u) => u.payload.status === "submitted")).toBe(false);
+      });
+    });
+
+    describe("describeInvalidPath", () => {
+      it.each([
+        ["hq_state", "HQ state"],
+        ["states[2]", "States of operation"],
+        ["employee_count", "Employee count"],
+        ["employees", "Your employee census"],
+        ["employees[0].dob", "Employee 1 in your census"],
+        ["employees[3].state", "Employee 4 in your census"],
+        ["employees[0].dependents[1].relationship", "A dependent of employee 1"],
+        ["chamber_data", "Some of your answers"],
+        ["something_new", "Some of your answers"],
+        [null, "Some of your answers"],
+      ])("%s reads as %s", (path, label) => {
+        expect(describeInvalidPath(path)).toBe(label);
+      });
+    });
+
+    describe("leaving the page", () => {
+      const leave = () => {
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event;
+      };
+
+      it("sends the version the page last saw", async () => {
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+        const { result } = await open();
+        edit(result);
+        leave();
+        expect(fetchSpy.mock.calls[0][0]).toMatch(/\/chamber_sessions\?id=eq\.s1&data_version=eq\.1$/);
+        fetchSpy.mockRestore();
+      });
+
+      it("allows for a save that is still out, which will have moved the version on", async () => {
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+        const { result } = await open();
+        edit(result, "One");
+        await autosave();
+        edit(result, "Two");
+        leave();
+        expect(fetchSpy.mock.calls[0][0]).toMatch(/\?id=eq\.s1&data_version=in\.\(1,2\)$/);
+        fetchSpy.mockRestore();
+      });
+
+      it("asks the prospect to stay, rather than sending a request that can't win, during a conflict", async () => {
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+        const { result } = await open();
+        edit(result);
+        await autosave();
+        resumeRow = serverRow();
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).toBe("conflict");
+        const event = leave();
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(event.defaultPrevented).toBe(true);
+        fetchSpy.mockRestore();
+      });
+    });
+
+    describe("submitting", () => {
+      it("is conditional on the version, asks for the status back, and moves the version on", async () => {
+        const { result } = await open();
+        edit(result);
+        const pending = result.current.submit(submission);
+        await drain();
+        updates[0].resolve({ error: null });
+        await drain();
+        expect(updates[1].payload).toMatchObject({ status: "submitted" });
+        expect(updates[1].payload).not.toHaveProperty("data_version");
+        expect(updates[1].filters).toEqual({ id: "s1", data_version: 2 });
+        expect(updates[1].columns).toBe("id, data_version, status");
+        await act(async () => { updates[1].resolve({ error: null }); await pending; });
+
+        edit(result, "Acme 2");
+        await autosave();
+        expect(updates[2].filters.data_version).toBe(3);
+      });
+
+      it("does not report success, and says the intake changed elsewhere, when the version is stale", async () => {
+        const { result } = await open();
+        let ok: SubmitResult | undefined;
+        const pending = result.current.submit(submission).then((r) => { ok = r; });
+        await drain();
+        resumeRow = serverRow();
+        updates[0].resolve({ error: null, data: [] });
+        await act(async () => { await pending; });
+        expect(ok).toEqual({ message: "This intake changed elsewhere. Reload the latest and certify again." });
+        expect(result.current.saveStatus).toBe("conflict");
+        expect(result.current.certification.status).toBe("none");
+        expect(dispatchOutbox).not.toHaveBeenCalled();
+      });
+
+      it("sends nothing while a conflict is waiting for the prospect", async () => {
+        const { result } = await open();
+        edit(result);
+        await autosave();
+        resumeRow = serverRow();
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+
+        let ok: SubmitResult | undefined;
+        await act(async () => { ok = await result.current.submit(submission); });
+        expect(ok).toEqual({ message: expect.stringContaining("changed elsewhere") });
+        expect(updates).toHaveLength(1);
+      });
+
+      it("can certify once the prospect has chosen to keep their changes", async () => {
+        const { result } = await open();
+        edit(result);
+        await autosave();
+        resumeRow = serverRow();
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+        act(() => result.current.keepMine());
+        await drain();
+        updates[1].resolve({ error: null });
+        await drain();
+
+        const pending = result.current.submit(submission);
+        await drain();
+        expect(updates[2].filters.data_version).toBe(6);
+        await act(async () => { updates[2].resolve({ error: null }); await pending; });
+        expect(result.current.certification.status).toBe("certified");
+      });
+
+      it("recognises its own certification when only the response was lost", async () => {
+        const { result } = await open();
+        const pending = result.current.submit(submission);
+        await drain();
+        const sent = JSON.parse(JSON.stringify(updates[0].payload));
+        resumeRow = serverRow({
+          data_version: 2,
+          status: "submitted",
+          chamber_data: sent.chamber_data,
+          submission: { ...sent.submission, certified_at: "2026-10-27T00:00:00Z", data_sha256: "abc" },
+        });
+        let ok: SubmitResult | undefined;
+        await act(async () => { updates[0].resolve({ error: null, data: [] }); ok = await pending; });
+        expect(ok).toBe(true);
+        expect(result.current.certification.status).toBe("certified");
+        expect(dispatchOutbox).toHaveBeenCalledTimes(1);
+      });
+
+      it("reports that the intake is gone, not a retryable failure, when the row is missing", async () => {
+        const { result } = await open();
+        let ok: SubmitResult | undefined;
+        const pending = result.current.submit(submission).then((r) => { ok = r; });
+        await drain();
+        resumeRow = null;
+        await act(async () => { updates[0].resolve({ error: null, data: [] }); await pending; });
+        expect(ok).toEqual({ message: expect.stringContaining("no longer be saved") });
+        expect(result.current.saveStatus).toBe("missing");
+      });
     });
   });
 });

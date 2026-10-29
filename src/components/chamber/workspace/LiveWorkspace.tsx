@@ -4,6 +4,7 @@ import type { CertificationState, ChamberSubmission } from "@/data/manuscript";
 import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance";
 import { applyDocumentCandidates, type DocumentCandidate } from "@/data/documentCandidates";
 import { useSessionDocuments, type SessionDocument } from "@/hooks/useSessionDocuments";
+import type { SubmitFailure } from "@/hooks/useChamberSession";
 import UploadTab from "../UploadTab";
 import CompanyTab from "./CompanyTab";
 import PayrollTab from "./PayrollTab";
@@ -30,7 +31,7 @@ interface LiveWorkspaceProps {
   data: ChamberData;
   isDemo: boolean;
   sessionId: string | null;
-  onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean>;
+  onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   provenance?: ProvenanceMap;
   /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
   onFieldAction?: (action: FieldAction) => void;

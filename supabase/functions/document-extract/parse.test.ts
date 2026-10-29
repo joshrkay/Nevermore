@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { buildPromptText, censusCandidates, findCensus, isPasswordError, shapeAiCandidates, sniffFormat } from "./parse";
+import {
+  buildPromptText,
+  censusCandidates,
+  findCensus,
+  isPasswordError,
+  MAX_EMPLOYEES,
+  shapeAiCandidates,
+  sniffFormat,
+  US_STATE_CODES,
+} from "./parse";
 
 const bytes = (...parts: (number[] | string)[]) =>
   new Uint8Array(parts.flatMap((p) => (typeof p === "string" ? [...p].map((c) => c.charCodeAt(0)) : p)));
@@ -61,6 +70,45 @@ describe("findCensus", () => {
   it("splits a single name column", () => {
     const census = findCensus([["Employee Name", "State", "Title"], ["Lee, Ann", "CA", "Dev"], ["Bo Ray", "TX", "Writer"]], "CSV")!;
     expect(census.employees.map((e) => [e.first_name, e.last_name])).toEqual([["Ann", "Lee"], ["Bo", "Ray"]]);
+  });
+
+  it("blanks a state that isn't a listed US code, keeping the employee", () => {
+    const rows = [["Name", "State", "Title"], ["Ann Lee", "California", "Dev"], ["Bo Ray", "zz", "Writer"], ["Cy Fox", " pr ", "Ops"], ["Di Kim", "AE", "Ops"]];
+    const census = findCensus(rows, "CSV")!;
+    expect(census.employees.map((e) => e.state)).toEqual(["", "", "PR", ""]);
+    expect(censusCandidates(census).find((c) => c.field === "states")?.value).toEqual(["PR"]);
+  });
+
+  it("omits states when no row has a listed code", () => {
+    const census = findCensus([["Name", "State", "Title"], ["Ann Lee", "Texas", "Dev"]], "CSV")!;
+    expect(censusCandidates(census).map((c) => c.field)).toEqual(["employees", "employee_count"]);
+  });
+
+  it("keeps the first MAX_EMPLOYEES people of a large roster and says so", () => {
+    const total = MAX_EMPLOYEES + 2500;
+    const rows: string[][] = [["Name", "State", "Title", "Type"]];
+    for (let i = 0; i < total; i++) rows.push([`Person ${i}`, "CA", "Dev", i % 10 === 0 ? "1099" : "W-2"]);
+    const census = findCensus(rows, "CSV", 1)!;
+    expect(census.employees).toHaveLength(total);
+    const [roster, headcount] = censusCandidates(census);
+    expect(roster.value as unknown[]).toHaveLength(MAX_EMPLOYEES);
+    expect((roster.value as { first_name: string }[])[0].first_name).toBe("Person");
+    expect(roster.location).toBe(`CSV, rows 2–${total + 1}; first 5,000 of 7,500 people kept`);
+    // the headcount is still the whole company's, not the truncated roster's
+    expect(headcount).toMatchObject({ field: "employee_count", value: total - total / 10, location: `CSV, rows 2–${total + 1}` });
+  });
+
+  it("does not touch a roster at the limit", () => {
+    const rows: string[][] = [["Name", "State", "Title"]];
+    for (let i = 0; i < MAX_EMPLOYEES; i++) rows.push([`Person ${i}`, "TX", "Dev"]);
+    const [roster] = censusCandidates(findCensus(rows, "CSV", 1)!);
+    expect(roster.value as unknown[]).toHaveLength(MAX_EMPLOYEES);
+    expect(roster.location).toBe(`CSV, rows 2–${MAX_EMPLOYEES + 1}`);
+  });
+
+  it("lists the 50 states, DC and the five territories", () => {
+    expect(US_STATE_CODES.size).toBe(56);
+    expect([...US_STATE_CODES]).toEqual([...US_STATE_CODES].sort());
   });
 
   it("ignores sheets that aren't a census", () => {

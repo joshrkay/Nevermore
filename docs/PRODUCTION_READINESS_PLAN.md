@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Version** | 2.3 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings) |
-| **Date** | 2026-10-22 |
-| **Verified against** | `main` at commit `6f2bf5c` (merge of pull request 21), plus the `chamber-extract` fix, the move of `document-extract` onto the shared adapter, the per-address and global ceilings on document reads and the edge-function type check on branch `claude/peaceful-albattani-neiujl`. v1.0 was verified against `04503c3` (2026-10-20) |
+| **Version** | 2.5 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings, and A-2.2 added database validation and versioned writes) |
+| **Date** | 2026-10-29 |
+| **Verified against** | `main` at commit `6f2bf5c` (merge of pull request 21), plus the `chamber-extract` fix, the move of `document-extract` onto the shared adapter, the per-address and global ceilings on document reads and the edge-function type check on branch `claude/peaceful-albattani-neiujl`. A-2.2 (2.5) was verified on branch `a22-local`, cut from `main` at `2a5e9af` (merge of pull request 27). v1.0 was verified against `04503c3` (2026-10-20) |
 | **Scope** | Everything between the current build and a supervised private pilot (M2) and a public launch (M3) |
-| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (624 tests in 44 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. **Not run:** any end-to-end test (none exist), and `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. |
+| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (624 tests in 44 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. **Not run:** any end-to-end test (none exist), and `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. A-2.2 was checked separately on `a22-local` with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (784 tests in 49 files), `npm run build`, all eight SQL tests and `npm run test:e2e` (four tests, run three times in a row). The new two-tab test fails when the client's version condition is removed. Two real database connections saving from one version were checked by hand, not in CI. |
 
 ---
 
@@ -80,7 +80,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | v1.0 assumed | The code does | Consequence |
 |---|---|---|
 | Guests return by a token in the URL fragment (D1). | Supabase anonymous auth in browser storage, the session id in `?session=`, owner RLS gates resume. | A row id grants nothing without the owner's JWT, so isolation holds. A guest upgraded by email has no sign-in path back (password-only sign-in), and a bare `/start` always creates a new session. |
-| `intake_sessions`, `intake_messages`, `intake_documents`, `intake_submissions`, reachable only through edge functions. | `chamber_sessions` (jsonb data, provenance, transcript, submission), the extended `documents` table, `chamber_certifications`. The browser writes them directly under RLS. | No server-side field validation, no version column, saves are last-write-wins, and two tabs can overwrite each other (A-2.2). |
+| `intake_sessions`, `intake_messages`, `intake_documents`, `intake_submissions`, reachable only through edge functions. | `chamber_sessions` (jsonb data, provenance, transcript, submission), the extended `documents` table, `chamber_certifications`. The browser writes them directly under RLS. | The database validates `chamber_data` and versions every save (A-2.2), so a tab that is behind is refused instead of overwriting the other. Nothing validates the transcript or provenance. |
 | `certify` and `submit` endpoints, idempotency keys, reference `EAA-YYYY-NNNN`. | A trigger on the status update records the certification and the snapshot. The reference is `EAA-<year>-<8 hex of the session id>`, built in the browser. | The reference is not unique or server-assigned, and a repeat submit adds another certification row (C-3.1). |
 | Manuscript at `/manuscript/:reference#t=`, review at `/review`. | `/manuscript?session=<id>` with a JWT and owner RLS. Review is a tab inside the Chamber. | Viewing needs sign-in. Safe error states exist, but not expired or revoked ones. |
 | Advisor access through endpoints with `has_role`. | `user_roles`, `has_role`, `require_advisor()` and RLS on every advisor table and function. | Matches the intent. Tests assert SQL refusals (42501), not HTTP 403s. |
@@ -117,7 +117,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | The reference is not unique or server-assigned, and a repeat submit adds another certification row. | `manuscript.ts`, `useChamberSession.ts` | C-3.1 |
 | The owner's update policy lets a prospect write `documents.status`, so it cannot carry a scan verdict. | `20261021100000_session_documents.sql` | E-4.3 |
 | Upload limits (20 MB, file types) are enforced only in the browser. The bucket has no size or type limit. | `UploadTab.tsx`, `config.toml` | E-4.1 |
-| A save can fail without the prospect knowing: the update has no `.select()` so a zero-row update looks like success, there is no status indicator, and no local backup. | `useChamberSession.ts` | A-1.4 |
+| A save can fail without the prospect knowing: there is no status indicator, and no local backup. | `useChamberSession.ts` | A-1.4 |
 | A bare `/start` always inserts a new session, so a returning guest is never resumed and orphan rows accumulate. | `useChamberSession.ts` | A-1.3 |
 | An upgraded guest cannot sign back in: nothing sets a password or signs in by emailed code. | `useAuth.tsx` | D1, A-1.3 |
 | The advisor queue has no `LIMIT` and the page loads every row. | `20261024100000_advisor_queue.sql` | F-2.1 |
@@ -140,7 +140,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | Epic | Done | Partial | Superseded | Not started | Not verifiable | Total |
 |---|---|---|---|---|---|---|
 | 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
-| A Durable session | 1 | 4 | 4 | 2 | 0 | 11 |
+| A Durable session | 2 | 4 | 4 | 1 | 0 | 11 |
 | B AI extraction | 2 | 4 | 1 | 2 | 0 | 9 |
 | C Review, certify, submit | 1 | 7 | 0 | 2 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
@@ -150,16 +150,16 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
 | I Quality and accessibility | 1 | 8 | 0 | 4 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **18** | **47** | **11** | **24** | **6** | **106** |
+| **Total** | **19** | **47** | **11** | **23** | **6** | **106** |
 
-15 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+16 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
 ## 2. Delivery Principles
 
 1. **Text is the dependable path.** Voice enhances intake and must never block it. *Holds: voice is opt-in and the text input is always present.*
-2. **The prospect controls their data.** AI proposes values. The prospect confirms material facts. *Holds in the browser; not enforced by the database (A-2.2).*
+2. **The prospect controls their data.** AI proposes values. The prospect confirms material facts. *Holds in the browser. The database validates answers and refuses stale saves (A-2.2), but does not enforce that an AI value never overwrites a prospect's edit (B-1.2).*
 3. **No fabricated data.** Unknown underwriting data stays unknown, shown as "Not provided" or listed as an open item. *Holds for the Manuscript and the PEO catalog. Demo data remains in `chamberTypes.ts` (D-1.5).*
 4. **Sensitive data stays private.** Census, payroll, benefits, and workers' compensation data are never publicly reachable. *Holds: private buckets, owner and advisor RLS, a test that every public table has row security.*
 5. **One source of truth.** The saved intake session feeds the Chamber, the review, the Manuscript, and the advisor view. Submitted packets are frozen as snapshots. *Holds, with the snapshot gaps in C-3.2.*
@@ -223,12 +223,12 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic A: Durable Intake Session
 
-*As built:* Sessions live in `chamber_sessions` under Supabase Auth and owner RLS (D14), not in token-gated edge-function tables. Isolation is in place and tested. What is missing is server-side validation and versioning, a visible save state, resume of the latest session, and expiry.
+*As built:* Sessions live in `chamber_sessions` under Supabase Auth and owner RLS (D14), not in token-gated edge-function tables. Isolation is in place and tested. What is missing is a visible save state, resume of the latest session, and expiry. Validation and versioned writes are done (A-2.2).
 
 #### A-1.1 Intake session data model
 - **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** D1, D4 · **Milestone:** M1
 - **Built:** `chamber_sessions` (migration `20260324031329`) with owner-only RLS for `authenticated` (guests are `authenticated` with the `is_anonymous` claim). Advisors read all rows, read-only (`20261022090000`). The access matrix in `supabase/tests/advisor_operations.sql` covers signed-out, guest, other prospect, advisor and admin.
-- **Remaining:** Anonymous denial and cross-owner isolation are met. Not met: `status` is free text (default `in_progress`, `submitted` at certification), not a checked set; there is no `schema_version`, `data_version`, `last_activity_at` or `expires_at`; the browser writes the table directly. The columns arrive with A-1.5 and A-2.2. The token-hash criteria no longer apply (D14).
+- **Remaining:** Anonymous denial and cross-owner isolation are met. Not met: `status` is free text (default `in_progress`, `submitted` at certification), not a checked set; there is no `schema_version`, `last_activity_at` or `expires_at` (`data_version` arrived with A-2.2); the browser writes the table directly. The columns arrive with A-1.5. The token-hash criteria no longer apply (D14).
 
 #### A-1.2 Create a guest session and issue a continuation token
 - **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-1.1, D1 · **Milestone:** M1
@@ -243,7 +243,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### A-1.4 Autosave with visible status and local backup
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** A-1.2, A-2.2 · **Milestone:** M1
 - **Built:** 2-second debounced autosave, a 10-second retry, an in-flight save awaited before the next, and a keepalive request on page unload (up to 60,000 bytes, otherwise a leave-confirm prompt) in `useChamberSession.ts`. Submit waits for pending saves. Tested.
-- **Remaining:** No 'Saving / Saved / Not saved' indicator and no Retry action: a failure reaches only `console.error`. No `localStorage` backup, so a failed save is lost on reload. 'Saved' means no PostgREST error: the update has no `.select()`, so an update that matched zero rows looks like success. Add all three.
+- **Remaining:** No 'Saving / Saved / Not saved' indicator and no Retry action: a failure reaches only `console.error`. No `localStorage` backup, so a failed save is lost on reload. A-2.2 added the `.select()`: 'Saved' now means the update returned the row, and zero rows is a conflict, not a success. Add the other two.
 
 #### A-1.5 Expiry, archive, and revocation
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** A-1.2, D4 · **Milestone:** M1
@@ -262,11 +262,21 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### A-2.1 Canonical intake schema v1
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE + FS · **Depends:** D2 · **Milestone:** M1
-- **Built:** `ChamberData` (36 flat fields plus an `employees` array) in `chamberTypes.ts`. Zod rules in `chamberValidation.ts`, used in the browser only. Provenance in a sibling `field_provenance` jsonb column. `docs/intake-schema.md` exists. Zero counts are accepted.
-- **Remaining:** No `{value, status, source, updated_at, note?}` envelope: provenance is a sibling map. Recommended: keep the sibling map, since every consumer already reads it, and amend the AC (D14). Statuses lack `not_applicable` and sources lack `advisor_edit` and `system` (advisor changes live in `advisor_field_reviews`). No per-field required-for-submission flag (D2). No workers' comp, EIN or contractor sections. No schema-version constant stored on a session. The edge function keeps its own 17-field copy of the field list. `docs/intake-schema.md` covers provenance only: add the field table and a test that keeps it in sync. Zero-versus-absent is untested, and the Review tab shows 0 as a dash.
+- **Built:** `ChamberData` (37 flat fields plus an `employees` array) in `chamberTypes.ts`. Zod rules in `chamberValidation.ts` sanitise in the browser, and the database enforces the same limits (A-2.2). Provenance in a sibling `field_provenance` jsonb column. `docs/intake-schema.md` exists. Zero counts are accepted.
+- **Remaining:** No `{value, status, source, updated_at, note?}` envelope: provenance is a sibling map. Recommended: keep the sibling map, since every consumer already reads it, and amend the AC (D14). Statuses lack `not_applicable` and sources lack `advisor_edit` and `system` (advisor changes live in `advisor_field_reviews`). No per-field required-for-submission flag (D2). No workers' comp, EIN or contractor sections. No schema-version constant stored on a session. The edge function keeps its own 17-field copy of the field list. `docs/intake-schema.md` now has the field table and the server rules (A-2.2). `schemaSync.test.ts` keeps the migration and the client's limits in sync, but nothing checks the doc's table against the code. Zero-versus-absent is untested, and the Review tab shows 0 as a dash.
 
 #### A-2.2 Server-side validation and versioned writes
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1, A-1.2 · **Milestone:** M1
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1, A-1.2 · **Milestone:** M1
+- **Built:** Migration `20261027090000_intake_validation_and_versioning.sql`. `chamber_sessions.data_version` (integer, default 1) is set by a trigger, not the client: 1 on insert, +1 on every update, whatever a client sends. `public.chamber_data_error` checks `chamber_data` on insert, whenever it changes and when the session is certified. It checks the kind of each of the 38 keys, the state codes (the 50 states, DC and `AS GU MP PR VI`), counts and salaries (whole numbers, 0 to 1,000,000), text length (1,000 characters) and the caps (5,000 employees, 20 dependents each, 60 states, 100 list items). A refused write changes nothing and raises SQLSTATE `EA001`, which PostgREST answers with HTTP 400 and the zero-based path (`employees[3].dob`) in `details`. `profiles.phone` is checked by its own trigger. `useChamberSession.ts` saves with `.eq("data_version", n).select(...)` through one queue; on zero rows it reads the row back and tells a conflict ('Load latest' or 'Keep my changes') from its own lost response, a deleted row and a transient error. `EA001` is not retried and the status names the field. The browser sanitiser (`chamberValidation.ts`) and `document-extract` hold the same limits, so valid client output is never refused, and `src/data/schemaSync.test.ts` fails CI when the migration and the client drift. `supabase/tests/intake_validation.sql` has 59 rejection cases plus the version, certification, phone and legacy-row cases. `e2e/two-tabs-conflict.spec.ts` shows a stale tab refused with the database keeping the other tab's save, and a direct `PATCH` refused with `EA001`. The field table and rules are in `docs/intake-schema.md`.
+- **Notes:**
+  - **Phone:** `chamber_data` has no phone. The only phone is `profiles.phone`, checked when it is set to a new non-empty value (7 to 15 digits, `+`, spaces, brackets, dots, dashes, an extension). Rows that already hold a bad phone stay editable.
+  - **Unknown keys:** an unknown top-level key in `chamber_data` is refused (unknown keys inside an employee or dependent are tolerated), so a new field needs its migration before the front end that sends it.
+  - **Existing rows:** nothing is backfilled or re-validated. A row that already holds invalid data stays editable until its `chamber_data` changes or it is certified.
+  - **Concurrency:** the SQL test and the browser test save from one version one after the other. That proves the version condition and the server-owned version. Two real connections (the second waits on the first's row lock, then matches no row) were checked by hand with two `psql` sessions and are not run in CI.
+  - **Keepalive:** the save on page unload carries the version condition and cannot read the response, so a tab that is behind and is closed with unsaved edits loses them, and says nothing. While a conflict, a refused answer or a deleted row is showing, closing the page asks the prospect to confirm.
+  - **Not covered:** the transcript, `field_provenance` and `documents.extraction` (only the existing is-object checks), `status`, and advisor edits. Dates stay free text.
+  - **Deploy order:** the migration must reach production before the front end, which selects `data_version`.
+  - The state list, the caps, refusing unknown keys, validating inserts and putting the phone rule on `profiles` are product choices made on recommended defaults: confirm them (open question 7).
 - *Revised scope, AC and tests:*
   - **Scope:** The browser writes whole-row jsonb straight to `chamber_sessions`, so nothing validates it on the server and saves are last-write-wins. Add a `data_version` column that a trigger increments, and a `BEFORE UPDATE` trigger that validates `chamber_data` (field types, state codes, count ranges). The client sends its last-seen version with each save (`.eq("data_version", n)` plus `.select()`), and treats zero matched rows as a conflict.
   - **AC:**
@@ -284,7 +294,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### A-3.1 Store transcript messages as ordered rows
 - **Status:** **SUPERSEDED** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** A-1.2 · **Milestone:** M1
 - **Built:** The transcript is a jsonb array on `chamber_sessions.transcript`, rewritten on each save. Senders are `lenore` and `user`. The prospect's message is added before the model call and kept when the call fails (tested).
-- **Remaining:** Order and role are met. Not met: separate rows, server-assigned `seq`, a `system` role, `extraction_status`. Two tabs overwrite each other's transcript. Recommended: keep the array and treat multi-tab editing as unsupported until A-2.2's version check lands.
+- **Remaining:** Order and role are met. Not met: separate rows, server-assigned `seq`, a `system` role, `extraction_status`. Two tabs no longer overwrite each other's transcript: a save from a stale version is refused and that tab offers 'Load latest' or 'Keep my changes' (A-2.2). Recommended: keep the array.
 
 #### A-3.2 Restore the transcript on resume
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** A-3.1, A-1.3 · **Milestone:** M1
@@ -305,7 +315,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### B-1.2 Merge policy and conflict capture
 - **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** B-1.1, A-2.2 · **Milestone:** M1
 - **Built:** Client-side `applyExtraction` (`provenance.ts`): an AI value never overwrites a `prospect_edit`, a differing AI value makes the field `conflicting` with both candidates, and an explicit correction replaces. Tested.
-- **Remaining:** All three ACs hold in intent. Not met: the full precedence ladder (document, then transcript, then system; AI against AI keeps the first value and flags a conflict) and server-side enforcement, since a client can write any value. Revisit when A-2.2 adds database validation.
+- **Remaining:** All three ACs hold in intent. Not met: the full precedence ladder (document, then transcript, then system; AI against AI keeps the first value and flags a conflict) and server-side enforcement, since a client can write any value. The database now checks the shape of every answer (A-2.2) but still not provenance or precedence, so the ladder stays in the client.
 
 #### B-1.3 Lenore follow-up policy and completion state
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** B-1.2, D2 · **Milestone:** M1
@@ -989,7 +999,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Criterion | Status |
 |---|---|
-| All M1 stories are done. | **Not met.** 15 of 54 are DONE or SUPERSEDED. |
+| All M1 stories are done. | **Not met.** 16 of 54 are DONE or SUPERSEDED. |
 | A test prospect completes text intake, review, certification, submission, and PDF download with real data. | **Not yet shown.** The chat path is fixed in code and tested with fakes, but is not deployed or exercised live. The workspace tabs, certification and PDF exist, and no end-to-end test (I-4.3) records a full run. |
 | No "Meridian" text appears in the live path. | **Mostly met.** The live Manuscript never renders the sample (tested). 'Meridian Creative Group' remains in `chamberTypes.ts` and an `AuthPage` placeholder (D-1.5). |
 | Two sessions cannot access each other's data (automated test). | **Met at the database level.** The SQL matrix covers cross-user reads and writes and runs in CI (not run in this refresh). There is no HTTP-level test. |
@@ -1032,7 +1042,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | A-1.5 | Expiry, archive, and revocation | M | High | M1 | NOT STARTED |
 | A-1.6 | Retire the legacy `chamber_sessions` path | S | High | M1 | SUPERSEDED |
 | A-2.1 | Canonical intake schema v1 | M | Highest | M1 | PARTIAL |
-| A-2.2 | Server-side validation and versioned writes | M | Highest | M1 | NOT STARTED |
+| A-2.2 | Server-side validation and versioned writes | M | Highest | M1 | DONE |
 | A-2.3 | Hydrate the Chamber workspace from saved data | M | Highest | M1 | DONE |
 | A-3.1 | Store transcript messages as ordered rows | S | High | M1 | SUPERSEDED |
 | A-3.2 | Restore the transcript on resume | S | High | M1 | PARTIAL |
@@ -1141,6 +1151,10 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 - Three decisions: **D14** (intake access model), **D15** (reference format), **D16** (advisor visibility), and a status on D1 to D13.
 - Milestone exit criteria with a status against each criterion (section 6).
 
+**Updated in 2.5** (after A-2.2 landed)
+- A-2.2 is DONE: the database validates `chamber_data` and versions every save, and the client sends its last-seen version and handles a conflict. Its Notes list what is not covered (the phone rule lives on `profiles.phone`, unknown keys are refused, two real connections were checked by hand, the keepalive limit).
+- A-1.1, A-1.4, A-2.1, A-3.1 and B-1.2 no longer say the database has no validation or version column, or that the update has no `.select()`. Sections 1.2, 1.3, 1.5 and 2, the Epic A summary, the risk table, the Definition of Done and open question 7 follow. Section 5 still lists A-2.2 as open work and needs the same change.
+
 **Updated in 2.3** (after the ceilings reached `document-extract`)
 - B-3.1 no longer lists the missing ceilings on document reads, and the matching defect and open question are removed. One shared budget serves both functions.
 
@@ -1216,7 +1230,7 @@ A story is done only when all of the following are true:
 4. New or changed data access has an authorization test.
 5. No sample or demo values appear in a live-session path.
 6. Empty, loading, and error states exist for every new screen.
-7. Any new data field is in `docs/intake-schema.md` and in the retention matrix (H-1.1).
+7. Any new data field is in `docs/intake-schema.md` and in the retention matrix (H-1.1). A new `chamber_data` key is also in the database's field list (`chamber_data_field_kind`) first (A-2.2).
 8. Any new log line is checked for sensitive content.
 9. Copy that makes a legal or affiliation claim is approved by LEGAL.
 10. **New:** a merge that touches an edge function passes `npm run typecheck:functions` before it lands on `main`.
@@ -1228,7 +1242,7 @@ A story is done only when all of the following are true:
 | Risk | Impact | Mitigation |
 |---|---|---|
 | Edge-function type check uses declarations for URL imports, so a wrong remote URL or a wrong call into a remote package is not caught. A broken merge reached `main` with green CI before the check existed. | A function can still fail at deploy or run time on a dependency the check cannot see. | F-0.4 catches local faults. Smoke-test each function after deploy. |
-| The browser writes intake data directly, with no server validation or version check. | Bad or overwritten data, with two tabs overwriting each other. | A-2.2 (database validation and a version column). |
+| The browser writes intake data directly under RLS. The database validates `chamber_data` and refuses stale saves (A-2.2), but not the transcript or provenance. | A stale tab's last edits are refused and, if it is closed, lost; provenance and the AI precedence ladder are still the client's word. | A-2.2 (built), B-1.2 for precedence, and the keepalive Note in A-2.2. |
 | The AI functions now import shared code from `supabase/functions/_shared`. A deploy that uploads only a function's own folder would fail to resolve it. | Both AI functions fail to start. | Deploy through the Supabase CLI, which bundles relative imports, and smoke-test a preview deploy first. |
 | Deployed environments may differ from `main`. This refresh could not see them. | Statuses here could be wrong about production in either direction. | Confirm deployed function versions, secrets, the cron schedule and Turnstile before the demo. |
 | Repeated 'repair main after merge' commits. | Overlapping branches keep breaking `main`. | Smaller pull requests, F-0.4, and required checks on `main`. |
@@ -1250,4 +1264,4 @@ A story is done only when all of the following are true:
 4. Which `chamber-extract` build is deployed (the fix is on the branch, not necessarily live), and is Turnstile enabled in every deployed environment?
 5. Are the CI checks required for merge on `main`? The README asks the owner to set it, and the repo cannot show whether they did.
 6. Should an advisor `admin` be able to do more than an `advisor` (delete an intake, grant a role through the app), or is SQL-only management the intent (D5)?
-
+7. A-2.2 shipped on the recommended defaults. Confirm them: the 56 state codes (the 50 states, DC and five territories; military mail codes are refused), the caps (5,000 employees, 20 dependents each, 60 states, 100 list items, 1,000 characters of text, 1,000,000 for counts and salary), refusing unknown top-level keys, validating inserts as well as updates, and checking the phone only on `profiles.phone`, since `chamber_data` has none.

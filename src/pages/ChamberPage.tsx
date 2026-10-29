@@ -39,6 +39,10 @@ const ChamberPage = () => {
     certification,
     saveStatus,
     retrySave,
+    loadLatest,
+    keepMine,
+    discardChanges,
+    invalidField,
   } = useChamberSession(searchParams.get("session"));
 
   // Keep the session in the URL so a refresh or "Back to Review" resumes it.
@@ -150,13 +154,21 @@ const ChamberPage = () => {
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Top bar */}
-      <div className="h-12 border-b border-border flex items-center px-4 gap-3 flex-shrink-0">
+      <div className="min-h-12 py-2 border-b border-border flex items-center px-4 gap-3 flex-shrink-0">
         <a href="/" className="font-display text-sm text-foreground hover:text-primary transition-colors">
           Edgar Allan Advisory
         </a>
         <span className="text-muted-foreground">/</span>
         <span className="text-sm text-muted-foreground">The Chamber</span>
-        <SaveStatus status={saveStatus} onRetry={retrySave} />
+        <SaveStatus
+          status={saveStatus}
+          onRetry={retrySave}
+          onLoadLatest={loadLatest}
+          onKeepMine={keepMine}
+          onDiscard={discardChanges}
+          onStartNew={startNew}
+          invalidField={invalidField}
+        />
       </div>
 
       {/* Voice Orb */}
