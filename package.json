@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "setup:supabase": "node scripts/supabase-setup.mjs"
     "test:e2e": "playwright test"
   },
   "dependencies": {

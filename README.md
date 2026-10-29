@@ -72,6 +72,12 @@ traces as an artifact.
 A Lovable sync may restore its own generated `playwright.config.ts`. If `npm run test:e2e` stops
 starting the stack, restore the config from git.
 
+## Supabase project
+
+`npm run setup:supabase -- --project-ref <ref>` applies the migrations, sets function secrets,
+deploys the edge functions, configures auth and schedules email delivery on a Supabase project, then
+checks the result. What it needs and what to do after: `docs/SUPABASE_SETUP.md`.
+
 ## Advisors
 
 Advisor tools are at `/advisor`. Roles, access rules and how to grant access: `docs/ADVISOR_ACCESS.md`.

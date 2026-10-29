@@ -28,5 +28,8 @@ dist-ssr
 .env.*
 !.env.example
 
+# Supabase CLI state written by `supabase link` (scripts/supabase-setup.mjs)
+supabase/.temp/
+supabase/.branches/
 # End-to-end test output: the app build, Playwright results and report (see e2e/)
 e2e/.output/
