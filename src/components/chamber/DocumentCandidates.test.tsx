@@ -5,6 +5,7 @@ import DocumentCandidates from "./DocumentCandidates";
 
 const extraction = {
   message: null,
+  notes: [],
   applied: {},
   candidates: [
     { field: "pay_frequency" as const, value: "Bi-weekly", location: "Page 2" },

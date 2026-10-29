@@ -32,7 +32,9 @@ describe("document candidates", () => {
       { field: "employee_count", value: 1200, location: null },
     ]);
     expect(ex.applied).toEqual({ payroll_vendor: "2026-10-20T00:00:00Z" });
+    expect(ex.notes).toEqual([]);
     expect(parseExtraction(null).candidates).toEqual([]);
+    expect(parseExtraction({ notes: ["The SSN column wasn't read.", 5, " "] }).notes).toEqual(["The SSN column wasn't read."]);
   });
 
   it("plans candidates against empty, matching, and existing values", () => {

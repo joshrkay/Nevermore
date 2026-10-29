@@ -28,7 +28,6 @@ declare module "https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs" {
   export const utils: {
     decode_range(ref: string): { s: { r: number; c: number }; e: { r: number; c: number } };
     sheet_to_json<T>(ws: WorkSheet, opts?: { header?: 1; raw?: boolean; defval?: unknown; blankrows?: boolean }): T[];
-    sheet_to_csv(ws: WorkSheet): string;
   };
 }
 

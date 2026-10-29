@@ -283,9 +283,9 @@ export function normalizeCensusRow(raw: unknown, now: Date = new Date()): Omit<C
   const hourlyRate = parseMoney(raw.hourly_rate);
   const employment_type =
     normalizeEmploymentType(raw.employment_type) ?? employmentTypeFromHours(raw.hours_per_week) ?? "full_time";
-  const compensation_type =
-    normalizeCompensationType(raw.compensation_type) ?? (hourlyRate !== undefined && raw.annual_salary === undefined ? "hourly" : "salary");
   let annual_salary = normalizeAnnualSalary(raw.annual_salary ?? raw.salary);
+  const compensation_type =
+    normalizeCompensationType(raw.compensation_type) ?? (hourlyRate !== undefined && annual_salary === undefined ? "hourly" : "salary");
   if (annual_salary === undefined && hourlyRate !== undefined) {
     // An hourly rate becomes a year's pay at the stated hours, or at full time when unstated.
     const hours = Number(raw.hours_per_week);

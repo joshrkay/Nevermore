@@ -18,12 +18,14 @@ export interface DocumentCandidate {
 
 export interface DocumentExtraction {
   message: string | null;
+  /** What the prospect should know about how the file was read, e.g. a column that was skipped. */
+  notes: string[];
   candidates: DocumentCandidate[];
   /** Fields the prospect applied from this document, with when. */
   applied: Partial<Record<CandidateField, string>>;
 }
 
-export const EMPTY_EXTRACTION: DocumentExtraction = { message: null, candidates: [], applied: {} };
+export const EMPTY_EXTRACTION: DocumentExtraction = { message: null, notes: [], candidates: [], applied: {} };
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -50,7 +52,8 @@ export function parseExtraction(raw: unknown): DocumentExtraction {
   if (isPlainObject(raw.applied)) {
     for (const [k, v] of Object.entries(raw.applied)) if (typeof v === "string") applied[candidateField(k) as CandidateField] = v;
   }
-  return { message: typeof raw.message === "string" ? raw.message : null, candidates, applied };
+  const notes = Array.isArray(raw.notes) ? raw.notes.filter((n): n is string => typeof n === "string" && n.trim() !== "") : [];
+  return { message: typeof raw.message === "string" ? raw.message : null, notes, candidates, applied };
 }
 
 export function isEmpty(v: unknown): boolean {
