@@ -15,7 +15,7 @@ const setup = () => {
   const addLenoreMessage = vi.fn();
   const setChamberData = vi.fn();
   const onOrbStateChange = vi.fn();
-  const data = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", employees: [{ first_name: "Ada", last_name: "L", dob: "1990-01-01", state: "TX", title: "Eng", salary: 1, classification: "W2" as const, dependents: [] }] };
+  const data = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", census: [{ id: "e1", first_name: "Ada", last_name: "L", dob: "1990-01-01", work_state: "TX", job_title: "Eng", annual_salary: 1, compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }] };
   const hook = renderHook(() =>
     useLenoreChat({ chamberData: data, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange }),
   );
@@ -38,6 +38,14 @@ describe("useLenoreChat", () => {
     expect(result.current.failure).toBeNull();
   });
 
+  it("removes a Social Security number before the message is kept or sent", async () => {
+    invoke.mockResolvedValue({ data: { extracted: {}, reply: "ok" }, error: null });
+    const { result, addUserMessage } = setup();
+    await act(async () => { await result.current.send("My SSN is 123-45-6789"); });
+    expect(addUserMessage).toHaveBeenCalledWith("My SSN is [redacted]");
+    expect(invoke.mock.calls[0][1].body.message).toBe("My SSN is [redacted]");
+  });
+
   it("keeps the roster out of what it sends to the model", async () => {
     invoke.mockResolvedValue({ data: { extracted: {}, reply: "ok" }, error: null });
     const { result } = setup();
@@ -45,7 +53,7 @@ describe("useLenoreChat", () => {
     const body = invoke.mock.calls[0][1].body;
     expect(body.message).toBe("hello");
     expect(body.context.company_name).toBe("Acme");
-    expect(body.context).not.toHaveProperty("employees");
+    expect(body.context).not.toHaveProperty("census");
   });
 
   it("says it couldn't respond, instead of pretending it understood, and keeps the message", async () => {

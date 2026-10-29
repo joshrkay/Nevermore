@@ -62,7 +62,7 @@ interface ProvenanceFieldProps {
 }
 
 const ProvenanceField = ({ label, field, display, raw, provenance, onAction, editable = true, children }: ProvenanceFieldProps) => {
-  const kind = field === "employees" ? null : FIELD_KINDS[field];
+  const kind = field === "census" ? null : FIELD_KINDS[field];
   const canEdit = Boolean(onAction && editable && kind);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");

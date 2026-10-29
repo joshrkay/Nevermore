@@ -7,8 +7,7 @@ interface DependentsTabProps {
 }
 
 const DependentsTab = ({ data }: DependentsTabProps) => {
-  const employeesWithDeps = data.employees.filter(e => e.dependents.length > 0);
-  const totalDeps = data.employees.reduce((acc, e) => acc + e.dependents.length, 0);
+  const totalDeps = data.census.reduce((acc, e) => acc + (e.dependents?.length ?? 0), 0);
 
   return (
     <div className="p-4 space-y-4">
@@ -17,28 +16,33 @@ const DependentsTab = ({ data }: DependentsTabProps) => {
         <span className="text-[10px] text-muted-foreground font-mono">{totalDeps} total dependents</span>
       </div>
 
-      {data.employees.length === 0 ? (
+      {data.census.length === 0 ? (
         <div className="text-center py-8 text-muted-foreground/50 italic text-sm">
           Lenore will confirm dependents during conversation.
         </div>
       ) : (
         <div className="space-y-3">
-          {data.employees.map((emp, i) => (
+          {data.census.map((emp, i) => {
+            const dependents = emp.dependents ?? [];
+            return (
             <motion.div
-              key={`${emp.first_name}-${emp.last_name}-${i}`}
+              key={emp.id}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}
+              transition={{ delay: Math.min(i, 20) * 0.05 }}
               className="bg-muted/50 rounded-lg p-3"
             >
               <div className="flex items-center gap-2 mb-2">
                 <Users className="w-3.5 h-3.5 text-muted-foreground" />
                 <span className="text-xs font-medium">{emp.first_name} {emp.last_name}</span>
-                <span className="text-[10px] text-muted-foreground">({emp.dependents.length} dependent{emp.dependents.length !== 1 ? "s" : ""})</span>
+                <span className="text-[10px] text-muted-foreground">({dependents.length} dependent{dependents.length !== 1 ? "s" : ""})</span>
+                {emp.coverage_tier && (
+                  <span className="text-[10px] text-muted-foreground">· coverage tier {emp.coverage_tier}</span>
+                )}
               </div>
-              {emp.dependents.length > 0 ? (
+              {dependents.length > 0 ? (
                 <div className="ml-5 space-y-1">
-                  {emp.dependents.map((dep, j) => (
+                  {dependents.map((dep, j) => (
                     <div key={j} className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span className="text-muted-foreground/30">└─</span>
                       <span className="text-foreground">{dep.first_name} {dep.last_name}</span>
@@ -53,7 +57,8 @@ const DependentsTab = ({ data }: DependentsTabProps) => {
                 <p className="ml-5 text-[10px] text-muted-foreground/40 italic">No dependents confirmed</p>
               )}
             </motion.div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

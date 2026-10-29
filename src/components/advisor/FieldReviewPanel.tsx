@@ -79,7 +79,7 @@ const FieldRow = ({
   const [draft, setDraft] = useState("");
   const [reason, setReason] = useState("");
   const label = FIELD_LABELS[field];
-  const correctable = field !== "employees";
+  const correctable = field !== "census";
   const source = prov?.source;
   const messageId = source?.kind === "transcript" && messageIds.has(source.message_id) ? source.message_id : null;
 

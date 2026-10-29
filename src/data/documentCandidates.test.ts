@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_CHAMBER_DATA, type ChamberEmployee } from "./chamberTypes";
+import { EMPTY_CHAMBER_DATA, type CensusEmployee } from "./chamberTypes";
 import { applyDocumentCandidates, parseExtraction, planCandidateMerge } from "./documentCandidates";
 
-const employee: ChamberEmployee = { first_name: "Ann", last_name: "Lee", dob: "1990-01-01", state: "CA", title: "Dev", salary: 100000, classification: "W2", dependents: [] };
+const employee: CensusEmployee = {
+  id: "e1",
+  first_name: "Ann",
+  last_name: "Lee",
+  dob: "1990-01-01",
+  work_state: "CA",
+  job_title: "Dev",
+  annual_salary: 100000,
+  compensation_type: "salary",
+  employment_type: "full_time",
+  classification: "w2",
+};
 
 describe("document candidates", () => {
   it("keeps only valid candidates and their source location", () => {
@@ -35,11 +46,25 @@ describe("document candidates", () => {
     expect(plan[2].current).toBe("Gusto");
   });
 
-  it("treats a roster as a conflict when the intake already has employees", () => {
-    const roster = { field: "employees" as const, value: [employee], location: "CSV, rows 2–2" };
+  it("treats a roster as a conflict when the intake already has a different census", () => {
+    const roster = { field: "census" as const, value: [employee], location: "CSV, rows 2–2" };
     expect(planCandidateMerge(EMPTY_CHAMBER_DATA, [roster])[0].kind).toBe("new");
-    const withTeam = { ...EMPTY_CHAMBER_DATA, employees: [{ ...employee, first_name: "Bo" }] };
+    const withTeam = { ...EMPTY_CHAMBER_DATA, census: [{ ...employee, first_name: "Bo" }] };
     expect(planCandidateMerge(withTeam, [roster])[0].kind).toBe("conflict");
+    // The same people and facts under other generated ids are the same census.
+    const sameTeam = { ...EMPTY_CHAMBER_DATA, census: [{ ...employee, id: "other-id" }] };
+    expect(planCandidateMerge(sameTeam, [roster])[0].kind).toBe("same");
+  });
+
+  it("reads a roster a document proposed as `employees` before the census contract", () => {
+    const ex = parseExtraction({
+      candidates: [{ field: "employees", value: [{ first_name: "Ann", state: "ca", salary: 90000, classification: "W2" }], location: "CSV, rows 2–2" }],
+      applied: { employees: "2026-10-20T00:00:00Z" },
+    });
+    expect(ex.candidates).toHaveLength(1);
+    expect(ex.candidates[0].field).toBe("census");
+    expect(ex.candidates[0].value).toEqual([expect.objectContaining({ first_name: "Ann", work_state: "CA", annual_salary: 90000, classification: "w2" })]);
+    expect(ex.applied).toEqual({ census: "2026-10-20T00:00:00Z" });
   });
 
   const doc = { id: "d1", file_name: "census.xlsx" };

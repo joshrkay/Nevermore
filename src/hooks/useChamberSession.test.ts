@@ -281,7 +281,7 @@ describe("useChamberSession", () => {
       await waitFor(() => expect(updates).toHaveLength(1));
       const payload = updates[0].payload as { chamber_data: unknown; submission: { chamber_data: unknown } };
       expect(payload.chamber_data).toEqual(payload.submission.chamber_data);
-      expect(payload.chamber_data).toMatchObject({ company_name: "Acme", employees: [] }); // normalized, not the sparse row
+      expect(payload.chamber_data).toMatchObject({ company_name: "Acme", census: [] }); // normalized, not the sparse row
       await act(async () => { updates[0].resolve({ error: null }); await pending; });
     });
 

@@ -28,14 +28,17 @@ export const EMPTY_EXTRACTION: DocumentExtraction = { message: null, candidates:
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+// Documents read before the census contract proposed the roster as `employees`.
+const candidateField = (f: string) => (f === "employees" ? "census" : f);
+
 /** Reads a stored `extraction` column, keeping only candidates that pass the intake's field rules. */
 export function parseExtraction(raw: unknown): DocumentExtraction {
   if (!isPlainObject(raw)) return EMPTY_EXTRACTION;
   const candidates: DocumentCandidate[] = [];
   for (const c of Array.isArray(raw.candidates) ? raw.candidates : []) {
     if (!isPlainObject(c) || typeof c.field !== "string") continue;
-    const patch = sanitizeChamberPatch({ [c.field]: c.value });
-    const field = c.field as CandidateField;
+    const field = candidateField(c.field) as CandidateField;
+    const patch = sanitizeChamberPatch({ [field]: c.value });
     if (!(field in patch) || isEmpty(patch[field])) continue;
     candidates.push({
       field,
@@ -45,7 +48,7 @@ export function parseExtraction(raw: unknown): DocumentExtraction {
   }
   const applied: DocumentExtraction["applied"] = {};
   if (isPlainObject(raw.applied)) {
-    for (const [k, v] of Object.entries(raw.applied)) if (typeof v === "string") applied[k as CandidateField] = v;
+    for (const [k, v] of Object.entries(raw.applied)) if (typeof v === "string") applied[candidateField(k) as CandidateField] = v;
   }
   return { message: typeof raw.message === "string" ? raw.message : null, candidates, applied };
 }
@@ -54,13 +57,19 @@ export function isEmpty(v: unknown): boolean {
   return v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
 }
 
+// A census row's id is generated, so two rosters with the same people and facts are the same census.
+const withoutIds = (rows: unknown[]) =>
+  rows.map((r) => (isPlainObject(r) ? Object.fromEntries(Object.entries(r).filter(([k]) => k !== "id")) : r));
+
 const normalize = (v: unknown): string =>
   JSON.stringify(
     Array.isArray(v) && v.every((x) => typeof x === "string")
       ? [...v].map((s) => s.toLowerCase()).sort()
-      : typeof v === "string"
-        ? v.trim().toLowerCase()
-        : v,
+      : Array.isArray(v)
+        ? withoutIds(v)
+        : typeof v === "string"
+          ? v.trim().toLowerCase()
+          : v,
   );
 
 export type MergeKind = "new" | "same" | "conflict";
@@ -139,7 +148,7 @@ const FIELD_LABELS: Partial<Record<CandidateField, string>> = {
   nonexempt_count: "Non-exempt employees",
   exempt_count: "Exempt employees",
   has_1099: "Has 1099 contractors",
-  employees: "Employee roster",
+  census: "Employee census",
 };
 
 export function fieldLabel(field: CandidateField): string {
@@ -149,7 +158,7 @@ export function fieldLabel(field: CandidateField): string {
 /** A short, human-readable rendering of a candidate or current value. */
 export function formatValue(field: CandidateField, v: unknown): string {
   if (isEmpty(v)) return "—";
-  if (field === "employees" && Array.isArray(v)) return `${v.length} employee${v.length === 1 ? "" : "s"}`;
+  if (field === "census" && Array.isArray(v)) return `${v.length} employee${v.length === 1 ? "" : "s"}`;
   if (Array.isArray(v)) return v.join(", ");
   if (typeof v === "boolean") return v ? "Yes" : "No";
   return String(v);
