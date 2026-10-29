@@ -4,9 +4,17 @@ import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { createFakeAi } from "./fake-ai.mjs";
 
+// Importing .ts needs type stripping. A static import runs before start.mjs's main().catch exists, so
+// without this check an older Node dies with a bare ERR_UNKNOWN_FILE_EXTENSION.
+if (!process.features.typescript) {
+  throw new Error(`The e2e gateway needs Node 22.18 or later to load chamber-extract/handler.ts (type stripping); this is Node ${process.version}`);
+}
+
 // handler.ts, not index.ts: index.ts imports from deno.land and reads Deno.env, handler.ts has neither.
 // Loading it here rather than per request makes a broken import stop the gateway at startup.
 const { handleRequest } = await import(new URL("../../supabase/functions/chamber-extract/handler.ts", import.meta.url).href);
+// dispatch-outbox's own caller check, importable because auth.ts has no imports.
+const { isServiceCall } = await import(new URL("../../supabase/functions/dispatch-outbox/auth.ts", import.meta.url).href);
 
 // The headers both real functions answer with. The gateway adds no CORS of its own for /functions/v1.
 const CORS_HEADERS = {
@@ -28,15 +36,6 @@ function toRequest(req, origin, pathAndQuery, body) {
   return new Request(new URL(pathAndQuery, origin), { method: req.method, headers, body: hasBody ? body : undefined });
 }
 
-/** The bytes the gateway already read, or else the request's own stream. */
-async function readBody(req, body) {
-  if (body !== undefined && body !== null) return body;
-  if (req.readableEnded) return Buffer.alloc(0);
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  return Buffer.concat(chunks);
-}
-
 async function send(res, response) {
   res.writeHead(response.status, Object.fromEntries(response.headers));
   res.end(Buffer.from(await response.arrayBuffer()));
@@ -50,16 +49,13 @@ const jsonResponse = (body, status = 200) => Response.json(body, { status, heade
  * @param {string} options.anonKey
  * @param {string} options.serviceRoleKey
  * @param {(line: string) => void} [options.log]
- * @returns {{ handle: (req, res, url, body) => Promise<void>, calls: { name: string, method: string, status: number, at: number }[], ai: ReturnType<typeof createFakeAi> }}
- *   `url` is a URL or a path string; `body` is a Buffer or string if the gateway already read the request body (otherwise it is read from `req`).
- *   `ai` is the fake provider, so a test can see which model calls the handler made.
+ * @returns {{ handle: (req, res, url: URL, body: Buffer) => Promise<void> }}
  */
 export function createFunctions({ supabaseUrl, anonKey, serviceRoleKey, log = (line) => console.error(`[functions] ${line}`) }) {
   const provider = process.env.E2E_AI_PROVIDER || "lovable";
   if (!AI_PROVIDERS.includes(provider)) throw new Error(`E2E_AI_PROVIDER must be one of ${AI_PROVIDERS.join(", ")}, got "${provider}"`);
 
   const fakeAi = createFakeAi({ log });
-  const calls = [];
 
   // Only what chamber-extract reads. The ceilings are high so repeated runs never meet them; the
   // per-user ceiling (15 a minute) is fixed in the handler, and the database starts empty each run.
@@ -89,20 +85,31 @@ export function createFunctions({ supabaseUrl, anonKey, serviceRoleKey, log = (l
     switch (name) {
       case "chamber-extract":
         // OPTIONS included: the handler answers its own preflight.
-        return await handleRequest(toRequest(req, supabaseUrl, pathAndQuery, await readBody(req, body)), deps);
-      case "dispatch-outbox":
+        return await handleRequest(toRequest(req, supabaseUrl, pathAndQuery, body), deps);
+      case "dispatch-outbox": {
         // A stub: the real function needs Deno and an email provider, and the database has already
-        // queued the emails when the certification was written.
+        // queued the emails when the certification was written. It enforces the real function's caller
+        // check (the service-role key, or a signed-in non-guest user) and sends no email.
         if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
         if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
+        const authorization = req.headers.authorization ?? null;
+        if (!isServiceCall(authorization, serviceRoleKey)) {
+          if (!authorization) return jsonResponse({ error: "Unauthorized" }, 401);
+          const caller = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authorization } } });
+          const { data: { user } } = await caller.auth.getUser();
+          if (!user || user.is_anonymous) return jsonResponse({ error: "Unauthorized" }, 401);
+        }
         return jsonResponse({ claimed: 0, sent: 0, retrying: 0, dead: 0, unrecorded: 0, skipped: 0 });
+      }
       default:
+        // Tells "the stand-in lacks this function" from "the function does not exist", as auth.mjs and rest.mjs do.
+        log(`functions: the e2e stand-in does not implement ${name}`);
         return jsonResponse({ code: "NOT_FOUND", message: "Requested function was not found" }, 404);
     }
   }
 
   async function handle(req, res, url, body) {
-    const { pathname, search } = new URL(url ?? req.url, "http://gateway.invalid");
+    const { pathname, search } = url;
     const name = decodeURIComponent(pathname.split("/")[3] ?? "");
     let response;
     try {
@@ -111,9 +118,8 @@ export function createFunctions({ supabaseUrl, anonKey, serviceRoleKey, log = (l
       log(`FUNCTION_ERROR ${name}: ${error instanceof Error ? error.message : String(error)}`);
       response = jsonResponse({ error: "Internal error" }, 500);
     }
-    calls.push({ name, method: req.method, status: response.status, at: Date.now() });
     await send(res, response);
   }
 
-  return { handle, calls, ai: fakeAi };
+  return { handle };
 }

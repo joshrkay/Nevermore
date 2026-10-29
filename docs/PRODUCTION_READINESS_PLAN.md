@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Version** | 2.3 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings) |
-| **Date** | 2026-10-22 |
-| **Verified against** | `main` at commit `6f2bf5c` (merge of pull request 21), plus the `chamber-extract` fix, the move of `document-extract` onto the shared adapter, the per-address and global ceilings on document reads and the edge-function type check on branch `claude/peaceful-albattani-neiujl`. v1.0 was verified against `04503c3` (2026-10-20) |
+| **Version** | 2.4 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings, and the intake-to-PDF end-to-end test and its CI job landed) |
+| **Date** | 2026-10-29 |
+| **Verified against** | `main` at commit `2a5e9af` (merge of pull request 27). That includes the `chamber-extract` fix, the move of `document-extract` onto the shared adapter, the per-address and global ceilings on document reads and the edge-function type check (pull request 26), and the end-to-end test (pull request 25). Version 2.3 was verified against `6f2bf5c` plus branch `claude/peaceful-albattani-neiujl`; v1.0 against `04503c3` (2026-10-20) |
 | **Scope** | Everything between the current build and a supervised private pilot (M2) and a public launch (M3) |
-| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (624 tests in 44 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. **Not run:** any end-to-end test (none exist), and `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. |
+| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (685 tests in 48 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. The `e2e` job has run green in CI: pull request 25's run 40774885703 on its final commit, and pull request 27's run 40812758403. This refresh read the test and its stand-ins and did not re-run the end-to-end test. **Not run:** `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. |
 
 ---
 
@@ -72,7 +72,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | Manuscript | Rendered from the signed snapshot at `/manuscript?session=<id>` for the signed-in owner. A vector-text PDF (jsPDF) with repeating table headers and page numbers. Date of birth is masked by default. `/manuscript/demo` is a labelled sample. |
 | Advisors | Roles `advisor` and `admin` in `user_roles` (granted by SQL). A submission queue with status filter and search. A detail page with field-by-field review, transcript evidence, documents through 60-second signed links, append-only internal notes, a nine-state pipeline with history, and versioned Manuscript PDFs in a private bucket. Prospects see only `submitted`, `under_review` and `information_requested`. |
 | Notifications | Certification queues an advisor alert and a prospect confirmation in the same transaction. `dispatch-outbox` sends them through Resend with retries (5 attempts), a frozen-message idempotency design, and a reaper and reconciliation sweep. Needs function secrets and a once-a-minute schedule (`docs/NOTIFICATIONS.md`). |
-| Quality gates | CI runs `verify` (lint, edge-function type check, test, build) and `sql-tests` on every pull request. 584 front-end and function unit tests. SQL tests cover certification, guest blocking, documents, provenance, AI limits, the advisor access matrix and the outbox. **No end-to-end tests.** |
+| Quality gates | CI runs `verify` (lint, edge-function type check, test, build), `sql-tests` and `e2e` on every pull request. 685 front-end and function unit tests. SQL tests cover certification, guest blocking, documents, provenance, AI limits, the advisor access matrix and the outbox. **One end-to-end test** (I-4.3) takes a guest's text intake to the downloaded Manuscript PDF against a Supabase stand-in with the real migrations. It does not cover document upload (no Storage), voice, the advisor path, real Supabase Auth, REST or edge functions, or a live AI model. |
 | Hosting | `vercel.json` sets a Vite build and a single-page-app rewrite. One Supabase `project_id` is in `supabase/config.toml`. |
 
 ### 1.2 Architecture as built, against v1.0
@@ -86,7 +86,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | Advisor access through endpoints with `has_role`. | `user_roles`, `has_role`, `require_advisor()` and RLS on every advisor table and function. | Matches the intent. Tests assert SQL refusals (42501), not HTTP 403s. |
 | AI provider behind an adapter. | Built, tested, and now used by both AI functions (`chamber-extract` after the fix in section 1.3, and `document-extract`). The shared code is in `supabase/functions/_shared/ai`. | `AI_PROVIDER`, the timeout, the retry and redacted logs apply to both. Chat gets 20 seconds per attempt and document reads 30. |
 | Text PDF with `html2canvas` removed (D12). | jsPDF vector text. `html2canvas` is never imported. | Matches. |
-| No `.github/`. | `ci.yml` with `verify` and `sql-tests`. | Matches the intent of I-4.4. Required-for-merge is a repository setting this refresh could not see. |
+| No `.github/`. | `ci.yml` with `verify`, `sql-tests` and `e2e`. | Matches the intent of I-4.4. Required-for-merge is a repository setting this refresh could not see. |
 
 ### 1.3 Defects found while verifying
 
@@ -132,6 +132,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-10-20 | Sourced PEO catalog replaces invented scoring. Guest intake with an email-verified account at certification. Per-IP and global AI limits with Turnstile. Real data and session recovery from the Reckoning to the Manuscript. Reliable AI calls (timeout, retry, adapter, safe logs, failure UX). Final certification with signer role, versioned consent and a server-side record. Text-based Manuscript PDF with a recorded, re-certifiable submission. Confidence and source for extracted fields. Session-linked uploads, categories and reviewed extraction. Advisor dashboard, pipeline status, field review and versioned Manuscripts. |
 | 2026-10-21 | Vercel configuration. Epic E document handling finished. Advisor session states, the access matrix and the searchable queue. CI for lint, tests, build and SQL tests. Advisor and prospect notifications on submission. Re-certification when a different PEO is chosen. A verify skill that drives the app against a local stand-in. |
 | 2026-10-22 | Supabase URL and key read from Vercel's integration variables. Outbox hardening: queueing faults heal and sends are frozen so a sender change cannot duplicate. |
+| 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
 
@@ -148,11 +149,11 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | F Advisor | 4 | 6 | 1 | 0 | 0 | 11 |
 | G Communications | 2 | 2 | 0 | 4 | 0 | 8 |
 | H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
-| I Quality and accessibility | 1 | 8 | 0 | 4 | 1 | 14 |
+| I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **18** | **47** | **11** | **24** | **6** | **106** |
+| **Total** | **19** | **47** | **11** | **23** | **6** | **106** |
 
-15 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+16 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -805,7 +806,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic I: Quality, Accessibility, and Release Readiness
 
-*As built:* Unit tests and CI exist. End-to-end tests, responsive and accessibility verification, and the voice state machine do not.
+*As built:* Unit tests, one end-to-end test and CI exist. Responsive and accessibility verification and the voice state machine do not.
 
 #### I-1.1 Responsive Chamber layout
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** FE · **Depends:** A-2.3, B-3.2 · **Milestone:** M2
@@ -854,16 +855,17 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### I-4.1 Unit tests for validation and schema
 - **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** FE · **Depends:** A-2.2 · **Milestone:** M1
-- **Built:** `npm test` runs Vitest with 624 tests in 44 files, including `chamberValidation.test.ts` and `provenance.test.ts`. `src/test` holds only `setup.ts`, so the placeholder is gone.
+- **Built:** `npm test` runs Vitest with 685 tests in 48 files, including `chamberValidation.test.ts` and `provenance.test.ts`. `src/test` holds only `setup.ts`, so the placeholder is gone.
 
 #### I-4.2 Integration test harness on local Supabase
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** J-1.1, A-1.2 · **Milestone:** M1
 - **Built:** `supabase/tests/run.sh` gives each SQL file a fresh database from one command. The CI `sql-tests` job covers certification, guest block, outbox, advisor, documents, provenance and AI limits.
-- **Remaining:** Plain Postgres with a stubbed `auth` schema, not local Supabase. No seed data. No create, save, certify and submit run through the real API. `certification.sql` runs as a superuser (`advisor_operations.sql` does use `SET ROLE`).
+- **Remaining:** Plain Postgres with a stubbed `auth` schema, not local Supabase. No seed data. Create, save, certify and submit now run end to end through a PostgREST and GoTrue stand-in with the real migrations and row security (I-4.3), but not through the real Supabase API. `certification.sql` runs as a superuser (`advisor_operations.sql` does use `SET ROLE`).
 
 #### I-4.3 End-to-end test: intake to PDF
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** QA + FE · **Depends:** I-4.2, D-3.2 · **Milestone:** M1
-- **Built:** There are zero end-to-end specs. `playwright.config.ts` is a bare `createLovableConfig({})`, and no script or CI step runs it.
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** QA + FE · **Depends:** I-4.2, D-3.2 · **Milestone:** M1
+- **Built:** `e2e/intake-to-pdf.spec.ts` drives a browser from a guest's text intake through review, a PEO choice, email verification, certification and submission to the Manuscript page and the PDF download. It asserts the File ID (reference), the PDF file name and its text, the rows in the database, and that the run produced no console errors or failed requests. `npm run test:e2e` starts the stack (`playwright.config.ts`, `e2e/stack/`): real Postgres with every migration, so row security and triggers are real; a gateway that serves subsets of GoTrue and PostgREST; the real `chamber-extract` handler with a scripted AI provider; and a `dispatch-outbox` that sends no email. The `e2e` job in `ci.yml` runs it on every pull request and has run green (run 40774885703 on pull request 25's final commit, run 40812758403 on pull request 27).
+- **Notes:** The path is a stand-in for Supabase, not Supabase. It uploads no documents (no Storage), does not use voice, does not touch the advisor side, and the model is scripted, so none of those is covered. The gateway implements only the calls the path makes. Setup, ports and the database it recreates are in `README.md`.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Playwright test: text intake, review, certify, submit, and PDF download.
   - **AC:**
@@ -872,8 +874,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### I-4.4 CI pipeline that gates releases
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** Highest · **Owner:** OPS · **Depends:** I-4.1, I-4.2, I-4.3 · **Milestone:** M1
-- **Built:** `ci.yml` runs `verify` (lint, edge-function type check, test, build) and `sql-tests` on every pull request and on pushes to `main`.
-- **Remaining:** No end-to-end job. Whether the checks are required for merge is not verifiable from the repo: `README.md` asks the owner to set it. The edge-function type check (F-0.4) is in `verify` and passed in a manual run on this branch.
+- **Built:** `ci.yml` runs `verify` (lint, edge-function type check, test, build), `sql-tests` and `e2e` (I-4.3) on every pull request and on pushes to `main`.
+- **Remaining:** Whether the checks, `e2e` included, are required for merge is not verifiable from the repo: `README.md` asks the owner to set it. The edge-function type check (F-0.4) is in `verify`. Its config also bans what Node's type stripping cannot run, because the `e2e` gateway loads `chamber-extract` that way.
 
 #### I-5.1 Voice reliability diagnosis and state machine
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** Medium · **Owner:** FE · **Depends:** A-3.1, D8 · **Milestone:** M3
@@ -975,11 +977,11 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | Tier | Stories | Why |
 |---|---|---|
 | 0: put the fixes in front of users | Confirm which builds of `chamber-extract` and `document-extract` are deployed, deploy both (and check the deploy bundles `supabase/functions/_shared`), and make one real Lenore exchange and one real document read in preview (the open part of F-0.2). | The fixes are verified in code, tests, a Deno run and a CI run, not live. |
-| 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, A-1.3, A-1.4, A-2.2, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.3, I-4.4 (add the function check), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus the end-to-end test that proves it. C-1.3, C-2.1 and B-1.3 wait for D2. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
+| 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, A-1.3, A-1.4, A-2.2, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.4 (make the checks required), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus making the end-to-end test (I-4.3, built) a required check. C-1.3, C-2.1 and B-1.3 wait for D2. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
 | 2: gate the private pilot (M2) | All M2 stories, plus the M1-tagged hardening stories that do not block the demo path: A-1.5, A-3.2, B-1.1, B-1.3, B-1.4, B-2.2, D-1.1 to D-1.4, D-2.2, D-3.1 to D-3.3, E-4.1, I-4.2. In practice: E-4.1, E-4.3, E-4.2, F-2.1, F-4.1, F-4.3, G-1.1 (schedule in a migration), G-1.3, H-1.1 to H-1.3, H-2.1, H-2.3, H-3.1, H-3.3, H-4.1 to H-4.3, I-1.x, I-2.x | Retention, deletion, upload hardening, an admin view of failed emails, legal pages, alerting, a runbook, and accessibility. Most wait on D3, D4, D10 and D13. |
 | 3: public launch (M3) | G-2.2, G-3.x, I-5.x, J-1.2, J-2.x, J-3.x | Bounces, CRM, voice reliability, domain, analytics and the launch checklist. G-3.x waits for D6. |
 
-**Critical path to a credible demo:** `A-2.2 → C-1.3 → C-2.1 → C-3.1 → D-1.5 → I-4.3`. D2 and D15 must close before C-1.3 and C-3.1 start.
+**Critical path to a credible demo:** `A-2.2 → C-1.3 → C-2.1 → C-3.1 → D-1.5`, with the end-to-end test (I-4.3, built) kept passing as each lands. D2 and D15 must close before C-1.3 and C-3.1 start.
 
 ---
 
@@ -989,8 +991,8 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Criterion | Status |
 |---|---|
-| All M1 stories are done. | **Not met.** 15 of 54 are DONE or SUPERSEDED. |
-| A test prospect completes text intake, review, certification, submission, and PDF download with real data. | **Not yet shown.** The chat path is fixed in code and tested with fakes, but is not deployed or exercised live. The workspace tabs, certification and PDF exist, and no end-to-end test (I-4.3) records a full run. |
+| All M1 stories are done. | **Not met.** 16 of 54 are DONE or SUPERSEDED. |
+| A test prospect completes text intake, review, certification, submission, and PDF download with real data. | **Shown in CI against stand-ins, not live.** The end-to-end test (I-4.3) completes text intake, review, certification, submission and PDF download in a browser with a scripted AI model and a Supabase stand-in. It is not shown on a deployed environment, with a real model or real Supabase, or with document upload. |
 | No "Meridian" text appears in the live path. | **Mostly met.** The live Manuscript never renders the sample (tested). 'Meridian Creative Group' remains in `chamberTypes.ts` and an `AuthPage` placeholder (D-1.5). |
 | Two sessions cannot access each other's data (automated test). | **Met at the database level.** The SQL matrix covers cross-user reads and writes and runs in CI (not run in this refresh). There is no HTTP-level test. |
 | Internal testers can repeat the flow without developer help. | **Not verifiable.** |
@@ -1116,7 +1118,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | I-3.1 | Consistent loading, empty, and error states | S | High | M1 | PARTIAL |
 | I-4.1 | Unit tests for validation and schema | S | Highest | M1 | DONE |
 | I-4.2 | Integration test harness on local Supabase | M | Highest | M1 | PARTIAL |
-| I-4.3 | End-to-end test: intake to PDF | M | Highest | M1 | NOT STARTED |
+| I-4.3 | End-to-end test: intake to PDF | M | Highest | M1 | DONE |
 | I-4.4 | CI pipeline that gates releases | S | Highest | M1 | PARTIAL |
 | I-5.1 | Voice reliability diagnosis and state machine | M | Medium | M3 | NOT STARTED |
 | I-5.2 | Voice fallback and browser support matrix | S | Medium | M3 | PARTIAL |
@@ -1140,6 +1142,11 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 - Two stories: **F-0.4** (type-check and import-check edge functions in CI) and **C-2.4** (one consent definition, marked DRAFT everywhere).
 - Three decisions: **D14** (intake access model), **D15** (reference format), **D16** (advisor visibility), and a status on D1 to D13.
 - Milestone exit criteria with a status against each criterion (section 6).
+
+**Updated in 2.4** (after the intake-to-PDF end-to-end test landed)
+- I-4.3 is DONE: the test, its stand-ins and `npm run test:e2e` exist, and the `e2e` CI job has run green (runs 40774885703 and 40812758403). I-4.4 now lists the `e2e` job as built, and only whether the checks are required for merge remains. I-4.2 notes that create, save, certify and submit run through a PostgREST and GoTrue stand-in under real row security.
+- Sections 1.1, 1.2, 1.4, 1.5, 5 and 6 and the Definition of Done no longer say no end-to-end test exists. The M1 'test prospect completes the path' criterion is met in CI against stand-ins and still not shown live. The test does not cover document upload, voice, the advisor path or real Supabase, so those stay open under their own stories.
+- Not re-verified: main's other changes since 2.3 (save-status indicator and resume of the latest intake, public-copy changes, the Supabase setup script). They may change A-1.3, A-1.4, I-2.2, I-3.1 and H-2.3 and the matching rows in section 1.3; those statuses are as of 2.3.
 
 **Updated in 2.3** (after the ceilings reached `document-extract`)
 - B-3.1 no longer lists the missing ceilings on document reads, and the matching defect and open question are removed. One shared budget serves both functions.
@@ -1212,7 +1219,7 @@ A story is done only when all of the following are true:
 
 1. Every acceptance criterion passes, and the tests listed in the story pass.
 2. Code is reviewed and merged to the default branch through a pull request.
-3. CI is green: lint, the edge-function type check, unit tests, build and the SQL tests now; end-to-end once I-4.3 lands.
+3. CI is green: lint, the edge-function type check, unit tests, build, the SQL tests and the end-to-end test.
 4. New or changed data access has an authorization test.
 5. No sample or demo values appear in a live-session path.
 6. Empty, loading, and error states exist for every new screen.

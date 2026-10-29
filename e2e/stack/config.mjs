@@ -26,6 +26,7 @@ export const DATABASE = process.env.E2E_DATABASE || "eaa_e2e";
 export const JWT_SECRET = "e2e-only-jwt-secret-for-the-local-supabase-stand-in";
 
 // API keys in the shape Supabase issues: long-lived JWTs whose `role` claim picks the database role.
+const KEY_ISSUED_AT = 1700000000; // fixed, so the keys are the same on every start
 const KEY_EXPIRY = 4102444800; // 2100-01-01
-export const ANON_KEY = signJwt({ iss: "eaa-e2e", role: "anon", iat: 1700000000, exp: KEY_EXPIRY }, JWT_SECRET);
-export const SERVICE_ROLE_KEY = signJwt({ iss: "eaa-e2e", role: "service_role", iat: 1700000000, exp: KEY_EXPIRY }, JWT_SECRET);
+export const ANON_KEY = signJwt({ iss: "eaa-e2e", role: "anon", iat: KEY_ISSUED_AT, exp: KEY_EXPIRY }, JWT_SECRET);
+export const SERVICE_ROLE_KEY = signJwt({ iss: "eaa-e2e", role: "service_role", iat: KEY_ISSUED_AT, exp: KEY_EXPIRY }, JWT_SECRET);
