@@ -1,6 +1,8 @@
-// The slice of PostgREST the prospect path uses. Every request runs in a transaction as the database
-// role and JWT claims of its token (see withRequest), so row security, grants and triggers are the real
-// ones. Query features beyond that slice answer 400 E2E_UNSUPPORTED rather than being guessed at.
+// A subset of PostgREST. The prospect path uses select, eq/neq, order, limit, POST/PATCH and scalar rpc;
+// the rest (gt/gte/lt/lte, is and in filters, offset, DELETE, void and set-returning rpc) is implemented
+// but no spec exercises it. Every request runs in a transaction as the database role and JWT claims of
+// its token (see withRequest), so row security, grants and triggers are the real ones. Query features
+// beyond the subset answer 400 E2E_UNSUPPORTED rather than being guessed at.
 import pg from "pg";
 import { JWT_SECRET } from "./config.mjs";
 import { withRequest } from "./db.mjs";
@@ -168,13 +170,18 @@ function rowsResponse(result, { status, wantsObject, range }) {
   };
 }
 
+/** Bind values in order, as `$1`, `$2`, ... */
+function makeParams() {
+  const values = [];
+  return { values, param: (value) => (values.push(value), `$${values.length}`) };
+}
+
 const contentRange = (n, offset = 0) => (n ? `${offset}-${offset + n - 1}/*` : "*/*");
 
 /** @returns {{ handle: (req, url, body: Buffer) => Promise<{status:number, headers?:object, body?:unknown, rawBody?:string}> }} */
 export function createRest({ pool, log = () => {} }) {
   async function readTable(ctx, url, table, wantsObject) {
-    const values = [];
-    const param = (value) => (values.push(value), `$${values.length}`);
+    const { values, param } = makeParams();
     const where = parseFilters(url, param);
     const sql = `SELECT ${parseSelect(url)} FROM public.${quote(table, "table")}${where.length ? ` WHERE ${where.join(" AND ")}` : ""}${parseOrder(url)}${parsePaging(url, param)}`;
     const offset = Number(url.searchParams.get("offset") ?? 0);
@@ -184,13 +191,12 @@ export function createRest({ pool, log = () => {} }) {
     });
   }
 
-  async function writeTable(ctx, req, url, table, body, prefer, wantsObject) {
-    const method = req.method;
+  async function writeTable(ctx, url, table, body, prefer, wantsObject) {
+    const method = ctx.method;
     for (const key of ["order", "limit", "offset"]) {
       if (method !== "POST" && url.searchParams.has(key)) throw unsupported(`"${key}" on ${method}`);
     }
-    const values = [];
-    const param = (value) => (values.push(value), `$${values.length}`);
+    const { values, param } = makeParams();
     const target = `public.${quote(table, "table")}`;
     const returning = parseSelect(url);
     const representation = prefer.return === "representation";
@@ -235,8 +241,8 @@ export function createRest({ pool, log = () => {} }) {
     });
   }
 
-  async function callFunction(ctx, req, name, body) {
-    if (req.method !== "POST") throw unsupported(`${req.method} on rpc (only POST)`);
+  async function callFunction(ctx, name, body) {
+    if (ctx.method !== "POST") throw unsupported(`${ctx.method} on rpc (only POST)`);
     const args = parseBody(body, { allowEmpty: true });
     if (!isPlainObject(args)) throw unsupported("positional or single-object rpc arguments");
     const keys = Object.keys(args);
@@ -251,9 +257,18 @@ export function createRest({ pool, log = () => {} }) {
         [name],
       );
       // PostgREST matches on parameter names: every key must name an argument and every required one must be present.
-      const match = candidates
+      const matches = candidates
         .map((candidate) => ({ ...candidate, names: (candidate.proargnames ?? []).filter((_, i) => !candidate.proargmodes || "ibv".includes(candidate.proargmodes[i])) }))
-        .find(({ names, pronargs, pronargdefaults }) => keys.every((key) => names.includes(key)) && names.slice(0, pronargs - pronargdefaults).every((n) => keys.includes(n)));
+        .filter(({ names, pronargs, pronargdefaults }) => keys.every((key) => names.includes(key)) && names.slice(0, pronargs - pronargdefaults).every((n) => keys.includes(n)));
+      // Several matches by name (say a migration changed a parameter's type with CREATE OR REPLACE) are
+      // an error in PostgREST, so they must not silently resolve to whichever pg_proc lists first.
+      if (matches.length > 1) {
+        const signatures = matches.map((m) => `public.${name}(${m.names.map((n, i) => `${n} => ${m.argtypes[i]}`).join(", ")})`);
+        throw new RestError(300, "PGRST203", `Could not choose the best candidate function between: ${signatures.join(", ")}`, {
+          hint: "Try renaming the parameters or the function itself in the database so function overloading can be resolved",
+        });
+      }
+      const [match] = matches;
       if (!match) {
         throw new RestError(404, "PGRST202", `Could not find the function public.${name}(${keys.join(", ")}) in the schema cache`, {
           hint: candidates.length ? "A function with that name exists, but not with those parameter names." : null,
@@ -308,12 +323,12 @@ export function createRest({ pool, log = () => {} }) {
         const wantsObject = String(req.headers.accept ?? "").includes(OBJECT_ACCEPT);
         const request = { role: ctx.role, claims: ctx.claims, method: req.method };
 
-        if (target.startsWith("rpc/")) return await callFunction(request, req, target.slice(4), body);
+        if (target.startsWith("rpc/")) return await callFunction(request, target.slice(4), body);
 
         if (!IDENTIFIER.test(target)) throw tableNotFound(target);
         table = target;
         if (req.method === "GET") return await readTable(request, url, target, wantsObject);
-        return await writeTable(request, req, url, target, body, prefer, wantsObject);
+        return await writeTable(request, url, target, body, prefer, wantsObject);
       } catch (error) {
         if (error instanceof RestError) {
           if (error.body.code === "E2E_UNSUPPORTED") log(`rest: ${error.message}`);

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test as base, type APIRequestContext, type Page } from "@playwright/test";
 import pg from "pg";
 import { consentStatements } from "../src/data/certification";
 import { manuscriptFilename } from "../src/data/manuscript";
@@ -11,7 +11,6 @@ const PEO = "Justworks";
 const SIGNER = { name: "Edgar Poe", role: "CEO" };
 const TARGET_START = "January 2027";
 const SESSION_URL = /\/start\?session=([0-9a-f-]{36})$/;
-const GENERATED_FILE_ID = /^File ID: (EAA-\d{4}-[0-9A-F]{8})$/;
 
 /** One entry of the gateway's request log, in the order the gateway saw them. */
 interface LoggedRequest {
@@ -42,12 +41,24 @@ function recordProblems(page: Page): string[] {
   });
   page.on("response", (response) => {
     const wrongCodeRejection = response.url() === verifyUrl && response.status() === 403;
-    if (response.url().startsWith(GATEWAY_URL) && response.status() >= 400 && !wrongCodeRejection) {
-      problems.push(`${response.status()} from ${response.request().method()} ${response.url()}`);
+    if (response.url().startsWith(GATEWAY_URL) && response.status() >= 300 && !wrongCodeRejection) {
+      const what = `${response.status()} from ${response.request().method()} ${response.url()}`;
+      // The body says why (a function's "message is required", the stand-in's E2E_UNSUPPORTED).
+      response.text().then((body) => problems.push(`${what}: ${body.slice(0, 200)}`), () => problems.push(what));
     }
   });
   return problems;
 }
+
+// A step that times out hides what the backend answered, so the problems are attached to the report
+// whether or not the test reaches its final assertion. Playwright prints a text attachment in the failure.
+const test = base.extend<{ problems: string[] }>({
+  problems: async ({ page }, provide, testInfo) => {
+    const problems = recordProblems(page);
+    await provide(problems);
+    if (problems.length) await testInfo.attach("gateway and console problems", { body: problems.join("\n"), contentType: "text/plain" });
+  },
+});
 
 async function queryDatabase<Row>(sql: string, params: unknown[]): Promise<Row[]> {
   const client = new pg.Client({ ...PG, database: DATABASE });
@@ -76,8 +87,7 @@ async function readRequestLog(request: APIRequestContext): Promise<LoggedRequest
 
 const isCall = (method: string, path: string) => (logged: LoggedRequest) => logged.method === method && logged.path.split("?")[0] === path;
 
-test("a guest's text intake becomes a certified, downloadable Manuscript", async ({ page, request }, testInfo) => {
-  const problems = recordProblems(page);
+test("a guest's text intake becomes a certified, downloadable Manuscript", async ({ page, request, problems }, testInfo) => {
   const email = `e2e+${Date.now()}@example.com`;
   // The gateway's log spans every test run since it started, so this test reads only what follows this point.
   const firstOwnRequest = (await readRequestLog(request)).length;
@@ -187,25 +197,45 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(generate).toBeEnabled();
     await generate.click();
 
-    await expect(page.getByRole("heading", { name: "The Raven has spoken." })).toBeVisible();
-    const shown = GENERATED_FILE_ID.exec((await page.getByText(GENERATED_FILE_ID).textContent())!)![1];
+    const confirmation = page.getByRole("heading", { name: "The Raven has spoken." });
+    await expect(confirmation).toBeVisible();
+    // toBeVisible ignores opacity, and the overlay and its heading fade in with framer-motion. An overlay
+    // stuck at 0 is a transparent layer over the form, so a person would see nothing and could click nothing.
+    await expect(page.getByRole("status").filter({ has: confirmation })).toHaveCSS("opacity", "1");
+    await expect(confirmation).toHaveCSS("opacity", "1");
 
     // Built here rather than with the app's fileIdForSession, so a regression in it is caught. The year
     // is the browser's: the app stamps the File ID with the signer's local clock.
     const year = await page.evaluate(() => new Date().getFullYear());
     const expected = `EAA-${year}-${sessionId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
-    expect(shown).toBe(expected);
+    await expect(page.getByText(/^File ID: /)).toHaveText(`File ID: ${expected}`);
     return expected;
   });
 
   await test.step("Check what the database recorded", async () => {
-    const [session] = await queryDatabase<{ status: string; file_id: string; signer_name: string; signer_title: string }>(
+    const [session] = await queryDatabase<Record<string, string>>(
       `SELECT status, submission ->> 'file_id' AS file_id, submission ->> 'signer_name' AS signer_name,
-              submission ->> 'signer_title' AS signer_title
+              submission ->> 'signer_title' AS signer_title,
+              submission -> 'chamber_data' ->> 'company_name' AS company_name,
+              submission -> 'chamber_data' ->> 'industry' AS industry,
+              submission -> 'chamber_data' ->> 'start_month' AS start_month,
+              submission -> 'chamber_data' ->> 'employee_count' AS employee_count,
+              submission -> 'field_provenance' -> 'industry' ->> 'status' AS industry_status
          FROM chamber_sessions WHERE id = $1`,
       [sessionId],
     );
-    expect(session).toEqual({ status: "submitted", file_id: fileId, signer_name: SIGNER.name, signer_title: SIGNER.role });
+    // The signed copy holds the extracted values, the prospect's edit and their confirmation of the inferred industry.
+    expect(session).toEqual({
+      status: "submitted",
+      file_id: fileId,
+      signer_name: SIGNER.name,
+      signer_title: SIGNER.role,
+      company_name: COMPANY_NAME,
+      industry: INTAKE_EXTRACTION.industry,
+      start_month: TARGET_START,
+      employee_count: String(INTAKE_EXTRACTION.employee_count),
+      industry_status: "confirmed",
+    });
 
     const certifications = await queryDatabase<{ file_id: string; signer_name: string; superseded_at: Date | null }>(
       "SELECT file_id, signer_name, superseded_at FROM chamber_certifications WHERE session_id = $1",
@@ -238,13 +268,29 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
   });
 
   await test.step("Open the Manuscript", async () => {
-    await page.getByRole("link", { name: "Download The Manuscript", exact: true }).click();
+    const download = page.getByRole("link", { name: "Download The Manuscript", exact: true });
+    // The link fades in last (see the overlay above); toBeVisible would not notice it stuck at 0.
+    await expect(download.locator("..")).toHaveCSS("opacity", "1");
+    await download.click();
     await expect(page).toHaveURL(`/manuscript?session=${sessionId}`);
     await expect(page.getByRole("heading", { name: "THE MANUSCRIPT", exact: true })).toBeVisible();
     await expect(page.getByText(fileId, { exact: true }).first()).toBeVisible();
     await expect(page.getByText(COMPANY_NAME, { exact: true }).first()).toBeVisible();
     await expect(page.getByText(`Signed electronically by ${SIGNER.name}`)).toBeVisible();
     await expect(page.getByText(new RegExp(`^PREPARED FOR\\s*${PEO}$`))).toBeVisible();
+
+    // The header, footer and signature block above would all pass with an empty body, so the intake's
+    // values are checked in their own rows. A row is the flex line holding the label and the value.
+    const row = (label: string) => page.getByText(label, { exact: true }).first().locator("..");
+    await expect(row("HQ State")).toContainText(INTAKE_EXTRACTION.hq_state);
+    await expect(row("Pay Frequency")).toContainText(INTAKE_EXTRACTION.pay_frequency);
+    await expect(row("Reported Headcount")).toContainText(String(INTAKE_EXTRACTION.employee_count));
+    // The industry was inferred and the target start typed in; both were confirmed by the prospect.
+    await expect(row("Industry")).toContainText(INTAKE_EXTRACTION.industry);
+    await expect(row("Industry")).toContainText("Confirmed");
+    await expect(row("Target Start")).toContainText(TARGET_START);
+    await expect(row("Target Start")).toContainText("Confirmed");
+    await expect(page.getByText("Industry — please confirm")).toHaveCount(0);
   });
 
   await test.step("Download the PDF", async () => {
@@ -268,6 +314,18 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     expect(text).toContain(COMPANY_NAME);
     expect(text).toContain(SIGNER.name);
     expect(text).toContain(PEO);
+    // pdfText gives one line per string drawn, and each label is followed by its value.
+    for (const [label, value] of [
+      ["Legal Name", COMPANY_NAME],
+      ["HQ State", INTAKE_EXTRACTION.hq_state],
+      ["Industry", INTAKE_EXTRACTION.industry],
+      ["Target Start", TARGET_START],
+      ["Pay Frequency", INTAKE_EXTRACTION.pay_frequency],
+      ["Reported Headcount", String(INTAKE_EXTRACTION.employee_count)],
+    ]) {
+      expect(text).toContain(`${label}\n${value}`);
+    }
+    expect(text, "the inferred industry was confirmed").not.toContain("Industry — please confirm");
   });
 
   expect(problems, "console errors, failed requests and gateway errors").toEqual([]);

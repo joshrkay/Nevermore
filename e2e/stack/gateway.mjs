@@ -23,7 +23,8 @@ async function readBody(req) {
 
 function send(res, { status = 200, headers = {}, body, rawBody }) {
   const payload = rawBody ?? (body === undefined ? undefined : JSON.stringify(body));
-  const out = { ...headers };
+  // Responses the gateway builds carry CORS; /functions/v1 goes out through functions.mjs, whose own headers are all it gets.
+  const out = { "Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "X-Supabase-Api-Version, Content-Range", ...headers };
   if (payload !== undefined && !Object.keys(out).some((name) => name.toLowerCase() === "content-type")) {
     out["Content-Type"] = "application/json; charset=utf-8";
   }
@@ -86,8 +87,6 @@ export async function startGateway({ port, pool, functions, log = () => {} }) {
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://gateway.invalid");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Expose-Headers", "X-Supabase-Api-Version, Content-Range");
     if (req.method !== "OPTIONS" && !url.pathname.startsWith("/__e2e/")) {
       res.on("finish", () => requests.push({ method: req.method, path: url.pathname + url.search, status: res.statusCode, at: new Date().toISOString() }));
     }

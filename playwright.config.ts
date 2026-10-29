@@ -22,7 +22,6 @@ export default defineConfig({
 
   use: {
     baseURL: APP_URL,
-    viewport: { width: 1440, height: 900 }, // 768px and wider is the desktop layout, which has the chat transcript
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
@@ -32,6 +31,7 @@ export default defineConfig({
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
+        // Overrides the device's 1280x720. 768px and wider is the desktop layout, which has the chat transcript.
         viewport: { width: 1440, height: 900 },
         // CI installs the browser Playwright expects; a machine whose browser is a different build
         // points this at it. An empty value counts as unset.

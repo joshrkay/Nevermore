@@ -59,11 +59,19 @@ export async function resetDatabase({ log = () => {} } = {}) {
 
   const admin = await connect("postgres");
   try {
-    // template0, so nothing installed in the server's template1 leaks in and the bootstrap sees an empty database.
-    await admin.query(`DROP DATABASE IF EXISTS "${DATABASE}" WITH (FORCE)`);
-    await admin.query(`CREATE DATABASE "${DATABASE}" TEMPLATE template0`);
-  } catch (error) {
-    throw new Error(`Cannot recreate database ${DATABASE} as ${PG.user}: ${error.message}\n${connectionHelp}`);
+    // The bootstrap needs the real superuser, and a managed server (Supabase cloud's `postgres` can
+    // create databases but is no superuser) must not get a stray database from a stale PGHOST.
+    const { rows } = await admin.query("SELECT rolsuper FROM pg_roles WHERE rolname = current_user");
+    if (PG.user !== "postgres" || !rows[0]?.rolsuper) {
+      throw new Error(`${PG.user} at ${PG.host}:${PG.port} is not the superuser "postgres", so nothing was changed\n${connectionHelp}`);
+    }
+    try {
+      // template0, so nothing installed in the server's template1 leaks in and the bootstrap sees an empty database.
+      await admin.query(`DROP DATABASE IF EXISTS "${DATABASE}" WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE "${DATABASE}" TEMPLATE template0`);
+    } catch (error) {
+      throw new Error(`Cannot recreate database ${DATABASE} as ${PG.user}: ${error.message}\n${connectionHelp}`);
+    }
   } finally {
     await admin.end();
   }
