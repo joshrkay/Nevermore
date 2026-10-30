@@ -33,11 +33,12 @@ const render = async (data = DEMO_CHAMBER_DATA, opts: Parameters<typeof buildMan
 
 const bigCensus = {
   ...DEMO_CHAMBER_DATA,
-  employees: Array.from({ length: 60 }, (_, i) => ({
-    ...DEMO_CHAMBER_DATA.employees[i % DEMO_CHAMBER_DATA.employees.length],
+  census: Array.from({ length: 60 }, (_, i) => ({
+    ...DEMO_CHAMBER_DATA.census[i % DEMO_CHAMBER_DATA.census.length],
+    id: `person-${i}`,
     first_name: `Person${i}`,
     last_name: "Featherstonehaugh-Cholmondeley",
-    title: "Senior Account Executive, Strategic Enterprise Partnerships",
+    job_title: "Senior Account Executive, Strategic Enterprise Partnerships",
   })),
 };
 

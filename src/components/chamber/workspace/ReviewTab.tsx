@@ -1,5 +1,6 @@
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
+import { censusPay } from "@/data/census";
 import { fieldOpenItems, formatFieldValue, type FieldAction, type ProvenanceMap } from "@/data/provenance";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
@@ -25,7 +26,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
   const eeCount = headcount(data);
   const needsReview = fieldOpenItems(provenance);
   const checks = eligibilityChecks(data);
-  const flaggedEmployees = data.employees.filter(e => employeeFlag(e) !== null);
+  const flaggedEmployees = data.census.filter(e => employeeFlag(e) !== null);
   const uploaded = documents.filter((d) => d.status !== "uploading");
   const missing = missingRecommended(uploaded);
   const submitted = submittedCategories(uploaded);
@@ -105,10 +106,10 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
       </div>
 
       {/* Census summary */}
-      {data.employees.length > 0 && (
+      {data.census.length > 0 && (
         <div className="bg-card border border-border rounded-xl p-6">
           <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">
-            Census — {data.employees.length} employees
+            Census — {data.census.length} employees
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -122,18 +123,16 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
                 </tr>
               </thead>
               <tbody>
-                {data.employees.map((emp, i) => (
-                  <tr key={i} className="border-b border-border last:border-0">
+                {data.census.map((emp) => (
+                  <tr key={emp.id} className="border-b border-border last:border-0">
                     <td className="py-1.5 pr-3 font-medium">{emp.first_name} {emp.last_name}</td>
-                    <td className="py-1.5 pr-3 font-mono">{emp.state}</td>
-                    <td className="py-1.5 pr-3">{emp.title}</td>
-                    <td className="py-1.5 pr-3 text-right font-mono">
-                      {emp.salary ? `$${emp.salary.toLocaleString()}` : "—"}
-                    </td>
+                    <td className="py-1.5 pr-3 font-mono">{emp.work_state || "—"}</td>
+                    <td className="py-1.5 pr-3">{emp.job_title || "—"}</td>
+                    <td className="py-1.5 pr-3 text-right font-mono">{censusPay(emp)}</td>
                     <td className="py-1.5 text-center">
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
                         emp.classification === "1099" ? "bg-warning/15 text-warning" : "bg-success/15 text-success"
-                      }`}>{emp.classification}</span>
+                      }`}>{emp.classification === "1099" ? "1099" : "W-2"}</span>
                       {employeeFlag(emp) && (
                         <span title={employeeFlag(emp) ?? undefined} className="ml-1 text-[10px] text-warning">⚠</span>
                       )}

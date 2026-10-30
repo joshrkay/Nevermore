@@ -62,7 +62,10 @@ const ProfilePage = () => {
 
     setSaving(false);
     if (error) {
-      toast.error("Failed to save profile");
+      // The server refuses a bad phone with EA001 and names it; the same UPDATE carries the other
+      // fields, so without this the user sees a generic failure and cannot tell what to fix.
+      const badPhone = error.code === "EA001" && error.details === "phone";
+      toast.error(badPhone ? "Enter a phone number such as (555) 123-4567" : "Failed to save profile");
       console.error(error);
     } else {
       toast.success("Profile updated");

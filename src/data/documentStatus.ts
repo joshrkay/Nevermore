@@ -27,7 +27,7 @@ const STATUS: Record<DocumentStatus, { label: string; message: string; tone: Sta
   },
   unsupported: {
     label: "Saved, not read",
-    message: "Lenore can read PDF, Excel, and CSV files. This one is saved for your advisor.",
+    message: "Lenore can read PDF, Word (.docx), Excel, and CSV files. This one is saved for your advisor.",
     tone: "warn",
   },
   encrypted: {

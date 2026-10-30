@@ -88,8 +88,14 @@ describe("applyAdvisorReview", () => {
   });
 
   it("lists fields an advisor marked incomplete as open items", () => {
-    const packet = applyAdvisorReview(data, {}, reviewMap([review({ field: "employees", review_state: "incomplete" })]));
+    const packet = applyAdvisorReview(data, {}, reviewMap([review({ field: "census", review_state: "incomplete" })]));
     expect(packet.followUps).toEqual(["Employee census — marked incomplete by an advisor"]);
+  });
+
+  it("reads a census review stored under the roster's old name, preferring a current one", () => {
+    const legacy = review({ field: "employees" as never, review_state: "incomplete" });
+    expect(reviewMap([legacy]).census?.review_state).toBe("incomplete");
+    expect(reviewMap([review({ field: "census", review_state: "verified" }), legacy]).census?.review_state).toBe("verified");
   });
 
   it("ignores a stored correction that isn't a valid value for its field", () => {
@@ -111,7 +117,7 @@ describe("parseCorrection", () => {
   it("refuses values that don't fit the field", () => {
     expect(parseCorrection("employee_count", "about 14")).toBeNull();
     expect(parseCorrection("has_401k", "maybe")).toBeNull();
-    expect(parseCorrection("employees", "[]")).toBeNull();
+    expect(parseCorrection("census", "[]")).toBeNull();
   });
 });
 

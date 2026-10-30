@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
+import { redactSensitive } from "./sensitive";
 
 // Every captured field records how sure we are of it and where it came from, so the
 // prospect and advisor can tell what Lenore inferred from what someone confirmed.
@@ -17,7 +18,7 @@ export type ExtractedStatus = Exclude<FieldStatus, "conflicting">;
 
 export type FieldSource =
   | { kind: "transcript"; message_id: string; quote?: string }
-  // Nothing produces document sources yet; document extraction will.
+  // A value the prospect applied from an uploaded document (document-extract's candidates).
   | { kind: "document"; document_id: string; document_name?: string; location?: string }
   | { kind: "prospect_edit" };
 
@@ -79,13 +80,13 @@ export const FIELD_LABELS: Record<FieldKey, string> = {
   hris_system: "HRIS system",
   key_challenges: "Key challenges",
   business_goals: "Business goals",
-  employees: "Employee census",
+  census: "Employee census",
 };
 
 export type FieldKind = "text" | "number" | "boolean" | "list";
 
 /** Input kind per field, for editing. The census has its own tab and isn't edited here. */
-export const FIELD_KINDS: Record<Exclude<FieldKey, "employees">, FieldKind> = {
+export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
   company_name: "text",
   industry: "text",
   hq_state: "text",
@@ -129,7 +130,10 @@ const FIELD_KEYS = Object.keys(FIELD_LABELS) as FieldKey[];
 const isFieldKey = (k: unknown): k is FieldKey => typeof k === "string" && k in FIELD_LABELS;
 
 const MAX_QUOTE_CHARS = 200;
-const clip = (s: string) => (s.length > MAX_QUOTE_CHARS ? `${s.slice(0, MAX_QUOTE_CHARS - 1)}…` : s);
+// A cut between the halves of an emoji leaves a lone high surrogate, which Postgres jsonb
+// refuses; the whole field_provenance is resent on every save, so one bad quote would fail them all.
+const clip = (s: string) =>
+  s.length > MAX_QUOTE_CHARS ? `${s.slice(0, MAX_QUOTE_CHARS - 1).replace(/[\uD800-\uDBFF]$/, "")}…` : s;
 
 // ---------- Parsing stored provenance ----------
 
@@ -151,11 +155,15 @@ const provenanceSchema = z.object({
   candidates: z.array(z.object({ value: z.unknown(), source: sourceSchema })).optional(),
 }) as unknown as z.ZodType<FieldProvenance, z.ZodTypeDef, unknown>;
 
-/** Rebuilds a provenance map from a stored jsonb column, dropping malformed entries. */
+/**
+ * Rebuilds a provenance map from a stored jsonb column, dropping malformed entries. The census was
+ * keyed `employees` before the census contract; that entry is read as `census`.
+ */
 export function parseProvenance(raw: unknown): ProvenanceMap {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
   const map: ProvenanceMap = {};
-  for (const [key, value] of Object.entries(raw)) {
+  for (const [stored, value] of Object.entries(raw)) {
+    const key = stored === "employees" && !("census" in raw) ? "census" : stored;
     if (!isFieldKey(key)) continue;
     const result = provenanceSchema.safeParse(value);
     if (result.success) map[key] = result.data;
@@ -209,7 +217,7 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
       !prev || // nothing recorded yet (or a session saved before provenance existed)
       isEmpty(prevValue) ||
       opts.corrections?.includes(field) ||
-      field === "employees" || // the roster is rebuilt as it grows
+      field === "census" || // the roster is rebuilt as it grows
       extendsList(prevValue, value);
 
     if (replaces) {
@@ -338,7 +346,7 @@ export function parseEvidence(raw: unknown): Partial<Record<FieldKey, string>> {
   const out: Partial<Record<FieldKey, string>> = {};
   if (typeof raw !== "object" || raw === null) return out;
   for (const [k, v] of Object.entries(raw)) {
-    if (isFieldKey(k) && typeof v === "string" && v.trim()) out[k] = clip(v.trim());
+    if (isFieldKey(k) && typeof v === "string" && v.trim()) out[k] = clip(redactSensitive(v.trim()));
   }
   return out;
 }

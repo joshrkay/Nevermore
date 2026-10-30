@@ -20,13 +20,13 @@ const FIT_TEXT: Record<FitStatus, string> = {
 const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProps) => {
   const [otherName, setOtherName] = useState("");
 
-  const totalDependents = data.employees.reduce((sum, e) => sum + e.dependents.length, 0);
-  const avgSalary = data.employees.length > 0
-    ? Math.round(data.employees.reduce((sum, e) => sum + (e.salary ?? 0), 0) / data.employees.length)
+  const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
+  const avgSalary = data.census.length > 0
+    ? Math.round(data.census.reduce((sum, e) => sum + (e.annual_salary ?? 0), 0) / data.census.length)
     : 0;
 
   const stats = [
-    { icon: <Users className="w-5 h-5" />, label: "Total EEs", value: String((data.employee_count ?? data.employees.length) || "—") },
+    { icon: <Users className="w-5 h-5" />, label: "Total EEs", value: String((data.employee_count ?? data.census.length) || "—") },
     { icon: <UserPlus className="w-5 h-5" />, label: "Dependents", value: totalDependents > 0 ? String(totalDependents) : "—" },
     { icon: <DollarSign className="w-5 h-5" />, label: "Avg Salary", value: avgSalary > 0 ? `$${avgSalary.toLocaleString()}` : "—" },
     { icon: <MapPin className="w-5 h-5" />, label: "States", value: data.states.length > 0 ? data.states.join(", ") : "—" },

@@ -133,9 +133,15 @@ export interface FieldReview {
 
 export type ReviewMap = Partial<Record<FieldKey, FieldReview>>;
 
+/** Reviews by field. A census review recorded before the census contract is keyed `employees`. */
 export function reviewMap(rows: FieldReview[]): ReviewMap {
   const map: ReviewMap = {};
-  for (const r of rows) if (r.field in FIELD_LABELS) map[r.field] = r;
+  for (const r of rows) {
+    if (r.field in FIELD_LABELS) map[r.field] = r;
+  }
+  for (const r of rows) {
+    if ((r.field as string) === "employees" && !map.census) map.census = { ...r, field: "census" };
+  }
   return map;
 }
 
@@ -170,7 +176,7 @@ export function applyAdvisorReview(data: ChamberData, provenance: ProvenanceMap,
     const review = reviews[field]!;
     const label = FIELD_LABELS[field];
     if (review.review_state === "verified") {
-      if (review.has_correction && field !== "employees") {
+      if (review.has_correction && field !== "census") {
         const patch = sanitizeChamberPatch({ [field]: review.corrected_value });
         if (field in patch) {
           corrections.push({
@@ -197,7 +203,7 @@ export function applyAdvisorReview(data: ChamberData, provenance: ProvenanceMap,
 
 /** Parses an advisor's typed correction for a field. Null when it isn't a valid value. */
 export function parseCorrection(field: FieldKey, input: string): { value: unknown } | null {
-  if (field === "employees") return null;
+  if (field === "census") return null;
   const text = input.trim();
   let value: unknown;
   switch (FIELD_KINDS[field]) {

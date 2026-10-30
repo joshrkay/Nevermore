@@ -184,11 +184,13 @@ describe("ManuscriptPage", () => {
   });
 
   it("masks dates of birth by default and reveals then re-masks them with the toggle", async () => {
+    // Signed before the census contract: the snapshot names the roster `employees`, in its old shape.
     const employee = {
       first_name: "Ada", last_name: "Lovelace", dob: "1990-05-17", state: "TX", title: "Engineer",
       salary: 90000, classification: "W2", dependents: [],
     };
-    const data = { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co", employees: [employee] };
+    const { census: _census, ...legacy } = EMPTY_CHAMBER_DATA;
+    const data = { ...legacy, company_name: "Signed Co", employees: [employee] };
     row = {
       chamber_data: data,
       submission: { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1", chamber_data: data },
