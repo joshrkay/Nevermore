@@ -102,7 +102,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authen
 \i supabase/migrations/20261024100000_advisor_queue.sql
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
-\i supabase/migrations/20261027090000_outbox_operations.sql
+\i supabase/migrations/20261027095000_outbox_operations.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 
 -- Fails the run unless `stmt` raises exactly `expected_state`.

@@ -1348,7 +1348,7 @@ BEGIN
   PERFORM pg_temp.mk_event(sid, 'dead', 5);
 END $$;
 
-\i supabase/migrations/20261027090000_outbox_operations.sql
+\i supabase/migrations/20261027095000_outbox_operations.sql
 
 DO $$
 DECLARE
@@ -1527,6 +1527,12 @@ BEGIN
   -- Headcount: the stated count wins, else the W-2 rows of the roster, else nothing.
   p := pg_temp.certify_with('w2@acme.example', '{"company_name":"W2 Co","employees":[{"classification":"W2"},{"classification":"1099"},{"classification":"W2"}]}');
   IF (p ->> 'employee_count')::int <> 2 THEN RAISE EXCEPTION 'FAIL: W-2 roster count is %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('census@acme.example', '{"company_name":"Census Co","census":[{"first_name":"A","classification":"w2"},{"first_name":"B","classification":"1099"},{"first_name":"C","classification":"w2"},{"first_name":"D","classification":"w2"}]}');
+  IF (p ->> 'employee_count')::int <> 3 THEN RAISE EXCEPTION 'FAIL: W-2 census count is %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('both@acme.example', '{"company_name":"Both Co","census":[],"employees":[{"classification":"W2"}]}');
+  IF (p ->> 'employee_count')::int <> 1 THEN RAISE EXCEPTION 'FAIL: an empty census should fall back to the roster, gave %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('badcensus@acme.example', '{"company_name":"Bad Census","census":"none","employees":42}');
+  IF p -> 'employee_count' <> 'null'::jsonb THEN RAISE EXCEPTION 'FAIL: non-array census/employees gave %', p -> 'employee_count'; END IF;
   p := pg_temp.certify_with('c1099@acme.example', '{"company_name":"1099 Co","employees":[{"classification":"1099"}]}');
   IF p -> 'employee_count' <> 'null'::jsonb THEN RAISE EXCEPTION 'FAIL: a roster with no W-2 rows gave %', p -> 'employee_count'; END IF;
   p := pg_temp.certify_with('round@acme.example', '{"company_name":"Round Co","employee_count":12.4}');

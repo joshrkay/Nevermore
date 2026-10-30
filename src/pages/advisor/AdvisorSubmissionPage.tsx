@@ -12,7 +12,8 @@ import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
 import { censusPay } from "@/data/census";
-import { loadSubmission, type SubmissionDetail } from "@/lib/advisorApi";
+import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
+import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
 
 type Load =
   | { kind: "loading" }

@@ -1,4 +1,4 @@
-// Advisor-side view of the notification queue. Mirrors supabase/migrations/20261027090000_outbox_operations.sql
+// Advisor-side view of the notification queue. Mirrors supabase/migrations/20261027095000_outbox_operations.sql
 // and the worker in supabase/functions/dispatch-outbox (docs/NOTIFICATIONS.md).
 
 export const OUTBOX_STATUSES = ["dead", "pending", "claimed", "sent", "suppressed"] as const;
