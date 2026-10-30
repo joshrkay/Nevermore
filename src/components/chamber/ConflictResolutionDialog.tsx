@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { CensusEmployee, ChamberData } from "@/data/chamberTypes";
 import { CENSUS_FACT_LABELS, formatCensusFact } from "@/data/census";
+import { MAX_CENSUS_ROWS } from "@/data/census";
 import {
+  censusMergeFits,
   compareCensus,
   fieldLabel,
   formatValue,
@@ -31,9 +33,11 @@ const listNames = (rows: CensusEmployee[], max = 8) =>
 // Nothing changes until they confirm; whichever value they keep is recorded as confirmed.
 const ConflictResolutionDialog = ({ candidate, fileName, data, provenance = {}, onCancel, onResolve }: ConflictResolutionDialogProps) => {
   const isCensus = candidate?.field === "census";
+  // Two censuses that each fit can merge into one the intake can't hold.
+  const mergeFits = !isCensus || censusMergeFits(data.census, candidate.value as CensusEmployee[], candidate.stated);
   const [choice, setChoice] = useState<Choice | null>(null);
-  // A census defaults to merging, the choice that loses nothing; a single value has no default.
-  useEffect(() => setChoice(isCensus ? "merge" : null), [candidate, isCensus]);
+  // A census defaults to merging, the choice that loses nothing, when it fits; a single value has no default.
+  useEffect(() => setChoice(isCensus && mergeFits ? "merge" : null), [candidate, isCensus, mergeFits]);
 
   if (!candidate) return null;
 
@@ -50,7 +54,7 @@ const ConflictResolutionDialog = ({ candidate, fileName, data, provenance = {}, 
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
       <DialogContent className="max-w-lg">
         {isCensus ? (
-          <CensusChoice candidate={candidate} fileName={fileName} current={data.census} choice={choice} onChoose={setChoice} />
+          <CensusChoice candidate={candidate} fileName={fileName} current={data.census} choice={choice} onChoose={setChoice} mergeFits={mergeFits} />
         ) : (
           <>
             <DialogHeader>
@@ -101,15 +105,17 @@ const Option = ({
   onChoose,
   title,
   detail,
+  disabled = false,
 }: {
   value: Choice;
   checked: boolean;
   onChoose: (c: Choice) => void;
   title: string;
   detail: string;
+  disabled?: boolean;
 }) => (
-  <label className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer ${checked ? "border-primary bg-primary/5" : "border-border"}`}>
-    <input type="radio" name="conflict-choice" value={value} checked={checked} onChange={() => onChoose(value)} className="mt-1" />
+  <label className={`flex items-start gap-3 rounded-lg border p-3 ${disabled ? "opacity-60" : "cursor-pointer"} ${checked ? "border-primary bg-primary/5" : "border-border"}`}>
+    <input type="radio" name="conflict-choice" value={value} checked={checked} disabled={disabled} onChange={() => onChoose(value)} className="mt-1" />
     <span className="min-w-0">
       <span className="block text-sm font-medium break-words">{title}</span>
       <span className="block text-xs text-muted-foreground">{detail}</span>
@@ -123,15 +129,17 @@ const CensusChoice = ({
   current,
   choice,
   onChoose,
+  mergeFits,
 }: {
   candidate: DocumentCandidate;
   fileName: string;
   current: CensusEmployee[];
   choice: Choice | null;
   onChoose: (c: Choice) => void;
+  mergeFits: boolean;
 }) => {
   const incoming = candidate.value as CensusEmployee[];
-  const { matched, added, missing } = compareCensus(current, incoming, candidate.facts);
+  const { matched, added, missing } = compareCensus(current, incoming, candidate.stated);
   const changed = matched.filter((m) => m.changes.length > 0);
 
   return (
@@ -170,7 +178,12 @@ const CensusChoice = ({
           checked={choice === "merge"}
           onChoose={onChoose}
           title="Merge"
-          detail={`Update the ${changed.length} whose details differ, add ${added.length} new, and keep the ${missing.length} not in this file.`}
+          disabled={!mergeFits}
+          detail={
+            mergeFits
+              ? `Update the ${changed.length} whose details differ, add ${added.length} new, and keep the ${missing.length} not in this file.`
+              : `Not available: merging would make ${(current.length + added.length).toLocaleString()} people, and an intake holds up to ${MAX_CENSUS_ROWS.toLocaleString()}. Replace with this file's census, or keep yours.`
+          }
         />
         <Option
           value="document"

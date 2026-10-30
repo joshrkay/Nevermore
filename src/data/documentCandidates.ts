@@ -1,5 +1,5 @@
 import type { CensusEmployee, ChamberData } from "./chamberTypes";
-import { CENSUS_FACTS, samePerson, type CensusFact } from "./census";
+import { CENSUS_FACTS, factsFromMask, MAX_CENSUS_ROWS, personNameKey, type CensusFact } from "./census";
 import { sanitizeChamberPatch } from "./chamberValidation";
 import { applyExtraction, applyFieldAction, type FieldSource, type IntakeState } from "./provenance";
 
@@ -17,10 +17,11 @@ export interface DocumentCandidate {
   /** Where in the document it was found, e.g. "Sheet1, rows 2–29" or "Page 3". */
   location: string | null;
   /**
-   * For a census: the row facts the document had columns for. Others are defaults (full time,
-   * salaried, W-2) or blank, and never replace what the intake already says. Absent: all of them.
+   * For a census: the facts each person's row actually stated, by row id, as a number (bit i is
+   * CENSUS_FACTS[i]). A blank cell is not stated: the row still holds a default (full time, salaried,
+   * W-2), which must never replace what the intake already says. Absent: every fact counts as stated.
    */
-  facts?: CensusFact[];
+  stated?: Record<string, number>;
 }
 
 export interface DocumentExtraction {
@@ -51,12 +52,13 @@ export function parseExtraction(raw: unknown): DocumentExtraction {
     const field = candidateField(c.field) as CandidateField;
     const patch = sanitizeChamberPatch({ [field]: c.value });
     if (!(field in patch) || isEmpty(patch[field])) continue;
-    const facts = Array.isArray(c.facts) ? CENSUS_FACTS.filter((f) => (c.facts as unknown[]).includes(f)) : undefined;
+    const value = patch[field] as ChamberData[CandidateField];
+    const stated = field === "census" ? parseStated(c.stated, value as CensusEmployee[]) : undefined;
     candidates.push({
       field,
-      value: patch[field] as ChamberData[CandidateField],
+      value,
       location: typeof c.location === "string" ? c.location : null,
-      ...(field === "census" && facts ? { facts } : {}),
+      ...(stated ? { stated } : {}),
     });
   }
   const notes = Array.isArray(raw.notes) ? raw.notes.filter((n): n is string => typeof n === "string" && n.trim() !== "") : [];
@@ -67,6 +69,18 @@ export function parseExtraction(raw: unknown): DocumentExtraction {
     applied: timestamps(raw.applied),
     kept: timestamps(raw.kept),
   };
+}
+
+/** Per-row stated facts for the rows that survived validation; absent when the document recorded none. */
+function parseStated(raw: unknown, rows: CensusEmployee[]): Record<string, number> | undefined {
+  if (!isPlainObject(raw)) return undefined;
+  const max = 2 ** CENSUS_FACTS.length;
+  const out: Record<string, number> = {};
+  for (const row of rows) {
+    const mask = raw[row.id];
+    if (typeof mask === "number" && Number.isInteger(mask) && mask >= 0 && mask < max) out[row.id] = mask;
+  }
+  return out;
 }
 
 function timestamps(raw: unknown): Partial<Record<CandidateField, string>> {
@@ -110,7 +124,7 @@ export function planCandidateMerge(data: ChamberData, candidates: DocumentCandid
     const current = data[candidate.field];
     const same =
       candidate.field === "census"
-        ? censusAgrees(compareCensus(data.census, candidate.value as CensusEmployee[], candidate.facts))
+        ? censusAgrees(compareCensus(data.census, candidate.value as CensusEmployee[], candidate.stated))
         : normalize(current) === normalize(candidate.value);
     const kind: MergeKind = isEmpty(current) ? "new" : same ? "same" : "conflict";
     return { candidate, kind, current };
@@ -136,27 +150,50 @@ export interface CensusComparison {
 
 const hasValue = (v: unknown) => v !== undefined && v !== null && v !== "";
 
+/** The facts one incoming row stated: all of them when the document recorded none, else only its own. */
+const statedFacts = (row: CensusEmployee, stated?: Record<string, number>): readonly CensusFact[] =>
+  stated ? factsFromMask(stated[row.id] ?? 0) : CENSUS_FACTS;
+
 /**
  * Lines a document's census up against the intake's, person by person (same name, and birth dates
- * that don't disagree). Only facts the document stated count as changes.
+ * that don't disagree). Only the facts a person's row stated count as changes: a blank cell is not a
+ * statement, so it never turns an existing 1099 contractor into a W-2 employee.
  */
-export function compareCensus(current: CensusEmployee[], incoming: CensusEmployee[], facts: readonly CensusFact[] = CENSUS_FACTS): CensusComparison {
-  const unmatched = [...current];
+export function compareCensus(current: CensusEmployee[], incoming: CensusEmployee[], stated?: Record<string, number>): CensusComparison {
+  // Current people by name, in order, so each incoming row finds its match without scanning everyone
+  // (this runs on every render of the review, over up to 5,000 people on each side).
+  const byName = new Map<string, CensusEmployee[]>();
+  for (const c of current) {
+    const key = personNameKey(c);
+    const bucket = byName.get(key);
+    if (bucket) bucket.push(c);
+    else byName.set(key, [c]);
+  }
+  const taken = new Set<CensusEmployee>();
   const matched: CensusComparison["matched"] = [];
   const added: CensusEmployee[] = [];
   for (const row of incoming) {
-    const i = unmatched.findIndex((c) => samePerson(c, row));
-    if (i === -1) {
+    // Same name, and birth dates that don't disagree; the first such person not already matched.
+    const existing = byName.get(personNameKey(row))?.find((c) => !taken.has(c) && (!c.dob || !row.dob || c.dob === row.dob));
+    if (!existing) {
       added.push(row);
       continue;
     }
-    const [existing] = unmatched.splice(i, 1);
-    const changes = facts
+    taken.add(existing);
+    const changes = statedFacts(row, stated)
       .filter((f) => hasValue(row[f]) && row[f] !== existing[f])
       .map((f) => ({ fact: f, from: existing[f], to: row[f] }));
     matched.push({ current: existing, incoming: row, changes });
   }
-  return { matched, added, missing: unmatched };
+  return { matched, added, missing: current.filter((c) => !taken.has(c)) };
+}
+
+/**
+ * Whether merging would leave a census the intake can hold. A union past the limit would be refused by
+ * the database on the next save, so it is never offered or applied.
+ */
+export function censusMergeFits(current: CensusEmployee[], incoming: CensusEmployee[], stated?: Record<string, number>): boolean {
+  return current.length + compareCensus(current, incoming, stated).added.length <= MAX_CENSUS_ROWS;
 }
 
 export const censusAgrees = (c: CensusComparison) =>
@@ -167,8 +204,8 @@ export const censusAgrees = (c: CensusComparison) =>
  * (keeping their id and the dependents named in conversation), people only in the document are
  * added, and people only in the intake stay.
  */
-export function mergeCensus(current: CensusEmployee[], incoming: CensusEmployee[], facts: readonly CensusFact[] = CENSUS_FACTS): CensusEmployee[] {
-  const { matched, added } = compareCensus(current, incoming, facts);
+export function mergeCensus(current: CensusEmployee[], incoming: CensusEmployee[], stated?: Record<string, number>): CensusEmployee[] {
+  const { matched, added } = compareCensus(current, incoming, stated);
   const updates = new Map(matched.map((m) => [m.current.id, m]));
   const merged = current.map((row) => {
     const m = updates.get(row.id);
@@ -283,7 +320,10 @@ export function resolveCandidate(
       return applyFieldAction(state, { type: "edit", field, value: state.data[field] }, now);
     }
     case "merge_census": {
-      const census = mergeCensus(state.data.census, r.candidate.value as CensusEmployee[], r.candidate.facts);
+      const incoming = r.candidate.value as CensusEmployee[];
+      // Never install a census the database would refuse to save.
+      if (!censusMergeFits(state.data.census, incoming, r.candidate.stated)) return state;
+      const census = mergeCensus(state.data.census, incoming, r.candidate.stated);
       return {
         data: { ...state.data, census },
         provenance: {

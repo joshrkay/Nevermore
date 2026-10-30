@@ -4,7 +4,10 @@ import {
   censusGaps,
   censusRowId,
   normalizeAnnualSalary,
+  factsFromMask,
+  factsMask,
   normalizeCensus,
+  normalizeCensusWithFacts,
   normalizeCensusRow,
   normalizeClassCode,
   normalizeClassification,
@@ -181,6 +184,56 @@ describe("normalizeCensus", () => {
   it("drops invalid rows and non-arrays", () => {
     expect(normalizeCensus([{ first_name: "A" }, null, 5, { last_name: "x" }], NOW)).toHaveLength(1);
     expect(normalizeCensus({ first_name: "A" }, NOW)).toEqual([]);
+  });
+});
+
+describe("normalizeCensusWithFacts", () => {
+  const statedOf = (raw: object) => {
+    const { census, stated } = normalizeCensusWithFacts([raw], NOW);
+    return { row: census[0], facts: factsFromMask(stated[census[0].id]) };
+  };
+
+  it("counts only what the input actually said, not the defaults a blank gets", () => {
+    const { row, facts } = statedOf({ first_name: "Ann", classification: "", employment_type: "", compensation_type: "", work_state: "", job_title: "Dev" });
+    expect(row).toMatchObject({ classification: "w2", employment_type: "full_time", compensation_type: "salary", work_state: "" });
+    expect(facts).toEqual(["job_title"]);
+  });
+
+  it("counts a recognised label as stated, including 1099", () => {
+    expect(statedOf({ first_name: "Ann", classification: "1099" }).facts).toEqual(["classification"]);
+    expect(statedOf({ first_name: "Ann", classification: "Employee" }).facts).toEqual(["classification"]);
+  });
+
+  it("counts full or part time when the input gave it, or gave weekly hours", () => {
+    expect(statedOf({ first_name: "Jane", employment_type: "PT" }).facts).toEqual(["employment_type"]);
+    expect(statedOf({ first_name: "Jane", hours_per_week: 20 }).facts).toEqual(["employment_type"]);
+    expect(statedOf({ first_name: "Jane", hours_per_week: "n/a" }).facts).toEqual([]);
+  });
+
+  it("counts pay type when stated, and when an hourly rate implies it", () => {
+    expect(statedOf({ first_name: "A", compensation_type: "Hourly" }).facts).toEqual(["compensation_type"]);
+    // The yearly pay is worked out from the stated rate, so it counts too.
+    expect(statedOf({ first_name: "A", hourly_rate: "$20" }).facts).toEqual(["annual_salary", "compensation_type"]);
+  });
+
+  it("counts every fact a full row stated", () => {
+    const { facts } = statedOf({
+      first_name: "Ann", dob: "1990-01-01", age: 35, work_state: "CA", zip_code: "94107", job_title: "Dev", annual_salary: 100000,
+      compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE", class_code: "8810",
+    });
+    expect(facts).toHaveLength(11);
+  });
+
+  it("keys the facts by row id, one entry per kept row", () => {
+    const { census, stated } = normalizeCensusWithFacts([{ first_name: "A", job_title: "x" }, { last_name: "dropped" }, { first_name: "B" }], NOW);
+    expect(census).toHaveLength(2);
+    expect(Object.keys(stated).sort()).toEqual(census.map((r) => r.id).sort());
+    expect(stated[census[1].id]).toBe(0);
+  });
+
+  it("round-trips facts through the compact form", () => {
+    expect(factsFromMask(factsMask(["dob", "class_code", "classification"]))).toEqual(["dob", "classification", "class_code"]);
+    expect(factsMask([])).toBe(0);
   });
 });
 

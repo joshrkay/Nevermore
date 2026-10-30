@@ -17,6 +17,18 @@ export type CompensationType = (typeof COMPENSATION_TYPES)[number];
 export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
 export type WorkerClassification = (typeof CLASSIFICATIONS)[number];
 
+/** Facts of a census row a document can state; the rest of a row is its name and id. */
+export const CENSUS_FACTS = [
+  "dob", "age", "work_state", "zip_code", "job_title", "annual_salary", "compensation_type",
+  "employment_type", "classification", "coverage_tier", "class_code",
+] as const;
+export type CensusFact = (typeof CENSUS_FACTS)[number];
+
+/** Facts as a number (bit i is CENSUS_FACTS[i]), the compact form kept per row beside a document's census. */
+export const factsMask = (facts: readonly CensusFact[]): number =>
+  facts.reduce((mask, f) => mask | (1 << CENSUS_FACTS.indexOf(f)), 0);
+export const factsFromMask = (mask: number): CensusFact[] => CENSUS_FACTS.filter((_, i) => (mask & (1 << i)) !== 0);
+
 /** The most people an intake holds; the database refuses a longer census. */
 export const MAX_CENSUS_ROWS = 5000;
 /** The most dependents one person holds; the database refuses more. */
@@ -293,6 +305,17 @@ const HOURS_PER_YEAR_FULL_TIME = 2080;
  * means; the prospect reviews every row before it is added.
  */
 export function normalizeCensusRow(raw: unknown, now: Date = new Date()): Omit<CensusEmployee, "id"> & { id?: string } | null {
+  return readCensusRow(raw, now)?.row ?? null;
+}
+
+type RowWithOptionalId = Omit<CensusEmployee, "id"> & { id?: string };
+
+/**
+ * normalizeCensusRow, and which facts the input actually stated. A blank cell is not a statement:
+ * the row still gets its default (W-2, full time, salaried), but that default isn't `stated`, so
+ * merging a document never overwrites what the intake already says with something the file left blank.
+ */
+export function readCensusRow(raw: unknown, now: Date = new Date()): { row: RowWithOptionalId; stated: CensusFact[] } | null {
   if (!isRecord(raw)) return null;
   let first_name = cleanText(raw.first_name);
   let last_name = cleanText(raw.last_name);
@@ -317,7 +340,7 @@ export function normalizeCensusRow(raw: unknown, now: Date = new Date()): Omit<C
     annual_salary = yearly === undefined ? undefined : normalizeAnnualSalary(yearly);
   }
 
-  const row: Omit<CensusEmployee, "id"> & { id?: string } = {
+  const row: RowWithOptionalId = {
     first_name,
     last_name,
     work_state: normalizeState(raw.work_state ?? raw.state),
@@ -341,7 +364,21 @@ export function normalizeCensusRow(raw: unknown, now: Date = new Date()): Omit<C
   if (classCode) row.class_code = classCode;
   const dependents = normalizeDependents(raw.dependents, now);
   if (dependents.length > 0) row.dependents = dependents;
-  return row;
+
+  const stated: CensusFact[] = [];
+  const state = (fact: CensusFact, yes: boolean) => yes && stated.push(fact);
+  state("dob", row.dob !== undefined);
+  state("age", row.age !== undefined);
+  state("work_state", row.work_state !== "");
+  state("zip_code", row.zip_code !== undefined);
+  state("job_title", row.job_title !== undefined);
+  state("annual_salary", row.annual_salary !== undefined);
+  state("compensation_type", normalizeCompensationType(raw.compensation_type) !== undefined || hourlyRate !== undefined);
+  state("employment_type", normalizeEmploymentType(raw.employment_type) !== undefined || employmentTypeFromHours(raw.hours_per_week) !== undefined);
+  state("classification", classification !== undefined);
+  state("coverage_tier", row.coverage_tier !== undefined);
+  state("class_code", row.class_code !== undefined);
+  return { row, stated };
 }
 
 /**
@@ -350,14 +387,25 @@ export function normalizeCensusRow(raw: unknown, now: Date = new Date()): Omit<C
  * same rows twice gives the same ids. Stops after `max` valid rows (invalid ones use no slot).
  */
 export function normalizeCensus(rows: unknown, now: Date = new Date(), max = Number.POSITIVE_INFINITY): CensusEmployee[] {
-  if (!Array.isArray(rows)) return [];
+  return normalizeCensusWithFacts(rows, now, max).census;
+}
+
+/** normalizeCensus, and for each row (by id) the facts it stated, as a factsMask. */
+export function normalizeCensusWithFacts(
+  rows: unknown,
+  now: Date = new Date(),
+  max = Number.POSITIVE_INFINITY,
+): { census: CensusEmployee[]; stated: Record<string, number> } {
+  const census: CensusEmployee[] = [];
+  const stated: Record<string, number> = {};
+  if (!Array.isArray(rows)) return { census, stated };
   const used = new Set<string>();
   const seen = new Map<string, number>();
-  const out: CensusEmployee[] = [];
   for (const raw of rows) {
-    if (out.length >= max) break;
-    const row = normalizeCensusRow(raw, now);
-    if (!row) continue;
+    if (census.length >= max) break;
+    const read = readCensusRow(raw, now);
+    if (!read) continue;
+    const { row } = read;
     let id = row.id;
     if (!id || used.has(id)) {
       const seed = [row.first_name, row.last_name, row.dob ?? "", row.work_state].join("|").toLowerCase();
@@ -367,9 +415,10 @@ export function normalizeCensus(rows: unknown, now: Date = new Date(), max = Num
       while (used.has(id)) id = censusRowId(`${id}+`);
     }
     used.add(id);
-    out.push({ ...row, id });
+    census.push({ ...row, id });
+    stated[id] = factsMask(read.stated);
   }
-  return out;
+  return { census, stated };
 }
 
 /** A UUID-shaped id derived from `seed` (128-bit cyrb128 hash, version nibble 8). */
@@ -411,9 +460,12 @@ export function censusGaps(e: CensusEmployee): CensusGap[] {
   return gaps;
 }
 
+/** A person's name as compared across censuses: lower case, punctuation as single spaces. */
+export const personNameKey = (e: Pick<CensusEmployee, "first_name" | "last_name">): string =>
+  `${e.first_name} ${e.last_name}`.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
 /** Same person: first and last name match, and their dates of birth don't disagree. */
 export function samePerson(a: CensusEmployee, b: CensusEmployee): boolean {
-  const name = (e: CensusEmployee) => `${e.first_name} ${e.last_name}`.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  if (name(a) !== name(b)) return false;
+  if (personNameKey(a) !== personNameKey(b)) return false;
   return !a.dob || !b.dob || a.dob === b.dob;
 }

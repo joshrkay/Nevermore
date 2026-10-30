@@ -1,7 +1,7 @@
 // Pure helpers for document-extract: no Deno or network imports, so they're unit-tested
 // with the frontend suite (vitest includes supabase/functions/**/*.test.ts).
 
-import { isW2, MAX_CENSUS_ROWS, normalizeCensus, parseMoney, US_STATE_CODES, type CensusEmployee } from "../_shared/census.ts";
+import { isW2, MAX_CENSUS_ROWS, normalizeCensusWithFacts, parseMoney, US_STATE_CODES, type CensusEmployee } from "../_shared/census.ts";
 import { isSensitiveHeader, redactSensitive } from "../_shared/sensitive.ts";
 
 // The most people an intake's census holds and the states it accepts, which the intake database enforces
@@ -24,8 +24,11 @@ export interface Candidate {
   field: string;
   value: unknown;
   location: string | null;
-  /** For a census: the row facts the file had columns for. The rest are defaults or blank. */
-  facts?: string[];
+  /**
+   * For a census: the facts each person's row actually stated, by row id, as a number (bit i is
+   * CENSUS_FACTS[i]). A blank cell is not stated, so merging never overwrites an answer with a default.
+   */
+  stated?: Record<string, number>;
 }
 
 const startsWith = (bytes: Uint8Array, sig: number[]) => sig.every((b, i) => bytes[i] === b);
@@ -220,8 +223,8 @@ const looksLikeName = (v: unknown) => /\p{L}/u.test(String(v ?? ""));
 export interface CensusResult {
   census: CensusEmployee[];
   location: string;
-  /** Census row facts the sheet had a column for, so a merge never overwrites a stated fact with a default. */
-  facts: string[];
+  /** The facts each person's row stated, by row id (see Candidate.stated). */
+  stated: Record<string, number>;
   /** Rows with content that couldn't become a census row (no name, or a worker type that isn't W-2 or 1099). */
   skipped: number;
   /** Headers of columns that were never read because they hold an SSN or bank details. */
@@ -279,27 +282,13 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
       if (firstData === -1) firstData = r;
       lastData = r;
     }
-    const census = normalizeCensus(raw, now);
+    const { census, stated } = normalizeCensusWithFacts(raw, now);
     skipped += raw.length - census.length;
     if (census.length === 0) return null;
-    const has = (...keys: ColumnKey[]) => keys.some((k) => c[k] !== undefined);
-    const stated: [string, boolean][] = [
-      ["dob", has("dob")],
-      ["age", has("age")],
-      ["work_state", has("work_state", "home_state")],
-      ["zip_code", has("zip_code")],
-      ["job_title", has("job_title")],
-      ["annual_salary", has("annual_salary", "hourly_rate")],
-      ["compensation_type", has("compensation_type", "hourly_rate")],
-      ["employment_type", has("employment_type", "hours_per_week")],
-      ["classification", has("classification")],
-      ["coverage_tier", has("coverage_tier")],
-      ["class_code", has("class_code")],
-    ];
     return {
       census,
       location: `${sheet}, rows ${firstRow + firstData}–${firstRow + lastData}`,
-      facts: stated.filter(([, yes]) => yes).map(([fact]) => fact),
+      stated,
       skipped,
       ignoredColumns: sensitive.map((i) => String(header[i] ?? "").trim()).filter(Boolean),
     };
@@ -312,15 +301,17 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
  * MAX_EMPLOYEES people, since the intake can't store more; the headcount, states and contractor
  * facts still cover every row, and the census's location says how many were kept.
  */
-export function censusCandidates({ census, location, facts }: CensusResult): Candidate[] {
+export function censusCandidates({ census, location, stated }: CensusResult): Candidate[] {
   const states = [...new Set(census.map((e) => e.work_state).filter(Boolean))].sort();
   const contractors = census.filter((e) => !isW2(e));
   const truncated = census.length > MAX_EMPLOYEES;
+  const kept = truncated ? census.slice(0, MAX_EMPLOYEES) : census;
+  const keptStated = truncated ? Object.fromEntries(kept.map((e) => [e.id, stated[e.id]])) : stated;
   const censusLocation = truncated
     ? `${location}; first ${MAX_EMPLOYEES.toLocaleString("en-US")} of ${census.length.toLocaleString("en-US")} people kept`
     : location;
   const candidates: Candidate[] = [
-    { field: "census", value: truncated ? census.slice(0, MAX_EMPLOYEES) : census, location: censusLocation, facts },
+    { field: "census", value: kept, location: censusLocation, stated: keptStated },
     { field: "employee_count", value: census.filter(isW2).length, location },
   ];
   if (states.length > 0) candidates.push({ field: "states", value: states, location });

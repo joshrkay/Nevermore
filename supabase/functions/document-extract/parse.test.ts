@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { factsFromMask } from "../_shared/census";
 import {
   buildPromptText,
   censusCandidates,
@@ -118,9 +119,13 @@ describe("findCensus", () => {
       { id: expect.any(String), first_name: "Bo", last_name: "Ray", dob: "1985-05-05", work_state: "TX", job_title: "Writer", annual_salary: 72000, compensation_type: "salary", employment_type: "full_time", classification: "1099" },
     ]);
     expect(census.skipped).toBe(0);
-    expect(census.facts).toEqual(["dob", "work_state", "job_title", "annual_salary", "classification"]);
     const candidates = censusCandidates(census);
-    expect(candidates[0].facts).toEqual(census.facts);
+    // Each person's row records the facts it stated: both here stated all five columns.
+    expect(Object.values(census.stated).map((m) => factsFromMask(m))).toEqual([
+      ["dob", "work_state", "job_title", "annual_salary", "classification"],
+      ["dob", "work_state", "job_title", "annual_salary", "classification"],
+    ]);
+    expect(candidates[0].stated).toEqual(census.stated);
     expect(candidates.map((c) => [c.field, c.field === "census" ? "…" : c.value])).toEqual([
       ["census", "…"],
       ["employee_count", 1],
@@ -145,6 +150,22 @@ describe("findCensus", () => {
       { id: expect.any(String), first_name: "Ann", last_name: "Lee", age: 34, work_state: "NJ", zip_code: "07030", job_title: "Cashier", annual_salary: 23088, compensation_type: "hourly", employment_type: "part_time", classification: "w2", coverage_tier: "WAIVE", class_code: "8017" },
       { id: expect.any(String), first_name: "Bo", last_name: "Ray", age: 51, work_state: "NJ", zip_code: "07030-1234", job_title: "Manager", annual_salary: 83200, compensation_type: "hourly", employment_type: "full_time", classification: "w2", coverage_tier: "FAM", class_code: "8810" },
     ]);
+  });
+
+  it("does not count a blank Employee Type cell as saying W-2", () => {
+    // The Employee Type column exists, but only Bo's cell is filled in.
+    const census = findCensus([["Name", "State", "Employee Type"], ["Ann Lee", "CA", ""], ["Bo Ray", "TX", "1099"]], "CSV", 1, NOW)!;
+    const [ann, bo] = census.census;
+    expect(ann.classification).toBe("w2");
+    expect(factsFromMask(census.stated[ann.id])).toEqual(["work_state"]);
+    expect(factsFromMask(census.stated[bo.id])).toEqual(["work_state", "classification"]);
+  });
+
+  it("counts full or part time read from an Employee Type column", () => {
+    const census = findCensus([["First Name", "State", "Employee Type"], ["Jane", "CA", "PT"]], "CSV", 1, NOW)!;
+    const [jane] = census.census;
+    expect(jane.employment_type).toBe("part_time");
+    expect(factsFromMask(census.stated[jane.id])).toEqual(["work_state", "employment_type", "classification"]);
   });
 
   it("treats a 'pay rate' in the tens of thousands as a salary", () => {
@@ -217,6 +238,9 @@ describe("findCensus", () => {
     expect(census.census).toHaveLength(total);
     const [roster, headcount] = censusCandidates(census);
     expect(roster.value as unknown[]).toHaveLength(MAX_EMPLOYEES);
+    // Only the kept people carry their stated facts.
+    expect(Object.keys(roster.stated!)).toHaveLength(MAX_EMPLOYEES);
+    expect(roster.stated![(roster.value as { id: string }[])[0].id]).toBeDefined();
     // "Person i" splits into last_name "i", so the index shows which end of the roster was kept
     const kept = roster.value as { last_name: string }[];
     expect(kept[0].last_name).toBe("0");

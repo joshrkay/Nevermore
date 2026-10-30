@@ -146,6 +146,26 @@ describe("DocumentCandidates: a census", () => {
     expect(onResolve).toHaveBeenCalledWith({ type: "merge_census", candidate: census.candidates[0] });
   });
 
+  it("won't offer a merge the intake couldn't hold, and says why", () => {
+    const onResolve = vi.fn();
+    const many = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => person(`${prefix}${i}`, `${prefix}${i}`));
+    const big: DocumentExtraction = { ...extraction, candidates: [{ field: "census", value: many("b", 2500), location: "CSV, rows 2–2501" }] };
+    const existing = { ...EMPTY_CHAMBER_DATA, census: many("a", 3000) };
+    render(<DocumentCandidates fileName="roster.xlsx" extraction={big} data={existing} onResolve={onResolve} />);
+    fireEvent.click(screen.getByRole("button", { name: "Resolve Employee census" }));
+
+    const dialog = screen.getByRole("dialog");
+    const merge = within(dialog).getByLabelText(/Merge/);
+    expect(merge).toBeDisabled();
+    expect(merge).not.toBeChecked();
+    expect(within(dialog).getByText(/merging would make 5,500 people, and an intake holds up to 5,000/)).toBeInTheDocument();
+    // Nothing is chosen for them, so they can't confirm until they pick one of the others.
+    expect(within(dialog).getByRole("button", { name: "Confirm" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByLabelText(/Keep my census/));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    expect(onResolve).toHaveBeenCalledWith({ type: "keep_current", candidate: big.candidates[0] });
+  });
+
   it("can replace the census with the file's, or keep the current one", () => {
     const onResolve = vi.fn();
     const existing = { ...EMPTY_CHAMBER_DATA, census: [person("y", "Zed")] };

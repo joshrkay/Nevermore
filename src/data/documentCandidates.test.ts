@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA, type CensusEmployee } from "./chamberTypes";
+import { factsMask } from "./census";
 import {
   applyDocumentCandidates,
+  censusMergeFits,
   compareCensus,
+  censusAgrees,
   mergeCensus,
   parseExtraction,
   planCandidateMerge,
@@ -124,7 +127,7 @@ describe("census comparison and merge", () => {
   it("lines people up by name and birth date, and reports only the facts the document stated", () => {
     const current = [row("a", "Ann", { job_title: "Designer", dob: "1990-01-01" }), row("b", "Bo"), row("z", "Zed")];
     const incoming = [row("n1", "ann", { job_title: "Dev", dob: "1990-01-01", annual_salary: 120000 }), row("n2", "Bo"), row("n3", "Cy")];
-    const cmp = compareCensus(current, incoming, ["job_title"]);
+    const cmp = compareCensus(current, incoming, { n1: factsMask(["job_title"]), n2: 0, n3: 0 });
     expect(cmp.matched.map((m) => [m.current.id, m.changes.map((c) => c.fact)])).toEqual([["a", ["job_title"]], ["b", []]]);
     expect(cmp.added.map((r) => r.first_name)).toEqual(["Cy"]);
     expect(cmp.missing.map((r) => r.first_name)).toEqual(["Zed"]);
@@ -144,7 +147,7 @@ describe("census comparison and merge", () => {
     const current = [row("a", "Ann", { job_title: "Designer", dependents: [spouse] }), row("z", "Zed")];
     const incoming = [row("n1", "Ann", { job_title: "Dev", annual_salary: 1 }), row("n2", "Cy")];
     // The document only has a title column, so its default salary doesn't overwrite the stated one.
-    const merged = mergeCensus(current, incoming, ["job_title"]);
+    const merged = mergeCensus(current, incoming, { n1: factsMask(["job_title"]), n2: 0 });
     expect(merged.map((r) => r.id)).toEqual(["a", "z", "n2"]);
     expect(merged[0]).toMatchObject({ job_title: "Dev", annual_salary: 100000, dependents: [spouse] });
   });
@@ -154,15 +157,70 @@ describe("census comparison and merge", () => {
     expect(merged[0].job_title).toBe("Designer");
   });
 
-  it("reads a document's stated facts from its extraction, and no others", () => {
+  it("does not let a blank cell turn an existing 1099 contractor into a W-2 employee", () => {
+    // The file has an Employee Type column, but this person's cell is blank, so the row holds the default.
+    const current = [row("a", "Ann", { classification: "1099", job_title: "Designer" })];
+    const incoming = [row("n", "Ann", { classification: "w2", job_title: "Dev" })];
+    const stated = { n: factsMask(["job_title"]) };
+    expect(compareCensus(current, incoming, stated).matched[0].changes.map((c) => c.fact)).toEqual(["job_title"]);
+    expect(mergeCensus(current, incoming, stated)[0]).toMatchObject({ classification: "1099", job_title: "Dev" });
+    // The same person with the cell filled in is a real change.
+    const filled = { n: factsMask(["job_title", "classification"]) };
+    expect(mergeCensus(current, incoming, filled)[0].classification).toBe("w2");
+  });
+
+  it("reports a part-time change the file stated, so the prospect can apply it", () => {
+    const current = [row("a", "Jane", { employment_type: "full_time" })];
+    const incoming = [row("n", "Jane", { employment_type: "part_time" })];
+    const cmp = compareCensus(current, incoming, { n: factsMask(["employment_type"]) });
+    expect(cmp.matched[0].changes).toEqual([{ fact: "employment_type", from: "full_time", to: "part_time" }]);
+    expect(censusAgrees(cmp)).toBe(false);
+  });
+
+  it("counts every fact as stated when the document recorded none", () => {
+    const cmp = compareCensus([row("a", "Ann")], [row("n", "Ann", { job_title: "Lead" })]);
+    expect(cmp.matched[0].changes.map((c) => c.fact)).toEqual(["job_title"]);
+  });
+
+  it("reads a document's stated facts from its extraction, keeping only valid ones for rows that survive", () => {
     const ex = parseExtraction({
       candidates: [
-        { field: "census", value: [{ first_name: "Ann" }], location: "CSV", facts: ["job_title", "nonsense"] },
-        { field: "employee_count", value: 1, facts: ["job_title"] },
+        { field: "census", value: [{ id: "r1", first_name: "Ann" }, { id: "r2", first_name: "Bo" }], location: "CSV", stated: { r1: 5, r2: "x", gone: 3, r3: 99999 } },
+        { field: "employee_count", value: 1, stated: { r1: 5 } },
       ],
     });
-    expect(ex.candidates[0].facts).toEqual(["job_title"]);
-    expect(ex.candidates[1]).not.toHaveProperty("facts");
+    expect(ex.candidates[0].stated).toEqual({ r1: 5 });
+    expect(ex.candidates[1]).not.toHaveProperty("stated");
+    expect(parseExtraction({ candidates: [{ field: "census", value: [{ first_name: "Ann" }] }] }).candidates[0]).not.toHaveProperty("stated");
+  });
+
+  describe("a merge that would be too big", () => {
+    const people = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => row(`${prefix}${i}`, `${prefix}${i}`));
+
+    it("compares two full-size censuses promptly, even with many people sharing a name", () => {
+      // The comparison runs on every render of the review, so it must not scale with the square of the roster.
+      const same = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => row(`${prefix}${i}`, i % 2 ? "Sam" : `P${i}`));
+      const started = Date.now();
+      const cmp = compareCensus(same("a", 5000), same("b", 5000));
+      expect(Date.now() - started).toBeLessThan(1500);
+      expect(cmp.matched.length + cmp.added.length).toBe(5000);
+    });
+
+    it("fits when the union stays within 5,000, counting people who are in both only once", () => {
+      expect(censusMergeFits(people("a", 3000), [...people("a", 1000), ...people("b", 2000)])).toBe(true);
+      expect(censusMergeFits(people("a", 3000), people("b", 2000))).toBe(true);
+    });
+
+    it("does not fit when two censuses that each fit add up to more", () => {
+      expect(censusMergeFits(people("a", 3000), people("b", 2001))).toBe(false);
+    });
+
+    it("never installs a census the database would refuse to save", () => {
+      const state = { data: { ...EMPTY_CHAMBER_DATA, census: people("a", 3000) }, provenance: {} };
+      const candidate = { field: "census" as const, value: people("b", 3000), location: "CSV" };
+      const next = resolveCandidate(state, { id: "d1", file_name: "roster.csv" }, { type: "merge_census", candidate });
+      expect(next).toBe(state);
+    });
   });
 });
 

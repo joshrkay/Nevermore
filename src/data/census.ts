@@ -1,8 +1,9 @@
 // The census contract lives beside the edge functions so document-extract and the app read a row
 // the same way. See supabase/functions/_shared/census.ts.
-import { ageOn, COVERAGE_TIER_LABELS, type CensusEmployee } from "../../supabase/functions/_shared/census.ts";
+import { ageOn, COVERAGE_TIER_LABELS, type CensusEmployee, type CensusFact } from "../../supabase/functions/_shared/census.ts";
 
 export {
+  CENSUS_FACTS,
   CLASSIFICATIONS,
   COMPENSATION_TYPES,
   COVERAGE_TIER_LABELS,
@@ -13,14 +14,18 @@ export {
   MAX_DEPENDENTS,
   ageOn,
   censusGaps,
+  factsFromMask,
+  factsMask,
   isW2,
   normalizeCensus,
+  personNameKey,
   samePerson,
   stripUnstorable,
 } from "../../supabase/functions/_shared/census.ts";
 export type {
   CensusDependent,
   CensusEmployee,
+  CensusFact,
   CensusGap,
   CompensationType,
   CoverageTier,
@@ -34,13 +39,6 @@ export const censusAge = (e: CensusEmployee): number | undefined => (e.dob ? age
 /** Annual pay for a table cell: "$85,000", "$41,600 (hourly)" for an hourly worker, or "—". */
 export const censusPay = (e: CensusEmployee): string =>
   e.annual_salary ? `$${e.annual_salary.toLocaleString()}${e.compensation_type === "hourly" ? " (hourly)" : ""}` : "—";
-
-/** Facts of a census row a document can state; the rest of a row is its name and id. */
-export const CENSUS_FACTS = [
-  "dob", "age", "work_state", "zip_code", "job_title", "annual_salary", "compensation_type",
-  "employment_type", "classification", "coverage_tier", "class_code",
-] as const;
-export type CensusFact = (typeof CENSUS_FACTS)[number];
 
 export const CENSUS_FACT_LABELS: Record<CensusFact, string> = {
   dob: "date of birth",
