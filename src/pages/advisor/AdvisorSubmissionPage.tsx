@@ -11,6 +11,7 @@ import NotesPanel from "@/components/advisor/NotesPanel";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
+import { censusPay } from "@/data/census";
 import { loadSubmission, type SubmissionDetail } from "@/lib/advisorApi";
 
 type Load =
@@ -144,7 +145,7 @@ const Detail = ({
 const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
   <section aria-labelledby="census-heading" className="border border-border rounded-xl p-5">
     <h2 id="census-heading" className="font-display text-lg font-bold mb-3">Employee census</h2>
-    {detail.data.employees.length === 0 ? (
+    {detail.data.census.length === 0 ? (
       <p className="text-sm text-muted-foreground">No census captured.</p>
     ) : (
       <div className="overflow-x-auto">
@@ -152,24 +153,33 @@ const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
           <thead>
             <tr className="text-left text-xs text-muted-foreground">
               <th className="py-1 pr-3">Name</th>
-              <th className="py-1 pr-3">DOB</th>
+              <th className="py-1 pr-3">DOB / age</th>
               <th className="py-1 pr-3">State</th>
+              <th className="py-1 pr-3">ZIP</th>
               <th className="py-1 pr-3">Title</th>
               <th className="py-1 pr-3 text-right">Salary</th>
               <th className="py-1 pr-3">Type</th>
+              <th className="py-1 pr-3">Tier</th>
+              <th className="py-1 pr-3">WC code</th>
               <th className="py-1">Dependents</th>
             </tr>
           </thead>
           <tbody>
-            {detail.data.employees.map((e, i) => (
-              <tr key={i} className="border-t border-border">
+            {detail.data.census.map((e) => (
+              <tr key={e.id} className="border-t border-border">
                 <td className="py-1 pr-3">{`${e.first_name} ${e.last_name}`.trim() || "—"}</td>
-                <td className="py-1 pr-3 font-mono">{e.dob || "—"}</td>
-                <td className="py-1 pr-3">{e.state || "—"}</td>
-                <td className="py-1 pr-3">{e.title || "—"}</td>
-                <td className="py-1 pr-3 text-right font-mono">{e.salary ? `$${e.salary.toLocaleString()}` : "—"}</td>
-                <td className="py-1 pr-3">{e.classification}</td>
-                <td className="py-1">{e.dependents.length}</td>
+                <td className="py-1 pr-3 font-mono">{e.dob || (e.age !== undefined ? `Age ${e.age}` : "—")}</td>
+                <td className="py-1 pr-3">{e.work_state || "—"}</td>
+                <td className="py-1 pr-3 font-mono">{e.zip_code ?? "—"}</td>
+                <td className="py-1 pr-3">{e.job_title || "—"}</td>
+                <td className="py-1 pr-3 text-right font-mono">{censusPay(e)}</td>
+                <td className="py-1 pr-3">
+                  {e.classification === "1099" ? "1099" : "W-2"}
+                  {e.employment_type === "part_time" && " PT"}
+                </td>
+                <td className="py-1 pr-3">{e.coverage_tier ?? "—"}</td>
+                <td className="py-1 pr-3 font-mono">{e.class_code ?? "—"}</td>
+                <td className="py-1">{e.dependents?.length ?? 0}</td>
               </tr>
             ))}
           </tbody>

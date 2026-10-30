@@ -59,6 +59,7 @@ INSERT INTO public.chamber_sessions (id, user_id, chamber_data, status, submissi
 UPDATE public.profiles SET phone = 'call me', company_name = 'Legacy Co' WHERE user_id = '00000000-0000-0000-0000-00000000000a';
 
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
+\i supabase/migrations/20261029092000_census_in_intake_validation.sql
 
 -- ---------- helpers ----------
 CREATE FUNCTION pg_temp.as_user(uid uuid, guest boolean DEFAULT false) RETURNS void LANGUAGE plpgsql AS $$
@@ -135,8 +136,12 @@ END $$;
 
 -- The data a fresh intake holds, and the app's demo intake (both copied from src/data/chamberTypes.ts).
 CREATE FUNCTION pg_temp.empty_data() RETURNS jsonb LANGUAGE sql AS
-  $j$ SELECT '{"company_name":null,"industry":null,"hq_state":null,"states":[],"employee_count":null,"start_month":null,"multiple_entities":null,"fein_count":null,"virgin_medical":null,"current_carrier":null,"renewal_date":null,"rate_history":null,"benefits_waiting_period":null,"ancillary_benefits":[],"has_401k":null,"retirement_type":null,"employer_contributes":null,"payroll_vendor":null,"pay_frequency":null,"funding_days":null,"has_nonexempt":null,"nonexempt_count":null,"exempt_count":null,"pto_types":[],"accrual_method":null,"has_handbook":null,"handbook_last_updated":null,"hr_staff_count":null,"has_1099":null,"ca_contractors":null,"uses_physical_clocks":null,"uses_mobile_app":null,"uses_computer_timekeeping":null,"shift_differentials":null,"hris_system":null,"key_challenges":null,"business_goals":null,"employees":[]}'::jsonb $j$;
+  $j$ SELECT '{"company_name":null,"industry":null,"hq_state":null,"states":[],"employee_count":null,"start_month":null,"multiple_entities":null,"fein_count":null,"virgin_medical":null,"current_carrier":null,"renewal_date":null,"rate_history":null,"benefits_waiting_period":null,"ancillary_benefits":[],"has_401k":null,"retirement_type":null,"employer_contributes":null,"payroll_vendor":null,"pay_frequency":null,"funding_days":null,"has_nonexempt":null,"nonexempt_count":null,"exempt_count":null,"pto_types":[],"accrual_method":null,"has_handbook":null,"handbook_last_updated":null,"hr_staff_count":null,"has_1099":null,"ca_contractors":null,"uses_physical_clocks":null,"uses_mobile_app":null,"uses_computer_timekeeping":null,"shift_differentials":null,"hris_system":null,"key_challenges":null,"business_goals":null,"census":[]}'::jsonb $j$;
 CREATE FUNCTION pg_temp.demo_data() RETURNS jsonb LANGUAGE sql AS
+  $j$ SELECT $d${"company_name":"Meridian Creative Group","industry":"Creative Agency","hq_state":"CA","states":["CA","TX"],"employee_count":28,"start_month":"March 2026","multiple_entities":false,"fein_count":1,"virgin_medical":false,"current_carrier":"Blue Shield","renewal_date":"June 2026","rate_history":"12% increase last year","benefits_waiting_period":"30 days","ancillary_benefits":["Life Insurance","FSA","EAP"],"has_401k":true,"retirement_type":"Safe Harbor 401k","employer_contributes":true,"payroll_vendor":"ADP Run","pay_frequency":"Bi-weekly","funding_days":2,"has_nonexempt":true,"nonexempt_count":8,"exempt_count":20,"pto_types":["Vacation","Sick","Personal"],"accrual_method":"Annual accrual","has_handbook":true,"handbook_last_updated":"2024","hr_staff_count":1,"has_1099":true,"ca_contractors":false,"uses_physical_clocks":false,"uses_mobile_app":true,"uses_computer_timekeeping":true,"shift_differentials":false,"hris_system":"Google Sheets","key_challenges":"Compliance with CA employment law, managing multi-state payroll","business_goals":"Scale to 50 employees, offer competitive benefits to attract talent","census":[{"id":"6f1c2a40-0001-4c1e-9a7b-3d5e00000001","first_name":"Sarah","last_name":"Chen","dob":"1988-03-15","work_state":"CA","zip_code":"94107","job_title":"Senior Designer","annual_salary":105000,"compensation_type":"salary","employment_type":"full_time","classification":"w2","coverage_tier":"FAM","class_code":"8810","dependents":[{"first_name":"Michael","last_name":"Chen","dob":"1985-06-12","relationship":"spouse"},{"first_name":"Emma","last_name":"Chen","dob":"2018-03-22","relationship":"child"}]},{"id":"6f1c2a40-0002-4c1e-9a7b-3d5e00000002","first_name":"Marcus","last_name":"Rivera","dob":"1985-07-22","work_state":"CA","zip_code":"94110","job_title":"Art Director","annual_salary":125000,"compensation_type":"salary","employment_type":"full_time","classification":"w2","coverage_tier":"EE+SP","class_code":"8810","dependents":[{"first_name":"Ana","last_name":"Rivera","dob":"1987-09-04","relationship":"spouse"}]},{"id":"6f1c2a40-0003-4c1e-9a7b-3d5e00000003","first_name":"Aisha","last_name":"Patel","dob":"1990-11-08","work_state":"CA","zip_code":"94612","job_title":"UX Researcher","annual_salary":98000,"compensation_type":"salary","employment_type":"full_time","classification":"w2","coverage_tier":"EE","class_code":"8810"},{"id":"6f1c2a40-0004-4c1e-9a7b-3d5e00000004","first_name":"James","last_name":"O'Brien","dob":"1992-01-30","work_state":"TX","zip_code":"78701","job_title":"Copywriter","annual_salary":78000,"compensation_type":"salary","employment_type":"full_time","classification":"w2","coverage_tier":"EE","class_code":"8810"},{"id":"6f1c2a40-0005-4c1e-9a7b-3d5e00000005","first_name":"Lisa","last_name":"Tanaka","dob":"1987-09-12","work_state":"CA","zip_code":"94103","job_title":"Project Manager","annual_salary":110000,"compensation_type":"salary","employment_type":"full_time","classification":"w2","coverage_tier":"FAM","class_code":"8810","dependents":[{"first_name":"Kenji","last_name":"Tanaka","dob":"2015-05-18","relationship":"child"},{"first_name":"Yuki","last_name":"Tanaka","dob":"2019-11-02","relationship":"child"},{"first_name":"Hiro","last_name":"Tanaka","dob":"1986-02-14","relationship":"spouse"}]},{"id":"6f1c2a40-0006-4c1e-9a7b-3d5e00000006","first_name":"Tom","last_name":"Bradley","dob":"1994-02-14","work_state":"TX","zip_code":"78702","job_title":"Freelance Illustrator","annual_salary":72000,"compensation_type":"salary","employment_type":"full_time","classification":"1099"}]}$d$::jsonb $j$;
+
+-- What a browser that predates the census wrote: the roster under `employees`, with `state`, `title`, `salary` and "W2".
+CREATE FUNCTION pg_temp.legacy_demo_data() RETURNS jsonb LANGUAGE sql AS
   $j$ SELECT $d${"company_name":"Meridian Creative Group","industry":"Creative Agency","hq_state":"CA","states":["CA","TX"],"employee_count":28,"start_month":"March 2026","multiple_entities":false,"fein_count":1,"virgin_medical":false,"current_carrier":"Blue Shield","renewal_date":"June 2026","rate_history":"12% increase last year","benefits_waiting_period":"30 days","ancillary_benefits":["Life Insurance","FSA","EAP"],"has_401k":true,"retirement_type":"Safe Harbor 401k","employer_contributes":true,"payroll_vendor":"ADP Run","pay_frequency":"Bi-weekly","funding_days":2,"has_nonexempt":true,"nonexempt_count":8,"exempt_count":20,"pto_types":["Vacation","Sick","Personal"],"accrual_method":"Annual accrual","has_handbook":true,"handbook_last_updated":"2024","hr_staff_count":1,"has_1099":true,"ca_contractors":false,"uses_physical_clocks":false,"uses_mobile_app":true,"uses_computer_timekeeping":true,"shift_differentials":false,"hris_system":"Google Sheets","key_challenges":"Compliance with CA employment law, managing multi-state payroll","business_goals":"Scale to 50 employees, offer competitive benefits to attract talent","employees":[{"first_name":"Sarah","last_name":"Chen","dob":"1988-03-15","state":"CA","title":"Senior Designer","salary":105000,"classification":"W2","dependents":[{"first_name":"Michael","last_name":"Chen","dob":"1985-06-12","relationship":"spouse"},{"first_name":"Emma","last_name":"Chen","dob":"2018-03-22","relationship":"child"}]},{"first_name":"Marcus","last_name":"Rivera","dob":"1985-07-22","state":"CA","title":"Art Director","salary":125000,"classification":"W2","dependents":[{"first_name":"Ana","last_name":"Rivera","dob":"1987-09-04","relationship":"spouse"}]},{"first_name":"Aisha","last_name":"Patel","dob":"1990-11-08","state":"CA","title":"UX Researcher","salary":98000,"classification":"W2","dependents":[]},{"first_name":"James","last_name":"O'Brien","dob":"1992-01-30","state":"TX","title":"Copywriter","salary":78000,"classification":"W2","dependents":[]},{"first_name":"Lisa","last_name":"Tanaka","dob":"1987-09-12","state":"CA","title":"Project Manager","salary":110000,"classification":"W2","dependents":[{"first_name":"Kenji","last_name":"Tanaka","dob":"2015-05-18","relationship":"child"},{"first_name":"Yuki","last_name":"Tanaka","dob":"2019-11-02","relationship":"child"},{"first_name":"Hiro","last_name":"Tanaka","dob":"1986-02-14","relationship":"spouse"}]},{"first_name":"Tom","last_name":"Bradley","dob":"1994-02-14","state":"TX","title":"Freelance Illustrator","salary":72000,"classification":"1099","dependents":[]}]}$d$::jsonb $j$;
 
 -- ---------- what the migration installed ----------
@@ -169,7 +174,10 @@ BEGIN
      OR NOT has_function_privilege('authenticated', 'public.is_us_state_code(text)', 'EXECUTE')
      OR NOT has_function_privilege('authenticated', 'public.is_valid_phone(text)', 'EXECUTE')
      OR NOT has_function_privilege('service_role', 'public.chamber_data_error(jsonb)', 'EXECUTE')
-     OR has_function_privilege('anon', 'public.chamber_data_error(jsonb)', 'EXECUTE') THEN
+     OR has_function_privilege('anon', 'public.chamber_data_error(jsonb)', 'EXECUTE')
+     OR NOT has_function_privilege('authenticated', 'public.chamber_data_census_row_error(jsonb, text)', 'EXECUTE')
+     OR NOT has_function_privilege('service_role', 'public.chamber_data_census_row_error(jsonb, text)', 'EXECUTE')
+     OR has_function_privilege('anon', 'public.chamber_data_census_row_error(jsonb, text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'FAIL: validator helpers are not open to authenticated and service_role only';
   END IF;
 
@@ -209,6 +217,9 @@ BEGIN
   UPDATE public.chamber_sessions SET chamber_data = '{}' WHERE id = sid;
   INSERT INTO public.chamber_sessions (user_id) VALUES (uid);
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, pg_temp.demo_data());
+  -- A browser that has not loaded the census version still saves the roster as `employees`.
+  UPDATE public.chamber_sessions SET chamber_data = pg_temp.legacy_demo_data() WHERE id = sid;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, pg_temp.legacy_demo_data());
 
   -- Limits are inclusive.
   FOREACH good IN ARRAY ARRAY[
@@ -670,6 +681,111 @@ BEGIN
     ok := ok + 1;
   END LOOP;
   RAISE NOTICE 'intake_validation: % validator cases passed', ok;
+END $$;
+
+-- ---------- the census (chamber_data.census) ----------
+DO $$
+DECLARE
+  r record;
+  ok int := 0;
+  one jsonb := '{"id":"a1","first_name":"Ann","last_name":"Lee","dob":"1990-01-01","age":35,"work_state":"CA","zip_code":"94107","job_title":"Dev","annual_salary":100000,"compensation_type":"salary","employment_type":"full_time","classification":"w2","coverage_tier":"EE","class_code":"8810","dependents":[{"first_name":"B","relationship":"child"}]}';
+  one_of constant text := 'jsonb_build_object(''census'', jsonb_build_array(';
+BEGIN
+  FOR r IN SELECT v.label, e.path, e.reason, v.expect FROM (VALUES
+    ('a full census row', jsonb_build_object('census', jsonb_build_array(one)), NULL::text),
+    ('an empty census', '{"census":[]}'::jsonb, NULL),
+    ('a row that is only a name', '{"census":[{"first_name":"A"}]}', NULL),
+    ('an unknown key in a row is tolerated', jsonb_build_object('census', jsonb_build_array(one || '{"future_fact":1}')), NULL),
+    ('work state blank', jsonb_build_object('census', jsonb_build_array(one || '{"work_state":""}')), NULL),
+    ('classification 1099', jsonb_build_object('census', jsonb_build_array(one || '{"classification":"1099"}')), NULL),
+    ('every coverage tier', jsonb_build_object('census', jsonb_build_array(one || '{"coverage_tier":"EE+SP"}', one || '{"coverage_tier":"EE+CH"}', one || '{"coverage_tier":"FAM"}', one || '{"coverage_tier":"WAIVE"}')), NULL),
+    ('hourly and part time', jsonb_build_object('census', jsonb_build_array(one || '{"compensation_type":"hourly","employment_type":"part_time"}')), NULL),
+    ('pay of exactly 1,000,000', jsonb_build_object('census', jsonb_build_array(one || '{"annual_salary":1000000}')), NULL),
+    ('a ZIP+4', jsonb_build_object('census', jsonb_build_array(one || '{"zip_code":"94107-1234"}')), NULL),
+    ('age at both ends', jsonb_build_object('census', jsonb_build_array(one || '{"age":14}', one || '{"age":100}')), NULL),
+    ('the older roster is still accepted', '{"employees":[{"first_name":"A","state":"CA","salary":5,"classification":"W2"}]}', NULL),
+    ('both keys together', jsonb_build_object('census', jsonb_build_array(one), 'employees', '[{"first_name":"A"}]'::jsonb), NULL),
+    ('exactly 5000 people', (SELECT jsonb_build_object('census', jsonb_agg(jsonb_build_object('first_name', 'E' || g))) FROM generate_series(1, 5000) g), NULL),
+
+    ('census given an object', '{"census":{"first_name":"A"}}', 'census'),
+    ('more than 5000 people', (SELECT jsonb_build_object('census', jsonb_agg(jsonb_build_object('first_name', 'E' || g))) FROM generate_series(1, 5001) g), 'census'),
+    ('row that is not an object', '{"census":[{"first_name":"A"},"junk"]}', 'census[1]'),
+    ('row without a first name', '{"census":[{"work_state":"CA"}]}', 'census[0].first_name'),
+    ('row with a blank first name', '{"census":[{"first_name":" "}]}', 'census[0].first_name'),
+    ('last name over 200', jsonb_build_object('census', jsonb_build_array(one || jsonb_build_object('last_name', repeat('a', 201)))), 'census[0].last_name'),
+    ('date of birth over 40', jsonb_build_object('census', jsonb_build_array(one || jsonb_build_object('dob', repeat('1', 41)))), 'census[0].dob'),
+    ('id blank', jsonb_build_object('census', jsonb_build_array(one || '{"id":" "}')), 'census[0].id'),
+    ('id over 64', jsonb_build_object('census', jsonb_build_array(one || jsonb_build_object('id', repeat('a', 65)))), 'census[0].id'),
+    ('id not text', jsonb_build_object('census', jsonb_build_array(one || '{"id":7}')), 'census[0].id'),
+    ('age 13', jsonb_build_object('census', jsonb_build_array(one || '{"age":13}')), 'census[0].age'),
+    ('age 101', jsonb_build_object('census', jsonb_build_array(one || '{"age":101}')), 'census[0].age'),
+    ('age fractional', jsonb_build_object('census', jsonb_build_array(one || '{"age":40.5}')), 'census[0].age'),
+    ('age a string', jsonb_build_object('census', jsonb_build_array(one || '{"age":"40"}')), 'census[0].age'),
+    ('work state a whole name', jsonb_build_object('census', jsonb_build_array(one || '{"work_state":"California"}')), 'census[0].work_state'),
+    ('work state lower case', jsonb_build_object('census', jsonb_build_array(one || '{"work_state":"ca"}')), 'census[0].work_state'),
+    ('work state null', jsonb_build_object('census', jsonb_build_array(one || '{"work_state":null}')), 'census[0].work_state'),
+    ('work state not a listed code', jsonb_build_object('census', jsonb_build_array(one || '{"work_state":"AE"}')), 'census[0].work_state'),
+    ('ZIP too short', jsonb_build_object('census', jsonb_build_array(one || '{"zip_code":"9410"}')), 'census[0].zip_code'),
+    ('ZIP not text', jsonb_build_object('census', jsonb_build_array(one || '{"zip_code":94107}')), 'census[0].zip_code'),
+    ('job title over 200', jsonb_build_object('census', jsonb_build_array(one || jsonb_build_object('job_title', repeat('a', 201)))), 'census[0].job_title'),
+    ('pay above 1,000,000', jsonb_build_object('census', jsonb_build_array(one || '{"annual_salary":1000001}')), 'census[0].annual_salary'),
+    ('pay below 0', jsonb_build_object('census', jsonb_build_array(one || '{"annual_salary":-5}')), 'census[0].annual_salary'),
+    ('pay fractional', jsonb_build_object('census', jsonb_build_array(one || '{"annual_salary":10.5}')), 'census[0].annual_salary'),
+    ('pay a string', jsonb_build_object('census', jsonb_build_array(one || '{"annual_salary":"85,000"}')), 'census[0].annual_salary'),
+    ('pay null', jsonb_build_object('census', jsonb_build_array(one || '{"annual_salary":null}')), 'census[0].annual_salary'),
+    ('pay type outside salary/hourly', jsonb_build_object('census', jsonb_build_array(one || '{"compensation_type":"weekly"}')), 'census[0].compensation_type'),
+    ('employment type outside full/part time', jsonb_build_object('census', jsonb_build_array(one || '{"employment_type":"ft"}')), 'census[0].employment_type'),
+    ('classification in the roster''s old case', jsonb_build_object('census', jsonb_build_array(one || '{"classification":"W2"}')), 'census[0].classification'),
+    ('classification outside w2/1099', jsonb_build_object('census', jsonb_build_array(one || '{"classification":"k-1"}')), 'census[0].classification'),
+    ('coverage tier outside the list', jsonb_build_object('census', jsonb_build_array(one || '{"coverage_tier":"Gold"}')), 'census[0].coverage_tier'),
+    ('class code of three digits', jsonb_build_object('census', jsonb_build_array(one || '{"class_code":"881"}')), 'census[0].class_code'),
+    ('class code a number', jsonb_build_object('census', jsonb_build_array(one || '{"class_code":8810}')), 'census[0].class_code'),
+    ('dependents given an object', jsonb_build_object('census', jsonb_build_array(one || '{"dependents":{"first_name":"B"}}')), 'census[0].dependents'),
+    ('more than 20 dependents', jsonb_build_object('census', jsonb_build_array(one || jsonb_build_object('dependents', (SELECT jsonb_agg(jsonb_build_object('first_name', 'D' || g)) FROM generate_series(1, 21) g)))), 'census[0].dependents'),
+    ('dependent without a first name', jsonb_build_object('census', jsonb_build_array(one || '{"dependents":[{"relationship":"child"}]}')), 'census[0].dependents[0].first_name'),
+    ('dependent relationship outside the list', jsonb_build_object('census', jsonb_build_array(one || '{"dependents":[{"first_name":"B","relationship":"kid"}]}')), 'census[0].dependents[0].relationship'),
+    ('first failure is in list order', jsonb_build_object('census', jsonb_build_array(one, one || '{"work_state":"XX"}', one || '{"work_state":"YY"}')), 'census[1].work_state')
+  ) v(label, payload, expect), LATERAL public.chamber_data_error(v.payload) e LOOP
+    IF r.path IS DISTINCT FROM r.expect OR (r.path IS NULL) <> (r.reason IS NULL) THEN
+      RAISE EXCEPTION 'FAIL: census case "%" gave path %, reason %, expected path %', r.label, r.path, r.reason, r.expect;
+    END IF;
+    ok := ok + 1;
+  END LOOP;
+  RAISE NOTICE 'intake_validation: % census validator cases passed', ok;
+END $$;
+
+-- The census is saved through the trigger as the signed-in user, and a bad row is refused naming its path.
+DO $$
+DECLARE
+  uid uuid := gen_random_uuid();
+  sid uuid;
+  detail text;
+  state text;
+  good jsonb := '{"census":[{"id":"a1","first_name":"Ann","work_state":"CA","annual_salary":90000,"compensation_type":"salary","employment_type":"full_time","classification":"w2"}]}';
+BEGIN
+  sid := pg_temp.new_session(uid, pg_temp.empty_data());
+  PERFORM pg_temp.as_user(uid);
+  SET LOCAL ROLE authenticated;
+  UPDATE public.chamber_sessions SET chamber_data = good WHERE id = sid;
+  IF (SELECT chamber_data FROM public.chamber_sessions WHERE id = sid) IS DISTINCT FROM good THEN
+    RAISE EXCEPTION 'FAIL: the census was not saved as sent';
+  END IF;
+
+  BEGIN
+    UPDATE public.chamber_sessions SET chamber_data = jsonb_set(good, '{census,0,work_state}', '"Texas"') WHERE id = sid;
+    RAISE EXCEPTION 'FAIL: a census with a state name was saved';
+  EXCEPTION WHEN SQLSTATE 'EA001' THEN
+    GET STACKED DIAGNOSTICS detail = PG_EXCEPTION_DETAIL;
+    IF detail <> 'census[0].work_state' THEN RAISE EXCEPTION 'FAIL: a bad census row named %', detail; END IF;
+  END;
+  IF (SELECT chamber_data FROM public.chamber_sessions WHERE id = sid) IS DISTINCT FROM good THEN
+    RAISE EXCEPTION 'FAIL: a refused census save changed the row';
+  END IF;
+
+  -- A new intake can hold a census, and the certification hash covers it as it does any other answer.
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, good);
+  RESET ROLE;
+  RAISE NOTICE 'intake_validation: census save cases passed';
 END $$;
 
 DO $$ BEGIN RAISE NOTICE 'intake_validation: all cases passed'; END $$;

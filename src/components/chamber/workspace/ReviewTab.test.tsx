@@ -10,8 +10,8 @@ describe("ReviewTab documents", () => {
         data={EMPTY_CHAMBER_DATA}
         onProceed={() => {}}
         documents={[
-          { id: "1", file_name: "census.xlsx", category: "census", status: "extracted" },
-          { id: "2", file_name: "sbc.pdf", category: "benefits", status: "encrypted" },
+          { id: "1", file_name: "census.xlsx", category: "employee_census", status: "extracted" },
+          { id: "2", file_name: "sbc.pdf", category: "benefits_summary", status: "encrypted" },
         ]}
       />,
     );
@@ -19,7 +19,7 @@ describe("ReviewTab documents", () => {
     expect(screen.getByText("census.xlsx").closest("li")).toHaveTextContent("Employee census");
     expect(screen.getByText("sbc.pdf").closest("li")).toHaveTextContent("Password-protected");
     expect(screen.getByText("Employee census, Benefits summary")).toBeInTheDocument();
-    expect(screen.getByText("payroll report, workers' comp history")).toBeInTheDocument();
+    expect(screen.getByText("payroll report, workers' comp loss runs")).toBeInTheDocument();
   });
 
   it("summarizes zero, some, and all of the recommended categories", () => {
@@ -28,9 +28,9 @@ describe("ReviewTab documents", () => {
     expect(screen.getByText("none yet")).toBeInTheDocument();
     expect(screen.getByText(/Still helpful, if you have them:/)).toBeInTheDocument();
 
-    rerender(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} documents={["census", "benefits", "payroll", "workers_comp"].map(doc)} />);
+    rerender(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} documents={["employee_census", "benefits_summary", "payroll_report", "workers_comp_loss_runs"].map(doc)} />);
     expect(screen.queryByText(/Still helpful, if you have them:/)).not.toBeInTheDocument();
-    expect(screen.getByText("Employee census, Benefits summary, Payroll report, Workers' comp history")).toBeInTheDocument();
+    expect(screen.getByText("Employee census, Benefits summary, Payroll report, Workers' comp loss runs")).toBeInTheDocument();
   });
 
   it("never blocks moving on when documents are missing", () => {

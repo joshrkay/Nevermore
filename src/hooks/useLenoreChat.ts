@@ -3,6 +3,7 @@ import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { mergeChamberData } from "@/data/chamberValidation";
 import type { ChamberData } from "@/data/chamberTypes";
+import { redactSensitive } from "@/data/sensitive";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 
 export interface ChatFailure {
@@ -46,8 +47,8 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
     setPending(true);
     onOrbStateChange("thinking");
     try {
-      // The roster isn't extracted from chat and can be large, so leave it out of the context.
-      const { employees: _employees, ...context } = dataRef.current;
+      // The roster isn't extracted from chat and holds personal details, so leave it out of the context.
+      const { census: _census, ...context } = dataRef.current;
       const { data, error } = await supabase.functions.invoke("chamber-extract", { body: { message: text, context } });
       if (error) throw error;
 
@@ -74,7 +75,9 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
 
   const send = useCallback(async (text: string) => {
     setFailure(null);
-    await ask(text, addUserMessage(text) || null);
+    // The model and the transcript only ever see the message with sensitive numbers removed.
+    const clean = redactSensitive(text);
+    await ask(clean, addUserMessage(clean) || null);
   }, [addUserMessage, ask]);
 
   /** Resends the message that failed, without adding it to the conversation a second time. */

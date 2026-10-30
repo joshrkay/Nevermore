@@ -1,10 +1,13 @@
 import { z } from "zod";
 import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
-import type { ChamberData, ChamberEmployee } from "./chamberTypes";
+import type { ChamberData } from "./chamberTypes";
+import { normalizeCensus, stripUnstorable } from "./census";
+import { redactSensitive } from "./sensitive";
 
 // Extracted data comes from an LLM (edge function or voice agent <extract> tags) or
 // from a stored jsonb column, so every field is checked before it reaches state.
 // Invalid fields are dropped individually rather than rejecting the whole patch.
+// Free text never keeps a Social Security or bank account number (see sensitive.ts).
 
 // The server (public.chamber_data_error, migration 20261027090000) enforces the same limits and
 // rejects a write that breaks one. Everything below is therefore the stricter side of that contract:
@@ -27,9 +30,8 @@ export const DOB_MAX = 40;
 const STATE_CODE_SET: ReadonlySet<string> = new Set(US_STATE_CODES);
 
 // Postgres jsonb refuses NUL and unpaired surrogates before any trigger can name the field, so they
-// are removed here instead of becoming an unattributable save failure.
-const UNPAIRED_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
-const clean = (v: unknown) => (typeof v === "string" ? v.split("\u0000").join("").replace(UNPAIRED_SURROGATE, "") : v);
+// are removed here instead of becoming an unattributable save failure. Sensitive numbers go too.
+const clean = (v: unknown) => (typeof v === "string" ? redactSensitive(stripUnstorable(v)) : v);
 const str = (schema: z.ZodString) => z.preprocess(clean, schema) as unknown as z.ZodType<string, z.ZodTypeDef, unknown>;
 
 const text = str(z.string().trim().min(1).max(TEXT_MAX));
@@ -63,42 +65,6 @@ const countUpTo = (max: number) =>
     z.number().int().nonnegative().max(max),
   );
 const count = countUpTo(COUNT_MAX);
-
-// Maps common spellings to the two classifications. A missing label means a regular
-// employee (rosters rarely label W-2s), but an unrecognized label is rejected rather
-// than guessed: miscounting a contractor as W-2 corrupts headcount and AB5 flags.
-const classification = z.preprocess(
-  (v) => {
-    if (v === undefined || v === null || v === "") return "W2";
-    if (typeof v !== "string") return v;
-    const key = v.trim().toLowerCase().replace(/[\s_-]+/g, " ");
-    if (/^(w ?2|w ?2 employee|employee|full time|part time)$/.test(key)) return "W2";
-    if (/^(1099|1099 contractor|contractor|independent contractor|freelance|freelancer)$/.test(key)) return "1099";
-    return v;
-  },
-  z.enum(["W2", "1099"]),
-);
-
-// Cast because the app tsconfig is non-strict, which makes zod infer every key as optional.
-const employeeSchema = z.object({
-  first_name: text,
-  last_name: str(z.string().trim().max(NAME_MAX)).catch(""),
-  dob: str(z.string().trim().max(DOB_MAX)).catch(""),
-  // An unlisted state becomes blank rather than dropping the employee, as an over-long one always did.
-  state: z.string().trim().transform((s) => s.toUpperCase()).transform((s) => (STATE_CODE_SET.has(s) ? s : "")).catch(""),
-  title: str(z.string().trim().max(NAME_MAX)).catch(""),
-  salary: countUpTo(SALARY_MAX).nullable().catch(null),
-  classification,
-  dependents: listOf(
-    z.object({
-      first_name: text,
-      last_name: str(z.string().trim().max(NAME_MAX)).catch(""),
-      dob: str(z.string().trim().max(DOB_MAX)).catch(""),
-      relationship: z.enum(["spouse", "domestic_partner", "child", "other"]).catch("other"),
-    }),
-    MAX_DEPENDENTS,
-  ).catch([]),
-}) as unknown as z.ZodType<ChamberEmployee, z.ZodTypeDef, unknown>;
 
 type FieldSchemas = { [K in keyof ChamberData]: z.ZodType<ChamberData[K], z.ZodTypeDef, unknown> };
 
@@ -144,19 +110,26 @@ const FIELD_SCHEMAS: FieldSchemas = {
   key_challenges: nullableText,
   business_goals: nullableText,
 
-  employees: listOf(employeeSchema, MAX_EMPLOYEES),
+  // Rows are checked one by one (supabase/functions/_shared/census.ts): an invalid row is dropped and the
+  // census stops at the most the intake holds.
+  census: z.array(z.unknown()).transform((rows) => normalizeCensus(rows, undefined, MAX_EMPLOYEES)),
 };
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Keeps only known, well-formed fields from an untrusted patch. */
+/**
+ * Keeps only known, well-formed fields from an untrusted patch. Data saved before the census contract
+ * (and older voice extractions) name the roster `employees`; it is read as `census`, and never written back.
+ */
 export function sanitizeChamberPatch(raw: unknown): Partial<ChamberData> {
   if (!isPlainObject(raw)) return {};
+  const input: Record<string, unknown> =
+    "employees" in raw && !("census" in raw) ? { ...raw, census: raw.employees } : raw;
   const patch: Partial<Record<keyof ChamberData, unknown>> = {};
   for (const key of Object.keys(FIELD_SCHEMAS) as (keyof ChamberData)[]) {
-    if (!(key in raw)) continue;
-    const result = FIELD_SCHEMAS[key].safeParse(raw[key]);
+    if (!(key in input)) continue;
+    const result = FIELD_SCHEMAS[key].safeParse(input[key]);
     if (result.success) patch[key] = result.data;
   }
   return patch as Partial<ChamberData>;

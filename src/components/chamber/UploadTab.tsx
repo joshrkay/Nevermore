@@ -5,25 +5,34 @@ import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ChamberData } from "@/data/chamberTypes";
 import { DOCUMENT_CATEGORIES, isDocumentCategory, missingRecommended } from "@/data/documentCategories";
-import type { DocumentCandidate } from "@/data/documentCandidates";
+import type { CandidateResolution } from "@/data/documentCandidates";
+import type { ProvenanceMap } from "@/data/provenance";
 import { canRetryExtraction, documentStatusInfo } from "@/data/documentStatus";
-import type { SessionDocument, UseSessionDocumentsReturn } from "@/hooks/useSessionDocuments";
+import type { SessionDocument, UploadRejection, UseSessionDocumentsReturn } from "@/hooks/useSessionDocuments";
+import { MAX_DOCUMENTS_PER_INTAKE, MAX_UPLOAD_BYTES } from "@/lib/uploadCheck";
 import DocumentCandidates from "./DocumentCandidates";
 
-const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const REJECTION_MESSAGES: Record<UploadRejection, (name: string) => string> = {
+  empty: (name) => `${name} is empty.`,
+  mismatch: (name) => `${name} doesn't contain what its name says (PDF, Word, Excel, or CSV). Check it's the right file.`,
+  duplicate: (name) => `${name} is already uploaded to this intake.`,
+  limit: (name) => `${name} wasn't uploaded: an intake holds up to ${MAX_DOCUMENTS_PER_INTAKE} files.`,
+};
 
 interface UploadTabProps {
   documents: UseSessionDocumentsReturn;
   /** Uploads attach to this intake; nothing can be uploaded until it exists. */
   sessionId: string | null;
   data: ChamberData;
-  onApplyCandidates?: (doc: SessionDocument, candidates: DocumentCandidate[], opts: { replace: boolean }) => void;
+  provenance?: ProvenanceMap;
+  /** The prospect's decision on what Lenore found in a document; omit for read-only. */
+  onResolveCandidates?: (doc: SessionDocument, resolution: CandidateResolution) => void;
 }
 
 const uploadedAt = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-const UploadTab = ({ documents, sessionId, data, onApplyCandidates }: UploadTabProps) => {
+const UploadTab = ({ documents, sessionId, data, provenance, onResolveCandidates }: UploadTabProps) => {
   const { docs, upload, remove, setCategory, extract, uploading } = documents;
   const uploaded = docs.filter((d) => d.status !== "uploading");
   const present = new Set(uploaded.map((d) => d.category));
@@ -36,7 +45,8 @@ const UploadTab = ({ documents, sessionId, data, onApplyCandidates }: UploadTabP
         toast.error(tooBig ? `${r.file.name} is over 20 MB.` : `${r.file.name} isn't a PDF, Excel, CSV, or Word file.`);
       }
       if (accepted.length === 0) return;
-      const { saved, failed } = await upload(accepted);
+      const { saved, failed, rejected: refused } = await upload(accepted);
+      for (const { name, reason } of refused) toast.error(REJECTION_MESSAGES[reason](name));
       for (const name of failed) toast.error(`Failed to upload ${name}.`);
       if (saved > 0) toast.success(`${saved} file${saved === 1 ? "" : "s"} uploaded.`);
     },
@@ -83,7 +93,9 @@ const UploadTab = ({ documents, sessionId, data, onApplyCandidates }: UploadTabP
         <p className="text-foreground font-medium mb-1">
           {isDragActive ? "Release to upload..." : uploading ? "Uploading…" : "Drag & drop files here"}
         </p>
-        <p className="text-sm text-muted-foreground">PDF, Excel, CSV, or Word · Max 20 MB</p>
+        <p className="text-sm text-muted-foreground">
+          PDF, Excel, CSV, or Word · Max 20 MB · Up to {MAX_DOCUMENTS_PER_INTAKE} files
+        </p>
       </div>
 
       {/* What's useful to share: a checklist, never a gate */}
@@ -181,7 +193,8 @@ const UploadTab = ({ documents, sessionId, data, onApplyCandidates }: UploadTabP
                       fileName={doc.file_name}
                       extraction={doc.extraction}
                       data={data}
-                      onApply={onApplyCandidates && ((c, opts) => onApplyCandidates(doc, c, opts))}
+                      provenance={provenance}
+                      onResolve={onResolveCandidates && ((r) => onResolveCandidates(doc, r))}
                     />
                   </div>
                 )}

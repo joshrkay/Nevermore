@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "./chamberTypes";
-import type { ChamberEmployee } from "./chamberTypes";
+import type { CensusEmployee } from "./chamberTypes";
 import {
   buildManuscript,
   CERTIFICATION_CONSENT_VERSION,
@@ -16,14 +16,17 @@ import {
   wcSystem,
 } from "./manuscript";
 
-const emp = (overrides: Partial<ChamberEmployee> = {}): ChamberEmployee => ({
+const emp = (overrides: Partial<CensusEmployee> = {}): CensusEmployee => ({
+  id: "e1",
   first_name: "A",
   last_name: "B",
   dob: "1990-01-01",
-  state: "TX",
-  title: "Designer",
-  salary: 50000,
-  classification: "W2",
+  work_state: "TX",
+  job_title: "Designer",
+  annual_salary: 50000,
+  compensation_type: "salary",
+  employment_type: "full_time",
+  classification: "w2",
   dependents: [],
   ...overrides,
 });
@@ -59,20 +62,28 @@ describe("eligibilityChecks", () => {
 
 describe("employeeFlag", () => {
   it("flags CA 1099 contractors and sales titles", () => {
-    expect(employeeFlag(emp({ classification: "1099", state: "CA" }))).toMatch(/AB5/);
-    expect(employeeFlag(emp({ title: "Account Executive" }))).toMatch(/outside sales/);
+    expect(employeeFlag(emp({ classification: "1099", work_state: "CA" }))).toMatch(/AB5/);
+    expect(employeeFlag(emp({ job_title: "Account Executive" }))).toMatch(/outside sales/);
+    expect(employeeFlag(emp({ job_title: undefined }))).toBeNull();
     expect(employeeFlag(emp())).toBeNull();
   });
 });
 
 describe("coverageTier", () => {
+  const spouse = { first_name: "S", last_name: "", dob: "", relationship: "spouse" as const };
+  const child = { first_name: "C", last_name: "", dob: "", relationship: "child" as const };
+
   it("derives the tier from dependents", () => {
-    const spouse = { first_name: "S", last_name: "", dob: "", relationship: "spouse" as const };
-    const child = { first_name: "C", last_name: "", dob: "", relationship: "child" as const };
     expect(coverageTier(emp())).toBe("Employee Only");
     expect(coverageTier(emp({ dependents: [spouse] }))).toBe("Employee + Spouse");
     expect(coverageTier(emp({ dependents: [child] }))).toBe("Employee + Child(ren)");
     expect(coverageTier(emp({ dependents: [spouse, child] }))).toBe("Employee + Family");
+    expect(coverageTier(emp({ dependents: undefined }))).toBe("Employee Only");
+  });
+
+  it("uses the tier the census states over one implied by dependents", () => {
+    expect(coverageTier(emp({ coverage_tier: "EE+CH" }))).toBe("Employee + Child(ren)");
+    expect(coverageTier(emp({ coverage_tier: "WAIVE", dependents: [spouse] }))).toBe("Waived");
   });
 });
 
@@ -87,7 +98,7 @@ describe("wcSystem", () => {
 describe("buildManuscript", () => {
   it("uses the session's data rather than sample content", () => {
     const m = buildManuscript(
-      { ...EMPTY_CHAMBER_DATA, company_name: "Acme Robotics", states: ["OH"], employees: [emp({ state: "OH" })] },
+      { ...EMPTY_CHAMBER_DATA, company_name: "Acme Robotics", states: ["OH"], census: [emp({ work_state: "OH" })] },
       {
         fileId: "EAA-2026-ABCDEF12",
         submission: { signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-2026-ABCDEF12" },
@@ -111,7 +122,7 @@ describe("buildManuscript", () => {
   it("counts dependent tiers and lists open items for the demo data", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: "EAA-SAMPLE" });
     const total = m.dependentTiers.reduce((sum, t) => sum + t.count, 0);
-    expect(total).toBe(DEMO_CHAMBER_DATA.employees.filter((e) => e.classification === "W2").length);
+    expect(total).toBe(DEMO_CHAMBER_DATA.census.filter((e) => e.classification === "w2").length);
     expect(m.totalDependents).toBe(6);
     expect(m.open.some((o) => o.includes("Workers' comp"))).toBe(true);
     expect(m.signer).toBeNull();
@@ -133,11 +144,27 @@ describe("buildManuscript with missing data", () => {
 describe("buildManuscript census and state mix with gaps", () => {
   it("says 'Not provided' for blank census cells and unknown state counts", () => {
     const m = buildManuscript(
-      { ...EMPTY_CHAMBER_DATA, states: ["TX"], employees: [emp({ dob: "", state: "", title: "", salary: null })] },
+      { ...EMPTY_CHAMBER_DATA, states: ["TX"], census: [emp({ dob: undefined, work_state: "", job_title: undefined, annual_salary: undefined })] },
       { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") },
     );
     expect(m.census[0]).toMatchObject({ dob: "Not provided", state: "Not provided", title: "Not provided", salary: "Not provided" });
     expect(m.states).toEqual([{ state: "TX", count: "Not provided", system: "NCCI" }]);
+  });
+
+  it("shows an age when the census gave no date of birth, and marks hourly and part-time workers", () => {
+    const m = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, census: [emp({ dob: undefined, age: 41, compensation_type: "hourly", employment_type: "part_time", annual_salary: 20800 })] },
+      { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") },
+    );
+    expect(m.census[0]).toMatchObject({ dob: "Age 41", salary: "$20,800 (hourly)", classification: "W-2 PT" });
+    expect(maskDob(m.census[0].dob)).toBe("Age 41");
+  });
+
+  it("lists waived coverage only when the census records it", () => {
+    const opts = { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") };
+    expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [emp()] }, opts).dependentTiers.map((t) => t.tier)).not.toContain("Waived");
+    const waived = buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [emp(), emp({ id: "e2", coverage_tier: "WAIVE" })] }, opts);
+    expect(waived.dependentTiers.find((t) => t.tier === "Waived")).toEqual({ tier: "Waived", count: 1, pct: "50%" });
   });
 
   it("shows no dependent percentages when there are no W-2 employees to divide by", () => {
@@ -158,7 +185,7 @@ describe("buildManuscript open items for missing core facts", () => {
 
   it("lists nothing for facts that were provided", () => {
     const { open } = buildManuscript(
-      { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["TX"], pay_frequency: "bi-weekly", employees: [emp()] },
+      { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["TX"], pay_frequency: "bi-weekly", census: [emp()] },
       opts,
     );
     expect(open.filter((o) => /not provided$/.test(o))).toEqual([]);

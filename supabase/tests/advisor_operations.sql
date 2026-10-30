@@ -95,6 +95,8 @@ INSERT INTO public.chamber_sessions (id, user_id) VALUES ('00000000-0000-0000-00
 \i supabase/migrations/20261023090000_document_categories_and_storage_access.sql
 \i supabase/migrations/20261024090000_document_processing_started.sql
 \i supabase/migrations/20261024100000_advisor_queue.sql
+\i supabase/migrations/20261029090000_document_ingestion.sql
+\i supabase/migrations/20261029091000_census_advisor_review.sql
 
 -- Runs `stmt` as `who` and fails the run unless it's refused (permission, row security or a
 -- deliberate check).
@@ -254,6 +256,7 @@ BEGIN
   PERFORM pg_temp.must_refuse(format('SELECT public.review_submission_field(%L, ''company_name'', ''verified'', ''set'', ''"Acme Holdings"'')', sid), 'a correction without a reason');
   PERFORM pg_temp.must_refuse(format('SELECT public.review_submission_field(%L, ''not_a_field'', ''verified'')', sid), 'an unknown field');
   PERFORM pg_temp.must_refuse(format('SELECT public.review_submission_field(%L, ''employees'', ''verified'', ''set'', ''[]'', ''x'')', sid), 'correcting the census');
+  PERFORM pg_temp.must_refuse(format('SELECT public.review_submission_field(%L, ''census'', ''verified'', ''set'', ''[]'', ''x'')', sid), 'correcting the census by its current name');
   PERFORM pg_temp.must_refuse(format('SELECT public.review_submission_field(%L, ''company_name'', ''approved'')', sid), 'an unknown review state');
   PERFORM public.review_submission_field(sid, 'company_name', 'follow_up', 'set', '"Acme Holdings LLC"', 'Legal name per W-9');
   PERFORM public.review_submission_field(sid, 'company_name', 'verified');
@@ -281,6 +284,11 @@ BEGIN
   END IF;
   SELECT * INTO r FROM public.advisor_list_submissions() WHERE session_id = sid;
   IF r.verified_fields <> 1 OR r.flagged_fields <> 1 THEN RAISE EXCEPTION 'FAIL: review counts were %', r; END IF;
+  -- The census is reviewed under its current name too.
+  PERFORM public.review_submission_field(sid, 'census', 'follow_up');
+  IF NOT EXISTS (SELECT 1 FROM public.advisor_field_reviews WHERE session_id = sid AND field = 'census' AND review_state = 'follow_up') THEN
+    RAISE EXCEPTION 'FAIL: the census could not be marked for follow-up';
+  END IF;
 
   -- ---------- Manuscript versions ----------
   SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = sid;
@@ -650,6 +658,24 @@ BEGIN
   IF states IS DISTINCT FROM ARRAY['CA', 'NY', 'TX'] THEN RAISE EXCEPTION 'FAIL: footprint was %', states; END IF;
   SELECT l.states INTO states FROM public.advisor_list_submissions() l WHERE l.session_id = '00000000-0000-0000-0000-00000000000b';
   IF states IS DISTINCT FROM ARRAY[]::text[] THEN RAISE EXCEPTION 'FAIL: malformed footprint was %', states; END IF;
+
+  -- ---------- The census (chamber_data.census) counts as the roster; a stale `employees` beside it doesn't ----------
+  RESET ROLE;
+  UPDATE public.chamber_sessions
+     SET chamber_data = '{"census":[{"first_name":"A","work_state":"wa"},{"first_name":"B","work_state":"OR"}],"employees":[{"state":"ZZ"}]}'
+   WHERE id = '00000000-0000-0000-0000-0000000000ff';
+  UPDATE public.chamber_sessions SET chamber_data = '{"census":[],"employees":[{"state":"NV"}]}'
+   WHERE id = '00000000-0000-0000-0000-0000000000ee';
+  PERFORM pg_temp.become('advisor');
+  SELECT * INTO r FROM public.advisor_list_submissions() l WHERE l.session_id = '00000000-0000-0000-0000-0000000000ff';
+  IF r.states IS DISTINCT FROM ARRAY['OR', 'WA'] THEN RAISE EXCEPTION 'FAIL: census footprint was %', r.states; END IF;
+  IF 'Employee census' = ANY (r.missing_required) OR 'States of operation' = ANY (r.missing_required) THEN
+    RAISE EXCEPTION 'FAIL: a census was reported missing: %', r.missing_required;
+  END IF;
+  SELECT * INTO r FROM public.advisor_list_submissions() l WHERE l.session_id = '00000000-0000-0000-0000-0000000000ee';
+  IF r.states IS DISTINCT FROM ARRAY[]::text[] OR NOT 'Employee census' = ANY (r.missing_required) THEN
+    RAISE EXCEPTION 'FAIL: an empty census was read past: % %', r.states, r.missing_required;
+  END IF;
 
   RAISE NOTICE 'advisor queue: all cases passed';
 END $$;

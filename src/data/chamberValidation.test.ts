@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import type { ChamberData } from "./chamberTypes";
+import { CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES } from "./census";
 import {
   COUNT_MAX,
   MAX_DEPENDENTS,
+  NAME_MAX,
   MAX_EMPLOYEES,
   MAX_LIST_ITEMS,
   MAX_STATES,
@@ -46,43 +48,80 @@ describe("sanitizeChamberPatch", () => {
     expect(sanitizeChamberPatch({ employee_count: "1,200", fein_count: -1 })).toEqual({ employee_count: 1200 });
   });
 
-  it("keeps valid employees, fills defaults, and drops nameless ones", () => {
+  it("keeps valid census rows, fills defaults, and drops nameless ones", () => {
     const patch = sanitizeChamberPatch({
-      employees: [
-        { first_name: "Ada", state: "ca", dependents: [{ first_name: "Bo", relationship: "kid" }] },
+      census: [
+        { first_name: "Ada", work_state: "ca", dependents: [{ first_name: "Bo", relationship: "kid" }] },
         { last_name: "No first name" },
         "garbage",
       ],
     });
-    expect(patch.employees).toEqual([
+    expect(patch.census).toEqual([
       {
+        id: expect.stringMatching(/^[0-9a-f-]{36}$/),
         first_name: "Ada",
         last_name: "",
-        dob: "",
-        state: "CA",
-        title: "",
-        salary: null,
-        classification: "W2",
+        work_state: "CA",
+        compensation_type: "salary",
+        employment_type: "full_time",
+        classification: "w2",
         dependents: [{ first_name: "Bo", last_name: "", dob: "", relationship: "other" }],
       },
     ]);
+  });
+
+  it("reads a roster saved as `employees` before the census contract", () => {
+    const patch = sanitizeChamberPatch({
+      employees: [{ first_name: "Sarah", last_name: "Chen", dob: "1988-03-15", state: "CA", title: "Designer", salary: 105000, classification: "W2", dependents: [] }],
+    });
+    expect(patch).not.toHaveProperty("employees");
+    expect(patch.census).toEqual([
+      {
+        id: expect.any(String),
+        first_name: "Sarah",
+        last_name: "Chen",
+        dob: "1988-03-15",
+        work_state: "CA",
+        job_title: "Designer",
+        annual_salary: 105000,
+        compensation_type: "salary",
+        employment_type: "full_time",
+        classification: "w2",
+      },
+    ]);
+    // A current census wins over a stale `employees` key.
+    expect(sanitizeChamberPatch({ census: [], employees: [{ first_name: "Old" }] }).census).toEqual([]);
+  });
+
+  it("keeps a census row's id, so saving and reloading doesn't change it", () => {
+    const [row] = sanitizeChamberPatch({ census: [{ first_name: "Ada" }] }).census!;
+    expect(sanitizeChamberPatch({ census: [row] }).census).toEqual([row]);
+  });
+
+  it("removes Social Security and bank account numbers from free text", () => {
+    const patch = sanitizeChamberPatch({
+      key_challenges: "Owner SSN is 123-45-6789; payroll from acct # 00012345",
+      company_name: "Acme 987654321",
+    });
+    expect(patch.key_challenges).toBe("Owner SSN is [redacted]; payroll from acct [redacted]");
+    expect(patch.company_name).toBe("Acme [redacted]");
   });
 });
 
 describe("worker classification", () => {
   const classify = (classification: unknown) =>
-    sanitizeChamberPatch({ employees: [{ first_name: "Ada", classification }] }).employees?.map((e) => e.classification);
+    sanitizeChamberPatch({ census: [{ first_name: "Ada", classification }] }).census?.map((e) => e.classification);
 
   it("normalizes common spellings", () => {
-    expect(classify("w-2")).toEqual(["W2"]);
-    expect(classify("Employee")).toEqual(["W2"]);
+    expect(classify("w-2")).toEqual(["w2"]);
+    expect(classify("Employee")).toEqual(["w2"]);
     expect(classify("1099 Contractor")).toEqual(["1099"]);
     expect(classify("independent_contractor")).toEqual(["1099"]);
     expect(classify("freelancer")).toEqual(["1099"]);
   });
 
   it("treats a missing label as W-2", () => {
-    expect(classify(undefined)).toEqual(["W2"]);
+    expect(classify(undefined)).toEqual(["w2"]);
   });
 
   it("drops workers whose label can't be recognized instead of counting them as W-2", () => {
@@ -105,6 +144,7 @@ describe("parseChamberData", () => {
   it("fills every field from defaults when stored data is malformed", () => {
     expect(parseChamberData(undefined)).toEqual(EMPTY_CHAMBER_DATA);
     expect(parseChamberData({ states: 5, employees: "x" })).toEqual(EMPTY_CHAMBER_DATA);
+    expect(parseChamberData({ census: { first_name: "not a list" } })).toEqual(EMPTY_CHAMBER_DATA);
   });
 });
 
@@ -130,36 +170,37 @@ describe("state codes", () => {
     expect(sanitizeChamberPatch({ states: "ny, XX, ny, Guam" })).toEqual({ states: ["NY"] });
   });
 
-  it("turns an unlisted employee state into blank without dropping the employee", () => {
-    const states = (state: unknown) =>
-      sanitizeChamberPatch({ employees: [{ first_name: "Ann", state }] }).employees?.map((e) => e.state);
+  it("turns an unlisted work state into blank without dropping the person, and reads a state's name", () => {
+    const states = (work_state: unknown) =>
+      sanitizeChamberPatch({ census: [{ first_name: "Ann", work_state }] }).census?.map((e) => e.work_state);
     expect(states("ca")).toEqual(["CA"]);
     expect(states(" tx ")).toEqual(["TX"]);
+    expect(states("California")).toEqual(["CA"]);
     expect(states("")).toEqual([""]);
-    for (const bad of ["ZZ", "C", "12", "1!", "W2", "AE", "California", null, 5, undefined]) expect(states(bad)).toEqual([""]);
+    for (const bad of ["ZZ", "C", "12", "1!", "W2", "AE", "Narnia", null, 5, undefined]) expect(states(bad)).toEqual([""]);
   });
 });
 
 describe("caps truncate instead of rejecting", () => {
-  const person = (i: number) => ({ first_name: `E${i}`, state: "CA" });
+  const person = (i: number) => ({ first_name: `E${i}`, work_state: "CA" });
 
-  it("keeps the first MAX_EMPLOYEES employees", () => {
-    const out = sanitizeChamberPatch({ employees: Array.from({ length: MAX_EMPLOYEES + 1000 }, (_, i) => person(i)) });
-    expect(out.employees).toHaveLength(MAX_EMPLOYEES);
-    expect(out.employees?.[0].first_name).toBe("E0");
-    expect(out.employees?.at(-1)?.first_name).toBe(`E${MAX_EMPLOYEES - 1}`);
+  it("keeps the first MAX_EMPLOYEES people of the census", () => {
+    const out = sanitizeChamberPatch({ census: Array.from({ length: MAX_EMPLOYEES + 1000 }, (_, i) => person(i)) });
+    expect(out.census).toHaveLength(MAX_EMPLOYEES);
+    expect(out.census?.[0].first_name).toBe("E0");
+    expect(out.census?.at(-1)?.first_name).toBe(`E${MAX_EMPLOYEES - 1}`);
   });
 
-  it("does not let dropped employees use up slots", () => {
+  it("does not let dropped rows use up slots", () => {
     const raw = [...Array.from({ length: 10 }, () => ({ last_name: "no first name" })), ...Array.from({ length: MAX_EMPLOYEES }, (_, i) => person(i))];
-    expect(sanitizeChamberPatch({ employees: raw }).employees).toHaveLength(MAX_EMPLOYEES);
+    expect(sanitizeChamberPatch({ census: raw }).census).toHaveLength(MAX_EMPLOYEES);
   });
 
-  it("keeps the first MAX_DEPENDENTS dependents of an employee", () => {
+  it("keeps the first MAX_DEPENDENTS dependents of a person", () => {
     const dependents = Array.from({ length: MAX_DEPENDENTS + 5 }, (_, i) => ({ first_name: `D${i}`, relationship: "child" }));
-    const [emp] = sanitizeChamberPatch({ employees: [{ first_name: "Ann", dependents }] }).employees ?? [];
+    const [emp] = sanitizeChamberPatch({ census: [{ first_name: "Ann", dependents }] }).census ?? [];
     expect(emp.dependents).toHaveLength(MAX_DEPENDENTS);
-    expect(emp.dependents.at(-1)?.first_name).toBe(`D${MAX_DEPENDENTS - 1}`);
+    expect(emp.dependents?.at(-1)?.first_name).toBe(`D${MAX_DEPENDENTS - 1}`);
   });
 
   it("keeps the first MAX_LIST_ITEMS entries of the text lists", () => {
@@ -184,31 +225,35 @@ describe("limits shared with the database", () => {
     expect(sanitizeChamberPatch({ employee_count: COUNT_MAX + 1 })).toEqual({});
     expect(sanitizeChamberPatch({ employee_count: 12.5 })).toEqual({});
     expect(sanitizeChamberPatch({ employee_count: "1e21" })).toEqual({});
-    const salary = (v: unknown) => sanitizeChamberPatch({ employees: [{ first_name: "A", salary: v }] }).employees?.[0].salary;
+    // Pay the intake can't hold is left blank rather than capped.
+    const salary = (v: unknown) => sanitizeChamberPatch({ census: [{ first_name: "A", annual_salary: v }] }).census?.[0].annual_salary;
     expect(salary(SALARY_MAX)).toBe(SALARY_MAX);
-    expect(salary(SALARY_MAX + 1)).toBeNull();
-    expect(salary(-5)).toBeNull();
+    expect(salary(SALARY_MAX + 1)).toBeUndefined();
+    expect(salary(-5)).toBeUndefined();
     expect(salary("105,000")).toBe(105000);
   });
 
-  it("limits text to TEXT_MAX and employee fields to their own lengths", () => {
+  it("limits text to TEXT_MAX and census fields to their own lengths", () => {
     expect(sanitizeChamberPatch({ company_name: "x".repeat(TEXT_MAX) }).company_name).toHaveLength(TEXT_MAX);
     expect(sanitizeChamberPatch({ company_name: "x".repeat(TEXT_MAX + 1) })).toEqual({});
+    // Over-long text in a row is cut to the limit, never left for the server to refuse.
     const [emp] = sanitizeChamberPatch({
-      employees: [{ first_name: "A", last_name: "x".repeat(201), title: "x".repeat(201), dob: "x".repeat(41) }],
-    }).employees ?? [];
-    expect([emp.last_name, emp.title, emp.dob]).toEqual(["", "", ""]);
+      census: [{ first_name: "A", last_name: "x".repeat(201), job_title: "x".repeat(201), dob: "x".repeat(41) }],
+    }).census ?? [];
+    expect(emp.last_name).toHaveLength(NAME_MAX);
+    expect(emp.job_title).toHaveLength(NAME_MAX);
+    expect(emp.dob).toBeUndefined();
   });
 
   it("removes characters Postgres jsonb refuses", () => {
     const out = sanitizeChamberPatch({
       company_name: "Ac\u0000me\ud800",
       pto_types: ["a\udc00b"],
-      employees: [{ first_name: "An\u0000n", last_name: "Le\ud83d", dependents: [{ first_name: "B\u0000o" }] }],
+      census: [{ first_name: "An\u0000n", last_name: "Le\ud83d", job_title: "D\u0000ev", dependents: [{ first_name: "B\u0000o" }] }],
     });
     expect(out.company_name).toBe("Acme");
     expect(out.pto_types).toEqual(["ab"]);
-    expect(out.employees?.[0]).toMatchObject({ first_name: "Ann", last_name: "Le", dependents: [{ first_name: "Bo" }] });
+    expect(out.census?.[0]).toMatchObject({ first_name: "Ann", last_name: "Le", job_title: "Dev", dependents: [{ first_name: "Bo" }] });
     expect(JSON.stringify(sanitizeChamberPatch({ company_name: "😀 ok" }))).toContain("😀");
   });
 });
@@ -225,7 +270,7 @@ function serverRefusal(d: unknown): string | null {
   for (const k of ["company_name", "industry", "start_month", "current_carrier", "renewal_date", "rate_history", "benefits_waiting_period", "retirement_type", "payroll_vendor", "pay_frequency", "accrual_method", "handbook_last_updated", "hris_system", "key_challenges", "business_goals"]) kinds[k] = "text";
   for (const k of ["employee_count", "fein_count", "funding_days", "nonexempt_count", "exempt_count", "hr_staff_count"]) kinds[k] = "count";
   for (const k of ["multiple_entities", "virgin_medical", "has_401k", "employer_contributes", "has_nonexempt", "has_handbook", "has_1099", "ca_contractors", "uses_physical_clocks", "uses_mobile_app", "uses_computer_timekeeping", "shift_differentials"]) kinds[k] = "bool";
-  for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"]]) kinds[k] = kind;
+  for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"]]) kinds[k] = kind;
   for (const [k, v] of Object.entries(d)) {
     switch (kinds[k]) {
       case "text": if (v !== null && !isText(v, TEXT_MAX)) return k; break;
@@ -264,6 +309,39 @@ function serverRefusal(d: unknown): string | null {
         }
         break;
       }
+      case "census": {
+        if (!Array.isArray(v) || v.length > MAX_EMPLOYEES) return k;
+        const oneOf = (x: unknown, list: readonly string[]) => typeof x === "string" && list.includes(x);
+        for (const [i, e] of v.entries()) {
+          const at = `census[${i}]`;
+          if (!isObj(e)) return at;
+          if (!isText(e.first_name, TEXT_MAX) || e.first_name.trim() === "") return `${at}.first_name`;
+          for (const [f, max] of [["last_name", 200], ["dob", 40]] as const) if (f in e && !isText(e[f], max)) return `${at}.${f}`;
+          if ("id" in e && !(isText(e.id, 64) && e.id.trim() !== "")) return `${at}.id`;
+          if ("age" in e && !(isCount(e.age, 100) && (e.age as number) >= 14)) return `${at}.age`;
+          if ("work_state" in e && !(e.work_state === "" || isState(e.work_state))) return `${at}.work_state`;
+          if ("zip_code" in e && !(typeof e.zip_code === "string" && /^[0-9]{5}(-[0-9]{4})?$/.test(e.zip_code))) return `${at}.zip_code`;
+          if ("job_title" in e && !isText(e.job_title, NAME_MAX)) return `${at}.job_title`;
+          if ("annual_salary" in e && !isCount(e.annual_salary, SALARY_MAX)) return `${at}.annual_salary`;
+          if ("compensation_type" in e && !oneOf(e.compensation_type, COMPENSATION_TYPES)) return `${at}.compensation_type`;
+          if ("employment_type" in e && !oneOf(e.employment_type, EMPLOYMENT_TYPES)) return `${at}.employment_type`;
+          if ("classification" in e && !oneOf(e.classification, CLASSIFICATIONS)) return `${at}.classification`;
+          if ("coverage_tier" in e && !oneOf(e.coverage_tier, COVERAGE_TIERS)) return `${at}.coverage_tier`;
+          if ("class_code" in e && !(typeof e.class_code === "string" && /^[0-9]{4}$/.test(e.class_code))) return `${at}.class_code`;
+          if ("dependents" in e) {
+            const deps = e.dependents;
+            if (!Array.isArray(deps) || deps.length > MAX_DEPENDENTS) return `${at}.dependents`;
+            for (const [j, dep] of deps.entries()) {
+              const dat = `${at}.dependents[${j}]`;
+              if (!isObj(dep)) return dat;
+              if (!isText(dep.first_name, TEXT_MAX) || dep.first_name.trim() === "") return `${dat}.first_name`;
+              for (const [f, max] of [["last_name", 200], ["dob", 40]] as const) if (f in dep && !isText(dep[f], max)) return `${dat}.${f}`;
+              if ("relationship" in dep && !["spouse", "domestic_partner", "child", "other"].includes(dep.relationship as string)) return `${dat}.relationship`;
+            }
+          }
+        }
+        break;
+      }
       default: return k;
     }
   }
@@ -277,6 +355,9 @@ describe("sanitiser output the server must accept", () => {
     expect(serverRefusal({ employee_count: 1_000_001 })).toBe("employee_count");
     expect(serverRefusal({ employee_count: "5" })).toBe("employee_count");
     expect(serverRefusal({ employees: [{ first_name: "A", state: "ZZ" }] })).toBe("employees[0].state");
+    expect(serverRefusal({ census: [{ first_name: "A", work_state: "ZZ" }] })).toBe("census[0].work_state");
+    expect(serverRefusal({ census: [{ first_name: "A", classification: "W2" }] })).toBe("census[0].classification");
+    expect(serverRefusal({ census: [{ first_name: "A", annual_salary: 1_000_001 }] })).toBe("census[0].annual_salary");
     expect(serverRefusal({ employees: [{ first_name: "A", dependents: Array.from({ length: 21 }, () => ({ first_name: "D" })) }] })).toBe("employees[0].dependents");
     expect(serverRefusal({ extra: 1 })).toBe("extra");
     expect(serverRefusal([])).toBe("chamber_data");
@@ -298,6 +379,7 @@ describe("sanitiser output the server must accept", () => {
 
   // Each row is hostile input a client can really hold (model output, voice JSON, a stored row, a roster).
   const bigRoster = Array.from({ length: MAX_EMPLOYEES + 1000 }, (_, i) => ({ first_name: `E${i}`, state: "CA", salary: 1 }));
+  const bigCensus = Array.from({ length: MAX_EMPLOYEES + 1000 }, (_, i) => ({ first_name: `E${i}`, work_state: "CA", annual_salary: 1 }));
   const golden: [string, Record<string, unknown>][] = [
     ["empty object", {}],
     ["unlisted and lower-case states", { hq_state: "zz", states: ["ca", "ZZ", "AE", " dc "] }],
@@ -318,6 +400,14 @@ describe("sanitiser output the server must accept", () => {
     ["25 dependents", { employees: [{ first_name: "A", dependents: Array.from({ length: 25 }, (_, i) => ({ first_name: `D${i}`, relationship: "kid" })) }] }],
     ["dependents that are not objects", { employees: [{ first_name: "A", dependents: ["x", null, { last_name: "no first" }, { first_name: "B", relationship: "spouse" }] }] }],
     ["more than MAX_EMPLOYEES employees", { employees: bigRoster }],
+    ["census rows with bad facts", { census: [{ first_name: "A", last_name: "x".repeat(201), dob: "soon", age: 7, work_state: "California", zip_code: "n/a", job_title: "x".repeat(300), annual_salary: 2_000_000, compensation_type: "weekly", employment_type: "ft", classification: "1099", coverage_tier: "Gold", class_code: "88" }] }],
+    ["census rows that must be dropped", { census: [{ last_name: "none" }, { first_name: " " }, "garbage", null, 7, { first_name: "A", classification: "K-1" }, [1]] }],
+    ["census state spellings", { census: ["ca", " Tx ", "zz", "12", "", null, "W2", "New York"].map((work_state) => ({ first_name: "A", work_state })) }],
+    ["census keys the older roster used", { census: [{ first_name: "A", state: "ca", title: "Dev", salary: "90,000", classification: "W2" }] }],
+    ["census ids", { census: [{ id: "x", first_name: "A" }, { id: "x", first_name: "B" }, { id: " ", first_name: "C" }, { id: "y".repeat(100), first_name: "D" }, { id: 7, first_name: "E" }] }],
+    ["unknown census keys", { census: [{ first_name: "A", nickname: "Al", dependents: [{ first_name: "B", extra: 1 }] }] }],
+    ["census hours and rates", { census: [{ first_name: "A", hourly_rate: "$20", hours_per_week: 20 }, { first_name: "B", hourly_rate: 900 }] }],
+    ["more than MAX_EMPLOYEES census rows", { census: bigCensus }],
     ["unknown top-level keys", { reply: "hello", unknown_field: 1, __proto__x: 2 }],
   ];
 
@@ -346,11 +436,20 @@ describe("sanitiser output the server must accept", () => {
       salary: maybe(any), classification: maybe(any),
       dependents: maybe(() => (rnd() < 0.3 ? pick(strings) : Array.from({ length: Math.floor(rnd() * 4) }, () => (rnd() < 0.85 ? dependent() : any())))),
     });
+    const censusRow = () => ({
+      id: maybe(any), first_name: maybe(() => pick(strings)), last_name: maybe(any), full_name: maybe(any), dob: maybe(any), age: maybe(any),
+      work_state: maybe(any), zip_code: maybe(any), job_title: maybe(any), annual_salary: maybe(any), hourly_rate: maybe(any),
+      hours_per_week: maybe(any), compensation_type: maybe(any), employment_type: maybe(any), classification: maybe(any),
+      coverage_tier: maybe(any), class_code: maybe(any),
+      dependents: maybe(() => (rnd() < 0.3 ? pick(strings) : Array.from({ length: Math.floor(rnd() * 4) }, () => (rnd() < 0.85 ? dependent() : any())))),
+    });
     for (let n = 0; n < 400; n++) {
       const raw: Record<string, unknown> = {};
+      // The roster as older browsers and stored rows name it.
+      if (rnd() < 0.3) raw.employees = rnd() < 0.15 ? any() : Array.from({ length: Math.floor(rnd() * 6) }, () => (rnd() < 0.9 ? employee() : any()));
       for (const k of Object.keys(EMPTY_CHAMBER_DATA)) {
         if (rnd() < 0.2) continue;
-        if (k === "employees") raw[k] = rnd() < 0.15 ? any() : Array.from({ length: Math.floor(rnd() * 6) }, () => (rnd() < 0.9 ? employee() : any()));
+        if (k === "census") raw[k] = rnd() < 0.15 ? any() : Array.from({ length: Math.floor(rnd() * 6) }, () => (rnd() < 0.9 ? (rnd() < 0.3 ? employee() : censusRow()) : any()));
         else if (k === "states" || k === "ancillary_benefits" || k === "pto_types") raw[k] = rnd() < 0.4 ? pick(strings) : Array.from({ length: Math.floor(rnd() * 5) }, any);
         else raw[k] = any();
       }
