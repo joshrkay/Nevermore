@@ -1,4 +1,5 @@
-import type { ChamberData, ChamberEmployee } from "./chamberTypes";
+import type { ChamberData } from "./chamberTypes";
+import { COVERAGE_TIER_LABELS, isW2, type CensusEmployee } from "./census";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
 import { fieldOpenItems, type FieldKey, type ProvenanceMap } from "./provenance";
@@ -83,8 +84,9 @@ export function certificationConsent(opts: { companyName: string | null; peo: st
 
 // ---------- Masking & filenames ----------
 
-/** Masks month/day of a date of birth, keeping the year. */
+/** Masks month/day of a date of birth, keeping the year. An age ("Age 41") already hides both. */
 export function maskDob(dob: string): string {
+  if (/^Age \d+$/.test(dob)) return dob;
   const year = dob.match(/\d{4}/)?.[0];
   return year ? `••/••/${year}` : "••/••/••••";
 }
@@ -144,8 +146,8 @@ export function eligibilityChecks(data: ChamberData, peo?: PeoRecord): Eligibili
     headcountCheck(data, peo),
     { label: "US headquarters", status: data.hq_state ? "pass" : "unknown" },
     {
-      label: `Employee census captured${data.employees.length ? ` (${data.employees.length} employees)` : ""}`,
-      status: data.employees.length > 0 ? "pass" : "unknown",
+      label: `Employee census captured${data.census.length ? ` (${data.census.length} employees)` : ""}`,
+      status: data.census.length > 0 ? "pass" : "unknown",
     },
     { label: "Industry — no exclusions", status: "unknown" },
     { label: "Workers' comp history and open claims", status: "unknown" },
@@ -155,9 +157,9 @@ export function eligibilityChecks(data: ChamberData, peo?: PeoRecord): Eligibili
 
 // ---------- Employee flags ----------
 
-export function employeeFlag(emp: ChamberEmployee): string | null {
-  if (emp.classification === "1099" && emp.state === "CA") return "CA 1099 contractor — AB5 review recommended";
-  const title = emp.title.toLowerCase();
+export function employeeFlag(emp: CensusEmployee): string | null {
+  if (emp.classification === "1099" && emp.work_state === "CA") return "CA 1099 contractor — AB5 review recommended";
+  const title = (emp.job_title ?? "").toLowerCase();
   if (/freelance|contractor/.test(title)) return "Worker classification needs confirmation";
   if (/account|sales/.test(title)) return "Confirm W/C class code (possible outside sales)";
   return null;
@@ -179,9 +181,12 @@ export function wcSystem(state: string): string {
   return STATE_RATING_BUREAUS[state] ?? "NCCI";
 }
 
-export function coverageTier(emp: ChamberEmployee): string {
-  const hasSpouse = emp.dependents.some((d) => d.relationship === "spouse" || d.relationship === "domestic_partner");
-  const hasChild = emp.dependents.some((d) => d.relationship === "child");
+/** The tier the census states, or else the one the dependents named in conversation imply. */
+export function coverageTier(emp: CensusEmployee): string {
+  if (emp.coverage_tier) return COVERAGE_TIER_LABELS[emp.coverage_tier];
+  const dependents = emp.dependents ?? [];
+  const hasSpouse = dependents.some((d) => d.relationship === "spouse" || d.relationship === "domestic_partner");
+  const hasChild = dependents.some((d) => d.relationship === "child");
   if (hasSpouse && hasChild) return "Employee + Family";
   if (hasSpouse) return "Employee + Spouse";
   if (hasChild) return "Employee + Child(ren)";
@@ -189,6 +194,7 @@ export function coverageTier(emp: ChamberEmployee): string {
 }
 
 const TIERS = ["Employee Only", "Employee + Spouse", "Employee + Child(ren)", "Employee + Family"];
+const WAIVED = COVERAGE_TIER_LABELS.WAIVE;
 
 export const NOT_PROVIDED = "Not provided";
 
@@ -199,14 +205,22 @@ const yesNo = (v: boolean | null) => (v === null ? NOT_PROVIDED : v ? "Yes" : "N
 
 export interface ManuscriptCensusRow {
   name: string;
+  /** Date of birth, or "Age N" when the census gave only an age. */
   dob: string;
   state: string;
   title: string;
   salary: string;
-  classification: ChamberEmployee["classification"];
+  /** "W-2" or "1099", with "PT" for part time. */
+  classification: string;
   tier: string;
   flag: string | null;
 }
+
+const classificationLabel = (e: CensusEmployee) =>
+  `${e.classification === "1099" ? "1099" : "W-2"}${e.employment_type === "part_time" ? " PT" : ""}`;
+
+const salaryLabel = (e: CensusEmployee) =>
+  e.annual_salary ? `$${e.annual_salary.toLocaleString()}${e.compensation_type === "hourly" ? " (hourly)" : ""}` : NOT_PROVIDED;
 
 /** Label, display value, and the field whose status and source the row shows. */
 export type ManuscriptRow = [label: string, value: string, field?: FieldKey];
@@ -263,28 +277,30 @@ export function buildManuscript(
   const fmtDateTime = (d: Date) =>
     d.toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
-  const w2 = data.employees.filter((e) => e.classification === "W2");
-  const contractors = data.employees.filter((e) => e.classification === "1099");
+  const w2 = data.census.filter(isW2);
+  const contractors = data.census.filter((e) => !isW2(e));
 
   const stateCounts = new Map<string, number>();
-  for (const emp of data.employees) {
-    if (emp.state) stateCounts.set(emp.state, (stateCounts.get(emp.state) ?? 0) + 1);
+  for (const emp of data.census) {
+    if (emp.work_state) stateCounts.set(emp.work_state, (stateCounts.get(emp.work_state) ?? 0) + 1);
   }
   const allStates = [...new Set([...data.states, ...stateCounts.keys()])];
 
-  const tierCounts = new Map<string, number>(TIERS.map((t) => [t, 0]));
+  const tierCounts = new Map<string, number>([...TIERS, WAIVED].map((t) => [t, 0]));
   for (const emp of w2) tierCounts.set(coverageTier(emp), (tierCounts.get(coverageTier(emp)) ?? 0) + 1);
+  // Waived appears only when the census records someone waiving coverage.
+  const tiers = tierCounts.get(WAIVED) ? [...TIERS, WAIVED] : TIERS;
 
   const checks = eligibilityChecks(data);
   const missingCore = [
     ["Company legal name", !data.company_name],
     ["States of operation", allStates.length === 0],
     ["Pay frequency", !data.pay_frequency],
-    ["Employee census", data.employees.length === 0],
+    ["Employee census", data.census.length === 0],
   ].flatMap(([label, missing]) => (missing ? [`${label} — not provided`] : []));
   const provenance = opts.provenance ?? {};
   const fieldItems = fieldOpenItems(provenance).map((i) => `${i.label} — ${i.reason.toLowerCase()}`);
-  const flags = data.employees.flatMap((e) => {
+  const flags = data.census.flatMap((e) => {
     const flag = employeeFlag(e);
     return flag ? [`${e.first_name} ${e.last_name}: ${flag}`] : [];
   });
@@ -307,27 +323,27 @@ export function buildManuscript(
     workforceRows: [
       ["Reported Headcount", orNotProvided(data.employee_count), "employee_count"],
       ["W-2 Employees on Census", String(w2.length)],
-      ["1099 Contractors on Census", data.employees.length ? String(contractors.length) : yesNo(data.has_1099)],
+      ["1099 Contractors on Census", data.census.length ? String(contractors.length) : yesNo(data.has_1099)],
       ["Exempt / Nonexempt", data.exempt_count === null && data.nonexempt_count === null ? NOT_PROVIDED : `${orNotProvided(data.exempt_count)} / ${orNotProvided(data.nonexempt_count)}`],
       ["In-house HR Staff", orNotProvided(data.hr_staff_count), "hr_staff_count"],
       ["Employee Handbook", yesNo(data.has_handbook), "has_handbook"],
     ],
     states: allStates.map((s) => ({ state: s, count: stateCounts.has(s) ? String(stateCounts.get(s)) : NOT_PROVIDED, system: wcSystem(s) })),
-    census: data.employees.map((e) => ({
+    census: data.census.map((e) => ({
       name: `${e.first_name} ${e.last_name}`.trim(),
-      dob: e.dob || NOT_PROVIDED,
-      state: e.state || NOT_PROVIDED,
-      title: e.title || NOT_PROVIDED,
-      salary: e.salary ? `$${e.salary.toLocaleString()}` : NOT_PROVIDED,
-      classification: e.classification,
-      tier: e.classification === "W2" ? coverageTier(e) : "Not applicable",
+      dob: e.dob || (e.age !== undefined ? `Age ${e.age}` : NOT_PROVIDED),
+      state: e.work_state || NOT_PROVIDED,
+      title: e.job_title || NOT_PROVIDED,
+      salary: salaryLabel(e),
+      classification: classificationLabel(e),
+      tier: isW2(e) ? coverageTier(e) : "Not applicable",
       flag: employeeFlag(e),
     })),
-    dependentTiers: TIERS.map((tier) => {
+    dependentTiers: tiers.map((tier) => {
       const count = tierCounts.get(tier) ?? 0;
       return { tier, count, pct: w2.length ? `${Math.round((count / w2.length) * 100)}%` : NOT_PROVIDED };
     }),
-    totalDependents: w2.reduce((sum, e) => sum + e.dependents.length, 0),
+    totalDependents: w2.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0),
     benefitsRows: [
       ["Current Carrier", orNotProvided(data.current_carrier), "current_carrier"],
       ["Renewal Date", orNotProvided(data.renewal_date), "renewal_date"],

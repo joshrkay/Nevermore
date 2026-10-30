@@ -1,3 +1,5 @@
+import { redactSensitive } from "./sensitive";
+
 export interface ChatMessage {
   id: string;
   sender: "lenore" | "user";
@@ -5,11 +7,12 @@ export interface ChatMessage {
   timestamp: string;
 }
 
+/** A transcript entry. Social Security and bank account numbers are removed before it is kept. */
 export function createChatMessage(sender: ChatMessage["sender"], text: string): ChatMessage {
   return {
     id: crypto.randomUUID(),
     sender,
-    text,
+    text: redactSensitive(text),
     timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
   };
 }
@@ -24,7 +27,7 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
     return [{
       id: typeof id === "string" && id ? id : crypto.randomUUID(),
       sender,
-      text,
+      text: redactSensitive(text),
       timestamp: typeof timestamp === "string" ? timestamp : "",
     }];
   });
