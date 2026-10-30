@@ -1,1 +1,6 @@
 project_id = "bspdkpwziixcastxxpqv"
+
+# Called by the email provider, which holds no Supabase login: the function checks the webhook's own
+# signature (RESEND_WEBHOOK_SECRET) instead of a JWT. See docs/NOTIFICATIONS.md.
+[functions.resend-webhook]
+verify_jwt = false

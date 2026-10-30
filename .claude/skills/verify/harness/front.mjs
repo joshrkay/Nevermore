@@ -23,5 +23,10 @@ http.createServer((req, res) => {
     up.on("error", (e) => { res.writeHead(502); res.end(String(e)); });
     return req.pipe(up);
   }
+  if (req.url.startsWith("/functions/v1/resend-webhook")) { // the provider's webhook: forwarded with its signature headers and exact body
+    const up = http.request({ host: "127.0.0.1", port: 8001, path: "/", method: req.method, headers: { ...req.headers, host: "127.0.0.1:8001" } }, (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
+    up.on("error", (e) => { res.writeHead(502); res.end(String(e)); });
+    return req.pipe(up);
+  }
   res.writeHead(404); res.end();
 }).listen(54321, "127.0.0.1", () => console.log("front on 54321"));

@@ -17,6 +17,7 @@ const goodEnv = {
   ADVISORY_NOTIFY_EMAIL: "advisors@example.com",
   SUPPORT_EMAIL: "help@example.com",
   PROSPECT_RESPONSE_TIME: "two business days",
+  RESEND_WEBHOOK_SECRET: "whsec_c2VjcmV0",
 };
 
 describe("isProjectRef", () => {
@@ -72,6 +73,20 @@ describe("checkSecrets", () => {
     const { errors, warnings } = checkSecrets(template);
     expect(errors).toEqual(["LOVABLE_API_KEY is required (or set AI_PROVIDER=anthropic and ANTHROPIC_API_KEY)"]);
     expect(warnings).toHaveLength(1);
+  });
+
+  it("warns, without stopping, that bounces are not processed when sending is set up but the webhook secret is not", () => {
+    const { errors, warnings } = checkSecrets({ ...goodEnv, RESEND_WEBHOOK_SECRET: "" });
+    expect(errors).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/RESEND_WEBHOOK_SECRET/);
+    expect(warnings[0]).toMatch(/Bounces and spam complaints/);
+    // Not a second warning on top of "emails stay queued" when sending itself is not set up.
+    expect(checkSecrets({ LOVABLE_API_KEY: "k", APP_BASE_URL: "https://example.com" }).warnings).toHaveLength(1);
+  });
+
+  it("lists the webhook function among those it deploys and checks", () => {
+    expect(FUNCTIONS).toContain("resend-webhook");
   });
 
     it("warns, without stopping, when email secrets are missing", () => {

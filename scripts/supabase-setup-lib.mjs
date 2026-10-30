@@ -1,7 +1,7 @@
 // Pure helpers for scripts/supabase-setup.mjs: parsing, validation, the SQL it runs and how it
 // reads the results. No I/O, so they are unit-tested (scripts/supabase-setup-lib.test.ts).
 
-export const FUNCTIONS = ["chamber-extract", "document-extract", "dispatch-outbox"];
+export const FUNCTIONS = ["chamber-extract", "document-extract", "dispatch-outbox", "resend-webhook"];
 
 /** Secrets the email notifications need. Without them emails wait in the queue; nothing is lost. */
 export const EMAIL_SECRETS = ["RESEND_API_KEY", "EMAIL_FROM", "ADVISORY_NOTIFY_EMAIL", "SUPPORT_EMAIL", "PROSPECT_RESPONSE_TIME"];
@@ -59,6 +59,10 @@ export function checkSecrets(env) {
 
   const missingEmail = EMAIL_SECRETS.filter((name) => !set(name));
   if (missingEmail.length > 0) warnings.push(`Emails stay queued until these are set: ${missingEmail.join(", ")}`);
+  // Sending works without it, so it is not one of the email secrets; only the bounces are lost.
+  if (set("RESEND_API_KEY") && !set("RESEND_WEBHOOK_SECRET")) {
+    warnings.push("Bounces and spam complaints are not processed until RESEND_WEBHOOK_SECRET is set: the signing secret of a Resend webhook pointed at the resend-webhook function (docs/NOTIFICATIONS.md)");
+  }
 
   return { errors, warnings };
 }

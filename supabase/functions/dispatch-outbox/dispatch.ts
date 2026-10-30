@@ -7,7 +7,7 @@
 // attempt and its retry cannot deliver a second, different message. The key only rotates when the
 // freeze is cleared, which the database does for a definitive rejection of the first send.
 
-import type { DispatchConfig } from "./config.ts";
+import type { BlockedKind, DispatchConfig } from "./config.ts";
 import {
   parseAdvisorNotification,
   parseProspectConfirmation,
@@ -25,6 +25,13 @@ export const MAX_ATTEMPTS = RETRY_DELAYS_SECONDS.length + 1;
 export function retryDelaySeconds(attempt: number): number | null {
   return attempt >= MAX_ATTEMPTS ? null : RETRY_DELAYS_SECONDS[Math.max(attempt, 1) - 1];
 }
+
+/**
+ * How long a claim is held, in seconds. A worker that has not recorded an outcome by then is taken
+ * to be lost (the next claim takes the event over; `reap_outbox_events` kills it once every attempt
+ * is used). Far longer than a batch takes: sends are sequential and each is cut off after 10 s.
+ */
+export const CLAIM_LEASE_SECONDS = 600;
 
 /** A claimed row from `claim_outbox_events`. `attempts` already counts the attempt being made. */
 export interface OutboxRow {
@@ -53,6 +60,14 @@ export interface PendingSend {
  */
 export const FROZEN_MAX_AGE_MS = 20 * 60 * 60 * 1000;
 
+/** An event that has just died, as engineering is told about it: ids and a failure kind, never content. */
+export interface DeadEvent {
+  event: string;
+  kind: string;
+  attempts: number;
+  reason: string;
+}
+
 export interface DispatchDeps {
   config: DispatchConfig;
   now: () => number;
@@ -62,8 +77,29 @@ export interface DispatchDeps {
   complete: (id: string, messageId: string | null) => Promise<void>;
   /** `attempt` fences the write to this claim; `definitive` says the provider proved it did not send. */
   fail: (id: string, error: string, retryInSeconds: number | null, attempt: number, definitive: boolean) => Promise<void>;
+  /** Pushes a dead event to engineering. Resolves to whether it was delivered; optional, since not every deployment has a channel. */
+  alertDead?: (event: DeadEvent) => Promise<boolean>;
   log: (line: string) => void;
 }
+
+/** Tells engineering, if there is a way to. A failed alert is logged and never stops the batch. */
+async function notifyDead(event: DeadEvent, deps: Pick<DispatchDeps, "alertDead" | "log">): Promise<void> {
+  if (!deps.alertDead) return;
+  let delivered = false;
+  try {
+    delivered = await deps.alertDead(event);
+  } catch {
+    delivered = false;
+  }
+  if (!delivered) deps.log(`OUTBOX_ALERT_FAILED: event=${event.event} died but the engineering alert was not delivered`);
+}
+
+/**
+ * What the provider said, folded into the failure kind for `last_error`: `auth:403 (validation_error:
+ * The sender domain is not verified)`. The detail was cleaned by the provider module; the kind alone
+ * is what logs carry.
+ */
+const recordedError = (reason: string, detail?: string) => (detail ? `${reason} (${detail})` : reason);
 
 export interface DispatchSummary {
   sent: number;
@@ -164,29 +200,38 @@ export async function dispatchEvents(rows: OutboxRow[], deps: DispatchDeps): Pro
   for (const row of rows) {
     const tag = `kind=${row.kind} event=${row.id}`;
 
-    const record = async (action: () => Promise<void>, counted: keyof DispatchSummary) => {
+    const record = async (action: () => Promise<void>, counted: keyof DispatchSummary): Promise<boolean> => {
       try {
         await action();
         summary[counted] += 1;
+        return true;
       } catch {
         summary.unrecorded += 1;
         deps.log(`OUTBOX_RECORD_FAILED: ${tag} could not be recorded; it will be retried once its claim lapses`);
+        return false;
       }
     };
 
     // `sent` is set once a send was attempted. `msg` is logged so an operator can see why a settings
     // change did not apply (the frozen message is reused); `definitive` is what lets the database
-    // rotate the key (see providers.ts for which answers qualify).
-    const failWith = (reason: string, final: boolean, sent?: { msg: MessageOrigin; definitive: boolean }) => {
+    // rotate the key (see providers.ts for which answers qualify); `detail` is the provider's cleaned
+    // explanation, which goes on the event but never into a log line.
+    const failWith = async (reason: string, final: boolean, sent?: { msg: MessageOrigin; definitive: boolean; detail?: string }) => {
       const delay = final ? null : retryDelaySeconds(row.attempts);
       const definitive = sent?.definitive ?? false;
+      const error = recordedError(reason, sent?.detail);
       if (delay === null) {
         deps.log(`OUTBOX_DEAD: ${tag} attempts=${row.attempts} reason=${reason}; needs an operator`);
-        return record(() => deps.fail(row.id, reason, null, row.attempts, definitive), "dead");
+        // Only once the event is really dead: if the write failed, the claim lapses and the reaper
+        // (or the next attempt) deals with it, and tells engineering then.
+        if (await record(() => deps.fail(row.id, error, null, row.attempts, definitive), "dead")) {
+          await notifyDead({ event: row.id, kind: row.kind, attempts: row.attempts, reason }, deps);
+        }
+        return;
       }
       const msg = sent ? ` msg=${sent.msg}` : "";
       deps.log(`OUTBOX_SEND_FAILED: ${tag} attempt=${row.attempts}/${MAX_ATTEMPTS}${msg} reason=${reason} retry_in=${delay}s`);
-      return record(() => deps.fail(row.id, reason, delay, row.attempts, definitive), "retrying");
+      await record(() => deps.fail(row.id, error, delay, row.attempts, definitive), "retrying");
     };
 
     const prepared = await prepare(row, deps);
@@ -213,7 +258,7 @@ export async function dispatchEvents(rows: OutboxRow[], deps: DispatchDeps): Pro
       await record(() => deps.complete(row.id, messageId), "sent");
     } else {
       const reason = result.httpStatus === null ? result.kind : `${result.kind}:${result.httpStatus}`;
-      await failWith(reason, false, { msg: origin, definitive: !result.ambiguous });
+      await failWith(reason, false, { msg: origin, definitive: !result.ambiguous, detail: result.detail });
     }
   }
   return summary;
@@ -268,21 +313,50 @@ export function reportReconcile(raw: unknown, log: (line: string) => void): Reco
   return summary;
 }
 
+/** The events `reap_outbox_events` just killed, as it returned them. */
+export function reapedDeaths(raw: unknown): DeadEvent[] {
+  return (Array.isArray(raw) ? raw : []).map((row) => {
+    const r = asRecord(row) ?? {};
+    return {
+      event: String(r.id),
+      kind: String(r.kind),
+      attempts: wholeNumber(r.attempts),
+      reason: r.last_error === "worker_lost_maybe_sent" ? "worker_lost_maybe_sent" : "worker_lost",
+    };
+  });
+}
+
 /** Logs each event `reap_outbox_events` just killed, so a lost worker is never silent. Returns how many. */
 export function reportReaped(raw: unknown, log: (line: string) => void): number {
-  const rows = Array.isArray(raw) ? raw : [];
-  for (const row of rows) {
-    const r = asRecord(row) ?? {};
-    const reason = r.last_error === "worker_lost_maybe_sent" ? "worker_lost_maybe_sent" : "worker_lost";
-    log(`OUTBOX_DEAD: kind=${String(r.kind)} event=${String(r.id)} attempts=${wholeNumber(r.attempts)} reason=${reason}; needs an operator`);
+  const dead = reapedDeaths(raw);
+  for (const d of dead) log(`OUTBOX_DEAD: kind=${d.kind} event=${d.event} attempts=${d.attempts} reason=${d.reason}; needs an operator`);
+  return dead.length;
+}
+
+/**
+ * Tells the setting-blocked kinds' waiting events why, on the events themselves, so an advisor
+ * looking at the queue sees "ADVISORY_NOTIFY_EMAIL is not set to valid address(es)" instead of a
+ * pending event that never moves. Spends no attempt. A failed write is logged (by code) and skipped.
+ */
+export async function noteBlockedKinds(
+  blocked: BlockedKind[],
+  note: (kind: BlockedKind["kind"], problem: string) => Promise<void>,
+  log: (line: string) => void,
+): Promise<void> {
+  for (const { kind, problem } of blocked) {
+    try {
+      await note(kind, problem);
+    } catch (e) {
+      log(`OUTBOX_NOTE_ERROR: kind=${kind} ${rpcErrorCode(e)}`);
+    }
   }
-  return rows.length;
 }
 
 export interface MaintenanceDeps {
   /** Each throws on a database error and resolves to what the function returned. */
   reap: () => Promise<unknown>;
   reconcile: () => Promise<unknown>;
+  alertDead?: DispatchDeps["alertDead"];
   log: (line: string) => void;
 }
 
@@ -294,7 +368,9 @@ export interface MaintenanceDeps {
 export async function runMaintenance(deps: MaintenanceDeps): Promise<{ reaped: number; reconciled: ReconcileSummary }> {
   let reaped = 0;
   try {
-    reaped = reportReaped(await deps.reap(), deps.log);
+    const killed = await deps.reap();
+    reaped = reportReaped(killed, deps.log);
+    for (const death of reapedDeaths(killed)) await notifyDead(death, deps);
   } catch (e) {
     deps.log(`OUTBOX_REAP_ERROR: ${rpcErrorCode(e)}`);
   }

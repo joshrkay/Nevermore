@@ -5,10 +5,10 @@ transaction and sent by the `dispatch-outbox` edge function:
 
 | Email | To | Contains |
 |---|---|---|
-| Advisor alert (G-1) | `ADVISORY_NOTIFY_EMAIL` | Company, contact name, contact email and phone (if on file), submission reference, link to the secure advisor review |
+| Advisor alert (G-1) | `ADVISORY_NOTIFY_EMAIL` | Company legal name, primary signer, title, work email, phone, employee count, HQ state, submission reference, when it was certified (UTC), link to the secure advisor review. Subject `New Intake Certified: <company> (<reference>)`, or `Updated Intake: ...` when changed answers were certified again |
 | Prospect confirmation (G-2) | The signed-in account's own email | Company, reference, what happens next, expected response time, support address |
 
-Neither email contains census, payroll, benefits or document content. The queue row itself never
+Neither email contains census, payroll, benefits or document content. Every listed detail is always shown on the advisor alert, as "Not provided" when empty, so a blank is never mistaken for an omission. The email is a complete HTML document (title, phone-width layout, row headers for the details) with a plain-text twin. The queue row itself never
 holds them: `enqueue_certification_notifications()` (which the trigger calls) copies only named
 fields, and the email builders read only named fields back out
 (`supabase/functions/dispatch-outbox/messages.ts`). While an event is being retried it also holds
@@ -22,9 +22,13 @@ certify (UPDATE chamber_sessions) ──► chamber_certifications row
                                          └─ trigger ─► outbox_events (one per kind) + marks the certification queued ◄── same transaction
 browser, right after a confirmed submit ─► dispatch-outbox ─┐   (sends and retries only)
 schedule, every minute (retries, healing, reaping) ─────────┘
-   scheduled runs only: reap lost claims ─► queue what the trigger missed
-   claim due events ─► freeze the email ─► send via provider ─► mark sent │ retry later │ dead after 5 attempts
+   scheduled runs only: reap lost claims ─► queue what the trigger missed ─► say why a blocked kind is waiting
+   claim due events (status claimed, 10 minute lease) ─► freeze the email ─► send via provider ─► mark sent │ retry later │ dead after 5 attempts
+                                                                                            dead ─► log OUTBOX_DEAD + push to ENGINEERING_ALERT_WEBHOOK_URL
+advisors: /advisor/outbox shows every event and retries a dead one (advisor_requeue_outbox_event)
 ```
+
+An event is `pending` (waiting to be sent, or waiting out a retry delay), `claimed` (a worker has it: `claimed_at` says since when, `locked_until` is when the claim lapses), `sent`, `dead`, or `suppressed` (not sent: its address bounced for good or reported an email as spam; see "Bounces and complaints"). A claim lasts 10 minutes. A worker that has not recorded an outcome by then is lost: the next claim takes the event over (with its frozen message, so the same idempotency key), and `reap_outbox_events` marks it dead once every attempt is used.
 
 - **A send failure never undoes a submission.** The submission commits first; sending happens later.
   A fault in the queueing code can never block a submission either: the trigger catches it, logs a
@@ -40,7 +44,7 @@ schedule, every minute (retries, healing, reaping) ─────────�
   alert is not flagged as an update. Certifying *changed* answers again is a new submission: the
   advisor alert says "Updated intake".
 - **Retries:** after failed attempts 1, 2, 3, 4 the event waits 1 min, 5 min, 30 min, 2 h. The 5th
-  failure marks it `dead`.
+  failure marks it `dead`. Each failure increments `attempts`, sets `next_attempt_at` and records why in `last_error`: the failure kind (`provider_error:503`, `auth:403`, `timeout`) and, when the provider explained itself, its explanation in brackets, e.g. `auth:403 (validation_error: The mail.example.com domain is not verified.)`. The explanation is the provider's JSON `name` and `message` only, with anything address-shaped replaced by `[email]` and key-like strings by `[redacted]`, capped at 140 characters. The raw response body is never stored, and the explanation is never logged.
 - **The prospect confirmation goes to the account's own address**, never to an address typed into
   the intake. Keep Supabase Auth's "Confirm email" enabled in production. Accounts with no email
   (none can certify today) get the advisor alert only.
@@ -84,9 +88,11 @@ Set with `supabase secrets set` or the dashboard. Secrets never go in `VITE_*` v
 | `APP_BASE_URL` | advisor alert | e.g. `https://app.example.com`. https only (http allowed for localhost). Builds the `/advisor/submissions/<id>` link. |
 | `SUPPORT_EMAIL` | prospect | Shown in the email and used as Reply-To. |
 | `PROSPECT_RESPONSE_TIME` | prospect | A phrase that follows "within", e.g. `2 business days`. This is a commitment shown to every prospect, so there is no default. |
+| `RESEND_WEBHOOK_SECRET` | bounces | The signing secret (`whsec_...`) of the Resend webhook that points at the `resend-webhook` function (see "Bounces and complaints"). Sending works without it; bounces and complaints are then not processed and a bounced address is mailed again. |
+| `ENGINEERING_ALERT_WEBHOOK_URL` | optional | An https URL (Slack-style incoming webhook: it reads a `text` field; the same facts also arrive as JSON fields). Called when an event goes `dead`, with the event id, kind, attempt count and failure kind only: no addresses, names or message content. Unset means log only. One that is set but is not an https URL is logged as `OUTBOX_CONFIG_MISSING`. |
 
 A kind whose settings are incomplete is **not sent**: its events stay queued, no attempts are spent,
-and `OUTBOX_CONFIG_MISSING` is logged naming the missing setting (never its value). Completing the
+and `OUTBOX_CONFIG_MISSING` is logged naming the missing setting (never its value). Each of that kind's pending events also says so itself, in `last_error` (`not_configured: ADVISORY_NOTIFY_EMAIL is not set to valid address(es)`), so an advisor on the Outbox page sees why it is not moving; the scheduled run writes that, a browser's nudge does not, and a send clears it. Completing the
 settings releases the queue, including older events, so clear test submissions first:
 `delete from public.outbox_events where status = 'pending';` Deleting queue rows only cancels those
 emails: the scheduled sweep never queues them again (only a new certification, such as a client
@@ -109,7 +115,7 @@ Apply `supabase/migrations/20261026090000_outbox_reliability.sql` **before** dep
 The migration drops the old three-argument `fail_outbox_event`, so the previous function cannot
 record a failure once it is in: until the new function is deployed, failed sends are not recorded
 (`OUTBOX_RECORD_FAILED`) and retry when their claim lapses; successful sends still record. An event
-that spends its fifth attempt that way stays `sending` until the new function's first scheduled run
+that spends its fifth attempt that way stays `sending` (`claimed` once the operations migration below is in) until the new function's first scheduled run
 marks it dead (`reason=worker_lost`): requeue it. In the other order nothing is sent: every attempt
 fails as `freeze_failed` (the function it calls does not exist yet), and since that failure cannot be
 recorded either, each lapsed claim spends an attempt, so events can die. Requeue any that did.
@@ -121,6 +127,10 @@ gives up after 3 seconds of waiting for a table lock instead of stalling submiss
 stops with `canceling statement due to lock timeout`, a long transaction was holding the table: run it
 again once that has finished. Applied statement by statement instead, a failure part-way leaves the
 earlier changes in place and a rerun then fails on them.
+
+Then apply `supabase/migrations/20261027090000_outbox_operations.sql`, again before deploying the function (it calls `note_outbox_config_problem`). Either order is safe, because nothing in it blocks sending. The new function against the old schema logs `OUTBOX_NOTE_ERROR` with `PGRST202` each scheduled run and otherwise works, so no waiting event is told why it is blocked until the migration lands. The old function against the new schema works too, with the 10 minute claim lease. The migration renames the status `sending` to `claimed` (existing in-flight rows are converted), adds `claimed_at`, the requeue audit columns, and the advisor functions. Apply it as one transaction, like the reliability one; it also gives up after 3 seconds waiting for a table lock.
+
+Then apply `supabase/migrations/20261028090000_email_delivery_events.sql` (bounces and suppression), before deploying `resend-webhook`. It replaces `claim_outbox_events` (which now holds back suppressed addresses), adds the `suppressed` status and the two tables, and replaces the two advisor outbox functions so they know the new status. `resend-webhook` deployed first answers 500 to every delivery until the migration lands, which makes the provider retry, so nothing is lost either way.
 
 ### Schedule (required)
 
@@ -142,7 +152,16 @@ select cron.schedule('dispatch-outbox', '* * * * *', $$
 $$);
 ```
 
-Any scheduler that can send that request works, and overlapping runs are safe. Callers other than the
+`supabase/migrations/20261027100000_outbox_schedule.sql` creates the same job for you where `pg_cron` and `pg_net` can be had and no `dispatch-outbox` job exists yet. It reads the project URL and the key from Vault on every run (secrets `project_url`, the project's `https://<ref>.supabase.co`, and `service_role_key`) and does nothing, quietly, until both exist:
+
+```sql
+select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
+select vault.create_secret('<service role key>', 'service_role_key');
+```
+
+An existing job is never replaced by the migration: `scripts/supabase-setup.mjs` schedules one on the project's own URL, and that one stays. Without `pg_cron` the migration logs a notice and does nothing; it never fails the deploy. Check with `select jobname, schedule from cron.job;`.
+
+Any scheduler that can send that request works, and overlapping runs are safe (claims use `FOR UPDATE SKIP LOCKED`). Callers other than the
 service role must be signed-in, non-guest users; they get the queue worked (sends and retries) and
 counts back, nothing more. A scheduled run's response also carries `reconciled`
 (`healed`, `failed`, `unqueued`) and `reaped`.
@@ -155,7 +174,13 @@ error line. Alert on these:
 
 | Log line | Meaning | Action |
 |---|---|---|
-| `OUTBOX_DEAD` | An event is out of attempts or can never succeed, or its worker was lost with every attempt used (`reason=worker_lost`: no email had been frozen yet; `worker_lost_maybe_sent`: one was frozen and may have gone out) | Find the cause below, fix it, requeue |
+| `OUTBOX_DEAD` | An event is out of attempts or can never succeed, or its worker was lost with every attempt used (`reason=worker_lost`: no email had been frozen yet; `worker_lost_maybe_sent`: one was frozen and may have gone out). Also pushed to `ENGINEERING_ALERT_WEBHOOK_URL` when set | Find the cause (the event's `last_error` on the Outbox page says what the provider answered), fix it, retry it there |
+| `OUTBOX_ALERT_FAILED` | An event died but the alert webhook did not take the push (refused, unreachable, over 5 seconds) | Check the webhook; the `OUTBOX_DEAD` line above it is the alert |
+| `WEBHOOK_ADVISOR_BOUNCE` | A notification to the advisory team bounced or was refused. The address is deliberately **not** suppressed (silently dropping the team's alerts would be worse), so a person has to look | Check that mailbox, or fix `ADVISORY_NOTIFY_EMAIL` |
+| `WEBHOOK_RECORD_FAILED` | The webhook could not record an event (a PostgREST code follows; `PGRST202` or `42883` means the bounce migration is not applied). It answered 500, so the provider retries | Check the database |
+| `WEBHOOK_CONFIG_MISSING` | `RESEND_WEBHOOK_SECRET` is not set, or is not a `whsec_` secret: bounces and complaints are not processed (it answers 503, and the provider retries for a while) | Set it |
+| `WEBHOOK_REJECTED`, `WEBHOOK_UNUSABLE` | A request with no valid signature (scanners, a wrong secret, a clock off by 5 minutes), or a signed event with no recipient. Warnings, not alerts | None unless it floods, or `reason=no_match` follows a secret you rotated |
+| `OUTBOX_NOTE_ERROR` | Writing why a blocked kind is waiting failed (a PostgREST code follows; `PGRST202` means the operations migration is not applied). Sending went on | Check the database |
 | `OUTBOX_ENQUEUE_FAILED` | `unqueued=K oldest_age_s=S last_sqlstate=X`: K active certifications have no notifications. Logged on every scheduled run until they are queued. One line that is gone on the next run is benign: a run that overlaps another queueing that certification at that moment can report it | See "A certification that was never queued" |
 | `OUTBOX_RECONCILED` | The run queued notifications for certifications the trigger had failed to queue (a warning, not a failure) | Find out why the trigger failed |
 | `OUTBOX_SEND_FAILED` | One attempt failed; retry scheduled | None unless it repeats |
@@ -165,7 +190,7 @@ error line. Alert on these:
 | `OUTBOX_DISPATCH_ERROR` | The run itself failed | Check logs |
 
 Log lines carry event ids, counters and failure kinds only: no addresses, names or message bodies,
-and the housekeeping lines carry a code, never database error text. `reason` is `timeout`, `network`,
+and the housekeeping lines carry a code, never database error text. The provider's own explanation never appears in a log line, only in the event's `last_error`. `reason` is `timeout`, `network`,
 `rate_limited:429`, `auth:401|403` (bad key, or sender domain not verified), `provider_error:<status>`,
 `invalid_payload`, `not_configured` or `freeze_failed` (the email could not be written to the event,
 so nothing was sent).
@@ -176,15 +201,67 @@ select kind, status, count(*) from public.outbox_events group by 1, 2;
 
 -- Stuck work. oldest_due_wait keeps growing when nothing is working the queue (the schedule is down,
 -- or a kind's settings are incomplete). lapsed_claims are sends whose worker died; those with
--- awaiting_reap are out of attempts and stay `sending` until a scheduled run reaps them.
+-- awaiting_reap are out of attempts and stay `claimed` until a scheduled run reaps them.
 select (select now() - min(next_attempt_at) from public.outbox_events
         where status = 'pending' and next_attempt_at <= now()) as oldest_due_wait,
-       count(*) filter (where status = 'sending' and locked_until < now()) as lapsed_claims,
-       count(*) filter (where status = 'sending' and locked_until < now() and attempts >= 5) as awaiting_reap
+       count(*) filter (where status = 'claimed' and locked_until < now()) as lapsed_claims,
+       count(*) filter (where status = 'claimed' and locked_until < now() and attempts >= 5) as awaiting_reap
 from public.outbox_events;
 ```
 
-`outbox_events` is service-role only (no client, prospect or advisor access).
+`outbox_events` is service-role only (no client, prospect or advisor access). Advisors reach it only through the functions below, which return a projection (never the payload or the email) and check the role first.
+
+### Outbox & Notifications (advisors, G-1.3)
+
+`/advisor/outbox` (the "Outbox & Notifications" link in the advisor header) lists every event, newest first, with its kind, company and reference, status (`pending`, `claimed`, `sent`, `dead`), attempts out of 5, when it was or will be sent, and `last_error` with a plain-language reading beside the recorded text. Tabs filter by status and show counts; the filter is in the URL. A banner appears when the longest-waiting due event has waited 10 minutes or more: nothing is working the queue (the schedule is down, or a setting is missing). A claim past its lease is marked "Claim lapsed".
+
+A dead event has **Retry send**: one click puts it back (`attempts = 0`, `status = 'pending'`, `next_attempt_at = now()`) and the next run sends it, the same email under the same idempotency key. When an email had already been written for it (it may have been delivered), a separate **Rebuild and retry…** discards that email and builds a new one from the current settings under a new key; the dialog says it sends a second copy if the first was delivered. Only dead events can be retried; a second click returns false and changes nothing.
+
+The database functions, all for signed-in advisors and admins (`public.is_advisor()`, i.e. `user_roles`); anyone else gets `42501`, which PostgREST sends as HTTP 403:
+
+| Function | |
+|---|---|
+| `advisor_list_outbox_events(p_status, p_limit)` | The list. `p_status` is one of the four statuses or null; `p_limit` 1 to 500, default 100 |
+| `advisor_outbox_summary()` | One row per status with its count, and how long the longest-waiting due pending event has waited |
+| `advisor_requeue_outbox_event(event_id, rebuild_payload)` | The retry. `rebuild_payload` drops the email already written, so it is rebuilt from the stored payload and the current settings under a new key. The payload is the summary taken when the intake was certified and is deliberately not re-read from live data. Returns whether it requeued |
+
+Who retried, when and how often is recorded on the event (`last_requeued_by`, `last_requeued_at`, `requeue_count`).
+
+### Bounces and complaints (G-2.2)
+
+Resend tells the product what became of a message by webhook. The `resend-webhook` function checks the request's signature, records the event, and, for a bounce that cannot be retried or a spam complaint, stops the product emailing that address again.
+
+**Setup.** In the Resend dashboard add a webhook to `https://<project-ref>.supabase.co/functions/v1/resend-webhook`, subscribed to `email.bounced`, `email.complained`, `email.delivery_delayed`, `email.failed` and `email.suppressed`, and copy its signing secret (`whsec_...`) into the `RESEND_WEBHOOK_SECRET` function secret. The function has the gateway's JWT check turned off (`supabase/config.toml`): Resend holds no Supabase login, and the signature is what proves a request is Resend's. Resend signs through Svix: HMAC-SHA256 over `<svix-id>.<svix-timestamp>.<raw body>`, in `svix-signature` as `v1,<base64>` (several, space-separated, while a secret rotates), and a timestamp more than 5 minutes from now is refused.
+
+| Event | What happens |
+|---|---|
+| `email.bounced`, type `Permanent` | The address is suppressed (`bounced`) |
+| `email.complained` | The address is suppressed (`complained`, the stronger reason: a later bounce does not weaken it) |
+| `email.suppressed` | Resend already blocks the address: suppressed here too (`provider_suppressed`) |
+| `email.bounced`, type `Transient` or `Undetermined` | Recorded only: the provider is still trying |
+| `email.delivery_delayed`, `email.failed` | Recorded only |
+| anything else (delivered, opened, contacts, domains...) | Acknowledged and dropped |
+
+- **Idempotent.** The provider retries a delivery with the same `svix-id`; each is kept once (`email_delivery_events`), and a replay changes nothing. The function answers 200 to a replay, 401 to a bad signature (it never says why), and 500 when the database fails, so the provider retries.
+- **A suppressed address is never emailed again.** The claim marks a due confirmation to it `suppressed` instead of handing it to the worker, so a re-certification, a retry or a requeue cannot send to it, and a confirmation already waiting is held back the moment the bounce is recorded. The Outbox page has a **Suppressed** tab showing why. Only the prospect's confirmation is held back: the email goes to the account's own address, and nobody else's.
+- **A bounce flags the submission.** `advisor_email_problems()` lists the submissions whose confirmation bounced, was reported as spam, or is blocked by the provider; the advisor queue shows an "Email bounced" / "Reported as spam" badge and the submission page a banner saying to reach the prospect another way. It is read beside the queue, so a failure of that check never takes the queue down.
+- **The advisory team is never suppressed.** `ADVISORY_NOTIFY_EMAIL` is protected, and so is any message the queue shows was sent to the team. A bounce on one is recorded as `protected` and logged as `WEBHOOK_ADVISOR_BOUNCE`.
+- **Only what was emailed is suppressed.** Resend reports every recipient of a message; for a confirmation (one recipient) only the address the queue sent it to is suppressed. A message that is not in the queue at all (the sign-in codes go through the same Resend account) concerns the recipients as reported: those addresses are suppressed here, which only matters to the confirmations.
+- **What is kept.** The event's type, the provider's message id, the recipients, the bounce type and the provider's explanation with addresses and key-like strings replaced, capped at 200 characters. The subject, sender, body and tags the provider sends are never read. Both tables hold email addresses: fold them into the retention rule (D4). Deleting rows is safe.
+
+```sql
+-- Who is suppressed, and why
+select address, reason, event_count, created_at from public.email_suppressions order by created_at desc;
+
+-- What the provider has told us lately (no message content is kept)
+select type, outcome, bounce_type, detail, occurred_at from public.email_delivery_events order by received_at desc limit 50;
+
+-- The prospect fixed their mailbox: let the address be emailed again. Events already marked
+-- suppressed stay suppressed; a new certification queues a new confirmation.
+delete from public.email_suppressions where address = 'person@example.com';
+```
+
+The signature scheme and the event fields were taken from the official `svix` and `resend` packages, and the verifier is tested against Svix's own signer. Check one real bounce end to end before launch (the checklist below).
 
 ### A certification that was never queued
 
@@ -261,8 +338,9 @@ addresses.
 select pending_send ->> 'key' as idempotency_key, pending_send ->> 'frozen_at' as frozen_at
 from public.outbox_events where id = '<event id>';
 
--- Requeue after fixing the cause. Same email, same key: the provider de-duplicates it if it was
--- delivered, but only if frozen_at (above) is under 20 hours old. An older freeze is rebuilt from the
+-- Requeue after fixing the cause (advisors can do the same from the Outbox page). Same email, same
+-- key: the provider de-duplicates it if it was delivered, but only if frozen_at (above) is under
+-- 20 hours old. An older freeze is rebuilt from the
 -- current settings under a new key, with the same risk of a second copy as the form below.
 select public.requeue_outbox_event('<event id>');
 -- Or rebuild it from the current settings under a new key (a changed sender, recipient or link).
@@ -290,7 +368,10 @@ included.
 - [ ] `PROSPECT_RESPONSE_TIME` and `SUPPORT_EMAIL` agreed with the advisory lead.
 - [ ] Supabase Auth "Confirm email" is on.
 - [ ] The migration `20261026090000_outbox_reliability.sql` was applied before the function was deployed.
-- [ ] The schedule above is running: it sends retries, queues what the trigger missed and reaps lost claims.
+- [ ] The schedule above is running (`select jobname, schedule from cron.job;`, and both Vault secrets exist): it sends retries, queues what the trigger missed and reaps lost claims.
+- [ ] The migration `20261027090000_outbox_operations.sql` was applied, and `ENGINEERING_ALERT_WEBHOOK_URL` points at a channel someone watches (kill the provider key in a test project and check the push arrives).
+- [ ] An advisor has opened `/advisor/outbox` and retried a dead test event.
+- [ ] The Resend webhook exists, points at `resend-webhook`, and `RESEND_WEBHOOK_SECRET` is set. Send a test confirmation to one of Resend's test addresses that simulates a bounce (their docs list them; this was not checked from the build environment, which cannot reach resend.com) and check that the address appears in `email_suppressions`, the submission shows "Email bounced" in the advisor queue, and a second confirmation to it is held back (`suppressed`).
 - [ ] The unqueued-certifications query above returns no rows.
 - [ ] Test submissions removed from `outbox_events`.
 - [ ] `OUTBOX_DEAD`, `OUTBOX_ENQUEUE_FAILED`, `OUTBOX_RECONCILE_ERROR` and `OUTBOX_REAP_ERROR` have an
@@ -300,9 +381,10 @@ included.
 
 ## Not covered here
 
-- Admin screen to see and retry dead events (plan G-1.3); use the SQL above until it exists. Its
-  retry button will call `requeue_outbox_event`.
-- Bounce and suppression handling (plan G-2.2).
+- Retrying an event that is not dead (a `pending` one waiting out a delay will be tried by the schedule on its own; a `claimed` one is in a worker's hands) and re-reading an event's payload from live data on a retry.
+- Lifting a suppression is SQL only (the recipe in "Bounces and complaints"); advisors can see that a prospect is unreachable but not clear it. A prospect who fixes their mailbox does not get the confirmation they missed: a new certification queues a new one.
+- Bounces of the sign-in codes (Supabase Auth sends them through the same Resend account) are recorded and suppress the address, but nothing tells the prospect or an advisor that the code did not arrive: the advisor flag is for submissions, which exist only after a code was entered.
+- Unsubscribe links: these are transactional emails and carry none.
 - Exactly-once delivery: see "Delivery guarantee" for the windows where a repeat can get through.
 - Certifications from before the outbox existed were not queued; nothing is back-filled. Queue one on
   purpose with the recipe above.
@@ -319,6 +401,9 @@ included.
   upgrade path, and covers privileges, the sweep, freeze, fail, complete, reap and requeue. Two
   concurrent sessions are needed to test single-flight (`SKIP LOCKED`), the migration's lock
   timeout and the helper's row lock; those were checked by hand and are not in this file.
-- `supabase/functions/dispatch-outbox/*.test.ts` run with `npm test`.
+- `supabase/tests/advisor_outbox.sql` loads the real advisor-role migrations and checks the three advisor functions as signed-out, guest, prospect, advisor and admin callers (403 for all but the last two), the projection, the filter, the retry and its audit, and that the worker then claims what was retried. `supabase/tests/outbox_schedule.sql` runs the schedule migration against stand-ins for `pg_cron`, `pg_net` and Vault, including the job's own SQL.
+- `supabase/tests/advisor_outbox.sql` also replays webhook fixtures through `record_email_delivery_event`: a permanent bounce suppresses once and a replay changes nothing, temporary trouble acts on nothing, a complaint outranks a bounce, the advisory team is protected, the claim never hands out a suppressed address, and the advisor flag and its access.
+- `supabase/functions/resend-webhook/*.test.ts` check the signature verifier against the vector and verdicts of the official `svix` library, the event parser, the handler's answers (200, 401, 500, 503) and its logs, and that `supabase/config.toml` turns the gateway's JWT check off for it.
+- `supabase/functions/dispatch-outbox/*.test.ts`, `src/data/outbox.test.ts`, `src/pages/advisor/AdvisorOutboxPage.test.tsx` and `src/lib/advisorApi.test.ts` run with `npm test`.
 - `.claude/skills/verify` runs the whole pipeline for real (Postgres, PostgREST, the function under
   Deno, a fake provider).

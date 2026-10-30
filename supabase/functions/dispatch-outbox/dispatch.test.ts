@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { readDispatchConfig } from "./config";
+import { blockedKinds, readDispatchConfig } from "./config";
 import {
+  CLAIM_LEASE_SECONDS,
   dispatchEvents,
   FROZEN_MAX_AGE_MS,
   logLevel,
   MAX_ATTEMPTS,
+  noteBlockedKinds,
   parsePending,
+  reapedDeaths,
   reportReaped,
   reportReconcile,
   retryDelaySeconds,
@@ -893,5 +896,206 @@ describe("sendableKinds", () => {
     expect(sendableKinds(config)).toEqual(["advisor_notification", "prospect_confirmation"]);
     expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification"]);
     expect(sendableKinds(readDispatchConfig(() => undefined))).toEqual([]);
+  });
+});
+
+describe("what the event records about a failed send", () => {
+  const refused: SendResult = {
+    ok: false, kind: "auth", httpStatus: 403, ambiguous: false,
+    detail: "validation_error: The mail.example.com domain is not verified.",
+  };
+
+  it("stores the provider's cleaned explanation after the failure kind, so an advisor can see why", async () => {
+    const { deps } = harness({}, refused);
+    await dispatchEvents([advisorRow()], deps);
+    expect(deps.fail).toHaveBeenCalledWith(
+      "evt-advisor", "auth:403 (validation_error: The mail.example.com domain is not verified.)", 60, 1, true,
+    );
+  });
+
+  it("stores it on the event that dies too", async () => {
+    const { deps } = harness({}, refused);
+    await dispatchEvents([advisorRow({ attempts: MAX_ATTEMPTS })], deps);
+    expect(deps.fail).toHaveBeenCalledWith(
+      "evt-advisor", "auth:403 (validation_error: The mail.example.com domain is not verified.)", null, MAX_ATTEMPTS, true,
+    );
+  });
+
+  it("keeps it out of every log line: logs carry the failure kind only", async () => {
+    const { deps, logs } = harness({}, refused);
+    await dispatchEvents([advisorRow(), advisorRow({ id: "e2", attempts: MAX_ATTEMPTS })], deps);
+    expect(logs).toHaveLength(2);
+    for (const line of logs) {
+      expect(line).toContain("reason=auth:403");
+      expect(line).not.toMatch(/domain|verified|validation_error/);
+    }
+  });
+
+  it("is just the kind when the provider said nothing usable, as before", async () => {
+    const { deps } = harness({}, { ok: false, kind: "provider_error", httpStatus: 500, ambiguous: true });
+    await dispatchEvents([advisorRow()], deps);
+    expect(deps.fail).toHaveBeenCalledWith("evt-advisor", "provider_error:500", 60, 1, false);
+  });
+
+  it("holds a lease that outlasts a whole batch of sends by a wide margin (10 minutes)", () => {
+    expect(CLAIM_LEASE_SECONDS).toBe(600);
+  });
+});
+
+describe("telling engineering an event died", () => {
+  const dead = { event: "evt-advisor", kind: "advisor_notification", attempts: MAX_ATTEMPTS, reason: "provider_error:503" };
+
+  it("alerts when the fifth failure is recorded, with ids and the failure kind only", async () => {
+    const alertDead = vi.fn(async () => true);
+    const { deps } = harness({ alertDead }, ambiguous503);
+    await dispatchEvents([advisorRow({ attempts: MAX_ATTEMPTS })], deps);
+    expect(alertDead).toHaveBeenCalledTimes(1);
+    expect(alertDead).toHaveBeenCalledWith(dead);
+    expect(JSON.stringify(alertDead.mock.calls)).not.toMatch(/@|Acme|Joanna/);
+  });
+
+  it("does not alert for a failure that will be retried", async () => {
+    for (const attempts of [1, 2, 3, 4]) {
+      const alertDead = vi.fn(async () => true);
+      const { deps } = harness({ alertDead }, ambiguous503);
+      await dispatchEvents([advisorRow({ attempts })], deps);
+      expect(alertDead).not.toHaveBeenCalled();
+    }
+  });
+
+  it("alerts for a payload that can never be sent, which dies at once", async () => {
+    const alertDead = vi.fn(async () => true);
+    const { deps } = harness({ alertDead });
+    await dispatchEvents([advisorRow({ id: "e2", payload: {} })], deps);
+    expect(alertDead).toHaveBeenCalledWith({ event: "e2", kind: "advisor_notification", attempts: 1, reason: "invalid_payload" });
+  });
+
+  it("does not alert when the death could not be written: the reaper will find it, and say so then", async () => {
+    const alertDead = vi.fn(async () => true);
+    const { deps } = harness({ alertDead, fail: vi.fn(async () => { throw new Error("db down"); }) }, ambiguous503);
+    const summary = await dispatchEvents([advisorRow({ attempts: MAX_ATTEMPTS })], deps);
+    expect(summary.unrecorded).toBe(1);
+    expect(alertDead).not.toHaveBeenCalled();
+  });
+
+  it("does not alert for a send that succeeded", async () => {
+    const alertDead = vi.fn(async () => true);
+    const { deps } = harness({ alertDead });
+    await dispatchEvents([advisorRow({ attempts: MAX_ATTEMPTS })], deps);
+    expect(alertDead).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["is refused", async () => false],
+    ["throws", async (): Promise<boolean> => { throw new Error("hooks down: https://hooks.example.com/secret-token"); }],
+  ])("logs, and carries on with the batch, when the alert %s", async (_name, alertDead) => {
+    const { deps, logs } = harness({ alertDead });
+    deps.send = vi.fn(async (): Promise<SendResult> => ambiguous503);
+    const summary = await dispatchEvents([advisorRow({ attempts: MAX_ATTEMPTS }), advisorRow({ id: "e2", attempts: MAX_ATTEMPTS })], deps);
+    expect(summary.dead).toBe(2);
+    expect(logs.filter((l) => l.startsWith("OUTBOX_ALERT_FAILED: event=evt-advisor"))).toHaveLength(1);
+    expect(logs.filter((l) => l.startsWith("OUTBOX_ALERT_FAILED: event=e2"))).toHaveLength(1);
+    expect(logs.join("\n")).not.toContain("secret-token");
+  });
+
+  it("works without any alert channel, which is the default", async () => {
+    const { deps } = harness({}, ambiguous503);
+    expect(deps.alertDead).toBeUndefined();
+    await expect(dispatchEvents([advisorRow({ attempts: MAX_ATTEMPTS })], deps)).resolves.toMatchObject({ dead: 1 });
+  });
+
+  it("routes the alert-failed line to the error log", () => {
+    expect(logLevel("OUTBOX_ALERT_FAILED: event=x died but the engineering alert was not delivered")).toBe("error");
+  });
+
+  describe("an event the reaper killed", () => {
+    const killed = [
+      { id: "evt-1", kind: "advisor_notification", attempts: 5, last_error: "worker_lost" },
+      { id: "evt-2", kind: "prospect_confirmation", attempts: 5, last_error: "worker_lost_maybe_sent" },
+    ];
+
+    it("is described by id, kind, attempts and a fixed reason, never the stored error text", () => {
+      expect(reapedDeaths(killed)).toEqual([
+        { event: "evt-1", kind: "advisor_notification", attempts: 5, reason: "worker_lost" },
+        { event: "evt-2", kind: "prospect_confirmation", attempts: 5, reason: "worker_lost_maybe_sent" },
+      ]);
+      expect(reapedDeaths([{ id: "e", kind: "k", attempts: 5, last_error: "boom for jo@acme.example" }])[0].reason).toBe("worker_lost");
+      expect(reapedDeaths(null)).toEqual([]);
+    });
+
+    it("is alerted once each by the scheduled run's housekeeping", async () => {
+      const alertDead = vi.fn(async () => true);
+      const logs: string[] = [];
+      const result = await runMaintenance({
+        reap: async () => killed,
+        reconcile: async () => ({ healed: 0, failed: 0, unqueued: 0 }),
+        alertDead,
+        log: (l) => logs.push(l),
+      });
+      expect(result.reaped).toBe(2);
+      expect(alertDead.mock.calls.map(([e]) => e.event)).toEqual(["evt-1", "evt-2"]);
+      expect(logs.filter((l) => l.startsWith("OUTBOX_DEAD:"))).toHaveLength(2);
+    });
+
+    it("never fails the run if the alert cannot be sent", async () => {
+      const result = await runMaintenance({
+        reap: async () => killed,
+        reconcile: async () => ({ healed: 0, failed: 0, unqueued: 0 }),
+        alertDead: async () => { throw new Error("hooks down"); },
+        log: () => {},
+      });
+      expect(result.reaped).toBe(2);
+    });
+  });
+});
+
+describe("telling a blocked kind's events why they are waiting", () => {
+  it("names the settings in the way, per kind, and nothing for a kind that is ready", () => {
+    expect(blockedKinds(config, null)).toEqual([]);
+    const noAdvisors = configFrom({ ...env, ADVISORY_NOTIFY_EMAIL: "" });
+    expect(blockedKinds(noAdvisors, null)).toEqual([
+      { kind: "advisor_notification", problem: "ADVISORY_NOTIFY_EMAIL is not set to valid address(es)" },
+    ]);
+    expect(blockedKinds(configFrom({ ...env, ADVISORY_NOTIFY_EMAIL: "not an address, x" }), null)[0].problem)
+      .toBe("ADVISORY_NOTIFY_EMAIL is not set to valid address(es)");
+  });
+
+  it("lists every missing setting of a kind together", () => {
+    const blocked = blockedKinds(configFrom({ ...env, APP_BASE_URL: "http://app.example.com", ADVISORY_NOTIFY_EMAIL: "" }), null);
+    expect(blocked).toEqual([
+      { kind: "advisor_notification", problem: "ADVISORY_NOTIFY_EMAIL is not set to valid address(es); APP_BASE_URL is not set to an https URL" },
+    ]);
+  });
+
+  it("blocks both kinds, naming the provider problem first, when there is no usable provider", () => {
+    expect(blockedKinds(config, "RESEND_API_KEY is not set")).toEqual([
+      { kind: "advisor_notification", problem: "RESEND_API_KEY is not set" },
+      { kind: "prospect_confirmation", problem: "RESEND_API_KEY is not set" },
+    ]);
+    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[1].problem)
+      .toBe("RESEND_API_KEY is not set; SUPPORT_EMAIL is not set to a valid address");
+  });
+
+  it("never carries a setting's value", () => {
+    const problem = JSON.stringify(blockedKinds(configFrom({ ...env, EMAIL_FROM: "super-secret-looking-value" }), null));
+    expect(problem).not.toContain("super-secret-looking-value");
+    expect(problem).toContain("EMAIL_FROM is not set to a valid sender address");
+  });
+
+  it("writes each note, and logs only a code, never an error's text, when one cannot be written", async () => {
+    const logs: string[] = [];
+    const note = vi.fn(async (kind: string) => {
+      if (kind === "advisor_notification") throw { code: "PGRST202", message: "function not found, row jo@acme.example" };
+    });
+    await noteBlockedKinds(blockedKinds(config, "RESEND_API_KEY is not set"), note, (l) => logs.push(l));
+    expect(note).toHaveBeenCalledTimes(2);
+    expect(note).toHaveBeenCalledWith("prospect_confirmation", "RESEND_API_KEY is not set");
+    expect(logs).toEqual(["OUTBOX_NOTE_ERROR: kind=advisor_notification PGRST202"]);
+  });
+
+  it("does nothing when nothing is blocked", async () => {
+    const note = vi.fn(async () => {});
+    await noteBlockedKinds([], note, () => {});
+    expect(note).not.toHaveBeenCalled();
   });
 });

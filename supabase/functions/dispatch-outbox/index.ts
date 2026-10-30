@@ -1,8 +1,19 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.100.0";
 import { isServiceCall } from "./auth.ts";
-import { readDispatchConfig } from "./config.ts";
-import { dispatchEvents, logLevel, MAX_ATTEMPTS, runMaintenance, sendableKinds, type OutboxRow } from "./dispatch.ts";
+import { parseAlertWebhook, sendDeadAlert } from "./alert.ts";
+import { blockedKinds, readDispatchConfig } from "./config.ts";
+import {
+  CLAIM_LEASE_SECONDS,
+  dispatchEvents,
+  logLevel,
+  MAX_ATTEMPTS,
+  noteBlockedKinds,
+  runMaintenance,
+  sendableKinds,
+  type DeadEvent,
+  type OutboxRow,
+} from "./dispatch.ts";
 import { selectEmailAdapter, sendEmail } from "./providers.ts";
 
 // Sends the queued submission emails (advisor alert and prospect confirmation) with retry and
@@ -60,6 +71,16 @@ serve(async (req) => {
 
     const admin = createClient(supabaseUrl, serviceRoleKey);
 
+    // Settings are read first: a lost worker's death is reported to the alert webhook from the
+    // housekeeping below, and what a kind is missing is what its events are told.
+    const chosen = selectEmailAdapter(env);
+    const config = readDispatchConfig(env);
+    const webhook = parseAlertWebhook(env("ENGINEERING_ALERT_WEBHOOK_URL"));
+    if (webhook.url === null && webhook.problem) console.error(`OUTBOX_CONFIG_MISSING: ${webhook.problem}`);
+    const webhookUrl = webhook.url;
+    const queueUrl = config.advisor.ok ? `${config.advisor.appBaseUrl}/advisor/outbox?status=dead` : null;
+    const alertDead = webhookUrl ? (event: DeadEvent) => sendDeadAlert(webhookUrl, { ...event, queueUrl }, { fetch }) : undefined;
+
     // Housekeeping is the schedule's job, never a browser's: a prospect must not be able to drive
     // database work or read queue health. It needs only the database, so it runs before the email
     // configuration gate, and ahead of the claim so what it queues is sent in this same run.
@@ -79,19 +100,29 @@ serve(async (req) => {
             if (error) throw error;
             return data;
           },
+          alertDead,
           log,
         })
       : null;
 
-    const chosen = selectEmailAdapter(env);
-    if (!chosen.ok) {
-      console.error(`OUTBOX_CONFIG_MISSING: ${chosen.problem}`);
-      return json({ error: "Notifications are unavailable right now." }, 503);
+    // What stops a kind from being sent is logged, and (on the schedule's runs) written on that
+    // kind's waiting events, so an advisor looking at the queue sees why they are not moving.
+    const blocked = blockedKinds(config, chosen.ok ? null : chosen.problem);
+    if (!chosen.ok) console.error(`OUTBOX_CONFIG_MISSING: ${chosen.problem}`);
+    else for (const b of blocked) console.error(`OUTBOX_CONFIG_MISSING: ${b.kind} is not being sent: ${b.problem}`);
+    if (service) {
+      await noteBlockedKinds(
+        blocked,
+        async (kind, problem) => {
+          const { error } = await admin
+            .rpc("note_outbox_config_problem", { p_kind: kind, p_error: problem })
+            .abortSignal(AbortSignal.timeout(MAINTENANCE_TIMEOUT_MS));
+          if (error) throw error;
+        },
+        log,
+      );
     }
-    const config = readDispatchConfig(env);
-    for (const [kind, readiness] of [["advisor_notification", config.advisor], ["prospect_confirmation", config.prospect]] as const) {
-      if (!readiness.ok) console.error(`OUTBOX_CONFIG_MISSING: ${kind} is not being sent: ${readiness.problems.join("; ")}`);
-    }
+    if (!chosen.ok) return json({ error: "Notifications are unavailable right now." }, 503);
     const kinds = sendableKinds(config);
     if (kinds.length === 0) return json({ error: "Notifications are unavailable right now." }, 503);
 
@@ -99,6 +130,7 @@ serve(async (req) => {
       p_kinds: kinds,
       p_batch: BATCH_SIZE,
       p_max_attempts: MAX_ATTEMPTS,
+      p_lock_seconds: CLAIM_LEASE_SECONDS,
     });
     if (error) throw error;
     const rows = (data ?? []) as OutboxRow[];
@@ -131,6 +163,7 @@ serve(async (req) => {
         });
         if (e) throw e;
       },
+      alertDead,
       log,
     });
     return json({ claimed: rows.length, ...summary, ...maintenance });

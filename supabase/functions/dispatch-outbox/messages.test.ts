@@ -11,9 +11,14 @@ import {
 const advisorPayload = {
   reference: "EAA-2026-AB12CD34",
   company_name: "Acme Co",
-  contact_name: "Joanna Doe",
+  contact_name: "Pat Contact",
   contact_email: "jo@acme.example",
   contact_phone: "555-0100",
+  signer_name: "Joanna Doe",
+  signer_title: "Chief Executive Officer",
+  employee_count: 28,
+  hq_state: "CA",
+  certified_at: "2026-05-01T12:34:56Z",
   resubmission: false,
 };
 const reviewUrl = "https://app.example.com/advisor/submissions/11111111-2222-3333-4444-555555555555";
@@ -31,39 +36,70 @@ const leaky = {
 describe("advisor notification", () => {
   const rendered = renderAdvisorNotification(parseAdvisorNotification(advisorPayload)!, { reviewUrl });
 
-  it("carries the company, contact method, reference and a link to the secure review", () => {
-    for (const body of [rendered.text, rendered.html]) {
-      expect(body).toContain("Acme Co");
-      expect(body).toContain("Joanna Doe");
-      expect(body).toContain("jo@acme.example");
-      expect(body).toContain("555-0100");
-      expect(body).toContain("EAA-2026-AB12CD34");
-      expect(body).toContain(reviewUrl);
+  it("has the spec's subject, and flags a re-certified intake as updated", () => {
+    expect(rendered.subject).toBe("New Intake Certified: Acme Co (EAA-2026-AB12CD34)");
+    const update = renderAdvisorNotification(parseAdvisorNotification({ ...advisorPayload, resubmission: true })!, { reviewUrl });
+    expect(update.subject).toBe("Updated Intake: Acme Co (EAA-2026-AB12CD34)");
+    expect(update.text).toContain("updated and certified again");
+    expect(update.html).toContain("<title>Updated Intake: Acme Co (EAA-2026-AB12CD34)</title>");
+  });
+
+  it("lists the company, signer, title, work email, phone, headcount, HQ state, reference and certification time", () => {
+    expect(rendered.text).toContain("Company Legal Name: Acme Co");
+    expect(rendered.text).toContain("Primary Signer: Joanna Doe");
+    expect(rendered.text).toContain("Title: Chief Executive Officer");
+    expect(rendered.text).toContain("Work Email: jo@acme.example");
+    expect(rendered.text).toContain("Phone: 555-0100");
+    expect(rendered.text).toContain("Employee Count: 28");
+    expect(rendered.text).toContain("HQ State: CA");
+    expect(rendered.text).toContain("Reference: EAA-2026-AB12CD34");
+    expect(rendered.text).toContain("Certified: 2026-05-01 12:34 UTC");
+    for (const value of ["Acme Co", "Joanna Doe", "Chief Executive Officer", "jo@acme.example", "555-0100", ">28<", ">CA<", "EAA-2026-AB12CD34", "2026-05-01 12:34 UTC"]) {
+      expect(rendered.html).toContain(value);
     }
-    expect(rendered.subject).toBe("New intake submitted: Acme Co (EAA-2026-AB12CD34)");
+  });
+
+  it("links straight to the authenticated review, in both bodies", () => {
+    expect(rendered.text).toContain(`\n${reviewUrl}\n`);
+    expect(rendered.html).toContain(`href="${reviewUrl}"`);
+    expect(rendered.text).toContain("advisor sign-in required");
   });
 
   it("says the alert holds no census, payroll or document contents", () => {
     expect(rendered.text).toContain("Census, payroll and document contents are not included");
   });
 
-  it("flags an update to an intake that was certified again", () => {
-    const update = renderAdvisorNotification(parseAdvisorNotification({ ...advisorPayload, resubmission: true })!, { reviewUrl });
-    expect(update.subject).toBe("Updated intake: Acme Co (EAA-2026-AB12CD34)");
-    expect(update.text).toContain("updated and certified again");
-  });
-
-  it("leaves out contact details that were not given", () => {
+  it("shows every listed detail, 'Not provided' when empty, so a blank is not mistaken for an omission", () => {
     const sparse = parseAdvisorNotification({ reference: "EAA-1", company_name: null, contact_phone: "  " })!;
     const email = renderAdvisorNotification(sparse, { reviewUrl });
-    expect(email.text).not.toMatch(/Contact:|Contact email:|Contact phone:/);
-    expect(email.text).toContain("Company name not provided");
+    expect(email.subject).toBe("New Intake Certified: Company name not provided (EAA-1)");
+    for (const label of ["Company Legal Name", "Primary Signer", "Title", "Work Email", "Phone", "Employee Count", "HQ State", "Certified"]) {
+      expect(email.text).toContain(`${label}: Not provided`);
+    }
+    expect(email.text).toContain("Reference: EAA-1");
+  });
+
+  it("falls back to the contact name for the signer on an alert queued before signers were recorded", () => {
+    const legacy = parseAdvisorNotification({ reference: "EAA-1", company_name: "Old Co", contact_name: "Pat Contact" })!;
+    expect(renderAdvisorNotification(legacy, { reviewUrl }).text).toContain("Primary Signer: Pat Contact");
+  });
+
+  it("is a clean document: a title, a viewport for phones, a language, and row headers for the details", () => {
+    expect(rendered.html).toMatch(/^<!doctype html>\n<html lang="en">\n<head>/);
+    expect(rendered.html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1">');
+    expect(rendered.html).toContain('<meta charset="utf-8">');
+    expect(rendered.html).toMatch(/<th scope="row"[^>]*>Primary Signer<\/th><td[^>]*>Joanna Doe<\/td>/);
+    expect(rendered.html).not.toContain("role=\"presentation\"");
+    // A phone-width column, and the link is text, not an image.
+    expect(rendered.html).toContain("max-width:560px");
+    expect(rendered.html).toContain(">Open the secure review</a>");
   });
 
   it("keeps only named fields, so nothing sensitive in the payload can be rendered", () => {
     const parsed = parseAdvisorNotification(leaky)!;
     expect(Object.keys(parsed).sort()).toEqual(
-      ["companyName", "contactEmail", "contactName", "contactPhone", "reference", "resubmission"],
+      ["certifiedAt", "companyName", "contactEmail", "contactName", "contactPhone", "employeeCount", "hqState", "reference",
+       "resubmission", "signerName", "signerTitle"],
     );
     const email = renderAdvisorNotification(parsed, { reviewUrl });
     for (const word of SENSITIVE) {
@@ -77,8 +113,31 @@ describe("advisor notification", () => {
     expect(parseAdvisorNotification([])).toBeNull();
   });
 
-  it("drops a contact email that is not an address", () => {
+  it("drops a work email that is not an address", () => {
     expect(parseAdvisorNotification({ ...advisorPayload, contact_email: "not an email" })!.contactEmail).toBeNull();
+  });
+
+  it("keeps a headcount, state and time only when they are what the database writes", () => {
+    const parse = (over: Record<string, unknown>) => parseAdvisorNotification({ ...advisorPayload, ...over })!;
+    expect(parse({ employee_count: 0 }).employeeCount).toBe(0);
+    for (const bad of [-1, 1.5, "28", NaN, 10_000_001, null]) expect(parse({ employee_count: bad }).employeeCount).toBeNull();
+    expect(parse({ hq_state: "tx" }).hqState).toBe("TX");
+    for (const bad of ["California", "C", "1A", 5, null]) expect(parse({ hq_state: bad }).hqState).toBeNull();
+    for (const bad of ["yesterday", "2026-05-01", "2026-05-01T12:34:56+02:00", "2026-13-45T99:99:99Z", 7, null]) {
+      expect(parse({ certified_at: bad }).certifiedAt).toBeNull();
+    }
+  });
+
+  it("flattens and escapes prospect-entered text in the new fields", () => {
+    const email = renderAdvisorNotification(
+      parseAdvisorNotification({ ...advisorPayload, signer_title: "CEO\r\nBcc: x@evil.example <b>", signer_name: "<script>alert(1)</script>" })!,
+      { reviewUrl },
+    );
+    expect(email.text).toContain("Title: CEO Bcc: x@evil.example <b>");
+    expect(email.text.split("\n").filter((l) => l.startsWith("Bcc"))).toEqual([]);
+    expect(email.html).not.toContain("<script>");
+    expect(email.html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(email.html).not.toContain("<b>");
   });
 });
 

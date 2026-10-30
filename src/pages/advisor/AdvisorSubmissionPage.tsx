@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, MailWarning } from "lucide-react";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import AuditTrail from "@/components/advisor/AuditTrail";
@@ -25,6 +25,17 @@ const AdvisorSubmissionPage = () => {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [highlighted, setHighlighted] = useState<string | null>(null);
+  const [emailProblem, setEmailProblem] = useState<EmailProblem | null>(null);
+
+  // Read beside the submission, not as part of it: if this fails, the submission still loads.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => listEmailProblems())
+      .then((rows) => !cancelled && setEmailProblem(rows.find((r) => r.session_id === id) ?? null))
+      .catch(() => !cancelled && setEmailProblem(null));
+    return () => { cancelled = true; };
+  }, [id, attempt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,7 +83,7 @@ const AdvisorSubmissionPage = () => {
         )}
 
         {load.kind === "ready" && (
-          <Detail detail={load.detail} reload={reload} messageIds={messageIds} highlighted={highlighted} onShowMessage={showMessage} />
+          <Detail detail={load.detail} reload={reload} messageIds={messageIds} highlighted={highlighted} onShowMessage={showMessage} emailProblem={emailProblem} />
         )}
       </main>
     </div>
@@ -85,16 +96,27 @@ const Detail = ({
   messageIds,
   highlighted,
   onShowMessage,
+  emailProblem,
 }: {
   detail: SubmissionDetail;
   reload: () => void;
   messageIds: Set<string>;
   highlighted: string | null;
   onShowMessage: (id: string) => void;
+  emailProblem: EmailProblem | null;
 }) => {
   const sub = detail.submission;
   return (
     <>
+      {emailProblem && (
+        <div role="alert" className="mb-6 flex gap-3 border border-destructive/40 bg-destructive/5 rounded-xl p-4 text-sm">
+          <MailWarning className="w-5 h-5 text-destructive shrink-0" aria-hidden="true" />
+          <p>
+            <strong className="font-medium">{emailProblemLabel(emailProblem.reason)}.</strong> {emailProblemHelp(emailProblem.reason)}
+            {detail.phone && ` Phone on file: ${detail.phone}.`}
+          </p>
+        </div>
+      )}
       <div className="mb-6">
         <h1 className="font-display text-3xl font-bold">{detail.data.company_name ?? "Company not provided"}</h1>
         <p className="text-sm text-muted-foreground font-mono">{detail.fileId}</p>

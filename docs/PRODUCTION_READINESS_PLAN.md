@@ -71,7 +71,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | Certification | Signer name and role, three acknowledgements and a separate sign step, with DRAFT consent text. A database trigger records `chamber_certifications` (server-stamped time, `data_sha256`, consent text and version) and refuses a missing, stale or guest certification. Any later change to the answers, or choosing a different PEO, withdraws it. |
 | Manuscript | Rendered from the signed snapshot at `/manuscript?session=<id>` for the signed-in owner. A vector-text PDF (jsPDF) with repeating table headers and page numbers. Date of birth is masked by default. `/manuscript/demo` is a labelled sample. |
 | Advisors | Roles `advisor` and `admin` in `user_roles` (granted by SQL). A submission queue with status filter and search. A detail page with field-by-field review, transcript evidence, documents through 60-second signed links, append-only internal notes, a nine-state pipeline with history, and versioned Manuscript PDFs in a private bucket. Prospects see only `submitted`, `under_review` and `information_requested`. |
-| Notifications | Certification queues an advisor alert and a prospect confirmation in the same transaction. `dispatch-outbox` sends them through Resend with retries (5 attempts), a frozen-message idempotency design, and a reaper and reconciliation sweep. Needs function secrets and a once-a-minute schedule (`docs/NOTIFICATIONS.md`). |
+| Notifications | Certification queues an advisor alert and a prospect confirmation in the same transaction. `dispatch-outbox` sends them through Resend with retries (5 attempts), a frozen-message idempotency design, and a reaper and reconciliation sweep. A dead event is pushed to an optional alert webhook, and advisors see and retry the queue at `/advisor/outbox`. Needs function secrets and a once-a-minute schedule (a guarded migration creates it; `docs/NOTIFICATIONS.md`). |
 | Quality gates | CI runs `verify` (lint, edge-function type check, test, build), `sql-tests` and `e2e` on every pull request. 685 front-end and function unit tests. SQL tests cover certification, guest blocking, documents, provenance, AI limits, the advisor access matrix and the outbox. **One end-to-end test** (I-4.3) takes a guest's text intake to the downloaded Manuscript PDF against a Supabase stand-in with the real migrations. It does not cover document upload (no Storage), voice, the advisor path, real Supabase Auth, REST or edge functions, or a live AI model. |
 | Hosting | `vercel.json` sets a Vite build and a single-page-app rewrite. One Supabase `project_id` is in `supabase/config.toml`. |
 
@@ -649,22 +649,22 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic G: Communications and Operating Integrations
 
-*As built:* The outbox and both emails are built and unusually well hardened. Gaps are an admin retry path, the schedule in a migration, bounce handling and the CRM.
+*As built:* The outbox, both emails, the every-minute schedule (a guarded migration), the engineering alert for dead events and the advisor Outbox & Notifications page with one-click retry are built and tested. Bounce and suppression handling is built too. The gap is the CRM (D6), and nothing here has run against a hosted project, a real inbox, a real Resend webhook or a real alert channel yet.
 
 #### G-1.1 Outbox and event dispatch
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** C-3.1 · **Milestone:** M2
-- **Built:** `outbox_events` is unique on (kind, session id and data hash). Five attempts with delays of 1 minute, 5 minutes, 30 minutes and 2 hours, then `dead`. The reliability design (frozen message with an idempotency key, reaper, reconciliation sweep, `outbox_queued_at`) is described in `docs/NOTIFICATIONS.md`. Tested.
-- **Remaining:** Unique per kind and certified data, not per submission: re-certified, changed answers queue a new 'Updated intake' alert (by design). No admin view of `dead` events (SQL only). The every-minute schedule exists only as documented SQL, not in a migration.
+- **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** C-3.1 · **Milestone:** M2
+- **Built:** `outbox_events` is unique on (kind, session id and data hash). Claims are `status = 'claimed'` with `claimed_at` and a 10 minute lease (`FOR UPDATE SKIP LOCKED`); a lost worker's claim is taken over by the next run, or marked dead by the reaper once every attempt is used. Five attempts with delays of 1 minute, 5 minutes, 30 minutes and 2 hours, then `dead`; each failure records `attempts`, `next_attempt_at` and `last_error` (failure kind plus the provider's explanation, with addresses and keys redacted). A dead event is logged (`OUTBOX_DEAD`) and pushed to `ENGINEERING_ALERT_WEBHOOK_URL` when set. A kind that cannot be sent says why on each waiting event. The every-minute `pg_cron` job is created by `20261027100000_outbox_schedule.sql` (guarded: never replaces an existing job, never fails a deploy). The reliability design (frozen message with an idempotency key, reaper, reconciliation sweep, `outbox_queued_at`) is in `docs/NOTIFICATIONS.md`. Tested, and run against real Postgres, PostgREST and the function under Deno.
+- **Notes:** Unique per kind and certified data, not per submission: re-certified, changed answers queue a new 'Updated intake' alert (by design). The schedule migration was tested against stand-ins for `pg_cron`, `pg_net` and Vault, not a hosted project: confirm with `select jobname, schedule from cron.job;` after deploy, and set the two Vault secrets. No alert channel is configured yet (H-4.1).
 
 #### G-1.2 Internal new-submission notification
 - **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** G-1.1, D7 · **Milestone:** M2
-- **Built:** The advisor alert carries company, contact name, reference and a link to the review page. Tested.
-- **Notes:** The alert also includes the contact's email and phone, beyond the plan (documented). No real-inbox send is recorded; the pre-launch checklist is unchecked.
+- **Built:** The advisor alert (`New Intake Certified: <company> (<reference>)`, or `Updated Intake:`) carries company legal name, primary signer, title, work email, phone, employee count, HQ state, reference, the server-stamped certification time and a link to the review page, as HTML (a complete document with a title, a phone-width layout and row headers) and plain text. Never salaries, SSNs, the census or documents. If `ADVISORY_NOTIFY_EMAIL` is unset or invalid, its events stay queued and each records `not_configured: ...` in `last_error`. Tested, and the delivered message inspected on the real stack.
+- **Notes:** No real-inbox send is recorded and rendering in real desktop and mobile mail clients has not been looked at; the pre-launch checklist is unchecked.
 
 #### G-1.3 Retry failed notifications
-- **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** FS · **Depends:** G-1.1, F-1.2 · **Milestone:** M2
-- **Built:** `requeue_outbox_event(id, rebuild)` exists and is tested.
-- **Remaining:** Service-role SQL only: no admin-callable path and no queue page.
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FS · **Depends:** G-1.1, F-1.2 · **Milestone:** M2
+- **Built:** `advisor_requeue_outbox_event(event_id, rebuild_payload)`, `advisor_list_outbox_events` and `advisor_outbox_summary`, each checking `is_advisor()` (so a non-advisor gets 42501, HTTP 403). `/advisor/outbox` ("Outbox & Notifications" in the advisor header): status tabs with counts (dead, pending, claimed, sent), attempts, `last_error` with a plain reading, a stalled-queue banner, and Retry send (a dead event only: attempts 0, pending, due now) with a confirmed Rebuild and retry for an event whose email may already have been delivered. Who retried and how often is recorded on the event. Tested at the database, API and page level, and driven in a real browser against real PostgREST.
+- **Notes:** `rebuild_payload` rebuilds the email from the stored payload and current settings under a new key; the payload is the summary taken at certification and is not re-read from live data. Retry is for dead events only.
 
 #### G-2.1 Prospect confirmation email
 - **Status:** **DONE** · **Size:** M · **Priority:** Medium · **Owner:** BE + DES · **Depends:** G-1.1, D7, D10 · **Milestone:** M3
@@ -672,14 +672,9 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Notes:** Plain-text header, no logo. `PROSPECT_RESPONSE_TIME` and `SUPPORT_EMAIL` have no default, so unset means not sent. The pre-launch checklist is unchecked.
 
 #### G-2.2 Bounce and suppression handling
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** BE · **Depends:** G-2.1 · **Milestone:** M3
-- **Built:** No webhook, suppression table or flag exists.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Process provider bounce webhooks. Mark the address undeliverable and flag the submission for advisor follow-up.
-  - **AC:**
-    - A bounce flags the submission in the queue.
-    - Suppressed addresses are not emailed again.
-  - **Tests:** Replay a bounce webhook fixture.
+- **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** BE · **Depends:** G-2.1 · **Milestone:** M3
+- **Built:** A `resend-webhook` function (gateway JWT check off, the webhook's own Svix signature checked instead, 5 minute timestamp window) records `email.bounced`, `email.complained`, `email.delivery_delayed`, `email.failed` and `email.suppressed` once each (a provider retry is a no-op). A permanent bounce, a complaint, or the provider's own suppression puts the address on `email_suppressions`; temporary trouble is recorded only. The claim holds back a due confirmation to a suppressed address (new status `suppressed`, shown on the Outbox page), so a re-certification or retry cannot email it. The advisory team's addresses are never suppressed: a bounce on one is logged as `WEBHOOK_ADVISOR_BOUNCE`. `advisor_email_problems()` flags the submission in the advisor queue ("Email bounced", "Reported as spam") and on its page. The signature scheme and event fields were taken from the official `svix` and `resend` packages; the verifier is tested against Svix's own signer. Replayed fixtures are covered in the SQL and function tests, and the whole path was run on real Postgres, PostgREST and the function under Deno.
+- **Notes:** Not exercised against a real Resend webhook or a real bounce (the build environment cannot reach resend.com): create the webhook, set `RESEND_WEBHOOK_SECRET`, and run the checklist item in `docs/NOTIFICATIONS.md`. Lifting a suppression is SQL only. Both new tables hold addresses and belong in the D4 retention rule. The prospect's sign-in code emails share the Resend account: their bounces are recorded but nothing shows them to anyone.
 
 #### G-3.1 CRM selection and field-mapping specification
 - **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** PM + BE · **Depends:** D6 · **Milestone:** M3
@@ -795,8 +790,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### H-4.1 Alerts for failed uploads, submits, AI calls, and auth
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** OPS · **Depends:** G-1.1, B-3.3 · **Milestone:** M2
-- **Built:** `dispatch-outbox` emits alert-grade log lines (`OUTBOX_DEAD`, `OUTBOX_ENQUEUE_FAILED`, `OUTBOX_RECONCILE_ERROR`, `OUTBOX_REAP_ERROR`). `.claude/skills/verify` forces failures locally.
-- **Remaining:** No alert configuration exists for any category. No upload, AI or auth alerting; `document-extract` only calls `console.error`. The `docs/NOTIFICATIONS.md` checklist item is unchecked.
+- **Built:** `dispatch-outbox` emits alert-grade log lines (`OUTBOX_DEAD`, `OUTBOX_ENQUEUE_FAILED`, `OUTBOX_RECONCILE_ERROR`, `OUTBOX_REAP_ERROR`), and pushes each dead event to `ENGINEERING_ALERT_WEBHOOK_URL` (ids and failure kind only) when it is set. `.claude/skills/verify` forces failures locally.
+- **Remaining:** No alert channel is configured for any category (the outbox's webhook is code, not a configured destination). No upload, AI or auth alerting; `document-extract` only calls `console.error`. The `docs/NOTIFICATIONS.md` checklist item is unchecked.
 
 #### H-4.2 Incident runbook and escalation contacts
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** OPS · **Depends:** H-4.1 · **Milestone:** M2
@@ -1100,11 +1095,11 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | F-4.1 | Status model and history | M | Medium | M2 | PARTIAL |
 | F-4.2 | Internal notes | S | Medium | M2 | DONE |
 | F-4.3 | Follow-up flag and status filter | S | Medium | M2 | PARTIAL |
-| G-1.1 | Outbox and event dispatch | M | High | M2 | PARTIAL |
+| G-1.1 | Outbox and event dispatch | M | High | M2 | DONE |
 | G-1.2 | Internal new-submission notification | S | High | M2 | DONE |
-| G-1.3 | Retry failed notifications | S | High | M2 | PARTIAL |
+| G-1.3 | Retry failed notifications | S | High | M2 | DONE |
 | G-2.1 | Prospect confirmation email | M | Medium | M3 | DONE |
-| G-2.2 | Bounce and suppression handling | S | Medium | M3 | NOT STARTED |
+| G-2.2 | Bounce and suppression handling | S | Medium | M3 | DONE |
 | G-3.1 | CRM selection and field-mapping specification | S | Medium | M3 | NOT STARTED |
 | G-3.2 | CRM sync worker | M | Medium | M3 | NOT STARTED |
 | G-3.3 | Sync failure visibility and retry | S | Medium | M3 | NOT STARTED |
@@ -1184,7 +1179,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 **Changed expectations worth a second look**
 - E-1.3: the URL lifetime is 60 seconds, not 5 minutes. Shorter is stricter, so the AC should be amended.
 - B-3.1: per-user, per-IP and global quotas exist instead of the plan's 30 requests per session per 10 minutes.
-- G-1.2: the advisor alert includes the contact's email and phone, which the story did not ask for.
+- G-1.1: `last_error` holds the provider's error name and message (addresses replaced by `[email]`, key-like strings by `[redacted]`, 140 characters) rather than the raw response, which can echo the message. Raw provider bodies would put recipient addresses in the queue table and on the advisor page.
 - F-4.1: nine pipeline statuses with different names and no transition allow-list.
 
 ### Split log (from v1.0)

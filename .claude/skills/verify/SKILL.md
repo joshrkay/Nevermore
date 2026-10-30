@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Verify the submission-notification pipeline (advisor alert + prospect confirmation) by running it for real. Use when asked to verify or QA changes to supabase/functions/dispatch-outbox, the submission_outbox or outbox_reliability migrations, or useChamberSession's submit path.
+description: Verify the submission-notification pipeline (advisor alert + prospect confirmation, retries, the dead-event alert and the advisor outbox functions) by running it for real. Use when asked to verify or QA changes to supabase/functions/dispatch-outbox, the submission_outbox, outbox_reliability, outbox_operations or outbox_schedule migrations, the advisor Outbox page, the resend-webhook function (bounces and suppression), or useChamberSession's submit path.
 ---
 
 # Verifying submission notifications
@@ -9,10 +9,11 @@ There is no Docker or hosted Supabase in the sandbox, so `harness/` stands up th
 
 | Layer | Real or stand-in |
 |---|---|
-| Postgres 16, the real migrations (certification, guest block, outbox, outbox reliability) | **real** (Supabase's `auth` schema and roles are stubbed in `setup.sql`) |
+| Postgres 16, the real migrations (certification, guest block, outbox, outbox reliability, outbox operations, outbox schedule) | **real** (Supabase's `auth` schema and roles are stubbed in `setup.sql`; the advisor role objects are a verbatim copy of lines 17-73 of the advisor migration, since the rest needs storage and documents) |
 | PostgREST 12.2.3 (so `authenticated` / `anon` / `service_role` table privileges are enforced; function ACLs are not, see Gotchas) | **real** |
 | `supabase/functions/dispatch-outbox/index.ts` under Deno | **real, unmodified** |
-| Gateway on :54321: GoTrue `GET /auth/v1/user`, `/rest/v1/*` pass-through, `/functions/v1/dispatch-outbox` | stand-in (`front.mjs`) |
+| `supabase/functions/resend-webhook/index.ts` under Deno on :8001 (`webhook.sh`) | **real, unmodified** |
+| Gateway on :54321: GoTrue `GET /auth/v1/user`, `/rest/v1/*` pass-through, `/functions/v1/dispatch-outbox` and `/functions/v1/resend-webhook` | stand-in (`front.mjs`) |
 | Resend on :54400 (records requests; mimics the documented `Idempotency-Key` rule; answers a rate limit before it looks the key up) | stand-in (`resend.mjs`) |
 
 ## One-time prerequisites
@@ -52,8 +53,8 @@ changes one.
 second's does not. `stats` shows `deliveries` (what the provider actually sent) against `requests`. Comparing the two is the only check that housekeeping
 is limited to service-role callers and runs ahead of the claim: `index.ts` is Deno-only, so no unit test sees it.
 
-- Certify, nudge: exactly one advisor alert and one confirmation, no census/payroll values in either.
-- Re-send the same certify `PATCH` several times (separate requests): certifications grow, queue and emails do not. Edit then re-certify: one new "Updated intake".
+- Certify, nudge: exactly one advisor alert and one confirmation, no census/payroll values in either. The advisor alert lists Company Legal Name, Primary Signer, Title, Work Email, Phone, Employee Count, HQ State, Reference and Certified (UTC); certify with `"employees":[{"name":"SECRET PERSON","classification":"W2","salary":987654}]` and search `$RUN/resend.jsonl` for both.
+- Re-send the same certify `PATCH` several times (separate requests): certifications grow, queue and emails do not. Edit then re-certify: one new "Updated Intake" (subject `Updated Intake: <company> (<reference>)`; a first alert is `New Intake Certified: ...`).
 - Refused callers (no token, anon key, guest, wrong method) leave a due queue untouched; guest certify is refused by the database.
 - Provider 503: logged, `retry_in=60s`, held by backoff; five failures: `OUTBOX_DEAD`. `select public.requeue_outbox_event('<id>')` (from `sql`) retries the
   same frozen email (`msg=frozen`); with `, true` it is rebuilt from the current settings (`msg=fresh`: change `EMAIL_FROM` first and the provider's `from` follows).
@@ -70,9 +71,28 @@ is limited to service-role callers and runs ahead of the claim: `index.ts` is De
   (a failure backs off 2 minutes: backdate it with `update chamber_certifications set outbox_last_failed_at = now() - interval '1 hour' where outbox_queued_at is null`
   to see `reconciled.failed` 1). Drop the constraint and backdate again: a nudge as `$PROSPECT` heals nothing; a scheduled run logs `OUTBOX_RECONCILED`, sends both emails in the same
   run, sets `outbox_queued_at`, and the alert is not flagged as an update.
+- Provider error detail and the dead alert: start a receiver (`node -e` an `http.createServer` that appends each POST body to a file, on 127.0.0.1:9911), `func.sh ENGINEERING_ALERT_WEBHOOK_URL=http://127.0.0.1:9911/hook`,
+  `mode 503`, certify, then `invoke POST $SVC` and `due` five times. `last_error` reads `provider_error:503 (provider down; echoes [email])` (the fake echoes an address; it must be redacted),
+  the logs carry only `reason=provider_error:503`, delays are 60/300/1800/7200 s, and the fifth run marks both events `dead` and posts one alert each (ids, kind, attempts, reason; no address). `mode 403` gives `auth:403 (domain not verified)`.
+- Advisor functions over real PostgREST (`rpc() { curl -s -w ' [http %{http_code}]\n' -X POST $REST/rpc/$1 -H "Authorization: Bearer $2" -H 'Content-Type: application/json' -d "$3"; }`): a prospect or guest calling
+  `advisor_list_outbox_events`, `advisor_outbox_summary` or `advisor_requeue_outbox_event` gets `42501` / HTTP 403; the anon key and no token get 401; `select` on `outbox_events` as a prospect is 403.
+  `insert into user_roles values ('$U_C','advisor')`, then with `$OTHER`: the list is a projection (no payload, no frozen email, no addresses), `p_status` `sending` is 400, a requeue of a dead event answers `true`
+  (pending, attempts 0, `requeue_count` 1, `last_requeued_by` the advisor), a second answers `false`, and the next `invoke POST $SVC` sends it.
+- Config problems write on the events: `func.sh ADVISORY_NOTIFY_EMAIL=`, certify, `invoke POST $PROSPECT` (the nudge writes nothing), then `invoke POST $SVC`: the advisor event stays `pending`, attempts 0, `last_error`
+  `not_configured: ADVISORY_NOTIFY_EMAIL is not set to valid address(es)`, the confirmation is sent; a second scheduled run does not rewrite the row (`xmin` is unchanged). `func.sh` with the default settings sends it and clears the note.
+- The claim lease: `mode accept_then_hang`, certify, start `invoke POST $SVC` in the background and, 3 s in, `select status, claimed_at is not null, locked_until - claimed_at from outbox_events`: `claimed`, true, `00:10:00`.
+  After the 10 s provider timeout it is `pending` with `last_error = timeout` and `claimed_at` null.
+- Bounces and suppression: sign fixtures with the OFFICIAL signer, not the function's own code (`npm i svix` in a scratch dir, never in the repo; `new Webhook(secret).sign(id, date, body)`, headers `svix-id`, `svix-timestamp`,
+  `svix-signature`; the harness secret is `whsec_dmVyaWZ5LWhhcm5lc3Mtd2ViaG9vay1zZWNyZXQtMzJiIQ==`) and POST them to `http://127.0.0.1:54321/functions/v1/resend-webhook`. Certify and run the worker so the confirmation has a
+  `provider_message_id` (`msg_<n>`), then send `email.bounced` with `data.email_id` of that id, `bounce.type` `Permanent`, and a `to` that also lists another address: expect 200 `outcome: suppressed`, one row in `email_suppressions`
+  (only the address the queue sent to), the waiting confirmations to it `suppressed`. The same `svix-id` again is 200 `duplicate: true` and changes nothing. No signature (with or without the anon key), another secret, a changed body and a 10 minute old
+  timestamp are all 401 and change nothing. Re-certify with a changed answer and run the worker: the advisor "Updated Intake" is delivered, the confirmation is `suppressed` and the provider's delivery count does not rise for it.
+  As an advisor (`insert into user_roles ...`, `$OTHER`) `advisor_email_problems` flags the session and `advisor_list_outbox_events` with `{"p_status":"suppressed"}` lists it; a prospect gets 403. A bounce for the advisor alert's message id answers
+  `outcome: protected`, suppresses nothing and logs `WEBHOOK_ADVISOR_BOUNCE`. `Transient` and `email.delivered` change nothing. Rename `record_email_delivery_event` in the database and deliver: 500 and `WEBHOOK_RECORD_FAILED`; rename it back and
+  the same `svix-id` records normally. `webhook.sh RESEND_WEBHOOK_SECRET=` answers unsigned requests 401 and signed ones 503. Grep `$RUN/webhook.log` for the addresses and message text: it must find nothing.
 - Deleted events stay deleted: after a send, `delete from outbox_events where session_id='$SID'`, then a scheduled run: `reconciled.healed` 0, no rows return, no new delivery.
-- Reaping: after certify, `update outbox_events set status='sending', attempts=5, locked_until=now() - interval '1 second' where session_id='$SID'`, and give one a frozen send with
-  `update outbox_events set pending_send = jsonb_build_object('key','x') where session_id='$SID' and kind='advisor_notification'`. A nudge leaves both `sending`; a scheduled run answers `reaped:2` and logs
+- Reaping: after certify, `update outbox_events set status='claimed', attempts=5, claimed_at=now() - interval '11 minutes', locked_until=now() - interval '1 second' where session_id='$SID'`, and give one a frozen send with
+  `update outbox_events set pending_send = jsonb_build_object('key','x') where session_id='$SID' and kind='advisor_notification'`. A nudge leaves both `claimed`; a scheduled run answers `reaped:2` and logs
   `OUTBOX_DEAD ... reason=worker_lost_maybe_sent` for the frozen one and `reason=worker_lost` for the other.
 - Emoji at the length cap: certify with a company name of 198 `a`, one emoji and a `b` (`NAME=$(node -e 'process.stdout.write("a".repeat(198)+"\u{1F600}"+"b")')`). Both emails send
   and the subject holds the whole emoji; cutting it by UTF-16 units left half a surrogate pair, which the database refuses to store.
@@ -89,6 +109,11 @@ The app itself may not build (check `npm run build`; `ReckoningTab.tsx` was brok
 bundle the app's real client and `src/lib/dispatchOutbox.ts` with esbuild (`--alias:@=src`, `--define:import.meta.env.VITE_SUPABASE_URL=...`
 pointing at :54321 and the anon key from `lib.sh`), serve the bundle from another origin, drive it in Chromium
 (`/opt/pw-browsers/chromium-*/chrome-linux/chrome`, `setSession` with `$PROSPECT`, then `window.dispatchOutbox()`). That exercises the CORS preflight a browser enforces.
+
+The advisor Outbox page can be driven the same way against the harness: build with `VITE_SUPABASE_URL=http://127.0.0.1:54321 VITE_SUPABASE_PUBLISHABLE_KEY=$ANON npx vite build --outDir <dir>`, serve it with
+`npx vite preview --outDir <dir> --port 4173`, and in Chromium put a session for an advisor (`$OTHER` after the `user_roles` insert above) in `localStorage` under `sb-127-auth-token` (an object with `access_token`, `refresh_token`,
+`expires_at` and a `user` of `{id, email, aud, role, app_metadata, user_metadata}`; the gateway stand-in answers `GET /auth/v1/user`) before opening `/advisor/outbox`. Use the pre-installed browser directly
+(`chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: ['--no-sandbox'] })` from a global `playwright`): the repo's pinned `playwright` wants a different Chromium build. Check it at 1280 and 390 px wide.
 
 ## Gotchas
 
