@@ -26,7 +26,7 @@ describe("parseResendEvent", () => {
         recipients: ["jo@acme.example"],
         bounceType: "Permanent",
         detail: "General: The recipient's mail server said the mailbox does not exist.",
-        occurredAt: "2026-10-28T12:00:00.000Z",
+        occurredAt: "2026-10-28T12:00:01.000Z",
       },
     });
   });
@@ -83,9 +83,20 @@ describe("parseResendEvent", () => {
       const p = parseResendEvent(bounce(over, dataOver));
       return p.kind === "event" ? p.event.occurredAt : "NOT AN EVENT";
     };
-    expect(at({}, {})).toBe("2026-10-28T12:00:00.000Z");
-    expect(at({}, { created_at: "garbage" })).toBe("2026-10-28T12:00:01.000Z");
+    // The envelope's time is when the event happened; data.created_at is when the email was created, the same on every event of it.
+    expect(at({}, {})).toBe("2026-10-28T12:00:01.000Z");
+    expect(at({ created_at: "garbage" }, {})).toBe("2026-10-28T12:00:00.000Z");
     expect(at({ created_at: "also garbage" }, { created_at: null })).toBeNull();
+  });
+
+  it("keeps the bounce type only when it is a plain word", () => {
+    const type = (t: unknown) => {
+      const p = parseResendEvent(bounce({}, { bounce: { type: t, subType: "General", message: "x" } }));
+      return p.kind === "event" ? p.event.bounceType : "NOT AN EVENT";
+    };
+    expect(type("Permanent")).toBe("Permanent");
+    expect(type(" Transient ")).toBe("Transient");
+    for (const bad of ["Perm anent", "Permanent; drop table", "jo@acme.example", "", 5, null, "x".repeat(31)]) expect(type(bad)).toBeNull();
   });
 
   it("has no message id when the provider sends none, or one that is not usable", () => {
@@ -104,6 +115,24 @@ describe("cleanText", () => {
     const long = cleanText("word ".repeat(100), 40)!;
     expect(Array.from(long)).toHaveLength(40);
     expect(long.endsWith("…")).toBe(true);
+  });
+
+  it("replaces an address whole, whatever surrounds it: a quoted local part, an apostrophe, brackets", () => {
+    const out = [
+      cleanText(`550 5.1.1 <"mary o'connor"@example.com>: Recipient address rejected`, 200),
+      cleanText("550 <mary.o'connor@example.com>, bob@example.org: unknown", 200),
+      cleanText("rejected: 'sam@example.com'.", 200),
+    ].join(" | ");
+    expect(out).not.toMatch(/mary|connor|bob|sam|example\.(com|org)/i);
+    expect(out).toContain("[email]");
+  });
+
+  it("looks only at the start of a very long message, and stays fast on one with no spaces or at-signs", () => {
+    const started = Date.now();
+    const out = cleanText("a".repeat(500_000), 160)!;
+    cleanText(`${"\"".repeat(100_000)}@`, 160);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(Array.from(out).length).toBeLessThanOrEqual(160);
   });
 
   it("says nothing for what is not text, or only blanks", () => {

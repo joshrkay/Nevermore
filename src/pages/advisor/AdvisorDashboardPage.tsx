@@ -42,14 +42,16 @@ const AdvisorDashboardPage = () => {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [problems, setProblems] = useState<Map<string, EmailProblem>>(new Map());
+  const [problemsFailed, setProblemsFailed] = useState(false);
 
-  // Read beside the queue, not as part of it: if this fails, the queue still loads.
+  // Read beside the queue, not as part of it: if this fails, the queue still loads. What was shown
+  // stays (a failed refresh is not "no problems"), and the advisor is told the check did not run.
   useEffect(() => {
     let cancelled = false;
     Promise.resolve()
       .then(() => listEmailProblems())
-      .then((rows) => !cancelled && setProblems(emailProblemsBySession(rows)))
-      .catch(() => !cancelled && setProblems(new Map()));
+      .then((rows) => { if (!cancelled) { setProblems(emailProblemsBySession(rows)); setProblemsFailed(false); } })
+      .catch(() => !cancelled && setProblemsFailed(true));
     return () => { cancelled = true; };
   }, [attempt]);
 
@@ -129,6 +131,13 @@ const AdvisorDashboardPage = () => {
             </button>
           </div>
         </div>
+
+        {problemsFailed && (
+          <p role="status" className="mb-4 text-sm text-warning">
+            Couldn't check for bounced emails, so prospects whose confirmation bounced may not be flagged here.{" "}
+            <button onClick={retry} className="underline">Try again</button>
+          </p>
+        )}
 
         {load.kind === "loading" && (
           <div className="flex items-center justify-center py-24 text-muted-foreground" role="status">

@@ -1,4 +1,4 @@
-// Advisor-side view of the notification queue. Mirrors supabase/migrations/20261027090000_outbox_operations.sql
+// Advisor-side view of the notification queue. Mirrors supabase/migrations/20261027095000_outbox_operations.sql
 // and the worker in supabase/functions/dispatch-outbox (docs/NOTIFICATIONS.md).
 
 export const OUTBOX_STATUSES = ["dead", "pending", "claimed", "sent", "suppressed"] as const;
@@ -104,6 +104,7 @@ export const EMAIL_PROBLEM_LABELS: Record<string, string> = {
   bounced: "Email bounced",
   complained: "Reported as spam",
   provider_suppressed: "Email blocked",
+  not_delivered: "Email not delivered",
 };
 
 export const emailProblemLabel = (reason: string) => EMAIL_PROBLEM_LABELS[reason] ?? "Email problem";
@@ -111,6 +112,7 @@ export const emailProblemLabel = (reason: string) => EMAIL_PROBLEM_LABELS[reason
 /** What to do about it, in one sentence. */
 export function emailProblemHelp(reason: string): string {
   if (reason === "complained") return "This prospect reported our confirmation email as spam, so we will not email them again. Reach them another way.";
+  if (reason === "not_delivered") return "The confirmation email to this prospect could not be delivered (for example, their mailbox is full), though their address is not blocked. Reach them another way.";
   if (reason === "provider_suppressed") return "The email provider blocks this prospect's address, so our emails do not reach them. Reach them another way.";
   return "The confirmation email to this prospect bounced for good, so we will not email them again. Reach them another way.";
 }

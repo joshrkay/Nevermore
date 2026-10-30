@@ -119,15 +119,19 @@ describe("prospects who cannot be reached by email", () => {
     expect(emailProblemLabel("bounced")).toBe("Email bounced");
     expect(emailProblemLabel("complained")).toBe("Reported as spam");
     expect(emailProblemLabel("provider_suppressed")).toBe("Email blocked");
+    expect(emailProblemLabel("not_delivered")).toBe("Email not delivered");
     expect(emailProblemLabel("something_new")).toBe("Email problem");
   });
 
   it("says what to do, and that the address will not be emailed again", () => {
-    for (const reason of ["bounced", "complained", "provider_suppressed", "something_new"]) {
+    for (const reason of ["bounced", "complained", "provider_suppressed", "not_delivered", "something_new"]) {
       expect(emailProblemHelp(reason)).toMatch(/Reach them another way/);
     }
     expect(emailProblemHelp("bounced")).toMatch(/bounced for good/);
     expect(emailProblemHelp("complained")).toMatch(/reported our confirmation email as spam/);
+    // Not delivered is not a block: it must not say the address is never emailed again.
+    expect(emailProblemHelp("not_delivered")).toMatch(/could not be delivered/);
+    expect(emailProblemHelp("not_delivered")).not.toMatch(/will not email them again/);
   });
 
   it("indexes the flagged submissions by id", () => {

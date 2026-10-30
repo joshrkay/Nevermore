@@ -128,9 +128,13 @@ stops with `canceling statement due to lock timeout`, a long transaction was hol
 again once that has finished. Applied statement by statement instead, a failure part-way leaves the
 earlier changes in place and a rerun then fails on them.
 
-Then apply `supabase/migrations/20261027090000_outbox_operations.sql`, again before deploying the function (it calls `note_outbox_config_problem`). Either order is safe, because nothing in it blocks sending. The new function against the old schema logs `OUTBOX_NOTE_ERROR` with `PGRST202` each scheduled run and otherwise works, so no waiting event is told why it is blocked until the migration lands. The old function against the new schema works too, with the 10 minute claim lease. The migration renames the status `sending` to `claimed` (existing in-flight rows are converted), adds `claimed_at`, the requeue audit columns, and the advisor functions. Apply it as one transaction, like the reliability one; it also gives up after 3 seconds waiting for a table lock.
+Then apply `supabase/migrations/20261027095000_outbox_operations.sql`, again before deploying the function (it calls `note_outbox_config_problem`). Either order is safe, because nothing in it blocks sending. The new function against the old schema logs `OUTBOX_NOTE_ERROR` with `PGRST202` each scheduled run and otherwise works, so no waiting event is told why it is blocked until the migration lands. The old function against the new schema works too, with the 10 minute claim lease. The migration renames the status `sending` to `claimed` (existing in-flight rows are converted), adds `claimed_at`, the requeue audit columns, and the advisor functions. Apply it as one transaction, like the reliability one; it also gives up after 3 seconds waiting for a table lock.
 
 Then apply `supabase/migrations/20261028090000_email_delivery_events.sql` (bounces and suppression), before deploying `resend-webhook`. It replaces `claim_outbox_events` (which now holds back suppressed addresses), adds the `suppressed` status and the two tables, and replaces the two advisor outbox functions so they know the new status. `resend-webhook` deployed first answers 500 to every delivery until the migration lands, which makes the provider retry, so nothing is lost either way.
+
+Then apply `supabase/migrations/20261030090000_outbox_census_headcount.sql` and `supabase/migrations/20261030091000_email_delivery_hardening.sql`, in that order. Both only add or replace functions (no table changes, grants carry over), so each is safe to apply with the app running. The first makes the advisor alert's headcount read the census (the intake's roster key since the census work; the older `employees` roster is still the fallback). The second holds back confirmations whose claim has lapsed, refuses a claimed confirmation to a suppressed address at the freeze, adds `lift_email_suppression`, makes `advisor_email_problems()` follow the latest confirmation (with `not_delivered`), and strengthens the stored-detail redaction. Apply each as one transaction, as above.
+
+A note on version numbers: `outbox_operations` is `20261027095000` because `20261027090000` was already taken by `intake_validation_and_versioning`, and two migrations cannot share a version. The file's content is unchanged. If a database ever recorded it under the first version, mark that version reverted and the new one applied with `supabase migration repair` rather than running it a second time.
 
 ### Schedule (required)
 
@@ -213,7 +217,7 @@ from public.outbox_events;
 
 ### Outbox & Notifications (advisors, G-1.3)
 
-`/advisor/outbox` (the "Outbox & Notifications" link in the advisor header) lists every event, newest first, with its kind, company and reference, status (`pending`, `claimed`, `sent`, `dead`), attempts out of 5, when it was or will be sent, and `last_error` with a plain-language reading beside the recorded text. Tabs filter by status and show counts; the filter is in the URL. A banner appears when the longest-waiting due event has waited 10 minutes or more: nothing is working the queue (the schedule is down, or a setting is missing). A claim past its lease is marked "Claim lapsed".
+`/advisor/outbox` (the "Outbox & Notifications" link in the advisor header) lists every event, newest first, with its kind, company and reference, status (`pending`, `claimed`, `sent`, `dead`, `suppressed`), attempts out of 5, when it was or will be sent, and `last_error` with a plain-language reading beside the recorded text. Tabs filter by status and show counts; the filter is in the URL. A banner appears when the longest-waiting due event has waited 10 minutes or more: nothing is working the queue (the schedule is down, or a setting is missing). A claim past its lease is marked "Claim lapsed".
 
 A dead event has **Retry send**: one click puts it back (`attempts = 0`, `status = 'pending'`, `next_attempt_at = now()`) and the next run sends it, the same email under the same idempotency key. When an email had already been written for it (it may have been delivered), a separate **Rebuild and retry…** discards that email and builds a new one from the current settings under a new key; the dialog says it sends a second copy if the first was delivered. Only dead events can be retried; a second click returns false and changes nothing.
 
@@ -221,7 +225,7 @@ The database functions, all for signed-in advisors and admins (`public.is_adviso
 
 | Function | |
 |---|---|
-| `advisor_list_outbox_events(p_status, p_limit)` | The list. `p_status` is one of the four statuses or null; `p_limit` 1 to 500, default 100 |
+| `advisor_list_outbox_events(p_status, p_limit)` | The list. `p_status` is one of the five statuses (`pending`, `claimed`, `sent`, `dead`, `suppressed`) or null; `p_limit` 1 to 500, default 100 |
 | `advisor_outbox_summary()` | One row per status with its count, and how long the longest-waiting due pending event has waited |
 | `advisor_requeue_outbox_event(event_id, rebuild_payload)` | The retry. `rebuild_payload` drops the email already written, so it is rebuilt from the stored payload and the current settings under a new key. The payload is the summary taken when the intake was certified and is deliberately not re-read from live data. Returns whether it requeued |
 
@@ -231,23 +235,23 @@ Who retried, when and how often is recorded on the event (`last_requeued_by`, `l
 
 Resend tells the product what became of a message by webhook. The `resend-webhook` function checks the request's signature, records the event, and, for a bounce that cannot be retried or a spam complaint, stops the product emailing that address again.
 
-**Setup.** In the Resend dashboard add a webhook to `https://<project-ref>.supabase.co/functions/v1/resend-webhook`, subscribed to `email.bounced`, `email.complained`, `email.delivery_delayed`, `email.failed` and `email.suppressed`, and copy its signing secret (`whsec_...`) into the `RESEND_WEBHOOK_SECRET` function secret. The function has the gateway's JWT check turned off (`supabase/config.toml`): Resend holds no Supabase login, and the signature is what proves a request is Resend's. Resend signs through Svix: HMAC-SHA256 over `<svix-id>.<svix-timestamp>.<raw body>`, in `svix-signature` as `v1,<base64>` (several, space-separated, while a secret rotates), and a timestamp more than 5 minutes from now is refused.
+**Setup.** In the Resend dashboard add a webhook to `https://<project-ref>.supabase.co/functions/v1/resend-webhook`, subscribed to `email.bounced`, `email.complained`, `email.delivery_delayed`, `email.failed` and `email.suppressed`, and copy its signing secret (`whsec_...`) into the `RESEND_WEBHOOK_SECRET` function secret. The function has the gateway's JWT check turned off (`supabase/config.toml`): Resend holds no Supabase login, and the signature is what proves a request is Resend's. Resend signs through Svix (the setup checks the function with a request that carries no Supabase credentials, as Resend calls it, so a project still rejecting it at the gateway shows as failed): HMAC-SHA256 over `<svix-id>.<svix-timestamp>.<raw body>`, in `svix-signature` as `v1,<base64>` (several, space-separated, while a secret rotates), and a timestamp more than 5 minutes from now is refused.
 
 | Event | What happens |
 |---|---|
 | `email.bounced`, type `Permanent` | The address is suppressed (`bounced`) |
 | `email.complained` | The address is suppressed (`complained`, the stronger reason: a later bounce does not weaken it) |
 | `email.suppressed` | Resend already blocks the address: suppressed here too (`provider_suppressed`) |
-| `email.bounced`, type `Transient` or `Undetermined` | Recorded only: the provider is still trying |
-| `email.delivery_delayed`, `email.failed` | Recorded only |
+| `email.bounced`, type `Transient` or `Undetermined`, and `email.failed` | Recorded; the address is **not** suppressed (it may be a full mailbox). If it was the submission's latest confirmation, advisors see "Email not delivered" on it |
+| `email.delivery_delayed` | Recorded only: the provider is still trying |
 | anything else (delivered, opened, contacts, domains...) | Acknowledged and dropped |
 
 - **Idempotent.** The provider retries a delivery with the same `svix-id`; each is kept once (`email_delivery_events`), and a replay changes nothing. The function answers 200 to a replay, 401 to a bad signature (it never says why), and 500 when the database fails, so the provider retries.
-- **A suppressed address is never emailed again.** The claim marks a due confirmation to it `suppressed` instead of handing it to the worker, so a re-certification, a retry or a requeue cannot send to it, and a confirmation already waiting is held back the moment the bounce is recorded. The Outbox page has a **Suppressed** tab showing why. Only the prospect's confirmation is held back: the email goes to the account's own address, and nobody else's.
-- **A bounce flags the submission.** `advisor_email_problems()` lists the submissions whose confirmation bounced, was reported as spam, or is blocked by the provider; the advisor queue shows an "Email bounced" / "Reported as spam" badge and the submission page a banner saying to reach the prospect another way. It is read beside the queue, so a failure of that check never takes the queue down.
+- **A suppressed address is never emailed again.** The claim marks a due confirmation to it `suppressed` instead of handing it to the worker, so a re-certification, a retry or a requeue cannot send to it, and a confirmation already waiting is held back the moment the bounce is recorded. The same holds for a claim whose worker was lost (the next claim would take it over), and a claim in flight when the bounce arrives is refused at `freeze_outbox_message`, before anything is written for sending. The one window left is between an email being written and the provider accepting it: milliseconds, and the provider's own suppression list closes it. The Outbox page has a **Suppressed** tab showing why. Only the prospect's confirmation is held back: the email goes to the account's own address, and nobody else's.
+- **A bounce flags the submission.** `advisor_email_problems()` lists the submissions whose confirmation bounced, was reported as spam, is blocked by the provider, or was reported undelivered; the advisor queue shows an "Email bounced" / "Reported as spam" / "Email blocked" / "Email not delivered" badge and the submission page a banner saying to reach the prospect another way. Only the submission's **latest** confirmation counts, so if the prospect changes their address and the new confirmation goes out, the flag clears by itself. It is read beside the queue, so a failure of that check never takes the queue down; the page then says the check did not run, and keeps any flags it already showed.
 - **The advisory team is never suppressed.** `ADVISORY_NOTIFY_EMAIL` is protected, and so is any message the queue shows was sent to the team. A bounce on one is recorded as `protected` and logged as `WEBHOOK_ADVISOR_BOUNCE`.
 - **Only what was emailed is suppressed.** Resend reports every recipient of a message; for a confirmation (one recipient) only the address the queue sent it to is suppressed. A message that is not in the queue at all (the sign-in codes go through the same Resend account) concerns the recipients as reported: those addresses are suppressed here, which only matters to the confirmations.
-- **What is kept.** The event's type, the provider's message id, the recipients, the bounce type and the provider's explanation with addresses and key-like strings replaced, capped at 200 characters. The subject, sender, body and tags the provider sends are never read. Both tables hold email addresses: fold them into the retention rule (D4). Deleting rows is safe.
+- **What is kept.** The event's type, the provider's message id, the recipients, the bounce type and the provider's explanation with every run of text around an `@` replaced (so a quoted or bracketed address goes whole, not just most of it) and key-like strings replaced, capped at 200 characters, and only the first 2,000 characters of the provider's text are looked at. The subject, sender, body and tags the provider sends are never read. Both tables hold email addresses and belong in the retention rule (D4), but not alike: `email_delivery_events` can be purged by age, while `email_suppressions` must **not** be (deleting a row lets that address be emailed again, which for a spam complaint is the one thing that must not happen), so an erasure request for an address needs a deliberate decision.
 
 ```sql
 -- Who is suppressed, and why
@@ -256,9 +260,11 @@ select address, reason, event_count, created_at from public.email_suppressions o
 -- What the provider has told us lately (no message content is kept)
 select type, outcome, bounce_type, detail, occurred_at from public.email_delivery_events order by received_at desc limit 50;
 
--- The prospect fixed their mailbox: let the address be emailed again. Events already marked
--- suppressed stay suppressed; a new certification queues a new confirmation.
-delete from public.email_suppressions where address = 'person@example.com';
+-- The prospect fixed their mailbox: let the address be emailed again. The second argument also puts
+-- the confirmations that were held back for it back in the queue, due now (leave it false to only lift
+-- the suppression: the held-back mail may be old). Returns how many it requeued. A new certification
+-- with unchanged answers queues nothing new (the same data is one notification), which is why this exists.
+select public.lift_email_suppression('person@example.com', true);
 ```
 
 The signature scheme and the event fields were taken from the official `svix` and `resend` packages, and the verifier is tested against Svix's own signer. Check one real bounce end to end before launch (the checklist below).
@@ -369,7 +375,7 @@ included.
 - [ ] Supabase Auth "Confirm email" is on.
 - [ ] The migration `20261026090000_outbox_reliability.sql` was applied before the function was deployed.
 - [ ] The schedule above is running (`select jobname, schedule from cron.job;`, and both Vault secrets exist): it sends retries, queues what the trigger missed and reaps lost claims.
-- [ ] The migration `20261027090000_outbox_operations.sql` was applied, and `ENGINEERING_ALERT_WEBHOOK_URL` points at a channel someone watches (kill the provider key in a test project and check the push arrives).
+- [ ] The migration `20261027095000_outbox_operations.sql` was applied, and `ENGINEERING_ALERT_WEBHOOK_URL` points at a channel someone watches (kill the provider key in a test project and check the push arrives).
 - [ ] An advisor has opened `/advisor/outbox` and retried a dead test event.
 - [ ] The Resend webhook exists, points at `resend-webhook`, and `RESEND_WEBHOOK_SECRET` is set. Send a test confirmation to one of Resend's test addresses that simulates a bounce (their docs list them; this was not checked from the build environment, which cannot reach resend.com) and check that the address appears in `email_suppressions`, the submission shows "Email bounced" in the advisor queue, and a second confirmation to it is held back (`suppressed`).
 - [ ] The unqueued-certifications query above returns no rows.
@@ -382,7 +388,7 @@ included.
 ## Not covered here
 
 - Retrying an event that is not dead (a `pending` one waiting out a delay will be tried by the schedule on its own; a `claimed` one is in a worker's hands) and re-reading an event's payload from live data on a retry.
-- Lifting a suppression is SQL only (the recipe in "Bounces and complaints"); advisors can see that a prospect is unreachable but not clear it. A prospect who fixes their mailbox does not get the confirmation they missed: a new certification queues a new one.
+- Lifting a suppression is SQL only (the recipe in "Bounces and complaints"); advisors can see that a prospect is unreachable but not clear it. A prospect who fixes their mailbox does not get the confirmation they missed unless an operator lifts the suppression with the requeue argument: a new certification queues a new confirmation only when the answers changed.
 - Bounces of the sign-in codes (Supabase Auth sends them through the same Resend account) are recorded and suppress the address, but nothing tells the prospect or an advisor that the code did not arrive: the advisor flag is for submissions, which exist only after a code was entered.
 - Unsubscribe links: these are transactional emails and carry none.
 - Exactly-once delivery: see "Delivery guarantee" for the windows where a repeat can get through.

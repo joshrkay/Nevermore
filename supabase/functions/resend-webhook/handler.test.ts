@@ -52,7 +52,7 @@ describe("a bounce fixture, replayed", () => {
       recipients: ["jo@acme.example"],
       bounceType: "Permanent",
       detail: "General: Mailbox [email] does not exist",
-      occurredAt: "2025-10-28T12:00:00.000Z",   // the envelope's time: this fixture's data has none
+      occurredAt: "2025-10-28T12:00:00.000Z",   // the envelope's time
       protectedAddresses: ["team@acme.test"],
     });
     expect(logs).toEqual(["WEBHOOK_RECORDED: type=email.bounced bounce=Permanent outcome=suppressed suppressed=1"]);

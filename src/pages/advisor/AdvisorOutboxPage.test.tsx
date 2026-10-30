@@ -181,7 +181,7 @@ describe("AdvisorOutboxPage", () => {
     expect(row.getByText("Suppressed")).toBeInTheDocument();
     expect(row.getByText(/this address bounced for good earlier, so it is not emailed again/)).toBeInTheDocument();
     expect(row.getByText("suppressed: bounced")).toBeInTheDocument();
-    expect(row.getByText(/^Held back/)).toBeInTheDocument();
+    expect(row.getByText(/^Queued/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Retry send|Rebuild/ })).not.toBeInTheDocument();
     expect(listOutboxEvents).toHaveBeenCalledWith("suppressed");
   });

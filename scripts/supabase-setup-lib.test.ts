@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  advisorSql, authConfigPatch, checkSecrets, cronScheduleSql, envFileLine, FUNCTIONS, interpretChecks,
+  advisorSql, authConfigPatch, checkSecrets, cronScheduleSql, envFileLine, FUNCTIONS, interpretChecks, probeHeaders, PROVIDER_CALLED_FUNCTIONS,
   isProjectRef, parseEnvFile, parseSender, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete,
   sqlLiteral, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
@@ -232,7 +232,7 @@ describe("interpretChecks", () => {
   it("passes a finished project, leaving emails and advisors as to-dos", () => {
     const checks = interpretChecks(allSet, { localMigrations: 16 });
     expect(setupComplete(checks)).toBe(true);
-    expect(checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["Email secrets", "Advisor accounts"]);
+    expect(checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["Email secrets", "Bounce webhook secret", "Advisor accounts"]);
     expect(checks.find((c) => c.name === "Advisor accounts")?.detail).toContain("--grant-advisor");
   });
 
@@ -258,5 +258,16 @@ describe("interpretChecks", () => {
   it("fails when prospects can't receive sign-in emails", () => {
     const builtIn = { ...allSet, authConfig: { ...allSet.authConfig, smtp_host: "" } };
     expect(setupComplete(interpretChecks(builtIn, { localMigrations: 16 }))).toBe(false);
+  });
+});
+
+describe("probeHeaders", () => {
+  it("carries the public key for the app's own functions", () => {
+    expect(probeHeaders("dispatch-outbox", "eyJanon")).toEqual({ Authorization: "Bearer eyJanon", apikey: "eyJanon", "Content-Type": "application/json" });
+  });
+
+  it("carries no credential at all for a function an outside service calls, as that service calls it", () => {
+    expect(PROVIDER_CALLED_FUNCTIONS).toEqual(["resend-webhook"]);
+    expect(probeHeaders("resend-webhook", "eyJanon")).toEqual({ "Content-Type": "application/json" });
   });
 });

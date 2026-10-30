@@ -18,10 +18,10 @@ front end that uses it is deployed.
 |---|---|---|
 | Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push` | SQL editor, file by file |
 | Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set` from a private temporary file | Edge Functions → Secrets |
-| Deploy `chamber-extract`, `document-extract`, `dispatch-outbox` | `supabase functions deploy` | (CLI only) |
+| Deploy `chamber-extract`, `document-extract`, `dispatch-outbox`, `resend-webhook` | `supabase functions deploy` | (CLI only) |
 | Auth: guest sign-in on, email confirmation on, site URL and redirect, the email-change message carries the 6-digit code, sign-in emails through Resend's SMTP | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
 | Email schedule: `pg_cron`, `pg_net`, the service-role key in Vault, `dispatch-outbox` every minute | Management API SQL endpoint | SQL editor, `docs/NOTIFICATIONS.md` → Schedule |
-| Check all of the above, and that each function boots | SQL counts, the public auth settings, a signed-out call to each function (a deployed one answers its own 401) | |
+| Check all of the above, and that each function boots | SQL counts, the public auth settings, a signed-out call to each function (a deployed one answers its own 401; `resend-webhook`, which Resend calls with no Supabase login, is probed with no credentials at all, so a gateway still refusing it fails the check) | |
 
 Sign-in emails matter for submissions, not just convenience: a guest certifies only after confirming
 an email with a 6-digit code, and Supabase's built-in mailer only delivers to your own team's
