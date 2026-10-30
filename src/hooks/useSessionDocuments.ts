@@ -44,8 +44,11 @@ export interface UseSessionDocumentsReturn {
   /** Deletes the record and the stored file. Resolves false if either couldn't be removed. */
   remove: (doc: SessionDocument) => Promise<boolean>;
   setCategory: (doc: SessionDocument, category: DocumentCategory) => Promise<boolean>;
-  /** Records that these fields were applied to the intake from this document. */
-  markApplied: (doc: SessionDocument, fields: CandidateField[]) => Promise<void>;
+  /**
+   * Records that these fields were settled from this document: applied to the intake, or, with
+   * `kept`, left as the prospect's own answer.
+   */
+  markApplied: (doc: SessionDocument, fields: CandidateField[], opts?: { kept?: boolean }) => Promise<void>;
   /** Reads the document again, e.g. after a failure. */
   extract: (doc: SessionDocument) => Promise<void>;
 }
@@ -305,14 +308,14 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
     return false;
   }, [patchDoc]);
 
-  const markApplied = useCallback(async (doc: SessionDocument, fields: CandidateField[]) => {
+  const markApplied = useCallback(async (doc: SessionDocument, fields: CandidateField[], opts: { kept?: boolean } = {}) => {
     const at = new Date().toISOString();
+    const marks = Object.fromEntries(fields.map((f) => [f, at]));
     // Build on the latest copy so two quick applies don't drop each other's marker.
     const current = docsRef.current.find((d) => d.id === doc.id)?.extraction ?? doc.extraction;
-    const extraction: DocumentExtraction = {
-      ...current,
-      applied: { ...current.applied, ...Object.fromEntries(fields.map((f) => [f, at])) },
-    };
+    const extraction: DocumentExtraction = opts.kept
+      ? { ...current, kept: { ...current.kept, ...marks } }
+      : { ...current, applied: { ...current.applied, ...marks } };
     docsRef.current = docsRef.current.map((d) => (d.id === doc.id ? { ...d, extraction } : d));
     patchDoc(doc.id, { extraction });
     const { error } = await supabase

@@ -18,6 +18,8 @@ export interface Candidate {
   field: string;
   value: unknown;
   location: string | null;
+  /** For a census: the row facts the file had columns for. The rest are defaults or blank. */
+  facts?: string[];
 }
 
 const startsWith = (bytes: Uint8Array, sig: number[]) => sig.every((b, i) => bytes[i] === b);
@@ -212,6 +214,8 @@ const looksLikeName = (v: unknown) => /\p{L}/u.test(String(v ?? ""));
 export interface CensusResult {
   census: CensusEmployee[];
   location: string;
+  /** Census row facts the sheet had a column for, so a merge never overwrites a stated fact with a default. */
+  facts: string[];
   /** Rows with content that couldn't become a census row (no name, or a worker type that isn't W-2 or 1099). */
   skipped: number;
   /** Headers of columns that were never read because they hold an SSN or bank details. */
@@ -272,9 +276,24 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
     const census = normalizeCensus(raw, now);
     skipped += raw.length - census.length;
     if (census.length === 0) return null;
+    const has = (...keys: ColumnKey[]) => keys.some((k) => c[k] !== undefined);
+    const stated: [string, boolean][] = [
+      ["dob", has("dob")],
+      ["age", has("age")],
+      ["work_state", has("work_state", "home_state")],
+      ["zip_code", has("zip_code")],
+      ["job_title", has("job_title")],
+      ["annual_salary", has("annual_salary", "hourly_rate")],
+      ["compensation_type", has("compensation_type", "hourly_rate")],
+      ["employment_type", has("employment_type", "hours_per_week")],
+      ["classification", has("classification")],
+      ["coverage_tier", has("coverage_tier")],
+      ["class_code", has("class_code")],
+    ];
     return {
       census,
       location: `${sheet}, rows ${firstRow + firstData}–${firstRow + lastData}`,
+      facts: stated.filter(([, yes]) => yes).map(([fact]) => fact),
       skipped,
       ignoredColumns: sensitive.map((i) => String(header[i] ?? "").trim()).filter(Boolean),
     };
@@ -283,11 +302,11 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
 }
 
 /** The census plus the headcount, states and contractor facts it implies. */
-export function censusCandidates({ census, location }: CensusResult): Candidate[] {
+export function censusCandidates({ census, location, facts }: CensusResult): Candidate[] {
   const states = [...new Set(census.map((e) => e.work_state).filter(Boolean))].sort();
   const contractors = census.filter((e) => !isW2(e));
   const candidates: Candidate[] = [
-    { field: "census", value: census, location },
+    { field: "census", value: census, location, facts },
     { field: "employee_count", value: census.filter(isW2).length, location },
   ];
   if (states.length > 0) candidates.push({ field: "states", value: states, location });

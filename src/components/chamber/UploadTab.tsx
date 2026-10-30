@@ -5,7 +5,8 @@ import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ChamberData } from "@/data/chamberTypes";
 import { DOCUMENT_CATEGORIES, isDocumentCategory, missingRecommended } from "@/data/documentCategories";
-import type { DocumentCandidate } from "@/data/documentCandidates";
+import type { CandidateResolution } from "@/data/documentCandidates";
+import type { ProvenanceMap } from "@/data/provenance";
 import { canRetryExtraction, documentStatusInfo } from "@/data/documentStatus";
 import type { SessionDocument, UploadRejection, UseSessionDocumentsReturn } from "@/hooks/useSessionDocuments";
 import { MAX_DOCUMENTS_PER_INTAKE, MAX_UPLOAD_BYTES } from "@/lib/uploadCheck";
@@ -23,13 +24,15 @@ interface UploadTabProps {
   /** Uploads attach to this intake; nothing can be uploaded until it exists. */
   sessionId: string | null;
   data: ChamberData;
-  onApplyCandidates?: (doc: SessionDocument, candidates: DocumentCandidate[], opts: { replace: boolean }) => void;
+  provenance?: ProvenanceMap;
+  /** The prospect's decision on what Lenore found in a document; omit for read-only. */
+  onResolveCandidates?: (doc: SessionDocument, resolution: CandidateResolution) => void;
 }
 
 const uploadedAt = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-const UploadTab = ({ documents, sessionId, data, onApplyCandidates }: UploadTabProps) => {
+const UploadTab = ({ documents, sessionId, data, provenance, onResolveCandidates }: UploadTabProps) => {
   const { docs, upload, remove, setCategory, extract, uploading } = documents;
   const uploaded = docs.filter((d) => d.status !== "uploading");
   const present = new Set(uploaded.map((d) => d.category));
@@ -190,7 +193,8 @@ const UploadTab = ({ documents, sessionId, data, onApplyCandidates }: UploadTabP
                       fileName={doc.file_name}
                       extraction={doc.extraction}
                       data={data}
-                      onApply={onApplyCandidates && ((c, opts) => onApplyCandidates(doc, c, opts))}
+                      provenance={provenance}
+                      onResolve={onResolveCandidates && ((r) => onResolveCandidates(doc, r))}
                     />
                   </div>
                 )}

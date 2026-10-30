@@ -116,7 +116,9 @@ describe("findCensus", () => {
       { id: expect.any(String), first_name: "Bo", last_name: "Ray", dob: "1985-05-05", work_state: "TX", job_title: "Writer", annual_salary: 72000, compensation_type: "salary", employment_type: "full_time", classification: "1099" },
     ]);
     expect(census.skipped).toBe(0);
+    expect(census.facts).toEqual(["dob", "work_state", "job_title", "annual_salary", "classification"]);
     const candidates = censusCandidates(census);
+    expect(candidates[0].facts).toEqual(census.facts);
     expect(candidates.map((c) => [c.field, c.field === "census" ? "…" : c.value])).toEqual([
       ["census", "…"],
       ["employee_count", 1],

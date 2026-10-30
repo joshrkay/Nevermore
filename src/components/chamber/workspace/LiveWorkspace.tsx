@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { CertificationState, ChamberSubmission } from "@/data/manuscript";
 import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance";
-import { applyDocumentCandidates, type DocumentCandidate } from "@/data/documentCandidates";
+import { resolutionFields, resolveCandidate, type CandidateResolution } from "@/data/documentCandidates";
 import { useSessionDocuments, type SessionDocument } from "@/hooks/useSessionDocuments";
 import UploadTab from "../UploadTab";
 import CompanyTab from "./CompanyTab";
@@ -44,11 +44,12 @@ const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, provenance = {}, onF
   const [activeTab, setActiveTab] = useState("upload");
   const documentSessionId = isDemo ? null : sessionId;
   const documents = useSessionDocuments(documentSessionId);
-  const handleApply =
+  const handleResolve =
     !isDemo && updateIntake
-      ? (doc: SessionDocument, candidates: DocumentCandidate[], opts: { replace: boolean }) => {
-          updateIntake((prev) => applyDocumentCandidates(prev, doc, candidates, opts));
-          void documents.markApplied(doc, candidates.map((c) => c.field));
+      ? (doc: SessionDocument, resolution: CandidateResolution) => {
+          updateIntake((prev) => resolveCandidate(prev, doc, resolution));
+          const { fields, kept } = resolutionFields(resolution);
+          void documents.markApplied(doc, fields, { kept });
         }
       : undefined;
   // Optional, and never defaulted: we don't rank PEOs, so the prospect picks one or none.
@@ -81,7 +82,7 @@ const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, provenance = {}, onF
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto">
-        {activeTab === "upload" && <UploadTab documents={documents} sessionId={documentSessionId} data={data} onApplyCandidates={handleApply} />}
+        {activeTab === "upload" && <UploadTab documents={documents} sessionId={documentSessionId} data={data} provenance={provenance} onResolveCandidates={handleResolve} />}
         {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
         {activeTab === "payroll" && <PayrollTab data={data} provenance={provenance} onAction={onAction} />}
         {activeTab === "benefits" && <BenefitsTab data={data} provenance={provenance} onAction={onAction} />}

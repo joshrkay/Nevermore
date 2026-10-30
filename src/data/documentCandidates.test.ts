@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA, type CensusEmployee } from "./chamberTypes";
-import { applyDocumentCandidates, parseExtraction, planCandidateMerge } from "./documentCandidates";
+import {
+  applyDocumentCandidates,
+  compareCensus,
+  mergeCensus,
+  parseExtraction,
+  planCandidateMerge,
+  resolutionFields,
+  resolveCandidate,
+} from "./documentCandidates";
 
 const employee: CensusEmployee = {
   id: "e1",
@@ -107,5 +115,126 @@ describe("document candidates", () => {
     expect(next.data.payroll_vendor).toBe("Gusto");
     expect(next.provenance.payroll_vendor?.status).toBe("conflicting");
     expect(next.provenance.payroll_vendor?.candidates?.map((c) => c.value)).toEqual(["Gusto", "ADP"]);
+  });
+});
+
+describe("census comparison and merge", () => {
+  const row = (id: string, first: string, over: Partial<CensusEmployee> = {}): CensusEmployee => ({ ...employee, id, first_name: first, last_name: "Lee", ...over });
+
+  it("lines people up by name and birth date, and reports only the facts the document stated", () => {
+    const current = [row("a", "Ann", { job_title: "Designer", dob: "1990-01-01" }), row("b", "Bo"), row("z", "Zed")];
+    const incoming = [row("n1", "ann", { job_title: "Dev", dob: "1990-01-01", annual_salary: 120000 }), row("n2", "Bo"), row("n3", "Cy")];
+    const cmp = compareCensus(current, incoming, ["job_title"]);
+    expect(cmp.matched.map((m) => [m.current.id, m.changes.map((c) => c.fact)])).toEqual([["a", ["job_title"]], ["b", []]]);
+    expect(cmp.added.map((r) => r.first_name)).toEqual(["Cy"]);
+    expect(cmp.missing.map((r) => r.first_name)).toEqual(["Zed"]);
+    // With every fact in play the new salary counts too.
+    expect(compareCensus(current, incoming).matched[0].changes.map((c) => c.fact)).toEqual(["job_title", "annual_salary"]);
+  });
+
+  it("treats two people with the same name but different birth dates as different people", () => {
+    const cmp = compareCensus([row("a", "Ann", { dob: "1990-01-01" })], [row("n", "Ann", { dob: "1975-05-05" })]);
+    expect(cmp.matched).toEqual([]);
+    expect(cmp.added).toHaveLength(1);
+    expect(cmp.missing).toHaveLength(1);
+  });
+
+  it("merges: stated facts update, new people are added, everyone else stays with their id and dependents", () => {
+    const spouse = { first_name: "S", last_name: "Lee", dob: "", relationship: "spouse" as const };
+    const current = [row("a", "Ann", { job_title: "Designer", dependents: [spouse] }), row("z", "Zed")];
+    const incoming = [row("n1", "Ann", { job_title: "Dev", annual_salary: 1 }), row("n2", "Cy")];
+    // The document only has a title column, so its default salary doesn't overwrite the stated one.
+    const merged = mergeCensus(current, incoming, ["job_title"]);
+    expect(merged.map((r) => r.id)).toEqual(["a", "z", "n2"]);
+    expect(merged[0]).toMatchObject({ job_title: "Dev", annual_salary: 100000, dependents: [spouse] });
+  });
+
+  it("never lets a document's blank overwrite a stated fact", () => {
+    const merged = mergeCensus([row("a", "Ann", { job_title: "Designer" })], [row("n", "Ann", { job_title: undefined })]);
+    expect(merged[0].job_title).toBe("Designer");
+  });
+
+  it("reads a document's stated facts from its extraction, and no others", () => {
+    const ex = parseExtraction({
+      candidates: [
+        { field: "census", value: [{ first_name: "Ann" }], location: "CSV", facts: ["job_title", "nonsense"] },
+        { field: "employee_count", value: 1, facts: ["job_title"] },
+      ],
+    });
+    expect(ex.candidates[0].facts).toEqual(["job_title"]);
+    expect(ex.candidates[1]).not.toHaveProperty("facts");
+  });
+});
+
+describe("resolveCandidate", () => {
+  const doc = { id: "d1", file_name: "roster.xlsx" };
+  const now = new Date("2026-10-20T00:00:00Z");
+  const candidate = (over: object) => ({ field: "payroll_vendor" as const, value: "ADP", location: "Page 2", ...over });
+  const prospect = {
+    data: { ...EMPTY_CHAMBER_DATA, payroll_vendor: "Gusto" },
+    provenance: { payroll_vendor: { status: "inferred" as const, source: { kind: "transcript" as const, message_id: "m1" }, updated_at: "x" } },
+  };
+
+  it("uses the document's value, recorded as confirmed from the document", () => {
+    const next = resolveCandidate(prospect, doc, { type: "use_document", candidate: candidate({}) }, now);
+    expect(next.data.payroll_vendor).toBe("ADP");
+    expect(next.provenance.payroll_vendor).toEqual({
+      status: "confirmed",
+      source: { kind: "document", document_id: "d1", document_name: "roster.xlsx", location: "Page 2" },
+      updated_at: now.toISOString(),
+    });
+  });
+
+  it("keeps the intake's value and records that the prospect confirmed it", () => {
+    const next = resolveCandidate(prospect, doc, { type: "keep_current", candidate: candidate({}) }, now);
+    expect(next.data.payroll_vendor).toBe("Gusto");
+    expect(next.provenance.payroll_vendor).toEqual({ status: "confirmed", source: { kind: "prospect_edit" }, updated_at: now.toISOString() });
+  });
+
+  it("settles a conflict that was already recorded when the prospect picks a side", () => {
+    const conflicting = {
+      data: prospect.data,
+      provenance: {
+        payroll_vendor: {
+          status: "conflicting" as const,
+          source: prospect.provenance.payroll_vendor.source,
+          updated_at: "x",
+          candidates: [{ value: "Gusto", source: prospect.provenance.payroll_vendor.source }, { value: "ADP", source: { kind: "prospect_edit" as const } }],
+        },
+      },
+    };
+    const next = resolveCandidate(conflicting, doc, { type: "use_document", candidate: candidate({}) }, now);
+    expect(next.provenance.payroll_vendor?.status).toBe("confirmed");
+    expect(next.provenance.payroll_vendor).not.toHaveProperty("candidates");
+  });
+
+  it("leaves a census the prospect keeps exactly as it is", () => {
+    const withTeam = { data: { ...EMPTY_CHAMBER_DATA, census: [employee] }, provenance: {} };
+    expect(resolveCandidate(withTeam, doc, { type: "keep_current", candidate: { field: "census", value: [], location: null } }, now)).toBe(withTeam);
+  });
+
+  it("merges a census into the existing one under the document's source", () => {
+    const withTeam = { data: { ...EMPTY_CHAMBER_DATA, census: [employee] }, provenance: {} };
+    const incoming = [{ ...employee, id: "n1", job_title: "Lead" }, { ...employee, id: "n2", first_name: "Bo" }];
+    const next = resolveCandidate(withTeam, doc, { type: "merge_census", candidate: { field: "census", value: incoming, location: "CSV, rows 2–3" } }, now);
+    expect(next.data.census.map((r) => [r.id, r.first_name, r.job_title])).toEqual([["e1", "Ann", "Lead"], ["n2", "Bo", "Dev"]]);
+    expect(next.provenance.census).toEqual({
+      status: "confirmed",
+      source: { kind: "document", document_id: "d1", document_name: "roster.xlsx", location: "CSV, rows 2–3" },
+      updated_at: now.toISOString(),
+    });
+  });
+
+  it("replaces the census with the document's when the prospect chooses it", () => {
+    const withTeam = { data: { ...EMPTY_CHAMBER_DATA, census: [employee] }, provenance: {} };
+    const incoming = [{ ...employee, id: "n2", first_name: "Bo" }];
+    const next = resolveCandidate(withTeam, doc, { type: "use_document", candidate: { field: "census", value: incoming, location: null } }, now);
+    expect(next.data.census.map((r) => r.first_name)).toEqual(["Bo"]);
+  });
+
+  it("names the fields a resolution settles", () => {
+    expect(resolutionFields({ type: "apply", candidates: [candidate({}), candidate({ field: "current_carrier" })] })).toEqual({ fields: ["payroll_vendor", "current_carrier"], kept: false });
+    expect(resolutionFields({ type: "keep_current", candidate: candidate({}) })).toEqual({ fields: ["payroll_vendor"], kept: true });
+    expect(resolutionFields({ type: "merge_census", candidate: candidate({ field: "census" }) })).toEqual({ fields: ["census"], kept: false });
   });
 });
