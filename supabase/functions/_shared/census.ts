@@ -5,10 +5,24 @@
 
 import { redactSensitive } from "./sensitive.ts";
 
-export type CoverageTier = "EE" | "EE+SP" | "EE+CH" | "FAM" | "WAIVE";
-export type CompensationType = "salary" | "hourly";
-export type EmploymentType = "full_time" | "part_time";
-export type WorkerClassification = "w2" | "1099";
+// The values a census row takes. The intake database accepts the same lists
+// (migration 20261029092000) and src/data/schemaSync.test.ts compares them.
+export const COVERAGE_TIERS = ["EE", "EE+SP", "EE+CH", "FAM", "WAIVE"] as const;
+export const COMPENSATION_TYPES = ["salary", "hourly"] as const;
+export const EMPLOYMENT_TYPES = ["full_time", "part_time"] as const;
+export const CLASSIFICATIONS = ["w2", "1099"] as const;
+
+export type CoverageTier = (typeof COVERAGE_TIERS)[number];
+export type CompensationType = (typeof COMPENSATION_TYPES)[number];
+export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
+export type WorkerClassification = (typeof CLASSIFICATIONS)[number];
+
+/** The most people an intake holds; the database refuses a longer census. */
+export const MAX_CENSUS_ROWS = 5000;
+/** The most dependents one person holds; the database refuses more. */
+export const MAX_DEPENDENTS = 20;
+/** The most a year's pay can be; the database refuses more. */
+export const MAX_ANNUAL_SALARY = 1_000_000;
 
 export interface CensusDependent {
   first_name: string;
@@ -46,11 +60,18 @@ export const COVERAGE_TIER_LABELS: Record<CoverageTier, string> = {
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Cell or field text: trimmed, sensitive numbers removed, capped. Empty for anything else. */
+// Postgres jsonb refuses NUL and unpaired surrogates before any check can name the field, so they are
+// removed here rather than becoming a save that fails without saying why.
+const UNPAIRED_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+
+/** A string without the characters the database can't store. */
+export const stripUnstorable = (s: string) => s.split("\u0000").join("").replace(UNPAIRED_SURROGATE, "");
+
+/** Cell or field text: trimmed, unstorable characters and sensitive numbers removed, capped. Empty for anything else. */
 export function cleanText(v: unknown, max = 200): string {
   if (typeof v === "number" && Number.isFinite(v)) v = String(v);
   if (typeof v !== "string") return "";
-  return redactSensitive(v).replace(/\s+/g, " ").trim().slice(0, max);
+  return redactSensitive(stripUnstorable(v)).replace(/\s+/g, " ").trim().slice(0, max);
 }
 
 // Lower case, punctuation as single spaces: "W-2 / 1099" -> "w 2 1099".
@@ -141,7 +162,9 @@ const STATE_NAMES: Record<string, string> = {
   "puerto rico": "PR", guam: "GU", "virgin islands": "VI", "us virgin islands": "VI",
   "american samoa": "AS", "northern mariana islands": "MP", "washington dc": "DC", "washington d c": "DC",
 };
-const STATE_CODES = new Set(Object.values(STATE_NAMES));
+/** The 50 states, DC and the five inhabited territories: the codes the intake database accepts. */
+export const US_STATE_CODES: ReadonlySet<string> = new Set(Object.values(STATE_NAMES));
+const STATE_CODES = US_STATE_CODES;
 
 /** A two-letter US state or territory code from a code or a name. "" when it isn't one. */
 export function normalizeState(v: unknown): string {
@@ -171,12 +194,10 @@ export function parseMoney(v: unknown): number | undefined {
   return n > 0 ? n : undefined;
 }
 
-const MAX_ANNUAL_SALARY = 10_000_000;
-
-/** Whole dollars a year, within a believable range. */
+/** Whole dollars a year, up to the most the intake holds. Pay above that is left blank, not capped. */
 export function normalizeAnnualSalary(v: unknown): number | undefined {
   const n = parseMoney(v);
-  return n !== undefined && n <= MAX_ANNUAL_SALARY ? Math.round(n) : undefined;
+  return n !== undefined && Math.round(n) <= MAX_ANNUAL_SALARY ? Math.round(n) : undefined;
 }
 
 export function normalizeCompensationType(v: unknown): CompensationType | undefined {
@@ -234,6 +255,7 @@ export function normalizeClassCode(v: unknown): string | undefined {
 
 const RELATIONSHIPS = new Set(["spouse", "domestic_partner", "child", "other"]);
 
+/** Valid dependents, the first MAX_DEPENDENTS of them (invalid ones use no slot). */
 function normalizeDependents(v: unknown, now: Date): CensusDependent[] {
   if (!Array.isArray(v)) return [];
   return v.flatMap((d) => {
@@ -247,7 +269,7 @@ function normalizeDependents(v: unknown, now: Date): CensusDependent[] {
       dob: normalizeDob(d.dob, now) ?? "",
       relationship: relationship as CensusDependent["relationship"],
     }];
-  });
+  }).slice(0, MAX_DEPENDENTS);
 }
 
 function splitFullName(name: string): [string, string] {
@@ -325,14 +347,15 @@ export function normalizeCensusRow(raw: unknown, now: Date = new Date()): Omit<C
 /**
  * A census from loosely typed rows: invalid rows dropped, and every row given an id. Rows that
  * arrive without one (or with one already used) get an id derived from the row, so reading the
- * same rows twice gives the same ids.
+ * same rows twice gives the same ids. Stops after `max` valid rows (invalid ones use no slot).
  */
-export function normalizeCensus(rows: unknown, now: Date = new Date()): CensusEmployee[] {
+export function normalizeCensus(rows: unknown, now: Date = new Date(), max = Number.POSITIVE_INFINITY): CensusEmployee[] {
   if (!Array.isArray(rows)) return [];
   const used = new Set<string>();
   const seen = new Map<string, number>();
   const out: CensusEmployee[] = [];
   for (const raw of rows) {
+    if (out.length >= max) break;
     const row = normalizeCensusRow(raw, now);
     if (!row) continue;
     let id = row.id;

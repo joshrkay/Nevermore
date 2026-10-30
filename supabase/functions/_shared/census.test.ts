@@ -148,6 +148,13 @@ describe("normalizeCensusRow", () => {
     expect(JSON.stringify(row)).not.toMatch(/6789/);
   });
 
+  it("keeps the first 20 dependents, not counting invalid ones", () => {
+    const dependents = [{ last_name: "no first" }, ...Array.from({ length: 25 }, (_, i) => ({ first_name: `D${i}`, relationship: "child" }))];
+    const row = normalizeCensusRow({ first_name: "Ann", dependents }, NOW);
+    expect(row?.dependents).toHaveLength(20);
+    expect(row?.dependents?.[19].first_name).toBe("D19");
+  });
+
   it("drops values that aren't valid and keeps the row", () => {
     const row = normalizeCensusRow({ first_name: "Ana", dob: "soon", age: 7, zip_code: "n/a", coverage_tier: "gold", class_code: "x", annual_salary: -5 }, NOW);
     expect(row).toEqual({ first_name: "Ana", last_name: "", work_state: "", compensation_type: "salary", employment_type: "full_time", classification: "w2" });

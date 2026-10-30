@@ -1,8 +1,14 @@
 // Pure helpers for document-extract: no Deno or network imports, so they're unit-tested
 // with the frontend suite (vitest includes supabase/functions/**/*.test.ts).
 
-import { isW2, normalizeCensus, parseMoney, type CensusEmployee } from "../_shared/census.ts";
+import { isW2, MAX_CENSUS_ROWS, normalizeCensus, parseMoney, US_STATE_CODES, type CensusEmployee } from "../_shared/census.ts";
 import { isSensitiveHeader, redactSensitive } from "../_shared/sensitive.ts";
+
+// The most people an intake's census holds and the states it accepts, which the intake database enforces
+// (src/data/schemaSync.test.ts compares them with the app's copies): a census or state column past
+// these limits would be refused on save.
+export const MAX_EMPLOYEES = MAX_CENSUS_ROWS;
+export { US_STATE_CODES };
 
 export const MAX_EXTRACT_BYTES = 10 * 1024 * 1024;
 export const MAX_PDF_PAGES = 50;
@@ -301,12 +307,20 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
   return null;
 }
 
-/** The census plus the headcount, states and contractor facts it implies. */
+/**
+ * The census plus the headcount, states and contractor facts it implies. The census keeps the first
+ * MAX_EMPLOYEES people, since the intake can't store more; the headcount, states and contractor
+ * facts still cover every row, and the census's location says how many were kept.
+ */
 export function censusCandidates({ census, location, facts }: CensusResult): Candidate[] {
   const states = [...new Set(census.map((e) => e.work_state).filter(Boolean))].sort();
   const contractors = census.filter((e) => !isW2(e));
+  const truncated = census.length > MAX_EMPLOYEES;
+  const censusLocation = truncated
+    ? `${location}; first ${MAX_EMPLOYEES.toLocaleString("en-US")} of ${census.length.toLocaleString("en-US")} people kept`
+    : location;
   const candidates: Candidate[] = [
-    { field: "census", value: census, location, facts },
+    { field: "census", value: truncated ? census.slice(0, MAX_EMPLOYEES) : census, location: censusLocation, facts },
     { field: "employee_count", value: census.filter(isW2).length, location },
   ];
   if (states.length > 0) candidates.push({ field: "states", value: states, location });

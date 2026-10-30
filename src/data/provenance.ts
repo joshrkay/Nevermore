@@ -130,7 +130,10 @@ const FIELD_KEYS = Object.keys(FIELD_LABELS) as FieldKey[];
 const isFieldKey = (k: unknown): k is FieldKey => typeof k === "string" && k in FIELD_LABELS;
 
 const MAX_QUOTE_CHARS = 200;
-const clip = (s: string) => (s.length > MAX_QUOTE_CHARS ? `${s.slice(0, MAX_QUOTE_CHARS - 1)}…` : s);
+// A cut between the halves of an emoji leaves a lone high surrogate, which Postgres jsonb
+// refuses; the whole field_provenance is resent on every save, so one bad quote would fail them all.
+const clip = (s: string) =>
+  s.length > MAX_QUOTE_CHARS ? `${s.slice(0, MAX_QUOTE_CHARS - 1).replace(/[\uD800-\uDBFF]$/, "")}…` : s;
 
 // ---------- Parsing stored provenance ----------
 

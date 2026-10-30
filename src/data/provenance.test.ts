@@ -7,6 +7,7 @@ import {
   parseEvidence,
   parseExtractedStatuses,
   parseProvenance,
+  transcriptExtraction,
   type FieldSource,
   type IntakeState,
 } from "./provenance";
@@ -182,5 +183,15 @@ describe("parsing", () => {
     expect(parseProvenance({ employees: entry })).toEqual({ census: entry });
     const current = { ...entry, updated_at: "y" };
     expect(parseProvenance({ employees: entry, census: current })).toEqual({ census: current });
+  });
+});
+
+describe("transcriptExtraction", () => {
+  it("never leaves half an emoji in the quote, which Postgres jsonb refuses", () => {
+    const text = `${"a".repeat(198)}😀${"b".repeat(20)}`;
+    const { source } = transcriptExtraction({ id: "m1", text }, {});
+    const quote = (source as { quote: string }).quote;
+    expect(quote).toBe(`${"a".repeat(198)}…`);
+    expect(JSON.stringify(quote)).not.toMatch(/\\ud[89ab]/i);
   });
 });

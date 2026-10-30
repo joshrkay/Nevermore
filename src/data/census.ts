@@ -3,12 +3,20 @@
 import { ageOn, COVERAGE_TIER_LABELS, type CensusEmployee } from "../../supabase/functions/_shared/census.ts";
 
 export {
+  CLASSIFICATIONS,
+  COMPENSATION_TYPES,
   COVERAGE_TIER_LABELS,
+  COVERAGE_TIERS,
+  EMPLOYMENT_TYPES,
+  MAX_ANNUAL_SALARY,
+  MAX_CENSUS_ROWS,
+  MAX_DEPENDENTS,
   ageOn,
   censusGaps,
   isW2,
   normalizeCensus,
   samePerson,
+  stripUnstorable,
 } from "../../supabase/functions/_shared/census.ts";
 export type {
   CensusDependent,
