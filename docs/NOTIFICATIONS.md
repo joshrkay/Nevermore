@@ -132,6 +132,10 @@ Then apply `supabase/migrations/20261027095000_outbox_operations.sql`, again bef
 
 Then apply `supabase/migrations/20261028090000_email_delivery_events.sql` (bounces and suppression), before deploying `resend-webhook`. It replaces `claim_outbox_events` (which now holds back suppressed addresses), adds the `suppressed` status and the two tables, and replaces the two advisor outbox functions so they know the new status. `resend-webhook` deployed first answers 500 to every delivery until the migration lands, which makes the provider retry, so nothing is lost either way.
 
+Then apply `supabase/migrations/20261030090000_outbox_census_headcount.sql` and `supabase/migrations/20261030091000_email_delivery_hardening.sql`, in that order. Both only add or replace functions (no table changes, grants carry over), so each is safe to apply with the app running. The first makes the advisor alert's headcount read the census (the intake's roster key since the census work; the older `employees` roster is still the fallback). The second holds back confirmations whose claim has lapsed, refuses a claimed confirmation to a suppressed address at the freeze, adds `lift_email_suppression`, makes `advisor_email_problems()` follow the latest confirmation (with `not_delivered`), and strengthens the stored-detail redaction. Apply each as one transaction, as above.
+
+A note on version numbers: `outbox_operations` is `20261027095000` because `20261027090000` was already taken by `intake_validation_and_versioning`, and two migrations cannot share a version. The file's content is unchanged. If a database ever recorded it under the first version, mark that version reverted and the new one applied with `supabase migration repair` rather than running it a second time.
+
 ### Schedule (required)
 
 The browser nudges the function right after a submit, but a closed tab, a provider outage or a retry

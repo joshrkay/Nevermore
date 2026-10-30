@@ -16,10 +16,8 @@
 --   bounced or was reported as spam, so they can reach that person another way. The queue page
 --   reads it beside advisor_list_submissions, which is unchanged.
 --
--- Both tables hold email addresses. Fold them into the retention rule (D4), but do not purge
--- email_suppressions by age: deleting a row lets that address be emailed again, which for a spam
--- complaint is the one thing that must not happen. email_delivery_events can be purged freely.
--- Lifting a suppression on purpose is lift_email_suppression().
+-- Both tables hold email addresses. Fold them into the retention rule (D4); deleting rows is
+-- safe, and deleting a suppression row lets that address be emailed again.
 
 SET lock_timeout = '3s';
 
@@ -150,7 +148,7 @@ BEGIN
   VALUES (
     btrim(p_event_id), p_type, left(p_message_id, 200), v_recipients, left(NULLIF(btrim(p_bounce_type), ''), 40),
     -- Addresses are redacted by the function too; this is the backstop for what it missed.
-    left(NULLIF(btrim(regexp_replace(regexp_replace(left(COALESCE(p_detail, ''), 2000), '"[^"]*"@\S*', '[email]', 'g'), '\S*@\S*', '[email]', 'g')), ''), 200),
+    left(NULLIF(btrim(regexp_replace(COALESCE(p_detail, ''), '[^\s@<>,;"()]+@[^\s@<>,;"()]+', '[email]', 'g')), ''), 200),
     v_outcome, COALESCE(p_occurred_at, now())
   )
   ON CONFLICT (provider_event_id) DO NOTHING
@@ -167,15 +165,12 @@ BEGIN
         -- A complaint is the stronger statement; otherwise the first reason stands.
         reason = CASE WHEN EXCLUDED.reason = 'complained' THEN 'complained' ELSE public.email_suppressions.reason END;
 
-  -- What is already waiting for that address goes no further, including a claim whose worker was
-  -- lost (the next claim would take it over). A live claim is the worker's: it is refused at
-  -- freeze_outbox_message, before anything is written for sending. (The claim does the same for
+  -- What is already waiting for that address goes no further. (The claim does the same for
   -- anything queued later.)
   UPDATE public.outbox_events e
   SET status = 'suppressed', last_error = left('suppressed: ' || v_reason, 200),
       claimed_at = NULL, locked_until = NULL, pending_send = NULL
-  WHERE e.kind = 'prospect_confirmation'
-    AND (e.status = 'pending' OR (e.status = 'claimed' AND e.locked_until < now()))
+  WHERE e.kind = 'prospect_confirmation' AND e.status = 'pending'
     AND lower(btrim(e.payload ->> 'recipient_email')) = ANY (v_suppress);
 
   RETURN jsonb_build_object(
@@ -187,9 +182,8 @@ $$;
 
 -- ---------- Never mailing a suppressed address again ----------
 
--- Same as before, plus: a due confirmation to a suppressed address, or one whose claim has lapsed
--- and is about to be taken over, is marked 'suppressed' here, so it is not claimed, however it
--- came to be queued (a re-certification, a retry, a requeue).
+-- Same as before, plus: a due confirmation to a suppressed address is marked 'suppressed' here, so
+-- it is not claimed, however it came to be queued (a re-certification, a retry, a requeue).
 CREATE OR REPLACE FUNCTION public.claim_outbox_events(
   p_kinds text[],
   p_batch integer,
@@ -206,8 +200,7 @@ BEGIN
   SET status = 'suppressed', last_error = left('suppressed: ' || s.reason, 200),
       claimed_at = NULL, locked_until = NULL, pending_send = NULL
   FROM public.email_suppressions s
-  WHERE e.kind = 'prospect_confirmation'
-    AND ((e.status = 'pending' AND e.next_attempt_at <= now()) OR (e.status = 'claimed' AND e.locked_until < now()))
+  WHERE e.kind = 'prospect_confirmation' AND e.status = 'pending' AND e.next_attempt_at <= now()
     AND s.address = lower(btrim(e.payload ->> 'recipient_email'));
 
   RETURN QUERY
@@ -225,86 +218,6 @@ BEGIN
     FOR UPDATE SKIP LOCKED
   )
   RETURNING e.*;
-END;
-$$;
-
--- Same as before, plus: the email of a claim whose address was suppressed after it was claimed is
--- not written for sending. The event becomes 'suppressed' and the answer is null, which the
--- worker reads as "no longer mine" and sends nothing. (Only the claimant's attempt can do this, as
--- before.) A retry that already has its email written does not pass through here: the claim's
--- pre-step holds those back instead.
-CREATE OR REPLACE FUNCTION public.freeze_outbox_message(
-  p_id uuid,
-  p_attempt integer,
-  p_message jsonb,
-  p_replace boolean DEFAULT false
-)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $$
-DECLARE
-  frozen jsonb;
-BEGIN
-  IF p_message IS NULL OR jsonb_typeof(p_message) <> 'object'
-     OR NOT (p_message ?& ARRAY['from', 'to', 'subject', 'text', 'html']) THEN
-    RAISE EXCEPTION 'freeze_outbox_message: the message must be an object with from, to, subject, text and html'
-      USING ERRCODE = '22023';
-  END IF;
-
-  UPDATE public.outbox_events e
-  SET status = 'suppressed', last_error = left('suppressed: ' || s.reason, 200),
-      claimed_at = NULL, locked_until = NULL, pending_send = NULL
-  FROM public.email_suppressions s
-  WHERE e.id = p_id AND e.status = 'claimed' AND e.attempts = p_attempt AND e.kind = 'prospect_confirmation'
-    AND s.address = lower(btrim(e.payload ->> 'recipient_email'));
-  IF FOUND THEN
-    RETURN NULL;
-  END IF;
-
-  UPDATE public.outbox_events e
-  SET pending_send = jsonb_build_object(
-    'key', 'outbox-' || p_id::text || '-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12),
-    'message', p_message,
-    'attempt', p_attempt,
-    'frozen_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-  )
-  WHERE e.id = p_id AND e.status = 'claimed' AND e.attempts = p_attempt AND (e.pending_send IS NULL OR p_replace)
-  RETURNING e.pending_send INTO frozen;
-
-  RETURN frozen;
-END;
-$$;
-
--- Lets an address be emailed again, on purpose (the prospect fixed their mailbox, or it was
--- suppressed by mistake). Removes the suppression and, when p_requeue is true, puts the
--- confirmations that were held back for it back in the queue, due now: they may be old, so the
--- default leaves them. Returns how many it requeued. A new certification with unchanged answers
--- queues nothing new (the same data is one notification), which is why this exists.
-CREATE FUNCTION public.lift_email_suppression(p_address text, p_requeue boolean DEFAULT false)
-RETURNS integer
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $$
-DECLARE
-  v_address text := lower(btrim(COALESCE(p_address, '')));
-  v_requeued integer := 0;
-BEGIN
-  IF v_address = '' THEN
-    RAISE EXCEPTION 'lift_email_suppression: an address is required' USING ERRCODE = '22023';
-  END IF;
-  DELETE FROM public.email_suppressions WHERE address = v_address;
-  IF p_requeue THEN
-    UPDATE public.outbox_events e
-    SET status = 'pending', attempts = 0, next_attempt_at = now(), last_error = NULL,
-        claimed_at = NULL, locked_until = NULL, pending_send = NULL
-    WHERE e.kind = 'prospect_confirmation' AND e.status = 'suppressed'
-      AND lower(btrim(e.payload ->> 'recipient_email')) = v_address;
-    GET DIAGNOSTICS v_requeued = ROW_COUNT;
-  END IF;
-  RETURN v_requeued;
 END;
 $$;
 
@@ -378,13 +291,9 @@ BEGIN
 END;
 $$;
 
--- The submissions whose prospect cannot be reached by the confirmation email, one row each, with
--- why and since when. Only the submission's LATEST confirmation counts: if the prospect changes
--- their address and the new confirmation goes out, the flag clears by itself.
---   bounced / complained / provider_suppressed: the address is suppressed and is not emailed again.
---   not_delivered: that confirmation was reported undelivered (a bounce the provider calls
---     temporary, such as a full mailbox, or a failed send) but the address is not suppressed.
--- Empty when all is well, so the queue page can read it beside the list without paying for it.
+-- The submissions whose prospect cannot be reached by the confirmation email: it bounced for good,
+-- or they reported it as spam. One row per submission, with why and since when. Empty when all is
+-- well, so the queue page can read it beside the list without paying for it.
 CREATE FUNCTION public.advisor_email_problems()
 RETURNS TABLE (session_id uuid, reason text, since timestamptz)
 LANGUAGE plpgsql
@@ -396,22 +305,11 @@ AS $$
 BEGIN
   PERFORM public.require_advisor();
   RETURN QUERY
-  WITH latest AS (
-    SELECT DISTINCT ON (e.session_id) e.session_id, lower(btrim(e.payload ->> 'recipient_email')) AS address, e.provider_message_id
-    FROM public.outbox_events e
-    WHERE e.kind = 'prospect_confirmation'
-    ORDER BY e.session_id, e.created_at DESC, e.id
-  )
-  SELECT l.session_id, COALESCE(s.reason, 'not_delivered'), COALESCE(s.created_at, d.received_at)
-  FROM latest l
-  LEFT JOIN public.email_suppressions s ON s.address = l.address
-  LEFT JOIN LATERAL (
-    SELECT max(x.received_at) AS received_at
-    FROM public.email_delivery_events x
-    WHERE x.provider_message_id = l.provider_message_id
-      AND (x.type = 'email.failed' OR (x.type = 'email.bounced' AND lower(COALESCE(x.bounce_type, '')) <> 'permanent'))
-  ) d ON true
-  WHERE s.address IS NOT NULL OR d.received_at IS NOT NULL;
+  SELECT DISTINCT ON (e.session_id) e.session_id, s.reason, s.created_at
+  FROM public.outbox_events e
+  JOIN public.email_suppressions s ON s.address = lower(btrim(e.payload ->> 'recipient_email'))
+  WHERE e.kind = 'prospect_confirmation'
+  ORDER BY e.session_id, s.updated_at DESC;
 END;
 $$;
 
@@ -419,12 +317,8 @@ $$;
 
 REVOKE ALL ON FUNCTION public.record_email_delivery_event(text, text, text, text[], text, text, timestamptz, text[]) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.claim_outbox_events(text[], integer, integer, integer) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.freeze_outbox_message(uuid, integer, jsonb, boolean) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.lift_email_suppression(text, boolean) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.record_email_delivery_event(text, text, text, text[], text, text, timestamptz, text[]) TO service_role;
 GRANT EXECUTE ON FUNCTION public.claim_outbox_events(text[], integer, integer, integer) TO service_role;
-GRANT EXECUTE ON FUNCTION public.freeze_outbox_message(uuid, integer, jsonb, boolean) TO service_role;
-GRANT EXECUTE ON FUNCTION public.lift_email_suppression(text, boolean) TO service_role;
 
 REVOKE ALL ON FUNCTION public.advisor_list_outbox_events(text, integer) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.advisor_outbox_summary() FROM PUBLIC, anon;

@@ -106,15 +106,9 @@ BEGIN
     WHEN jsonb_typeof(s.chamber_data -> 'employee_count') = 'number' THEN
       CASE WHEN (s.chamber_data ->> 'employee_count')::numeric BETWEEN 0 AND 10000000
            THEN round((s.chamber_data ->> 'employee_count')::numeric)::integer END
-    -- No stated count: the W-2 rows of the census, or of the roster the census replaced (`employees`).
-    ELSE COALESCE(
-      NULLIF((SELECT count(*)::integer FROM jsonb_array_elements(
-                CASE WHEN jsonb_typeof(s.chamber_data -> 'census') = 'array' THEN s.chamber_data -> 'census' ELSE '[]'::jsonb END) r
-              WHERE lower(r ->> 'classification') = 'w2'), 0),
-      NULLIF((SELECT count(*)::integer FROM jsonb_array_elements(
-                CASE WHEN jsonb_typeof(s.chamber_data -> 'employees') = 'array' THEN s.chamber_data -> 'employees' ELSE '[]'::jsonb END) r
+    WHEN jsonb_typeof(s.chamber_data -> 'employees') = 'array' THEN
+      NULLIF((SELECT count(*)::integer FROM jsonb_array_elements(s.chamber_data -> 'employees') r
               WHERE r ->> 'classification' = 'W2'), 0)
-    )
   END;
   hq := CASE
     WHEN jsonb_typeof(s.chamber_data -> 'hq_state') = 'string' AND (s.chamber_data ->> 'hq_state') ~ '^[A-Za-z]{2}$'

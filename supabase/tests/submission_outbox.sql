@@ -1349,6 +1349,7 @@ BEGIN
 END $$;
 
 \i supabase/migrations/20261027095000_outbox_operations.sql
+\i supabase/migrations/20261030090000_outbox_census_headcount.sql
 
 DO $$
 DECLARE

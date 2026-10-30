@@ -104,6 +104,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authen
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027095000_outbox_operations.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
+\i supabase/migrations/20261030090000_outbox_census_headcount.sql
+\i supabase/migrations/20261030091000_email_delivery_hardening.sql
 
 -- Fails the run unless `stmt` raises exactly `expected_state`.
 CREATE FUNCTION pg_temp.must_raise(stmt text, expected_state text, label text) RETURNS void LANGUAGE plpgsql AS $$
