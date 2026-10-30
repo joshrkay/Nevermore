@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...args: unknown[]) => rpc(...args) } }));
 
-const { AdvisorApiError, fetchIsAdvisor, listOutboxEvents, listSubmissions, outboxSummary, requeueOutboxEvent } = await import("./advisorApi");
+const { AdvisorApiError, fetchIsAdvisor, listEmailProblems, listOutboxEvents, listSubmissions, outboxSummary, requeueOutboxEvent } = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
 const caught = async (run: () => Promise<unknown>) => {
@@ -121,5 +121,27 @@ describe("outbox API", () => {
     expect((await caught(() => listOutboxEvents(null))).message).toBe("Couldn't load the outbox.");
     expect((await caught(() => outboxSummary())).message).toBe("Couldn't load the outbox counts.");
     expect((await caught(() => requeueOutboxEvent("e1", false))).message).toBe("Couldn't retry this notification.");
+  });
+});
+
+describe("email problems API", () => {
+  beforeEach(() => rpc.mockReset());
+
+  it("reads the flagged submissions through the advisor-only function", async () => {
+    rpc.mockResolvedValue({ data: [{ session_id: "s1", reason: "bounced", since: "2026-10-28T12:00:00Z" }], error: null });
+    await expect(listEmailProblems()).resolves.toEqual([{ session_id: "s1", reason: "bounced", since: "2026-10-28T12:00:00Z" }]);
+    expect(rpc).toHaveBeenLastCalledWith("advisor_email_problems");
+  });
+
+  it("treats an empty answer as none flagged", async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    await expect(listEmailProblems()).resolves.toEqual([]);
+  });
+
+  it("calls the database's refusal of a non-advisor a lack of advisor access (HTTP 403)", async () => {
+    failWith({ code: "42501", message: "Advisor access required" });
+    const err = await caught(() => listEmailProblems());
+    expect(err.forbidden).toBe(true);
+    expect(err.message).toBe("You don't have advisor access.");
   });
 });

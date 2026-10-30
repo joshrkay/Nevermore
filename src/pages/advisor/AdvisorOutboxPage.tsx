@@ -42,6 +42,7 @@ const STATUS_CLASS: Record<OutboxStatus, string> = {
   // Neutral, not the theme's red: a claim in progress is not a problem (a lapsed one says so separately).
   claimed: "bg-muted text-foreground",
   sent: "bg-success/15 text-success",
+  suppressed: "bg-warning/15 text-warning",
 };
 
 const StatusBadge = ({ status }: { status: string }) =>
@@ -57,6 +58,7 @@ const StatusBadge = ({ status }: { status: string }) =>
 function timing(e: OutboxEvent, now: number): string {
   if (e.status === "sent") return e.sent_at ? `Sent ${formatDateTime(e.sent_at)}` : "Sent";
   if (e.status === "claimed") return e.claimed_at ? `Claimed ${formatDateTime(e.claimed_at)}` : "Claimed";
+  if (e.status === "suppressed") return `Held back ${formatDateTime(e.created_at)}`;
   if (e.status === "pending") {
     return Date.parse(e.next_attempt_at) <= now ? "Due now" : `Next attempt ${formatDateTime(e.next_attempt_at)}`;
   }

@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Verify the submission-notification pipeline (advisor alert + prospect confirmation, retries, the dead-event alert and the advisor outbox functions) by running it for real. Use when asked to verify or QA changes to supabase/functions/dispatch-outbox, the submission_outbox, outbox_reliability, outbox_operations or outbox_schedule migrations, the advisor Outbox page, or useChamberSession's submit path.
+description: Verify the submission-notification pipeline (advisor alert + prospect confirmation, retries, the dead-event alert and the advisor outbox functions) by running it for real. Use when asked to verify or QA changes to supabase/functions/dispatch-outbox, the submission_outbox, outbox_reliability, outbox_operations or outbox_schedule migrations, the advisor Outbox page, the resend-webhook function (bounces and suppression), or useChamberSession's submit path.
 ---
 
 # Verifying submission notifications
@@ -12,7 +12,8 @@ There is no Docker or hosted Supabase in the sandbox, so `harness/` stands up th
 | Postgres 16, the real migrations (certification, guest block, outbox, outbox reliability, outbox operations, outbox schedule) | **real** (Supabase's `auth` schema and roles are stubbed in `setup.sql`; the advisor role objects are a verbatim copy of lines 17-73 of the advisor migration, since the rest needs storage and documents) |
 | PostgREST 12.2.3 (so `authenticated` / `anon` / `service_role` table privileges are enforced; function ACLs are not, see Gotchas) | **real** |
 | `supabase/functions/dispatch-outbox/index.ts` under Deno | **real, unmodified** |
-| Gateway on :54321: GoTrue `GET /auth/v1/user`, `/rest/v1/*` pass-through, `/functions/v1/dispatch-outbox` | stand-in (`front.mjs`) |
+| `supabase/functions/resend-webhook/index.ts` under Deno on :8001 (`webhook.sh`) | **real, unmodified** |
+| Gateway on :54321: GoTrue `GET /auth/v1/user`, `/rest/v1/*` pass-through, `/functions/v1/dispatch-outbox` and `/functions/v1/resend-webhook` | stand-in (`front.mjs`) |
 | Resend on :54400 (records requests; mimics the documented `Idempotency-Key` rule; answers a rate limit before it looks the key up) | stand-in (`resend.mjs`) |
 
 ## One-time prerequisites
@@ -81,6 +82,14 @@ is limited to service-role callers and runs ahead of the claim: `index.ts` is De
   `not_configured: ADVISORY_NOTIFY_EMAIL is not set to valid address(es)`, the confirmation is sent; a second scheduled run does not rewrite the row (`xmin` is unchanged). `func.sh` with the default settings sends it and clears the note.
 - The claim lease: `mode accept_then_hang`, certify, start `invoke POST $SVC` in the background and, 3 s in, `select status, claimed_at is not null, locked_until - claimed_at from outbox_events`: `claimed`, true, `00:10:00`.
   After the 10 s provider timeout it is `pending` with `last_error = timeout` and `claimed_at` null.
+- Bounces and suppression: sign fixtures with the OFFICIAL signer, not the function's own code (`npm i svix` in a scratch dir, never in the repo; `new Webhook(secret).sign(id, date, body)`, headers `svix-id`, `svix-timestamp`,
+  `svix-signature`; the harness secret is `whsec_dmVyaWZ5LWhhcm5lc3Mtd2ViaG9vay1zZWNyZXQtMzJiIQ==`) and POST them to `http://127.0.0.1:54321/functions/v1/resend-webhook`. Certify and run the worker so the confirmation has a
+  `provider_message_id` (`msg_<n>`), then send `email.bounced` with `data.email_id` of that id, `bounce.type` `Permanent`, and a `to` that also lists another address: expect 200 `outcome: suppressed`, one row in `email_suppressions`
+  (only the address the queue sent to), the waiting confirmations to it `suppressed`. The same `svix-id` again is 200 `duplicate: true` and changes nothing. No signature (with or without the anon key), another secret, a changed body and a 10 minute old
+  timestamp are all 401 and change nothing. Re-certify with a changed answer and run the worker: the advisor "Updated Intake" is delivered, the confirmation is `suppressed` and the provider's delivery count does not rise for it.
+  As an advisor (`insert into user_roles ...`, `$OTHER`) `advisor_email_problems` flags the session and `advisor_list_outbox_events` with `{"p_status":"suppressed"}` lists it; a prospect gets 403. A bounce for the advisor alert's message id answers
+  `outcome: protected`, suppresses nothing and logs `WEBHOOK_ADVISOR_BOUNCE`. `Transient` and `email.delivered` change nothing. Rename `record_email_delivery_event` in the database and deliver: 500 and `WEBHOOK_RECORD_FAILED`; rename it back and
+  the same `svix-id` records normally. `webhook.sh RESEND_WEBHOOK_SECRET=` answers unsigned requests 401 and signed ones 503. Grep `$RUN/webhook.log` for the addresses and message text: it must find nothing.
 - Deleted events stay deleted: after a send, `delete from outbox_events where session_id='$SID'`, then a scheduled run: `reconciled.healed` 0, no rows return, no new delivery.
 - Reaping: after certify, `update outbox_events set status='claimed', attempts=5, claimed_at=now() - interval '11 minutes', locked_until=now() - interval '1 second' where session_id='$SID'`, and give one a frozen send with
   `update outbox_events set pending_send = jsonb_build_object('key','x') where session_id='$SID' and kind='advisor_notification'`. A nudge leaves both `claimed`; a scheduled run answers `reaped:2` and logs

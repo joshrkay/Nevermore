@@ -13,7 +13,8 @@ import {
   type Completeness,
   type PipelineStatus,
 } from "@/data/advisor";
-import { listSubmissions, type SubmissionSummary } from "@/lib/advisorApi";
+import { emailProblemHelp, emailProblemLabel, emailProblemsBySession } from "@/data/outbox";
+import { listEmailProblems, listSubmissions, type EmailProblem, type SubmissionSummary } from "@/lib/advisorApi";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { PipelineBadge } from "@/components/advisor/PipelineBadge";
@@ -40,6 +41,17 @@ const AdvisorDashboardPage = () => {
   const query = searchParams.get("q") ?? "";
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [problems, setProblems] = useState<Map<string, EmailProblem>>(new Map());
+
+  // Read beside the queue, not as part of it: if this fails, the queue still loads.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => listEmailProblems())
+      .then((rows) => !cancelled && setProblems(emailProblemsBySession(rows)))
+      .catch(() => !cancelled && setProblems(new Map()));
+    return () => { cancelled = true; };
+  }, [attempt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -190,6 +202,14 @@ const AdvisorDashboardPage = () => {
                         </TableCell>
                         <TableCell className="text-sm">
                           {row.contact_name ?? <span className="text-muted-foreground">—</span>}
+                          {problems.get(row.session_id) && (
+                            <p className="mt-1">
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-destructive/15 text-destructive whitespace-nowrap">
+                                {emailProblemLabel(problems.get(row.session_id)!.reason)}
+                                <span className="sr-only">. {emailProblemHelp(problems.get(row.session_id)!.reason)}</span>
+                              </span>
+                            </p>
+                          )}
                         </TableCell>
                         <TableCell className="text-sm">
                           {formatStates(row.states) ?? <span className="text-muted-foreground">—</span>}

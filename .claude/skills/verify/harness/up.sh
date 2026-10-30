@@ -20,4 +20,5 @@ CONF
 (nohup node $H/resend.mjs $RUN/resend.jsonl > $RUN/resend.log 2>&1 & echo $! > $RUN/resend.pid)
 for i in $(seq 1 20); do curl -s -o /dev/null http://127.0.0.1:3001/ && break; sleep 0.5; done
 "$H/func.sh"
+"$H/webhook.sh"
 echo "up: pgrst=$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:3001/) gateway=$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:54321/x) func(GET)=$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8000/) (expect 200 404 405)"

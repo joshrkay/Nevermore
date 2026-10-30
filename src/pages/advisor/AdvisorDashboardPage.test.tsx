@@ -6,7 +6,8 @@ import type { SubmissionSummary } from "@/lib/advisorApi";
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
 const listSubmissions = vi.fn();
-vi.mock("@/lib/advisorApi", () => ({ listSubmissions: (s: unknown) => listSubmissions(s) }));
+const listEmailProblems = vi.fn();
+vi.mock("@/lib/advisorApi", () => ({ listSubmissions: (s: unknown) => listSubmissions(s), listEmailProblems: () => listEmailProblems() }));
 
 const { default: AdvisorDashboardPage } = await import("./AdvisorDashboardPage");
 
@@ -51,6 +52,7 @@ const companyOrder = () =>
 describe("AdvisorDashboardPage", () => {
   beforeEach(() => {
     listSubmissions.mockReset();
+    listEmailProblems.mockReset().mockResolvedValue([]);
     signOut.mockReset().mockResolvedValue(undefined);
   });
 
@@ -290,5 +292,42 @@ describe("AdvisorDashboardPage", () => {
     renderAt();
     expect(await screen.findByRole("alert")).toHaveTextContent("You no longer have advisor access");
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+  describe("prospects who cannot be reached by email", () => {
+    it("flags the submissions whose confirmation bounced or was reported as spam, and only those", async () => {
+      listSubmissions.mockResolvedValue([
+        row({ session_id: "s1", company_name: "Bounced Co" }),
+        row({ session_id: "s2", company_name: "Spam Co" }),
+        row({ session_id: "s3", company_name: "Fine Co" }),
+      ]);
+      listEmailProblems.mockResolvedValue([
+        { session_id: "s1", reason: "bounced", since: "2026-10-28T12:00:00Z" },
+        { session_id: "s2", reason: "complained", since: "2026-10-28T12:00:00Z" },
+      ]);
+      renderAt();
+      const rows = (await screen.findAllByRole("row")).slice(1);
+      const by = (name: string) => within(rows.find((r) => within(r).queryByText(name))!);
+      expect(by("Bounced Co").getByText("Email bounced")).toBeInTheDocument();
+      expect(by("Spam Co").getByText("Reported as spam")).toBeInTheDocument();
+      expect(by("Fine Co").queryByText(/Email bounced|Reported as spam|Email blocked/)).not.toBeInTheDocument();
+      // And says what to do, for a screen reader as much as anyone.
+      expect(by("Bounced Co").getByText(/Reach them another way/)).toBeInTheDocument();
+    });
+
+    it("still shows the queue, with no flags, when the check fails", async () => {
+      listSubmissions.mockResolvedValue([row({ company_name: "Acme" })]);
+      listEmailProblems.mockRejectedValue(new Error("Couldn't check for bounced emails."));
+      renderAt();
+      expect(await screen.findByText("Acme")).toBeInTheDocument();
+      expect(screen.queryByText("Email bounced")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("still shows the queue when the check throws before it can even ask", async () => {
+      listSubmissions.mockResolvedValue([row({ company_name: "Acme" })]);
+      listEmailProblems.mockImplementation(() => { throw new Error("synchronous"); });
+      renderAt();
+      expect(await screen.findByText("Acme")).toBeInTheDocument();
+    });
   });
 });

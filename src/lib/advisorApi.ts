@@ -74,6 +74,18 @@ export async function listOutboxEvents(status: OutboxStatus | null): Promise<Out
   return data ?? [];
 }
 
+export type EmailProblem = Database["public"]["Functions"]["advisor_email_problems"]["Returns"][number];
+
+/**
+ * The submissions whose prospect cannot be reached by the confirmation email (it bounced for good,
+ * or was reported as spam). Empty when all is well. Read beside the queue, not as part of it.
+ */
+export async function listEmailProblems(): Promise<EmailProblem[]> {
+  const { data, error } = await supabase.rpc("advisor_email_problems");
+  if (error) fail(error, "Couldn't check for bounced emails.");
+  return data ?? [];
+}
+
 /** How many events are in each status, and how long the longest-waiting due one has waited. */
 export async function outboxSummary(): Promise<OutboxSummaryRow[]> {
   const { data, error } = await supabase.rpc("advisor_outbox_summary");

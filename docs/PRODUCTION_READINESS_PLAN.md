@@ -638,7 +638,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic G: Communications and Operating Integrations
 
-*As built:* The outbox, both emails, the every-minute schedule (a guarded migration), the engineering alert for dead events and the advisor Outbox & Notifications page with one-click retry are built and tested. Gaps are bounce handling and the CRM, and nothing here has run against a hosted project, a real inbox or a real alert channel yet.
+*As built:* The outbox, both emails, the every-minute schedule (a guarded migration), the engineering alert for dead events and the advisor Outbox & Notifications page with one-click retry are built and tested. Bounce and suppression handling is built too. The gap is the CRM (D6), and nothing here has run against a hosted project, a real inbox, a real Resend webhook or a real alert channel yet.
 
 #### G-1.1 Outbox and event dispatch
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** C-3.1 · **Milestone:** M2
@@ -661,14 +661,9 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Notes:** Plain-text header, no logo. `PROSPECT_RESPONSE_TIME` and `SUPPORT_EMAIL` have no default, so unset means not sent. The pre-launch checklist is unchecked.
 
 #### G-2.2 Bounce and suppression handling
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** BE · **Depends:** G-2.1 · **Milestone:** M3
-- **Built:** No webhook, suppression table or flag exists.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Process provider bounce webhooks. Mark the address undeliverable and flag the submission for advisor follow-up.
-  - **AC:**
-    - A bounce flags the submission in the queue.
-    - Suppressed addresses are not emailed again.
-  - **Tests:** Replay a bounce webhook fixture.
+- **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** BE · **Depends:** G-2.1 · **Milestone:** M3
+- **Built:** A `resend-webhook` function (gateway JWT check off, the webhook's own Svix signature checked instead, 5 minute timestamp window) records `email.bounced`, `email.complained`, `email.delivery_delayed`, `email.failed` and `email.suppressed` once each (a provider retry is a no-op). A permanent bounce, a complaint, or the provider's own suppression puts the address on `email_suppressions`; temporary trouble is recorded only. The claim holds back a due confirmation to a suppressed address (new status `suppressed`, shown on the Outbox page), so a re-certification or retry cannot email it. The advisory team's addresses are never suppressed: a bounce on one is logged as `WEBHOOK_ADVISOR_BOUNCE`. `advisor_email_problems()` flags the submission in the advisor queue ("Email bounced", "Reported as spam") and on its page. The signature scheme and event fields were taken from the official `svix` and `resend` packages; the verifier is tested against Svix's own signer. Replayed fixtures are covered in the SQL and function tests, and the whole path was run on real Postgres, PostgREST and the function under Deno.
+- **Notes:** Not exercised against a real Resend webhook or a real bounce (the build environment cannot reach resend.com): create the webhook, set `RESEND_WEBHOOK_SECRET`, and run the checklist item in `docs/NOTIFICATIONS.md`. Lifting a suppression is SQL only. Both new tables hold addresses and belong in the D4 retention rule. The prospect's sign-in code emails share the Resend account: their bounces are recorded but nothing shows them to anyone.
 
 #### G-3.1 CRM selection and field-mapping specification
 - **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** PM + BE · **Depends:** D6 · **Milestone:** M3
@@ -1093,7 +1088,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | G-1.2 | Internal new-submission notification | S | High | M2 | DONE |
 | G-1.3 | Retry failed notifications | S | High | M2 | DONE |
 | G-2.1 | Prospect confirmation email | M | Medium | M3 | DONE |
-| G-2.2 | Bounce and suppression handling | S | Medium | M3 | NOT STARTED |
+| G-2.2 | Bounce and suppression handling | S | Medium | M3 | DONE |
 | G-3.1 | CRM selection and field-mapping specification | S | Medium | M3 | NOT STARTED |
 | G-3.2 | CRM sync worker | M | Medium | M3 | NOT STARTED |
 | G-3.3 | Sync failure visibility and retry | S | Medium | M3 | NOT STARTED |

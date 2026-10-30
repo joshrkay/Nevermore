@@ -11,6 +11,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const api = {
   loadSubmission: vi.fn(),
+  listEmailProblems: vi.fn(),
   setStatus: vi.fn(),
   addNote: vi.fn(),
   reviewField: vi.fn(),
@@ -88,6 +89,7 @@ describe("AdvisorSubmissionPage", () => {
     downloadBlob.mockReset();
     buildManuscriptPdf.mockClear();
     api.loadSubmission.mockResolvedValue(detail());
+    api.listEmailProblems.mockResolvedValue([]);
   });
 
   it("shows every captured field with its source, the transcript and the documents", async () => {
@@ -279,5 +281,29 @@ describe("AdvisorSubmissionPage", () => {
     renderPage();
     expect(await screen.findByRole("alert")).toHaveTextContent("You no longer have advisor access");
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+  describe("when the prospect cannot be reached by email", () => {
+    it("says so at the top, with what to do and the phone number on file", async () => {
+      api.listEmailProblems.mockResolvedValue([{ session_id: "s1", reason: "bounced", since: "2026-10-28T12:00:00Z" }]);
+      renderPage();
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("Email bounced.");
+      expect(alert).toHaveTextContent(/bounced for good/);
+      expect(alert).toHaveTextContent(/Reach them another way/);
+    });
+
+    it("says nothing about another submission's bounce, or when none is flagged", async () => {
+      api.listEmailProblems.mockResolvedValue([{ session_id: "other", reason: "complained", since: "2026-10-28T12:00:00Z" }]);
+      renderPage();
+      expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      expect(screen.queryByText(/Reported as spam|Email bounced/)).not.toBeInTheDocument();
+    });
+
+    it("still shows the submission when the check fails", async () => {
+      api.listEmailProblems.mockRejectedValue(new Error("Couldn't check for bounced emails."));
+      renderPage();
+      expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
+      expect(screen.queryByText(/Email bounced/)).not.toBeInTheDocument();
+    });
   });
 });

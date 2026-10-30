@@ -41,7 +41,7 @@ const event = (over: Partial<OutboxEvent> = {}): OutboxEvent => ({
 });
 
 const summaryOf = (counts: Partial<Record<string, number>>, oldestDue: string | null = null): OutboxSummaryRow[] =>
-  ["pending", "claimed", "sent", "dead"].map((status) => ({
+  ["pending", "claimed", "sent", "dead", "suppressed"].map((status) => ({
     status,
     events: counts[status] ?? 0,
     oldest_due_at: status === "pending" ? oldestDue : null,
@@ -119,17 +119,18 @@ describe("AdvisorOutboxPage", () => {
   });
 
   it("shows the counts per status, and which view is selected", async () => {
-    ready([event()], summaryOf({ dead: 2, pending: 1, claimed: 0, sent: 40 }));
+    ready([event()], summaryOf({ dead: 2, pending: 1, claimed: 0, sent: 40, suppressed: 2 }));
     renderAt();
     const filters = within(await screen.findByRole("group", { name: "Filter by status" }));
-    expect(filters.getByRole("button", { name: "All (43)" })).toHaveAttribute("aria-pressed", "true");
+    expect(filters.getByRole("button", { name: "All (45)" })).toHaveAttribute("aria-pressed", "true");
+    expect(filters.getByRole("button", { name: "Suppressed (2)" })).toBeInTheDocument();
     expect(filters.getByRole("button", { name: "Dead (2)" })).toHaveAttribute("aria-pressed", "false");
     expect(filters.getByRole("button", { name: "Pending (1)" })).toBeInTheDocument();
     expect(filters.getByRole("button", { name: "Claimed (0)" })).toBeInTheDocument();
     expect(filters.getByRole("button", { name: "Sent (40)" })).toBeInTheDocument();
   });
 
-  it.each(["dead", "sent", "pending", "claimed"] as const)("filters by %s, and keeps the filter in the URL", async (status) => {
+  it.each(["dead", "sent", "pending", "claimed", "suppressed"] as const)("filters by %s, and keeps the filter in the URL", async (status) => {
     ready([event()]);
     renderAt();
     await screen.findByText("Acme");
@@ -168,6 +169,21 @@ describe("AdvisorOutboxPage", () => {
     ready([], summaryOf({}));
     renderAt();
     expect(await screen.findByText("No notifications yet.")).toBeInTheDocument();
+  });
+
+  it("lists a suppressed email with why it was held back, and offers no retry", async () => {
+    ready(
+      [event({ id: "e9", kind: "prospect_confirmation", status: "suppressed", attempts: 0, last_error: "suppressed: bounced" })],
+      summaryOf({ suppressed: 1 }),
+    );
+    renderAt("/advisor/outbox?status=suppressed");
+    const row = within((await screen.findAllByRole("row"))[1]);
+    expect(row.getByText("Suppressed")).toBeInTheDocument();
+    expect(row.getByText(/this address bounced for good earlier, so it is not emailed again/)).toBeInTheDocument();
+    expect(row.getByText("suppressed: bounced")).toBeInTheDocument();
+    expect(row.getByText(/^Held back/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry send|Rebuild/ })).not.toBeInTheDocument();
+    expect(listOutboxEvents).toHaveBeenCalledWith("suppressed");
   });
 
   describe("retrying", () => {

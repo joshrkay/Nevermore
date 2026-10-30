@@ -1,7 +1,7 @@
 // Advisor-side view of the notification queue. Mirrors supabase/migrations/20261027090000_outbox_operations.sql
 // and the worker in supabase/functions/dispatch-outbox (docs/NOTIFICATIONS.md).
 
-export const OUTBOX_STATUSES = ["dead", "pending", "claimed", "sent"] as const;
+export const OUTBOX_STATUSES = ["dead", "pending", "claimed", "sent", "suppressed"] as const;
 export type OutboxStatus = (typeof OUTBOX_STATUSES)[number];
 
 export const isOutboxStatus = (s: unknown): s is OutboxStatus =>
@@ -12,6 +12,7 @@ export const OUTBOX_STATUS_LABELS: Record<OutboxStatus, string> = {
   pending: "Pending",
   claimed: "Claimed",
   sent: "Sent",
+  suppressed: "Suppressed",
 };
 
 /** One line each, for people who have not read the runbook. */
@@ -20,6 +21,7 @@ export const OUTBOX_STATUS_HELP: Record<OutboxStatus, string> = {
   pending: "Waiting to be sent, or waiting out a retry delay.",
   claimed: "A worker has it and is sending now.",
   sent: "Delivered to the email provider.",
+  suppressed: "Not sent: the address bounced for good or reported an email as spam, so it is not emailed again.",
 };
 
 /** The worker's attempt limit (`MAX_ATTEMPTS` in the dispatch-outbox function): the fifth failure is final. */
@@ -49,6 +51,12 @@ const GLOSSES: Record<string, string> = {
   network: "The connection to the provider failed. The email may have been delivered.",
 };
 
+const SUPPRESSED_GLOSSES: Record<string, string> = {
+  bounced: "Not sent: this address bounced for good earlier, so it is not emailed again.",
+  complained: "Not sent: this person reported an earlier email as spam, so they are not emailed again.",
+  provider_suppressed: "Not sent: the email provider already blocks this address.",
+};
+
 /**
  * A plain-language reading of an event's `last_error`: the worker records a short failure kind
  * (`provider_error:503`, `auth:403`, `timeout`) and, when the provider explained itself, that
@@ -58,6 +66,8 @@ const GLOSSES: Record<string, string> = {
 export function explainOutboxError(lastError: string | null): string | null {
   const text = lastError?.trim();
   if (!text) return null;
+  const suppressed = /^suppressed: (bounced|complained|provider_suppressed)$/.exec(text);
+  if (suppressed) return SUPPRESSED_GLOSSES[suppressed[1]];
   const configured = /^not_configured: (.+)$/.exec(text);
   if (configured) return `Not being sent until this is fixed: ${configured[1]}. It sends by itself once it is.`;
   const m = /^([a-z_]+)(?::(\d{3}))?(?: \(.*\))?$/.exec(text);
@@ -86,3 +96,26 @@ export function stalledMinutes(
 /** A status's count from the summary, 0 when absent. */
 export const countFor = (summary: { status: string; events: number }[], status: OutboxStatus) =>
   Number(summary.find((r) => r.status === status)?.events ?? 0);
+
+// ---------- Prospects who cannot be reached by email (G-2.2) ----------
+
+/** Why a submission is flagged: the confirmation email to the prospect bounced for good, or they reported it as spam. */
+export const EMAIL_PROBLEM_LABELS: Record<string, string> = {
+  bounced: "Email bounced",
+  complained: "Reported as spam",
+  provider_suppressed: "Email blocked",
+};
+
+export const emailProblemLabel = (reason: string) => EMAIL_PROBLEM_LABELS[reason] ?? "Email problem";
+
+/** What to do about it, in one sentence. */
+export function emailProblemHelp(reason: string): string {
+  if (reason === "complained") return "This prospect reported our confirmation email as spam, so we will not email them again. Reach them another way.";
+  if (reason === "provider_suppressed") return "The email provider blocks this prospect's address, so our emails do not reach them. Reach them another way.";
+  return "The confirmation email to this prospect bounced for good, so we will not email them again. Reach them another way.";
+}
+
+/** The flagged submissions by id. */
+export function emailProblemsBySession<T extends { session_id: string }>(rows: T[]): Map<string, T> {
+  return new Map(rows.map((r) => [r.session_id, r]));
+}

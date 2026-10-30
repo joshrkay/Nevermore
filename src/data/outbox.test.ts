@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   canRetry,
   countFor,
+  emailProblemHelp,
+  emailProblemLabel,
+  emailProblemsBySession,
   explainOutboxError,
   isOutboxStatus,
   OUTBOX_MAX_ATTEMPTS,
@@ -11,15 +14,15 @@ import {
 } from "./outbox";
 
 describe("statuses", () => {
-  it("are the four the queue uses, dead first because it is the one that needs action", () => {
-    expect([...OUTBOX_STATUSES]).toEqual(["dead", "pending", "claimed", "sent"]);
+  it("are the five the queue uses, dead first because it is the one that needs action", () => {
+    expect([...OUTBOX_STATUSES]).toEqual(["dead", "pending", "claimed", "sent", "suppressed"]);
     for (const s of OUTBOX_STATUSES) expect(isOutboxStatus(s)).toBe(true);
     for (const s of ["sending", "failed", "", null, undefined, 3]) expect(isOutboxStatus(s)).toBe(false);
   });
 
   it("allow a retry only for a dead event", () => {
     expect(canRetry({ status: "dead" })).toBe(true);
-    for (const status of ["pending", "claimed", "sent"]) expect(canRetry({ status })).toBe(false);
+    for (const status of ["pending", "claimed", "sent", "suppressed"]) expect(canRetry({ status })).toBe(false);
   });
 
   it("match the worker's attempt limit", () => {
@@ -63,7 +66,16 @@ describe("explainOutboxError", () => {
     expect(text).toContain("sends by itself");
   });
 
+  it.each([
+    ["suppressed: bounced", /bounced for good earlier/],
+    ["suppressed: complained", /reported an earlier email as spam/],
+    ["suppressed: provider_suppressed", /provider already blocks/],
+  ])("reads %s", (recorded, expected) => {
+    expect(explainOutboxError(recorded)).toMatch(expected);
+  });
+
   it("does not guess at text it does not know", () => {
+    expect(explainOutboxError("suppressed: something new")).toBeNull();
     expect(explainOutboxError("something odd happened")).toBeNull();
     expect(explainOutboxError("mystery_code")).toBeNull();
   });
@@ -99,5 +111,33 @@ describe("countFor", () => {
     expect(countFor(summary, "dead")).toBe(3);
     expect(countFor(summary, "sent")).toBe(12);
     expect(countFor(summary, "pending")).toBe(0);
+  });
+});
+
+describe("prospects who cannot be reached by email", () => {
+  it("labels each reason, and any reason it does not know, without hiding that something is wrong", () => {
+    expect(emailProblemLabel("bounced")).toBe("Email bounced");
+    expect(emailProblemLabel("complained")).toBe("Reported as spam");
+    expect(emailProblemLabel("provider_suppressed")).toBe("Email blocked");
+    expect(emailProblemLabel("something_new")).toBe("Email problem");
+  });
+
+  it("says what to do, and that the address will not be emailed again", () => {
+    for (const reason of ["bounced", "complained", "provider_suppressed", "something_new"]) {
+      expect(emailProblemHelp(reason)).toMatch(/Reach them another way/);
+    }
+    expect(emailProblemHelp("bounced")).toMatch(/bounced for good/);
+    expect(emailProblemHelp("complained")).toMatch(/reported our confirmation email as spam/);
+  });
+
+  it("indexes the flagged submissions by id", () => {
+    const map = emailProblemsBySession([
+      { session_id: "s1", reason: "bounced", since: "2026-10-28T12:00:00Z" },
+      { session_id: "s2", reason: "complained", since: "2026-10-28T13:00:00Z" },
+    ]);
+    expect(map.get("s1")?.reason).toBe("bounced");
+    expect(map.get("s2")?.reason).toBe("complained");
+    expect(map.get("s3")).toBeUndefined();
+    expect(emailProblemsBySession([]).size).toBe(0);
   });
 });

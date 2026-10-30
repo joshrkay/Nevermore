@@ -125,6 +125,7 @@ beforeEach(async () => {
     "ADVISORY_NOTIFY_EMAIL=advisors@example.com",
     "SUPPORT_EMAIL=help@example.com",
     "PROSPECT_RESPONSE_TIME=two business days",
+    "RESEND_WEBHOOK_SECRET=whsec_c2VjcmV0",
     "AI_MODEL=",
   ].join("\n"));
   fake = { auth: {}, queries: [], patches: [], deployed: new Set(), setUp: false };
@@ -163,6 +164,7 @@ describe("supabase-setup", () => {
       `functions deploy chamber-extract`,
       `functions deploy document-extract`,
       `functions deploy dispatch-outbox`,
+      `functions deploy resend-webhook`,
     ]);
 
     const secretsCall = cliCalls().find((c) => c.secrets);

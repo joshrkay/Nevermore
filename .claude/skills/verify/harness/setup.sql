@@ -91,6 +91,7 @@ $$;
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
+\i supabase/migrations/20261028090000_email_delivery_events.sql
 
 -- Seed: a verified prospect (with a profile), a guest, and one fixed session per scenario.
 INSERT INTO auth.users VALUES

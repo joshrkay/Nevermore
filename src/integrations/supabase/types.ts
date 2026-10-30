@@ -283,6 +283,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      advisor_email_problems: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          reason: string
+          session_id: string
+          since: string
+        }[]
+      }
       advisor_list_outbox_events: {
         Args: { p_limit?: number; p_status?: string | null }
         Returns: {
