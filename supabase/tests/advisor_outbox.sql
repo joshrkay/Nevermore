@@ -516,3 +516,151 @@ BEGIN
 
   RAISE NOTICE 'advisor_outbox: bounce flag and access cases passed';
 END $$;
+
+-- ====================================================================================
+-- Review follow-ups (G-2.2): claims that bypass the hold-back, lifting a suppression, what the
+-- flag follows, undelivered mail, and addresses in the provider's own text.
+-- ====================================================================================
+DO $$
+DECLARE
+  u uuid := gen_random_uuid();
+  s uuid := gen_random_uuid();
+  ev_lapsed uuid; ev_lapsed2 uuid; ev_live2 uuid; ev_clean uuid; ev_h1 uuid; ev_h2 uuid;
+  frozen jsonb;
+  msg jsonb := jsonb_build_object('from', 'a@x.example', 'to', jsonb_build_array('b@y.example'), 'subject', 's', 'text', 't', 'html', 'h');
+  n integer;
+BEGIN
+  INSERT INTO auth.users (id, email) VALUES (u, 'followup@acme.example');
+  INSERT INTO public.chamber_sessions (id, user_id, chamber_data) VALUES (s, u, '{"company_name":"Followup"}');
+  DELETE FROM public.outbox_events;
+
+  -- ---------- A claim whose worker was lost is held back too, not handed to the next worker ----------
+  PERFORM pg_temp.hook('fu_1', 'email.bounced', NULL, ARRAY['late1@x.example'], 'Permanent');
+  ev_lapsed := pg_temp.mk_conf(s, 'late1@x.example', 'claimed');
+  UPDATE public.outbox_events SET attempts = 1, locked_until = now() - interval '1 minute', claimed_at = now() - interval '11 minutes' WHERE id = ev_lapsed;
+  SET LOCAL ROLE service_role;
+  SELECT count(*) INTO n FROM public.claim_outbox_events(ARRAY['prospect_confirmation'], 10, 5);
+  RESET ROLE;
+  IF n <> 0 OR (SELECT status FROM public.outbox_events WHERE id = ev_lapsed) <> 'suppressed' THEN
+    RAISE EXCEPTION 'FAIL: a lapsed claim to a suppressed address was handed on (% claimed)', n;
+  END IF;
+
+  -- The webhook holds back a lapsed claim at once, and leaves a LIVE claim to the freeze below.
+  ev_lapsed2 := pg_temp.mk_conf(s, 'late2@x.example', 'claimed');
+  UPDATE public.outbox_events SET attempts = 1, locked_until = now() - interval '1 minute' WHERE id = ev_lapsed2;
+  ev_live2 := pg_temp.mk_conf(s, 'late2@x.example', 'claimed');
+  UPDATE public.outbox_events SET attempts = 1, locked_until = now() + interval '5 minutes', claimed_at = now() WHERE id = ev_live2;
+  PERFORM pg_temp.hook('fu_2', 'email.bounced', NULL, ARRAY['late2@x.example'], 'Permanent');
+  IF (SELECT status FROM public.outbox_events WHERE id = ev_lapsed2) <> 'suppressed' THEN RAISE EXCEPTION 'FAIL: the webhook left a lapsed claim in the queue'; END IF;
+  IF (SELECT status FROM public.outbox_events WHERE id = ev_live2) <> 'claimed' THEN RAISE EXCEPTION 'FAIL: the webhook took a live claim out from under its worker'; END IF;
+
+  -- The live claim's worker asks to write the email: refused, the event is held back, and the worker is told it no longer holds it.
+  SET LOCAL ROLE service_role;
+  frozen := public.freeze_outbox_message(ev_live2, 1, msg);
+  RESET ROLE;
+  IF frozen IS NOT NULL THEN RAISE EXCEPTION 'FAIL: an email was written for a suppressed address: %', frozen; END IF;
+  IF (SELECT status FROM public.outbox_events WHERE id = ev_live2) <> 'suppressed' OR (SELECT pending_send FROM public.outbox_events WHERE id = ev_live2) IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: the refused freeze left the event %', (SELECT status FROM public.outbox_events WHERE id = ev_live2);
+  END IF;
+  -- Anyone else is frozen as before; and only the claimant's attempt can do either.
+  ev_clean := pg_temp.mk_conf(s, 'clean@x.example', 'claimed');
+  UPDATE public.outbox_events SET attempts = 1, locked_until = now() + interval '5 minutes', claimed_at = now() WHERE id = ev_clean;
+  SET LOCAL ROLE service_role;
+  IF public.freeze_outbox_message(ev_clean, 2, msg) IS NOT NULL THEN RAISE EXCEPTION 'FAIL: a freeze by a stale attempt was applied'; END IF;
+  frozen := public.freeze_outbox_message(ev_clean, 1, msg);
+  RESET ROLE;
+  IF frozen IS NULL OR frozen ->> 'key' NOT LIKE 'outbox-%' OR (SELECT status FROM public.outbox_events WHERE id = ev_clean) <> 'claimed' THEN
+    RAISE EXCEPTION 'FAIL: a normal freeze changed: %', frozen;
+  END IF;
+
+  -- ---------- Lifting a suppression, on purpose ----------
+  ev_h1 := pg_temp.mk_conf(s, 'late3@x.example', 'pending');
+  ev_h2 := pg_temp.mk_conf(s, 'late3@x.example', 'pending');
+  PERFORM pg_temp.hook('fu_3', 'email.bounced', NULL, ARRAY['late3@x.example'], 'Permanent');
+  IF (SELECT count(*) FROM public.outbox_events WHERE id IN (ev_h1, ev_h2) AND status = 'suppressed') <> 2 THEN RAISE EXCEPTION 'FAIL: test premise: both should be held back'; END IF;
+  SET LOCAL ROLE service_role;
+  -- Without p_requeue the held-back mail stays held back (it may be old); the address is free again.
+  n := public.lift_email_suppression('  Late1@X.example ', false);
+  IF n <> 0 OR EXISTS (SELECT 1 FROM public.email_suppressions WHERE address = 'late1@x.example') THEN RAISE EXCEPTION 'FAIL: lifting did not just lift (% requeued)', n; END IF;
+  n := public.lift_email_suppression('late3@x.example', true);
+  RESET ROLE;
+  IF n <> 2 OR EXISTS (SELECT 1 FROM public.email_suppressions WHERE address = 'late3@x.example') THEN RAISE EXCEPTION 'FAIL: lifting with a requeue returned %', n; END IF;
+  IF (SELECT count(*) FROM public.outbox_events WHERE id IN (ev_h1, ev_h2) AND status = 'pending' AND attempts = 0 AND last_error IS NULL AND next_attempt_at <= now()) <> 2 THEN
+    RAISE EXCEPTION 'FAIL: the held-back confirmations were not requeued as new';
+  END IF;
+  SET LOCAL ROLE service_role;
+  IF public.lift_email_suppression('never-suppressed@x.example', true) <> 0 THEN RAISE EXCEPTION 'FAIL: lifting an address that was not suppressed did something'; END IF;
+  RESET ROLE;
+  PERFORM pg_temp.must_raise($q$SELECT public.lift_email_suppression('   ')$q$, '22023', 'lifting nothing');
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.must_raise($q$SELECT public.lift_email_suppression('late1@x.example')$q$, '42501', 'a signed-in user lifting a suppression');
+  RESET ROLE;
+
+  RAISE NOTICE 'advisor_outbox: hold-back, freeze and lift cases passed';
+END $$;
+
+DO $$
+DECLARE
+  adv uuid := (SELECT user_id FROM public.user_roles WHERE role = 'advisor' LIMIT 1);
+  mk uuid;
+  s_move uuid := gen_random_uuid(); s_nd uuid := gen_random_uuid(); s_fail uuid := gen_random_uuid();
+  s_both uuid := gen_random_uuid(); s_other uuid := gen_random_uuid(); s_ok uuid := gen_random_uuid();
+  flags jsonb;
+BEGIN
+  DELETE FROM public.outbox_events; DELETE FROM public.email_suppressions; DELETE FROM public.email_delivery_events;
+  FOREACH mk IN ARRAY ARRAY[s_move, s_nd, s_fail, s_both, s_other, s_ok] LOOP
+    INSERT INTO auth.users (id, email) VALUES (mk, mk::text || '@acme.example');
+    INSERT INTO public.chamber_sessions (id, user_id, chamber_data) VALUES (mk, mk, '{"company_name":"Flags"}');
+  END LOOP;
+
+  -- ---------- The flag follows the LATEST confirmation: a new address that was emailed clears it ----------
+  PERFORM pg_temp.hook('fl_1', 'email.bounced', 'm-old', ARRAY['old@x.example'], 'Permanent');
+  PERFORM pg_temp.mk_conf(s_move, 'old@x.example', 'sent', 'm-old');
+  UPDATE public.outbox_events SET created_at = now() - interval '2 hours' WHERE session_id = s_move;
+  PERFORM pg_temp.mk_conf(s_move, 'new@x.example', 'sent', 'm-new');   -- the prospect changed their address and certified again
+  UPDATE public.outbox_events SET created_at = now() - interval '1 hour' WHERE session_id = s_move AND provider_message_id = 'm-new';
+
+  -- ---------- Mail the provider reports undelivered, though the address is not suppressed ----------
+  PERFORM pg_temp.mk_conf(s_nd, 'nd@x.example', 'sent', 'm-nd');
+  PERFORM pg_temp.hook('fl_2', 'email.bounced', 'm-nd', ARRAY['nd@x.example'], 'Transient', 'mailbox full');
+  PERFORM pg_temp.mk_conf(s_fail, 'f@x.example', 'sent', 'm-f');
+  PERFORM pg_temp.hook('fl_3', 'email.failed', 'm-f', ARRAY['f@x.example'], NULL, 'provider fault');
+  -- A later, permanent report for the same address: the suppression is the stronger statement.
+  PERFORM pg_temp.mk_conf(s_both, 'both@x.example', 'sent', 'm-both');
+  PERFORM pg_temp.hook('fl_4', 'email.bounced', 'm-both', ARRAY['both@x.example'], 'Transient');
+  PERFORM pg_temp.hook('fl_5', 'email.complained', 'm-both', ARRAY['both@x.example']);
+  -- Trouble with a message that is not this submission's confirmation says nothing about it.
+  PERFORM pg_temp.mk_conf(s_other, 'other@x.example', 'sent', 'm-other');
+  PERFORM pg_temp.hook('fl_6', 'email.bounced', 'm-someone-elses', ARRAY['other@x.example'], 'Transient');
+  PERFORM pg_temp.mk_conf(s_ok, 'ok2@x.example', 'sent', 'm-ok');
+  PERFORM pg_temp.hook('fl_7', 'email.delivery_delayed', 'm-ok', ARRAY['ok2@x.example']);   -- still trying: not a problem
+
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.as_user(adv);
+  SELECT jsonb_object_agg(p.session_id, p.reason) INTO flags FROM public.advisor_email_problems() p;
+  RESET ROLE;
+  IF flags IS DISTINCT FROM jsonb_build_object(s_nd, 'not_delivered', s_fail, 'not_delivered', s_both, 'complained') THEN
+    RAISE EXCEPTION 'FAIL: the flags are %', flags;
+  END IF;
+
+  -- A newer confirmation to the bounced address (a re-certification after the bounce) brings the flag back.
+  PERFORM pg_temp.mk_conf(s_move, 'old@x.example', 'pending');
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.as_user(adv);
+  SELECT jsonb_object_agg(p.session_id, p.reason) INTO flags FROM public.advisor_email_problems() p;
+  RESET ROLE;
+  IF (flags ->> s_move::text) IS DISTINCT FROM 'bounced' THEN RAISE EXCEPTION 'FAIL: a new confirmation to the bounced address did not flag again: %', flags; END IF;
+
+  -- ---------- Addresses in the provider's own text never reach the table ----------
+  PERFORM pg_temp.hook('rd_1', 'email.bounced', NULL, ARRAY['x1@x.example'], 'Permanent', '550 5.1.1 <"mary o''connor"@example.com>: Recipient address rejected');
+  PERFORM pg_temp.hook('rd_2', 'email.bounced', NULL, ARRAY['x2@x.example'], 'Permanent', '550 <mary.o''connor@example.com>, bob@example.org: unknown');
+  PERFORM pg_temp.hook('rd_3', 'email.bounced', NULL, ARRAY['x3@x.example'], 'Permanent', 'user+tag@sub.example.co.uk mailbox gone; Idempotency-Key outbox-2f0c1a7e-3b1d-4c9e-9d5a-0123456789ab');
+  IF (SELECT detail FROM public.email_delivery_events WHERE provider_event_id = 'rd_1') <> '550 5.1.1 <[email] Recipient address rejected'
+     OR (SELECT detail FROM public.email_delivery_events WHERE provider_event_id = 'rd_2') <> '550 [email] [email] unknown'
+     OR (SELECT detail FROM public.email_delivery_events WHERE provider_event_id = 'rd_3') NOT LIKE '[email] mailbox gone;%' THEN
+    RAISE EXCEPTION 'FAIL: redacted details are %', (SELECT jsonb_agg(detail ORDER BY provider_event_id) FROM public.email_delivery_events WHERE provider_event_id LIKE 'rd_%');
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.email_delivery_events WHERE detail ~* 'mary|connor|bob@|example\.org|user\+tag') THEN RAISE EXCEPTION 'FAIL: part of an address survived redaction'; END IF;
+
+  RAISE NOTICE 'advisor_outbox: flag follow-up and redaction cases passed';
+END $$;

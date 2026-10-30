@@ -299,11 +299,12 @@ describe("AdvisorSubmissionPage", () => {
       expect(screen.queryByText(/Reported as spam|Email bounced/)).not.toBeInTheDocument();
     });
 
-    it("still shows the submission when the check fails", async () => {
+    it("still shows the submission when the check fails, and says the check did not run", async () => {
       api.listEmailProblems.mockRejectedValue(new Error("Couldn't check for bounced emails."));
       renderPage();
       expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
       expect(screen.queryByText(/Email bounced/)).not.toBeInTheDocument();
+      expect(await screen.findByText(/Couldn't check whether the confirmation email to this prospect bounced/)).toBeInTheDocument();
     });
   });
 });

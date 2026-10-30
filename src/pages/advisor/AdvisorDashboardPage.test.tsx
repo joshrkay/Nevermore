@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import type { SubmissionSummary } from "@/lib/advisorApi";
 
@@ -314,13 +314,39 @@ describe("AdvisorDashboardPage", () => {
       expect(by("Bounced Co").getByText(/Reach them another way/)).toBeInTheDocument();
     });
 
-    it("still shows the queue, with no flags, when the check fails", async () => {
+    it("still shows the queue when the check fails, and says the check did not run", async () => {
       listSubmissions.mockResolvedValue([row({ company_name: "Acme" })]);
       listEmailProblems.mockRejectedValue(new Error("Couldn't check for bounced emails."));
       renderAt();
       expect(await screen.findByText("Acme")).toBeInTheDocument();
       expect(screen.queryByText("Email bounced")).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      // An unflagged queue must not read as "every prospect is reachable".
+      expect(await screen.findByText(/Couldn't check for bounced emails, so prospects whose confirmation bounced may not be flagged/)).toBeInTheDocument();
+    });
+
+    it("keeps the flags it already showed when a refresh of the check fails, and clears the note when it works again", async () => {
+      listSubmissions.mockResolvedValue([row({ session_id: "s1", company_name: "Acme" })]);
+      listEmailProblems.mockResolvedValueOnce([{ session_id: "s1", reason: "bounced", since: "2026-10-28T12:00:00Z" }]);
+      renderAt();
+      expect(await screen.findByText("Email bounced")).toBeInTheDocument();
+
+      listEmailProblems.mockRejectedValueOnce(new Error("timeout"));
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      expect(await screen.findByText(/Couldn't check for bounced emails/)).toBeInTheDocument();
+      expect(screen.getByText("Email bounced")).toBeInTheDocument();
+
+      listEmailProblems.mockResolvedValue([{ session_id: "s1", reason: "bounced", since: "2026-10-28T12:00:00Z" }]);
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(screen.queryByText(/Couldn't check for bounced emails/)).not.toBeInTheDocument());
+      expect(screen.getByText("Email bounced")).toBeInTheDocument();
+    });
+
+    it("shows a not-delivered flag in its own words", async () => {
+      listSubmissions.mockResolvedValue([row({ session_id: "s1", company_name: "Acme" })]);
+      listEmailProblems.mockResolvedValue([{ session_id: "s1", reason: "not_delivered", since: "2026-10-28T12:00:00Z" }]);
+      renderAt();
+      expect(await screen.findByText("Email not delivered")).toBeInTheDocument();
     });
 
     it("still shows the queue when the check throws before it can even ask", async () => {

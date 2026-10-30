@@ -26,14 +26,16 @@ const AdvisorSubmissionPage = () => {
   const [attempt, setAttempt] = useState(0);
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const [emailProblem, setEmailProblem] = useState<EmailProblem | null>(null);
+  const [problemCheckFailed, setProblemCheckFailed] = useState(false);
 
-  // Read beside the submission, not as part of it: if this fails, the submission still loads.
+  // Read beside the submission, not as part of it: if this fails, the submission still loads. A flag
+  // already shown stays (a failed refresh is not "no problem"), and the advisor is told it did not run.
   useEffect(() => {
     let cancelled = false;
     Promise.resolve()
       .then(() => listEmailProblems())
-      .then((rows) => !cancelled && setEmailProblem(rows.find((r) => r.session_id === id) ?? null))
-      .catch(() => !cancelled && setEmailProblem(null));
+      .then((rows) => { if (!cancelled) { setEmailProblem(rows.find((r) => r.session_id === id) ?? null); setProblemCheckFailed(false); } })
+      .catch(() => !cancelled && setProblemCheckFailed(true));
     return () => { cancelled = true; };
   }, [id, attempt]);
 
@@ -83,7 +85,7 @@ const AdvisorSubmissionPage = () => {
         )}
 
         {load.kind === "ready" && (
-          <Detail detail={load.detail} reload={reload} messageIds={messageIds} highlighted={highlighted} onShowMessage={showMessage} emailProblem={emailProblem} />
+          <Detail detail={load.detail} reload={reload} messageIds={messageIds} highlighted={highlighted} onShowMessage={showMessage} emailProblem={emailProblem} problemCheckFailed={problemCheckFailed} />
         )}
       </main>
     </div>
@@ -97,6 +99,7 @@ const Detail = ({
   highlighted,
   onShowMessage,
   emailProblem,
+  problemCheckFailed,
 }: {
   detail: SubmissionDetail;
   reload: () => void;
@@ -104,10 +107,16 @@ const Detail = ({
   highlighted: string | null;
   onShowMessage: (id: string) => void;
   emailProblem: EmailProblem | null;
+  problemCheckFailed: boolean;
 }) => {
   const sub = detail.submission;
   return (
     <>
+      {problemCheckFailed && !emailProblem && (
+        <p role="status" className="mb-4 text-sm text-warning">
+          Couldn't check whether the confirmation email to this prospect bounced.
+        </p>
+      )}
       {emailProblem && (
         <div role="alert" className="mb-6 flex gap-3 border border-destructive/40 bg-destructive/5 rounded-xl p-4 text-sm">
           <MailWarning className="w-5 h-5 text-destructive shrink-0" aria-hidden="true" />

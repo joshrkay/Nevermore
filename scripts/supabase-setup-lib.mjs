@@ -3,6 +3,21 @@
 
 export const FUNCTIONS = ["chamber-extract", "document-extract", "dispatch-outbox", "resend-webhook"];
 
+/**
+ * Functions called by an outside service, which holds no Supabase login: the gateway's JWT check is
+ * off for them (supabase/config.toml) and they verify the caller themselves. They are probed with no
+ * credentials at all, as that service calls them, so a gateway that is still refusing them (the
+ * setting not applied) answers with its own 401 and the check fails, instead of looking healthy
+ * because the probe carried a valid key.
+ */
+export const PROVIDER_CALLED_FUNCTIONS = ["resend-webhook"];
+
+/** The headers the setup's signed-out probe of `fn` sends. */
+export function probeHeaders(fn, publicKey) {
+  const json = { "Content-Type": "application/json" };
+  return PROVIDER_CALLED_FUNCTIONS.includes(fn) ? json : { Authorization: `Bearer ${publicKey}`, apikey: publicKey, ...json };
+}
+
 /** Secrets the email notifications need. Without them emails wait in the queue; nothing is lost. */
 export const EMAIL_SECRETS = ["RESEND_API_KEY", "EMAIL_FROM", "ADVISORY_NOTIFY_EMAIL", "SUPPORT_EMAIL", "PROSPECT_RESPONSE_TIME"];
 
@@ -279,6 +294,7 @@ export function interpretChecks(seen, { localMigrations }) {
     add("Function secrets", missing.length === 0, missing.length === 0 ? "AI key, IP_HASH_SECRET and APP_BASE_URL set" : `missing: ${missing.join(", ")}`);
     const emailMissing = EMAIL_SECRETS.filter((n) => !names.includes(n));
     add("Email secrets", emailMissing.length === 0, emailMissing.length === 0 ? "all set" : `missing: ${emailMissing.join(", ")} (emails wait in the queue)`, false);
+    add("Bounce webhook secret", names.includes("RESEND_WEBHOOK_SECRET"), names.includes("RESEND_WEBHOOK_SECRET") ? "set" : "missing (bounces and complaints are not processed)", false);
   } else {
     add("Function secrets", false, "could not list secret names");
   }

@@ -191,7 +191,24 @@ describe("providerErrorDetail", () => {
   });
 
   it("replaces addresses, wherever they sit", () => {
-    expect(detail("Invalid address jo@acme.example in to; cc <a.b+c@d.example>, x@y.example")).toBe("Invalid address [email] in to; cc <[email]>, [email]");
+    expect(detail("Invalid address jo@acme.example in to; cc <a.b+c@d.example>, x@y.example")).toBe("Invalid address [email] in to; cc [email] [email]");
+  });
+
+  it("replaces an address whole, whatever surrounds it: a quoted local part, an apostrophe, brackets", () => {
+    const out = [
+      detail(`550 5.1.1 <"mary o'connor"@example.com>: Recipient address rejected`),
+      detail("550 <mary.o'connor@example.com>, bob@example.org: unknown"),
+      detail("rejected: 'sam@example.com'."),
+    ].join(" | ");
+    expect(out).not.toMatch(/mary|connor|bob|sam|example\.(com|org)/i);
+    expect(out).toContain("[email]");
+  });
+
+  it("looks only at the start of a very long message, and stays fast on one with no spaces", () => {
+    const started = Date.now();
+    const out = detail("a".repeat(500_000))!;
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(Array.from(out).length).toBeLessThanOrEqual(140);
   });
 
   it("replaces anything that could be a key, token or idempotency key", () => {

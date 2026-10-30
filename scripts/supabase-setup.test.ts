@@ -22,6 +22,8 @@ interface Fake {
   patches: Record<string, unknown>[];
   deployed: Set<string>;
   setUp: boolean;
+  /** The gateway is still checking JWTs for resend-webhook: it refuses a caller with no credentials. */
+  webhookJwtCheck?: boolean;
 }
 
 let dir: string;
@@ -87,7 +89,12 @@ function handle(req: IncomingMessage, body: string, res: ServerResponse) {
     return send(200, { external: { anonymous_users: fake.auth.external_anonymous_users_enabled === true }, mailer_autoconfirm: fake.auth.mailer_autoconfirm ?? true });
   }
   const fn = p.match(/^\/functions\/v1\/(.+)$/)?.[1];
-  if (fn) return fake.deployed.has(fn) ? send(401, { error: "Unauthorized" }) : send(404, { code: "NOT_FOUND" });
+  if (fn) {
+    if (!fake.deployed.has(fn)) return send(404, { code: "NOT_FOUND" });
+    // The gateway's own refusal (not the function's): what a project deployed without config.toml's verify_jwt = false answers.
+    if (fn === "resend-webhook" && fake.webhookJwtCheck && !req.headers.authorization) return send(401, { code: 401, message: "Missing authorization header" });
+    return send(401, { error: "Unauthorized" });
+  }
   send(404, { message: "unknown route" });
 }
 
@@ -189,6 +196,24 @@ describe("supabase-setup", () => {
     for (const secret of [SERVICE_KEY, SECRETS.LOVABLE_API_KEY, SECRETS.RESEND_API_KEY, ipHashSecret!, "sbp_token"]) {
       expect(out).not.toContain(secret);
     }
+  });
+
+  it("probes the webhook function with no credentials, so a gateway still refusing it cannot look healthy", async () => {
+    // Deployed the way the config asks (JWT check off): the function's own 401 is what comes back.
+    const ok = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"]);
+    expect(ok.out).toContain("✓ Function resend-webhook: answered 401 from the function itself");
+
+    // Deployed without that setting (a dashboard redeploy, a deploy that did not read config.toml): the gateway
+    // refuses the credential-less probe with its own 401, and the check fails.
+    fake.webhookJwtCheck = true;
+    const bad = await run(["--project-ref", REF, "--check"]);
+    expect(bad.out).toMatch(/✗ Function resend-webhook: answered 401(?! from the function itself)/);
+    expect(bad.out).toContain("✓ Function dispatch-outbox: answered 401 from the function itself");
+  });
+
+  it("reports a missing webhook secret as a to-do, not a failed setup", async () => {
+    const { out } = await run(["--project-ref", REF, "--check"]);
+    expect(out).toMatch(/Bounce webhook secret/);
   });
 
   it("changes nothing unless the project ref is typed back", async () => {

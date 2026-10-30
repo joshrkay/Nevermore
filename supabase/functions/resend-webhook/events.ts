@@ -22,7 +22,7 @@ export interface EmailEvent {
   bounceType: string | null;
   /** The provider's explanation, with addresses and key-like strings replaced. */
   detail: string | null;
-  /** ISO time the provider says it happened. */
+  /** ISO time of the event: the envelope's, else the email's own creation time (which every event of one email shares). */
   occurredAt: string | null;
 }
 
@@ -41,13 +41,19 @@ const isTracked = (t: unknown): t is TrackedType => typeof t === "string" && (TR
 // Control characters, line/paragraph separators and invisible or bidi-override characters.
 // eslint-disable-next-line no-control-regex
 const INVISIBLE = /[\u0000-\u001f\u007f\u200b-\u200f\u2028-\u2029\u202a-\u202e\u2066-\u2069\ufeff]+/g;
-const ADDRESS = /[^\s@<>,;"'()[\]\\]+@[^\s@<>,;"'()[\]\\]+/g;
+// A quoted local part ("mary o'connor"@example.com), then any run of non-space characters around an
+// '@' (so brackets, apostrophes and trailing punctuation go with the address, not just most of it).
+const QUOTED_ADDRESS = /"[^"]*"@\S*/g;
+const ADDRESS = /\S*@\S*/g;
 const TOKEN = /[A-Za-z0-9_\-+/=]{24,}/g;
+
+/** How much of a provider's text is looked at at all: the patterns below are cheap on this much, and the line kept is far shorter. */
+const MAX_INPUT = 2000;
 
 /** Free text from the provider as one capped line, with addresses and key-like strings replaced. */
 export function cleanText(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
-  const flat = value.replace(ADDRESS, "[email]").replace(TOKEN, "[redacted]").replace(INVISIBLE, " ").replace(/\s+/g, " ").trim();
+  const flat = value.slice(0, MAX_INPUT).replace(QUOTED_ADDRESS, "[email]").replace(ADDRESS, "[email]").replace(TOKEN, "[redacted]").replace(INVISIBLE, " ").replace(/\s+/g, " ").trim();
   if (!flat) return null;
   const points = Array.from(flat);
   return points.length > max ? `${points.slice(0, max - 1).join("")}…` : flat;
@@ -88,7 +94,8 @@ export function parseResendEvent(raw: unknown): Parsed {
   const bounce = asObject(data.bounce);
   const failed = asObject(data.failed);
   const suppressed = asObject(data.suppressed);
-  const bounceType = typeof bounce?.type === "string" ? cleanText(bounce.type, 40) : null;
+  // The provider's word for it (Permanent, Transient, Undetermined): letters only, or not at all.
+  const bounceType = typeof bounce?.type === "string" && /^[A-Za-z]{1,30}$/.test(bounce.type.trim()) ? bounce.type.trim() : null;
   const subType = cleanText(bounce?.subType, 40);
   const explanation = cleanText(bounce?.message ?? failed?.reason ?? suppressed?.message, 160);
   const detail = cleanText([subType, explanation].filter(Boolean).join(": "), 160);
@@ -96,6 +103,6 @@ export function parseResendEvent(raw: unknown): Parsed {
 
   return {
     kind: "event",
-    event: { type, messageId, recipients, bounceType, detail, occurredAt: isoOrNull(data.created_at) ?? isoOrNull(body.created_at) },
+    event: { type, messageId, recipients, bounceType, detail, occurredAt: isoOrNull(body.created_at) ?? isoOrNull(data.created_at) },
   };
 }

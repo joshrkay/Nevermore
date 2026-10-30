@@ -102,7 +102,10 @@ const DETAIL_MAX = 140;
 
 // Anything address-shaped, and anything that could be a key, token or idempotency key: long runs of
 // token characters. Error messages are free text and can quote the request they refuse.
-const ADDRESS = /[^\s@<>,;"'()[\]\\]+@[^\s@<>,;"'()[\]\\]+/g;
+// A quoted local part ("mary o'connor"@example.com), then any run of non-space characters around an
+// '@', so brackets, apostrophes and trailing punctuation go with the address and none of it is left.
+const QUOTED_ADDRESS = /"[^"]*"@\S*/g;
+const ADDRESS = /\S*@\S*/g;
 const TOKEN = /[A-Za-z0-9_\-+/=]{24,}/g;
 
 /**
@@ -122,7 +125,8 @@ export function providerErrorDetail(body: string): string | undefined {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
   const { name, message } = parsed as { name?: unknown; message?: unknown };
   if (typeof message !== "string") return undefined;
-  const clean = oneLine(message.replace(ADDRESS, "[email]").replace(TOKEN, "[redacted]"), DETAIL_MAX);
+  // Only the start of the provider's text is looked at: the patterns stay cheap, and the line kept is short.
+  const clean = oneLine(message.slice(0, 2000).replace(QUOTED_ADDRESS, "[email]").replace(ADDRESS, "[email]").replace(TOKEN, "[redacted]"), DETAIL_MAX);
   if (clean === null) return undefined;
   const label = typeof name === "string" && /^[A-Za-z0-9_.-]{1,40}$/.test(name) ? `${name}: ` : "";
   return oneLine(`${label}${clean}`, DETAIL_MAX) ?? undefined;

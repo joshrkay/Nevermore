@@ -17,7 +17,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  advisorSql, authConfigPatch, checkSecrets, cronScheduleSql, envFileLine, EXTENSIONS_SQL, FUNCTIONS,
+  advisorSql, authConfigPatch, checkSecrets, cronScheduleSql, envFileLine, EXTENSIONS_SQL, FUNCTIONS, probeHeaders,
   interpretChecks, isProjectRef, parseEnvFile, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete,
   STATUS_QUERIES, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
@@ -212,10 +212,11 @@ async function check(call, ref) {
     } catch { /* reported as unreadable */ }
     for (const fn of FUNCTIONS) {
       try {
-        // Signed in as nobody: a deployed function answers with its own 401.
+        // Signed in as nobody: a deployed function answers with its own 401. A function an outside
+        // service calls is probed with no credentials at all, as that service calls it.
         const res = await fetch(`${projectUrl}/functions/v1/${fn}`, {
           method: "POST",
-          headers: { Authorization: `Bearer ${publicKey}`, apikey: publicKey, "Content-Type": "application/json" },
+          headers: probeHeaders(fn, publicKey),
           body: "{}",
           signal: AbortSignal.timeout(30_000),
         });
