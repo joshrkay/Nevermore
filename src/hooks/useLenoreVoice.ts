@@ -23,6 +23,9 @@ export function useLenoreVoice({
   const [isConnected, setIsConnected] = useState(false);
   const callbacksRef = useRef({ onOrbStateChange, onNewMessage, onLastSpokenText, onExtract });
   const lastUserMessageRef = useRef<ChatMessage | null>(null);
+  // The agent opens each voice session with its own hello. Its first line, if it comes before the prospect
+  // says anything, is marked as a greeting so the transcript keeps only one (see useChamberSession).
+  const awaitingGreetingRef = useRef(false);
 
   // Keep refs fresh without re-creating the hook
   useEffect(() => {
@@ -32,6 +35,7 @@ export function useLenoreVoice({
   const conversation = useConversation({
     onConnect: () => {
       console.log("Lenore voice connected");
+      awaitingGreetingRef.current = true;
       setIsConnected(true);
       callbacksRef.current.onOrbStateChange("listening");
     },
@@ -44,6 +48,7 @@ export function useLenoreVoice({
       if (!message) return;
 
       if (role === "user") {
+        awaitingGreetingRef.current = false;
         const msg = createChatMessage("user", message);
         lastUserMessageRef.current = msg;
         callbacksRef.current.onNewMessage(msg);
@@ -62,7 +67,9 @@ export function useLenoreVoice({
       }
       const spoken = message.replace(/<extract>[\s\S]*?<\/extract>/g, "").trim();
       if (!spoken) return;
-      callbacksRef.current.onNewMessage(createChatMessage("lenore", spoken));
+      const greeting = awaitingGreetingRef.current;
+      awaitingGreetingRef.current = false;
+      callbacksRef.current.onNewMessage(createChatMessage("lenore", spoken, greeting ? "greeting" : undefined));
       callbacksRef.current.onLastSpokenText(
         spoken.length > 120 ? spoken.slice(0, 120) + "..." : spoken
       );

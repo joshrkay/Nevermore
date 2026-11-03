@@ -17,7 +17,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  advisorSql, authConfigPatch, checkSecrets, cronScheduleSql, envFileLine, EXTENSIONS_SQL, FUNCTIONS,
+  advisorSql, authConfigPatch, checkSecrets, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, EXTENSIONS_SQL, FUNCTIONS,
   interpretChecks, isProjectRef, parseEnvFile, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete,
   STATUS_QUERIES, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
@@ -168,7 +168,7 @@ async function setup(call, ref, secretsFile, env) {
   }
   for (const note of notes) say(`  Note: ${note}`);
 
-  step("Email schedule: pg_cron, pg_net, the service-role key in Vault, and a run every minute");
+  step("Schedules: pg_cron, pg_net, the service-role key in Vault, dispatch-outbox every minute and draft expiry hourly");
   const ext = await runSql(call, ref, EXTENSIONS_SQL);
   if (!ext.ok) fail(`Enabling pg_cron and pg_net failed (${ext.status}): ${ext.message}`);
   const keys = await apiKeys(call, ref);
@@ -179,6 +179,8 @@ async function setup(call, ref, secretsFile, env) {
   if (!vault.ok) fail(`Storing the service-role key in Vault failed (${vault.status}).`);
   const cron = await runSql(call, ref, cronScheduleSql(ref));
   if (!cron.ok) fail(`Scheduling dispatch-outbox failed (${cron.status}): ${cron.message}`);
+  const expiry = await runSql(call, ref, EXPIRY_SCHEDULE_SQL);
+  if (!expiry.ok) fail(`Scheduling expire-idle-intakes failed (${expiry.status}): ${expiry.message}`);
   say("  Scheduled.");
 }
 

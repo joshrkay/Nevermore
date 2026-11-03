@@ -116,6 +116,18 @@ export const EMAIL_CODE_TEMPLATE = [
 ].join("\n");
 
 /**
+ * The sign-in message (Supabase's "magic link" template) a returning prospect gets when they ask the
+ * Chamber to recover an intake from another browser: it must carry the 6-digit code `RecoverIntake` asks for.
+ */
+export const SIGN_IN_CODE_SUBJECT = "Your sign-in code";
+export const SIGN_IN_CODE_TEMPLATE = [
+  "<h2>Sign in to your intake</h2>",
+  "<p>Enter this code to pick up your intake where you left off:</p>",
+  "<p style=\"font-size:24px;font-weight:bold;letter-spacing:4px\">{{ .Token }}</p>",
+  "<p>If you didn't ask for this, you can ignore this email.</p>",
+].join("\n");
+
+/**
  * The auth settings to change, given the current ones (`null` when they couldn't be read). Only what
  * differs is sent, and nothing already customised is overwritten: extra redirect URLs are kept, a
  * template that already has the code stays, and SMTP that isn't Resend's is left alone. Resend's SMTP
@@ -141,6 +153,10 @@ export function authConfigPatch(current, env) {
   if (!String(c.mailer_templates_email_change_content ?? "").includes(".Token")) {
     patch.mailer_subjects_email_change = EMAIL_CODE_SUBJECT;
     patch.mailer_templates_email_change_content = EMAIL_CODE_TEMPLATE;
+  }
+  if (!String(c.mailer_templates_magic_link_content ?? "").includes(".Token")) {
+    patch.mailer_subjects_magic_link = SIGN_IN_CODE_SUBJECT;
+    patch.mailer_templates_magic_link_content = SIGN_IN_CODE_TEMPLATE;
   }
 
   const sender = parseSender(env.EMAIL_FROM);
@@ -203,6 +219,13 @@ export function cronScheduleSql(projectRef) {
   ].join("\n");
 }
 
+/**
+ * Expires idle drafts hourly (A-1.5, migration 20261103090000). The migration schedules it when pg_cron
+ * exists as it runs; this covers a project that only gets pg_cron from this script, which runs after
+ * the migrations. Scheduling the same name again replaces the job.
+ */
+export const EXPIRY_SCHEDULE_SQL = "select cron.schedule('expire-idle-intakes', '17 * * * *', 'select public.expire_idle_intakes();');";
+
 /** Grants the advisor role to an existing account, and reports whether that account exists. */
 export function advisorSql(email) {
   return [
@@ -225,6 +248,7 @@ export const STATUS_QUERIES = {
   extensions: "select count(*)::int as n from pg_extension where extname in ('pg_cron', 'pg_net');",
   vault_secret: "select count(*)::int as n from vault.secrets where name = 'service_role_key';",
   schedule: "select count(*)::int as n from cron.job where jobname = 'dispatch-outbox' and schedule = '* * * * *';",
+  expiry_schedule: "select count(*)::int as n from cron.job where jobname = 'expire-idle-intakes';",
   role_grants: "select count(*)::int as n from public.user_roles;",
 };
 
@@ -254,6 +278,7 @@ export function interpretChecks(seen, { localMigrations }) {
   add("pg_cron and pg_net", s.extensions === 2, `${s.extensions ?? "?"} of 2 enabled`);
   add("Service-role key in Vault", s.vault_secret === 1, s.vault_secret === 1 ? "stored" : "missing");
   add("Email schedule", s.schedule === 1, s.schedule === 1 ? "dispatch-outbox every minute" : "not scheduled");
+  add("Draft expiry schedule", s.expiry_schedule === 1, s.expiry_schedule === 1 ? "expire-idle-intakes hourly" : "not scheduled: idle drafts never expire");
 
   const auth = seen.auth;
   add("Guest (anonymous) sign-in", auth?.external?.anonymous_users === true, auth ? `anonymous_users=${auth.external?.anonymous_users}` : "settings unreadable");
@@ -262,6 +287,8 @@ export function interpretChecks(seen, { localMigrations }) {
   const ac = seen.authConfig;
   const codeOk = !!ac && ac.mailer_otp_length === 6 && String(ac.mailer_templates_email_change_content ?? "").includes(".Token");
   add("Email code message", codeOk, ac ? (codeOk ? "6-digit code in the email-change template" : "the email-change template must send a 6-digit {{ .Token }}") : "auth config unreadable");
+  const signInOk = !!ac && ac.mailer_otp_length === 6 && String(ac.mailer_templates_magic_link_content ?? "").includes(".Token");
+  add("Sign-in code message", signInOk, ac ? (signInOk ? "6-digit code in the magic-link template" : "the magic-link template must send a 6-digit {{ .Token }} (returning prospects sign in with it)") : "auth config unreadable");
   add("Sign-in emails reach prospects", !!ac?.smtp_host, ac ? (ac.smtp_host ? `custom SMTP (${ac.smtp_host})` : "built-in mailer: only your team's addresses get emails") : "auth config unreadable");
 
   for (const fn of FUNCTIONS) {

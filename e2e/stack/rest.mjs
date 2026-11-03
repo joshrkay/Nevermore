@@ -34,6 +34,8 @@ function quote(name, what) {
 }
 
 function statusForSqlState(code, role) {
+  // PostgREST's custom status: SQLSTATE PTxyz answers HTTP xyz.
+  if (/^PT[1-5][0-9]{2}$/.test(code)) return Number(code.slice(2));
   if (code === "42501") return role === "anon" ? 401 : 403;
   if (code === "23503" || code === "23505") return 409;
   if (code === "42883" || code === "42P01") return 404;

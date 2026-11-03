@@ -16,19 +16,32 @@ const updates: {
 let resumeRow: Record<string, unknown> | null = null;
 let readError: MockError | null = null;
 const reads: string[] = [];
+// The intake ids those reads asked for.
+const readIds: unknown[] = [];
 let inserts = 0;
 const insertedRows: Record<string, unknown>[] = [];
 const insertedColumns: string[] = [];
 let insertError: { message: string } | null = null;
 // The prospect's latest unfinished intake, as the lookup on a bare /start finds it.
-let latestRow: { id: string } | null = null;
+let latestRow: { id: string; status?: string } | null = null;
 let latestError: { message: string } | null = null;
+// What the second lookup (no unfinished intake) finds among expired and submitted intakes.
+let lastClosedRow: { id: string; status: string } | null = null;
 const latestQueries: unknown[][] = [];
+// Calls to archive_chamber_session, and what it answers.
+const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
+let rpcResult: { data: unknown; error: MockError | null } = { data: "archived", error: null };
 
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" }, session: { access_token: "tok" } }) }));
+// Who is signed in. A test can switch it and rerender, as signing in with an emailed code does.
+let authUserId = "u1";
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: authUserId }, session: { access_token: "tok" } }) }));
 vi.mock("@/lib/dispatchOutbox", () => ({ dispatchOutbox: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      rpcCalls.push({ fn, args });
+      return rpcResult;
+    },
     from: () => ({
       select: (columns: string) => ({
         eq: (column: string, value: unknown) =>
@@ -36,16 +49,18 @@ vi.mock("@/integrations/supabase/client", () => ({
             ? {
                 maybeSingle: async () => {
                   reads.push(columns);
+                  readIds.push(value);
                   return readError ? { data: null, error: readError } : { data: resumeRow, error: null };
                 },
               }
             : {
-                neq: (notColumn: string, notValue: unknown) => ({
+                in: (inColumn: string, inValues: string[]) => ({
                   order: (orderColumn: string, order: unknown) => ({
                     limit: (n: number) => ({
                       maybeSingle: async () => {
-                        latestQueries.push([column, value, notColumn, notValue, orderColumn, order, n]);
-                        return latestError ? { data: null, error: latestError } : { data: latestRow, error: null };
+                        latestQueries.push([column, value, inColumn, inValues, orderColumn, order, n]);
+                        if (latestError) return { data: null, error: latestError };
+                        return { data: inValues.includes("in_progress") ? latestRow : lastClosedRow, error: null };
                       },
                     }),
                   }),
@@ -97,7 +112,8 @@ const { useChamberSession, describeInvalidPath } = await import("./useChamberSes
 const { dispatchOutbox } = await import("@/lib/dispatchOutbox");
 const { applyExtraction } = await import("@/data/provenance");
 const { parseChamberData } = await import("@/data/chamberValidation");
-const { createChatMessage } = await import("@/data/chat");
+const { createChatMessage, OPENING_MESSAGE } = await import("@/data/chat");
+const { readBackup, writeBackup } = await import("@/data/intakeBackup");
 
 // Lets queued promise callbacks run while fake timers are active (waitFor would hang).
 const drain = () => act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
@@ -126,13 +142,19 @@ describe("useChamberSession", () => {
     resumeRow = null;
     readError = null;
     reads.length = 0;
+    readIds.length = 0;
     insertedColumns.length = 0;
     inserts = 0;
     insertedRows.length = 0;
     insertError = null;
     latestRow = null;
     latestError = null;
+    lastClosedRow = null;
     latestQueries.length = 0;
+    rpcCalls.length = 0;
+    rpcResult = { data: "archived", error: null };
+    authUserId = "u1";
+    localStorage.clear();
     vi.mocked(dispatchOutbox).mockClear();
   });
   afterEach(() => {
@@ -452,10 +474,21 @@ describe("useChamberSession", () => {
       expect(inserts).toBe(0);
     });
 
-    it("looks only at the prospect's own intakes that aren't submitted, most recently changed first", async () => {
+    it("looks only at the prospect's own unfinished intakes, most recently active first, then at whether the last one expired", async () => {
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.sessionId).toBe("s1"));
-      expect(latestQueries).toEqual([["user_id", "u1", "status", "submitted", "updated_at", { ascending: false }, 1]]);
+      expect(latestQueries).toEqual([
+        ["user_id", "u1", "status", ["in_progress"], "last_activity_at", { ascending: false }, 1],
+        ["user_id", "u1", "status", ["expired", "submitted"], "last_activity_at", { ascending: false }, 1],
+      ]);
+    });
+
+    it("doesn't look further once it finds an unfinished intake", async () => {
+      latestRow = { id: "s7" };
+      resumeRow = openRow;
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(latestQueries).toEqual([["user_id", "u1", "status", ["in_progress"], "last_activity_at", { ascending: false }, 1]]);
     });
 
     it("starts a new intake when they have no unfinished one", async () => {
@@ -1424,5 +1457,379 @@ describe("useChamberSession", () => {
         expect(result.current.saveStatus).toBe("missing");
       });
     });
+  });
+
+  describe("an intake that expired", () => {
+    const expiredRow = (over: Record<string, unknown> = {}) =>
+      serverRow({ id: "s5", status: "expired", expires_at: "2026-10-01T00:00:00Z", chamber_data: { company_name: "Old Co" }, ...over });
+
+    it("says so when a linked intake has expired, shows none of it, and creates nothing", async () => {
+      resumeRow = expiredRow();
+      const { result } = renderHook(() => useChamberSession("s5"));
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.expired).toEqual({ at: "2026-10-01T00:00:00Z" });
+      expect(result.current.resumeFailed).toBe(false);
+      expect(result.current.sessionId).toBeNull();
+      expect(result.current.chamberData.company_name).toBeNull();
+      expect(inserts).toBe(0);
+    });
+
+    it("starts a fresh intake from there when the prospect asks", async () => {
+      resumeRow = expiredRow();
+      const { result } = renderHook(() => useChamberSession("s5"));
+      await waitFor(() => expect(result.current.expired).not.toBeNull());
+      act(() => result.current.startNew());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(result.current.expired).toBeNull();
+      expect(insertedRows[0].chamber_data).toMatchObject({ company_name: null });
+    });
+
+    it("says so on a bare /start when nothing is open and what they last worked on expired", async () => {
+      lastClosedRow = { id: "s5", status: "expired" };
+      resumeRow = expiredRow();
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.expired).not.toBeNull();
+      expect(inserts).toBe(0);
+    });
+
+    it("just starts a new intake when what they last did was submit one", async () => {
+      lastClosedRow = { id: "s6", status: "submitted" };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(result.current.expired).toBeNull();
+      expect(reads).toEqual([]);
+    });
+
+    describe("while it is open", () => {
+      const edit = (result: { current: ReturnType<typeof useChamberSession> }) =>
+        act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      const open = async () => {
+        const hook = renderHook(() => useChamberSession());
+        await waitFor(() => expect(hook.result.current.sessionId).toBe("s1"));
+        vi.useFakeTimers();
+        return hook;
+      };
+
+      it("says it expired, rather than calling it a conflict, when a save finds it closed, and doesn't retry", async () => {
+        const { result } = await open();
+        edit(result);
+        await act(async () => { vi.advanceTimersByTime(2000); });
+        resumeRow = expiredRow({ id: "s1", data_version: 2 });
+        await act(async () => { updates[0].resolve({ error: null, data: [] }); });
+        await drain();
+        expect(result.current.saveStatus).toBe("expired");
+        edit(result);
+        await act(async () => { vi.advanceTimersByTime(30000); });
+        expect(updates).toHaveLength(1);
+      });
+
+      it("treats the database's closed-intake refusal the same way", async () => {
+        const { result } = await open();
+        edit(result);
+        await act(async () => { vi.advanceTimersByTime(2000); });
+        await act(async () => { updates[0].resolve({ error: { message: "This intake is closed (expired)", code: "EA002", details: "expired" } }); });
+        await drain();
+        expect(result.current.saveStatus).toBe("expired");
+      });
+
+      it("refuses to certify it, and says why", async () => {
+        const { result } = await open();
+        let ok: SubmitResult | undefined;
+        const pending = result.current.submit(submission).then((r) => { ok = r; });
+        await drain();
+        resumeRow = expiredRow({ id: "s1" });
+        await act(async () => { updates[0].resolve({ error: null, data: [] }); await pending; });
+        expect(ok).toEqual({ message: expect.stringContaining("has expired") });
+        expect(result.current.certification.status).toBe("none");
+      });
+
+      it("keeps the prospect's answers in the new intake they start from there", async () => {
+        const { result } = await open();
+        edit(result);
+        await act(async () => { vi.advanceTimersByTime(2000); });
+        resumeRow = expiredRow({ id: "s1" });
+        await act(async () => { updates[0].resolve({ error: null, data: [] }); });
+        await drain();
+        vi.useRealTimers();
+        act(() => result.current.startNew());
+        await waitFor(() => expect(inserts).toBe(2));
+        expect(insertedRows[1].chamber_data).toMatchObject({ company_name: "Acme" });
+      });
+    });
+  });
+
+  describe("start over", () => {
+    it("archives the intake, then begins a blank one with a fresh greeting", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      const greeting = result.current.messages[0];
+
+      let ok: boolean | undefined;
+      await act(async () => { ok = await result.current.startOver(); });
+      expect(ok).toBe(true);
+      expect(rpcCalls).toEqual([{ fn: "archive_chamber_session", args: { p_session_id: "s1" } }]);
+      await waitFor(() => expect(inserts).toBe(2));
+      expect(insertedRows[1].chamber_data).toMatchObject({ company_name: null });
+      const transcript = insertedRows[1].transcript as { id: string; text: string; kind?: string }[];
+      expect(transcript).toHaveLength(1);
+      expect(transcript[0]).toMatchObject({ text: OPENING_MESSAGE, kind: "greeting" });
+      expect(transcript[0].id).not.toBe(greeting.id);
+      // The unsaved edit was left behind with the old intake, not sent.
+      expect(updates).toHaveLength(0);
+    });
+
+    it("waits for a save already on its way, so it can't land on the archived intake", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      const saving = act(async () => { await result.current.retrySave(); });
+      await saving;
+      expect(updates).toHaveLength(1);
+      let done = false;
+      const pending = result.current.startOver().then(() => { done = true; });
+      await drain();
+      expect(rpcCalls).toHaveLength(0);
+      updates[0].resolve({ error: null });
+      await act(async () => { await pending; });
+      expect(done).toBe(true);
+      expect(rpcCalls).toHaveLength(1);
+    });
+
+    it("changes nothing when the intake couldn't be archived", async () => {
+      rpcResult = { data: null, error: { message: "Failed to fetch" } };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      let ok: boolean | undefined;
+      await act(async () => { ok = await result.current.startOver(); });
+      expect(ok).toBe(false);
+      expect(result.current.sessionId).toBe("s1");
+      expect(result.current.chamberData.company_name).toBe("Acme");
+      expect(inserts).toBe(1);
+    });
+
+    it("goes ahead when the intake was already archived (a retry after a lost answer)", async () => {
+      rpcResult = { data: null, error: { message: "Intake not found", code: "PT404" } };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      let ok: boolean | undefined;
+      await act(async () => { ok = await result.current.startOver(); });
+      expect(ok).toBe(true);
+      await waitFor(() => expect(inserts).toBe(2));
+    });
+  });
+
+  describe("unsaved answers kept in the browser", () => {
+    const key = "eaa.intake-backup.v1:u1:s1";
+    const stored = () => JSON.parse(localStorage.getItem(key) ?? "null");
+
+    it("keeps an edit until the save is confirmed, without the census", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.updateIntake((prev) => ({
+        ...prev,
+        data: { ...prev.data, company_name: "Acme", census: parseChamberData({ census: [{ first_name: "Sarah", work_state: "CA" }] }).census },
+      })));
+      await waitFor(() => expect(stored()?.chamber_data.company_name).toBe("Acme"));
+      expect(stored().chamber_data).not.toHaveProperty("census");
+      expect(stored().baseVersion).toBe(1);
+
+      await act(async () => { await result.current.retrySave(); });
+      await act(async () => { updates[0].resolve({ error: null }); });
+      await waitFor(() => expect(result.current.saveStatus).toBe("saved"));
+      expect(localStorage.getItem(key)).toBeNull();
+    });
+
+    it("keeps it when the save fails", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      await act(async () => { await result.current.retrySave(); });
+      await act(async () => { updates[0].resolve({ error: networkError }); });
+      await waitFor(() => expect(result.current.saveStatus).toBe("failed"));
+      expect(stored()?.chamber_data.company_name).toBe("Acme");
+    });
+
+    const keptCopy = (over: Record<string, unknown> = {}) => writeBackup({
+      userId: "u1",
+      sessionId: "s7",
+      baseVersion: 2,
+      chamber_data: { ...parseChamberData({ company_name: "Acme Unsaved" }) } as unknown as Record<string, unknown>,
+      field_provenance: { company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-11-01T00:00:00Z" } },
+      transcript: [
+        { id: "m1", sender: "lenore", text: OPENING_MESSAGE, timestamp: "", kind: "greeting" },
+        { id: "m2", sender: "user", text: "We're Acme Unsaved", timestamp: "" },
+      ],
+      ...over,
+    });
+    const savedRow = (over: Record<string, unknown> = {}) => serverRow({
+      id: "s7",
+      data_version: 2,
+      chamber_data: parseChamberData({ company_name: "Acme", census: [{ first_name: "Sarah", work_state: "CA" }] }),
+      transcript: [{ id: "m1", sender: "lenore", text: OPENING_MESSAGE, timestamp: "", kind: "greeting" }],
+      ...over,
+    });
+
+    it("offers them back when the intake is opened again, and restores them over what was loaded", async () => {
+      keptCopy();
+      resumeRow = savedRow();
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.backupOffer).not.toBeNull());
+      expect(result.current.backupOffer?.savedElsewhereSince).toBe(false);
+      expect(result.current.chamberData.company_name).toBe("Acme");
+
+      act(() => result.current.restoreBackup());
+      expect(result.current.backupOffer).toBeNull();
+      expect(result.current.chamberData.company_name).toBe("Acme Unsaved");
+      // The census is the server's: the browser never kept it.
+      expect(result.current.chamberData.census.map((e) => e.first_name)).toEqual(["Sarah"]);
+      expect(result.current.messages.map((m) => m.text)).toEqual([OPENING_MESSAGE, "We're Acme Unsaved"]);
+      expect(result.current.provenance.company_name?.status).toBe("confirmed");
+
+      await act(async () => { await result.current.retrySave(); });
+      expect(updates[0].filters).toEqual({ id: "s7", data_version: 2 });
+      expect(updates[0].payload.chamber_data).toMatchObject({ company_name: "Acme Unsaved" });
+    });
+
+    it("warns when the intake was saved from somewhere else since", async () => {
+      keptCopy();
+      resumeRow = savedRow({ data_version: 4 });
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.backupOffer?.savedElsewhereSince).toBe(true));
+    });
+
+    it("forgets them when the prospect discards them", async () => {
+      keptCopy();
+      resumeRow = savedRow();
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.backupOffer).not.toBeNull());
+      act(() => result.current.discardBackup());
+      expect(result.current.backupOffer).toBeNull();
+      expect(readBackup("u1", "s7")).toBeNull();
+      expect(result.current.chamberData.company_name).toBe("Acme");
+    });
+
+    it("leaves the copy alone while the prospect hasn't decided, even as they type", async () => {
+      keptCopy();
+      resumeRow = savedRow();
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.backupOffer).not.toBeNull());
+      act(() => result.current.setChamberData((prev) => ({ ...prev, industry: "Retail" })));
+      await act(async () => { await result.current.retrySave(); });
+      await act(async () => { updates[0].resolve({ error: null }); });
+      expect(readBackup("u1", "s7")?.chamber_data.company_name).toBe("Acme Unsaved");
+    });
+
+    it("offers nothing, and forgets the copy, when the server already has exactly those answers", async () => {
+      keptCopy({ chamber_data: { ...parseChamberData({ company_name: "Acme" }) }, field_provenance: {}, transcript: [{ id: "m1", sender: "lenore", text: OPENING_MESSAGE, timestamp: "", kind: "greeting" }] });
+      resumeRow = savedRow();
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(result.current.backupOffer).toBeNull();
+      expect(readBackup("u1", "s7")).toBeNull();
+    });
+
+    it("never offers one person's copy to another", async () => {
+      keptCopy({ userId: "u2" });
+      resumeRow = savedRow();
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(result.current.backupOffer).toBeNull();
+    });
+  });
+
+  describe("when someone else signs in in this tab", () => {
+    it("opens the linked intake for them after it couldn't be opened for the guest", async () => {
+      const { result, rerender } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.resumeFailed).toBe(true));
+
+      authUserId = "u2";
+      resumeRow = serverRow({ id: "s7", chamber_data: { company_name: "Recovered Co" } });
+      rerender();
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(result.current.resumeFailed).toBe(false);
+      expect(result.current.chamberData.company_name).toBe("Recovered Co");
+    });
+
+    it("doesn't ask for the intake the guest had open, which was the guest's, not theirs", async () => {
+      resumeRow = serverRow({ id: "g1", chamber_data: { company_name: null } });
+      const { result, rerender } = renderHook(() => useChamberSession("g1"));
+      await waitFor(() => expect(result.current.sessionId).toBe("g1"));
+      readIds.length = 0;
+
+      authUserId = "u2";
+      latestRow = { id: "s8" };
+      resumeRow = serverRow({ id: "s8", chamber_data: { company_name: "Mine Inc" } });
+      rerender();
+      await waitFor(() => expect(result.current.sessionId).toBe("s8"));
+      expect(readIds).toEqual(["s8"]);
+      expect(result.current.resumeFailed).toBe(false);
+    });
+
+    it("drops the guest's blank intake and opens their own latest one", async () => {
+      const { result, rerender } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.addMessage(createChatMessage("user", "hello")));
+
+      authUserId = "u2";
+      latestRow = { id: "s8" };
+      resumeRow = serverRow({ id: "s8", chamber_data: { company_name: "Mine Inc" }, transcript: [] });
+      rerender();
+      await waitFor(() => expect(result.current.sessionId).toBe("s8"));
+      expect(result.current.chamberData.company_name).toBe("Mine Inc");
+      expect(result.current.messages.map((m) => m.text)).toEqual([OPENING_MESSAGE]);
+      expect(latestQueries.at(-1)?.[1]).toBe("u2");
+    });
+  });
+
+  describe("the conversation", () => {
+    it("keeps one greeting: a voice session's own hello is not added again", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.addMessage(createChatMessage("lenore", "Hi — I'm Lenore.", "greeting")));
+      expect(result.current.messages).toHaveLength(1);
+      act(() => result.current.addMessage(createChatMessage("lenore", "Noted.")));
+      expect(result.current.messages).toHaveLength(2);
+    });
+
+    it("drops repeated greetings from a saved transcript and marks where the restored conversation ends", async () => {
+      resumeRow = serverRow({
+        id: "s9",
+        transcript: [
+          { id: "a", sender: "lenore", text: OPENING_MESSAGE, timestamp: "" },
+          { id: "b", sender: "lenore", text: OPENING_MESSAGE, timestamp: "" },
+          { id: "c", sender: "user", text: "We're Acme", timestamp: "" },
+          { id: "d", sender: "lenore", text: "Welcome back. Hello again!", timestamp: "", kind: "greeting" },
+          { id: "e", sender: "lenore", text: "Noted.", timestamp: "" },
+        ],
+      });
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+      expect(result.current.messages.map((m) => m.id)).toEqual(["a", "c", "e"]);
+      expect(result.current.restoredThrough).toBe("e");
+    });
+
+    it("marks nothing as restored when the saved conversation is only the greeting", async () => {
+      resumeRow = serverRow({ id: "s9", transcript: [{ id: "a", sender: "lenore", text: OPENING_MESSAGE, timestamp: "" }] });
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+      expect(result.current.restoredThrough).toBeNull();
+    });
+  });
+
+  it("reports, by path only, saved answers that don't match intake schema v1, and loads what is valid", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    resumeRow = serverRow({ id: "s9", chamber_data: { company_name: "Acme", hq_state: "California", employees: [] } });
+    const { result } = renderHook(() => useChamberSession("s9"));
+    await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+    expect(result.current.chamberData.company_name).toBe("Acme");
+    expect(result.current.chamberData.hq_state).toBeNull();
+    const [message, issues] = warn.mock.calls[0];
+    expect(message).toMatch(/intake schema v1/);
+    expect(issues).toEqual(["hq_state must be a US state or territory code such as CA", "employees is not a known intake field"]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("California");
+    warn.mockRestore();
   });
 });

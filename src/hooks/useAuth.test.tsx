@@ -15,6 +15,7 @@ const authApi = {
   signInAnonymously: vi.fn(),
   updateUser: vi.fn(),
   verifyOtp: vi.fn(),
+  signInWithOtp: vi.fn(),
 };
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { auth: authApi } }));
 
@@ -98,6 +99,45 @@ describe("useAuth guest accounts", () => {
   });
 });
 
+describe("useAuth returning by emailed code", () => {
+  beforeEach(() => {
+    currentSession = { user: { id: "g1", is_anonymous: true } };
+    authApi.signInWithOtp.mockReset().mockResolvedValue({ error: null });
+    authApi.verifyOtp.mockReset().mockResolvedValue({ error: null });
+  });
+
+  it("emails a code to an existing account only, never creating one", async () => {
+    const { result } = await mountAuth();
+    let outcome: { error: Error | null; noAccount: boolean } | undefined;
+    await act(async () => { outcome = await result.current.requestSignInCode("jo@acme.com"); });
+    expect(authApi.signInWithOtp).toHaveBeenCalledWith({ email: "jo@acme.com", options: { shouldCreateUser: false } });
+    expect(outcome).toEqual({ error: null, noAccount: false });
+  });
+
+  it("tells the caller there is no account, without calling it an error", async () => {
+    authApi.signInWithOtp.mockResolvedValue({ error: Object.assign(new Error("Signups not allowed for otp"), { code: "otp_disabled" }) });
+    const { result } = await mountAuth();
+    let outcome: { error: Error | null; noAccount: boolean } | undefined;
+    await act(async () => { outcome = await result.current.requestSignInCode("nobody@acme.com"); });
+    expect(outcome).toEqual({ error: null, noAccount: true });
+  });
+
+  it("passes other failures on, such as too many requests", async () => {
+    authApi.signInWithOtp.mockResolvedValue({ error: Object.assign(new Error("For security purposes, you can only request this after 60 seconds"), { code: "over_email_send_rate_limit" }) });
+    const { result } = await mountAuth();
+    let outcome: { error: Error | null; noAccount: boolean } | undefined;
+    await act(async () => { outcome = await result.current.requestSignInCode("jo@acme.com"); });
+    expect(outcome?.noAccount).toBe(false);
+    expect(outcome?.error?.message).toMatch(/60 seconds/);
+  });
+
+  it("signs in with the code as an email sign-in, not an email change", async () => {
+    const { result } = await mountAuth();
+    await act(async () => { await result.current.verifySignInCode("jo@acme.com", "654321"); });
+    expect(authApi.verifyOtp).toHaveBeenCalledWith({ email: "jo@acme.com", token: "654321", type: "email" });
+  });
+});
+
 describe("useAuth session ending", () => {
   const account = { user: { id: "adv1", is_anonymous: false } };
 
@@ -115,6 +155,18 @@ describe("useAuth session ending", () => {
     const fresh = await mountAuth();
     act(() => listener?.("SIGNED_OUT", null));
     expect(fresh.result.current.sessionEnded).toBeNull();
+  });
+
+  it("removes unsaved answers kept in this browser on a deliberate sign-out, but not when a session lapses", async () => {
+    localStorage.setItem("eaa.intake-backup.v1:adv1:s1", "{}");
+    localStorage.setItem("other", "keep");
+    const { result } = await mountAuth();
+    await act(async () => { await result.current.signOut("expired"); });
+    expect(localStorage.getItem("eaa.intake-backup.v1:adv1:s1")).not.toBeNull();
+    await act(async () => { await result.current.signOut(); });
+    expect(localStorage.getItem("eaa.intake-backup.v1:adv1:s1")).toBeNull();
+    expect(localStorage.getItem("other")).toBe("keep");
+    localStorage.clear();
   });
 
   it("calls a deliberate sign-out a sign-out", async () => {
