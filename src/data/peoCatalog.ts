@@ -50,6 +50,20 @@ export const PEO_CATALOG: PeoRecord[] = [
   { name: "TriNet", minHeadcount: null, statesServed: null, lastVerified: null },
 ];
 
+/**
+ * The longest PEO name kept, the limit of the "name another PEO" field. The database refuses longer
+ * names (chamber_sessions.chosen_peo); src/data/schemaSync.test.ts keeps the two the same.
+ */
+export const PEO_NAME_MAX = 80;
+
+/** A PEO name as it is saved: trimmed and at most PEO_NAME_MAX characters, or null for none. */
+export function cleanPeoName(name: unknown): string | null {
+  if (typeof name !== "string") return null;
+  // Cut by character, not UTF-16 unit, so a name is never left ending in half a character.
+  const cleaned = Array.from(name.trim()).slice(0, PEO_NAME_MAX).join("").trim();
+  return cleaned === "" ? null : cleaned;
+}
+
 export function findPeo(name: string): PeoRecord | undefined {
   const wanted = name.trim().toLowerCase();
   return PEO_CATALOG.find((p) => p.name.toLowerCase() === wanted);

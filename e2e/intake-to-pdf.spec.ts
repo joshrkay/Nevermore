@@ -147,6 +147,26 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(page.getByRole("heading", { name: "The Reckoning", exact: true })).toBeVisible();
   });
 
+  await test.step("Reload in The Reckoning: the same intake and the chosen PEO come back", async () => {
+    // The choice is saved with the intake, like the answers. Wait for it to land, as a prospect who
+    // reloads a few seconds later would; a reload sooner sends it on the way out instead.
+    await expect
+      .poll(async () => (await queryDatabase<{ chosen_peo: string | null }>("SELECT chosen_peo FROM chamber_sessions WHERE id = $1", [sessionId]))[0].chosen_peo)
+      .toBe(PEO);
+    await page.reload();
+    await expect(page).toHaveURL(`/start?session=${sessionId}`);
+    await page.getByRole("button", { name: "⑨ The Reckoning", exact: true }).click();
+    await expect(page.getByText(`before The Manuscript is prepared for ${PEO}.`)).toBeVisible();
+    await expect(page.getByText(consentStatements(PEO)[2], { exact: true })).toBeVisible();
+    // And it is the same intake: the answers given before the reload are still there.
+    await page.getByRole("button", { name: "② Company", exact: true }).click();
+    await expect(page.getByText(TARGET_START, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "⑧ PEO Match", exact: true }).click();
+    await expect(page.getByText("✓ Selected")).toBeVisible();
+    await page.getByRole("button", { name: `Proceed with ${PEO} →`, exact: true }).click();
+    await expect(page.getByRole("heading", { name: "The Reckoning", exact: true })).toBeVisible();
+  });
+
   // The Reckoning forgets what was entered when the tab is left, so everything from here to
   // "Generate" happens in one visit.
   await test.step("Acknowledge each statement", async () => {

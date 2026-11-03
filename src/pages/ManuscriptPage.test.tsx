@@ -49,6 +49,20 @@ describe("ManuscriptPage", () => {
     expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
   });
 
+  it("says an expired intake has expired, shows none of it, and sends the prospect to start again", async () => {
+    row = {
+      chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Gone Co" },
+      submission: null,
+      status: "expired",
+      created_at: "2026-05-01T00:00:00Z",
+    };
+    renderAt("/manuscript?session=s1");
+    expect(await screen.findByText(/This intake has expired/)).toBeInTheDocument();
+    expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Gone Co/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Go to The Chamber" })).toHaveAttribute("href", "/start");
+  });
+
   it("says the certification no longer applies when the information changed after it", async () => {
     row = {
       chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Edited Later Inc" },
