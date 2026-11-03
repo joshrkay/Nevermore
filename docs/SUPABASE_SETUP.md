@@ -234,6 +234,11 @@ supabase migration list --linked
 
 - **`supabase link` or `db push`:** usually the database password. A failed `db push` stops
   before anything else changes.
+- **`db push` stops with `duplicate key value violates unique constraint "schema_migrations_pkey"`:**
+  two migration files share a version, the number before the first `_`. The CLI records a migration
+  by that number, so the second file is never applied. Give it a later, unused version that keeps its
+  place in the order, then run the script again: what was applied stays applied and the rest goes in.
+  `scripts/migrations.test.ts` fails on a shared version, so `npm test` catches one before it merges.
 - **Deploying a function asks for Docker:** recent CLIs bundle on Supabase's side; update the CLI,
   or run `supabase functions deploy <name> --use-api --project-ref <ref>` and rerun the script.
 - **"Reading the auth settings failed":** the script stops rather than guess, because a patch built

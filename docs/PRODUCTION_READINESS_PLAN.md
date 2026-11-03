@@ -755,7 +755,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 
 #### E-1.3 Document access isolation
 - **Status:** **SUPERSEDED** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** E-1.1 · **Milestone:** M1
-- **Built:** No tokens. The storage select policy needs the folder to equal `auth.uid()` and an owned intake. Only advisors get signed URLs (`SIGNED_URL_SECONDS = 60`). Prospects have no download UI. Cross-user reads are denied in `session_documents.sql`. A new row's `storage_path` must be `{user_id}/{session_id}/{file}` (migration `20261103110001`), so a prospect can't add a row that points at another user's file for an advisor to open; also in `session_documents.sql`.
+- **Built:** No tokens. The storage select policy needs the folder to equal `auth.uid()` and an owned intake. Only advisors get signed URLs (`SIGNED_URL_SECONDS = 60`). Prospects have no download UI. Cross-user reads are denied in `session_documents.sql`. A new row's `storage_path` must be `{user_id}/{session_id}/{file}` (migration `20261103110100`), so a prospect can't add a row that points at another user's file for an advisor to open; also in `session_documents.sql`.
 - **Remaining:** The URL lifetime is 60 seconds, not 5 minutes (shorter is stricter: amend the AC). No test covers signed-URL issuance or expiry, only row visibility.
 
 #### E-2.1 Document categories and guidance
