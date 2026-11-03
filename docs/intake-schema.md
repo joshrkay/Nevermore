@@ -1,6 +1,6 @@
 # Intake schema
 
-The intake lives in `chamber_sessions`. The first section covers the answers themselves (`chamber_data`), the rest their provenance (`field_provenance`).
+The intake lives in `chamber_sessions`. The first section covers the answers themselves (`chamber_data`), then their provenance (`field_provenance`), then the session's lifecycle (`status`, expiry, archiving, revocation and the browser's backup of unsaved answers).
 
 ## Intake data (`chamber_data`)
 
@@ -146,9 +146,33 @@ Any change a prospect makes to an expired intake is refused with `EA002` instead
 
 The migration must be deployed before the front end, which selects `data_version`.
 
+`chamber_sessions.schema_version` (smallint, default 1, migration `20261103091000`) records which version of the intake schema the row's answers follow. Version 1 is the only one, so every row is version 1 and the database refuses any other value. A later version changes the check in its own migration, says how rows move, and changes `INTAKE_SCHEMA_VERSION` with it.
+
+### JSON Schema v1 and strict checks on the way in
+
+The canonical schema is `supabase/functions/_shared/intakeSchema.ts`: `chamber_data` as a JSON Schema (draft 2020-12), published as [`docs/intake-schema.v1.json`](intake-schema.v1.json). Regenerate the file with `npm run schema:intake`; `src/data/intakeSchema.test.ts` fails while the two differ.
+
+It is the stricter statement of the same rules: every value it accepts, the database accepts. `src/data/schemaSync.test.ts` holds its state codes, caps, census value lists and field kinds to the migrations, and `src/data/chamberValidation.test.ts` checks that the sanitiser's output always passes it. It is stricter than the database in three ways:
+
+- An unknown key is refused at every level, including inside a census row or a dependent. The database tolerates those, so an older client can save a newer census.
+- `employees`, the roster's old name, is not part of v1. The database still accepts it.
+- A census row must carry `id`, `first_name`, `last_name`, `work_state`, `compensation_type`, `employment_type` and `classification`, as every v1 writer gives it. The database requires only `first_name`.
+
+The validator (`validateChamberData`, `validateIntakeField`) is strict. A value is accepted as sent or refused with a reason. Nothing is trimmed, upper-cased, split or converted. Issues name the path the way the database does (`states[1]`, `census[0].dependents[0].relationship`), never the value, and stop at 50. It implements only the keywords the schema uses (`type`, `enum`, `maxLength`, `pattern`, `minimum`, `maximum`, `maxItems`, `items`, `properties`, `required`, `additionalProperties: false`, local `$ref`), and refuses a schema with any other, so a rule can't be written into the schema and then go unenforced. Lengths count characters (code points), as Postgres does.
+
+Where it runs:
+
+| Data coming in | What happens to a value that breaks v1 |
+| --- | --- |
+| The model's extraction in `chamber-extract` | The field is refused and listed in the response's `rejected` (path and reason), along with its status, evidence and correction. The function logs `EXTRACTION_REFUSED request=… paths=…` (paths only). The browser never receives it. |
+| The browser's backup of unsaved answers (see "Session lifecycle") | The whole copy is discarded, not offered for restore, and a warning names the paths. |
+| A saved intake as the Chamber loads it | The mismatch is logged (paths and reasons). Rows saved by earlier versions stay editable: the sanitiser still loads what is valid. |
+
+Voice extractions (`<extract>` tags) still go through the sanitiser, which repairs what it can (a lower-case state, a comma list, `"1,200"`).
+
 ### Adding a field
 
-A new key in `ChamberData` needs a migration first: add it to `public.chamber_data_field_kind` with its kind, then to `EMPTY_CHAMBER_DATA`, `FIELD_SCHEMAS`, `FIELD_LABELS` and `FIELD_KINDS`. `src/data/schemaSync.test.ts` compares the SQL key list, state codes and caps with the client constants, so a field added on one side only fails CI. The database refuses an unknown top-level key, so a front end shipped ahead of its migration would fail every save.
+A new key in `ChamberData` needs a migration first: add it to `public.chamber_data_field_kind` with its kind, then to `EMPTY_CHAMBER_DATA`, `FIELD_SCHEMAS`, `FIELD_LABELS`, `FIELD_KINDS` and the JSON Schema's `properties` (then `npm run schema:intake`). `src/data/schemaSync.test.ts` compares the SQL key list, state codes and caps with the client constants and the schema, so a field added on one side only fails CI. The database refuses an unknown top-level key, so a front end shipped ahead of its migration would fail every save.
 
 ### Employee census (`chamber_data.census`)
 
@@ -225,7 +249,7 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
 
 ### Extraction contract (`chamber-extract`)
 
-The response is `{ extracted, field_status, evidence, corrected_fields, reply }`. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`.
+The response is `{ extracted, field_status, evidence, corrected_fields, reply, rejected }`. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`. A field enters `extracted` only if intake schema v1 accepts the model's value exactly as sent. A lower-case `"ny"`, a state list with one unknown code, `12.5` people or a string of digits is refused and listed in `rejected` as `{ path, reason }`. The browser ignores `rejected`.
 
 ### Document candidates (`document-extract`)
 

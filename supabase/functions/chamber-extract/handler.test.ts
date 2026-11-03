@@ -208,14 +208,25 @@ describe("chamber-extract handler: the response", () => {
       evidence: { employee_count: "actually it's 45 people" },
       corrected_fields: ["employee_count"],
       reply: "Thank you. And which states?",
+      rejected: [],
     });
+  });
+
+  it("refuses an extracted value the intake schema doesn't accept, and logs its path but not the value", async () => {
+    const t = setup({ responses: [gatewayReply({ company_name: "Acme", hq_state: "New York", reply: "Noted." })] });
+    const { status, body } = await read(await handleRequest(post({ message: "we're Acme in New York" }), t.deps));
+    expect(status).toBe(200);
+    expect(body.extracted).toEqual({ company_name: "Acme" });
+    expect(body.rejected).toEqual([{ path: "hq_state", reason: "must be a US state or territory code such as CA" }]);
+    expect(t.logs).toEqual(["EXTRACTION_REFUSED request=req-1 paths=hq_state"]);
+    expect(t.logs.join()).not.toContain("New York");
   });
 
   it("returns nothing extracted and no reply when the model made no tool call", async () => {
     const t = setup({ responses: [new Response(JSON.stringify({ choices: [{ message: { content: "hello" } }] }), { status: 200 })] });
     const { status, body } = await read(await handleRequest(post({ message: "hi" }), t.deps));
     expect(status).toBe(200);
-    expect(body).toEqual({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null });
+    expect(body).toEqual({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null, rejected: [] });
   });
 });
 

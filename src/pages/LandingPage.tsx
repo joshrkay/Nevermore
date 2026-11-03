@@ -15,20 +15,17 @@ const sectionFade = {
   viewport: { once: true },
 };
 
-// What a PEO's underwriting team gets in every Manuscript. Keep each point true of the packet the
-// app builds (src/pages/ManuscriptPage.tsx); copy.guard.test.ts keeps it PEO-neutral.
+// What a PEO's underwriting team gets in every Manuscript. Keep each point true of the PDF the
+// prospect sends (src/lib/manuscriptPdf.ts), not just the on-screen page; copy.guard.test.ts keeps it
+// PEO-neutral.
 const PEO_PARTNER_POINTS = [
   {
-    title: "The same six sections, every time",
-    desc: "Company profile, workforce and state breakdown, employee census, dependent tiers, current benefits, and underwriting readiness, always in that order.",
-  },
-  {
-    title: "Each value shows where it came from",
-    desc: "Fields are marked confirmed or inferred, with their source: an uploaded document or the prospect's own answer.",
+    title: "The same layout, every time",
+    desc: "Company profile, workforce and state breakdown, employee census, dependent tiers, current benefits and underwriting readiness, then the signed certification.",
   },
   {
     title: "Open items are listed, not buried",
-    desc: "Underwriting readiness separates what the prospect confirmed from what is still open, so you know what to ask before you price.",
+    desc: "Underwriting readiness lists the checks that passed and every open item, including answers that were only inferred, are incomplete or conflict, so you know what to ask before you price.",
   },
   {
     title: "Certified by a verified contact",
@@ -182,7 +179,7 @@ const LandingPage = () => {
               The facts that usually take three email threads to collect arrive in one document.
             </p>
           </motion.div>
-          <div className="grid md:grid-cols-2 gap-6">
+          <div className="grid md:grid-cols-3 gap-6">
             {PEO_PARTNER_POINTS.map((item, i) => (
               <motion.div
                 key={item.title}
@@ -254,10 +251,10 @@ const LandingPage = () => {
             <p className="font-display text-sm italic text-muted-foreground">
               "Nevermore will HR slow you down."
             </p>
-            <div className="flex items-center gap-6 text-sm text-muted-foreground">
-              <a href="#how-it-works" className="hover:text-foreground transition-colors">How It Works</a>
-              <a href="#peo-partners" className="hover:text-foreground transition-colors">For PEO Partners</a>
-              <Link to="/start" className="hover:text-foreground transition-colors">Start Your Intake</Link>
+            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
+              <a href="#how-it-works" className="whitespace-nowrap hover:text-foreground transition-colors">How It Works</a>
+              <a href="#peo-partners" className="whitespace-nowrap hover:text-foreground transition-colors">For PEO Partners</a>
+              <Link to="/start" className="whitespace-nowrap hover:text-foreground transition-colors">Start Your Intake</Link>
             </div>
             <p className="text-xs text-muted-foreground mt-4">© Edgar Allan Advisory.</p>
           </div>

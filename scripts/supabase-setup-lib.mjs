@@ -127,17 +127,39 @@ export const EMAIL_CODE_TEMPLATE = [
 export const SIGNUP_CONFIRM_SUBJECT = "Confirm your email";
 export const SIGNUP_CONFIRM_TEMPLATE = [
   "<h2>Confirm your email</h2>",
-  "<p>Enter this code on the sign-up page to finish creating your account:</p>",
+  "<p>Enter this code where you signed up (or sign in, and you'll be asked for it) to finish creating your account:</p>",
   "<p style=\"font-size:24px;font-weight:bold;letter-spacing:4px\">{{ .Token }}</p>",
   "<p>Or <a href=\"{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email\">open this link</a> and click Confirm my email.</p>",
   "<p>If you didn't sign up, you can ignore this email.</p>",
 ].join("\n");
 
+/** True when a template sends the 6-digit code itself: `{{ .Token }}`, not just `{{ .TokenHash }}`. */
+export function sendsOtpCode(content) {
+  return /\{\{\s*\.Token\s*\}\}/.test(String(content ?? ""));
+}
+
 /** True when a sign-up confirmation template carries both the code and a link that verifies only on a click. */
 export function signupTemplateOk(content) {
   const text = String(content ?? "");
-  return /\{\{\s*\.Token\s*\}\}/.test(text) && /\{\{\s*\.TokenHash\s*\}\}/.test(text) && !text.includes(".ConfirmationURL");
+  return (
+    /\{\{\s*\.Token\s*\}\}/.test(text) &&
+    /token_hash=\{\{\s*\.TokenHash\s*\}\}/.test(text) &&
+    !text.includes(".ConfirmationURL") &&
+    !text.includes("/auth/v1/verify")
+  );
 }
+
+/**
+ * The sign-in message (Supabase's "magic link" template) a returning prospect gets when they ask the
+ * Chamber to recover an intake from another browser: it must carry the 6-digit code `RecoverIntake` asks for.
+ */
+export const SIGN_IN_CODE_SUBJECT = "Your sign-in code";
+export const SIGN_IN_CODE_TEMPLATE = [
+  "<h2>Sign in to your intake</h2>",
+  "<p>Enter this code to pick up your intake where you left off:</p>",
+  "<p style=\"font-size:24px;font-weight:bold;letter-spacing:4px\">{{ .Token }}</p>",
+  "<p>If you didn't ask for this, you can ignore this email.</p>",
+].join("\n");
 
 /**
  * The auth settings to change, given the current ones (`null` when they couldn't be read). Only what
@@ -168,6 +190,10 @@ export function authConfigPatch(current, env) {
   if (!String(c.mailer_templates_email_change_content ?? "").includes(".Token")) {
     patch.mailer_subjects_email_change = EMAIL_CODE_SUBJECT;
     patch.mailer_templates_email_change_content = EMAIL_CODE_TEMPLATE;
+  }
+  if (!sendsOtpCode(c.mailer_templates_magic_link_content)) {
+    patch.mailer_subjects_magic_link = SIGN_IN_CODE_SUBJECT;
+    patch.mailer_templates_magic_link_content = SIGN_IN_CODE_TEMPLATE;
   }
   if (!signupTemplateOk(c.mailer_templates_confirmation_content)) {
     patch.mailer_subjects_confirmation = SIGNUP_CONFIRM_SUBJECT;
@@ -234,6 +260,13 @@ export function cronScheduleSql(projectRef) {
   ].join("\n");
 }
 
+/**
+ * Expires idle drafts hourly (A-1.5, migration 20261103090000). The migration schedules it when pg_cron
+ * exists as it runs; this covers a project that only gets pg_cron from this script, which runs after
+ * the migrations. Scheduling the same name again replaces the job.
+ */
+export const EXPIRY_SCHEDULE_SQL = "select cron.schedule('expire-idle-intakes', '17 * * * *', 'select public.expire_idle_intakes();');";
+
 /** Grants the advisor role to an existing account, and reports whether that account exists. */
 export function advisorSql(email) {
   return [
@@ -256,6 +289,7 @@ export const STATUS_QUERIES = {
   extensions: "select count(*)::int as n from pg_extension where extname in ('pg_cron', 'pg_net');",
   vault_secret: "select count(*)::int as n from vault.secrets where name = 'service_role_key';",
   schedule: "select count(*)::int as n from cron.job where jobname = 'dispatch-outbox' and schedule = '* * * * *';",
+  expiry_schedule: "select count(*)::int as n from cron.job where jobname = 'expire-idle-intakes';",
   role_grants: "select count(*)::int as n from public.user_roles;",
 };
 
@@ -269,10 +303,11 @@ export function rowsFrom(body) {
 
 /**
  * Why the links in sign-up and email-change emails would not come back to the site, or [] when they
- * would. Supabase sends a link's visitor to the redirect the app asked for only when it is on the
- * Redirect URLs list, and otherwise to the Site URL: a new project's Site URL is
- * http://localhost:3000, so an unset one turns every confirmation into a browser error page.
- * `appBaseUrl` (APP_BASE_URL) pins the expected origin when it is known.
+ * would. Supabase sends a link's visitor to the redirect the app asked for when it is on the Site
+ * URL's own scheme, host and port, or on the Redirect URLs list, and otherwise to the Site URL: a new
+ * project's Site URL is http://localhost:3000, so an unset one turns every confirmation into a browser
+ * error page. With the Site URL right, the list isn't needed for the site itself. `appBaseUrl`
+ * (APP_BASE_URL) pins the expected origin when it is known.
  */
 export function authUrlProblems(authConfig, appBaseUrl) {
   if (!authConfig) return ["auth config unreadable"];
@@ -280,14 +315,19 @@ export function authUrlProblems(authConfig, appBaseUrl) {
   try { site = new URL(String(authConfig.site_url ?? "")); } catch { return ["Site URL is not set (Authentication → URL Configuration)"]; }
   const local = site.hostname === "localhost" || site.hostname === "127.0.0.1";
   let expected = null;
-  try { expected = appBaseUrl ? new URL(appBaseUrl).origin : null; } catch { /* checkSecrets reports a bad APP_BASE_URL */ }
-
   const problems = [];
-  if (expected && site.origin !== expected) problems.push(`Site URL is ${authConfig.site_url}, not ${expected}`);
-  else if (!expected && (local || site.protocol !== "https:")) problems.push(`Site URL is ${authConfig.site_url}: confirmation links send people there`);
-  const origin = expected ?? site.origin;
+  if (appBaseUrl) {
+    try { expected = new URL(appBaseUrl).origin; } catch {
+      problems.push(`APP_BASE_URL (${appBaseUrl}) isn't a URL, so the Site URL wasn't compared with it`);
+    }
+  }
+
+  const siteWrong = expected ? site.origin !== expected : local || site.protocol !== "https:";
+  if (!siteWrong) return problems;
+  problems.push(expected ? `Site URL is ${authConfig.site_url}, not ${expected}` : `Site URL is ${authConfig.site_url}: confirmation links send people there`);
+  // With the Site URL wrong, only a Redirect URLs entry brings links back to the site.
   const allowList = String(authConfig.uri_allow_list ?? "").split(",").map((u) => u.trim()).filter(Boolean);
-  if (!allowList.includes(`${origin}/**`)) problems.push(`Redirect URLs lack ${origin}/**`);
+  if (expected && !allowList.includes(`${expected}/**`)) problems.push(`Redirect URLs lack ${expected}/**`);
   return problems;
 }
 
@@ -309,6 +349,7 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
   add("pg_cron and pg_net", s.extensions === 2, `${s.extensions ?? "?"} of 2 enabled`);
   add("Service-role key in Vault", s.vault_secret === 1, s.vault_secret === 1 ? "stored" : "missing");
   add("Email schedule", s.schedule === 1, s.schedule === 1 ? "dispatch-outbox every minute" : "not scheduled");
+  add("Draft expiry schedule", s.expiry_schedule === 1, s.expiry_schedule === 1 ? "expire-idle-intakes hourly" : "not scheduled: idle drafts never expire");
 
   const auth = seen.auth;
   add("Guest (anonymous) sign-in", auth?.external?.anonymous_users === true, auth ? `anonymous_users=${auth.external?.anonymous_users}` : "settings unreadable");
@@ -321,6 +362,8 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
   add("Email code message", codeOk, ac ? (codeOk ? "6-digit code in the email-change template" : "the email-change template must send a 6-digit {{ .Token }}") : "auth config unreadable");
   const urlProblems = authUrlProblems(ac, appBaseUrl);
   add("Email links return to the site", urlProblems.length === 0, urlProblems.length === 0 ? `Site URL ${ac.site_url}, redirects allowed under it` : urlProblems.join("; "));
+  const signInOk = !!ac && ac.mailer_otp_length === 6 && sendsOtpCode(ac.mailer_templates_magic_link_content);
+  add("Sign-in code message", signInOk, ac ? (signInOk ? "6-digit code in the magic-link template" : "the magic-link template must send a 6-digit {{ .Token }} (returning prospects sign in with it)") : "auth config unreadable");
   add("Sign-in emails reach prospects", !!ac?.smtp_host, ac ? (ac.smtp_host ? `custom SMTP (${ac.smtp_host})` : "built-in mailer: only your team's addresses get emails") : "auth config unreadable");
 
   for (const fn of FUNCTIONS) {

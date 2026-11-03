@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChatMessage } from "@/data/chat";
 
 const session = {
   sessionId: null as string | null,
@@ -8,6 +9,7 @@ const session = {
   loadFailed: false,
   expired: false,
   startNew: vi.fn(),
+  startOver: vi.fn(async () => true),
   retryLoad: vi.fn(),
   isLoading: false,
   saveStatus: "idle",
@@ -16,7 +18,19 @@ const session = {
   loadLatest: vi.fn(),
   keepMine: vi.fn(),
   discardChanges: vi.fn(),
+  backupOffer: null as { savedAt: string; savedElsewhereSince: boolean } | null,
+  restoreBackup: vi.fn(),
+  discardBackup: vi.fn(),
+  restoredThrough: null as string | null,
+  messages: [] as ChatMessage[],
+  certification: { status: "none" as string },
 };
+const auth = {
+  isAnonymous: true,
+  requestSignInCode: vi.fn(async () => ({ error: null, noAccount: false })),
+  verifySignInCode: vi.fn(async () => ({ error: null })),
+};
+let storageWorks = true;
 
 const auth = { isAnonymous: true };
 
@@ -24,10 +38,12 @@ const auth = { isAnonymous: true };
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 vi.mock("@/hooks/useChamberSession", () => ({ useChamberSession: () => session }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
+vi.mock("@/data/intakeBackup", () => ({ browserStorageWorks: () => storageWorks }));
 vi.mock("@/hooks/useLenoreVoice", () => ({ useLenoreVoice: () => ({ startVoice: vi.fn(), isConnected: false, hasAgentId: false }) }));
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
-// The workspace panes are not what these tests are about.
-vi.mock("@/components/chamber/VoiceOrb", () => ({ default: () => null }));
+// The orb only shows what Lenore last said; the workspace panes are not what these tests are about.
+vi.mock("@/components/chamber/VoiceOrb", () => ({ default: ({ lastSpokenText }: { lastSpokenText: string }) => <p data-testid="orb">{lastSpokenText}</p> }));
 vi.mock("@/components/chamber/TranscriptPanel", () => ({ default: () => null }));
 vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({ default: () => null }));
 vi.mock("@/hooks/useLenoreChat", () => ({ useLenoreChat: () => ({ send: vi.fn(), retry: vi.fn(), dismissFailure: vi.fn(), failure: null, pending: false }) }));
@@ -52,13 +68,20 @@ const LoginStandIn = () => {
 
 describe("ChamberPage", () => {
   beforeEach(() => {
+    session.sessionId = null;
     session.resumeFailed = false;
     session.loadFailed = false;
     session.expired = false;
     auth.isAnonymous = true;
     session.saveStatus = "idle";
     session.invalidField = null;
-    for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges]) {
+    session.backupOffer = null;
+    session.messages = [];
+    session.certification = { status: "none" };
+    session.startOver.mockReset().mockResolvedValue(true);
+    auth.isAnonymous = true;
+    storageWorks = true;
+    for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges, session.restoreBackup, session.discardBackup]) {
       fn.mockClear();
     }
   });
@@ -143,6 +166,14 @@ describe("ChamberPage", () => {
     it("offers a new intake when the saved one is gone", () => {
       session.saveStatus = "missing";
       renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "Start a new intake" }));
+      expect(session.startNew).toHaveBeenCalledTimes(1);
+    });
+
+    it("offers a new intake, with what's on screen, when the open one expires", () => {
+      session.saveStatus = "expired";
+      renderPage();
+      expect(screen.getByRole("alert")).toHaveTextContent("this intake has expired");
       fireEvent.click(screen.getByRole("button", { name: "Start a new intake" }));
       expect(session.startNew).toHaveBeenCalledTimes(1);
     });

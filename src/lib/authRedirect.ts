@@ -39,7 +39,8 @@ function params(href: string): Record<string, string> {
 /** The auth outcome in `href`, or null when it carries none (an ordinary page address). */
 export function parseAuthRedirect(href: string): AuthRedirect | null {
   const p = params(href);
-  if (p.error || p.error_code || p.error_description) {
+  // Supabase always names the error with a code or a description; a bare ?error= is some other page's.
+  if (p.error_code || p.error_description) {
     return { kind: "error", code: p.error_code || p.error || "unknown", description: p.error_description ?? "" };
   }
   if (p.token_hash && p.type && TOKEN_TYPES.includes(p.type)) {
@@ -97,9 +98,4 @@ export function takeInitialAuthRedirect(): AuthRedirect | null {
   if (initialRedirectTaken) return null;
   initialRedirectTaken = true;
   return parseAuthRedirect(initialHref);
-}
-
-/** Test hook: forget that the initial redirect was taken. */
-export function resetInitialAuthRedirectForTests() {
-  initialRedirectTaken = false;
 }

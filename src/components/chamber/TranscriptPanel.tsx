@@ -1,5 +1,5 @@
-import { useRef, useEffect, useState } from "react";
-import { Send } from "lucide-react";
+import { Fragment, useCallback, useLayoutEffect, useRef, useState } from "react";
+import { ArrowDown, Send } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ChatMessage } from "@/data/chat";
 
@@ -9,15 +9,51 @@ interface TranscriptPanelProps {
   inputRef?: React.RefObject<HTMLInputElement>;
   /** Shown between the conversation and the input, e.g. when Lenore couldn't respond. */
   notice?: ReactNode;
+  /** The last message brought back with the intake: the conversation picks up after it. */
+  restoredThrough?: string | null;
 }
 
-const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice }: TranscriptPanelProps) => {
-  const [input, setInput] = useState("");
-  const endRef = useRef<HTMLDivElement>(null);
+// Within this many pixels of the bottom, the reader is following the conversation.
+const FOLLOW_SLACK_PX = 48;
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice, restoredThrough }: TranscriptPanelProps) => {
+  const [input, setInput] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Whether the view keeps to the latest message. Scrolling up to read stops it; scrolling back down resumes it.
+  const followRef = useRef(true);
+  const shownRef = useRef(0);
+  const [unseen, setUnseen] = useState(false);
+
+  const toLatest = useCallback((smooth: boolean) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Only this panel scrolls: scrollIntoView would also move the page around it.
+    if (smooth && typeof el.scrollTo === "function") el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    else el.scrollTop = el.scrollHeight;
+    followRef.current = true;
+    setUnseen(false);
+  }, []);
+
+  useLayoutEffect(() => {
+    const before = shownRef.current;
+    shownRef.current = messages.length;
+    if (messages.length === 0) return;
+    // A restored conversation opens at its latest message, at once, without scrolling through it all.
+    if (before === 0) return toLatest(false);
+    // Replaced rather than added to (start over, or the latest version loaded): show its end.
+    if (messages.length < before) return toLatest(false);
+    if (messages.length === before) return;
+    const sentByProspect = messages[messages.length - 1].sender === "user";
+    if (followRef.current || sentByProspect) toLatest(true);
+    else setUnseen(true);
+  }, [messages, toLatest]);
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK_PX;
+    if (followRef.current) setUnseen(false);
+  };
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -33,22 +69,48 @@ const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice }: Transcri
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        {messages.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-            <div
-              className={`max-w-[90%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
-                msg.sender === "user"
-                  ? "bg-primary/15 text-foreground rounded-br-sm"
-                  : "bg-muted text-foreground rounded-bl-sm"
-              }`}
-            >
-              {msg.text}
-              <p className="text-[9px] text-muted-foreground mt-1 font-mono">{msg.timestamp}</p>
-            </div>
-          </div>
-        ))}
-        <div ref={endRef} />
+      <div className="relative flex-1 min-h-0">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          data-testid="transcript-scroll"
+          role="log"
+          aria-label="Conversation with Lenore"
+          className="h-full overflow-y-auto p-3 space-y-3"
+        >
+          {messages.map((msg) => (
+            <Fragment key={msg.id}>
+              <div className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`max-w-[90%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
+                    msg.sender === "user"
+                      ? "bg-primary/15 text-foreground rounded-br-sm"
+                      : "bg-muted text-foreground rounded-bl-sm"
+                  }`}
+                >
+                  {msg.text}
+                  <p className="text-[9px] text-muted-foreground mt-1 font-mono">{msg.timestamp}</p>
+                </div>
+              </div>
+              {msg.id === restoredThrough && (
+                <div role="separator" className="flex items-center gap-2 py-1 text-[10px] uppercase tracking-widest text-muted-foreground">
+                  <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                  Restored from your last visit
+                  <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                </div>
+              )}
+            </Fragment>
+          ))}
+        </div>
+        {unseen && (
+          <button
+            type="button"
+            onClick={() => toLatest(true)}
+            className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full bg-primary text-primary-foreground text-[11px] font-medium px-3 py-1 shadow"
+          >
+            <ArrowDown className="w-3 h-3" aria-hidden="true" /> New message
+          </button>
+        )}
       </div>
 
       {notice}
@@ -66,7 +128,7 @@ const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice }: Transcri
             maxLength={2000}
             className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
           />
-          <button onClick={handleSend} className="text-primary hover:text-primary/80 transition-colors">
+          <button onClick={handleSend} aria-label="Send" className="text-primary hover:text-primary/80 transition-colors">
             <Send className="w-3.5 h-3.5" />
           </button>
         </div>

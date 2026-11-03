@@ -5,9 +5,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { dispatchOutbox } from "@/lib/dispatchOutbox";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
-import { createChatMessage, parseTranscript } from "@/data/chat";
+import { dedupeGreetings, isGreeting, openingMessage, parseTranscript } from "@/data/chat";
 import { parseChamberData } from "@/data/chamberValidation";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup } from "@/data/intakeBackup";
+import { validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
 import {
@@ -34,6 +36,14 @@ type ServerRow = Pick<
   Database["public"]["Tables"]["chamber_sessions"]["Row"],
   "id" | "data_version" | "status" | "chamber_data" | "field_provenance" | "transcript" | "submission" | "chosen_peo"
 >;
+
+/** Answers kept in this browser that never reached the server, offered back when the intake is opened. */
+export interface BackupOffer {
+  /** When they were kept (ISO 8601). */
+  savedAt: string;
+  /** True when the intake was saved from somewhere else since: restoring replaces those changes. */
+  savedElsewhereSince: boolean;
+}
 
 interface UseChamberSessionReturn {
   sessionId: string | null;
@@ -83,8 +93,6 @@ interface UseChamberSessionReturn {
   /** After status "invalid": which answer the server refused, in words for the prospect. */
   invalidField: string | null;
 }
-
-const OPENING_MESSAGE = "Good evening. I'm Lenore — your guide through The Chamber. As we talk, I'll fill in the workspace beside us, and you can check or correct anything there. Shall we begin with something simple — tell me a little about your business and what you do.";
 
 const SAVE_DELAY_MS = 2000;
 const SAVE_RETRY_MS = 10000;
@@ -180,8 +188,9 @@ type Reconciled =
 
 /**
  * Resumes `requestedSessionId` when it belongs to the signed-in user. Without one, resumes their
- * latest intake that isn't submitted yet, and only starts a fresh session when there is none.
- * Only the id present on first render is used.
+ * latest intake that isn't submitted yet, and only starts a fresh session when there is none (saying so
+ * first when their latest one has expired). Only the id present on first render is used, until someone
+ * else signs in in this tab: then that person's latest intake is opened.
  */
 export function useChamberSession(requestedSessionId?: string | null): UseChamberSessionReturn {
   const { user, session } = useAuth();
@@ -195,11 +204,22 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [initRun, setInitRun] = useState(0);
   const [chamberData, setChamberDataRaw] = useState<ChamberData>(EMPTY_CHAMBER_DATA);
   const [provenance, setProvenanceRaw] = useState<ProvenanceMap>({});
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [createChatMessage("lenore", OPENING_MESSAGE)]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [openingMessage()]);
   const [certification, setCertification] = useState<CertificationState>(NO_CERTIFICATION);
   const [chosenPeo, setChosenPeoRaw] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [invalidField, setInvalidField] = useState<string | null>(null);
+  const [expired, setExpired] = useState<{ at: string | null } | null>(null);
+  const [backupOffer, setBackupOffer] = useState<BackupOffer | null>(null);
+  const [restoredThrough, setRestoredThrough] = useState<string | null>(null);
+  // Changes whenever the conversation on screen is replaced by a blank one (start over, another person
+  // signing in), so a reply or a voice line meant for the old conversation is never added to the new one.
+  const [conversationEpoch, setConversationEpoch] = useState(0);
+  // The kept answers on offer. While the prospect hasn't decided, the copy in storage is left alone.
+  const backupRef = useRef<IntakeBackup | null>(null);
+  const userIdRef = useRef(userId);
+  // Who the intake on screen belongs to, so a different sign-in starts from a clean slate.
+  const loadedForRef = useRef<string | undefined>(undefined);
   const certificationRef = useRef(certification);
   useEffect(() => { certificationRef.current = certification; }, [certification]);
 
@@ -240,7 +260,41 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   useEffect(() => { provenanceRef.current = provenance; }, [provenance]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { pruneBackups(); }, []);
 
+  // Keep what the server hasn't confirmed in this browser, so a failed save survives a reload or a crash.
+  // Nothing is written while an older copy is on offer: the prospect hasn't decided about it yet.
+  const backupNow = useCallback(() => {
+    const sid = sessionIdRef.current;
+    const uid = userIdRef.current;
+    if (!sid || !uid || !dirtyRef.current || backupRef.current) return;
+    writeBackup({
+      userId: uid,
+      sessionId: sid,
+      baseVersion: versionRef.current,
+      chamber_data: dataRef.current as unknown as Record<string, unknown>,
+      field_provenance: provenanceRef.current as unknown as Record<string, unknown>,
+      transcript: messagesRef.current,
+    });
+  }, []);
+  useEffect(() => { backupNow(); }, [chamberData, provenance, messages, backupNow]);
+
+  // Removes the browser's copy once what it holds is on the server, or this tab chose to drop it. Every tab
+  // of the same intake shares the copy, so one holding other answers belongs to another tab and stays.
+  const forgetBackup = useCallback((sid: string, held: { chamber_data: unknown; field_provenance: unknown; transcript: unknown }) => {
+    const uid = userIdRef.current;
+    if (!uid || backupRef.current) return;
+    const stored = readBackup(uid, sid);
+    if (stored
+        && sameJson(stored.chamber_data, withoutCensus(asStored(held.chamber_data)))
+        && sameJson(stored.field_provenance, asStored(held.field_provenance))
+        && sameJson(stored.transcript, asStored(held.transcript))) {
+      clearBackup(uid, sid);
+    }
+  }, []);
+
+  // What this tab has on screen, in the shape forgetBackup compares.
+  const onScreen = useCallback(() => ({ chamber_data: dataRef.current, field_provenance: provenanceRef.current, transcript: messagesRef.current }), []);
   const report = useCallback((status: SaveStatus) => {
     if (mountedRef.current) setSaveStatus(status);
   }, []);
@@ -285,8 +339,14 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // Shows a loaded row exactly as the server has it. Never put the raw row in state: loading
   // rebuilds the answers in a stable key order, which the signature check depends on.
   const applyRow = useCallback((row: ServerRow) => {
+    // Checked against intake schema v1 as it comes in. Rows saved by earlier versions stay editable (the
+    // sanitiser below still loads them), so a mismatch is reported, by path only, rather than refused.
+    const issues = validateChamberData(row.chamber_data);
+    if (issues.length > 0) {
+      console.warn("Saved answers don't match intake schema v1; loading what is valid:", issues.map((issue) => `${issue.path} ${issue.reason}`));
+    }
     const loadedData = parseChamberData(row.chamber_data);
-    const loadedMessages = parseTranscript(row.transcript);
+    const loadedMessages = dedupeGreetings(parseTranscript(row.transcript));
     dataRef.current = loadedData;
     setChamberDataRaw(loadedData);
     const loadedProvenance = parseProvenance(row.field_provenance);
@@ -351,6 +411,16 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     conflictRef.current = row;
     console.error("Failed to save session: it was changed elsewhere", { savedVersion: row.data_version });
     report("conflict");
+  }, [report, settleOutcome, stopTimer]);
+
+  const markExpired = useCallback(() => {
+    dirtyRef.current = true;
+    settleOutcome();
+    stopTimer();
+    blockRef.current = "expired";
+    conflictRef.current = null;
+    console.error("Failed to save session: the intake has expired");
+    report("expired");
   }, [report, settleOutcome, stopTimer]);
 
   const markMissing = useCallback(() => {
@@ -450,6 +520,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     if (!error && data && data.length > 0) {
       adoptVersion(sid, data[0].data_version);
       clearBlock();
+      if (!dirtyRef.current) forgetBackup(sid, sent);
       if (mountedRef.current) setSaveStatus(dirtyRef.current ? "saving" : "saved");
       return true;
     }
@@ -475,6 +546,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         // Our write did land; only its response was lost. Take the version, keep what is on screen.
         adoptVersion(sid, outcome.row.data_version);
         clearBlock();
+        if (!dirtyRef.current) forgetBackup(sid, sent);
         if (mountedRef.current) setSaveStatus(dirtyRef.current ? "saving" : "saved");
         return true;
       case "earlier": {
@@ -587,9 +659,71 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     };
   }, [flush, stopTimer]);
 
+  // A blank intake on screen: no answers, a fresh greeting, nothing certified.
+  const blankIntake = useCallback(() => {
+    dataRef.current = EMPTY_CHAMBER_DATA;
+    setChamberDataRaw(EMPTY_CHAMBER_DATA);
+    provenanceRef.current = {};
+    setProvenanceRaw({});
+    const opening = [openingMessage()];
+    messagesRef.current = opening;
+    setMessages(opening);
+    certificationRef.current = NO_CERTIFICATION;
+    setCertification(NO_CERTIFICATION);
+    setConversationEpoch((n) => n + 1);
+  }, []);
+
+  // After an intake is loaded: offers this browser's copy of answers that never reached the server, unless
+  // the server already holds exactly them (the save sent as the page closed landed after all).
+  const offerBackup = useCallback((row: ServerRow) => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    const backup = readBackup(uid, row.id);
+    if (!backup) return;
+    const shown = {
+      chamber_data: withoutCensus(asStored(dataRef.current)),
+      field_provenance: asStored(provenanceRef.current),
+      transcript: asStored(messagesRef.current),
+    };
+    if (sameJson(backup.chamber_data, shown.chamber_data)
+        && sameJson(backup.field_provenance, shown.field_provenance)
+        && sameJson(backup.transcript, shown.transcript)) {
+      clearBackup(uid, row.id);
+      return;
+    }
+    backupRef.current = backup;
+    setBackupOffer({ savedAt: backup.savedAt, savedElsewhereSince: backup.baseVersion !== row.data_version });
+  }, []);
+
   // Resume or create a session
   useEffect(() => {
+    userIdRef.current = userId;
     if (!userId) { setIsLoading(false); return; }
+    // Someone else signed in in this tab (a guest getting back to their own intake with an emailed code).
+    // Nothing on screen is theirs: start from a clean slate. A link they were sent here with still counts,
+    // unless it named the intake the last person had open.
+    if (loadedForRef.current !== undefined && loadedForRef.current !== userId) {
+      stopTimer();
+      dirtyRef.current = false;
+      clearBlock();
+      settleOutcome();
+      if (sessionIdRef.current) requestedIdRef.current = null;
+      sessionIdRef.current = null;
+      versionRef.current = null;
+      forceNewRef.current = false;
+      createFailedRef.current = false;
+      backupRef.current = null;
+      setSessionId(null);
+      setBackupOffer(null);
+      setExpired(null);
+      setRestoredThrough(null);
+      setResumeFailed(false);
+      setLoadFailed(false);
+      setSaveStatus("idle");
+      setIsLoading(true);
+      blankIntake();
+    }
+    loadedForRef.current = userId;
     let cancelled = false;
 
     const resume = async (id: string): Promise<"opened" | "expired" | "unavailable"> => {
@@ -641,8 +775,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     const latestOpen = async (): Promise<{ ok: true; id: string | null } | { ok: false }> => {
       const { data, error } = await supabase
         .from("chamber_sessions")
-        .select("id")
-        // Advisors can read every intake; only the prospect's own count here.
+        .select("id, status")
         .eq("user_id", userId)
         .neq("status", "submitted")
         .neq("status", EXPIRED_STATUS)
@@ -653,7 +786,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         console.error("Failed to look up an open session:", error);
         return { ok: false };
       }
-      return { ok: true, id: data?.id ?? null };
+      return { ok: true, id: data?.id ?? null, status: data?.status ?? null };
     };
 
     // With nothing to pick up: whether the prospect's most recent intake is one that expired, so they are
@@ -717,7 +850,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
 
     init();
     return () => { cancelled = true; };
-  }, [userId, scheduleSave, applyRow, initRun]);
+  }, [userId, scheduleSave, applyRow, initRun, blankIntake, clearBlock, offerBackup, settleOutcome, stopTimer]);
 
   const startNew = useCallback(() => {
     requestedIdRef.current = null;
@@ -727,12 +860,58 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     settleOutcome();
     versionRef.current = null;
     sessionIdRef.current = null;
+    backupRef.current = null;
+    setBackupOffer(null);
+    setExpired(null);
+    setRestoredThrough(null);
     setResumeFailed(false);
     setLoadFailed(false);
     setExpired(false);
     setIsLoading(true);
     setInitRun((n) => n + 1);
   }, [clearBlock, settleOutcome]);
+
+  const startOver = useCallback(async (): Promise<boolean> => {
+    stopTimer();
+    const sid = sessionIdRef.current;
+    if (sid) {
+      // After any save already on its way, so it can't land on the archived row.
+      const archived = await enqueue(async () => {
+        try {
+          const { error } = await supabase.rpc("archive_chamber_session", { p_session_id: sid });
+          if (error && error.code !== NOT_FOUND_CODE) {
+            console.error("Failed to archive the intake:", error);
+            return false;
+          }
+          return true;
+        } catch (error) {
+          console.error("Failed to archive the intake:", error);
+          return false;
+        }
+      });
+      if (!archived) {
+        // The prospect keeps this intake: send the edit whose save was held back for the archive.
+        if (dirtyRef.current && !saveTimerRef.current) scheduleSave();
+        return false;
+      }
+      const uid = userIdRef.current;
+      if (uid) clearBackup(uid, sid);
+    }
+    // The prospect chose to leave this intake behind, unsaved changes included.
+    dirtyRef.current = false;
+    blankIntake();
+    startNew();
+    return true;
+  }, [blankIntake, enqueue, scheduleSave, startNew, stopTimer]);
+
+  const discardBackup = useCallback(() => {
+    const backup = backupRef.current;
+    backupRef.current = null;
+    setBackupOffer(null);
+    if (backup) clearBackup(backup.userId, backup.sessionId);
+    // Edits made while the old copy was on offer weren't kept (see backupNow): keep them now.
+    backupNow();
+  }, [backupNow]);
 
   const retryLoad = useCallback(() => {
     setLoadFailed(false);
@@ -757,9 +936,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     stopTimer();
     dirtyRef.current = false;
     clearBlock();
+    const dropped = onScreen();
     applyRow(row);
+    forgetBackup(row.id, dropped);
     report("saved");
-  }, [applyRow, clearBlock, report, stopTimer]);
+  }, [applyRow, clearBlock, forgetBackup, onScreen, report, stopTimer]);
 
   const keepMine = useCallback(() => {
     const row = conflictRef.current;
@@ -802,7 +983,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       }
       dirtyRef.current = false;
       clearBlock();
+      const dropped = onScreen();
       applyRow(data);
+      forgetBackup(sid, dropped);
       report("saved");
     });
   }, [applyRow, clearBlock, enqueue, markExpired, markMissing, report, stopTimer]);
@@ -849,6 +1032,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   }, [scheduleSave]);
 
   const addMessage = useCallback((msg: ChatMessage) => {
+    // Lenore says hello once per intake. A voice session opens with her own greeting; it isn't kept twice.
+    if (isGreeting(msg) && messagesRef.current.some(isGreeting)) return;
     setMessages(prev => {
       const next = [...prev, msg];
       messagesRef.current = next;

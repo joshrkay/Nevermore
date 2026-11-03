@@ -16,23 +16,33 @@ const updates: {
 let resumeRow: Record<string, unknown> | null = null;
 let readError: MockError | null = null;
 const reads: string[] = [];
+// The intake ids those reads asked for.
+const readIds: unknown[] = [];
 let inserts = 0;
 const insertedRows: Record<string, unknown>[] = [];
 const insertedColumns: string[] = [];
 let insertError: { message: string } | null = null;
 // The prospect's latest unfinished intake, as the lookup on a bare /start finds it.
-let latestRow: { id: string } | null = null;
+let latestRow: { id: string; status?: string } | null = null;
 let latestError: { message: string } | null = null;
+// What the second lookup (no unfinished intake) finds among expired and submitted intakes.
+let lastClosedRow: { id: string; status: string } | null = null;
 const latestQueries: unknown[][] = [];
 // The prospect's most recent intake of any status, looked up when there is no unfinished one to pick up.
 let latestAnyRow: { status: string } | null = null;
 let latestAnyError: { message: string } | null = null;
 const latestAnyQueries: unknown[][] = [];
 
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" }, session: { access_token: "tok" } }) }));
+// Who is signed in. A test can switch it and rerender, as signing in with an emailed code does.
+let authUserId = "u1";
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: authUserId }, session: { access_token: "tok" } }) }));
 vi.mock("@/lib/dispatchOutbox", () => ({ dispatchOutbox: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      rpcCalls.push({ fn, args });
+      return rpcResult;
+    },
     from: () => ({
       select: (columns: string) => ({
         eq: (column: string, value: unknown) =>
@@ -40,6 +50,7 @@ vi.mock("@/integrations/supabase/client", () => ({
             ? {
                 maybeSingle: async () => {
                   reads.push(columns);
+                  readIds.push(value);
                   return readError ? { data: null, error: readError } : { data: resumeRow, error: null };
                 },
               }
@@ -113,7 +124,8 @@ const { useChamberSession, describeInvalidPath } = await import("./useChamberSes
 const { dispatchOutbox } = await import("@/lib/dispatchOutbox");
 const { applyExtraction } = await import("@/data/provenance");
 const { parseChamberData } = await import("@/data/chamberValidation");
-const { createChatMessage } = await import("@/data/chat");
+const { createChatMessage, OPENING_MESSAGE } = await import("@/data/chat");
+const { readBackup, writeBackup } = await import("@/data/intakeBackup");
 
 // Lets queued promise callbacks run while fake timers are active (waitFor would hang).
 const drain = () => act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
@@ -142,12 +154,14 @@ describe("useChamberSession", () => {
     resumeRow = null;
     readError = null;
     reads.length = 0;
+    readIds.length = 0;
     insertedColumns.length = 0;
     inserts = 0;
     insertedRows.length = 0;
     insertError = null;
     latestRow = null;
     latestError = null;
+    lastClosedRow = null;
     latestQueries.length = 0;
     latestAnyRow = null;
     latestAnyError = null;
