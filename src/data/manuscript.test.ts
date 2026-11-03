@@ -38,6 +38,20 @@ describe("fileIdForSession", () => {
     expect(fileIdForSession(id, date)).toBe("EAA-2026-0F1E2D3C");
     expect(fileIdForSession(id, date)).toBe(fileIdForSession(id, date));
   });
+
+  it("takes the year in UTC, as the database does, whatever the browser's time zone", () => {
+    const id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
+    const zone = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      // 03:00 UTC on 1 January is still New Year's Eve in California.
+      expect(new Date("2027-01-01T03:00:00Z").getFullYear()).toBe(2026);
+      expect(fileIdForSession(id, new Date("2027-01-01T03:00:00Z"))).toBe("EAA-2027-0F1E2D3C");
+    } finally {
+      if (zone === undefined) delete process.env.TZ;
+      else process.env.TZ = zone;
+    }
+  });
 });
 
 describe("eligibilityChecks", () => {
