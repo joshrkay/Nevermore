@@ -240,8 +240,11 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(confirmation).toHaveCSS("opacity", "1");
 
     // Built here rather than with the app's fileIdForSession, so a regression in it is caught. The year
-    // is the browser's: the app stamps the File ID with the signer's local clock.
-    const year = await page.evaluate(() => new Date().getFullYear());
+    // is the one the database recorded the intake starting in (UTC), never the signer's clock.
+    const [{ year }] = await queryDatabase<{ year: string }>(
+      "SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY') AS year FROM chamber_sessions WHERE id = $1",
+      [sessionId],
+    );
     const expected = `EAA-${year}-${sessionId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
     await expect(page.getByText(/^File ID: /)).toHaveText(`File ID: ${expected}`);
     return expected;

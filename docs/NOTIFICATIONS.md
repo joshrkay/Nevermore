@@ -5,10 +5,10 @@ transaction and sent by the `dispatch-outbox` edge function:
 
 | Email | To | Contains |
 |---|---|---|
-| Advisor alert (G-1) | `ADVISORY_NOTIFY_EMAIL` | Company legal name, primary signer, title, work email, phone, employee count, HQ state, submission reference, when it was certified (UTC), link to the secure advisor review. Subject `New Intake Certified: <company> (<reference>)`, or `Updated Intake: ...` when changed answers were certified again |
-| Prospect confirmation (G-2) | The signed-in account's own email | Company, reference, what happens next, expected response time, support address |
+| Advisor alert (G-1) | `ADVISORY_NOTIFY_EMAIL` | Company legal name, primary signer, title, work email, phone, employee count, HQ state, File ID, when it was certified (UTC), link to the secure advisor review. Subject `New Intake Certified: <company> (<File ID>)`, or `Updated Intake: ...` when changed answers were certified again |
+| Prospect confirmation (G-2) | The signed-in account's own email | Company, File ID, what happens next, expected response time, support address |
 
-Neither email contains census, payroll, benefits or document content. Every listed detail is always shown on the advisor alert, as "Not provided" when empty, so a blank is never mistaken for an omission. The email is a complete HTML document (title, phone-width layout, row headers for the details) with a plain-text twin. The queue row itself never
+Both emails call the intake's identifier its **File ID**, as the app and the signed Manuscript do (`GLOSSARY.md`); the queued payload keeps the field name `reference`. Neither email contains census, payroll, benefits or document content. Every listed detail is always shown on the advisor alert, as "Not provided" when empty, so a blank is never mistaken for an omission. The email is a complete HTML document (title, phone-width layout, row headers for the details) with a plain-text twin. The queue row itself never
 holds them: `enqueue_certification_notifications()` (which the trigger calls) copies only named
 fields, and the email builders read only named fields back out
 (`supabase/functions/dispatch-outbox/messages.ts`). While an event is being retried it also holds
@@ -48,6 +48,26 @@ An event is `pending` (waiting to be sent, or waiting out a retry delay), `claim
 - **The prospect confirmation goes to the account's own address**, never to an address typed into
   the intake. Keep Supabase Auth's "Confirm email" enabled in production. Accounts with no email
   (none can certify today) get the advisor alert only.
+
+## Consent and preferences (US-5.2)
+
+The confirmation is a transactional receipt for a certification the prospect has just made, not
+marketing. So it needs no opt-in, offers no unsubscribe link, and there is no notification setting.
+That was decided when US-5.2 was closed. "Respecting consent and preferences" means:
+
+- It goes only to the signed-in account's own address, the one the prospect verified, never to an
+  address typed into the intake.
+- It is never sent to an address that bounced for good, reported an email as spam, or that the
+  provider blocks (see "Bounces and complaints").
+- It holds the receipt and nothing more: company, File ID, what happens next, the response time and
+  the support address.
+
+Each certification of changed answers sends another confirmation, the same as the first and with the
+same File ID. That is intended: it tells the prospect the update arrived. Certifying the same answers
+again sends nothing.
+
+Sending anything that is not a receipt for something the prospect just did (a reminder, a newsletter,
+a follow-up campaign) would need consent and an unsubscribe first. Nothing here sends one.
 
 ## Delivery guarantee
 
@@ -213,7 +233,7 @@ from public.outbox_events;
 
 ### Outbox & Notifications (advisors, G-1.3)
 
-`/advisor/outbox` (the "Outbox & Notifications" link in the advisor header) lists every event, newest first, with its kind, company and reference, status (`pending`, `claimed`, `sent`, `dead`), attempts out of 5, when it was or will be sent, and `last_error` with a plain-language reading beside the recorded text. Tabs filter by status and show counts; the filter is in the URL. A banner appears when the longest-waiting due event has waited 10 minutes or more: nothing is working the queue (the schedule is down, or a setting is missing). A claim past its lease is marked "Claim lapsed".
+`/advisor/outbox` (the "Outbox & Notifications" link in the advisor header) lists every event, newest first, with its kind, company and File ID, status (`pending`, `claimed`, `sent`, `dead`), attempts out of 5, when it was or will be sent, and `last_error` with a plain-language reading beside the recorded text. Tabs filter by status and show counts; the filter is in the URL. A banner appears when the longest-waiting due event has waited 10 minutes or more: nothing is working the queue (the schedule is down, or a setting is missing). A claim past its lease is marked "Claim lapsed".
 
 A dead event has **Retry send**: one click puts it back (`attempts = 0`, `status = 'pending'`, `next_attempt_at = now()`) and the next run sends it, the same email under the same idempotency key. When an email had already been written for it (it may have been delivered), a separate **Rebuild and retry…** discards that email and builds a new one from the current settings under a new key; the dialog says it sends a second copy if the first was delivered. Only dead events can be retried; a second click returns false and changes nothing.
 
@@ -384,7 +404,7 @@ included.
 - Retrying an event that is not dead (a `pending` one waiting out a delay will be tried by the schedule on its own; a `claimed` one is in a worker's hands) and re-reading an event's payload from live data on a retry.
 - Lifting a suppression is SQL only (the recipe in "Bounces and complaints"); advisors can see that a prospect is unreachable but not clear it. A prospect who fixes their mailbox does not get the confirmation they missed: a new certification queues a new one.
 - Bounces of the sign-in codes (Supabase Auth sends them through the same Resend account) are recorded and suppress the address, but nothing tells the prospect or an advisor that the code did not arrive: the advisor flag is for submissions, which exist only after a code was entered.
-- Unsubscribe links: these are transactional emails and carry none.
+- Unsubscribe links and notification preferences: these are transactional emails and carry none (see "Consent and preferences").
 - Exactly-once delivery: see "Delivery guarantee" for the windows where a repeat can get through.
 - Certifications from before the outbox existed were not queued; nothing is back-filled. Queue one on
   purpose with the recipe above.

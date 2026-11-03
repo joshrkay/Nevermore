@@ -53,7 +53,7 @@ changes one.
 second's does not. `stats` shows `deliveries` (what the provider actually sent) against `requests`. Comparing the two is the only check that housekeeping
 is limited to service-role callers and runs ahead of the claim: `index.ts` is Deno-only, so no unit test sees it.
 
-- Certify, nudge: exactly one advisor alert and one confirmation, no census/payroll values in either. The advisor alert lists Company Legal Name, Primary Signer, Title, Work Email, Phone, Employee Count, HQ State, Reference and Certified (UTC); certify with `"employees":[{"name":"SECRET PERSON","classification":"W2","salary":987654}]` and search `$RUN/resend.jsonl` for both.
+- Certify, nudge: exactly one advisor alert and one confirmation, no census/payroll values in either. The advisor alert lists Company Legal Name, Primary Signer, Title, Work Email, Phone, Employee Count, HQ State, File ID and Certified (UTC); certify with `"employees":[{"name":"SECRET PERSON","classification":"W2","salary":987654}]` and search `$RUN/resend.jsonl` for both.
 - Re-send the same certify `PATCH` several times (separate requests): certifications grow, queue and emails do not. Edit then re-certify: one new "Updated Intake" (subject `Updated Intake: <company> (<reference>)`; a first alert is `New Intake Certified: ...`).
 - Refused callers (no token, anon key, guest, wrong method) leave a due queue untouched; guest certify is refused by the database.
 - Provider 503: logged, `retry_in=60s`, held by backoff; five failures: `OUTBOX_DEAD`. `select public.requeue_outbox_event('<id>')` (from `sql`) retries the

@@ -44,7 +44,7 @@ describe("advisor notification", () => {
     expect(update.html).toContain("<title>Updated Intake: Acme Co (EAA-2026-AB12CD34)</title>");
   });
 
-  it("lists the company, signer, title, work email, phone, headcount, HQ state, reference and certification time", () => {
+  it("lists the company, signer, title, work email, phone, headcount, HQ state, File ID and certification time", () => {
     expect(rendered.text).toContain("Company Legal Name: Acme Co");
     expect(rendered.text).toContain("Primary Signer: Joanna Doe");
     expect(rendered.text).toContain("Title: Chief Executive Officer");
@@ -52,7 +52,9 @@ describe("advisor notification", () => {
     expect(rendered.text).toContain("Phone: 555-0100");
     expect(rendered.text).toContain("Employee Count: 28");
     expect(rendered.text).toContain("HQ State: CA");
-    expect(rendered.text).toContain("Reference: EAA-2026-AB12CD34");
+    expect(rendered.text).toContain("File ID: EAA-2026-AB12CD34");
+    expect(rendered.html).toMatch(/<th scope="row"[^>]*>File ID<\/th><td[^>]*>EAA-2026-AB12CD34<\/td>/);
+    expect(`${rendered.text}\n${rendered.html}`).not.toMatch(/reference/i);
     expect(rendered.text).toContain("Certified: 2026-05-01 12:34 UTC");
     for (const value of ["Acme Co", "Joanna Doe", "Chief Executive Officer", "jo@acme.example", "555-0100", ">28<", ">CA<", "EAA-2026-AB12CD34", "2026-05-01 12:34 UTC"]) {
       expect(rendered.html).toContain(value);
@@ -76,7 +78,7 @@ describe("advisor notification", () => {
     for (const label of ["Company Legal Name", "Primary Signer", "Title", "Work Email", "Phone", "Employee Count", "HQ State", "Certified"]) {
       expect(email.text).toContain(`${label}: Not provided`);
     }
-    expect(email.text).toContain("Reference: EAA-1");
+    expect(email.text).toContain("File ID: EAA-1");
   });
 
   it("falls back to the contact name for the signer on an alert queued before signers were recorded", () => {
@@ -161,6 +163,14 @@ describe("prospect confirmation", () => {
       expect(body).toContain("support@mail.example.com");
     }
     expect(rendered.subject).toBe("We received your intake (EAA-2026-AB12CD34)");
+  });
+
+  it("calls the identifier the File ID, as the prospect's signed Manuscript does", () => {
+    expect(rendered.text).toContain("File ID: EAA-2026-AB12CD34");
+    expect(rendered.text).toContain("quote your File ID");
+    expect(rendered.html).toMatch(/<th scope="row"[^>]*>File ID<\/th><td[^>]*>EAA-2026-AB12CD34<\/td>/);
+    expect(rendered.html).toContain("File ID EAA-2026-AB12CD34.");
+    expect(`${rendered.text}\n${rendered.html}`).not.toMatch(/reference/i);
   });
 
   it("is branded", () => {

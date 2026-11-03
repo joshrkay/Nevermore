@@ -229,8 +229,12 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   sectionHeading("1 — Company Profile");
   keyValues(m.companyRows);
 
-  // ---------- 2 Workforce ----------
-  sectionHeading("2 — Workforce Summary");
+  // ---------- 2 Payroll ----------
+  sectionHeading("2 — Payroll & Time");
+  keyValues(m.payrollRows);
+
+  // ---------- 3 Workforce ----------
+  sectionHeading("3 — Workforce Summary");
   keyValues(m.workforceRows);
   subheading("State breakdown");
   if (m.states.length === 0) {
@@ -246,8 +250,8 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     );
   }
 
-  // ---------- 3 Census ----------
-  sectionHeading("3 — Employee Census");
+  // ---------- 4 Census ----------
+  sectionHeading("4 — Employee Census");
   if (m.census.length === 0) {
     paragraph("No employee census captured yet.", 9, "normal", MUTED);
   } else {
@@ -281,8 +285,8 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     }
   }
 
-  // ---------- 4 Dependents ----------
-  sectionHeading("4 — Dependent Summary");
+  // ---------- 5 Dependents ----------
+  sectionHeading("5 — Dependent Summary");
   table(
     [
       { header: "Tier", width: CONTENT_W - 70 },
@@ -291,17 +295,17 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     ],
     [
       ...m.dependentTiers.map((t) => [t.tier, String(t.count), t.pct]),
-      ["Total Dependents", String(m.totalDependents), ""],
+      ["Total Dependents", m.totalDependents, ""],
     ],
   );
   paragraph("Dependent figures are self-reported. Actual election rates may vary at open enrollment.", 8.5, "italic", MUTED);
 
-  // ---------- 5 Benefits ----------
-  sectionHeading("5 — Current Benefits");
+  // ---------- 6 Benefits ----------
+  sectionHeading("6 — Current Benefits");
   keyValues(m.benefitsRows);
 
-  // ---------- 6 Readiness ----------
-  sectionHeading("6 — Underwriting Readiness");
+  // ---------- 7 Readiness ----------
+  sectionHeading("7 — Underwriting Readiness");
   subheading("Confirmed");
   if (m.resolved.length === 0) paragraph("Nothing confirmed yet.", 9, "normal", MUTED);
   m.resolved.forEach((item) => paragraph(`•  ${item}`, 9, "normal", INK, 1));
@@ -333,7 +337,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     );
   }
 
-  // ---------- 7 Certification ----------
+  // ---------- 8 Certification ----------
   // Kept together on one page: a signature block split across pages isn't a signature block.
   const consentLines = m.signer ? wrap(m.signer.consent.replace(/\n+/g, " "), CONTENT_W - 8) : [];
   const certHeight = 78 + consentLines.length * lineHeight(9);
@@ -345,7 +349,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   y += 6;
   font("bold", 12);
   setInk(INK);
-  pdf.text("7 — Submission Certification", MARGIN, y + 3);
+  pdf.text("8 — Submission Certification", MARGIN, y + 3);
   y += 9;
   paragraph(
     `Authorized representative of ${m.companyName} has reviewed and confirmed accuracy of this submission through Edgar Allan Advisory's intake process.`,

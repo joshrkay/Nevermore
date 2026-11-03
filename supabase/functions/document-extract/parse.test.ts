@@ -114,8 +114,8 @@ describe("findCensus", () => {
     const census = findCensus(rows, "Sheet Roster", 1, NOW)!;
     expect(census.location).toBe("Sheet Roster, rows 3–5");
     expect(census.census).toEqual([
-      { id: expect.any(String), first_name: "Ann", last_name: "Lee", dob: "1990-01-01", work_state: "CA", job_title: "Dev", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2" },
-      { id: expect.any(String), first_name: "Bo", last_name: "Ray", dob: "1985-05-05", work_state: "TX", job_title: "Writer", annual_salary: 72000, compensation_type: "salary", employment_type: "full_time", classification: "1099" },
+      { id: expect.any(String), first_name: "Ann", last_name: "Lee", dob: "1990-01-01", work_state: "CA", job_title: "Dev", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", assumed: ["employment_type"] },
+      { id: expect.any(String), first_name: "Bo", last_name: "Ray", dob: "1985-05-05", work_state: "TX", job_title: "Writer", annual_salary: 72000, compensation_type: "salary", employment_type: "full_time", classification: "1099", assumed: ["employment_type"] },
     ]);
     expect(census.skipped).toBe(0);
     expect(census.facts).toEqual(["dob", "work_state", "job_title", "annual_salary", "classification"]);

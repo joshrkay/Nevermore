@@ -544,6 +544,18 @@
           "items": {
             "$ref": "#/$defs/dependent"
           }
+        },
+        "assumed": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "string",
+            "enum": [
+              "classification",
+              "employment_type",
+              "annual_salary"
+            ]
+          }
         }
       }
     },

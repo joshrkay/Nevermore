@@ -50,6 +50,7 @@ const ChamberPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
     sessionId,
+    fileId,
     resumeFailed,
     startNew,
     loadFailed,
@@ -287,6 +288,7 @@ const ChamberPage = () => {
             data={chamberData}
             isDemo={false}
             sessionId={sessionId}
+            fileId={fileId}
             onSubmit={submit}
             provenance={provenance}
             onFieldAction={handleFieldAction}
