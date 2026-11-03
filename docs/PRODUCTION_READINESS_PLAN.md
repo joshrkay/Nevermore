@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Version** | 2.6 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings, A-2.2 added database validation and versioned writes, and A-1.3, A-1.4, A-1.5, A-2.1 and A-3.2 closed Epic A's open work) |
+| **Version** | 2.7 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings, A-2.2 added database validation and versioned writes, A-1.3, A-1.4, A-1.5, A-2.1 and A-3.2 closed Epic A's open work, and version 2.7 closed Epic G with D6 decided) |
 | **Date** | 2026-11-03 |
 | **Verified against** | `main` at commit `2a5e9af` (merge of pull request 27). That includes the `chamber-extract` fix, the move of `document-extract` onto the shared adapter, the per-address and global ceilings on document reads and the edge-function type check (pull request 26), and the end-to-end test (pull request 25). Version 2.3 was verified against `6f2bf5c` plus branch `claude/peaceful-albattani-neiujl`; v1.0 against `04503c3` (2026-10-20). A-2.2 (version 2.5) was verified on a branch cut from `2a5e9af`, before pull request 28's review fixes to the end-to-end test. |
 | **Scope** | Everything between the current build and a supervised private pilot (M2) and a public launch (M3) |
-| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (685 tests in 48 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. The `e2e` job has run green in CI: pull request 25's run 40774885703 on its final commit, and pull request 27's run 40812758403. This refresh read the test and its stand-ins and did not re-run the end-to-end test. **Not run:** `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. A-2.2 was checked separately on `a22-local` with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (806 tests in 50 files), `npm run build`, all eight SQL tests and `npm run test:e2e` (four tests, run three times in a row). The new two-tab test fails when the client's version condition is removed. Two real database connections saving from one version were checked by hand, not in CI. Version 2.6 (A-1.3, A-1.4, A-1.5, A-2.1, A-3.2) was checked on branch `claude/sharp-keller-qpo079`, cut from `main` at `34441de`, with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `tsc -p tsconfig.app.json` (clean once the advisor page's lost imports were restored), `npm test` (1,204 tests in 66 files), `npm run build`, all eleven SQL tests on Postgres 16, and `npm run test:e2e` (seven tests, three runs in a row). The new SQL and hook tests were checked to fail when the rule each covers is removed. The `/verify` harness (real PostgREST 12.2.3 and `dispatch-outbox` under Deno) passed its certify-and-send flow. Rebuilt on every migration, it showed that certifying through the lifecycle trigger still sends exactly two emails, that an expired draft can't be certified and queues nothing, and that archiving and every refused caller behave over HTTP. That run is also why a missing intake answers `PT404` (HTTP 404) and not `P0002`, which PostgREST turns into a 500. Nothing was deployed. |
+| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (685 tests in 48 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. The `e2e` job has run green in CI: pull request 25's run 40774885703 on its final commit, and pull request 27's run 40812758403. This refresh read the test and its stand-ins and did not re-run the end-to-end test. **Not run:** `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. A-2.2 was checked separately on `a22-local` with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (806 tests in 50 files), `npm run build`, all eight SQL tests and `npm run test:e2e` (four tests, run three times in a row). The new two-tab test fails when the client's version condition is removed. Two real database connections saving from one version were checked by hand, not in CI. Version 2.6 (A-1.3, A-1.4, A-1.5, A-2.1, A-3.2) was checked on branch `claude/sharp-keller-qpo079`, cut from `main` at `34441de`, with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `tsc -p tsconfig.app.json` (clean once the advisor page's lost imports were restored), `npm test` (1,204 tests in 66 files), `npm run build`, all eleven SQL tests on Postgres 16, and `npm run test:e2e` (seven tests, three runs in a row). The new SQL and hook tests were checked to fail when the rule each covers is removed. The `/verify` harness (real PostgREST 12.2.3 and `dispatch-outbox` under Deno) passed its certify-and-send flow. Rebuilt on every migration, it showed that certifying through the lifecycle trigger still sends exactly two emails, that an expired draft can't be certified and queues nothing, and that archiving and every refused caller behave over HTTP. That run is also why a missing intake answers `PT404` (HTTP 404) and not `P0002`, which PostgREST turns into a 500. Nothing was deployed. Version 2.7 (Epic G, US-5.1 to US-5.3) was checked on branch `claude/vigilant-brahmagupta-astca7`, cut from `main` at `578cfba` and merged with `main` at `378abef`, with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `tsc -p tsconfig.app.json`, `npm test` (1,345 tests in 72 files), `npm run build`, all thirteen SQL tests on Postgres 16, and `npm run test:e2e` (nine tests, all 28 migrations). The new File ID and email-label tests were checked to fail before the change. The `/verify` harness (real PostgREST 12.2.3 and `dispatch-outbox` under Deno 2.9.6) delivered both emails labelled File ID with no census values, sent nothing for a repeat certification of the same answers, and sent one "Updated Intake" alert and a second, identical confirmation for changed answers. With US-1.2's readiness check loaded, a certification missing required answers was refused (`EA003`) and queued nothing, and a complete one sent both emails. Nothing was deployed. |
 
 ---
 
@@ -132,8 +132,10 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-10-22 | Supabase URL and key read from Vercel's integration variables. Outbox hardening: queueing faults heal and sends are frozen so a sender change cannot duplicate. |
 | 2026-10-29 | Epic E census ingestion (branch `claude/adoring-dijkstra-2fcocb`, not yet merged): the roster is `chamber_data.census` with the spec's `CensusEmployee` row, and older `employees` data is read as it; `document-extract` matches census columns by header, reads `.docx`, never reads or keeps SSN or bank details; upload checks by contents with a SHA-256 and duplicate refusal; category names and per-intake limits in the database; a review step that shows census rows and settles differences in a dialog. Deploy order: the migrations (including `20261029092000`, which teaches the A-2.2 intake validator the `census` key and still accepts `employees`), then `document-extract` (it imports `_shared`), then the front end. See `docs/intake-schema.md`. |
 | 2026-11-03 | Migration versions made unique: `outbox_operations` is now `20261027090001` and `document_storage_path` `20261103110001`, each the second of a pair that shared a number, which `supabase db push` can't apply. CI fails on a duplicate (`src/data/migrations.test.ts`). An existing project: see `docs/SUPABASE_SETUP.md`, Migration versions. |
+| 2026-11-03 | US-1.4, real data in the Manuscript: a payroll section, and no invented values (census defaults are recorded in a row's `assumed` list and shown as not provided; no made-up coverage tiers or dependent counts). No migration. See D-1.2 and `docs/intake-schema.md`. |
 | 2026-11-03 | US-1.3, the hand-off to The Reckoning: the chosen PEO is saved with the intake (`chamber_sessions.chosen_peo`, migration `20261103100000`, deploy it before the front end), and the Manuscript page says when an intake has expired instead of calling it unsigned. See A-1.3. |
 | 2026-11-03 | Document fixes from the US-3 review: a new document row must point into its own intake's folder (migration `20261103110001`, which only changes a policy and can deploy before or after the front end), and removing a document deletes the stored file before its row and treats storage's empty answer as "not deleted" unless the file is gone. See E-1.2 and E-1.3. |
+| 2026-11-03 | Epic G closed (US-5.1 to US-5.3). D6 decided: the Advisor Console is the operating workflow, mapped in `docs/ADVISOR_CONSOLE.md`; G-3.2 and G-3.3 superseded. The File ID keeps the year its intake started (UTC) instead of the signer's current year. Both emails and the queue search call it the File ID. The confirmation's consent stance is written down in `docs/NOTIFICATIONS.md`. Terms are in a new `GLOSSARY.md`. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -149,13 +151,13 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
 | E Documents | 5 | 1 | 3 | 2 | 0 | 11 |
 | F Advisor | 4 | 6 | 1 | 0 | 0 | 11 |
-| G Communications | 2 | 2 | 0 | 4 | 0 | 8 |
+| G Communications | 6 | 0 | 2 | 0 | 0 | 8 |
 | H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **26** | **43** | **11** | **20** | **6** | **106** |
+| **Total** | **30** | **41** | **13** | **16** | **6** | **106** |
 
-23 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+23 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 15 of 39 M2; 5 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -182,7 +184,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | D3 | Certification and consent wording | **Open.** The placeholder `2026-10-draft-1` is marked DRAFT in the Reckoning. A second, unused wording (`2026-10-v1`) exists (C-2.4). No intake-consent text exists (H-2.2). | LEGAL | C-2.4, H-2.2 |
 | D4 | Retention windows | **Partly decided in code, to confirm.** An uncertified draft expires 30 days after its last change (A-1.5, `public.intake_draft_retention()`); an expired draft keeps its data until H-1.2 purges it. A browser's copy of unsaved answers is kept at most 7 days (A-1.4). Nothing else is windowed; AI rate-limit logs are pruned after a day. | LEGAL + PM | H-1.x, E-4.2 |
 | D5 | Advisor roles and permissions | **Decided and implemented**: `advisor` and `admin` in `user_roles`. In the repo `admin` has no power beyond `advisor` (tests assert it cannot grant roles or delete intakes). | PM | none |
-| D6 | CRM or workflow destination | **Open.** No CRM is named. | PM | G-3.1 |
+| D6 | CRM or workflow destination | **Decided:** the Advisor Console (`/advisor`) is the operating workflow, and there is no CRM. Every Submission appears there when certified, so nothing is re-keyed or synced. Field mapping and ownership: `docs/ADVISOR_CONSOLE.md`. | PM | none |
 | D7 | Email provider and sender domain | **Decided in code:** Resend, the only adapter. `EMAIL_FROM` has no default and must be on a verified domain. The domain is not named and the verification checklist item is unchecked. | OPS | G-2.1 launch, J-1.2 |
 | D8 | Is voice launch-critical? | **Recommended default stands:** an opt-in beta behind a flag, with text always available. | PM | I-5.x scope |
 | D9 | Carrier or PEO routing | **Unchanged:** out of scope for M1 to M3. The product tells prospects they send the packet themselves. | PM | none |
@@ -191,7 +193,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | D12 | PDF rendering approach | **Decided and implemented:** browser jsPDF with vector text, lazy-loaded. Server-side rendering has not been revisited. | BE + FE | none |
 | D13 | Malware-scanning provider for uploads | **Open.** | OPS | E-4.3 |
 | D14 | **New.** Intake access model: keep Supabase Auth with owner RLS, or move to continuation tokens (v1.0 D1)? | **Recommended: keep as built.** It isolates sessions today and is covered by SQL tests. Drop the token stories (A-1.6), amend the envelope AC in A-2.1, and close the gaps it leaves: a return path for upgraded guests, and database validation with a version check (A-2.2). | PM + BE | A-1.3, A-2.1, H-3.3 |
-| D15 | **New.** Reference format and assignment | **Recommended:** server-assigned `EAA-YYYY-NNNN` from a per-year sequence, recorded with the certification and unique. Today it is `EAA-<year>-<8 hex of the session id>` built in the browser. | PM + BE | C-3.1, D-3.2 |
+| D15 | **New.** Reference format and assignment | **Recommended:** server-assigned `EAA-YYYY-NNNN` from a per-year sequence, recorded with the certification and unique. Today it is `EAA-<year>-<8 hex of the session id>` built in the browser. The year is the one the intake started in (UTC), as the database's fallback has it, so an intake keeps one File ID for good; it used to be the signer's current local year, which gave an intake certified across New Year two File IDs. A File ID already recorded on a certification, even a withdrawn one, is kept as it is, so no File ID already issued changes. The database still does not check the File ID a certification carries. | PM + BE | C-3.1, D-3.2 |
 | D16 | **New.** Advisor visibility: does every advisor see every intake? | **As built: yes**, with no assignment. **Recommended:** keep for a pilot with a small named advisory team and revisit before M3. | PM | F-2.1 |
 
 ---
@@ -428,7 +430,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### C-3.1 Submit with idempotency and a human-readable reference
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** C-2.2, C-2.3 · **Milestone:** M1
 - **Built:** Submit is one update. The database refuses a missing or stale certification and refuses guests. The status changes atomically with the commit. The notification emails dedupe on (kind, session, data hash).
-- **Remaining:** The reference is `EAA-<year>-<8 hex of the session id>`, made in the browser: not `EAA-YYYY-NNNN`, not unique-constrained, not server-assigned (D15). No idempotency key: submitting again adds another certification row. No double-submit test.
+- **Remaining:** The reference (the File ID) is `EAA-<year the intake started, UTC>-<8 hex of the session id>`, made in the browser: not `EAA-YYYY-NNNN`, not unique-constrained, not server-assigned (D15). No idempotency key: submitting again adds another certification row. No double-submit test.
 - *Revised scope, AC and tests:*
   - **Scope:** Assign the reference in the database (a per-year sequence) when the certification is recorded, and make a repeat submit of unchanged data return the existing certification and reference.
   - **AC:**
@@ -460,8 +462,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### D-1.2 Mapper: census, dependents, benefits, payroll
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** D-1.1 · **Milestone:** M1
-- **Built:** Census, dependent tiers and benefits are mapped. Zero counts render as `0`.
-- **Remaining:** No payroll section (vendor and frequency sit in company rows). No census by state and coverage level. The full employee list (name, date of birth, salary) appears in the Manuscript body, where the plan says to keep it out unless underwriting needs it (D2). No zero, partial and full fixture test.
+- **Built:** Census, dependent tiers and benefits are mapped. Zero counts render as `0`. Since US-1.4 (2026-11-03) payroll is its own section (vendor, frequency, funding lead time, accrual method, PTO types, timekeeping, shift differentials, HRIS) on the page and in the PDF. Nothing is made up: a census default (W-2, full time, pay at full-time hours) is recorded per row in `assumed` and shown as "Not provided" or "est." with an open item; a person with no tier or named dependents is "Not provided", not "Employee Only"; the dependent total counts only the dependents known of. Tested in `manuscript.test.ts`, `manuscriptPdf.test.ts` and `ManuscriptPage.test.tsx`.
+- **Remaining:** No census by state and coverage level. The full employee list (name, date of birth, salary) appears in the Manuscript body, where the plan says to keep it out unless underwriting needs it (D2).
 
 #### D-1.3 Mapper: workers' comp, documents, resolved and open items
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** D-1.1, B-2.2 · **Milestone:** M1
@@ -647,7 +649,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic G: Communications and Operating Integrations
 
-*As built:* The outbox, both emails, the every-minute schedule (a guarded migration), the engineering alert for dead events and the advisor Outbox & Notifications page with one-click retry are built and tested. Bounce and suppression handling is built too. The gap is the CRM (D6), and nothing here has run against a hosted project, a real inbox, a real Resend webhook or a real alert channel yet.
+*As built:* The outbox, both emails, the every-minute schedule (a guarded migration), the engineering alert for dead events and the advisor Outbox & Notifications page with one-click retry are built and tested. Bounce and suppression handling is built too. D6 is decided: the Advisor Console is the operating workflow, so G-3 needed a mapping document and no sync. Nothing here has run against a hosted project, a real inbox, a real Resend webhook or a real alert channel yet, and the sender domain (D7) is not chosen.
 
 #### G-1.1 Outbox and event dispatch
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** C-3.1 · **Milestone:** M2
@@ -667,7 +669,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### G-2.1 Prospect confirmation email
 - **Status:** **DONE** · **Size:** M · **Priority:** Medium · **Owner:** BE + DES · **Depends:** G-1.1, D7, D10 · **Milestone:** M3
 - **Built:** A confirmation email with company, reference, next step, expected response time and support address (also Reply-To). It is queued in the certification transaction, goes only to the account's own email, and a send failure never touches the submission.
-- **Notes:** Plain-text header, no logo. `PROSPECT_RESPONSE_TIME` and `SUPPORT_EMAIL` have no default, so unset means not sent. The pre-launch checklist is unchecked.
+- **Notes:** Plain-text header, no logo. `PROSPECT_RESPONSE_TIME` and `SUPPORT_EMAIL` have no default, so unset means not sent. The pre-launch checklist is unchecked. Both emails call the identifier the File ID, as the app and the signed Manuscript do. Consent and preferences (US-5.2): the confirmation is a transactional receipt, so it needs no opt-in and has no preference setting. "Respected" means it goes only to the verified account address and never to a suppressed one, and that a re-certification sends another, identical confirmation by design (`docs/NOTIFICATIONS.md`, "Consent and preferences").
 
 #### G-2.2 Bounce and suppression handling
 - **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** BE · **Depends:** G-2.1 · **Milestone:** M3
@@ -675,34 +677,17 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Notes:** Not exercised against a real Resend webhook or a real bounce (the build environment cannot reach resend.com): create the webhook, set `RESEND_WEBHOOK_SECRET`, and run the checklist item in `docs/NOTIFICATIONS.md`. Lifting a suppression is SQL only. Both new tables hold addresses and belong in the D4 retention rule. The prospect's sign-in code emails share the Resend account: their bounces are recorded but nothing shows them to anyone.
 
 #### G-3.1 CRM selection and field-mapping specification
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** PM + BE · **Depends:** D6 · **Milestone:** M3
-- **Built:** No CRM is named or mapped.
-- **Remaining:** Blocked on D6.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Document the mapping for company, contacts, employee count, states, submission ID, status, and packet reference. Document ownership of each field.
-  - **AC:**
-    - Every mapped field lists its source and target.
-    - No target field receives a public document URL.
-  - **Tests:** Review against the mapping checklist.
+- **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** PM + BE · **Depends:** D6 · **Milestone:** M3
+- **Built:** D6 decided the Advisor Console is the operating workflow, with no CRM. `docs/ADVISOR_CONSOLE.md` maps company, contacts, employee count, locations, status, File ID and Manuscript to where advisors see them, with each field's source and owner, and lists every link and how it is protected: no stored or emailed link opens a document; signed storage links last 60 seconds and are made on click.
+- **Notes:** The console does not show the account's email (the Advisor Alert carries it); the doc records this as a known gap. Should a CRM be added later, the doc says how: an outbox kind keyed on the intake id, never the File ID or a signed link.
 
 #### G-3.2 CRM sync worker
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Medium · **Owner:** BE · **Depends:** G-3.1, F-4.1, G-1.1 · **Milestone:** M3
-- **Built:** The outbox `kind` check allows only the two email kinds.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Upsert a lead keyed on the submission reference. Log every sync attempt.
-  - **AC:**
-    - Repeated submits update one lead, not many.
-    - Each attempt is logged with status.
-  - **Tests:** Sync the same submission twice and confirm one lead.
+- **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Medium · **Owner:** BE · **Depends:** G-3.1 · **Milestone:** M3
+- **Built:** Nothing to sync: every Submission is in the Advisor Console when it is certified (D6). The outbox `kind` check still allows only the two email kinds.
 
 #### G-3.3 Sync failure visibility and retry
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** FS · **Depends:** G-3.2 · **Milestone:** M3
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Show failed syncs in the admin queue with a retry action.
-  - **AC:**
-    - A failed sync appears in the queue.
-    - Retry produces one lead.
-  - **Tests:** Forced failure, then retry.
+- **Status:** **SUPERSEDED** · **Size:** S · **Priority:** Medium · **Owner:** FS · **Depends:** G-3.2 · **Milestone:** M3
+- **Built:** No sync, so no sync failures. Failed emails about a Submission are visible and retriable on `/advisor/outbox` (G-1.3).
 
 ---
 
@@ -983,7 +968,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | 0: put the fixes in front of users | Confirm which builds of `chamber-extract` and `document-extract` are deployed, deploy both (and check the deploy bundles `supabase/functions/_shared`), and make one real Lenore exchange and one real document read in preview (the open part of F-0.2). | The fixes are verified in code, tests, a Deno run and a CI run, not live. |
 | 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.4 (make the checks required), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus making the end-to-end test (I-4.3, built) a required check. C-1.3, C-2.1 and B-1.3 wait for D2. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
 | 2: gate the private pilot (M2) | All M2 stories, plus the M1-tagged hardening stories that do not block the demo path: B-1.1, B-1.3, B-1.4, B-2.2, D-1.1 to D-1.4, D-2.2, D-3.1 to D-3.3, E-4.1, I-4.2. In practice: E-4.1, E-4.3, E-4.2, F-2.1, F-4.1, F-4.3, G-1.1 (schedule in a migration), G-1.3, H-1.1 to H-1.3, H-2.1, H-2.3, H-3.1, H-3.3, H-4.1 to H-4.3, I-1.x, I-2.x | Retention, deletion, upload hardening, an admin view of failed emails, legal pages, alerting, a runbook, and accessibility. Most wait on D3, D4, D10 and D13. |
-| 3: public launch (M3) | G-2.2, G-3.x, I-5.x, J-1.2, J-2.x, J-3.x | Bounces, CRM, voice reliability, domain, analytics and the launch checklist. G-3.x waits for D6. |
+| 3: public launch (M3) | G-2.2, G-3.x, I-5.x, J-1.2, J-2.x, J-3.x | Bounces, voice reliability, domain, analytics and the launch checklist. G-3.x closed with D6 (the Advisor Console, no CRM). |
 
 **Critical path to a credible demo:** `C-1.3 → C-2.1 → C-3.1 → D-1.5` (A-2.2, the first step, is done), with the end-to-end test (I-4.3, built) kept passing as each lands. D2 and D15 must close before C-1.3 and C-3.1 start.
 
@@ -1098,9 +1083,9 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | G-1.3 | Retry failed notifications | S | High | M2 | DONE |
 | G-2.1 | Prospect confirmation email | M | Medium | M3 | DONE |
 | G-2.2 | Bounce and suppression handling | S | Medium | M3 | DONE |
-| G-3.1 | CRM selection and field-mapping specification | S | Medium | M3 | NOT STARTED |
-| G-3.2 | CRM sync worker | M | Medium | M3 | NOT STARTED |
-| G-3.3 | Sync failure visibility and retry | S | Medium | M3 | NOT STARTED |
+| G-3.1 | CRM selection and field-mapping specification | S | Medium | M3 | DONE |
+| G-3.2 | CRM sync worker | M | Medium | M3 | SUPERSEDED |
+| G-3.3 | Sync failure visibility and retry | S | Medium | M3 | SUPERSEDED |
 | H-1.1 | Data classification and retention matrix | S | Highest | M2 | NOT VERIFIABLE |
 | H-1.2 | Automated retention enforcement | M | Highest | M2 | NOT STARTED |
 | H-1.3 | Deletion request workflow | S | High | M2 | NOT STARTED |
@@ -1213,7 +1198,7 @@ Earlier drafts sized several broad stories as Medium while they covered several 
 | F-4 Status and notes | Statuses, notes, flags | F-4.1 to F-4.3 |
 | G-1 Internal notification | Outbox, send, retry | G-1.1 to G-1.3 |
 | G-2 Prospect email | Send, bounces | G-2.1, G-2.2 |
-| G-3 CRM | Spec, worker, visibility | G-3.1 to G-3.3 |
+| G-3 Operating workflow | Advisor Console mapping (no CRM sync) | G-3.1 to G-3.3 |
 | H-1 Retention | Matrix, enforcement, deletion | H-1.1 to H-1.3 |
 | H-2 Privacy and consent | Pages, consent gate, copy audit | H-2.1 to H-2.3 |
 | H-3 Access tests | Guest, role, signed URL | H-3.1 to H-3.3 |

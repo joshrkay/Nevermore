@@ -156,7 +156,7 @@ describe("matchesSearch", () => {
     expect(matchesSearch(row, "   ")).toBe(true);
   });
 
-  it("finds a row by company, contact or reference, ignoring case", () => {
+  it("finds a row by company, contact or File ID, ignoring case", () => {
     expect(matchesSearch(row, "acme")).toBe(true);
     expect(matchesSearch(row, "PROSPECT")).toBe(true);
     expect(matchesSearch(row, "eaa-2026-a1b2")).toBe(true);
