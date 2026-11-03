@@ -260,7 +260,7 @@ These rules run in the browser, and the database checks only that `field_provena
 
 ### Extraction contract (`chamber-extract`)
 
-The response is `{ extracted, field_status, evidence, corrected_fields, reply, prompt_version }`. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`.
+The response is `{ extracted, field_status, evidence, corrected_fields, reply, rejected, prompt_version }`. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`. A field enters `extracted` only if intake schema v1 accepts the model's value exactly as sent. A lower-case `"ny"`, a state list with one unknown code, `12.5` people or a string of digits is refused and listed in `rejected` as `{ path, reason }`. The browser ignores `rejected`.
 
 ### Extraction contract version and eval
 

@@ -18,6 +18,7 @@ describe("shapeExtraction", () => {
       evidence: { employee_count: "actually it's 45", states: "mainly CA and TX" },
       corrected_fields: ["employee_count"],
       reply: "Thank you.",
+      rejected: [],
       prompt_version: PROMPT_VERSION,
     });
   });
@@ -114,6 +115,7 @@ describe("emptyExtraction", () => {
       evidence: {},
       corrected_fields: [],
       reply: null,
+      rejected: [],
       prompt_version: PROMPT_VERSION,
     });
   });

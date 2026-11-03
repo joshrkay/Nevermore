@@ -64,6 +64,11 @@ export function useLenoreChat({ chamberData, addUserMessage, addLenoreMessage, o
       const { data, error } = await supabase.functions.invoke("chamber-extract", {
         body: { message: text, context: chatContext(dataRef.current) },
       });
+      // The conversation was replaced while Lenore was answering: her answer belongs to the old one.
+      if (replaced()) {
+        onOrbStateChange("idle");
+        return false;
+      }
       if (error) throw error;
 
       if (data?.extracted) onExtracted(data.extracted, data, message);

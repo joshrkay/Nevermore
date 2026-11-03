@@ -140,7 +140,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | Epic | Done | Partial | Superseded | Not started | Not verifiable | Total |
 |---|---|---|---|---|---|---|
 | 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
-| A Durable session | 2 | 4 | 4 | 1 | 0 | 11 |
+| A Durable session | 7 | 0 | 4 | 0 | 0 | 11 |
 | B AI extraction | 3 | 5 | 0 | 1 | 0 | 9 |
 | C Review, certify, submit | 1 | 7 | 0 | 2 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
@@ -150,7 +150,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **21** | **48** | **10** | **21** | **6** | **106** |
+| **Total** | **26** | **44** | **10** | **20** | **6** | **106** |
 
 22 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
@@ -306,8 +306,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### B-1.1 Extraction response contract and parser
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1 · **Milestone:** M1
-- **Built:** `chamber-extract` keeps only 17 allow-listed fields with a per-field `field_status` and `evidence` (up to 200 characters) and returns `{extracted, field_status, evidence, corrected_fields, reply}` (plus `prompt_version`, B-1.4); the shaping is in `extraction.ts` and the tool schema now asks the model for all of it. The client's `sanitizeChamberPatch` validates. An empty extraction yields a fallback reply.
-- **Remaining:** Invalid fields are dropped one by one in the browser rather than rejecting the whole response. Unknown field paths are dropped without being logged. The contract version moved to B-1.4 (`PROMPT_VERSION`, one version for the prompt, the tool schema and the response shape).
+- **Built:** `chamber-extract` keeps only 17 allow-listed fields with a per-field `field_status` and `evidence` (up to 200 characters) and returns `{extracted, field_status, evidence, corrected_fields, reply, rejected}` (plus `prompt_version`, B-1.4); the shaping is in `extraction.ts` and the tool schema now asks the model for all of it. The client's `sanitizeChamberPatch` validates. An empty extraction yields a fallback reply.
+- **Remaining:** `chamber-extract` now refuses each field whose value breaks intake schema v1 and lists it in `rejected`, logging its path (A-2.1). Invalid fields are still refused one by one rather than the whole response being rejected. Unknown field paths are dropped without being logged. The contract version moved to B-1.4 (`PROMPT_VERSION`, one version for the prompt, the tool schema and the response shape).
 
 #### B-1.2 Merge policy and conflict capture
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** B-1.1, A-2.2 · **Milestone:** M1

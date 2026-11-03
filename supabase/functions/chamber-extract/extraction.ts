@@ -3,6 +3,7 @@
 // the model sent it, and a status, evidence quote or correction survives only for a field that was
 // extracted. No Deno or network imports, so it is unit-tested with the frontend suite.
 
+import { type IntakeIssue, validateIntakeField } from "../_shared/intakeSchema.ts";
 import { FIELDS, FIELD_STATUSES, MAX_EVIDENCE_CHARS, PROMPT_VERSION } from "./schema.ts";
 
 export interface Extraction {
@@ -11,6 +12,8 @@ export interface Extraction {
   evidence: Record<string, string>;
   corrected_fields: string[];
   reply: string | null;
+  /** Fields the model sent that the intake schema refuses, by path and reason (never the value). */
+  rejected: IntakeIssue[];
   /** The contract this answer was produced under, which the browser stores with each value. */
   prompt_version: string;
 }
@@ -22,6 +25,7 @@ export const emptyExtraction = (): Extraction => ({
   evidence: {},
   corrected_fields: [],
   reply: null,
+  rejected: [],
   prompt_version: PROMPT_VERSION,
 });
 
@@ -58,5 +62,5 @@ export function shapeExtraction(args: Record<string, unknown>): Extraction {
     ? args.corrected_fields.filter((f: unknown): f is string => typeof f === "string" && f in extracted)
     : [];
   const reply = typeof args.reply === "string" && args.reply.trim() ? args.reply : null;
-  return { extracted, field_status, evidence, corrected_fields, reply, prompt_version: PROMPT_VERSION };
+  return { extracted, field_status, evidence, corrected_fields, reply, rejected, prompt_version: PROMPT_VERSION };
 }
