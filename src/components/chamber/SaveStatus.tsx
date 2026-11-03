@@ -10,7 +10,7 @@ interface SaveStatusProps {
   onKeepMine?: () => void;
   /** Invalid: drop the unsaved changes and reload what was saved. */
   onDiscard?: () => void;
-  /** Missing: begin a new intake from what's on screen. */
+  /** Missing or expired: begin a new intake from what's on screen. */
   onStartNew?: () => void;
   /** Invalid: the answer the server refused, in words. */
   invalidField?: string | null;
@@ -21,7 +21,7 @@ const linkButton = "font-medium text-foreground underline underline-offset-2 hov
 /** Tells the prospect whether their latest answers are saved, and what to do when they aren't. */
 const SaveStatus = ({ status, onRetry, onLoadLatest, onKeepMine, onDiscard, onStartNew, invalidField }: SaveStatusProps) => {
   // These need the prospect's decision, so they interrupt rather than wait politely.
-  if (status === "conflict" || status === "invalid" || status === "missing") {
+  if (status === "conflict" || status === "invalid" || status === "missing" || status === "expired") {
     return (
       <div role="alert" className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs">
         <span className="flex items-center gap-1.5 text-destructive">
@@ -29,6 +29,7 @@ const SaveStatus = ({ status, onRetry, onLoadLatest, onKeepMine, onDiscard, onSt
           {status === "conflict" && "Not saved: this intake was changed in another tab or device."}
           {status === "invalid" && `Not saved. Please check: ${invalidField ?? "one of your answers"}.`}
           {status === "missing" && "Not saved: this intake can no longer be saved."}
+          {status === "expired" && "Not saved: this intake has expired."}
         </span>
         {status === "conflict" && (
           <>
@@ -39,7 +40,7 @@ const SaveStatus = ({ status, onRetry, onLoadLatest, onKeepMine, onDiscard, onSt
         {status === "invalid" && (
           <button type="button" onClick={onDiscard} className={linkButton}>Discard my changes</button>
         )}
-        {status === "missing" && (
+        {(status === "missing" || status === "expired") && (
           <button type="button" onClick={onStartNew} className={linkButton}>Start a new intake</button>
         )}
       </div>

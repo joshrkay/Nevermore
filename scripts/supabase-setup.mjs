@@ -17,7 +17,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  advisorSql, authConfigPatch, checkSecrets, cronScheduleSql, envFileLine, EXTENSIONS_SQL, FUNCTIONS,
+  advisorSql, authConfigPatch, checkSecrets, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, EXTENSIONS_SQL, FUNCTIONS,
   interpretChecks, isProjectRef, parseEnvFile, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete,
   STATUS_QUERIES, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
@@ -139,7 +139,7 @@ function setSecrets(ref, secrets) {
 async function setup(call, ref, secretsFile, env) {
   // First, because it needs only the Management API: a failure in a later step (database password,
   // migration, Docker) must not leave the Site URL at Supabase's default, which breaks every sign-up link.
-  step("Auth: guest sign-in, email confirmation, Site URL and redirects, the sign-up and email-change messages, sign-in email delivery");
+  step("Auth: guest sign-in, email confirmation, Site URL and redirects, the sign-up, email-change and sign-in messages, sign-in email delivery");
   const current = await call("GET", `/v1/projects/${ref}/config/auth`);
   // Without the current settings the patch would replace the Redirect URLs list, so stop instead.
   if (!current.ok || !current.body) fail(`Reading the auth settings failed (${current.status}); nothing was changed. Check the access token can manage this project, then run this again.`);
@@ -172,7 +172,7 @@ async function setup(call, ref, secretsFile, env) {
     if (!cliInteractive(["functions", "deploy", fn, "--project-ref", ref])) fail(`Deploying ${fn} failed. If the CLI asked for Docker, update it or run \`supabase functions deploy ${fn} --use-api --project-ref ${ref}\`, then run this again.`);
   }
 
-  step("Email schedule: pg_cron, pg_net, the service-role key in Vault, and a run every minute");
+  step("Schedules: pg_cron, pg_net, the service-role key in Vault, dispatch-outbox every minute and draft expiry hourly");
   const ext = await runSql(call, ref, EXTENSIONS_SQL);
   if (!ext.ok) fail(`Enabling pg_cron and pg_net failed (${ext.status}): ${ext.message}`);
   const keys = await apiKeys(call, ref);
@@ -183,6 +183,8 @@ async function setup(call, ref, secretsFile, env) {
   if (!vault.ok) fail(`Storing the service-role key in Vault failed (${vault.status}).`);
   const cron = await runSql(call, ref, cronScheduleSql(ref));
   if (!cron.ok) fail(`Scheduling dispatch-outbox failed (${cron.status}): ${cron.message}`);
+  const expiry = await runSql(call, ref, EXPIRY_SCHEDULE_SQL);
+  if (!expiry.ok) fail(`Scheduling expire-idle-intakes failed (${expiry.status}): ${expiry.message}`);
   say("  Scheduled.");
 }
 

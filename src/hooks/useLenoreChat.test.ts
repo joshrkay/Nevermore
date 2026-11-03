@@ -165,3 +165,67 @@ describe("useLenoreChat", () => {
     expect(onExtracted).toHaveBeenCalledWith({ employee_count: 13 }, expect.anything(), { id: "m2", text: "We have 12 staff" });
   });
 });
+
+// "Start over" (or another person signing in) replaces the conversation while Lenore may still be answering.
+describe("useLenoreChat when the conversation is replaced", () => {
+  beforeEach(() => { invoke.mockReset(); });
+
+  const mount = () => {
+    const addLenoreMessage = vi.fn();
+    const setChamberData = vi.fn();
+    const onExtracted = vi.fn();
+    const hook = renderHook(({ epoch }) =>
+      useLenoreChat({
+        epoch, chamberData: EMPTY_CHAMBER_DATA, setChamberData, addLenoreMessage, onOrbStateChange: vi.fn(), onExtracted,
+        addUserMessage: (text) => ({ id: "m1", text }),
+      }), { initialProps: { epoch: 0 } });
+    return { ...hook, addLenoreMessage, setChamberData, onExtracted };
+  };
+
+  it("drops an answer that arrives after the conversation was replaced", async () => {
+    let answer!: (value: unknown) => void;
+    invoke.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    const { result, rerender, addLenoreMessage, setChamberData, onExtracted } = mount();
+    let sending!: Promise<void>;
+    act(() => { sending = result.current.send("We're Acme, 12 people"); });
+    rerender({ epoch: 1 });
+    await act(async () => {
+      answer({ data: { extracted: { company_name: "Acme", employee_count: 12 }, reply: "Twelve, then." }, error: null });
+      await sending;
+    });
+    expect(addLenoreMessage).not.toHaveBeenCalled();
+    expect(setChamberData).not.toHaveBeenCalled();
+    expect(onExtracted).not.toHaveBeenCalled();
+    expect(result.current.pending).toBe(false);
+    expect(result.current.failure).toBeNull();
+  });
+
+  it("doesn't offer to resend a message from the old conversation", async () => {
+    invoke.mockResolvedValue({ data: null, error: httpError(500) });
+    const { result, rerender } = mount();
+    await act(async () => { await result.current.send("We're Acme"); });
+    expect(result.current.failure).not.toBeNull();
+    rerender({ epoch: 1 });
+    expect(result.current.failure).toBeNull();
+  });
+
+  it("doesn't report a failure that arrives after the conversation was replaced", async () => {
+    // The call itself fails (a network error), rather than answering with an error.
+    let fail!: (reason: unknown) => void;
+    invoke.mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+    const { result, rerender } = mount();
+    let sending!: Promise<void>;
+    act(() => { sending = result.current.send("We're Acme"); });
+    rerender({ epoch: 1 });
+    await act(async () => { fail(new TypeError("Failed to fetch")); await sending; });
+    expect(result.current.failure).toBeNull();
+  });
+
+  it("still answers when the conversation stays the same", async () => {
+    invoke.mockResolvedValue({ data: { reply: "Noted." }, error: null });
+    const { result, rerender, addLenoreMessage } = mount();
+    rerender({ epoch: 0 });
+    await act(async () => { await result.current.send("Hi"); });
+    expect(addLenoreMessage).toHaveBeenCalledWith("Noted.");
+  });
+});

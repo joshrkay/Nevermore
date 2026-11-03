@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "setup:supabase": "node scripts/supabase-setup.mjs",
+    "schema:intake": "node scripts/intake-schema.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {

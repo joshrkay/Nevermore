@@ -24,6 +24,13 @@ type Load =
   | { kind: "error"; error: Error }
   | { kind: "ready"; rows: SubmissionSummary[] };
 
+// Drafts the prospect can no longer open (docs/intake-schema.md, "Session lifecycle").
+const CLOSED_INTAKE_LABELS: Record<string, string> = {
+  expired: "Expired (idle draft)",
+  archived: "Archived by prospect",
+  revoked: "Revoked",
+};
+
 const COMPLETENESS_CLASS: Record<Completeness["state"], string> = {
   complete: "bg-success/15 text-success",
   needs_review: "bg-warning/15 text-warning",
@@ -220,11 +227,12 @@ const AdvisorDashboardPage = () => {
                             formatDate(row.submitted_at)
                           ) : (
                             <span className="text-muted-foreground">
-                              {row.intake_status === "submitted"
-                                ? "Date not recorded"
-                                : row.signer_name
-                                  ? "Needs re-certification"
-                                  : "Not certified"}
+                              {CLOSED_INTAKE_LABELS[row.intake_status ?? ""]
+                                ?? (row.intake_status === "submitted"
+                                  ? "Date not recorded"
+                                  : row.signer_name
+                                    ? "Needs re-certification"
+                                    : "Not certified")}
                             </span>
                           )}
                         </TableCell>

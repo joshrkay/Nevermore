@@ -16,6 +16,7 @@ import {
   parseChamberData,
   sanitizeChamberPatch,
 } from "./chamberValidation";
+import { validateChamberData } from "../../supabase/functions/_shared/intakeSchema";
 
 describe("sanitizeChamberPatch", () => {
   it("returns an empty patch for non-objects", () => {
@@ -419,6 +420,37 @@ describe("sanitiser output the server must accept", () => {
     expect(serverRefusal(mergeChamberData(DEMO_CHAMBER_DATA, raw))).toBeNull();
     // and the stored form survives a JSON round trip unchanged, so what the server holds is what we sent
     expect(parseChamberData(JSON.parse(JSON.stringify(data)))).toEqual(data);
+    // and it is canonical: intake schema v1 accepts it exactly as it is
+    expect(validateChamberData(data)).toEqual([]);
+    expect(validateChamberData(sanitizeChamberPatch(raw))).toEqual([]);
+  });
+
+  // The schema is the stricter side: whatever it accepts, the server accepts, and whatever the server
+  // refuses, the schema refuses.
+  it("the intake schema accepts nothing the server refuses", () => {
+    const atTheLimits = {
+      ...DEMO_CHAMBER_DATA,
+      company_name: "😀".repeat(TEXT_MAX),
+      states: Array.from({ length: MAX_STATES }, () => "PR"),
+      ancillary_benefits: Array.from({ length: MAX_LIST_ITEMS }, () => "x".repeat(TEXT_MAX)),
+      employee_count: COUNT_MAX,
+      census: Array.from({ length: MAX_EMPLOYEES }, (_, i) => ({
+        id: `id-${i}`, first_name: "x".repeat(TEXT_MAX), last_name: "x".repeat(NAME_MAX), dob: "x".repeat(40), age: 100,
+        work_state: "", zip_code: "94107-1234", job_title: "x".repeat(NAME_MAX), annual_salary: SALARY_MAX,
+        compensation_type: "hourly", employment_type: "part_time", classification: "1099", coverage_tier: "WAIVE", class_code: "0000",
+        dependents: Array.from({ length: MAX_DEPENDENTS }, () => ({ first_name: "D", last_name: "", dob: "", relationship: "other" })),
+      })).slice(0, 50),
+    };
+    expect(validateChamberData(atTheLimits)).toEqual([]);
+    expect(serverRefusal(atTheLimits)).toBeNull();
+    for (const refused of [
+      { hq_state: "ZZ" }, { states: ["CA", "ca"] }, { employee_count: 1_000_001 }, { employee_count: "5" },
+      { census: [{ first_name: "A", work_state: "ZZ" }] }, { census: [{ first_name: "A", classification: "W2" }] },
+      { census: [{ first_name: "A", annual_salary: 1_000_001 }] }, { census: [{ first_name: " " }] }, { extra: 1 }, [],
+    ]) {
+      expect(serverRefusal(refused), JSON.stringify(refused)).not.toBeNull();
+      expect(validateChamberData(refused), JSON.stringify(refused)).not.toEqual([]);
+    }
   });
 
   it("holds across seeded random input", () => {
@@ -455,6 +487,7 @@ describe("sanitiser output the server must accept", () => {
       }
       const data: ChamberData = parseChamberData(raw);
       expect(serverRefusal(data), JSON.stringify(raw)).toBeNull();
+      expect(validateChamberData(data), JSON.stringify(raw)).toEqual([]);
     }
   });
 });

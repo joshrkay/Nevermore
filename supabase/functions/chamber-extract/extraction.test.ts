@@ -18,7 +18,35 @@ describe("shapeExtraction", () => {
       evidence: { employee_count: "actually it's 45", states: "mainly CA and TX" },
       corrected_fields: ["employee_count"],
       reply: "Thank you.",
+      rejected: [],
     });
+  });
+
+  // Strict: a value the intake schema refuses is not repaired and not passed on. The browser would
+  // otherwise have to guess, and the database would refuse the save.
+  it("refuses a value the intake schema doesn't accept as sent, and says which and why", () => {
+    const shaped = shapeExtraction({
+      company_name: "Acme",
+      hq_state: "ca",
+      states: ["CA", "XX"],
+      employee_count: 12.5,
+      has_401k: "yes",
+      key_challenges: "x".repeat(1001),
+      field_status: { company_name: "confirmed", hq_state: "confirmed", states: "confirmed" },
+      evidence: { hq_state: "in california" },
+      corrected_fields: ["hq_state"],
+    });
+    expect(shaped.extracted).toEqual({ company_name: "Acme" });
+    expect(shaped.field_status).toEqual({ company_name: "confirmed" });
+    expect(shaped.evidence).toEqual({});
+    expect(shaped.corrected_fields).toEqual([]);
+    expect(shaped.rejected.map((issue) => issue.path)).toEqual(["hq_state", "states[1]", "employee_count", "has_401k", "key_challenges"]);
+    expect(shaped.rejected.find((issue) => issue.path === "key_challenges")?.reason).toBe("must be at most 1000 characters");
+  });
+
+  it("never echoes a refused value in its reasons", () => {
+    const { rejected } = shapeExtraction({ hq_state: "Secret Street 12", employee_count: "forty" });
+    expect(JSON.stringify(rejected)).not.toMatch(/Secret|forty/);
   });
 
   it("drops fields we don't collect, and null or empty values", () => {
@@ -75,7 +103,7 @@ describe("shapeExtraction", () => {
 
 describe("emptyExtraction", () => {
   it("is nothing extracted and no reply, so the browser falls back to its own line", () => {
-    expect(emptyExtraction()).toEqual({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null });
+    expect(emptyExtraction()).toEqual({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null, rejected: [] });
   });
 
   it("hands out a fresh object each time", () => {

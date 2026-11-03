@@ -16,11 +16,11 @@ front end that uses it is deployed.
 
 | Step | How | Done by hand instead |
 |---|---|---|
-| Auth: guest sign-in on, email confirmation on, Site URL and Redirect URLs (below), the sign-up and email-change messages (below), sign-in emails through Resend's SMTP. First, so a later failure can't leave sign-up links broken | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
+| Auth: guest sign-in on, email confirmation on, Site URL and Redirect URLs (below), the sign-up, email-change and sign-in (magic-link) messages (below), sign-in emails through Resend's SMTP. First, so a later failure can't leave sign-up links broken | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
 | Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push` | SQL editor, file by file |
 | Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set` from a private temporary file | Edge Functions → Secrets |
 | Deploy `chamber-extract`, `document-extract`, `dispatch-outbox` | `supabase functions deploy` | (CLI only) |
-| Email schedule: `pg_cron`, `pg_net`, the service-role key in Vault, `dispatch-outbox` every minute | Management API SQL endpoint | SQL editor, `docs/NOTIFICATIONS.md` → Schedule |
+| Schedules: `pg_cron`, `pg_net`, the service-role key in Vault, `dispatch-outbox` every minute, and `expire-idle-intakes` hourly (uncertified drafts idle for 30 days expire) | Management API SQL endpoint | SQL editor, `docs/NOTIFICATIONS.md` → Schedule; `select cron.schedule('expire-idle-intakes', '17 * * * *', 'select public.expire_idle_intakes();');` |
 | Check all of the above, and that each function boots | SQL counts, the public auth settings, the auth config (Site URL, Redirect URLs, templates), a signed-out call to each function (a deployed one answers its own 401) | |
 
 ### Auth URLs and emails
@@ -47,12 +47,15 @@ account. The script sets, and `--check` verifies:
   first uses it up. The script replaces a template that still uses `{{ .ConfirmationURL }}`; the text
   it installs is `SIGNUP_CONFIRM_TEMPLATE` in `scripts/supabase-setup-lib.mjs`, to paste by hand.
 - **Change email address** template: the 6-digit `{{ .Token }}` a guest types to certify.
+- **Magic link** template: the 6-digit `{{ .Token }}` a returning prospect types to get back to an intake
+  from another browser (`RecoverIntake`). The text the script installs is `SIGN_IN_CODE_TEMPLATE`.
 
 Deploy the front end with `/auth/callback` before installing the sign-up template: an older
 front end ignores the token in the link.
 
 Sign-in emails matter for submissions, not just convenience: a guest certifies only after confirming
-an email with a 6-digit code, and Supabase's built-in mailer only delivers to your own team's
+an email with a 6-digit code, a returning prospect on another browser signs back in with one (the
+magic-link template), and Supabase's built-in mailer only delivers to your own team's
 addresses. With `RESEND_API_KEY` and `EMAIL_FROM` set, the script routes those emails through
 Resend (`smtp.resend.com`). It leaves SMTP alone if another provider is already configured.
 
@@ -131,7 +134,9 @@ A rerun applies new migrations, sets the secrets again (an existing `IP_HASH_SEC
 redeploys the functions, re-sends the Resend SMTP settings (so a rotated key is picked up), replaces
 the Vault copy of the service-role key and re-creates the schedule under the same name. It doesn't
 remove redirect URLs or replace an email template that already sends the code (for sign-up: the
-code and an app link, with no `{{ .ConfirmationURL }}`).
+code and an app link, with no `{{ .ConfirmationURL }}`). A project set up
+before the sign-in code existed fails `--check` on "Sign-in code message" until a rerun (or the
+dashboard) puts `{{ .Token }}` in the magic-link template.
 
 ## If a step fails
 

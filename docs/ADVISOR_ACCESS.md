@@ -49,6 +49,14 @@ a sign-out the app asked for is remembered until the event arrives.
 - Change the pipeline status only through `set_submission_status()`, which appends to
   `submission_status_history` (who, when, from, to, note).
 - Add internal notes (`advisor_notes`); notes can't be edited or deleted and prospects can't read them.
+- Read `intake_lifecycle_events`: every draft that expired, was archived by its prospect ("Start
+  over") or was revoked, with who and why. The queue lists those intakes with their intake status
+  (`expired`, `archived`, `revoked`).
+- Admins only: revoke a draft that was never certified with
+  `select public.revoke_chamber_session('<session id>', '<reason>');` run as the admin (an admin's
+  JWT through the API; there is no screen yet). The prospect loses all access to it and its
+  documents, and the revocation is recorded with the reason. See `docs/intake-schema.md` →
+  "Session lifecycle".
 - Generate Manuscript versions into the private `manuscripts` bucket. A version is recorded only
   for a certified intake, against the latest review state; recorded files can't be overwritten
   or deleted. Prospects can't list or download stored versions.
