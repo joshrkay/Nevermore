@@ -116,7 +116,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | The consent wording is defined twice (`2026-10-draft-1` and an unused `2026-10-v1` with no draft flag). The Manuscript page and PDF print the signed consent with no DRAFT marker. | `certification.ts`, `manuscript.ts` | C-2.4 |
 | The reference is not unique or server-assigned, and a repeat submit adds another certification row. | `manuscript.ts`, `useChamberSession.ts` | C-3.1 |
 | The owner's update policy lets a prospect write `documents.status`, so it cannot carry a scan verdict. | `20261021100000_session_documents.sql` | E-4.3 |
-| Upload limits (20 MB, file types) are enforced only in the browser. The bucket has no size or type limit. | `UploadTab.tsx`, `config.toml` | E-4.1 |
+| Only the browser checks a file's contents before upload. The `documents` bucket refuses files over 20 MB and undeclared types (migration `20261029090000`), but it checks the type the client declares, not the bytes. | `uploadCheck.ts`, `20261029090000_document_ingestion.sql` | E-4.1 |
 | Two rapid loads or two tabs can still create two sessions (a bare `/start` resumes the latest open one). Orphan drafts now expire after 30 days idle (A-1.5). | `useChamberSession.ts` | A-1.3 |
 | The advisor queue has no `LIMIT` and the page loads every row. | `20261024100000_advisor_queue.sql` | F-2.1 |
 | The opening message tells the prospect the workspace is 'a demonstration'. | `useChamberSession.ts` | A-2.3 |
@@ -132,6 +132,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-10-22 | Supabase URL and key read from Vercel's integration variables. Outbox hardening: queueing faults heal and sends are frozen so a sender change cannot duplicate. |
 | 2026-10-29 | Epic E census ingestion (branch `claude/adoring-dijkstra-2fcocb`, not yet merged): the roster is `chamber_data.census` with the spec's `CensusEmployee` row, and older `employees` data is read as it; `document-extract` matches census columns by header, reads `.docx`, never reads or keeps SSN or bank details; upload checks by contents with a SHA-256 and duplicate refusal; category names and per-intake limits in the database; a review step that shows census rows and settles differences in a dialog. Deploy order: the migrations (including `20261029092000`, which teaches the A-2.2 intake validator the `census` key and still accepts `employees`), then `document-extract` (it imports `_shared`), then the front end. See `docs/intake-schema.md`. |
 | 2026-11-03 | US-1.3, the hand-off to The Reckoning: the chosen PEO is saved with the intake (`chamber_sessions.chosen_peo`, migration `20261103100000`, deploy it before the front end), and the Manuscript page says when an intake has expired instead of calling it unsigned. See A-1.3. |
+| 2026-11-03 | Document fixes from the US-3 review: a new document row must point into its own intake's folder (migration `20261103110000`, which only changes a policy and can deploy before or after the front end), and removing a document deletes the stored file before its row and treats storage's empty answer as "not deleted" unless the file is gone. See E-1.2 and E-1.3. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -165,7 +166,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 4. **Sensitive data stays private.** Census, payroll, benefits, and workers' compensation data are never publicly reachable. *Holds: private buckets, owner and advisor RLS, a test that every public table has row security.*
 5. **One source of truth.** The saved intake session feeds the Chamber, the review, the Manuscript, and the advisor view. Submitted packets are frozen as snapshots. *Holds, with the snapshot gaps in C-3.2.*
 6. **Every story is independently releasable** and no larger than M.
-7. **Access is enforced in the backend.** A hidden button is not access control. *Holds for advisors and prospects through RLS. Upload limits are the exception (E-4.1).*
+7. **Access is enforced in the backend.** A hidden button is not access control. *Holds for advisors and prospects through RLS. Checking a file's contents is the exception: storage enforces the size and declared type, and only the browser reads the bytes (E-4.1).*
 
 ---
 
@@ -520,12 +521,12 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### E-1.2 Upload list, refresh, and removal in the UI
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** FE · **Depends:** E-1.1, A-1.3 · **Milestone:** M1
-- **Built:** The list loads by session. Remove deletes the row then the object and restores the row on failure. Tested.
+- **Built:** The list loads by session. Remove deletes the stored file, then the row. Storage answers success with an empty list when it deleted nothing (including when its policies refused), so an empty answer is checked with `exists()`: a file still there keeps the row, a file already gone lets the row go. A row that can't be deleted stays listed, and the next try finds its file gone and finishes. Nothing is put back, so an expired intake (which refuses new rows) can't leave a stored file with no row. Tested in `useSessionDocuments.test.ts`.
 - **Notes:** Progress is a spinner, not a percentage.
 
 #### E-1.3 Document access isolation
 - **Status:** **SUPERSEDED** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** E-1.1 · **Milestone:** M1
-- **Built:** No tokens. The storage select policy needs the folder to equal `auth.uid()` and an owned intake. Only advisors get signed URLs (`SIGNED_URL_SECONDS = 60`). Prospects have no download UI. Cross-user reads are denied in `session_documents.sql`.
+- **Built:** No tokens. The storage select policy needs the folder to equal `auth.uid()` and an owned intake. Only advisors get signed URLs (`SIGNED_URL_SECONDS = 60`). Prospects have no download UI. Cross-user reads are denied in `session_documents.sql`. A new row's `storage_path` must be `{user_id}/{session_id}/{file}` (migration `20261103110000`), so a prospect can't add a row that points at another user's file for an advisor to open; also in `session_documents.sql`.
 - **Remaining:** The URL lifetime is 60 seconds, not 5 minutes (shorter is stricter: amend the AC). No test covers signed-URL issuance or expiry, only row visibility.
 
 #### E-2.1 Document categories and guidance
