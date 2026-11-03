@@ -271,6 +271,22 @@ Candidates never change `chamber_data` by themselves. In the Upload tab the pros
 
 When the prospect signs, `submission.field_provenance` snapshots the provenance alongside `submission.chamber_data`. The Manuscript shows the status and source for each row, and adds the status-based open items to "Underwriting Readiness".
 
+### Required answers
+
+Three answers are required before an intake can be certified, and so before The Manuscript can be generated (decision D2, US-1.2). The one list is `REQUIRED_ITEMS` in `src/data/readiness.ts`:
+
+| Key | Answer | Counts as given when |
+| --- | --- | --- |
+| `company_name` | Company legal name | it isn't blank |
+| `states` | States of operation | `states` holds a code, or a census row (or a row of the older `employees` roster) has a work state |
+| `pay_frequency` | Pay frequency | it isn't blank |
+
+The employee census is recommended, not required (`RECOMMENDED_ITEMS`): it can only come from an uploaded file today, and no document is required. A missing census is an open item in the Review step and the Manuscript, and never blocks.
+
+- **In the app.** These fields are marked "Required" wherever they appear (`ProvenanceField`), and say they're needed while empty. The Review step lists what is still missing, with a link to each field. The Reckoning lists them with a way back to Review, and keeps Generate disabled (`certificationBlockers`). The Manuscript lists them as "not provided" open items, as the advisor queue does.
+- **In the database.** `public.intake_missing_required(chamber_data)` returns the missing keys in the order above. A certification sent from the browser (`current_user` `anon` or `authenticated`) is refused while any are missing, with SQLSTATE `EA003` and the keys, comma-separated, in DETAIL (`company_name,pay_frequency`). Nothing is written. Other saves, existing certifications and privileged writes are not checked. `src/data/schemaSync.test.ts` compares the function's keys with `REQUIRED_ITEMS`.
+- **On `EA003`.** The client names the missing answers and points to the Review tab. It is a definite refusal: saving carries on as before.
+
 ### The chosen PEO (`chosen_peo`)
 
 `chamber_sessions.chosen_peo` (text, nullable, migration `20261103100000_chosen_peo.sql`) is the PEO the prospect picked on PEO Match, kept so that a reload during the final steps doesn't lose it. It is `NULL` until they pick one, which they never have to: we don't rank PEOs or choose for them. It can be a listed PEO or one the prospect typed in.
