@@ -1,5 +1,5 @@
 import type { ChamberData } from "@/data/chamberTypes";
-import { censusAge, censusGaps, censusPay } from "@/data/census";
+import { censusAge, censusGaps, censusPay, classificationLabel, isAssumed } from "@/data/census";
 import { motion } from "framer-motion";
 
 interface CensusWorkspaceTabProps {
@@ -74,11 +74,13 @@ const CensusWorkspaceTab = ({ data, isDemo }: CensusWorkspaceTabProps) => {
                       <td className="px-3 py-2 text-right font-mono">{censusPay(emp)}</td>
                       <td className="px-3 py-2 text-center whitespace-nowrap">
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                          emp.classification === "1099"
-                            ? "bg-warning/15 text-warning"
-                            : "bg-secondary/15 text-secondary"
+                          isAssumed(emp, "classification")
+                            ? "bg-muted text-muted-foreground"
+                            : emp.classification === "1099"
+                              ? "bg-warning/15 text-warning"
+                              : "bg-secondary/15 text-secondary"
                         }`}>
-                          {emp.classification === "1099" ? "1099" : "W-2"}
+                          {classificationLabel(emp)}
                           {emp.employment_type === "part_time" && " PT"}
                         </span>
                         {emp.classification === "1099" && emp.work_state === "CA" && (

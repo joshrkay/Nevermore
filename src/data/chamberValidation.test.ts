@@ -69,6 +69,8 @@ describe("sanitizeChamberPatch", () => {
         employment_type: "full_time",
         classification: "w2",
         dependents: [{ first_name: "Bo", last_name: "", dob: "", relationship: "other" }],
+        // Neither was given, so both are recorded as defaults rather than answers.
+        assumed: ["classification", "employment_type"],
       },
     ]);
   });
@@ -90,6 +92,8 @@ describe("sanitizeChamberPatch", () => {
         compensation_type: "salary",
         employment_type: "full_time",
         classification: "w2",
+        // The old roster had no employment type: full time is only the default.
+        assumed: ["employment_type"],
       },
     ]);
     // A current census wins over a stale `employees` key.

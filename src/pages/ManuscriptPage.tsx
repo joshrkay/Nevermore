@@ -66,6 +66,7 @@ type LoadState =
   | { kind: "error"; message: string }
   | { kind: "unsigned" }
   | { kind: "recertify" }
+  | { kind: "expired" }
   | { kind: "ready"; data: ChamberData; provenance: ProvenanceMap; submission: ChamberSubmission | null; fileId: string };
 
 // `demo` renders the fictional sample; the live route never does.
@@ -104,6 +105,10 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           return;
         }
         const submission = (data.submission as unknown as ChamberSubmission | null) ?? null;
+        if (data.status === "expired") {
+          setState({ kind: "expired" });
+          return;
+        }
         // Only a signed submission becomes a certified manuscript. A signed one whose status
         // moved back means the information changed after certification.
         if (data.status !== "submitted" && submission?.signer_name) {
@@ -183,6 +188,22 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           </p>
           <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
             Back to The Chamber
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.kind === "expired") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-6">
+        <div className="text-center max-w-md">
+          <p className="text-muted-foreground mb-4">
+            This intake has expired, so it can no longer be certified or made into a Manuscript. Start a new intake
+            in The Chamber to continue.
+          </p>
+          <Link to="/start" className="text-primary underline hover:text-primary/90">
+            Go to The Chamber
           </Link>
         </div>
       </div>
@@ -278,9 +299,17 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           </div>
         </section>
 
+        {/* Section 2 — Payroll & Time */}
+        <section>
+          <SectionHeader>2 — Payroll &amp; Time</SectionHeader>
+          <div className="bg-card border border-border rounded-xl p-6">
+            {renderRows(d.payrollRows, d.provenance)}
+          </div>
+        </section>
+
         {/* Section 2 — Workforce Summary */}
         <section>
-          <SectionHeader>2 — Workforce Summary</SectionHeader>
+          <SectionHeader>3 — Workforce Summary</SectionHeader>
           <div className="grid md:grid-cols-2 gap-6">
             <div className="bg-card border border-border rounded-xl p-6">
               {renderRows(d.workforceRows, d.provenance)}
@@ -309,7 +338,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 3 — Employee Census */}
         <section>
-          <SectionHeader>3 — Employee Census</SectionHeader>
+          <SectionHeader>4 — Employee Census</SectionHeader>
           {d.census.length === 0 ? (
             <div className="bg-card border border-border rounded-xl p-6 text-sm text-muted-foreground">
               No employee census captured yet.
@@ -352,7 +381,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 4 — Dependent Summary */}
         <section>
-          <SectionHeader>4 — Dependent Summary</SectionHeader>
+          <SectionHeader>5 — Dependent Summary</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6">
             <table className="w-full text-sm">
               <thead><tr className="text-muted-foreground text-left border-b border-border"><th className="pb-2">Tier</th><th className="pb-2 text-right">Employees</th><th className="pb-2 text-right">%</th></tr></thead>
@@ -377,7 +406,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 5 — Benefits */}
         <section>
-          <SectionHeader>5 — Current Benefits</SectionHeader>
+          <SectionHeader>6 — Current Benefits</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6">
             {renderRows(d.benefitsRows, d.provenance)}
           </div>
@@ -385,7 +414,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 6 — Status */}
         <section>
-          <SectionHeader>6 — Underwriting Readiness</SectionHeader>
+          <SectionHeader>7 — Underwriting Readiness</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6 space-y-3">
             <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">Confirmed</p>
             {d.resolved.length === 0 && <p className="text-sm text-muted-foreground">Nothing confirmed yet.</p>}

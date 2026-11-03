@@ -1,8 +1,9 @@
 import type { ChamberData } from "./chamberTypes";
-import { COVERAGE_TIER_LABELS, isW2, type CensusEmployee } from "./census";
+import { classificationLabel, COVERAGE_TIER_LABELS, isAssumed, isW2, type CensusEmployee } from "./census";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
 import { fieldOpenItems, type FieldKey, type ProvenanceMap } from "./provenance";
+import { missingRecommendedItems, missingRequired } from "./readiness";
 
 /** Signed attestation stored on chamber_sessions.submission. */
 export interface ChamberSubmission {
@@ -112,9 +113,13 @@ export function manuscriptFilename(fileId: string, companyName: string | null): 
   return `The_Manuscript_${fileId}_${slug || "Company"}.pdf`;
 }
 
-/** Stable, human-readable file id derived from the session id. */
-export function fileIdForSession(sessionId: string, date = new Date()): string {
-  return `EAA-${date.getFullYear()}-${sessionId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+/**
+ * The intake's File ID, from its id and when it started. The year is the start's, in UTC, exactly as
+ * the database builds it when a certification carries none, so one intake has one File ID for good:
+ * never today's year, and never the browser's time zone.
+ */
+export function fileIdForSession(sessionId: string, startedAt: Date): string {
+  return `EAA-${startedAt.getUTCFullYear()}-${sessionId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
 }
 
 // ---------- Eligibility ----------
@@ -181,8 +186,11 @@ export function wcSystem(state: string): string {
   return STATE_RATING_BUREAUS[state] ?? "NCCI";
 }
 
-/** The tier the census states, or else the one the dependents named in conversation imply. */
-export function coverageTier(emp: CensusEmployee): string {
+/**
+ * The tier the census states, or else the one the dependents named in conversation imply, or null when
+ * neither says. No dependents named is not the same as none: nobody may have asked.
+ */
+export function coverageTier(emp: CensusEmployee): string | null {
   if (emp.coverage_tier) return COVERAGE_TIER_LABELS[emp.coverage_tier];
   const dependents = emp.dependents ?? [];
   const hasSpouse = dependents.some((d) => d.relationship === "spouse" || d.relationship === "domestic_partner");
@@ -190,7 +198,17 @@ export function coverageTier(emp: CensusEmployee): string {
   if (hasSpouse && hasChild) return "Employee + Family";
   if (hasSpouse) return "Employee + Spouse";
   if (hasChild) return "Employee + Child(ren)";
-  return "Employee Only";
+  return null;
+}
+
+/**
+ * How many dependents a person has, when that is known: the ones named in conversation, or none for a
+ * stated Employee Only or Waived tier. Null otherwise (a family tier from a census names nobody).
+ */
+function knownDependents(emp: CensusEmployee): number | null {
+  const named = emp.dependents?.length ?? 0;
+  if (named > 0) return named;
+  return emp.coverage_tier === "EE" || emp.coverage_tier === "WAIVE" ? 0 : null;
 }
 
 const TIERS = ["Employee Only", "Employee + Spouse", "Employee + Child(ren)", "Employee + Family"];
@@ -210,17 +228,33 @@ export interface ManuscriptCensusRow {
   state: string;
   title: string;
   salary: string;
-  /** "W-2" or "1099", with "PT" for part time. */
+  /** "W-2" or "1099", with "PT" for part time; "Not provided" when the census didn't say. */
   classification: string;
   tier: string;
   flag: string | null;
 }
 
-const classificationLabel = (e: CensusEmployee) =>
-  `${e.classification === "1099" ? "1099" : "W-2"}${e.employment_type === "part_time" ? " PT" : ""}`;
+// Part time is never a default, so "PT" is always an answer; full time can be, and so isn't printed.
+const typeLabel = (e: CensusEmployee) => `${classificationLabel(e)}${e.employment_type === "part_time" ? " PT" : ""}`;
 
 const salaryLabel = (e: CensusEmployee) =>
-  e.annual_salary ? `$${e.annual_salary.toLocaleString()}${e.compensation_type === "hourly" ? " (hourly)" : ""}` : NOT_PROVIDED;
+  e.annual_salary
+    ? `$${e.annual_salary.toLocaleString()}${e.compensation_type === "hourly" ? (isAssumed(e, "annual_salary") ? " (hourly, est.)" : " (hourly)") : ""}`
+    : NOT_PROVIDED;
+
+/** Which timekeeping methods were named: the ones in use, "None" when all three were ruled out. */
+function timekeeping(data: ChamberData): string {
+  const methods: [string, boolean | null][] = [
+    ["Computer", data.uses_computer_timekeeping],
+    ["Mobile app", data.uses_mobile_app],
+    ["Physical time clock", data.uses_physical_clocks],
+  ];
+  const used = methods.filter(([, v]) => v === true).map(([name]) => name);
+  if (used.length > 0) return used.join(", ");
+  return methods.every(([, v]) => v === false) ? "None of computer, mobile app or time clock" : NOT_PROVIDED;
+}
+
+const counted = (n: number, of: number, what: string) => `${n} of ${of} ${what}`;
 
 /** Label, display value, and the field whose status and source the row shows. */
 export type ManuscriptRow = [label: string, value: string, field?: FieldKey];
@@ -231,11 +265,13 @@ export interface Manuscript {
   companyName: string;
   submittedTo: string | null;
   companyRows: ManuscriptRow[];
+  payrollRows: ManuscriptRow[];
   workforceRows: ManuscriptRow[];
   states: { state: string; count: string; system: string }[];
   census: ManuscriptCensusRow[];
   dependentTiers: { tier: string; count: number; pct: string }[];
-  totalDependents: number;
+  /** The dependents known of, with how many people that leaves out; "Not provided" when nothing is known. */
+  totalDependents: string;
   benefitsRows: ManuscriptRow[];
   resolved: string[];
   open: string[];
@@ -277,8 +313,16 @@ export function buildManuscript(
   const fmtDateTime = (d: Date) =>
     d.toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
+  // Everyone but a stated 1099 contractor is counted for coverage; whose classification is only the
+  // default is reported as not provided rather than as W-2.
   const w2 = data.census.filter(isW2);
+  const statedW2 = w2.filter((e) => !isAssumed(e, "classification"));
   const contractors = data.census.filter((e) => !isW2(e));
+  const unstated = (fact: string) => data.census.filter((e) => isAssumed(e, fact)).length;
+  const unknownTier = w2.filter((e) => coverageTier(e) === null).length;
+  const knownCounts = w2.map(knownDependents);
+  const listedDependents = knownCounts.reduce<number>((sum, n) => sum + (n ?? 0), 0);
+  const dependentsUnknown = knownCounts.filter((n) => n === null).length;
 
   const stateCounts = new Map<string, number>();
   for (const emp of data.census) {
@@ -286,18 +330,28 @@ export function buildManuscript(
   }
   const allStates = [...new Set([...data.states, ...stateCounts.keys()])];
 
-  const tierCounts = new Map<string, number>([...TIERS, WAIVED].map((t) => [t, 0]));
-  for (const emp of w2) tierCounts.set(coverageTier(emp), (tierCounts.get(coverageTier(emp)) ?? 0) + 1);
-  // Waived appears only when the census records someone waiving coverage.
-  const tiers = tierCounts.get(WAIVED) ? [...TIERS, WAIVED] : TIERS;
+  const tierCounts = new Map<string, number>([...TIERS, WAIVED, NOT_PROVIDED].map((t) => [t, 0]));
+  for (const emp of w2) {
+    const tier = coverageTier(emp) ?? NOT_PROVIDED;
+    tierCounts.set(tier, (tierCounts.get(tier) ?? 0) + 1);
+  }
+  // Waived appears only when the census records someone waiving coverage, and Not provided only when
+  // someone's tier is unknown.
+  const tiers = [...TIERS, ...(tierCounts.get(WAIVED) ? [WAIVED] : []), ...(tierCounts.get(NOT_PROVIDED) ? [NOT_PROVIDED] : [])];
+
+  // Answers the census only defaulted, said plainly (US-1.4: nothing silently made up).
+  const census = data.census.length;
+  const unstatedItems = [
+    [unstated("classification"), "Worker classification (W-2 or 1099)"],
+    [unstated("employment_type"), "Full- or part-time status"],
+  ].flatMap(([n, label]) => ((n as number) > 0 ? [`${label} — not provided for ${counted(n as number, census, "people on the census")}`] : []));
+  const estimatedPay = unstated("annual_salary");
+  if (estimatedPay > 0) unstatedItems.push(`Annual pay — estimated at full-time hours for ${counted(estimatedPay, census, "people on the census")}; confirm their hours`);
+  if (unknownTier > 0) unstatedItems.push(`Coverage tier — not provided for ${counted(unknownTier, w2.length, "employees")}`);
 
   const checks = eligibilityChecks(data);
-  const missingCore = [
-    ["Company legal name", !data.company_name],
-    ["States of operation", allStates.length === 0],
-    ["Pay frequency", !data.pay_frequency],
-    ["Employee census", data.census.length === 0],
-  ].flatMap(([label, missing]) => (missing ? [`${label} — not provided`] : []));
+  // The answers certification requires (always present on a certified packet), then the recommended census.
+  const missingCore = [...missingRequired(data), ...missingRecommendedItems(data)].map((item) => `${item.label} — not provided`);
   const provenance = opts.provenance ?? {};
   const fieldItems = fieldOpenItems(provenance).map((i) => `${i.label} — ${i.reason.toLowerCase()}`);
   const flags = data.census.flatMap((e) => {
@@ -316,14 +370,23 @@ export function buildManuscript(
       ["Industry", orNotProvided(data.industry), "industry"],
       ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? `Multiple (${orNotProvided(data.fein_count)} FEINs)` : "Single entity", "multiple_entities"],
       ["Target Start", orNotProvided(data.start_month), "start_month"],
+      ["Coverage Status", data.virgin_medical === null ? NOT_PROVIDED : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage", "virgin_medical"],
+    ],
+    payrollRows: [
       ["Current Payroll", orNotProvided(data.payroll_vendor), "payroll_vendor"],
       ["Pay Frequency", orNotProvided(data.pay_frequency), "pay_frequency"],
-      ["Coverage Status", data.virgin_medical === null ? NOT_PROVIDED : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage", "virgin_medical"],
+      ["Funding Lead Time", data.funding_days === null ? NOT_PROVIDED : `${data.funding_days} day${data.funding_days === 1 ? "" : "s"}`, "funding_days"],
+      ["Accrual Method", orNotProvided(data.accrual_method), "accrual_method"],
+      ["PTO Types", data.pto_types.length ? data.pto_types.join(", ") : NOT_PROVIDED, "pto_types"],
+      ["Timekeeping", timekeeping(data)],
+      ["Shift Differentials", yesNo(data.shift_differentials), "shift_differentials"],
+      ["HRIS", orNotProvided(data.hris_system), "hris_system"],
     ],
     workforceRows: [
       ["Reported Headcount", orNotProvided(data.employee_count), "employee_count"],
-      ["W-2 Employees on Census", String(w2.length)],
+      ["W-2 Employees on Census", String(statedW2.length)],
       ["1099 Contractors on Census", data.census.length ? String(contractors.length) : yesNo(data.has_1099)],
+      ...(unstated("classification") > 0 ? ([["Classification Not Provided", String(unstated("classification"))]] as ManuscriptRow[]) : []),
       ["Exempt / Nonexempt", data.exempt_count === null && data.nonexempt_count === null ? NOT_PROVIDED : `${orNotProvided(data.exempt_count)} / ${orNotProvided(data.nonexempt_count)}`],
       ["In-house HR Staff", orNotProvided(data.hr_staff_count), "hr_staff_count"],
       ["Employee Handbook", yesNo(data.has_handbook), "has_handbook"],
@@ -335,15 +398,20 @@ export function buildManuscript(
       state: e.work_state || NOT_PROVIDED,
       title: e.job_title || NOT_PROVIDED,
       salary: salaryLabel(e),
-      classification: classificationLabel(e),
-      tier: isW2(e) ? coverageTier(e) : "Not applicable",
+      classification: typeLabel(e),
+      tier: isW2(e) ? coverageTier(e) ?? NOT_PROVIDED : "Not applicable",
       flag: employeeFlag(e),
     })),
     dependentTiers: tiers.map((tier) => {
       const count = tierCounts.get(tier) ?? 0;
       return { tier, count, pct: w2.length ? `${Math.round((count / w2.length) * 100)}%` : NOT_PROVIDED };
     }),
-    totalDependents: w2.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0),
+    totalDependents:
+      w2.length === 0 || dependentsUnknown === w2.length
+        ? NOT_PROVIDED
+        : dependentsUnknown > 0
+          ? `${listedDependents} (not known for ${dependentsUnknown} of ${w2.length})`
+          : String(listedDependents),
     benefitsRows: [
       ["Current Carrier", orNotProvided(data.current_carrier), "current_carrier"],
       ["Renewal Date", orNotProvided(data.renewal_date), "renewal_date"],
@@ -355,6 +423,7 @@ export function buildManuscript(
     resolved: checks.filter((c) => c.status === "pass").map((c) => c.label),
     open: [
       ...missingCore,
+      ...unstatedItems,
       ...fieldItems,
       ...checks.filter((c) => c.status === "fail").map((c) => `${c.label} — not met`),
       ...checks.filter((c) => c.status === "unknown").map((c) => `${c.label} — not yet verified`),

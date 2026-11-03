@@ -1,7 +1,7 @@
 // One extraction event for each signed-in call to an AI function (US-2.4a, decision D20): what was asked,
 // what the function answered and why, findable later by intake or by request id. An event holds no
 // prospect content: identifiers, codes, counts, and field names or schema paths, never a value. This
-// module drops anything that isn't a name or a path, and the database refuses it too (20261103110000).
+// module drops anything that isn't a name or a path, and the database refuses it too (20261103120200).
 // No remote imports, so it runs under Deno and Vitest alike.
 
 import type { AiErrorCode } from "./errors.ts";

@@ -1,6 +1,6 @@
 // The error codes both AI functions answer with (`{ error, code, request_id }`), so the browser can say
 // something specific without reading the wording, and the extraction events can record why a call
-// failed. The database's list is the migration's `ai_error_codes` sync block (20261103110000), which
+// failed. The database's list is the migration's `ai_error_codes` sync block (20261103120200), which
 // src/data/schemaSync.test.ts holds to this one. No imports, so it runs under Deno and Vitest alike.
 
 export const AI_ERROR_CODES = [

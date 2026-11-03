@@ -77,6 +77,43 @@ describe("LiveWorkspace", () => {
     expect(screen.getByText(/send to Acme PEO myself/)).toBeInTheDocument();
   });
 
+  it("shows the PEO kept with the intake, and hands a new choice back to be saved", () => {
+    const onChoosePeo = vi.fn();
+    const { rerender } = render(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} chosenPeo="Insperity" onChoosePeo={onChoosePeo} />
+      </MemoryRouter>,
+    );
+    // Opened straight on The Reckoning, as after a reload: the saved choice is already there.
+    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    expect(screen.getByText(/prepared for Insperity/)).toBeInTheDocument();
+    expect(screen.getByText(/send to Insperity myself/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose TriNet" }));
+    expect(onChoosePeo).toHaveBeenCalledWith("TriNet");
+    // What is shown is what the intake holds, not a copy kept here.
+    expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("Insperity");
+    rerender(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} chosenPeo="TriNet" onChoosePeo={onChoosePeo} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("TriNet");
+  });
+
+  it("goes from The Reckoning back to Review to add a missing answer", () => {
+    render(
+      <MemoryRouter>
+        <LiveWorkspace data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} isDemo={false} sessionId="s1" onSubmit={async () => true} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to Review" }));
+    expect(screen.getByRole("heading", { name: "Review" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Pay frequency");
+  });
+
   it("reaches The Reckoning with no PEO chosen without naming or inventing one", () => {
     render(
       <MemoryRouter>

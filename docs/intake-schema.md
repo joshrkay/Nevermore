@@ -161,7 +161,7 @@ Paths are zero-based: `hq_state`, `states[2]`, `census[3].dob`, `census[0].depen
 
 The migration must be deployed before the front end, which selects `data_version`.
 
-`chamber_sessions.schema_version` (smallint, migration `20261103091000`) records which version of the intake schema the row's answers follow. The current version is 2, the default, and the database refuses any other value. Version 2 (migrations `20261103100000` and `20261103100100`) is version 1 plus the workers' comp block, with nothing in v1 changed, so every row moved to 2 without its answers being rewritten. The move was not a save: no `data_version`, `updated_at` or `last_activity_at` changed. A later version changes the check in its own migration, says how rows move, and changes `INTAKE_SCHEMA_VERSION` with it.
+`chamber_sessions.schema_version` (smallint, migration `20261103091000`) records which version of the intake schema the row's answers follow. The current version is 2, the default, and the database refuses any other value. Version 2 (migrations `20261103120000` and `20261103120100`) is version 1 plus the workers' comp block, with nothing in v1 changed, so every row moved to 2 without its answers being rewritten. The move was not a save: no `data_version`, `updated_at` or `last_activity_at` changed. A later version changes the check in its own migration, says how rows move, and changes `INTAKE_SCHEMA_VERSION` with it.
 
 ### JSON Schema v2 and strict checks on the way in
 
@@ -209,13 +209,23 @@ The roster is an array of rows (`CensusEmployee`, defined in `supabase/functions
 | `age` | Whole years, 14 to 100. Used when a file gives an age and no date of birth. |
 | `work_state` | Two-letter uppercase, from a code or a name; `""` until known. |
 | `zip_code` | `12345` or `12345-6789`; a ZIP Excel stripped a zero from is padded. |
-| `job_title`, `annual_salary` | Salary is whole dollars a year. An hourly rate becomes a year's pay at the stated weekly hours, or at 2,080 hours for a full-time worker. |
+| `job_title`, `annual_salary` | Salary is whole dollars a year. An hourly rate becomes a year's pay at the stated weekly hours, or at 2,080 hours for a full-time worker (recorded in `assumed` when the hours weren't given). |
 | `compensation_type` | `salary` or `hourly`. |
-| `employment_type` | `full_time` or `part_time`; weekly hours of 30 or more are full time. |
-| `classification` | `w2` or `1099`. A blank label means W-2; a label that is neither (a K-1 owner) drops the row rather than guess. |
-| `coverage_tier` | `EE`, `EE+SP`, `EE+CH`, `FAM` or `WAIVE`. When absent, the Manuscript derives a tier from `dependents`. |
+| `employment_type` | `full_time` or `part_time`; weekly hours of 30 or more are full time. Full time when nothing says, recorded in `assumed`. |
+| `classification` | `w2` or `1099`. A blank label is stored as W-2 and recorded in `assumed`; a label that is neither (a K-1 owner) drops the row rather than guess. |
+| `coverage_tier` | `EE`, `EE+SP`, `EE+CH`, `FAM` or `WAIVE`. When absent, the Manuscript derives a tier from the `dependents` named, and otherwise shows it as not provided. |
 | `class_code` | Four-digit workers' comp code. |
 | `dependents` | Named in conversation, never read from a document. |
+| `assumed` | Which of `classification`, `employment_type` and `annual_salary` hold a default rather than an answer. Absent when none do. |
+
+#### Defaults are recorded, not passed off as answers
+
+A row always has a classification, an employment type and a pay type, so a file that doesn't say gets a default. `assumed` (US-1.4) lists the ones that are only defaults, so nothing downstream presents them as answers:
+
+- **Reading a row** (`normalizeCensusRow`) adds a fact to `assumed` when it filled the value in, and keeps a fact a saved row already lists as long as the value is still the default. A row saved before the list existed has none: its values can't be told apart.
+- **Merging a document's census** (`mergeCensus`) never lets a default replace an answer, even in a column the file has, and drops a fact from a person's `assumed` once a document states it.
+- **The Manuscript** shows a defaulted classification as "Not provided" and counts it apart from W-2 and 1099, marks a year's pay worked out at assumed hours "(hourly, est.)", and lists each kind as an open item with a count. It never prints "Employee Only" or a dependent count nobody gave: a person with no tier and no named dependents is "Not provided", and the total says how many people it leaves out. The workspace's census tables show the same labels.
+- **The database** tolerated unknown keys in a census row already, so no migration was needed. Intake schema v1 now lists `assumed` as an optional key of a census row (`docs/intake-schema.v1.json`), without a new version: it is optional, and nothing that validates against v1 runs outside the app that writes it.
 
 Intakes, provenance entries, advisor reviews and signed snapshots saved before the census contract call the roster `employees` and use `state`, `title`, `salary` and `"W2"`. They are read as `census` and never rewritten, so a signed Manuscript still renders. A census row with no first name, or a `classification` that isn't W-2 or 1099, is dropped when read.
 
@@ -300,6 +310,30 @@ Candidates never change `chamber_data` by themselves. In the Upload tab the pros
 ### Submission
 
 When the prospect signs, `submission.field_provenance` snapshots the provenance alongside `submission.chamber_data`. The Manuscript shows the status and source for each row, and adds the status-based open items to "Underwriting Readiness".
+
+### Required answers
+
+Three answers are required before an intake can be certified, and so before The Manuscript can be generated (decision D2, US-1.2). The one list is `REQUIRED_ITEMS` in `src/data/readiness.ts`:
+
+| Key | Answer | Counts as given when |
+| --- | --- | --- |
+| `company_name` | Company legal name | it isn't blank |
+| `states` | States of operation | `states` holds a code, or a census row (or a row of the older `employees` roster) has a work state |
+| `pay_frequency` | Pay frequency | it isn't blank |
+
+The employee census is recommended, not required (`RECOMMENDED_ITEMS`): it can only come from an uploaded file today, and no document is required. A missing census is an open item in the Review step and the Manuscript, and never blocks.
+
+- **In the app.** These fields are marked "Required" wherever they appear (`ProvenanceField`), and say they're needed while empty. The Review step lists what is still missing, with a link to each field. The Reckoning lists them with a way back to Review, and keeps Generate disabled (`certificationBlockers`). The Manuscript lists them as "not provided" open items, as the advisor queue does.
+- **In the database.** `public.intake_missing_required(chamber_data)` returns the missing keys in the order above. A certification sent from the browser (`current_user` `anon` or `authenticated`) is refused while any are missing, with SQLSTATE `EA003` and the keys, comma-separated, in DETAIL (`company_name,pay_frequency`). Nothing is written. Other saves, existing certifications and privileged writes are not checked. `src/data/schemaSync.test.ts` compares the function's keys with `REQUIRED_ITEMS`.
+- **On `EA003`.** The client names the missing answers and points to the Review tab. It is a definite refusal: saving carries on as before.
+
+### The chosen PEO (`chosen_peo`)
+
+`chamber_sessions.chosen_peo` (text, nullable, migration `20261103100000_chosen_peo.sql`) is the PEO the prospect picked on PEO Match, kept so that a reload during the final steps doesn't lose it. It is `NULL` until they pick one, which they never have to: we don't rank PEOs or choose for them. It can be a listed PEO or one the prospect typed in.
+
+- It is saved by the same versioned write as the answers (`chamber_data`, `field_provenance`, `transcript`), sent with the keepalive save on page unload, and set on insert. A read-back after a write that matched no row compares it too, so a different choice saved elsewhere is a conflict. Start over clears it with the rest of the screen. The browser's copy of unsaved answers does not include it.
+- It is not an answer. It is outside `chamber_data`, so changing it doesn't move the certification hash or withdraw a certification. The certified PEO is `submission.peo`. When the two differ, The Reckoning asks the prospect to certify again (in the browser only; the database doesn't enforce it).
+- A CHECK constraint keeps it trimmed and 1 to 80 characters (`PEO_NAME_MAX` in `src/data/peoCatalog.ts`, compared by `src/data/schemaSync.test.ts`). `cleanPeoName` trims and cuts by character before saving, so the app never sends a value the constraint refuses. A closed intake refuses a change to it like any other (see Session lifecycle).
 
 ## Session lifecycle
 

@@ -11,8 +11,11 @@ import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup } from "@/data/intakeBackup";
 import { INTAKE_SCHEMA_VERSION, validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
+import { cleanPeoName } from "@/data/peoCatalog";
+import { describeMissingKeys } from "@/data/readiness";
 import {
   certificationFromRow,
+  fileIdForSession,
   NO_CERTIFICATION,
   type CertificationState,
   type ChamberSubmission,
@@ -33,7 +36,8 @@ export interface SubmitFailure {
 
 type ServerRow = Pick<
   Database["public"]["Tables"]["chamber_sessions"]["Row"],
-  "id" | "data_version" | "status" | "chamber_data" | "field_provenance" | "transcript" | "submission" | "expires_at"
+  | "id" | "data_version" | "status" | "chamber_data" | "field_provenance" | "transcript" | "submission" | "expires_at"
+  | "chosen_peo" | "created_at"
 >;
 
 /** Answers kept in this browser that never reached the server, offered back when the intake is opened. */
@@ -46,6 +50,8 @@ export interface BackupOffer {
 
 interface UseChamberSessionReturn {
   sessionId: string | null;
+  /** The intake's File ID, fixed by when the server created it; null while there is no intake. */
+  fileId: string | null;
   /** True when a requested session couldn't be opened; no replacement is created until startNew(). */
   resumeFailed: boolean;
   /** Starts a fresh intake. Never resumes an existing one. */
@@ -94,6 +100,10 @@ interface UseChamberSessionReturn {
   submit: (submission: ChamberSubmission, signedDataKey?: string) => Promise<boolean | SubmitFailure>;
   /** Whether the answers are certified, or were changed after being certified. */
   certification: CertificationState;
+  /** The PEO the packet is prepared for, saved with the intake; null until the prospect picks one. */
+  chosenPeo: string | null;
+  /** Records the prospect's choice of PEO and saves it with the intake, so a reload keeps it. */
+  choosePeo: (name: string | null) => void;
   saveStatus: SaveStatus;
   /** Saves now, or creates the intake again if creating it failed. */
   retrySave: () => void;
@@ -116,10 +126,14 @@ const INVALID_DATA_CODE = "EA001";
 // Raised when a write reaches an intake that is closed (DETAIL: expired, archived or revoked). Row security
 // normally turns such a write into one that matches no row, which is read back instead.
 const CLOSED_INTAKE_CODE = "EA002";
+// Raised when a certification arrives without the answers it requires; DETAIL lists their keys. The
+// Reckoning doesn't send one, so this means the answers changed under it. Nothing was written.
+const NOT_READY_CODE = "EA003";
 // Archiving an intake that is already archived, or isn't this person's: either way it is out of the Chamber.
 // (PostgREST answers this SQLSTATE with HTTP 404.)
 const NOT_FOUND_CODE = "PT404";
-const ROW_COLUMNS = "id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at";
+const ROW_COLUMNS =
+  "id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo, created_at";
 
 const CONFLICT_MESSAGE = "This intake changed elsewhere. Reload the latest and certify again.";
 const MISSING_MESSAGE = "This intake can no longer be saved. Start a new intake to keep your answers.";
@@ -164,10 +178,11 @@ function sameJson(a: unknown, b: unknown): boolean {
 const asStored = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
 
 // Whether a saved row is the result of an autosave that sent `stored`.
-const matchesSave = (stored: { chamber_data: unknown; field_provenance: unknown; transcript: unknown }) => (row: ServerRow) =>
+const matchesSave = (stored: { chamber_data: unknown; field_provenance: unknown; transcript: unknown; chosen_peo?: unknown }) => (row: ServerRow) =>
   sameJson(row.chamber_data, stored.chamber_data) &&
   sameJson(row.field_provenance, stored.field_provenance) &&
-  sameJson(row.transcript, stored.transcript);
+  sameJson(row.transcript, stored.transcript) &&
+  (row.chosen_peo ?? null) === (stored.chosen_peo ?? null);
 
 // Whether a saved row is the result of certifying `submission` over `signedData` (as stored).
 const matchesSubmission = (submission: ChamberSubmission, signedData: unknown) => (row: ServerRow) => {
@@ -217,6 +232,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // Depend on the id, not the object: token refreshes hand out a new User object.
   const userId = user?.id;
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // When the server created the intake: the File ID's year comes from it, never from today.
+  const [startedAt, setStartedAt] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [resumeFailed, setResumeFailed] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -225,6 +242,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [provenance, setProvenanceRaw] = useState<ProvenanceMap>({});
   const [messages, setMessages] = useState<ChatMessage[]>(() => [openingMessage()]);
   const [certification, setCertification] = useState<CertificationState>(NO_CERTIFICATION);
+  const [chosenPeo, setChosenPeoRaw] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [invalidField, setInvalidField] = useState<string | null>(null);
   const [expired, setExpired] = useState<{ at: string | null } | null>(null);
@@ -265,6 +283,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const dataRef = useRef(chamberData);
   const provenanceRef = useRef(provenance);
   const messagesRef = useRef(messages);
+  const chosenPeoRef = useRef(chosenPeo);
   const sessionIdRef = useRef(sessionId);
   const requestedIdRef = useRef(requestedSessionId ?? null);
   // Set by startNew (and by a retry after the intake couldn't be created): create, never resume.
@@ -373,6 +392,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       messagesRef.current = loadedMessages;
       setMessages(loadedMessages);
     }
+    const loadedPeo = cleanPeoName(row.chosen_peo);
+    chosenPeoRef.current = loadedPeo;
+    setChosenPeoRaw(loadedPeo);
     let loadedCertification = certificationFromRow(row.status, row.submission);
     // Rows certified under looser rules can hold answers the sanitiser now changes. Saving them back would
     // make the database withdraw the certification, so show it as withdrawn rather than as certified.
@@ -385,6 +407,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     settleOutcome();
     sessionIdRef.current = row.id;
     setSessionId(row.id);
+    setStartedAt(row.created_at);
   }, [settleOutcome]);
 
   const adoptVersion = useCallback((sid: string, version: unknown) => {
@@ -500,6 +523,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       chamber_data: dataRef.current,
       field_provenance: provenanceRef.current,
       transcript: messagesRef.current,
+      chosen_peo: chosenPeoRef.current,
     };
     let result;
     try {
@@ -509,6 +533,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           chamber_data: sent.chamber_data as unknown as Json,
           field_provenance: sent.field_provenance as unknown as Json,
           transcript: sent.transcript as unknown as Json,
+          chosen_peo: sent.chosen_peo,
         })
         .eq("id", sid)
         .eq("data_version", version)
@@ -623,6 +648,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         chamber_data: dataRef.current,
         field_provenance: provenanceRef.current,
         transcript: messagesRef.current,
+        chosen_peo: chosenPeoRef.current,
       });
       const token = accessTokenRef.current;
       const version = versionRef.current;
@@ -672,6 +698,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     setMessages(opening);
     certificationRef.current = NO_CERTIFICATION;
     setCertification(NO_CERTIFICATION);
+    chosenPeoRef.current = null;
+    setChosenPeoRaw(null);
     setConversationEpoch((n) => n + 1);
   }, []);
 
@@ -716,6 +744,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       createFailedRef.current = false;
       backupRef.current = null;
       setSessionId(null);
+      setStartedAt(null);
       setBackupOffer(null);
       setExpired(null);
       setRestoredThrough(null);
@@ -757,8 +786,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           chamber_data: dataRef.current as unknown as Json,
           field_provenance: provenanceRef.current as unknown as Json,
           transcript: messagesRef.current as unknown as Json,
+          chosen_peo: chosenPeoRef.current,
         })
-        .select("id, data_version")
+        .select("id, data_version, created_at")
         .single();
 
       if (error || !newSession) {
@@ -771,6 +801,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         sessionIdRef.current = newSession.id;
         versionRef.current = typeof newSession.data_version === "number" ? newSession.data_version : null;
         setSessionId(newSession.id);
+        setStartedAt(newSession.created_at);
         // Anything captured while the row was being created still needs saving.
         if (dirtyRef.current) scheduleSave();
         else setSaveStatus((s) => (s === "idle" ? s : "saved"));
@@ -1035,6 +1066,15 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     }));
   }, [updateIntake]);
 
+  const choosePeo = useCallback((name: string | null) => {
+    const next = cleanPeoName(name);
+    if (next === chosenPeoRef.current) return;
+    // Not an answer: the certification stands. The Reckoning asks for a new one when the PEO differs.
+    chosenPeoRef.current = next;
+    setChosenPeoRaw(next);
+    scheduleSave();
+  }, [scheduleSave]);
+
   const addMessage = useCallback((msg: ChatMessage) => {
     // Lenore says hello once per intake. A voice session opens with her own greeting; it isn't kept twice.
     if (isGreeting(msg) && messagesRef.current.some(isGreeting)) return;
@@ -1114,6 +1154,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       if (error.details === "expired") markExpired();
       else markMissing();
       return blockedMessage();
+    } else if (error?.code === NOT_READY_CODE) {
+      // A definite refusal: nothing changed, and saving goes on as before.
+      const missing = describeMissingKeys(error.details);
+      return { message: `Add ${missing.length > 0 ? missing.join(", ").toLowerCase() : "the required answers"} on the Review tab, then certify.` };
     } else if (error) {
       // It may have landed anyway; a later write has to be able to tell.
       rememberUnconfirmed(version, { submitted: submission, chamber_data: storedData }, isOwnSubmission);
@@ -1150,8 +1194,21 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     return true;
   }), [adoptVersion, blockedMessage, enqueue, markConflict, markExpired, markInvalid, markMissing, reconcile, rememberUnconfirmed, saveNow]);
 
+  // A File ID already recorded on a certification (even a withdrawn one) stays the intake's, as the
+  // advisor views and the Manuscript read it: intakes certified before the start-year rule may carry
+  // another year. Only an intake with none recorded gets one made from when it started.
+  const recorded = certification.status === "none" ? null : certification.submission.file_id;
+  const fileId = !sessionId
+    ? null
+    : typeof recorded === "string" && recorded.trim()
+      ? recorded
+      : startedAt
+        ? fileIdForSession(sessionId, new Date(startedAt))
+        : null;
+
   return {
     sessionId,
+    fileId,
     resumeFailed,
     startNew,
     loadFailed,
@@ -1173,6 +1230,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     setMessages,
     submit,
     certification,
+    chosenPeo,
+    choosePeo,
     saveStatus,
     retrySave,
     loadLatest,

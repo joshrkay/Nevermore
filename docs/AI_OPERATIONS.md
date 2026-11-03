@@ -10,7 +10,7 @@ Every answer carries the call's request id, in the body as `request_id` and in t
 { "error": "Lenore is taking too long to answer. Please try again.", "code": "timeout", "request_id": "3f2a…" }
 ```
 
-The codes are `AI_ERROR_CODES` in `supabase/functions/_shared/ai/errors.ts`. The database's copy (the `ai_error_codes` sync block in `20261103110000_ai_extraction_events.sql`) is held to it by `src/data/schemaSync.test.ts`.
+The codes are `AI_ERROR_CODES` in `supabase/functions/_shared/ai/errors.ts`. The database's copy (the `ai_error_codes` sync block in `20261103120200_ai_extraction_events.sql`) is held to it by `src/data/schemaSync.test.ts`.
 
 | Code | HTTP | When | The prospect sees (`src/data/aiFailure.ts`) |
 | --- | --- | --- | --- |
@@ -124,7 +124,7 @@ Each function's `PROMPT_VERSION` (in its `schema.ts`) is recorded on every event
 
 ## Deploy order
 
-1. The migration `20261103110000_ai_extraction_events.sql`.
+1. The migration `20261103120200_ai_extraction_events.sql`.
 2. Both functions, which write events and import `_shared`.
 3. The front end, which sends `session_id` and reads the codes.
 

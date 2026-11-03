@@ -126,7 +126,7 @@ CREATE TEMP TABLE before_upgrade AS SELECT id, data_version, updated_at FROM pub
 
 \i supabase/migrations/20261103090000_intake_lifecycle.sql
 \i supabase/migrations/20261103091000_intake_schema_version.sql
-\i supabase/migrations/20261103100100_intake_schema_v2_version.sql
+\i supabase/migrations/20261103120100_intake_schema_v2_version.sql
 SET client_min_messages = notice;
 
 -- ---------- what the migration installed, and the upgrade ----------

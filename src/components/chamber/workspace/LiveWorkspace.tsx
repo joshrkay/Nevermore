@@ -31,6 +31,8 @@ interface LiveWorkspaceProps {
   data: ChamberData;
   isDemo: boolean;
   sessionId: string | null;
+  /** The intake's File ID, for The Reckoning; null while there is no intake. */
+  fileId?: string | null;
   onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   provenance?: ProvenanceMap;
   /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
@@ -38,9 +40,24 @@ interface LiveWorkspaceProps {
   certification?: CertificationState;
   /** Lets the prospect apply what Lenore read from their documents. Omit for read-only. */
   updateIntake?: (updater: (prev: IntakeState) => IntakeState) => void;
+  /** The PEO chosen on PEO Match, kept with the intake. With onChoosePeo; without them the choice lasts only for this page. */
+  chosenPeo?: string | null;
+  onChoosePeo?: (name: string) => void;
 }
 
-const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, provenance = {}, onFieldAction, certification, updateIntake }: LiveWorkspaceProps) => {
+const LiveWorkspace = ({
+  data,
+  isDemo,
+  sessionId,
+  fileId = null,
+  onSubmit,
+  provenance = {},
+  onFieldAction,
+  certification,
+  updateIntake,
+  chosenPeo: savedPeo,
+  onChoosePeo,
+}: LiveWorkspaceProps) => {
   const onAction = isDemo ? undefined : onFieldAction;
   const [activeTab, setActiveTab] = useState("upload");
   const documentSessionId = isDemo ? null : sessionId;
@@ -53,8 +70,12 @@ const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, provenance = {}, onF
           void documents.markApplied(doc, fields, { kept });
         }
       : undefined;
-  // Optional, and never defaulted: we don't rank PEOs, so the prospect picks one or none.
-  const [chosenPeo, setChosenPeo] = useState<string | null>(null);
+  // Optional, and never defaulted: we don't rank PEOs, so the prospect picks one or none. The live Chamber
+  // keeps the choice with the intake, so a reload during the final steps doesn't lose it.
+  const [localPeo, setLocalPeo] = useState<string | null>(null);
+  const kept = onChoosePeo !== undefined;
+  const chosenPeo = kept ? savedPeo ?? null : localPeo;
+  const setChosenPeo = kept ? onChoosePeo : setLocalPeo;
 
   return (
     <div className="flex flex-col h-full">
@@ -91,7 +112,7 @@ const LiveWorkspace = ({ data, isDemo, sessionId, onSubmit, provenance = {}, onF
         {activeTab === "dependents" && <DependentsTab data={data} />}
         {activeTab === "review" && <ReviewTab data={data} provenance={provenance} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} />}
         {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
-        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={chosenPeo} sessionId={sessionId} onSubmit={onSubmit} certification={certification} />}
+        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={chosenPeo} sessionId={sessionId} fileId={fileId} onSubmit={onSubmit} certification={certification} onReview={() => setActiveTab("review")} />}
       </div>
     </div>
   );

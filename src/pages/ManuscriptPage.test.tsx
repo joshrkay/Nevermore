@@ -49,6 +49,20 @@ describe("ManuscriptPage", () => {
     expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
   });
 
+  it("says an expired intake has expired, shows none of it, and sends the prospect to start again", async () => {
+    row = {
+      chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Gone Co" },
+      submission: null,
+      status: "expired",
+      created_at: "2026-05-01T00:00:00Z",
+    };
+    renderAt("/manuscript?session=s1");
+    expect(await screen.findByText(/This intake has expired/)).toBeInTheDocument();
+    expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Gone Co/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Go to The Chamber" })).toHaveAttribute("href", "/start");
+  });
+
   it("says the certification no longer applies when the information changed after it", async () => {
     row = {
       chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Edited Later Inc" },
@@ -88,6 +102,21 @@ describe("ManuscriptPage", () => {
     expect(screen.queryByText(/Edited Later Inc/)).not.toBeInTheDocument();
     // The packet is prepared for the PEO the prospect chose; nothing says it was submitted to them.
     expect(screen.getByText("PREPARED FOR").parentElement).toHaveTextContent("PREPARED FORJustworks");
+  });
+
+  it("shows payroll as its own section, from what was signed", async () => {
+    const signed = { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co", payroll_vendor: "Gusto", pay_frequency: "weekly", funding_days: 2, pto_types: ["Vacation"] };
+    row = {
+      chamber_data: signed,
+      submission: { signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-2026-ABC", chamber_data: signed },
+      status: "submitted",
+      created_at: "2026-05-01T00:00:00Z",
+    };
+    renderAt("/manuscript?session=s1");
+    const heading = await screen.findByRole("heading", { name: "2 — Payroll & Time" });
+    const section = heading.closest("section")!;
+    for (const text of ["Gusto", "weekly", "2 days", "Vacation"]) expect(section).toHaveTextContent(text);
+    expect(screen.getByRole("heading", { name: "3 — Workforce Summary" })).toBeInTheDocument();
   });
 
   describe("advisor status shared with the prospect", () => {

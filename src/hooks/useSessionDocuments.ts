@@ -47,7 +47,10 @@ export interface UseSessionDocumentsReturn {
    * limit), stores the rest with this intake, then has Lenore read each one.
    */
   upload: (files: File[]) => Promise<UploadOutcome>;
-  /** Deletes the record and the stored file. Resolves false if either couldn't be removed. */
+  /**
+   * Deletes the stored file, then the record. Resolves false if either is still there; trying again
+   * finishes the job.
+   */
   remove: (doc: SessionDocument) => Promise<boolean>;
   setCategory: (doc: SessionDocument, category: DocumentCategory) => Promise<boolean>;
   /**
@@ -78,6 +81,30 @@ const fromRow = ({ processing_started_at: _startedAt, ...row }: Row): SessionDoc
   file_sha256: row.file_sha256 ?? null,
   extraction: parseExtraction(row.extraction),
 });
+
+/**
+ * Deletes a stored file. True once it is gone, including when it was already gone; false while it is
+ * still there or that can't be told.
+ */
+async function removeStoredFile(path: string): Promise<boolean> {
+  const { data, error } = await supabase.storage.from(BUCKET).remove([path]);
+  if (error) {
+    console.error("Failed to delete a stored document:", error.message);
+    return false;
+  }
+  if (data.length > 0) return true;
+  // Storage answers success with an empty list whenever it deleted nothing: when the file is already
+  // gone, and also when its policies refused. Only the first counts as removed.
+  try {
+    const { data: stillThere } = await supabase.storage.from(BUCKET).exists(path);
+    if (stillThere) console.error("A stored document was not deleted");
+    return !stillThere;
+  } catch (e) {
+    // exists() throws for anything but "not found" (a network or server error).
+    console.error("Couldn't check whether a stored document was deleted:", e instanceof Error ? e.message : e);
+    return false;
+  }
+}
 
 // A read that has been going longer than this has stopped (the function's own limit is shorter).
 const STALE_PROCESSING_MS = 5 * 60 * 1000;
@@ -282,31 +309,15 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
   }, [userId, extract]);
 
   const remove = useCallback(async (doc: SessionDocument) => {
-    const sid = sessionRef.current;
-    if (!userId || !sid || !doc.storage_path) return false;
-    // Delete the row first, then the file. If the file can't be removed, put the
-    // row back so the document stays listed and the delete can be retried —
-    // never leave a row pointing at a missing file.
+    if (!userId || !sessionRef.current || !doc.storage_path) return false;
+    // The file goes first, then the record. If the record can't be deleted, it stays listed and the
+    // next try finds its file already gone and finishes. The other order could leave a stored file
+    // with no record, which nobody can see or delete: putting the record back can fail too (an
+    // expired intake refuses new rows).
+    if (!(await removeStoredFile(doc.storage_path))) return false;
     const { error } = await supabase.from("documents").delete().eq("id", doc.id);
-    if (error) return false;
-    const { error: storageError } = await supabase.storage.from(BUCKET).remove([doc.storage_path]);
-    if (storageError) {
-      const { error: restoreError } = await supabase.from("documents").insert({
-        id: doc.id,
-        user_id: userId,
-        session_id: sid,
-        file_name: doc.file_name,
-        file_size: doc.file_size,
-        size_bytes: doc.size_bytes,
-        mime_type: doc.mime_type,
-        file_sha256: doc.file_sha256,
-        category: doc.category,
-        storage_path: doc.storage_path,
-        status: doc.status,
-        extraction: doc.extraction as unknown as Json,
-        created_at: doc.created_at,
-      });
-      if (restoreError) console.error("Failed to restore document row:", restoreError);
+    if (error) {
+      console.error("Failed to delete a document record:", error.message);
       return false;
     }
     setDocs((prev) => prev.filter((d) => d.id !== doc.id));

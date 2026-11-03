@@ -60,7 +60,7 @@ UPDATE public.profiles SET phone = 'call me', company_name = 'Legacy Co' WHERE u
 
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
 \i supabase/migrations/20261029092000_census_in_intake_validation.sql
-\i supabase/migrations/20261103100000_intake_schema_v2_workers_comp.sql
+\i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
 
 -- ---------- helpers ----------
 CREATE FUNCTION pg_temp.as_user(uid uuid, guest boolean DEFAULT false) RETURNS void LANGUAGE plpgsql AS $$

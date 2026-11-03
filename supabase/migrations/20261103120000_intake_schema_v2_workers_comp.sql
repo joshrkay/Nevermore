@@ -14,7 +14,7 @@
 -- from the latest migration that defines its function.
 --
 -- Deploy before the front end that sends the new keys: the database refuses an unknown top-level key, so
--- a front end shipped first would fail every save that holds one. Part 2 (20261103100100) records
+-- a front end shipped first would fail every save that holds one. Part 2 (20261103120100) records
 -- schema version 2 on every intake.
 
 -- How each top-level chamber_data key is checked; NULL for a key that is not part of the intake.

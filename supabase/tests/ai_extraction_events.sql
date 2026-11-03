@@ -1,6 +1,6 @@
 -- Run against a scratch Postgres (NOT production); it drops and recreates the `public` schema:
 --   psql -v ON_ERROR_STOP=1 -f supabase/tests/ai_extraction_events.sql
--- Extraction events (20261103110000, US-2.4a): what the table refuses so it can never hold prospect
+-- Extraction events (20261103120200, US-2.4a): what the table refuses so it can never hold prospect
 -- content, who can read and write it, and pruning after the retention window. The setup is
 -- advisor_operations.sql's, which loads the real migrations is_advisor() comes from.
 DROP SCHEMA IF EXISTS public CASCADE;
@@ -96,7 +96,7 @@ CREATE POLICY "own update" ON public.chamber_sessions FOR UPDATE TO authenticate
 \i supabase/migrations/20261029090000_document_ingestion.sql
 \i supabase/migrations/20261029091000_census_advisor_review.sql
 
-\i supabase/migrations/20261103110000_ai_extraction_events.sql
+\i supabase/migrations/20261103120200_ai_extraction_events.sql
 
 CREATE FUNCTION pg_temp.as_user(uid uuid) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
