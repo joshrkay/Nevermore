@@ -1,7 +1,9 @@
 # Advisor access
 
-Advisor pages live under `/advisor`. The UI guard (`RequireAdvisor`) only decides what to render;
-the database enforces access (`supabase/migrations/20261022090000_advisor_operations.sql`).
+Advisor pages live under `/advisor`: the Advisor Console, which is the team's operating workflow
+(no CRM; its field mapping and ownership rules are in `docs/ADVISOR_CONSOLE.md`). The UI guard
+(`RequireAdvisor`) only decides what to render; the database enforces access
+(`supabase/migrations/20261022090000_advisor_operations.sql`).
 
 | Route | Audience | Enforced by |
 |---|---|---|
@@ -64,13 +66,13 @@ a sign-out the app asked for is remembered until the event arrives.
 ## The submission queue (`/advisor`)
 
 One row per intake, from `advisor_list_submissions()`: company, contact, state footprint (operating
-states plus census work states), employee count, reference (file id), certification date, pipeline
+states plus census work states), employee count, File ID, certification date, pipeline
 status and completeness. The list carries no census, payroll, DOB, EIN, phone, email or transcript
 content; those are on the detail page, behind the same checks.
 
 - **Order**: certified submissions first, newest certification first; intakes not (or no longer)
   certified follow, most recently active first; session id breaks ties so the order never shuffles.
-- **Status filter** runs in the database. **Search** (company, contact, reference; every word must
+- **Status filter** runs in the database. **Search** (company, contact, File ID; every word must
   match) narrows the loaded list in the browser. Both live in the URL (`?status=`, `?q=`).
 - A click anywhere on a row opens that submission; the company link works for keyboard and new tabs.
 - Loading, empty (none yet / none with this status / no search match) and error states are all shown.
