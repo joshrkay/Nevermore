@@ -96,7 +96,14 @@ describe("chamber-extract handler: configuration and budget", () => {
     expect(status).toBe(503);
     expect(JSON.stringify(body)).not.toContain("LOVABLE_API_KEY");
     expect(t.logs).toEqual(["AI_CONFIG_MISSING: LOVABLE_API_KEY is not set"]);
-    expect(t.rpcCalls).toEqual([]);
+    // No budget is spent; the failure is recorded for monitoring, with the service role.
+    expect(t.rpcCalls).toEqual([
+      {
+        key: "service-key",
+        fn: "record_ops_event",
+        args: { p_kind: "ai_failed", p_source: "chamber-extract", p_code: "config_missing", p_detail: null, p_user_id: "user-1", p_session_id: null },
+      },
+    ]);
     expect(t.fetchFn).not.toHaveBeenCalled();
   });
 
@@ -283,6 +290,70 @@ describe("chamber-extract handler: when the provider fails", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("chamber-extract handler: monitoring", () => {
+  const recorded = (t: ReturnType<typeof setup>) => t.rpcCalls.filter((c) => c.fn === "record_ops_event");
+
+  it("records a failed model call as ai_failed with its kind and status, never its content", async () => {
+    const t = setup({ responses: [providerError(503, "echoed: SECRET"), providerError(503, "echoed: SECRET")] });
+    const { status } = await read(await handleRequest(post({ message: "our payroll is 12345" }), t.deps));
+    expect(status).toBe(502);
+    expect(recorded(t)).toEqual([
+      {
+        key: "service-key",
+        fn: "record_ops_event",
+        args: { p_kind: "ai_failed", p_source: "chamber-extract", p_code: "provider_error:503", p_detail: null, p_user_id: "user-1", p_session_id: null },
+      },
+    ]);
+    expect(JSON.stringify(recorded(t))).not.toMatch(/SECRET|12345|payroll/);
+  });
+
+  it("records a stalled provider as a timeout", async () => {
+    const t = setup();
+    const stalled = vi.fn((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted")))));
+    t.deps.fetch = stalled as unknown as typeof fetch;
+    vi.useFakeTimers();
+    try {
+      const pending = handleRequest(post({ message: "hi" }), t.deps);
+      await vi.waitFor(() => expect(stalled).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect((await pending).status).toBe(504);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(recorded(t).map((c) => c.args.p_code)).toEqual(["timeout:-"]);
+  });
+
+  it("records nothing when the model answers", async () => {
+    const t = setup({ responses: [gatewayReply({ company_name: "Acme" })] });
+    expect((await handleRequest(post({ message: "hi" }), t.deps)).status).toBe(200);
+    expect(recorded(t)).toEqual([]);
+  });
+
+  it("answers the same when recording the failure fails", async () => {
+    const failing = setup({ responses: [providerError(500), providerError(500)] });
+    const base = failing.createClient.getMockImplementation()!;
+    failing.createClient.mockImplementation((url: string, key: string) => {
+      const client = base(url, key);
+      return {
+        ...client,
+        rpc: async (fn: string, args: Record<string, unknown>) =>
+          fn === "record_ops_event" ? { data: null, error: { message: "down", code: "PGRST000" } as { message?: string } } : client.rpc(fn, args),
+      };
+    });
+    const { status, body } = await read(await handleRequest(post({ message: "hi" }), failing.deps));
+    expect(status).toBe(502);
+    expect(body.error).toBe("Lenore couldn't respond. Please try again.");
+    expect(failing.logs).toContain("OPS_EVENT_NOT_RECORDED kind=ai_failed source=chamber-extract reason=rpc:PGRST000");
+  });
+
+  it("records nothing, and still answers, without the service-role key", async () => {
+    const t = setup({ env: { LOVABLE_API_KEY: undefined, SUPABASE_SERVICE_ROLE_KEY: undefined } });
+    expect((await handleRequest(post({ message: "hi" }), t.deps)).status).toBe(503);
+    expect(recorded(t)).toEqual([]);
   });
 });
 

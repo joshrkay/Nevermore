@@ -120,7 +120,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | Two rapid loads or two tabs can still create two sessions (a bare `/start` resumes the latest open one). Orphan drafts now expire after 30 days idle (A-1.5). | `useChamberSession.ts` | A-1.3 |
 | The advisor queue has no `LIMIT` and the page loads every row. | `20261024100000_advisor_queue.sql` | F-2.1 |
 | The opening message tells the prospect the workspace is 'a demonstration'. | `useChamberSession.ts` | A-2.3 |
-| Public copy contradicts the role disclosure: 'No account required' while certification needs a verified email, 'Get Your Quote', and `SUBMITTED TO <PEO>` on the Manuscript. | `LandingPage.tsx`, `index.html`, `ManuscriptPage.tsx` | H-2.3 |
+| Public copy contradicted the role disclosure ('No account required', 'Get Your Quote', `SUBMITTED TO <PEO>`). **Fixed** and guarded by `copy.guard.test.ts`, which now also bans affiliation claims; the landing page's 'not health data' and 'nothing else' claims are gone (US-6.2). The Manuscript's HIPAA statement and preview-domain 'Prepared by' line are left for counsel. | `LandingPage.tsx`, `index.html`, `ManuscriptPage.tsx`, `manuscriptPdf.ts` | H-2.3 |
 | `html2canvas` is a direct dependency that no source file imports. | `package.json` | D-3.1 |
 
 ### 1.4 What landed since v1.0
@@ -133,6 +133,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-10-29 | Epic E census ingestion (branch `claude/adoring-dijkstra-2fcocb`, not yet merged): the roster is `chamber_data.census` with the spec's `CensusEmployee` row, and older `employees` data is read as it; `document-extract` matches census columns by header, reads `.docx`, never reads or keeps SSN or bank details; upload checks by contents with a SHA-256 and duplicate refusal; category names and per-intake limits in the database; a review step that shows census rows and settles differences in a dialog. Deploy order: the migrations (including `20261029092000`, which teaches the A-2.2 intake validator the `census` key and still accepts `employees`), then `document-extract` (it imports `_shared`), then the front end. See `docs/intake-schema.md`. |
 | 2026-11-03 | US-1.3, the hand-off to The Reckoning: the chosen PEO is saved with the intake (`chamber_sessions.chosen_peo`, migration `20261103100000`, deploy it before the front end), and the Manuscript page says when an intake has expired instead of calling it unsigned. See A-1.3. |
 | 2026-11-03 | Document fixes from the US-3 review: a new document row must point into its own intake's folder (migration `20261103110000`, which only changes a policy and can deploy before or after the front end), and removing a document deletes the stored file before its row and treats storage's empty answer as "not deleted" unless the file is gone. See E-1.2 and E-1.3. |
+| 2026-11-04 | US-6.1 to US-6.4 (Epic H). Classification and retention (`docs/DATA_HANDLING.md`, `src/data/dataPolicy.ts`) with a daily retention job and a deletion process that removes stored files, then rows (`purge-intakes`); the Privacy Policy, Terms of Use, legal links on every page and an intake consent gate the database enforces; an isolation test over every migration with a findings register (`docs/SECURITY_REVIEW.md`) and a fix migration; failure monitoring with threshold alerts (`ops-monitor`) and `docs/RUNBOOK.md`. Deploy order: migrations `20261104090000` to `20261104093000`, then the `purge-intakes` and `ops-monitor` functions and the updated `chamber-extract` and `document-extract` (they import `_shared`), then the front end, close behind the consent migration. See H-1 to H-4. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -146,15 +147,15 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | B AI extraction | 2 | 4 | 1 | 2 | 0 | 9 |
 | C Review, certify, submit | 2 | 7 | 0 | 1 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
-| E Documents | 5 | 1 | 3 | 2 | 0 | 11 |
+| E Documents | 6 | 1 | 3 | 1 | 0 | 11 |
 | F Advisor | 4 | 6 | 1 | 0 | 0 | 11 |
 | G Communications | 2 | 2 | 0 | 4 | 0 | 8 |
-| H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
+| H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **26** | **43** | **11** | **20** | **6** | **106** |
+| **Total** | **32** | **44** | **11** | **14** | **5** | **106** |
 
-23 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+24 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 18 of 39 M2; 1 of 13 M3. (Counts updated for US-6.1 to US-6.4 only; other stories since 2.6 are not recounted here.) The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -178,14 +179,14 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 |---|---|---|---|---|
 | D1 | How does a guest return to their intake? | **Decided in code, with a different design** (see D14). Supabase anonymous auth persisted in browser storage; the session id in `?session=`; owner RLS gates resume. Email upgrade is a 6-digit code (`updateUser`, then `verifyOtp`), refused if the email already has an account ('we can't yet move your answers'). A guest who verified an email can get back to the intake from another browser, or after this one's data was cleared, by signing in with a 6-digit code emailed to that address (A-1.3); the Chamber then opens the linked intake or their latest one. **Gap:** a guest who never verified an email has no way back from another browser, and nothing sets a password. | PM | none |
 | D2 | Minimum data required before certification | **Decided for certification (2026-11-03, US-1.2).** Company legal name, states of operation (a code in `states`, or a work state on the census) and pay frequency are required: the Reckoning won't generate The Manuscript without them, and the database refuses a certification from the browser (`EA003`, `public.intake_missing_required`). The census is recommended, not required, because today it can only come from an uploaded file and no document is required. It is listed as an open item and never blocks; the advisor queue still counts it under `missing_required`. One list in `src/data/readiness.ts`, compared with the database by `schemaSync.test.ts`. Still differs from the v1.0 default: no EIN field, no total-employee-count requirement, no 'Not applicable' status. | PM + Advisory lead | B-1.3 |
-| D3 | Certification and consent wording | **Open.** The placeholder `2026-10-draft-1` is marked DRAFT in the Reckoning. A second, unused wording (`2026-10-v1`) exists (C-2.4). No intake-consent text exists (H-2.2). | LEGAL | C-2.4, H-2.2 |
-| D4 | Retention windows | **Partly decided in code, to confirm.** An uncertified draft expires 30 days after its last change (A-1.5, `public.intake_draft_retention()`); an expired draft keeps its data until H-1.2 purges it. A browser's copy of unsaved answers is kept at most 7 days (A-1.4). Nothing else is windowed; AI rate-limit logs are pruned after a day. | LEGAL + PM | H-1.x, E-4.2 |
+| D3 | Certification and consent wording | **Open.** The placeholder `2026-10-draft-1` is marked DRAFT in the Reckoning. A second, unused wording (`2026-10-v1`) exists (C-2.4). The intake consent (`src/data/intakeConsent.ts`, `2026-11-draft-1`) is marked DRAFT on the gate (H-2.2). Both wait for LEGAL (`docs/LEGAL_REVIEW.md`). | LEGAL | C-2.4, H-2.2 |
+| D4 | Retention windows | **Recommended defaults enforced in code, LEGAL to confirm** (US-6.1, `docs/DATA_HANDLING.md`): a draft expires 30 days after its last change and a closed draft is deleted 30 days after it closed; a submitted record is reviewed for deletion 3 years after its latest certification; operational events 90 days, email delivery events 365 days, AI rate-limit records 1 day; the browser's copy of unsaved answers at most 7 days. One list in `src/data/dataPolicy.ts`, kept equal to the database by `schemaSync.test.ts`. | LEGAL + PM | H-1.x, E-4.2 |
 | D5 | Advisor roles and permissions | **Decided and implemented**: `advisor` and `admin` in `user_roles`. In the repo `admin` has no power beyond `advisor` (tests assert it cannot grant roles or delete intakes). | PM | none |
 | D6 | CRM or workflow destination | **Open.** No CRM is named. | PM | G-3.1 |
 | D7 | Email provider and sender domain | **Decided in code:** Resend, the only adapter. `EMAIL_FROM` has no default and must be on a verified domain. The domain is not named and the verification checklist item is unchecked. | OPS | G-2.1 launch, J-1.2 |
 | D8 | Is voice launch-critical? | **Recommended default stands:** an opt-in beta behind a flag, with text always available. | PM | I-5.x scope |
 | D9 | Carrier or PEO routing | **Unchanged:** out of scope for M1 to M3. The product tells prospects they send the packet themselves. | PM | none |
-| D10 | Legal reviewer for policy, terms and disclosures | **Not recorded in the repo.** | LEGAL | H-2.1, H-2.3 |
+| D10 | Legal reviewer for policy, terms and disclosures | **Not recorded in the repo.** `docs/LEGAL_REVIEW.md` is the record to fill in: what to review, the questions for counsel, and how approval is made live. | LEGAL | H-2.1, H-2.3 |
 | D11 | AI provider for Lenore and document extraction | **Partly decided:** the adapter supports Lovable (default) and Anthropic, and neither is chosen. Both AI functions use the one adapter, so a single `AI_PROVIDER` secret switches them. Voice uses ElevenLabs. No data-processing terms are recorded. | PM + BE | F-0.2, E-3.1 |
 | D12 | PDF rendering approach | **Decided and implemented:** browser jsPDF with vector text, lazy-loaded. Server-side rendering has not been revisited. | BE + FE | none |
 | D13 | Malware-scanning provider for uploads | **Open.** | OPS | E-4.3 |
@@ -559,16 +560,9 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Remaining:** The bucket limits are applied only where the storage schema has those columns, and the SQL tests' storage stand-in has them but real Supabase Storage was not exercised, so confirm they took effect on the project. Storage checks the declared type, not the bytes: a renamed file sent straight to the API is stored and later marked `unsupported`. `file_name` is stored raw. No test for `Content-Disposition`. The 20 MB upload cap is above the 10 MB the plan names and the 10 MB `document-extract` reads.
 
 #### E-4.2 Document retention and deletion
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** E-1.1, H-1.2 · **Milestone:** M2
-- **Built:** No purge job, schedule or `expires_at` exists.
-- **Remaining:** A foreign-key cascade does not remove storage objects, so the purge must delete them explicitly.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Apply the D4 retention rule to documents. Expired or abandoned documents are deleted along with their storage objects. The deletion writes an audit row.
-  - **AC:**
-    - Expired draft documents are removed from the database and storage.
-    - Submitted-session documents follow the submitted retention rule.
-    - Each deletion writes an audit row.
-  - **Tests:** Run the purge against fixtures and confirm removal from both locations.
+- **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** E-1.1, H-1.2 · **Milestone:** M2
+- **Built (US-6.1, with H-1.2):** A closed draft's documents are deleted 30 days after it closed, stored files through the Storage API first, then the rows (`purge-intakes`, `complete_intake_deletion`, which refuses while any file remains). Documents of a submitted record follow the submitted-record rule (reviewed after 3 years, deleted by request). Every deletion is recorded in `intake_deletions` with the files and rows removed. Tests: `supabase/tests/data_retention.sql` and `purge-intakes/handler.test.ts`.
+- **Notes:** Since US-6.3 (SR-5) a prospect can only change a document's row while its intake is open; removing one from an expired draft is still allowed.
 
 #### E-4.3 Malware scanning
 - **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** OPS · **Depends:** D13, E-1.1 · **Milestone:** M2
@@ -707,103 +701,67 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic H: Security, Privacy, and Legal Readiness
 
-*As built:* Authorization tests are strong. Retention, deletion, privacy and terms pages, consent gate, alerting and the runbook are not started.
+*As built (after US-6.1 to US-6.4):* Classification and retention are documented and enforced, deletion removes rows and stored files, the privacy and terms pages and the intake consent gate exist (copy pending LEGAL), every table and function is covered by an isolation catalogue, and failures are recorded and alerted with a runbook behind them. What remains is mostly outside the repository: LEGAL approval, filling in contacts, configuring the alert channel, and the first restore drill.
 
 #### H-1.1 Data classification and retention matrix
-- **Status:** **NOT VERIFIABLE** · **Size:** S · **Priority:** Highest · **Owner:** LEGAL + PM · **Depends:** D4 · **Milestone:** M2
-- **Built:** No matrix exists. `docs/NOTIFICATIONS.md` notes that outbox rows keep recipient addresses and should be folded into D4.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Document each data class (contact, business, census, dependent, benefits, payroll, workers' comp, documents, transcripts, PDFs, audit records) with retention and deletion rules.
-  - **AC:**
-    - Every stored data class has a rule.
-    - The matrix is approved by LEGAL.
-  - **Tests:** Checklist review against the schema.
+- **Status:** **PARTIAL** · **Size:** S · **Priority:** Highest · **Owner:** LEGAL + PM · **Depends:** D4 · **Milestone:** M2
+- **Built (US-6.1):** `docs/DATA_HANDLING.md`: four sensitivity levels (Restricted, Confidential, Internal, Public) with handling rules; fifteen data classes (contact, company, census, payroll, benefits, workers' comp, documents, transcripts, Manuscript PDFs, certification and consent, advisor work, notifications, accounts, audit, operational), each with where it is stored, its retention and its deletion rule; the advisory team's responsibilities. `src/data/dataPolicy.ts` is the same policy in code, and the Privacy page renders it. `src/data/dataPolicy.test.ts` checks every table and bucket the migrations create belongs to a class, so a new table fails CI until it is classified. `schemaSync.test.ts` keeps the windows equal to the database's.
+- **Remaining:** LEGAL's approval of the matrix and windows (D4; `docs/LEGAL_REVIEW.md`). Until then they are recommended defaults, enforced as written.
 
 #### H-1.2 Automated retention enforcement
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** H-1.1, A-1.5 · **Milestone:** M2
-- **Built:** Only `ai_request_log` and `ai_ip_log` rows older than a day are pruned, inline.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Scheduled job that applies the matrix to sessions, transcripts, documents, and generated PDFs. Writes an audit row per deletion.
-  - **AC:**
-    - Expired records and objects are removed.
-    - Submitted records are not removed by the draft rule.
-    - Every deletion is audited.
-  - **Tests:** Fixture run confirms each class.
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** H-1.1, A-1.5 · **Milestone:** M2
+- **Built (US-6.1):** Migration `20261104092000_data_retention_and_deletion.sql`. `run_retention()` runs daily (`run-retention`, pg_cron): it queues a deletion for every closed draft (expired, archived, revoked, never certified) 30 days after it closed (`closed_draft_retention()`), and prunes operational events (90 days), email delivery events (365 days) and the AI rate-limit logs (1 day, which until now were pruned only for a caller on their next call, so idle accounts' rows were kept for good). The `purge-intakes` edge function (hourly) carries each deletion out: stored files through the Storage API, then every row in one transaction (`complete_intake_deletion`, which refuses while any file remains). Each deletion is recorded in `intake_deletions` with counts per table; a deletion out of attempts alerts (H-4.1). Submitted records are never touched by the draft rule: after 3 years (`submitted_record_retention()`) `retention_review_due()` lists them for an admin. Tests: `supabase/tests/data_retention.sql`, `supabase/functions/purge-intakes/handler.test.ts`.
+- **Notes:** Needs `purge-intakes` deployed and Vault's `project_url` and `service_role_key` set (`docs/SUPABASE_SETUP.md`). Not exercised against real Supabase Storage. A database restore can bring deleted intakes back; `docs/RUNBOOK.md` ("After a restore") says how to delete them again.
 
 #### H-1.3 Deletion request workflow
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** FS · **Depends:** H-1.2, F-1.2 · **Milestone:** M2
-- **Built:** No delete function exists: nobody, admin included, can delete an intake (tested). Foreign-key cascades from `chamber_sessions` reach documents, certifications, workflow, notes, reviews and the outbox, but not storage objects. Status history, audit rows and `manuscript_versions` have no foreign key on purpose.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Admin deletes a submission, which cascades to its rows and files. The action is logged.
-  - **AC:**
-    - After deletion, no row or file for the submission remains.
-    - The audit log records the action and the admin.
-  - **Tests:** Delete a submission with documents and confirm full removal.
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FS · **Depends:** H-1.2, F-1.2 · **Milestone:** M2
+- **Built (US-6.1):** `request_intake_deletion(session, reason)` (admins only, any intake, idempotent while one is open) queues the same deletion H-1.2 runs, recording who asked and why; `retry_intake_deletion` re-queues a failed one. The append-only audit tables (status history, review events, notes, lifecycle events, Manuscript versions) refuse every change except this deletion of the one intake it names. `docs/DATA_HANDLING.md` has the request, verification, account-deletion and review steps.
+- **Notes:** No screen: an admin's token through the API, or the SQL editor. Deleting the account itself (Supabase Auth, profile, consents) is a documented manual step.
 
 #### H-2.1 Privacy policy and terms pages
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Highest · **Owner:** LEGAL + FE · **Depends:** D10 · **Milestone:** M2
-- **Built:** No privacy or terms routes exist, and the landing footer does not link to either.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Publish privacy policy and terms from the site footer. Copy is approved by LEGAL.
-  - **AC:**
-    - Both pages are reachable from every page.
-    - Copy is marked approved by LEGAL before publication.
-  - **Tests:** Link check on all routes.
+- **Status:** **PARTIAL** · **Size:** S · **Priority:** Highest · **Owner:** LEGAL + FE · **Depends:** D10 · **Milestone:** M2
+- **Built (US-6.2):** `/privacy` and `/terms` (`PrivacyPage.tsx`, `TermsPage.tsx`, `src/data/legal.ts`). The Privacy Policy renders the data classes and the retention rules from `dataPolicy.ts`, names the service providers, and says how to ask for deletion. Both show "Draft, pending legal review" while `LEGAL_COPY_APPROVED` is false. `LegalLinks` is on every page (landing footer, sign-in, Chamber top bar, consent gate, Manuscript page, profile, not found, auth callback, advisor header); `copy.guard.test.ts` fails if a page file doesn't render it. `docs/LEGAL_REVIEW.md` is the review and approval record.
+- **Remaining:** LEGAL review and approval (D10), the privacy-request contact address, and the Terms' bracketed sections (liability, governing law, disclaimers).
 
 #### H-2.2 Intake consent gate
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Highest · **Owner:** FE · **Depends:** A-1.2, D3 · **Milestone:** M1
-- **Built:** Consent exists only at certification. No control gates the intake fields.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Consent checkbox before the first sensitive field. Store the consent version and timestamp on the session.
-  - **AC:**
-    - Sensitive fields are disabled until consent is recorded.
-    - The consent record stores the version.
-  - **Tests:** Attempt a sensitive field without consent. Confirm consent record.
+- **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** FE · **Depends:** A-1.2, D3 · **Milestone:** M1
+- **Built (US-6.2):** `IntakeConsentGate` wraps `/start`: nothing of the Chamber renders, so nothing can be typed, said or uploaded, until the account agrees to `src/data/intakeConsent.ts` (who Edgar Allan Advisory is and isn't, what is collected, how it's used and kept). Migration `20261104090000_intake_consent.sql`: `record_intake_consent` stores the wording, the version and the server's time in `intake_consents`; the database refuses a new intake or document from the browser without an agreement to the version in force (`EA004`), and a new intake records which agreement it was started under (`intake_consent_id`). Tests: `supabase/tests/intake_consent.sql`, `IntakeConsentGate.test.tsx`; the e2e specs agree and `intake-to-pdf.spec.ts` checks the record.
+- **Notes:** The wording is a draft marked as such until LEGAL approves it (D3). Saves to intakes started before this change aren't refused (open tabs keep working); the gate asks for consent before any intake opens. Deploy the migration and the front end close together.
 
 #### H-2.3 Role-disclosure copy audit
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** LEGAL + PM · **Depends:** H-2.1 · **Milestone:** M2
-- **Built:** `copy.guard.test.ts` bans named PEOs and phrases like 'on my behalf' in five files. Consent line 3 says Edgar Allan Advisory does not submit.
-- **Remaining:** No LEGAL or PM audit record. Residual copy that implies affiliation or contradicts the consent: the Manuscript's `SUBMITTED TO <PEO>` and 'Certified Submission' (page and PDF); 'Get Your Quote' on the landing page; 'AI-native PEO brokerage' in `index.html`; and 'No account required' while certification needs a verified email.
+- **Built:** `copy.guard.test.ts` covers the landing page, Chamber, Reckoning, consent gate, PEO Match, Privacy and Terms pages and the emails: no named PEOs, no "on my behalf", no quote or submission promises, and (new) no affiliation or agency claims ("partnered with", "authorized agent", "on behalf of", …). The consent, Privacy and Terms state the role disclosure word for word (not a PEO, carrier or insurance agency; naming a PEO isn't endorsement). The landing page's "not health data" and "nothing else" claims are gone.
+- **Remaining:** LEGAL's audit record (`docs/LEGAL_REVIEW.md`), including whether any compensation arrangement with a PEO must be disclosed. Residual copy for counsel: the Manuscript's HIPAA statement and its preview-domain "Prepared by" line.
 
 #### H-3.1 Guest isolation tests
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-1.2, E-1.3 · **Milestone:** M2
-- **Built:** `session_documents.sql` covers cross-user read, insert, object store, move, update and delete. The access matrix covers signed-out, guest, other prospect and advisor-as-guest.
-- **Remaining:** Not tested: a cross-user download or signed URL, and expired or revoked sessions. The SQL tests run on stubbed `auth` and `storage` schemas, not the real Supabase APIs.
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-1.2, E-1.3 · **Milestone:** M2
+- **Built (US-6.3):** `supabase/tests/data_isolation.sql` loads every migration and checks guests and prospects against each other's intakes in every status (rows, transcript, provenance, documents, files in both buckets, certifications, consents), including archived, revoked and expired intakes, a known intake id with someone else's token or none, and storage `SELECT` (which is what signing a link checks). `e2e/data-isolation.spec.ts` repeats the core of it over HTTP through the gateway.
+- **Notes:** The SQL runs on mirrored `auth` and `storage` schemas and the HTTP spec on a stand-in gateway, not real Supabase (finding SR-9, accepted; launch checks in `docs/SECURITY_REVIEW.md`).
 
 #### H-3.2 Prospect versus advisor permission tests
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** F-1.2, F-2.1 · **Milestone:** M2
-- **Built:** `advisor_operations.sql` has 7 callers by 13 sources with exact row counts, function refusals, write denials, and a catalogue check that every public table has row security. The `sql-tests` CI job runs it. The outbox is covered separately.
-- **Notes:** The catalogue covers only what that file loads. Advisors see all intakes. No HTTP-level test.
+- **Built:** `advisor_operations.sql` has 7 callers by 13 sources with exact row counts, function refusals, write denials, and a catalogue check that every public table has row security. US-6.3 added `data_isolation.sql`: 25 tables and buckets by 9 callers with exact counts over every migration; every advisor, admin and service-only function by caller; advisors refused monitoring data, the AI rate-limit tables, other users' roles, deletions and every write to prospect data; and catalogue checks that fail when a table isn't in the matrix, a function callable by the API roles isn't on the reviewed allowlist, or a bucket is public.
+- **Notes:** Advisors see all intakes (D16, finding SR-7, accepted for the pilot).
 
 #### H-3.3 Signed URL and fragment-token tests
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** D-2.1, E-1.3 · **Milestone:** M2
-- *Revised scope, AC and tests:*
-  - **Scope:** Test that advisor signed URLs expire (60 seconds) and that no credential appears in a URL or log. The fragment-token tests no longer apply (D14). The session id in `?session=` is not a credential, so add a test that it grants nothing without the owner's JWT.
-  - **AC:**
-    - An expired signed URL is denied.
-    - A request with a valid session id and no matching JWT returns no data.
-    - Function logs contain no signed URL or token for a known test value.
-  - **Tests:** Expiry test, session-id-without-JWT test, log scan.
+- **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** D-2.1, E-1.3 · **Milestone:** M2
+- **Built (US-6.3):** A known session id grants nothing without the owner's token (`data_isolation.sql`, `e2e/data-isolation.spec.ts`). `src/lib/fileLinks.test.ts`: every signed link goes through one helper with a 60-second expiry, nothing calls `getPublicUrl`, no link is stored, put in a URL or logged, edge functions never sign links, and no migration makes a bucket public. Monitoring redacts links from anything it records (`ops_redact`).
+- **Remaining:** That an expired link is refused is Supabase Storage's to enforce and isn't in the test stack (SR-10): the manual launch check in `docs/SECURITY_REVIEW.md` covers it.
 
 #### H-4.1 Alerts for failed uploads, submits, AI calls, and auth
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** OPS · **Depends:** G-1.1, B-3.3 · **Milestone:** M2
-- **Built:** `dispatch-outbox` emits alert-grade log lines (`OUTBOX_DEAD`, `OUTBOX_ENQUEUE_FAILED`, `OUTBOX_RECONCILE_ERROR`, `OUTBOX_REAP_ERROR`), and pushes each dead event to `ENGINEERING_ALERT_WEBHOOK_URL` (ids and failure kind only) when it is set. `.claude/skills/verify` forces failures locally.
-- **Remaining:** No alert channel is configured for any category (the outbox's webhook is code, not a configured destination). No upload, AI or auth alerting; `document-extract` only calls `console.error`. The `docs/NOTIFICATIONS.md` checklist item is unchecked.
+- **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** OPS · **Depends:** G-1.1, B-3.3 · **Milestone:** M2
+- **Built (US-6.4):** Migration `20261104091000_ops_monitoring.sql`: `ops_events` records application errors, failed uploads, AI failures, authorization failures and failed deletions, with a code and a redacted detail, never contents. The browser reports through `report_client_event` (`src/lib/monitoring.ts`: the error boundary, uncaught errors, upload and document-read failures, chat that never answered, advisor denials), capped per account and overall; `chamber-extract` and `document-extract` record provider failures with the service role. `ops_alert_rules()` sets a threshold per kind; the `ops-monitor` edge function (every five minutes) raises each at most once per cooldown and posts to `ENGINEERING_ALERT_WEBHOOK_URL`. Admins read `admin_ops_summary`. Tests: `supabase/tests/ops_monitoring.sql`, `src/lib/monitoring.test.ts`, `ops-monitor/handler.test.ts`.
+- **Notes:** Before launch, set `ENGINEERING_ALERT_WEBHOOK_URL` to a watched channel and send the test event (`docs/RUNBOOK.md`). Refusals that never reach the browser or a function (direct API 401/403, failed sign-ins) are in Supabase's logs only; the runbook says where to look. Browser reports can be forged to raise false alerts (SR-11, accepted, capped). No external uptime check.
 
 #### H-4.2 Incident runbook and escalation contacts
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** OPS · **Depends:** H-4.1 · **Milestone:** M2
-- **Built:** `docs/NOTIFICATIONS.md` 'Operating' has a log-line-to-action table and recovery SQL.
-- **Remaining:** No `docs/RUNBOOK.md`: escalation contacts, rollback steps, and sections for uploads, AI and auth are missing.
+- **Built (US-6.4):** `docs/RUNBOOK.md`: escalation contacts, what is monitored and how alerts arrive, severity levels with response times, response steps and an incident log template, playbooks (application errors, uploads, AI, authorization, deletions, notifications, suspected data exposure, leaked secrets), backup and recovery expectations, and the quarterly production access review with its record. `schemaSync.test.ts` keeps its alert table equal to `ops_alert_rules()`.
+- **Remaining:** Names and numbers in the contacts table (no people are invented in the repo).
 
 #### H-4.3 Backup and restore verification
 - **Status:** **NOT VERIFIABLE** · **Size:** S · **Priority:** High · **Owner:** OPS · **Depends:** J-1.1 · **Milestone:** M2
-- **Built:** No backup or restore document or drill record exists.
-- **Remaining:** Depends on J-1.1.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Document backup frequency and perform one restore drill on staging.
-  - **AC:**
-    - A restore from backup succeeds on staging and is recorded.
-  - **Tests:** Restore drill record.
+- **Built:** `docs/RUNBOOK.md` "Backup and recovery": what is backed up and what isn't (stored files are not in database backups), recovery point and time expectations, the quarterly restore drill and its record, and what to do after a restore (re-delete intakes deleted since the backup).
+- **Remaining:** Confirm the production plan's backups and PITR, and run and record the first drill on staging (J-1.1).
 
 ---
 
@@ -1006,10 +964,10 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 |---|---|
 | All M2 stories are done. | **Not met.** 13 of 39 are DONE or SUPERSEDED. |
 | Advisors can review, manage status, and see notifications. | **Largely met in code:** queue, detail, field review, notes, status history, versioned Manuscripts, alert emails. Email needs secrets, a verified sender and the schedule. |
-| Retention and deletion run on schedule. | **Partly met.** Uncertified drafts expire hourly through pg_cron (A-1.5). Nothing is purged or deleted on a schedule yet (H-1.2, H-1.3, E-4.2). |
-| Privacy policy and terms are approved by LEGAL. | **Not met.** No pages exist (H-2.1). |
-| Authorization, upload, and isolation tests pass in CI. | **Authorization and isolation met** in the SQL tests. **Upload not met:** server-side limits, cross-user download and signed-URL expiry are untested (E-4.1, H-3.1, H-3.3). |
-| Runbook, alerts, and backup drill are complete. | **Not met.** A log-line table exists for the outbox only (H-4.1 to H-4.3). |
+| Retention and deletion run on schedule. | **Met in the repository.** Drafts expire hourly (A-1.5); `run-retention` queues closed drafts for deletion and prunes logs daily, and `purge-intakes` deletes files and rows hourly (H-1.2, H-1.3, E-4.2). Needs the functions deployed and Vault's secrets set on the project. |
+| Privacy policy and terms are approved by LEGAL. | **Not met.** The pages and the intake consent exist as marked drafts; LEGAL's approval is recorded in `docs/LEGAL_REVIEW.md` (H-2.1, H-2.2, D10). |
+| Authorization, upload, and isolation tests pass in CI. | **Authorization and isolation met** (`data_isolation.sql` over every migration, `e2e/data-isolation.spec.ts`, cross-user storage reads included). **Upload partly met:** only the browser checks file contents (E-4.1), and signed-link expiry is a manual launch check (H-3.3, SR-10). |
+| Runbook, alerts, and backup drill are complete. | **Partly met.** `docs/RUNBOOK.md` and alerting for every failure kind exist (H-4.1, H-4.2). Escalation names, the alert channel and the first restore drill (H-4.3) are still to do. |
 
 ### Milestone 3: Public Launch
 
@@ -1079,7 +1037,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | E-3.2 | Candidate review and merge policy | M | High | M2 | SUPERSEDED |
 | E-3.3 | Unsupported, encrypted, and unreadable file messages | S | High | M2 | DONE |
 | E-4.1 | Upload validation before storage (interim controls) | S | Highest | M1 | PARTIAL |
-| E-4.2 | Document retention and deletion | M | High | M2 | NOT STARTED |
+| E-4.2 | Document retention and deletion | M | High | M2 | DONE |
 | E-4.3 | Malware scanning | S | High | M2 | NOT STARTED |
 | F-1.1 | Role model | M | High | M2 | DONE |
 | F-1.2 | Advisor routes and backend enforcement | M | High | M2 | DONE |
@@ -1100,16 +1058,16 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | G-3.1 | CRM selection and field-mapping specification | S | Medium | M3 | NOT STARTED |
 | G-3.2 | CRM sync worker | M | Medium | M3 | NOT STARTED |
 | G-3.3 | Sync failure visibility and retry | S | Medium | M3 | NOT STARTED |
-| H-1.1 | Data classification and retention matrix | S | Highest | M2 | NOT VERIFIABLE |
-| H-1.2 | Automated retention enforcement | M | Highest | M2 | NOT STARTED |
-| H-1.3 | Deletion request workflow | S | High | M2 | NOT STARTED |
-| H-2.1 | Privacy policy and terms pages | S | Highest | M2 | NOT STARTED |
-| H-2.2 | Intake consent gate | S | Highest | M1 | NOT STARTED |
+| H-1.1 | Data classification and retention matrix | S | Highest | M2 | PARTIAL |
+| H-1.2 | Automated retention enforcement | M | Highest | M2 | DONE |
+| H-1.3 | Deletion request workflow | S | High | M2 | DONE |
+| H-2.1 | Privacy policy and terms pages | S | Highest | M2 | PARTIAL |
+| H-2.2 | Intake consent gate | S | Highest | M1 | DONE |
 | H-2.3 | Role-disclosure copy audit | S | High | M2 | PARTIAL |
-| H-3.1 | Guest isolation tests | M | Highest | M2 | PARTIAL |
+| H-3.1 | Guest isolation tests | M | Highest | M2 | DONE |
 | H-3.2 | Prospect versus advisor permission tests | M | Highest | M2 | DONE |
-| H-3.3 | Signed URL and fragment-token tests | S | High | M2 | NOT STARTED |
-| H-4.1 | Alerts for failed uploads, submits, AI calls, and auth | M | High | M2 | PARTIAL |
+| H-3.3 | Signed URL and fragment-token tests | S | High | M2 | PARTIAL |
+| H-4.1 | Alerts for failed uploads, submits, AI calls, and auth | M | High | M2 | DONE |
 | H-4.2 | Incident runbook and escalation contacts | S | High | M2 | PARTIAL |
 | H-4.3 | Backup and restore verification | S | High | M2 | NOT VERIFIABLE |
 | I-1.1 | Responsive Chamber layout | M | High | M2 | PARTIAL |

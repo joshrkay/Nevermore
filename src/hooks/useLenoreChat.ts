@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { mergeChamberData } from "@/data/chamberValidation";
 import type { ChamberData } from "@/data/chamberTypes";
 import { redactSensitive } from "@/data/sensitive";
+import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 
 export interface ChatFailure {
@@ -86,6 +87,9 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
       onOrbStateChange("idle");
       if (replaced()) return false;
       const rateLimited = err instanceof FunctionsHttpError && err.context?.status === 429;
+      // Provider failures are recorded by chamber-extract itself; this covers it never answering.
+      const unrecorded = unrecordedFunctionFailure("chat", err);
+      if (unrecorded) reportOpsEvent("ai_failed", { code: unrecorded, detail: errorDetail(err) });
       failedMessageRef.current = message;
       setFailure({ text, kind: rateLimited ? "rate_limited" : "failed" });
       return false;

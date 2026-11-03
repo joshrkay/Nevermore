@@ -2,6 +2,7 @@ import { Link, NavLink } from "react-router-dom";
 import { LogOut } from "lucide-react";
 import { RavenLogo } from "@/components/RavenLogo";
 import { useAuth } from "@/hooks/useAuth";
+import LegalLinks from "@/components/LegalLinks";
 
 const AdvisorHeader = () => {
   const { user, signOut } = useAuth();
@@ -29,6 +30,7 @@ const AdvisorHeader = () => {
           </NavLink>
         </nav>
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
+          <LegalLinks compact />
           <span className="hidden sm:inline">{user?.email}</span>
           <button onClick={() => void signOut()} className="flex items-center gap-1.5 hover:text-foreground">
             <LogOut className="w-4 h-4" /> Sign out

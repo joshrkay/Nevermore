@@ -57,6 +57,13 @@ a sign-out the app asked for is remembered until the event arrives.
   JWT through the API; there is no screen yet). The prospect loses all access to it and its
   documents, and the revocation is recorded with the reason. See `docs/intake-schema.md` →
   "Session lifecycle".
+- Read every intake consent record (`intake_consents`) and every deletion record (`intake_deletions`), and list
+  submitted records past their retention window (`retention_review_due()`).
+- Admins only: ask for an intake to be deleted, rows and stored files
+  (`request_intake_deletion('<session id>', '<reason>')`), put a failed deletion back in the queue
+  (`retry_intake_deletion('<deletion id>')`), and read operational monitoring (`ops_events`, `ops_alerts`,
+  `admin_ops_summary(hours)`). No screen yet; `docs/DATA_HANDLING.md` and `docs/RUNBOOK.md` have the recipes.
+  Advisors can't read monitoring data or the AI rate-limit tables.
 - Generate Manuscript versions into the private `manuscripts` bucket. A version is recorded only
   for a certified intake, against the latest review state; recorded files can't be overwritten
   or deleted. Prospects can't list or download stored versions.

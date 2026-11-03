@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supa
 import { UNAVAILABLE } from "../_shared/ai/allowance.ts";
 import { checkAiBudget } from "../_shared/ai/budget.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
+import { recordOpsEvent } from "../_shared/opsEvents.ts";
 import { AiUnavailableError, askWithinBudget, DOCUMENT_MAX_TOKENS, retryLater } from "./ask.ts";
 import { MAX_EXTRACT_BYTES, sha256Hex, type Candidate, type TextSection } from "./parse.ts";
 import { readDocument, type Outcome } from "./read.ts";
@@ -103,7 +104,8 @@ serve(async (req) => {
       } else {
         const bytes = new Uint8Array(await blob.arrayBuffer());
         await recordHash(bytes);
-        outcome = await readDocument(bytes, doc.file_name, (sections) => askModel(supabase, sections, requestId, req));
+        outcome = await readDocument(bytes, doc.file_name, (sections) =>
+          askModel(supabase, sections, requestId, req, { userId: user.id, sessionId: doc.session_id }));
       }
     } catch (e) {
       // Not the document's fault: leave it ready to read again rather than marking it failed.
@@ -123,11 +125,29 @@ serve(async (req) => {
   }
 });
 
-async function askModel(supabase: Client, sections: TextSection[], requestId: string, req: Request): Promise<Candidate[]> {
+// An AI failure is recorded for monitoring (ops-monitor alerts on a run of them), with the service role,
+// best effort and bounded: it never changes how the read ends.
+function noteAiFailure(code: string, who: { userId: string; sessionId: string }) {
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  return recordOpsEvent(
+    serviceRoleKey ? createClient(Deno.env.get("SUPABASE_URL")!, serviceRoleKey) : null,
+    { kind: "ai_failed", source: "document-extract", code, userId: who.userId, sessionId: who.sessionId },
+    { log: (line) => console.error(line) },
+  );
+}
+
+async function askModel(
+  supabase: Client,
+  sections: TextSection[],
+  requestId: string,
+  req: Request,
+  who: { userId: string; sessionId: string },
+): Promise<Candidate[]> {
   // Check provider configuration before spending any of the budget on the request.
   const chosen = selectAdapter((name) => Deno.env.get(name), REPORT_TOOL, { maxTokens: DOCUMENT_MAX_TOKENS });
   if (!chosen.ok) {
     console.error(`AI_CONFIG_MISSING: ${chosen.problem}`);
+    await noteAiFailure("config_missing", who);
     throw new AiUnavailableError(UNAVAILABLE);
   }
 
@@ -140,6 +160,7 @@ async function askModel(supabase: Client, sections: TextSection[], requestId: st
     },
     requestId,
     log: (line) => console.error(line),
+    recordFailure: (code) => noteAiFailure(code, who),
     // The same budget chat spends from: the caller's quota, their address's, and the daily ceiling for everyone.
     checkBudget: () =>
       checkAiBudget({

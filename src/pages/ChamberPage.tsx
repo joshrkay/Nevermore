@@ -15,6 +15,7 @@ import BackupNotice from "@/components/chamber/BackupNotice";
 import RecoverIntake from "@/components/chamber/RecoverIntake";
 import StartOverButton from "@/components/chamber/StartOverButton";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
+import LegalLinks from "@/components/LegalLinks";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { createChatMessage } from "@/data/chat";
 import { browserStorageWorks } from "@/data/intakeBackup";
@@ -244,6 +245,7 @@ const ChamberPage = () => {
           onStartNew={startNew}
           invalidField={invalidField}
         />
+        <LegalLinks compact className="shrink-0" />
       </div>
 
       {backupOffer && <BackupNotice offer={backupOffer} onRestore={restoreBackup} onDiscard={discardBackup} />}

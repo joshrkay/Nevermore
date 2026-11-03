@@ -6,6 +6,7 @@ import { UNAVAILABLE } from "../_shared/ai/allowance.ts";
 import { checkAiBudget } from "../_shared/ai/budget.ts";
 import { callModel, failureLogLine, failureResponse, unexpectedErrorLine } from "../_shared/ai/model.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
+import { aiFailureCode, recordOpsEvent } from "../_shared/opsEvents.ts";
 import { emptyExtraction, shapeExtraction } from "./extraction.ts";
 import { EXTRACT_TOOL, SYSTEM_PROMPT } from "./schema.ts";
 
@@ -57,10 +58,23 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return json({ error: "Unauthorized" }, 401);
 
+    // An AI failure is recorded for monitoring (ops-monitor alerts on a run of them), best effort and
+    // bounded: it never changes the answer. Needs the service role; without it there is nowhere to write.
+    const userId = typeof (user as { id?: unknown }).id === "string" ? (user as { id: string }).id : null;
+    const noteAiFailure = (code: string) => {
+      const serviceRoleKey = deps.env("SUPABASE_SERVICE_ROLE_KEY");
+      return recordOpsEvent(
+        serviceRoleKey ? deps.createClient(supabaseUrl, serviceRoleKey) : null,
+        { kind: "ai_failed", source: "chamber-extract", code, userId },
+        { log: deps.logError },
+      );
+    };
+
     // Check provider configuration before spending any budget on the request.
     const chosen = selectAdapter(deps.env, EXTRACT_TOOL);
     if (!chosen.ok) {
       deps.logError(`AI_CONFIG_MISSING: ${chosen.problem}`);
+      await noteAiFailure("config_missing");
       return json({ error: UNAVAILABLE }, 503);
     }
 
@@ -99,6 +113,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     );
     if (!result.ok) {
       deps.logError(failureLogLine({ requestId, provider: chosen.adapter.name, result }));
+      await noteAiFailure(aiFailureCode(result));
       const failure = failureResponse(result.kind);
       return json({ error: failure.message }, failure.status);
     }

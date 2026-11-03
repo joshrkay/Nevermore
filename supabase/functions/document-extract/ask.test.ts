@@ -164,6 +164,36 @@ describe("askForCandidates: when the provider fails", () => {
 
 const refusal = (status: 429 | 503, reason: Refusal["reason"], error = "refused"): Refusal => ({ allowed: false, status, error, reason });
 
+describe("askForCandidates: monitoring", () => {
+  it("records a failed read with its kind and status, and still fails the same way", async () => {
+    const t = setup({ responses: [providerError(500, "echoed: SECRET"), providerError(500, "echoed: SECRET")] });
+    const recordFailure = vi.fn(async (_code: string) => true);
+    const failure = await askForCandidates(sections, { ...t.deps, recordFailure }).catch((e: unknown) => e);
+    expect((failure as Error).message).toBe("AI extraction failed");
+    expect(recordFailure.mock.calls).toEqual([["provider_error:500"]]);
+  });
+
+  it("records a rate-limited read, which still stays ready to read later", async () => {
+    const t = setup({ responses: [providerError(429), providerError(429)] });
+    const recordFailure = vi.fn(async (_code: string) => true);
+    await expect(askForCandidates(sections, { ...t.deps, recordFailure })).rejects.toBeInstanceOf(AiQuotaError);
+    expect(recordFailure.mock.calls).toEqual([["rate_limited:429"]]);
+  });
+
+  it("records nothing when the model answers", async () => {
+    const t = setup();
+    const recordFailure = vi.fn(async (_code: string) => true);
+    expect(await askForCandidates(sections, { ...t.deps, recordFailure })).toEqual([]);
+    expect(recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("fails the same way when recording throws", async () => {
+    const t = setup({ responses: [providerError(402)] });
+    const recordFailure = vi.fn(async () => { throw new Error("monitoring down"); });
+    await expect(askForCandidates(sections, { ...t.deps, recordFailure })).rejects.toThrow("AI extraction failed");
+  });
+});
+
 describe("refusalError", () => {
   it("treats a rate limit as the retry-later case a provider rate limit already is", () => {
     expect(refusalError(refusal(429, "user_quota"))).toBeInstanceOf(AiQuotaError);

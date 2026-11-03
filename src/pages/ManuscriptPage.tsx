@@ -13,6 +13,7 @@ import { describeSource, parseProvenance, STATUS_LABELS, type FieldProvenance, t
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
+import LegalLinks from "@/components/LegalLinks";
 
 const SAMPLE_FILE_ID = "EAA-SAMPLE";
 
@@ -168,6 +169,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to="/start" className="text-primary underline hover:text-primary/90">
             Go to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -183,6 +185,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
             Back to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -199,6 +202,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to="/start" className="text-primary underline hover:text-primary/90">
             Go to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -215,6 +219,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
             Back to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -228,6 +233,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to={user ? "/start" : "/login"} className="text-primary underline hover:text-primary/90">
             {user ? "Go to The Chamber" : "Sign in"}
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -493,6 +499,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             <ArrowLeft className="w-5 h-5" /> {isSample ? "Start Yours" : "Back to Review"}
           </Link>
         </div>
+
+        {/* The site's legal links: part of the page, not the packet (the PDF is built separately). */}
+        <LegalLinks className="text-center pb-8" />
       </div>
     </div>
   );

@@ -5,6 +5,7 @@
 
 import type { AllowanceResult, Refusal } from "../_shared/ai/allowance.ts";
 import { callModel, failureLogLine, type ModelDeps, type ProviderAdapter } from "../_shared/ai/model.ts";
+import { aiFailureCode } from "../_shared/opsEvents.ts";
 import { buildPromptText, shapeAiCandidates, type Candidate, type TextSection } from "./parse.ts";
 import { SYSTEM_PROMPT } from "./schema.ts";
 
@@ -30,6 +31,11 @@ export interface AskDeps {
   model: Pick<ModelDeps, "fetch" | "sleep" | "now">;
   requestId: string;
   log: (line: string) => void;
+  /**
+   * Records a failed model call for monitoring, with a code such as `provider_error:503` (index.ts writes
+   * it to ops_events). Best effort: whatever it does, the read fails or retries exactly as it would without it.
+   */
+  recordFailure?: (code: string) => Promise<unknown>;
 }
 
 export async function askForCandidates(sections: TextSection[], deps: AskDeps): Promise<Candidate[]> {
@@ -45,6 +51,11 @@ export async function askForCandidates(sections: TextSection[], deps: AskDeps): 
   if (!result.ok) {
     // Fixed fields only: a provider's response can echo the document's text.
     deps.log(failureLogLine({ requestId: deps.requestId, provider: deps.adapter.name, result }));
+    try {
+      await deps.recordFailure?.(aiFailureCode(result));
+    } catch {
+      // Monitoring never changes the outcome.
+    }
     if (result.kind === "rate_limited") throw new AiQuotaError();
     throw new Error("AI extraction failed");
   }

@@ -329,6 +329,24 @@ The Chamber resumes the prospect's latest `in_progress` intake by `last_activity
 - **Revocation**: `public.revoke_chamber_session(id, reason)` is for admins only (`has_role('admin')`). It takes a draft that was never certified, in progress or expired, and needs a reason of 1 to 2,000 characters. It answers `PT404` for an unknown intake and refuses anything ever certified (`55000`) and records the admin and the reason. There is no screen for it yet: call it from the SQL editor as an admin's JWT, or through the API.
 - `intake_lifecycle_events` (append-only, advisors can read it) holds every expiry, archive and revocation: session, owner, from and to status, reason, actor (null for the job) and when.
 
+### Deletion
+
+A closed draft (expired, archived or revoked, never certified) is deleted 30 days after it closed
+(`public.closed_draft_retention()`), rows and stored files, by the daily retention job and the `purge-intakes`
+function. Any intake, certified or not, can be deleted by an admin on request. Migration
+`20261104092000_data_retention_and_deletion.sql`; the process, its guarantees and the recipes are in
+`docs/DATA_HANDLING.md`.
+
+### Intake consent
+
+Before the Chamber opens, the account agrees to how intake information is used (`src/data/intakeConsent.ts`,
+shown by `IntakeConsentGate`). `public.record_intake_consent(version, text)` records it in `intake_consents`
+(the wording, the server's time, once per account and version). A browser insert into `chamber_sessions` or
+`documents` without an agreement to `public.intake_consent_version()` is refused with `EA004` (DETAIL: the
+version needed); a stale version is refused with `EA005`. A new intake records the agreement it was started
+under in `chamber_sessions.intake_consent_id`, which the browser can't set. Migration
+`20261104090000_intake_consent.sql`; `supabase/tests/intake_consent.sql` covers it.
+
 ### The browser's copy of unsaved answers
 
 While a change hasn't been confirmed by the server, the Chamber keeps a copy in `localStorage` (`src/data/intakeBackup.ts`, key `eaa.intake-backup.v1:<user>:<intake>`), with the version it was made on. A confirmed save removes it. When the same person opens the same intake again and the copy differs from what the server has, the Chamber offers it back: "Restore my changes" saves it from the loaded version, or "Discard them". It warns when the intake was saved from somewhere else since. A copy the server already matches (the save sent as the page closed landed) is removed silently.
