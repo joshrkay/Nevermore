@@ -103,7 +103,12 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
       return json({ error: failure.message }, failure.status);
     }
 
-    return json(result.args ? shapeExtraction(result.args) : emptyExtraction());
+    const shaped = result.args ? shapeExtraction(result.args) : emptyExtraction();
+    // Paths only: the refused values are the prospect's words.
+    if (shaped.rejected.length > 0) {
+      deps.logError(`EXTRACTION_REFUSED request=${requestId} paths=${shaped.rejected.map((issue) => issue.path).join(",")}`);
+    }
+    return json(shaped);
   } catch (e) {
     deps.logError(unexpectedErrorLine(requestId, e));
     return json({ error: "Internal error" }, 500);

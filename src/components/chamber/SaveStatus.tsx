@@ -29,7 +29,7 @@ const SaveStatus = ({ status, onRetry, onLoadLatest, onKeepMine, onDiscard, onSt
           {status === "conflict" && "Not saved: this intake was changed in another tab or device."}
           {status === "invalid" && `Not saved. Please check: ${invalidField ?? "one of your answers"}.`}
           {status === "missing" && "Not saved: this intake can no longer be saved."}
-          {status === "expired" && "Not saved: this intake has expired and can no longer be changed."}
+          {status === "expired" && "Not saved: this intake has expired."}
         </span>
         {status === "conflict" && (
           <>

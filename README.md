@@ -18,6 +18,9 @@ Only publishable values go in `.env`; it is git-ignored. Secrets (AI provider ke
 npm run lint && npm run typecheck:functions && npm test && npm run build
 ```
 
+`npm run schema:intake` rewrites `docs/intake-schema.v1.json` from the intake schema
+(`supabase/functions/_shared/intakeSchema.ts`); the tests fail while the two differ.
+
 `typecheck:functions` type-checks the Deno edge functions with `tsc` (`tsconfig.functions.json`). Their
 URL imports can't be fetched by `tsc`, so `types/functions-shims.d.ts` declares them; add a
 declaration there when a function starts using more of a remote package than it already does.
@@ -35,11 +38,14 @@ on pushes to `main`, as three checks: `verify` (lint, edge-function type check, 
 
 ## End-to-end test
 
-One Playwright test (`e2e/intake-to-pdf.spec.ts`) walks the prospect's path in a browser: a guest
+`e2e/intake-to-pdf.spec.ts` walks the prospect's path in a browser: a guest
 tells Lenore about the company in text, reviews the answers, picks a PEO, verifies an email with a
 6-digit code, certifies and signs, submits, then opens the Manuscript and downloads the PDF. It
 asserts the File ID, that the intake's values (including the confirmed industry and the typed target
 start) reach the database, the Manuscript page and the PDF's text, and the PDF's file name.
+`e2e/two-tabs-conflict.spec.ts` shows a tab that is behind refused rather than overwriting, and
+`e2e/intake-lifecycle.spec.ts` shows "Start over" archiving a draft that nothing opens again, an idle
+draft expiring and saying so, and answers whose save failed being offered back after the tab closes.
 
 It needs no Supabase project. A real Postgres runs every migration in `supabase/migrations`, so row
 security, grants and triggers are the real ones, and the real `chamber-extract` handler answers

@@ -15,6 +15,7 @@ const authApi = {
   signInAnonymously: vi.fn(),
   updateUser: vi.fn(),
   verifyOtp: vi.fn(),
+  signInWithOtp: vi.fn(),
   signUp: vi.fn(),
   resend: vi.fn(),
 };
@@ -100,6 +101,45 @@ describe("useAuth guest accounts", () => {
   });
 });
 
+describe("useAuth returning by emailed code", () => {
+  beforeEach(() => {
+    currentSession = { user: { id: "g1", is_anonymous: true } };
+    authApi.signInWithOtp.mockReset().mockResolvedValue({ error: null });
+    authApi.verifyOtp.mockReset().mockResolvedValue({ error: null });
+  });
+
+  it("emails a code to an existing account only, never creating one", async () => {
+    const { result } = await mountAuth();
+    let outcome: { error: Error | null; noAccount: boolean } | undefined;
+    await act(async () => { outcome = await result.current.requestSignInCode("jo@acme.com"); });
+    expect(authApi.signInWithOtp).toHaveBeenCalledWith({ email: "jo@acme.com", options: { shouldCreateUser: false } });
+    expect(outcome).toEqual({ error: null, noAccount: false });
+  });
+
+  it("tells the caller there is no account, without calling it an error", async () => {
+    authApi.signInWithOtp.mockResolvedValue({ error: Object.assign(new Error("Signups not allowed for otp"), { code: "otp_disabled" }) });
+    const { result } = await mountAuth();
+    let outcome: { error: Error | null; noAccount: boolean } | undefined;
+    await act(async () => { outcome = await result.current.requestSignInCode("nobody@acme.com"); });
+    expect(outcome).toEqual({ error: null, noAccount: true });
+  });
+
+  it("passes other failures on, such as too many requests", async () => {
+    authApi.signInWithOtp.mockResolvedValue({ error: Object.assign(new Error("For security purposes, you can only request this after 60 seconds"), { code: "over_email_send_rate_limit" }) });
+    const { result } = await mountAuth();
+    let outcome: { error: Error | null; noAccount: boolean } | undefined;
+    await act(async () => { outcome = await result.current.requestSignInCode("jo@acme.com"); });
+    expect(outcome?.noAccount).toBe(false);
+    expect(outcome?.error?.message).toMatch(/60 seconds/);
+  });
+
+  it("signs in with the code as an email sign-in, not an email change", async () => {
+    const { result } = await mountAuth();
+    await act(async () => { await result.current.verifySignInCode("jo@acme.com", "654321"); });
+    expect(authApi.verifyOtp).toHaveBeenCalledWith({ email: "jo@acme.com", token: "654321", type: "email" });
+  });
+});
+
 describe("useAuth session ending", () => {
   const account = { user: { id: "adv1", is_anonymous: false } };
 
@@ -117,6 +157,18 @@ describe("useAuth session ending", () => {
     const fresh = await mountAuth();
     act(() => listener?.("SIGNED_OUT", null));
     expect(fresh.result.current.sessionEnded).toBeNull();
+  });
+
+  it("removes unsaved answers kept in this browser on a deliberate sign-out, but not when a session lapses", async () => {
+    localStorage.setItem("eaa.intake-backup.v1:adv1:s1", "{}");
+    localStorage.setItem("other", "keep");
+    const { result } = await mountAuth();
+    await act(async () => { await result.current.signOut("expired"); });
+    expect(localStorage.getItem("eaa.intake-backup.v1:adv1:s1")).not.toBeNull();
+    await act(async () => { await result.current.signOut(); });
+    expect(localStorage.getItem("eaa.intake-backup.v1:adv1:s1")).toBeNull();
+    expect(localStorage.getItem("other")).toBe("keep");
+    localStorage.clear();
   });
 
   it("calls a deliberate sign-out a sign-out", async () => {
@@ -167,7 +219,7 @@ describe("useAuth email sign-up", () => {
     currentSession = null;
     authApi.signUp.mockReset().mockResolvedValue({ data: { user: { id: "u1", identities: [{ id: "i1" }] }, session: null }, error: null });
     authApi.resend.mockReset().mockResolvedValue({ data: { user: null, session: null }, error: null });
-    authApi.verifyOtp.mockReset().mockResolvedValue({ data: { user: null, session: null }, error: null });
+    authApi.verifyOtp.mockReset().mockResolvedValue({ data: { user: { id: "u1", email: "jo@acme.com" }, session: null }, error: null });
   });
 
   it("sends the confirmation link to the callback page, which then goes on to the Chamber", async () => {
@@ -221,11 +273,12 @@ describe("useAuth email sign-up", () => {
 
   it("verifies a token from a link that points at the app", async () => {
     const { result } = await mountAuth();
-    let outcome: { error: Error | null } | undefined;
+    let outcome: { error: Error | null; email: string | null } | undefined;
     await act(async () => {
       outcome = await result.current.confirmEmailToken("hash123", "email");
     });
     expect(authApi.verifyOtp).toHaveBeenCalledWith({ token_hash: "hash123", type: "email" });
-    expect(outcome?.error).toBeNull();
+    // Which account the link signed in to, so the page can say so.
+    expect(outcome).toEqual({ error: null, email: "jo@acme.com" });
   });
 });

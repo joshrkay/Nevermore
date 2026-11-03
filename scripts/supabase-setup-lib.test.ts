@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cronScheduleSql, envFileLine, FUNCTIONS, interpretChecks,
+  advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, FUNCTIONS, interpretChecks,
   isProjectRef, parseEnvFile, parseSender, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete,
   sqlLiteral, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
@@ -137,6 +137,8 @@ describe("authConfigPatch", () => {
       smtp_sender_name: "Edgar Allan Advisory",
     });
     expect(patch.mailer_templates_email_change_content).toContain("{{ .Token }}");
+    expect(patch.mailer_templates_magic_link_content).toContain("{{ .Token }}");
+    expect(patch.mailer_subjects_magic_link).toBe("Your sign-in code");
     expect(patch.mailer_templates_confirmation_content).toContain("{{ .Token }}");
     // Back to the address the app asked for (the deployment signed up on, with its next), token in the fragment.
     expect(patch.mailer_templates_confirmation_content).toContain('href="{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email"');
@@ -151,6 +153,11 @@ describe("authConfigPatch", () => {
     expect(authConfigPatch({ mailer_templates_confirmation_content: custom }, goodEnv).patch).not.toHaveProperty("mailer_templates_confirmation_content");
   });
 
+  it("doesn't count a link to Supabase's verify endpoint as scanner-safe, since any GET confirms it", () => {
+    const verifyLink = '<p>{{ .Token }}</p><a href="https://abc.supabase.co/auth/v1/verify?token={{ .TokenHash }}&type=signup&redirect_to={{ .RedirectTo }}">Go</a>';
+    expect(authConfigPatch({ mailer_templates_confirmation_content: verifyLink }, goodEnv).patch.mailer_templates_confirmation_content).toContain("#token_hash=");
+  });
+
   it("refuses to build a patch without the current settings, which would replace the Redirect URLs", () => {
     expect(() => authConfigPatch(null, goodEnv)).toThrow(/current auth settings/);
   });
@@ -162,15 +169,24 @@ describe("authConfigPatch", () => {
     expect(authConfigPatch({ ...patch }, { ...goodEnv, RESEND_API_KEY: "" }).patch).toEqual({});
   });
 
+  it("replaces a magic-link template that sends only the token hash, not the 6-digit code", () => {
+    const linkOnly = { mailer_templates_magic_link_content: '<a href="{{ .SiteURL }}/auth/callback#token_hash={{ .TokenHash }}">Sign in</a>' };
+    const { patch } = authConfigPatch(linkOnly, goodEnv);
+    expect(patch.mailer_templates_magic_link_content).toContain("{{ .Token }}");
+    expect(authConfigPatch({ mailer_templates_magic_link_content: "Code: {{.Token}}" }, goodEnv).patch).not.toHaveProperty("mailer_templates_magic_link_content");
+  });
+
   it("keeps redirect URLs, templates and SMTP someone set by hand", () => {
     const current = {
       uri_allow_list: "https://preview.example.com/**",
       mailer_templates_email_change_content: "Your code: {{ .Token }}",
+      mailer_templates_magic_link_content: "Sign in with {{ .Token }}",
       smtp_host: "smtp.sendgrid.net",
     };
     const { patch, notes } = authConfigPatch(current, goodEnv);
     expect(patch.uri_allow_list).toBe("https://preview.example.com/**,https://nevermore-gamma.vercel.app/**");
     expect(patch).not.toHaveProperty("mailer_templates_email_change_content");
+    expect(patch).not.toHaveProperty("mailer_templates_magic_link_content");
     expect(patch).not.toHaveProperty("smtp_host");
     expect(notes[0]).toMatch(/smtp\.sendgrid\.net/);
   });
@@ -221,6 +237,13 @@ describe("SQL", () => {
     expect(() => cronScheduleSql("bad'ref")).toThrow();
   });
 
+  it("schedules draft expiry exactly as the migration does", () => {
+    const migration = readFileSync("supabase/migrations/20261103090000_intake_lifecycle.sql", "utf8");
+    const scheduled = /PERFORM cron\.schedule\(('[^']+'), ('[^']+'), ('[^']+')\)/.exec(migration);
+    expect(scheduled).not.toBeNull();
+    expect(EXPIRY_SCHEDULE_SQL).toBe(`select cron.schedule(${scheduled![1]}, ${scheduled![2]}, ${scheduled![3]});`);
+  });
+
   it("grants the advisor role by email, escaped", () => {
     const sql = advisorSql("o'brien@example.com");
     expect(sql).toContain("lower('o''brien@example.com')");
@@ -237,10 +260,10 @@ describe("SQL", () => {
 
 describe("interpretChecks", () => {
   const allSet = {
-    status: { migrations: 16, intake_table: 1, table_grants: 1, buckets: 2, extensions: 2, vault_secret: 1, schedule: 1, role_grants: 0 },
+    status: { migrations: 16, intake_table: 1, table_grants: 1, buckets: 2, extensions: 2, vault_secret: 1, schedule: 1, expiry_schedule: 1, role_grants: 0 },
     auth: { external: { anonymous_users: true }, mailer_autoconfirm: false },
     authConfig: {
-      mailer_otp_length: 6, mailer_templates_email_change_content: "{{ .Token }}", smtp_host: "smtp.resend.com",
+      mailer_otp_length: 6, mailer_templates_email_change_content: "{{ .Token }}", mailer_templates_magic_link_content: "{{ .Token }}", smtp_host: "smtp.resend.com",
       site_url: "https://nevermore-gamma.vercel.app", uri_allow_list: "https://nevermore-gamma.vercel.app/**",
       mailer_templates_confirmation_content: "{{ .Token }} {{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email",
     },
@@ -272,6 +295,19 @@ describe("interpretChecks", () => {
     expect(setupComplete(interpretChecks(allSet, { localMigrations: 17 }))).toBe(false);
     const noCode = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_email_change_content: "{{ .ConfirmationURL }}" } };
     expect(setupComplete(interpretChecks(noCode, { localMigrations: 16 }))).toBe(false);
+    const hashOnly = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_magic_link_content: "{{ .RedirectTo }}#token_hash={{ .TokenHash }}" } };
+    expect(setupComplete(interpretChecks(hashOnly, { localMigrations: 16 }))).toBe(false);
+    const linkOnly = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_magic_link_content: "{{ .ConfirmationURL }}" } };
+    const checks = interpretChecks(linkOnly, { localMigrations: 16 });
+    expect(setupComplete(checks)).toBe(false);
+    expect(checks.find((c) => c.name === "Sign-in code message")?.detail).toMatch(/magic-link template/);
+  });
+
+  it("fails when idle drafts would never expire", () => {
+    const unscheduled = { ...allSet, status: { ...allSet.status, expiry_schedule: 0 } };
+    const checks = interpretChecks(unscheduled, { localMigrations: 16 });
+    expect(setupComplete(checks)).toBe(false);
+    expect(checks.find((c) => c.name === "Draft expiry schedule")?.detail).toMatch(/never expire/);
   });
 
   it("fails while the sign-up email is Supabase's default link", () => {
@@ -302,26 +338,38 @@ describe("interpretChecks", () => {
 describe("authUrlProblems", () => {
   const site = "https://nevermore-gamma.vercel.app";
 
-  it("accepts the site as Site URL with everything under it allowed", () => {
+  it("accepts the site as Site URL, with or without a Redirect URLs entry for it", () => {
     expect(authUrlProblems({ site_url: site, uri_allow_list: `http://localhost:8080/**, ${site}/**` }, site)).toEqual([]);
     // A trailing slash on the Site URL is the same origin.
     expect(authUrlProblems({ site_url: `${site}/`, uri_allow_list: `${site}/**` }, site)).toEqual([]);
+    // Supabase always allows the Site URL's own host, so the list isn't needed for it.
+    expect(authUrlProblems({ site_url: site, uri_allow_list: "" }, site)).toEqual([]);
+    expect(authUrlProblems({ site_url: site, uri_allow_list: `${site}/start` }, site)).toEqual([]);
   });
 
   it("names a Site URL left at Supabase's default", () => {
     expect(authUrlProblems({ site_url: "http://localhost:3000", uri_allow_list: "" }, null)).toEqual([
       "Site URL is http://localhost:3000: confirmation links send people there",
-      "Redirect URLs lack http://localhost:3000/**",
     ]);
     expect(authUrlProblems({ site_url: "http://localhost:3000", uri_allow_list: "" }, site)).toEqual([
       `Site URL is http://localhost:3000, not ${site}`,
       `Redirect URLs lack ${site}/**`,
     ]);
+    // A wrong Site URL with the site on the list still sends links home, but the Site URL is still named.
+    expect(authUrlProblems({ site_url: "http://localhost:3000", uri_allow_list: `${site}/**` }, site)).toEqual([
+      `Site URL is http://localhost:3000, not ${site}`,
+    ]);
   });
 
-  it("names a missing Site URL, a missing redirect entry and an unreadable config", () => {
+  it("names a missing Site URL and an unreadable config", () => {
     expect(authUrlProblems({ site_url: "", uri_allow_list: `${site}/**` }, site)).toEqual(["Site URL is not set (Authentication → URL Configuration)"]);
-    expect(authUrlProblems({ site_url: site, uri_allow_list: `${site}/start` }, site)).toEqual([`Redirect URLs lack ${site}/**`]);
     expect(authUrlProblems(null, site)).toEqual(["auth config unreadable"]);
   });
+
+  it("says so when APP_BASE_URL can't be compared, instead of passing quietly", () => {
+    expect(authUrlProblems({ site_url: "https://old-preview.lovable.app", uri_allow_list: "" }, "nevermore-gamma.vercel.app")).toEqual([
+      "APP_BASE_URL (nevermore-gamma.vercel.app) isn't a URL, so the Site URL wasn't compared with it",
+    ]);
+  });
 });
+

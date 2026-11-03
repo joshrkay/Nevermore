@@ -18,6 +18,10 @@ describe("parseAuthRedirect", () => {
     });
   });
 
+  it("leaves a bare ?error= alone: Supabase always adds a code or a description", () => {
+    expect(parseAuthRedirect(`${SITE}/start?error=card_declined`)).toBeNull();
+  });
+
   it("reads a token for the app to verify", () => {
     expect(parseAuthRedirect(`${SITE}/auth/callback?token_hash=abc123&type=email`)).toEqual({
       kind: "token",

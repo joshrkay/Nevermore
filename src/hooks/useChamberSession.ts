@@ -5,9 +5,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { dispatchOutbox } from "@/lib/dispatchOutbox";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
-import { createChatMessage, parseTranscript } from "@/data/chat";
+import { dedupeGreetings, isGreeting, openingMessage, parseTranscript } from "@/data/chat";
 import { parseChamberData } from "@/data/chamberValidation";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup } from "@/data/intakeBackup";
+import { validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
 import {
@@ -20,7 +22,7 @@ import {
 /**
  * Whether the prospect's latest changes are on the server. "idle" until anything changes.
  * "conflict": someone else saved this intake first. "invalid": the server refused an answer.
- * "missing": the intake no longer exists. "expired": the intake has expired and can no longer be changed.
+ * "missing": the intake no longer exists. "expired": it was idle too long and is closed.
  * None of these four is retried automatically.
  */
 export type SaveStatus = "idle" | "saving" | "saved" | "failed" | "conflict" | "invalid" | "missing" | "expired";
@@ -32,8 +34,16 @@ export interface SubmitFailure {
 
 type ServerRow = Pick<
   Database["public"]["Tables"]["chamber_sessions"]["Row"],
-  "id" | "data_version" | "status" | "chamber_data" | "field_provenance" | "transcript" | "submission" | "chosen_peo"
+  "id" | "data_version" | "status" | "chamber_data" | "field_provenance" | "transcript" | "submission" | "expires_at" | "chosen_peo"
 >;
+
+/** Answers kept in this browser that never reached the server, offered back when the intake is opened. */
+export interface BackupOffer {
+  /** When they were kept (ISO 8601). */
+  savedAt: string;
+  /** True when the intake was saved from somewhere else since: restoring replaces those changes. */
+  savedElsewhereSince: boolean;
+}
 
 interface UseChamberSessionReturn {
   sessionId: string | null;
@@ -49,10 +59,28 @@ interface UseChamberSessionReturn {
   /** Looks for the prospect's latest unfinished intake again. */
   retryLoad: () => void;
   /**
-   * True when the intake to open (the one named, or the prospect's most recent) has expired. It isn't
-   * loaded, since nothing can be saved to it, and nothing is created until startNew().
+   * Set when the intake that was opened had expired (idle past the retention window). Nothing of it is
+   * loaded; `at` is when it expired. startNew() begins a fresh one.
    */
-  expired: boolean;
+  expired: { at: string | null } | null;
+  /**
+   * "Start over": archives this intake (unless it was ever certified, which is kept) and begins a blank one.
+   * Resolves false, changing nothing, when the intake couldn't be archived.
+   */
+  startOver: () => Promise<boolean>;
+  /** Unsaved answers this browser kept from an earlier visit, while the prospect decides about them. */
+  backupOffer: BackupOffer | null;
+  /** Puts the kept answers back on screen and saves them. The census stays as the server has it. */
+  restoreBackup: () => void;
+  /** Forgets the kept answers. */
+  discardBackup: () => void;
+  /** The last message loaded with the intake, when it was opened with a conversation in it. */
+  restoredThrough: string | null;
+  /**
+   * Changes when the conversation on screen is replaced by a blank one ("Start over", or another person
+   * signing in in this tab). Chat and voice drop anything that answers an earlier conversation.
+   */
+  conversationEpoch: number;
   chamberData: ChamberData;
   /** Status and source of each captured field. */
   provenance: ProvenanceMap;
@@ -84,27 +112,33 @@ interface UseChamberSessionReturn {
   invalidField: string | null;
 }
 
-const OPENING_MESSAGE = "Good evening. I'm Lenore — your guide through The Chamber. As we talk, I'll fill in the workspace beside us, and you can check or correct anything there. Shall we begin with something simple — tell me a little about your business and what you do.";
-
 const SAVE_DELAY_MS = 2000;
 const SAVE_RETRY_MS = 10000;
 // Browsers cap the total body size of keepalive requests at 64 KiB.
 const KEEPALIVE_MAX_BYTES = 60_000;
 // Raised by the database when an answer breaks a rule; its DETAIL names the field. Other 400s are not this.
 const INVALID_DATA_CODE = "EA001";
-// Raised by the database when the prospect changes an intake that has expired. Not retried.
-const EXPIRED_CODE = "EA002";
-const EXPIRED_STATUS = "expired";
-const ROW_COLUMNS = "id, data_version, status, chamber_data, field_provenance, transcript, submission, chosen_peo";
+// Raised when a write reaches an intake that is closed (DETAIL: expired, archived or revoked). Row security
+// normally turns such a write into one that matches no row, which is read back instead.
+const CLOSED_INTAKE_CODE = "EA002";
+// Archiving an intake that is already archived, or isn't this person's: either way it is out of the Chamber.
+// (PostgREST answers this SQLSTATE with HTTP 404.)
+const NOT_FOUND_CODE = "PT404";
+const ROW_COLUMNS = "id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo";
 
 const CONFLICT_MESSAGE = "This intake changed elsewhere. Reload the latest and certify again.";
 const MISSING_MESSAGE = "This intake can no longer be saved. Start a new intake to keep your answers.";
-const EXPIRED_MESSAGE = "This intake has expired, so it can no longer be changed or certified. Start a new intake to continue.";
+const EXPIRED_MESSAGE = "This intake has expired. Start a new intake to keep your answers.";
 
-/** Why saving stopped. "invalid" waits for the next edit; the others wait for the prospect to choose what to do. */
+// Saving is off until the prospect acts: someone else's changes, or an intake that is gone or closed.
 type Block = "conflict" | "invalid" | "missing" | "expired";
-/** Saving has stopped until the prospect acts: nothing is sent, not even after another edit. */
-const halts = (block: Block | null) => block === "conflict" || block === "missing" || block === "expired";
+const stopsSaving = (block: Block | null) => block === "conflict" || block === "missing" || block === "expired";
+
+const withoutCensus = (data: unknown): unknown => {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return data;
+  const { census: _census, employees: _employees, ...answers } = data as Record<string, unknown>;
+  return answers;
+};
 
 /**
  * Names the answer behind a server path such as `hq_state`, `states[2]` or
@@ -180,8 +214,9 @@ type Reconciled =
 
 /**
  * Resumes `requestedSessionId` when it belongs to the signed-in user. Without one, resumes their
- * latest intake that isn't submitted yet, and only starts a fresh session when there is none.
- * Only the id present on first render is used.
+ * latest intake that isn't submitted yet, and only starts a fresh session when there is none (saying so
+ * first when their latest one has expired). Only the id present on first render is used, until someone
+ * else signs in in this tab: then that person's latest intake is opened.
  */
 export function useChamberSession(requestedSessionId?: string | null): UseChamberSessionReturn {
   const { user, session } = useAuth();
@@ -191,15 +226,25 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [isLoading, setIsLoading] = useState(true);
   const [resumeFailed, setResumeFailed] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
-  const [expired, setExpired] = useState(false);
   const [initRun, setInitRun] = useState(0);
   const [chamberData, setChamberDataRaw] = useState<ChamberData>(EMPTY_CHAMBER_DATA);
   const [provenance, setProvenanceRaw] = useState<ProvenanceMap>({});
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [createChatMessage("lenore", OPENING_MESSAGE)]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [openingMessage()]);
   const [certification, setCertification] = useState<CertificationState>(NO_CERTIFICATION);
   const [chosenPeo, setChosenPeoRaw] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [invalidField, setInvalidField] = useState<string | null>(null);
+  const [expired, setExpired] = useState<{ at: string | null } | null>(null);
+  const [backupOffer, setBackupOffer] = useState<BackupOffer | null>(null);
+  const [restoredThrough, setRestoredThrough] = useState<string | null>(null);
+  // Changes whenever the conversation on screen is replaced by a blank one (start over, another person
+  // signing in), so a reply or a voice line meant for the old conversation is never added to the new one.
+  const [conversationEpoch, setConversationEpoch] = useState(0);
+  // The kept answers on offer. While the prospect hasn't decided, the copy in storage is left alone.
+  const backupRef = useRef<IntakeBackup | null>(null);
+  const userIdRef = useRef(userId);
+  // Who the intake on screen belongs to, so a different sign-in starts from a clean slate.
+  const loadedForRef = useRef<string | undefined>(undefined);
   const certificationRef = useRef(certification);
   useEffect(() => { certificationRef.current = certification; }, [certification]);
 
@@ -240,7 +285,41 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   useEffect(() => { provenanceRef.current = provenance; }, [provenance]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { pruneBackups(); }, []);
 
+  // Keep what the server hasn't confirmed in this browser, so a failed save survives a reload or a crash.
+  // Nothing is written while an older copy is on offer: the prospect hasn't decided about it yet.
+  const backupNow = useCallback(() => {
+    const sid = sessionIdRef.current;
+    const uid = userIdRef.current;
+    if (!sid || !uid || !dirtyRef.current || backupRef.current) return;
+    writeBackup({
+      userId: uid,
+      sessionId: sid,
+      baseVersion: versionRef.current,
+      chamber_data: dataRef.current as unknown as Record<string, unknown>,
+      field_provenance: provenanceRef.current as unknown as Record<string, unknown>,
+      transcript: messagesRef.current,
+    });
+  }, []);
+  useEffect(() => { backupNow(); }, [chamberData, provenance, messages, backupNow]);
+
+  // Removes the browser's copy once what it holds is on the server, or this tab chose to drop it. Every tab
+  // of the same intake shares the copy, so one holding other answers belongs to another tab and stays.
+  const forgetBackup = useCallback((sid: string, held: { chamber_data: unknown; field_provenance: unknown; transcript: unknown }) => {
+    const uid = userIdRef.current;
+    if (!uid || backupRef.current) return;
+    const stored = readBackup(uid, sid);
+    if (stored
+        && sameJson(stored.chamber_data, withoutCensus(asStored(held.chamber_data)))
+        && sameJson(stored.field_provenance, asStored(held.field_provenance))
+        && sameJson(stored.transcript, asStored(held.transcript))) {
+      clearBackup(uid, sid);
+    }
+  }, []);
+
+  // What this tab has on screen, in the shape forgetBackup compares.
+  const onScreen = useCallback(() => ({ chamber_data: dataRef.current, field_provenance: provenanceRef.current, transcript: messagesRef.current }), []);
   const report = useCallback((status: SaveStatus) => {
     if (mountedRef.current) setSaveStatus(status);
   }, []);
@@ -285,8 +364,14 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // Shows a loaded row exactly as the server has it. Never put the raw row in state: loading
   // rebuilds the answers in a stable key order, which the signature check depends on.
   const applyRow = useCallback((row: ServerRow) => {
+    // Checked against intake schema v1 as it comes in. Rows saved by earlier versions stay editable (the
+    // sanitiser below still loads them), so a mismatch is reported, by path only, rather than refused.
+    const issues = validateChamberData(row.chamber_data);
+    if (issues.length > 0) {
+      console.warn("Saved answers don't match intake schema v1; loading what is valid:", issues.map((issue) => `${issue.path} ${issue.reason}`));
+    }
     const loadedData = parseChamberData(row.chamber_data);
-    const loadedMessages = parseTranscript(row.transcript);
+    const loadedMessages = dedupeGreetings(parseTranscript(row.transcript));
     dataRef.current = loadedData;
     setChamberDataRaw(loadedData);
     const loadedProvenance = parseProvenance(row.field_provenance);
@@ -353,16 +438,6 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     report("conflict");
   }, [report, settleOutcome, stopTimer]);
 
-  const markMissing = useCallback(() => {
-    dirtyRef.current = true;
-    settleOutcome();
-    stopTimer();
-    blockRef.current = "missing";
-    conflictRef.current = null;
-    console.error("Failed to save session: the intake no longer exists");
-    report("missing");
-  }, [report, settleOutcome, stopTimer]);
-
   const markExpired = useCallback(() => {
     dirtyRef.current = true;
     settleOutcome();
@@ -371,6 +446,16 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     conflictRef.current = null;
     console.error("Failed to save session: the intake has expired");
     report("expired");
+  }, [report, settleOutcome, stopTimer]);
+
+  const markMissing = useCallback(() => {
+    dirtyRef.current = true;
+    settleOutcome();
+    stopTimer();
+    blockRef.current = "missing";
+    conflictRef.current = null;
+    console.error("Failed to save session: the intake no longer exists");
+    report("missing");
   }, [report, settleOutcome, stopTimer]);
 
   // A write matched no row. That can mean another tab saved first, but also that our own write landed
@@ -387,8 +472,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       .maybeSingle();
     if (error) return { kind: "unreadable", error };
     if (!row) return { kind: "missing" };
-    // Expiring an intake moves its version on, so a save from before then matches no row. It is not a conflict.
-    if (row.status === EXPIRED_STATUS) return { kind: "expired" };
+    // Closed by the expiry job (which also moved the version on): not another tab's save.
+    if (row.status === "expired") return { kind: "expired" };
     if (row.data_version === sentVersion) return { kind: "unchanged" };
     if (isOwnWrite(row)) return { kind: "own", row };
     // An earlier write that errored may have landed after all, leaving the row one version on. Any edits
@@ -411,8 +496,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       return false;
     }
     if (!dirtyRef.current) return true;
-    // Saving over someone else's changes, or into an intake that is gone or expired, needs the prospect's say-so.
-    if (halts(blockRef.current)) return false;
+    // Saving over someone else's changes, or into an intake that is gone or closed, needs the prospect's say-so.
+    if (stopsSaving(blockRef.current)) return false;
     const version = versionRef.current;
     if (version === null) {
       // Never guess: without a version a save could overwrite newer changes.
@@ -450,6 +535,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     if (!error && data && data.length > 0) {
       adoptVersion(sid, data[0].data_version);
       clearBlock();
+      if (!dirtyRef.current) forgetBackup(sid, sent);
       if (mountedRef.current) setSaveStatus(dirtyRef.current ? "saving" : "saved");
       return true;
     }
@@ -457,8 +543,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       markInvalid(error);
       return false;
     }
-    if (error?.code === EXPIRED_CODE) {
-      markExpired();
+    if (error?.code === CLOSED_INTAKE_CODE) {
+      if (error.details === "expired") markExpired();
+      else markMissing();
       return false;
     }
     const stored = asStored(sent) as typeof sent;
@@ -475,6 +562,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         // Our write did land; only its response was lost. Take the version, keep what is on screen.
         adoptVersion(sid, outcome.row.data_version);
         clearBlock();
+        if (!dirtyRef.current) forgetBackup(sid, sent);
         if (mountedRef.current) setSaveStatus(dirtyRef.current ? "saving" : "saved");
         return true;
       case "earlier": {
@@ -504,7 +592,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         failTransient("no row was updated");
         return false;
     }
-  }, [adoptVersion, clearBlock, failTransient, markConflict, markExpired, markInvalid, markMissing, reconcile, rememberUnconfirmed, report]);
+  }, [adoptVersion, clearBlock, failTransient, forgetBackup, markConflict, markExpired, markInvalid, markMissing, reconcile, rememberUnconfirmed, report]);
 
   // Writes pending changes now. Must run inside the write queue. Resolves true once everything
   // captured so far is saved.
@@ -529,11 +617,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // Debounced save
   const scheduleSave = useCallback(() => {
     dirtyRef.current = true;
-    // A conflict, a refused answer, or a vanished or expired intake stays on screen until the prospect deals with it.
+    // A conflict, a refused answer or a vanished or closed intake stays on screen until the prospect deals with it.
     if (!blockRef.current) setSaveStatus("saving");
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    // Nothing is sent while in conflict, or once the intake is gone or has expired.
-    saveTimerRef.current = halts(blockRef.current) ? null : setTimeout(flush, SAVE_DELAY_MS);
+    // Nothing is sent while in conflict, or once the intake is gone or closed.
+    saveTimerRef.current = stopsSaving(blockRef.current) ? null : setTimeout(flush, SAVE_DELAY_MS);
   }, [flush]);
 
   // Don't lose the last few seconds of edits when leaving the page.
@@ -587,13 +675,77 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     };
   }, [flush, stopTimer]);
 
+  // A blank intake on screen: no answers, a fresh greeting, nothing certified.
+  const blankIntake = useCallback(() => {
+    dataRef.current = EMPTY_CHAMBER_DATA;
+    setChamberDataRaw(EMPTY_CHAMBER_DATA);
+    provenanceRef.current = {};
+    setProvenanceRaw({});
+    const opening = [openingMessage()];
+    messagesRef.current = opening;
+    setMessages(opening);
+    certificationRef.current = NO_CERTIFICATION;
+    setCertification(NO_CERTIFICATION);
+    chosenPeoRef.current = null;
+    setChosenPeoRaw(null);
+    setConversationEpoch((n) => n + 1);
+  }, []);
+
+  // After an intake is loaded: offers this browser's copy of answers that never reached the server, unless
+  // the server already holds exactly them (the save sent as the page closed landed after all).
+  const offerBackup = useCallback((row: ServerRow) => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    const backup = readBackup(uid, row.id);
+    if (!backup) return;
+    const shown = {
+      chamber_data: withoutCensus(asStored(dataRef.current)),
+      field_provenance: asStored(provenanceRef.current),
+      transcript: asStored(messagesRef.current),
+    };
+    if (sameJson(backup.chamber_data, shown.chamber_data)
+        && sameJson(backup.field_provenance, shown.field_provenance)
+        && sameJson(backup.transcript, shown.transcript)) {
+      clearBackup(uid, row.id);
+      return;
+    }
+    backupRef.current = backup;
+    setBackupOffer({ savedAt: backup.savedAt, savedElsewhereSince: backup.baseVersion !== row.data_version });
+  }, []);
+
   // Resume or create a session
   useEffect(() => {
+    userIdRef.current = userId;
     if (!userId) { setIsLoading(false); return; }
+    // Someone else signed in in this tab (a guest getting back to their own intake with an emailed code).
+    // Nothing on screen is theirs: start from a clean slate. A link they were sent here with still counts,
+    // unless it named the intake the last person had open.
+    if (loadedForRef.current !== undefined && loadedForRef.current !== userId) {
+      stopTimer();
+      dirtyRef.current = false;
+      clearBlock();
+      settleOutcome();
+      if (sessionIdRef.current) requestedIdRef.current = null;
+      sessionIdRef.current = null;
+      versionRef.current = null;
+      forceNewRef.current = false;
+      createFailedRef.current = false;
+      backupRef.current = null;
+      setSessionId(null);
+      setBackupOffer(null);
+      setExpired(null);
+      setRestoredThrough(null);
+      setResumeFailed(false);
+      setLoadFailed(false);
+      setSaveStatus("idle");
+      setIsLoading(true);
+      blankIntake();
+    }
+    loadedForRef.current = userId;
     let cancelled = false;
 
     const resume = async (id: string): Promise<"opened" | "expired" | "unavailable"> => {
-      // RLS only returns the user's own sessions.
+      // RLS only returns the user's own sessions, and never an archived or revoked one.
       const { data, error } = await supabase
         .from("chamber_sessions")
         .select(ROW_COLUMNS)
@@ -601,9 +753,15 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         .maybeSingle();
       if (error) console.error("Failed to load session:", error);
       if (!data) return "unavailable";
-      // Nothing can be saved to an expired intake, so it is reported rather than loaded.
-      if (data.status === EXPIRED_STATUS) return "expired";
+      if (data.status === "expired") {
+        // Nothing of it is shown: the prospect is told it expired and can start again.
+        setExpired({ at: data.expires_at ?? null });
+        return "expired";
+      }
       applyRow(data);
+      const loaded = messagesRef.current;
+      setRestoredThrough(loaded.some((m) => m.sender === "user") ? loaded[loaded.length - 1].id : null);
+      offerBackup(data);
       return "opened";
     };
 
@@ -636,88 +794,77 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       }
     };
 
-    // A returning prospect picks up their latest unfinished intake instead of starting over. Expired ones
-    // don't count: expiring an intake touches it, which would otherwise put it ahead of one still in use.
-    const latestOpen = async (): Promise<{ ok: true; id: string | null } | { ok: false }> => {
+    // The prospect's own intake in one of `statuses` they were last active in. Advisors can read every
+    // intake, so only the prospect's own count here.
+    const latest = async (statuses: string[]): Promise<{ ok: true; id: string | null; status: string | null } | { ok: false }> => {
       const { data, error } = await supabase
         .from("chamber_sessions")
-        .select("id")
-        // Advisors can read every intake; only the prospect's own count here.
+        .select("id, status")
         .eq("user_id", userId)
-        .neq("status", "submitted")
-        .neq("status", EXPIRED_STATUS)
-        .order("updated_at", { ascending: false })
+        .in("status", statuses)
+        .order("last_activity_at", { ascending: false })
         .limit(1)
         .maybeSingle();
       if (error) {
         console.error("Failed to look up an open session:", error);
         return { ok: false };
       }
-      return { ok: true, id: data?.id ?? null };
-    };
-
-    // With nothing to pick up: whether the prospect's most recent intake is one that expired, so they are
-    // told so instead of being handed an empty intake without a word.
-    const latestExpired = async (): Promise<boolean> => {
-      const { data, error } = await supabase
-        .from("chamber_sessions")
-        .select("status")
-        .eq("user_id", userId)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      // Not knowing only costs the notice: an expired intake can't be picked up either way.
-      if (error) console.error("Failed to look up the latest session:", error);
-      return data?.status === EXPIRED_STATUS;
-    };
-
-    const showExpired = () => {
-      setExpired(true);
-      setIsLoading(false);
+      return { ok: true, id: data?.id ?? null, status: data?.status ?? null };
     };
 
     const init = async () => {
       const requested = requestedIdRef.current;
       const forceNew = forceNewRef.current;
       forceNewRef.current = false;
-      let opened = requested ? await resume(requested) : null;
+      let outcome = requested ? await resume(requested) : "unavailable";
       if (cancelled) return;
-      if (opened === "expired") return showExpired();
-      if (requested && opened !== "opened") {
+      if (outcome === "expired") {
+        setIsLoading(false);
+        return;
+      }
+      if (requested && outcome !== "opened") {
         // Don't quietly swap in a blank session: the caller decides what the prospect sees.
         setResumeFailed(true);
         setIsLoading(false);
         return;
       }
-      if (!opened && !forceNew) {
-        const latest = await latestOpen();
+      if (outcome !== "opened" && !forceNew) {
+        // A returning prospect picks up their latest unfinished intake instead of starting over.
+        const open = await latest(["in_progress"]);
         if (cancelled) return;
-        if (latest.ok && latest.id) {
-          opened = await resume(latest.id);
+        if (open.ok && open.id) {
+          outcome = await resume(open.id);
           if (cancelled) return;
-          // It expired between the lookup and opening it.
-          if (opened === "expired") return showExpired();
         }
         // Couldn't check, or found it but couldn't open it. A new intake would become the latest one
         // and hide the prospect's answers from every later visit, so offer to try again instead.
-        if (!latest.ok || (latest.id && opened !== "opened")) {
+        if (!open.ok || (open.id && outcome !== "opened")) {
           setLoadFailed(true);
           setIsLoading(false);
           return;
         }
-        if (!latest.id) {
-          const lastExpired = await latestExpired();
+        if (!open.id) {
+          // Nothing open. When what they last worked on has since expired, say so rather than greet them
+          // with a blank intake. (Not finding out is no reason to stop: a new intake hides nothing.)
+          const last = await latest(["expired", "submitted"]);
           if (cancelled) return;
-          if (lastExpired) return showExpired();
+          if (last.ok && last.id && last.status === "expired") {
+            outcome = await resume(last.id);
+            if (cancelled) return;
+            if (outcome === "expired") {
+              setIsLoading(false);
+              return;
+            }
+          }
         }
       }
-      if (opened !== "opened") await create();
+      if (outcome !== "opened") await create();
       if (!cancelled) setIsLoading(false);
     };
 
     init();
     return () => { cancelled = true; };
-  }, [userId, scheduleSave, applyRow, initRun]);
+  }, [userId, scheduleSave, applyRow, initRun, blankIntake, clearBlock, offerBackup, settleOutcome, stopTimer]);
 
   const startNew = useCallback(() => {
     requestedIdRef.current = null;
@@ -727,12 +874,57 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     settleOutcome();
     versionRef.current = null;
     sessionIdRef.current = null;
+    backupRef.current = null;
+    setBackupOffer(null);
+    setExpired(null);
+    setRestoredThrough(null);
     setResumeFailed(false);
     setLoadFailed(false);
-    setExpired(false);
     setIsLoading(true);
     setInitRun((n) => n + 1);
   }, [clearBlock, settleOutcome]);
+
+  const startOver = useCallback(async (): Promise<boolean> => {
+    stopTimer();
+    const sid = sessionIdRef.current;
+    if (sid) {
+      // After any save already on its way, so it can't land on the archived row.
+      const archived = await enqueue(async () => {
+        try {
+          const { error } = await supabase.rpc("archive_chamber_session", { p_session_id: sid });
+          if (error && error.code !== NOT_FOUND_CODE) {
+            console.error("Failed to archive the intake:", error);
+            return false;
+          }
+          return true;
+        } catch (error) {
+          console.error("Failed to archive the intake:", error);
+          return false;
+        }
+      });
+      if (!archived) {
+        // The prospect keeps this intake: send the edit whose save was held back for the archive.
+        if (dirtyRef.current && !saveTimerRef.current) scheduleSave();
+        return false;
+      }
+      const uid = userIdRef.current;
+      if (uid) clearBackup(uid, sid);
+    }
+    // The prospect chose to leave this intake behind, unsaved changes included.
+    dirtyRef.current = false;
+    blankIntake();
+    startNew();
+    return true;
+  }, [blankIntake, enqueue, scheduleSave, startNew, stopTimer]);
+
+  const discardBackup = useCallback(() => {
+    const backup = backupRef.current;
+    backupRef.current = null;
+    setBackupOffer(null);
+    if (backup) clearBackup(backup.userId, backup.sessionId);
+    // Edits made while the old copy was on offer weren't kept (see backupNow): keep them now.
+    backupNow();
+  }, [backupNow]);
 
   const retryLoad = useCallback(() => {
     setLoadFailed(false);
@@ -757,9 +949,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     stopTimer();
     dirtyRef.current = false;
     clearBlock();
+    const dropped = onScreen();
     applyRow(row);
+    forgetBackup(row.id, dropped);
     report("saved");
-  }, [applyRow, clearBlock, report, stopTimer]);
+  }, [applyRow, clearBlock, forgetBackup, onScreen, report, stopTimer]);
 
   const keepMine = useCallback(() => {
     const row = conflictRef.current;
@@ -796,16 +990,18 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         markMissing();
         return;
       }
-      if (data.status === EXPIRED_STATUS) {
+      if (data.status === "expired") {
         markExpired();
         return;
       }
       dirtyRef.current = false;
       clearBlock();
+      const dropped = onScreen();
       applyRow(data);
+      forgetBackup(sid, dropped);
       report("saved");
     });
-  }, [applyRow, clearBlock, enqueue, markExpired, markMissing, report, stopTimer]);
+  }, [applyRow, clearBlock, enqueue, forgetBackup, markExpired, markMissing, onScreen, report, stopTimer]);
 
   // Certification covers the answers as they were signed. The database withdraws it the
   // moment the saved answers differ; mirror that here so the prospect sees it right away.
@@ -839,6 +1035,23 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     scheduleSave();
   }, [scheduleSave, withdrawIfChanged]);
 
+  const restoreBackup = useCallback(() => {
+    const backup = backupRef.current;
+    backupRef.current = null;
+    setBackupOffer(null);
+    if (!backup) return;
+    const kept = dedupeGreetings(parseTranscript(backup.transcript));
+    if (kept.length > 0) {
+      messagesRef.current = kept;
+      setMessages(kept);
+    }
+    // Saved from the version on screen, like any edit. The census was never kept in the browser.
+    updateIntake((prev) => ({
+      data: parseChamberData({ ...backup.chamber_data, census: prev.data.census }),
+      provenance: parseProvenance(backup.field_provenance),
+    }));
+  }, [updateIntake]);
+
   const choosePeo = useCallback((name: string | null) => {
     const next = cleanPeoName(name);
     if (next === chosenPeoRef.current) return;
@@ -849,6 +1062,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   }, [scheduleSave]);
 
   const addMessage = useCallback((msg: ChatMessage) => {
+    // Lenore says hello once per intake. A voice session opens with her own greeting; it isn't kept twice.
+    if (isGreeting(msg) && messagesRef.current.some(isGreeting)) return;
     setMessages(prev => {
       const next = [...prev, msg];
       messagesRef.current = next;
@@ -871,7 +1086,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const submit = useCallback((submission: ChamberSubmission, signedDataKey?: string) => enqueue(async (): Promise<boolean | SubmitFailure> => {
     const sid = sessionIdRef.current;
     if (!sid) return false;
-    if (halts(blockRef.current)) return blockedMessage();
+    if (stopsSaving(blockRef.current)) return blockedMessage();
     if (!(await saveNow())) return blockedMessage();
     // Answers edited while the autosave was finishing were not what the prospect signed.
     if (signedDataKey !== undefined && JSON.stringify(dataRef.current) !== signedDataKey) return false;
@@ -921,8 +1136,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     } else if (error?.code === INVALID_DATA_CODE) {
       markInvalid(error);
       return blockedMessage();
-    } else if (error?.code === EXPIRED_CODE) {
-      markExpired();
+    } else if (error?.code === CLOSED_INTAKE_CODE) {
+      if (error.details === "expired") markExpired();
+      else markMissing();
       return blockedMessage();
     } else if (error) {
       // It may have landed anyway; a later write has to be able to tell.
@@ -967,6 +1183,12 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     loadFailed,
     retryLoad,
     expired,
+    startOver,
+    backupOffer,
+    restoreBackup,
+    discardBackup,
+    restoredThrough,
+    conversationEpoch,
     chamberData,
     provenance,
     messages,

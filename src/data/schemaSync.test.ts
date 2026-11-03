@@ -15,8 +15,10 @@ import {
   US_STATE_CODES,
 } from "@/data/chamberValidation";
 import { FIELD_KINDS } from "@/data/provenance";
+import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
+import { INTAKE_SCHEMA_V1, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
 
 // The server (supabase/migrations/20261027090000_intake_validation_and_versioning.sql, and later
 // migrations that replace its functions) refuses what the client sanitiser would never produce, so the
@@ -126,5 +128,75 @@ describe("server and client intake rules agree", () => {
   it("has the same roster cap and state codes in document-extract", () => {
     expect(EXTRACT_MAX_EMPLOYEES).toBe(MAX_EMPLOYEES);
     expect([...EXTRACT_STATE_CODES].sort()).toEqual([...US_STATE_CODES].sort());
+  });
+
+  // Intake schema v1 (supabase/functions/_shared/intakeSchema.ts) must never accept what the database
+  // refuses, so it holds the same codes, caps and value lists, and checks each key as the same kind.
+  describe("intake schema v1", () => {
+    const props = INTAKE_SCHEMA_V1.properties as Record<string, JsonSchema>;
+    const defs = INTAKE_SCHEMA_V1.$defs as Record<string, JsonSchema>;
+    const row = (defs.censusRow.properties ?? {}) as Record<string, JsonSchema>;
+    const dependent = (defs.dependent.properties ?? {}) as Record<string, JsonSchema>;
+
+    it("is the version the database records on each session", () => {
+      const version = /schema_version\s*=\s*(\d+)/.exec(blocks("intake_schema_version").join("\n"))?.[1];
+      expect(Number(version)).toBe(INTAKE_SCHEMA_VERSION);
+    });
+
+    it("accepts the same state codes", () => {
+      expect([...SCHEMA_STATE_CODES].sort()).toEqual([...quoted(blocks("us_state_codes").join("\n"))].sort());
+    });
+
+    it("holds the same caps", () => {
+      const server = new Map<string, number>();
+      for (const sql of [...blocks("caps"), ...blocks("caps_person")]) {
+        for (const m of sql.matchAll(/(max_\w+)\s+constant\s+integer\s*:=\s*(\d+)/g)) server.set(m[1], Number(m[2]));
+      }
+      expect({
+        max_employees: LIMITS.census, max_dependents: LIMITS.dependents, max_states: LIMITS.states, max_list_items: LIMITS.listItems,
+        max_text: LIMITS.text, max_name: LIMITS.name, max_dob: LIMITS.dob, max_count: LIMITS.count, max_salary: LIMITS.salary,
+      }).toEqual(Object.fromEntries(server));
+      expect(props.census.maxItems).toBe(server.get("max_employees"));
+      expect(props.states.maxItems).toBe(server.get("max_states"));
+      expect(props.pto_types.maxItems).toBe(server.get("max_list_items"));
+      expect(row.annual_salary.maximum).toBe(server.get("max_salary"));
+      expect(row.dependents.maxItems).toBe(server.get("max_dependents"));
+      expect([row.last_name.maxLength, row.job_title.maxLength, dependent.last_name.maxLength]).toEqual(Array(3).fill(server.get("max_name")));
+      expect([row.dob.maxLength, dependent.dob.maxLength]).toEqual(Array(2).fill(server.get("max_dob")));
+    });
+
+    it("accepts the same census values", () => {
+      const server = (name: string) => quoted(blocks(name).join("\n"));
+      expect(row.compensation_type.enum).toEqual(server("census_compensation_types"));
+      expect(row.employment_type.enum).toEqual(server("census_employment_types"));
+      expect(row.classification.enum).toEqual(server("census_classifications"));
+      expect(row.coverage_tier.enum).toEqual(server("census_coverage_tiers"));
+    });
+
+    it("checks each key as the kind the database checks it as", () => {
+      const kindOf = (schema: JsonSchema): string => {
+        const types = ([] as unknown[]).concat(schema.type);
+        if (types.includes("array")) {
+          const items = schema.items as JsonSchema;
+          if (items.$ref === "#/$defs/stateCode") return "state_list";
+          if (items.$ref === "#/$defs/censusRow") return "census";
+          return "text_list";
+        }
+        if (schema.enum) return "state";
+        if (types.includes("integer")) return "count";
+        if (types.includes("boolean")) return "boolean";
+        return "text";
+      };
+      const schemaKinds = Object.fromEntries(Object.entries(props).map(([key, schema]) => [key, kindOf(schema)]));
+      // The legacy roster is the one key the database knows and v1 does not.
+      const dbKinds = Object.fromEntries([...serverKinds].filter(([key]) => !LEGACY_KEYS.includes(key)));
+      expect(schemaKinds).toEqual(dbKinds);
+    });
+  });
+
+  // The Chamber tells a prospect how long a draft is kept; the database is what keeps (and expires) it.
+  it("tells prospects the retention window the database applies", () => {
+    const days = /interval\s+'(\d+) days'/.exec(blocks("draft_retention").join("\n"))?.[1];
+    expect(Number(days)).toBe(DRAFT_RETENTION_DAYS);
   });
 });

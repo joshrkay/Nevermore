@@ -24,6 +24,11 @@ interface UseLenoreChatOptions {
    * evidence). Without it, or when the message wasn't recorded, the plain merge is used.
    */
   onExtracted?: (extracted: Partial<ChamberData>, response: unknown, message: { id: string; text: string }) => void;
+  /**
+   * Which conversation this is (useChamberSession's `conversationEpoch`). When it changes, an answer still
+   * on its way belongs to the old conversation: it is dropped, and so is a failure notice about it.
+   */
+  epoch?: unknown;
 }
 
 const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?";
@@ -32,7 +37,7 @@ const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
  */
-export function useLenoreChat({ chamberData, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted }: UseLenoreChatOptions) {
+export function useLenoreChat({ chamberData, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
   const [failure, setFailure] = useState<ChatFailure | null>(null);
   const [pending, setPending] = useState(false);
   const dataRef = useRef(chamberData);
@@ -42,14 +47,29 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
   const failedMessageRef = useRef<{ id: string; text: string } | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (idleTimer.current) clearTimeout(idleTimer.current); }, []);
+  const epochRef = useRef(epoch);
+  useEffect(() => {
+    if (Object.is(epochRef.current, epoch)) return;
+    epochRef.current = epoch;
+    // "Try again" would resend a message from the conversation that was just replaced.
+    failedMessageRef.current = null;
+    setFailure(null);
+  }, [epoch]);
 
   const ask = useCallback(async (text: string, message: { id: string; text: string } | null): Promise<boolean> => {
+    const askedIn = epochRef.current;
+    const replaced = () => !Object.is(epochRef.current, askedIn);
     setPending(true);
     onOrbStateChange("thinking");
     try {
       // The roster isn't extracted from chat and holds personal details, so leave it out of the context.
       const { census: _census, ...context } = dataRef.current;
       const { data, error } = await supabase.functions.invoke("chamber-extract", { body: { message: text, context } });
+      // The conversation was replaced while Lenore was answering: her answer belongs to the old one.
+      if (replaced()) {
+        onOrbStateChange("idle");
+        return false;
+      }
       if (error) throw error;
 
       if (data?.extracted) {
@@ -64,6 +84,7 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
       return true;
     } catch (err) {
       onOrbStateChange("idle");
+      if (replaced()) return false;
       const rateLimited = err instanceof FunctionsHttpError && err.context?.status === 429;
       failedMessageRef.current = message;
       setFailure({ text, kind: rateLimited ? "rate_limited" : "failed" });

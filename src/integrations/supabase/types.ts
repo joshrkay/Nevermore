@@ -99,8 +99,15 @@ export type Database = {
           created_at: string
           // Set by the database: 1 on insert, +1 on every update. Writes name the version they saw.
           data_version: number
+          // When an uncertified draft expires; null once it was ever certified. Set by the database.
+          expires_at: string | null
           field_provenance: Json
           id: string
+          // When the prospect last saved anything. Set by the database.
+          last_activity_at: string
+          // The intake schema version chamber_data follows (supabase/functions/_shared/intakeSchema.ts).
+          schema_version: number
+          // in_progress | submitted | expired | archived | revoked (the last three are closed).
           status: string
           submission: Json | null
           transcript: Json
@@ -112,8 +119,11 @@ export type Database = {
           chosen_peo?: string | null
           created_at?: string
           data_version?: never
+          expires_at?: never
           field_provenance?: Json
           id?: string
+          last_activity_at?: never
+          schema_version?: never
           status?: string
           submission?: Json | null
           transcript?: Json
@@ -125,8 +135,11 @@ export type Database = {
           chosen_peo?: string | null
           created_at?: string
           data_version?: never
+          expires_at?: never
           field_provenance?: Json
           id?: string
+          last_activity_at?: never
+          schema_version?: never
           status?: string
           submission?: Json | null
           transcript?: Json
@@ -370,6 +383,14 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: boolean
       }
+      archive_chamber_session: {
+        Args: { p_session_id: string }
+        Returns: string
+      }
+      expire_idle_intakes: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
       prospect_submission_status: {
         Args: { p_session_id: string }
         Returns: string | null
@@ -396,6 +417,10 @@ export type Database = {
           p_value?: Json | null
         }
         Returns: Database["public"]["Tables"]["advisor_field_reviews"]["Row"]
+      }
+      revoke_chamber_session: {
+        Args: { p_reason: string; p_session_id: string }
+        Returns: string
       }
       set_submission_status: {
         Args: { p_note?: string | null; p_session_id: string; p_status: string }

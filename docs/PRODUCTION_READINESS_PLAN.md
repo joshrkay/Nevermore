@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Version** | 2.5 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings, and A-2.2 added database validation and versioned writes) |
-| **Date** | 2026-10-29 |
+| **Version** | 2.6 (v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings, A-2.2 added database validation and versioned writes, and A-1.3, A-1.4, A-1.5, A-2.1 and A-3.2 closed Epic A's open work) |
+| **Date** | 2026-11-03 |
 | **Verified against** | `main` at commit `2a5e9af` (merge of pull request 27). That includes the `chamber-extract` fix, the move of `document-extract` onto the shared adapter, the per-address and global ceilings on document reads and the edge-function type check (pull request 26), and the end-to-end test (pull request 25). Version 2.3 was verified against `6f2bf5c` plus branch `claude/peaceful-albattani-neiujl`; v1.0 against `04503c3` (2026-10-20). A-2.2 (version 2.5) was verified on a branch cut from `2a5e9af`, before pull request 28's review fixes to the end-to-end test. |
 | **Scope** | Everything between the current build and a supervised private pilot (M2) and a public launch (M3) |
-| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (685 tests in 48 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. The `e2e` job has run green in CI: pull request 25's run 40774885703 on its final commit, and pull request 27's run 40812758403. This refresh read the test and its stand-ins and did not re-run the end-to-end test. **Not run:** `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. A-2.2 was checked separately on `a22-local` with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (806 tests in 50 files), `npm run build`, all eight SQL tests and `npm run test:e2e` (four tests, run three times in a row). The new two-tab test fails when the client's version condition is removed. Two real database connections saving from one version were checked by hand, not in CI. |
+| **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (685 tests in 48 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. The `e2e` job has run green in CI: pull request 25's run 40774885703 on its final commit, and pull request 27's run 40812758403. This refresh read the test and its stand-ins and did not re-run the end-to-end test. **Not run:** `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. A-2.2 was checked separately on `a22-local` with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (806 tests in 50 files), `npm run build`, all eight SQL tests and `npm run test:e2e` (four tests, run three times in a row). The new two-tab test fails when the client's version condition is removed. Two real database connections saving from one version were checked by hand, not in CI. Version 2.6 (A-1.3, A-1.4, A-1.5, A-2.1, A-3.2) was checked on branch `claude/sharp-keller-qpo079`, cut from `main` at `34441de`, with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `tsc -p tsconfig.app.json` (clean once the advisor page's lost imports were restored), `npm test` (1,204 tests in 66 files), `npm run build`, all eleven SQL tests on Postgres 16, and `npm run test:e2e` (seven tests, three runs in a row). The new SQL and hook tests were checked to fail when the rule each covers is removed. The `/verify` harness (real PostgREST 12.2.3 and `dispatch-outbox` under Deno) passed its certify-and-send flow. Rebuilt on every migration, it showed that certifying through the lifecycle trigger still sends exactly two emails, that an expired draft can't be certified and queues nothing, and that archiving and every refused caller behave over HTTP. That run is also why a missing intake answers `PT404` (HTTP 404) and not `P0002`, which PostgREST turns into a 500. Nothing was deployed. |
 
 ---
 
@@ -117,9 +117,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | The reference is not unique or server-assigned, and a repeat submit adds another certification row. | `manuscript.ts`, `useChamberSession.ts` | C-3.1 |
 | The owner's update policy lets a prospect write `documents.status`, so it cannot carry a scan verdict. | `20261021100000_session_documents.sql` | E-4.3 |
 | Upload limits (20 MB, file types) are enforced only in the browser. The bucket has no size or type limit. | `UploadTab.tsx`, `config.toml` | E-4.1 |
-| A failed save is shown as 'Not saved' with Retry, but there is no local backup, so it is lost on reload. | `useChamberSession.ts` | A-1.4 |
-| Two rapid loads or two tabs can still create two sessions, and orphan rows accumulate (a bare `/start` now resumes the latest open one). | `useChamberSession.ts` | A-1.3 |
-| An upgraded guest cannot sign back in: nothing sets a password or signs in by emailed code. | `useAuth.tsx` | D1, A-1.3 |
+| Two rapid loads or two tabs can still create two sessions (a bare `/start` resumes the latest open one). Orphan drafts now expire after 30 days idle (A-1.5). | `useChamberSession.ts` | A-1.3 |
 | The advisor queue has no `LIMIT` and the page loads every row. | `20261024100000_advisor_queue.sql` | F-2.1 |
 | The opening message tells the prospect the workspace is 'a demonstration'. | `useChamberSession.ts` | A-2.3 |
 | Public copy contradicts the role disclosure: 'No account required' while certification needs a verified email, 'Get Your Quote', and `SUBMITTED TO <PEO>` on the Manuscript. | `LandingPage.tsx`, `index.html`, `ManuscriptPage.tsx` | H-2.3 |
@@ -133,7 +131,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-10-21 | Vercel configuration. Epic E document handling finished. Advisor session states, the access matrix and the searchable queue. CI for lint, tests, build and SQL tests. Advisor and prospect notifications on submission. Re-certification when a different PEO is chosen. A verify skill that drives the app against a local stand-in. |
 | 2026-10-22 | Supabase URL and key read from Vercel's integration variables. Outbox hardening: queueing faults heal and sends are frozen so a sender change cannot duplicate. |
 | 2026-10-29 | Epic E census ingestion (branch `claude/adoring-dijkstra-2fcocb`, not yet merged): the roster is `chamber_data.census` with the spec's `CensusEmployee` row, and older `employees` data is read as it; `document-extract` matches census columns by header, reads `.docx`, never reads or keeps SSN or bank details; upload checks by contents with a SHA-256 and duplicate refusal; category names and per-intake limits in the database; a review step that shows census rows and settles differences in a dialog. Deploy order: the migrations (including `20261029092000`, which teaches the A-2.2 intake validator the `census` key and still accepts `employees`), then `document-extract` (it imports `_shared`), then the front end. See `docs/intake-schema.md`. |
-| 2026-11-03 | US-1.3, the hand-off to The Reckoning: the chosen PEO is saved with the intake, an expired intake is recognised in the database (`EA002`) and the app, and the 'couldn't open that intake' screen says what a guest can actually do. Migration `20261103090000` must be deployed before the front end, which selects `chosen_peo`. See A-1.3 and A-1.5. |
+| 2026-11-03 | US-1.3, the hand-off to The Reckoning: the chosen PEO is saved with the intake (`chamber_sessions.chosen_peo`, migration `20261103100000`, deploy it before the front end), and the Manuscript page says when an intake has expired instead of calling it unsigned. See A-1.3. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -143,7 +141,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | Epic | Done | Partial | Superseded | Not started | Not verifiable | Total |
 |---|---|---|---|---|---|---|
 | 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
-| A Durable session | 2 | 4 | 4 | 1 | 0 | 11 |
+| A Durable session | 7 | 0 | 4 | 0 | 0 | 11 |
 | B AI extraction | 2 | 4 | 1 | 2 | 0 | 9 |
 | C Review, certify, submit | 1 | 7 | 0 | 2 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
@@ -153,9 +151,9 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **20** | **47** | **11** | **22** | **6** | **106** |
+| **Total** | **25** | **43** | **11** | **21** | **6** | **106** |
 
-17 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+22 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -177,10 +175,10 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 | ID | Decision | Status and evidence | Owner | Blocks |
 |---|---|---|---|---|
-| D1 | How does a guest return to their intake? | **Decided in code, with a different design** (see D14). Supabase anonymous auth persisted in browser storage; the session id in `?session=`; owner RLS gates resume. Email upgrade is a 6-digit code (`updateUser`, then `verifyOtp`), refused if the email already has an account ('we can't yet move your answers'). **Gap:** nothing sets a password or signs in by code, so an upgraded guest cannot return from another device or after clearing storage. | PM | A-1.3 |
+| D1 | How does a guest return to their intake? | **Decided in code, with a different design** (see D14). Supabase anonymous auth persisted in browser storage; the session id in `?session=`; owner RLS gates resume. Email upgrade is a 6-digit code (`updateUser`, then `verifyOtp`), refused if the email already has an account ('we can't yet move your answers'). A guest who verified an email can get back to the intake from another browser, or after this one's data was cleared, by signing in with a 6-digit code emailed to that address (A-1.3); the Chamber then opens the linked intake or their latest one. **Gap:** a guest who never verified an email has no way back from another browser, and nothing sets a password. | PM | none |
 | D2 | Minimum data required before certification | **Partly decided, not enforced.** A four-item minimum is reported (company legal name, states of operation, pay frequency, a non-empty census) in the Manuscript open items and the advisor queue, but `certificationBlockers` checks none of it. It differs from the recommended default: there is no EIN field, the contact comes from `profiles.contact_name`, total employee count is not required, and pay frequency is. There is no 'Not applicable' status. | PM + Advisory lead | C-1.3, C-2.1, B-1.3 |
 | D3 | Certification and consent wording | **Open.** The placeholder `2026-10-draft-1` is marked DRAFT in the Reckoning. A second, unused wording (`2026-10-v1`) exists (C-2.4). No intake-consent text exists (H-2.2). | LEGAL | C-2.4, H-2.2 |
-| D4 | Retention windows | **Open.** No windows in code. Drafts never expire. Only AI rate-limit logs are pruned, after a day. | LEGAL + PM | A-1.5, H-1.x, E-4.2 |
+| D4 | Retention windows | **Partly decided in code, to confirm.** An uncertified draft expires 30 days after its last change (A-1.5, `public.intake_draft_retention()`); an expired draft keeps its data until H-1.2 purges it. A browser's copy of unsaved answers is kept at most 7 days (A-1.4). Nothing else is windowed; AI rate-limit logs are pruned after a day. | LEGAL + PM | H-1.x, E-4.2 |
 | D5 | Advisor roles and permissions | **Decided and implemented**: `advisor` and `admin` in `user_roles`. In the repo `admin` has no power beyond `advisor` (tests assert it cannot grant roles or delete intakes). | PM | none |
 | D6 | CRM or workflow destination | **Open.** No CRM is named. | PM | G-3.1 |
 | D7 | Email provider and sender domain | **Decided in code:** Resend, the only adapter. `EMAIL_FROM` has no default and must be on a verified domain. The domain is not named and the verification checklist item is unchecked. | OPS | G-2.1 launch, J-1.2 |
@@ -226,12 +224,12 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic A: Durable Intake Session
 
-*As built:* Sessions live in `chamber_sessions` under Supabase Auth and owner RLS (D14), not in token-gated edge-function tables. Isolation is in place and tested. What is missing is expiry and a local backup of a failed save. Validation and versioned writes are done (A-2.2).
+*As built:* Sessions live in `chamber_sessions` under Supabase Auth and owner RLS (D14), not in token-gated edge-function tables. Isolation is in place and tested. Validation and versioned writes (A-2.2), expiry, archive and revocation (A-1.5), a local backup of unsaved answers (A-1.4), a way back from another browser (A-1.3), the canonical JSON Schema checked on the way in (A-2.1) and a clean transcript on resume (A-3.2) are done. `docs/intake-schema.md` → "Session lifecycle" describes them.
 
 #### A-1.1 Intake session data model
 - **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** D1, D4 · **Milestone:** M1
 - **Built:** `chamber_sessions` (migration `20260324031329`) with owner-only RLS for `authenticated` (guests are `authenticated` with the `is_anonymous` claim). Advisors read all rows, read-only (`20261022090000`). The access matrix in `supabase/tests/advisor_operations.sql` covers signed-out, guest, other prospect, advisor and admin.
-- **Remaining:** Anonymous denial and cross-owner isolation are met. Not met: `status` is free text (default `in_progress`, `submitted` at certification), not a checked set; there is no `schema_version`, `last_activity_at` or `expires_at` (`data_version` arrived with A-2.2); the browser writes the table directly. The columns arrive with A-1.5. The token-hash criteria no longer apply (D14).
+- **Remaining:** Anonymous denial and cross-owner isolation are met. `status` is now a checked set (`in_progress`, `submitted`, `expired`, `archived`, `revoked`), and `last_activity_at`, `expires_at` (A-1.5), `schema_version` (A-2.1) and `data_version` (A-2.2) exist, all set by the server. The browser still writes the table directly, under row security and triggers. The token-hash criteria no longer apply (D14).
 
 #### A-1.2 Create a guest session and issue a continuation token
 - **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-1.1, D1 · **Milestone:** M1
@@ -239,26 +237,20 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Remaining:** A row id is useless without the owner's JWT, so the intent holds. No limit on sessions per user or per IP exists in the repo (a Supabase anonymous-sign-in limit would be dashboard configuration, which this refresh could not see). Turnstile is off when the key is unset: set it in every deployed environment. Decide whether to add a creation cap.
 
 #### A-1.3 Restore a session after refresh, with a recovery screen
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** A-1.2, A-2.3, A-3.2 · **Milestone:** M1
-- **Built:** The Supabase auth session persists in browser storage and the session id travels in `?session=` (`ChamberPage.tsx`). Resume is gated by RLS. When a session cannot be opened, a recovery screen offers 'Start a new intake' and shows no data. Both are tested.
-- **Built (2026-11-03, US-1.3):** The chosen PEO is saved with the intake (`chamber_sessions.chosen_peo`, migration `20261103090000`) in the same versioned write as the answers, so a reload in The Reckoning keeps both the intake and the PEO (end-to-end tested). An expired intake shows 'Your intake has expired' with a restart, on a link, on a bare `/start` when it was the prospect's latest, while open (the save status) and on the Manuscript; the database refuses a prospect's change to it with `EA002` (see A-1.5). The 'couldn't open that intake' screen no longer tells a guest to sign in to an account they may not have: it says a guest intake reopens only in its own browser, offers **Sign in** (returning to the intake) for password accounts, and doesn't mention signing in to a signed-in prospect.
-- **Remaining:** A bare `/start` (landing CTA, navbar, Manuscript link) resumes the user's latest open session (`latestOpen()` in `useChamberSession.ts`), and offers a retry rather than a new intake when it cannot be checked or opened, so a returning guest is resumed. Rows created before that fix can still be orphans. Two rapid loads or two tabs can create two rows. No warning when browser storage is blocked. A reload returns to the first workspace tab, not the one the prospect was on. A guest upgraded by email has no cross-device or cleared-storage return path: nothing in `src` sets a password or signs in by emailed code, and `signIn` is password-only (D1).
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** A-1.2, A-2.3, A-3.2 · **Milestone:** M1
+- **Built:** The Supabase auth session persists in browser storage and the session id travels in `?session=` (`ChamberPage.tsx`). Resume is gated by RLS. A bare `/start` resumes the prospect's latest open intake (by `last_activity_at`), and offers a retry rather than a new intake when it can't be checked or opened. When a linked intake can't be opened, the recovery screen says why: for a guest, that this browser no longer holds the sign-in (another device, a private window, cleared data). It offers to email a 6-digit sign-in code to the address they verified (`RecoverIntake.tsx`, `useAuth().requestSignInCode` / `verifySignInCode`: `signInWithOtp` with `shouldCreateUser: false`, then `verifyOtp` type `email`). The reply is the same whether or not the address has an account. A guest on a fresh intake gets the same offer ("Continue an earlier intake"). Once signed in, the hook drops what was on screen and opens the linked intake, or the person's latest one; a link that named the guest's own blank intake is dropped. The Chamber warns when the browser won't keep site data at all. `npm run setup:supabase` puts the code in the magic-link template and `--check` verifies it. Unit tests cover the screen, the form, the auth calls and the switch to another user. The browser path of the email code is not in the end-to-end test (the stand-in has no `/otp`).
+- **Notes:** A guest who never verified an email can't come back from another browser, and the screen says so. Nothing sets a password. Two rapid loads or two tabs can still create two rows; such orphans now expire (A-1.5). The chosen PEO is saved with the intake (`chamber_sessions.chosen_peo`, migration `20261103100000`, US-1.3), so a reload in The Reckoning keeps it (end-to-end tested). A reload still returns to the first workspace tab.
 
 #### A-1.4 Autosave with visible status and local backup
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** A-1.2, A-2.2 · **Milestone:** M1
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** A-1.2, A-2.2 · **Milestone:** M1
 - **Built:** 2-second debounced autosave, a 10-second retry, an in-flight save awaited before the next, and a keepalive request on page unload (up to 60,000 bytes, otherwise a leave-confirm prompt) in `useChamberSession.ts`. Submit waits for pending saves. `SaveStatus.tsx` shows Saving / Saved / Not saved with a Retry action, and A-2.2 added conflict, invalid-field and missing-row states. 'Saved' means the versioned update returned the row, and zero rows is a conflict, not a success. Tested.
-- **Remaining:** No `localStorage` backup, so a failed save is lost on reload.
+- **Local backup:** While a change is unconfirmed, the hook keeps a copy in `localStorage` (`src/data/intakeBackup.ts`) with the version it was made on, and removes it once a save is confirmed. When the same person opens the same intake and the copy differs from the server, `BackupNotice` offers "Restore my changes" (saved from the loaded version, warning when the intake was saved elsewhere since) or "Discard them". A copy the server already matches is dropped silently. The census is never written to the browser, copies last at most 7 days, are offered only to the user who wrote them, are checked against intake schema v1 before use, and are all removed on a deliberate sign-out. Tested in the hook, the module and `e2e/intake-lifecycle.spec.ts` (saves blocked, tab closed, copy restored and saved).
+- **Notes:** Answers typed before the intake row is first created are not backed up (creation failing means the database is unreachable). Blocked or full storage keeps nothing, quietly, beyond the Chamber's warning that the browser keeps no site data.
 
 #### A-1.5 Expiry, archive, and revocation
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** A-1.2, D4 · **Milestone:** M1
-- **Built ahead of it (2026-11-03, for US-1.3):** what a prospect meets once an intake's `status` is `expired`. Migration `20261103090000` refuses a prospect's change to an expired intake with `EA002` (the service role and a job with no user JWT are not refused; `supabase/tests/intake_handoff.sql`), and the Chamber, its save status and the Manuscript say it expired and offer a new intake (`docs/intake-schema.md`, Expired intakes). Nothing sets `expired` yet: the window (D4), `last_activity_at` and `expires_at`, the job, the purge, documents in an expired intake (still writable by the owner), and archiving on 'Start over' are all still this story.
-- *Revised scope, AC and tests:*
-  - **Scope:** Add `last_activity_at` and `expires_at` to `chamber_sessions`. A scheduled job (pg_cron, the same pattern as `dispatch-outbox`) marks drafts idle past the D4 window `expired` and removes their transcript and uploads (H-1.2 covers the purge). 'Start over' archives the old session instead of only dropping its id in the browser.
-  - **AC:**
-    - The job changes only idle drafts, never a certified or submitted intake, and writes one audit row per session it changes.
-    - An expired session opens a 'This intake has expired' state with a restart option.
-    - After 'Start over' the old row is archived and unreachable from the Chamber.
-  - **Tests:** Expire a session in the scratch database and confirm the expired state. Run the job against a certified session and confirm no change.
+- **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** A-1.2, D4 · **Milestone:** M1
+- **Built:** Migration `20261103090000_intake_lifecycle.sql`. `status` is a checked set with three closed states: `expired`, `archived`, `revoked`. `last_activity_at` and `expires_at` are server-set (last activity + 30 days for an uncertified draft, null once ever certified). `public.expire_idle_intakes()` runs hourly through pg_cron (`expire-idle-intakes`, also scheduled by `npm run setup:supabase`). It moves only in-progress drafts that were never certified, skips rows being saved, and writes one `intake_lifecycle_events` row per intake. "Start over" in the Chamber calls `archive_chamber_session` (own, never-certified drafts; anything certified is kept) and begins a blank intake. `revoke_chamber_session(id, reason)` is admin-only and audited. Row security hides archived and revoked intakes, their documents and their stored files from the prospect; an expired one stays readable but can't be changed or take documents, and a trigger backs that up (`EA002`). The Chamber shows "This intake has expired" with a restart, for a link and for a bare `/start` whose latest intake expired. A tab open at expiry is told at its next save. The advisor queue labels closed drafts. Existing drafts got a full window from the deploy, with versions untouched. Tested in `supabase/tests/intake_lifecycle.sql` (upgrade, activity, the job and its limit, certified and once-certified intakes left alone, the expired, archived and revoked access rules, the audit trail, the schedule), the hook and page tests, and `e2e/intake-lifecycle.spec.ts`.
+- **Notes:** The window (30 days) is a recommended default until D4 closes. Expiry closes a draft but keeps its data, transcript and uploads: purging them is H-1.2. Revocation has no screen yet (SQL or API as an admin, `docs/ADVISOR_ACCESS.md`). Deploy the migration before the front end, which orders by `last_activity_at` and calls `archive_chamber_session`.
 
 #### A-1.6 Retire the legacy `chamber_sessions` path
 - **Status:** **SUPERSEDED** · **Size:** S · **Priority:** High · **Owner:** FS · **Depends:** A-1.3 · **Milestone:** M1
@@ -266,9 +258,10 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Remaining:** Drop this story. Its AC ('no frontend code path writes to `chamber_sessions`') contradicts the shipped design (D14).
 
 #### A-2.1 Canonical intake schema v1
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE + FS · **Depends:** D2 · **Milestone:** M1
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE + FS · **Depends:** D2 · **Milestone:** M1
 - **Built:** `ChamberData` (37 flat fields plus an `employees` array) in `chamberTypes.ts`. Zod rules in `chamberValidation.ts` sanitise in the browser, and the database enforces the same limits (A-2.2). Provenance in a sibling `field_provenance` jsonb column. `docs/intake-schema.md` exists. Zero counts are accepted.
-- **Remaining:** No `{value, status, source, updated_at, note?}` envelope: provenance is a sibling map. Recommended: keep the sibling map, since every consumer already reads it, and amend the AC (D14). Statuses lack `not_applicable` and sources lack `advisor_edit` and `system` (advisor changes live in `advisor_field_reviews`). No per-field required-for-submission flag (D2). No workers' comp, EIN or contractor sections. No schema-version constant stored on a session. The edge function keeps its own 17-field copy of the field list. `docs/intake-schema.md` now has the field table and the server rules (A-2.2). `schemaSync.test.ts` keeps the migration and the client's limits in sync, but nothing checks the doc's table against the code. Zero-versus-absent is untested, and the Review tab shows 0 as a dash.
+- **JSON Schema and strict checks:** `supabase/functions/_shared/intakeSchema.ts` is the canonical schema, v1, as a draft 2020-12 JSON Schema, published as `docs/intake-schema.v1.json` (`npm run schema:intake`; a test fails while they differ). Its validator is strict: no coercion, unknown keys refused at every level, paths named like the database's, values never echoed, and any keyword it doesn't implement refused. It runs where data comes in: `chamber-extract` refuses each extracted field that breaks it and returns `rejected`, logging paths only; a local backup is checked before it is offered; a saved row is checked as it loads and mismatches are logged. Everything it accepts the database accepts: `schemaSync.test.ts` holds its codes, caps, value lists and kinds to the migrations, and the sanitiser's output always passes it (golden and seeded random inputs). `chamber_sessions.schema_version` (migration `20261103091000`) records v1 on every row and refuses any other value.
+- **Notes:** Provenance stays a sibling map rather than a `{value, status, source, …}` envelope, as D14 recommends; amend the AC. Statuses lack `not_applicable` and sources lack `advisor_edit` and `system` (advisor changes live in `advisor_field_reviews`). There is no per-field required-for-submission flag (D2), and no workers' comp, EIN or contractor sections. These wait on D2. Voice `<extract>` data still goes through the lenient sanitiser. `chamber-extract` keeps its own 17-field list, now checked value by value against the schema. Nothing checks the field table in `docs/intake-schema.md` against the code (the JSON file is checked). Zero-versus-absent is untested, and the Review tab shows 0 as a dash.
 
 #### A-2.2 Server-side validation and versioned writes
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1, A-1.2 · **Milestone:** M1
@@ -294,7 +287,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### A-2.3 Hydrate the Chamber workspace from saved data
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** A-2.1, A-2.2 · **Milestone:** M1
 - **Built:** The workspace tabs render the hydrated `chamberData` with `isDemo={false}`. Company, Payroll and Benefits show status badges and empty-state text. Sample data appears only on `/manuscript/demo` and in tests.
-- **Notes:** Census and Dependents have no badge or edit path. The chosen PEO is saved with the intake since 2026-11-03 (A-1.3). The opening message still tells the prospect the workspace is 'a demonstration' (`OPENING_MESSAGE` in `useChamberSession.ts`): rewrite it.
+- **Notes:** Census and Dependents have no badge or edit path. The chosen PEO is saved with the intake (A-1.3). The opening message still tells the prospect the workspace is 'a demonstration' (`OPENING_MESSAGE` in `useChamberSession.ts`): rewrite it.
 
 #### A-3.1 Store transcript messages as ordered rows
 - **Status:** **SUPERSEDED** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** A-1.2 · **Milestone:** M1
@@ -302,9 +295,9 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Remaining:** Order and role are met. Not met: separate rows, server-assigned `seq`, a `system` role, `extraction_status`. Two tabs no longer overwrite each other's transcript: a save from a stale version is refused and that tab offers 'Load latest' or 'Keep my changes' (A-2.2). Recommended: keep the array.
 
 #### A-3.2 Restore the transcript on resume
-- **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** A-3.1, A-1.3 · **Milestone:** M1
-- **Built:** `parseTranscript` runs on resume, the panel scrolls to the latest message, and user and Lenore bubbles are styled differently.
-- **Remaining:** No 'Restored from earlier' divider, no system styling, no multi-turn refresh test.
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** A-3.1, A-1.3 · **Milestone:** M1
+- **Built:** `parseTranscript` runs on resume and `dedupeGreetings` keeps only the first greeting. Lenore's opening is marked `kind: "greeting"`, and older openings, including the 'demonstration' wording, are recognised by their words. A voice session's own hello is marked as one and not added again. The panel opens at the latest message without animating through the history and scrolls only itself, never the page. It follows new messages only while the reader is at the bottom, otherwise offering "New message", and always shows the prospect's own message. It marks "Restored from your last visit" after the last restored message. The orb shows Lenore's latest line instead of a separate hard-coded hello. Tested in `chat.test.ts`, `useLenoreVoice.test.ts`, `TranscriptPanel.test.tsx`, the hook (deduped load, restored marker) and the page.
+- **Notes:** No `system` sender (A-3.1 recommends keeping the array). The restored marker is set when an intake is opened, not when another tab's version is loaded.
 
 ---
 
@@ -315,7 +308,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### B-1.1 Extraction response contract and parser
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1 · **Milestone:** M1
 - **Built:** `chamber-extract` keeps only 17 allow-listed fields with a per-field `field_status` and `evidence` (up to 200 characters) and returns `{extracted, field_status, evidence, corrected_fields, reply}`; the shaping is in `extraction.ts` and the tool schema now asks the model for all of it. The client's `sanitizeChamberPatch` validates. An empty extraction yields a fallback reply.
-- **Remaining:** Invalid fields are dropped one by one in the browser rather than rejecting the whole response. Unknown field paths are dropped without being logged. No contract version is stored with an extraction.
+- **Remaining:** `chamber-extract` now refuses each field whose value breaks intake schema v1 and lists it in `rejected`, logging its path (A-2.1). Invalid fields are still refused one by one rather than the whole response being rejected. Unknown field paths are dropped without being logged. No contract version is stored with an extraction.
 
 #### B-1.2 Merge policy and conflict capture
 - **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** B-1.1, A-2.2 · **Milestone:** M1
@@ -986,8 +979,8 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | Tier | Stories | Why |
 |---|---|---|
 | 0: put the fixes in front of users | Confirm which builds of `chamber-extract` and `document-extract` are deployed, deploy both (and check the deploy bundles `supabase/functions/_shared`), and make one real Lenore exchange and one real document read in preview (the open part of F-0.2). | The fixes are verified in code, tests, a Deno run and a CI run, not live. |
-| 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, A-1.3, A-1.4, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.4 (make the checks required), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus making the end-to-end test (I-4.3, built) a required check. C-1.3, C-2.1 and B-1.3 wait for D2. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
-| 2: gate the private pilot (M2) | All M2 stories, plus the M1-tagged hardening stories that do not block the demo path: A-1.5, A-3.2, B-1.1, B-1.3, B-1.4, B-2.2, D-1.1 to D-1.4, D-2.2, D-3.1 to D-3.3, E-4.1, I-4.2. In practice: E-4.1, E-4.3, E-4.2, F-2.1, F-4.1, F-4.3, G-1.1 (schedule in a migration), G-1.3, H-1.1 to H-1.3, H-2.1, H-2.3, H-3.1, H-3.3, H-4.1 to H-4.3, I-1.x, I-2.x | Retention, deletion, upload hardening, an admin view of failed emails, legal pages, alerting, a runbook, and accessibility. Most wait on D3, D4, D10 and D13. |
+| 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.4 (make the checks required), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus making the end-to-end test (I-4.3, built) a required check. C-1.3, C-2.1 and B-1.3 wait for D2. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
+| 2: gate the private pilot (M2) | All M2 stories, plus the M1-tagged hardening stories that do not block the demo path: B-1.1, B-1.3, B-1.4, B-2.2, D-1.1 to D-1.4, D-2.2, D-3.1 to D-3.3, E-4.1, I-4.2. In practice: E-4.1, E-4.3, E-4.2, F-2.1, F-4.1, F-4.3, G-1.1 (schedule in a migration), G-1.3, H-1.1 to H-1.3, H-2.1, H-2.3, H-3.1, H-3.3, H-4.1 to H-4.3, I-1.x, I-2.x | Retention, deletion, upload hardening, an admin view of failed emails, legal pages, alerting, a runbook, and accessibility. Most wait on D3, D4, D10 and D13. |
 | 3: public launch (M3) | G-2.2, G-3.x, I-5.x, J-1.2, J-2.x, J-3.x | Bounces, CRM, voice reliability, domain, analytics and the launch checklist. G-3.x waits for D6. |
 
 **Critical path to a credible demo:** `C-1.3 → C-2.1 → C-3.1 → D-1.5` (A-2.2, the first step, is done), with the end-to-end test (I-4.3, built) kept passing as each lands. D2 and D15 must close before C-1.3 and C-3.1 start.
@@ -1000,7 +993,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Criterion | Status |
 |---|---|
-| All M1 stories are done. | **Not met.** 17 of 54 are DONE or SUPERSEDED. |
+| All M1 stories are done. | **Not met.** 22 of 54 are DONE or SUPERSEDED. |
 | A test prospect completes text intake, review, certification, submission, and PDF download with real data. | **Shown in CI against stand-ins, not live.** The end-to-end test (I-4.3) completes text intake, review, certification, submission and PDF download in a browser with a scripted AI model and a Supabase stand-in. It is not shown on a deployed environment, with a real model or real Supabase, or with document upload. |
 | No "Meridian" text appears in the live path. | **Mostly met.** The live Manuscript never renders the sample (tested). 'Meridian Creative Group' remains in `chamberTypes.ts` and an `AuthPage` placeholder (D-1.5). |
 | Two sessions cannot access each other's data (automated test). | **Met at the database level.** The SQL matrix covers cross-user reads and writes and runs in CI (not run in this refresh). There is no HTTP-level test. |
@@ -1012,7 +1005,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 |---|---|
 | All M2 stories are done. | **Not met.** 13 of 39 are DONE or SUPERSEDED. |
 | Advisors can review, manage status, and see notifications. | **Largely met in code:** queue, detail, field review, notes, status history, versioned Manuscripts, alert emails. Email needs secrets, a verified sender and the schedule. |
-| Retention and deletion run on schedule. | **Not met.** Nothing exists (H-1.2, H-1.3, E-4.2, A-1.5). |
+| Retention and deletion run on schedule. | **Partly met.** Uncertified drafts expire hourly through pg_cron (A-1.5). Nothing is purged or deleted on a schedule yet (H-1.2, H-1.3, E-4.2). |
 | Privacy policy and terms are approved by LEGAL. | **Not met.** No pages exist (H-2.1). |
 | Authorization, upload, and isolation tests pass in CI. | **Authorization and isolation met** in the SQL tests. **Upload not met:** server-side limits, cross-user download and signed-URL expiry are untested (E-4.1, H-3.1, H-3.3). |
 | Runbook, alerts, and backup drill are complete. | **Not met.** A log-line table exists for the outbox only (H-4.1 to H-4.3). |
@@ -1038,15 +1031,15 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | F-0.4 | Type-check and import-check edge functions in CI | S | Highest | M1 | DONE |
 | A-1.1 | Intake session data model | M | Highest | M1 | SUPERSEDED |
 | A-1.2 | Create a guest session and issue a continuation token | M | Highest | M1 | SUPERSEDED |
-| A-1.3 | Restore a session after refresh, with a recovery screen | M | Highest | M1 | PARTIAL |
-| A-1.4 | Autosave with visible status and local backup | M | Highest | M1 | PARTIAL |
-| A-1.5 | Expiry, archive, and revocation | M | High | M1 | NOT STARTED |
+| A-1.3 | Restore a session after refresh, with a recovery screen | M | Highest | M1 | DONE |
+| A-1.4 | Autosave with visible status and local backup | M | Highest | M1 | DONE |
+| A-1.5 | Expiry, archive, and revocation | M | High | M1 | DONE |
 | A-1.6 | Retire the legacy `chamber_sessions` path | S | High | M1 | SUPERSEDED |
-| A-2.1 | Canonical intake schema v1 | M | Highest | M1 | PARTIAL |
+| A-2.1 | Canonical intake schema v1 | M | Highest | M1 | DONE |
 | A-2.2 | Server-side validation and versioned writes | M | Highest | M1 | DONE |
 | A-2.3 | Hydrate the Chamber workspace from saved data | M | Highest | M1 | DONE |
 | A-3.1 | Store transcript messages as ordered rows | S | High | M1 | SUPERSEDED |
-| A-3.2 | Restore the transcript on resume | S | High | M1 | PARTIAL |
+| A-3.2 | Restore the transcript on resume | S | High | M1 | DONE |
 | B-1.1 | Extraction response contract and parser | M | Highest | M1 | PARTIAL |
 | B-1.2 | Merge policy and conflict capture | M | Highest | M1 | SUPERSEDED |
 | B-1.3 | Lenore follow-up policy and completion state | M | Highest | M1 | NOT STARTED |
@@ -1151,6 +1144,11 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 - Two stories: **F-0.4** (type-check and import-check edge functions in CI) and **C-2.4** (one consent definition, marked DRAFT everywhere).
 - Three decisions: **D14** (intake access model), **D15** (reference format), **D16** (advisor visibility), and a status on D1 to D13.
 - Milestone exit criteria with a status against each criterion (section 6).
+
+**Updated in 2.6** (after A-1.3, A-1.4, A-1.5, A-2.1 and A-3.2 landed)
+- All five are DONE, so Epic A has no open story: a way back from another browser by emailed code, a local backup of unsaved answers, draft expiry with archive and admin revocation, intake schema v1 as a JSON Schema checked on the way in, and a transcript that restores once, at its latest message. Each story's Notes list what it leaves out (no way back for a guest who never verified an email, no backup before the intake row exists, no purge on expiry, the D2 schema items, no `system` sender).
+- D1 and D4 record what is now in code. Section 1.3 loses the 'no local backup' and 'cannot sign back in' defects; sections 1.5, 5 and 6 follow. The M2 retention criterion is partly met.
+- Also fixed on the branch: `AdvisorSubmissionPage.tsx` had lost its email-problem imports in a merge (`409e3f5`), so the page threw as it loaded and its test failed on `main`.
 
 **Updated in 2.5** (after A-2.2 landed)
 - A-2.2 is DONE: the database validates `chamber_data` and versions every save, and the client sends its last-seen version and handles a conflict. Its Notes list what is not covered (the phone rule lives on `profiles.phone`, unknown keys are refused, two real connections were checked by hand, the keepalive limit).

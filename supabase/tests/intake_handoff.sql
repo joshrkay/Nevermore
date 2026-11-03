@@ -1,54 +1,53 @@
--- Run against a scratch Postgres, never one you care about (not production, not a local or dev
--- Supabase): it drops and recreates the `public` AND `auth` schemas, which deletes real users:
---   psql -v ON_ERROR_STOP=1 -f supabase/tests/intake_handoff.sql
--- Loads the real migrations chamber_sessions comes from, so the guest block, certification, validation,
--- version and updated_at triggers fire in their production order, then checks what
--- 20261103090000_chosen_peo_and_expired_intakes.sql adds:
--- * chosen_peo is saved with the intake, in the versioned write, and is not an answer: changing it on a
---   certified intake keeps the certification. Only a trimmed name of 1 to 80 characters is stored.
--- * an expired intake can be read by its owner but not changed by them (SQLSTATE EA002, row untouched),
---   whatever the change, and that refusal comes before every other one. The service role and a
---   connection with no user JWT (a scheduled job) can still change it.
-DROP SCHEMA IF EXISTS public CASCADE;
-DROP SCHEMA IF EXISTS auth CASCADE;
-CREATE SCHEMA public;
-CREATE SCHEMA auth;
-DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-GRANT USAGE ON SCHEMA public, auth TO anon, authenticated, service_role;
--- Supabase grants table access to these roles by default and relies on row security.
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
-
-CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS
-  $$ SELECT nullif(current_setting('request.jwt.claims', true), '')::jsonb $$;
-CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
-  $$ SELECT (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;
-CREATE TABLE auth.users (id uuid PRIMARY KEY, raw_user_meta_data jsonb);
-
+-- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
+-- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
+--   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh intake_handoff
+-- The chosen PEO (20261103100000_chosen_peo.sql): it is saved with the intake in the versioned write, it is
+-- not an answer (changing it on a certified intake keeps the certification), only a trimmed name of 1 to 80
+-- characters is stored, and a closed intake refuses it like any other change. Everything a prospect does
+-- runs as `authenticated` with their JWT claims, so row security and the lifecycle guard are on.
+\set ON_ERROR_STOP 1
+\i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
+\i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql
 \i supabase/migrations/20260324031329_0de2017b-f5c3-4631-b280-4cfa150f3c76.sql
 \i supabase/migrations/20261020180000_signup_company_and_session_submission.sql
+\i supabase/migrations/20261020190000_ai_rate_limit.sql
 \i supabase/migrations/20261020200000_block_guest_submission.sql
 \i supabase/migrations/20261020210000_certification_events.sql
+\i supabase/migrations/20261020220000_guest_abuse_limits.sql
 \i supabase/migrations/20261021090000_chamber_field_provenance.sql
+\i supabase/migrations/20261021100000_session_documents.sql
+\i supabase/migrations/20261022090000_advisor_operations.sql
+\i supabase/migrations/20261023090000_document_categories_and_storage_access.sql
+\i supabase/migrations/20261024090000_document_processing_started.sql
+\i supabase/migrations/20261024100000_advisor_queue.sql
+\i supabase/migrations/20261025090000_submission_outbox.sql
+\i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
+\i supabase/migrations/20261027090000_outbox_operations.sql
+\i supabase/migrations/20261027100000_outbox_schedule.sql
+\i supabase/migrations/20261028090000_email_delivery_events.sql
+\i supabase/migrations/20261029090000_document_ingestion.sql
+\i supabase/migrations/20261029091000_census_advisor_review.sql
 \i supabase/migrations/20261029092000_census_in_intake_validation.sql
-\i supabase/migrations/20261103090000_chosen_peo_and_expired_intakes.sql
+\i supabase/migrations/20261103090000_intake_lifecycle.sql
+\i supabase/migrations/20261103091000_intake_schema_version.sql
+\i supabase/migrations/20261103100000_chosen_peo.sql
+SET client_min_messages = notice;
 
 -- ---------- helpers ----------
--- The signed-in user, as PostgREST presents them: JWT claims with role `authenticated`.
-CREATE FUNCTION pg_temp.as_user(uid uuid, guest boolean DEFAULT false) RETURNS void LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.as_user(uid uuid) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM set_config('request.jwt.claims',
-    jsonb_build_object('sub', uid, 'is_anonymous', guest, 'role', 'authenticated')::text, false);
+    jsonb_build_object('sub', uid, 'is_anonymous', false, 'role', 'authenticated', 'email', uid || '@example.test')::text, false);
 END $$;
 
--- No user JWT at all: a migration, or a scheduled job such as the retention job will be.
-CREATE FUNCTION pg_temp.as_job() RETURNS void LANGUAGE plpgsql AS $$
+CREATE FUNCTION pg_temp.new_user() RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE uid uuid := gen_random_uuid();
 BEGIN
-  PERFORM set_config('request.jwt.claims', '', false);
+  INSERT INTO auth.users (id, aud, role, email, is_anonymous, created_at, updated_at)
+  VALUES (uid, 'authenticated', 'authenticated', uid || '@example.test', false, now(), now());
+  RETURN uid;
 END $$;
 
 CREATE FUNCTION pg_temp.snap(sid uuid) RETURNS jsonb LANGUAGE sql AS
@@ -91,7 +90,7 @@ $$;
 -- ---------- the chosen PEO ----------
 DO $$
 DECLARE
-  uid uuid := gen_random_uuid();
+  uid uuid := pg_temp.new_user();
   sid uuid;
   data jsonb := '{"company_name":"Acme"}';
   v integer;
@@ -115,7 +114,6 @@ BEGIN
   IF row_.chosen_peo <> 'Justworks' OR row_.data_version <> v + 1 THEN
     RAISE EXCEPTION 'FAIL: chosen PEO save left % at version %', row_.chosen_peo, row_.data_version;
   END IF;
-  v := row_.data_version;
 
   -- A name of exactly 80 characters is kept, and clearing the choice is allowed.
   UPDATE public.chamber_sessions SET chosen_peo = longest WHERE id = sid;
@@ -138,97 +136,42 @@ BEGIN
   IF row_.status <> 'submitted' OR row_.chosen_peo <> 'TriNet' OR row_.certified_peo <> 'Justworks' THEN
     RAISE EXCEPTION 'FAIL: choosing another PEO left status %, chosen %, certified %', row_.status, row_.chosen_peo, row_.certified_peo;
   END IF;
+  IF (SELECT count(*) FROM public.chamber_certifications WHERE session_id = sid AND superseded_at IS NULL) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: choosing another PEO withdrew or added a certification';
+  END IF;
   RESET ROLE;
   RAISE NOTICE 'intake_handoff: chosen PEO cases passed';
 END $$;
 
--- ---------- an expired intake ----------
+-- ---------- a closed intake keeps its choice ----------
 DO $$
 DECLARE
-  uid uuid := gen_random_uuid();
+  uid uuid := pg_temp.new_user();
   sid uuid;
-  data jsonb := '{"company_name":"Gone Co"}';
-  v integer;
-  row_ record;
+  n bigint;
 BEGIN
   PERFORM pg_temp.as_user(uid);
   SET LOCAL ROLE authenticated;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data, chosen_peo) VALUES (uid, data, 'Insperity') RETURNING id INTO sid;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data, chosen_peo) VALUES (uid, '{"company_name":"Gone Co"}', 'Insperity') RETURNING id INTO sid;
   RESET ROLE;
 
-  -- The retention job runs with no user JWT. Expiring the intake moves its version on, like any update.
-  PERFORM pg_temp.as_job();
-  SELECT data_version INTO v FROM public.chamber_sessions WHERE id = sid;
+  -- Expired as the expiry job leaves it (a privileged write).
   UPDATE public.chamber_sessions SET status = 'expired' WHERE id = sid;
-  IF (SELECT data_version FROM public.chamber_sessions WHERE id = sid) <> v + 1 THEN RAISE EXCEPTION 'FAIL: expiring did not move the version'; END IF;
-  v := v + 1;
 
   PERFORM pg_temp.as_user(uid);
   SET LOCAL ROLE authenticated;
-
-  -- The owner can still read it, so the app can say that it expired.
-  SELECT status, chosen_peo INTO row_ FROM public.chamber_sessions WHERE id = sid;
-  IF row_.status IS DISTINCT FROM 'expired' THEN RAISE EXCEPTION 'FAIL: the owner cannot see their expired intake (status %)', row_.status; END IF;
-
-  -- Nothing the owner sends changes it, and expiry is the reason given, ahead of every other refusal.
-  PERFORM pg_temp.must_raise(sid, format('UPDATE public.chamber_sessions SET chamber_data = %L WHERE id = %L AND data_version = %s',
-    '{"company_name":"Back again"}', sid, v), 'EA002', 'an autosave');
-  PERFORM pg_temp.must_raise(sid, format('UPDATE public.chamber_sessions SET transcript = %L WHERE id = %L', '[{"sender":"user","text":"hi"}]', sid),
-    'EA002', 'a transcript-only save');
-  PERFORM pg_temp.must_raise(sid, format('UPDATE public.chamber_sessions SET chosen_peo = %L WHERE id = %L', 'TriNet', sid), 'EA002', 'choosing a PEO');
-  PERFORM pg_temp.must_raise(sid, format('UPDATE public.chamber_sessions SET status = %L WHERE id = %L', 'in_progress', sid), 'EA002', 'reopening it');
-  PERFORM pg_temp.must_raise(sid, format('UPDATE public.chamber_sessions SET chamber_data = %L WHERE id = %L', '{"employee_count":-1}', sid),
-    'EA002', 'an invalid answer (EA001 otherwise)');
-  PERFORM pg_temp.must_raise(sid, format('UPDATE public.chamber_sessions SET status = %L, submission = %L WHERE id = %L',
-    'submitted', pg_temp.certification(data, 'Insperity'), sid), 'EA002', 'certifying it');
-  PERFORM pg_temp.must_raise(sid, format('UPDATE public.chamber_sessions SET status = %L, submission = %L WHERE id = %L',
-    'submitted', '{}', sid), 'EA002', 'an incomplete certification (23514 otherwise)');
-
-  -- A save from before it expired names the old version: it matches nothing, so the app reads the row back.
-  IF pg_temp.rows_changed(format('UPDATE public.chamber_sessions SET chamber_data = %L WHERE id = %L AND data_version = %s',
-       '{"company_name":"Stale tab"}', sid, v - 1)) <> 0 THEN
-    RAISE EXCEPTION 'FAIL: a save at the version before expiry matched the row';
+  -- Row security matches no row for a write to a closed intake, and the lifecycle guard refuses one that gets
+  -- through (EA002). Either way the choice is unchanged.
+  BEGIN
+    n := pg_temp.rows_changed(format('UPDATE public.chamber_sessions SET chosen_peo = %L WHERE id = %L', 'TriNet', sid));
+    IF n <> 0 THEN RAISE EXCEPTION 'FAIL: the owner changed the PEO of an expired intake'; END IF;
+  EXCEPTION WHEN SQLSTATE 'EA002' THEN NULL;
+  END;
+  IF (SELECT chosen_peo FROM public.chamber_sessions WHERE id = sid) IS DISTINCT FROM 'Insperity' THEN
+    RAISE EXCEPTION 'FAIL: an expired intake''s chosen PEO changed';
   END IF;
   RESET ROLE;
-
-  -- A guest owner is refused as expired too, not as a guest certifying.
-  PERFORM pg_temp.as_user(uid, true);
-  SET LOCAL ROLE authenticated;
-  PERFORM pg_temp.must_raise(sid, format('UPDATE public.chamber_sessions SET status = %L, submission = %L WHERE id = %L',
-    'submitted', pg_temp.certification(data, 'Insperity'), sid), 'EA002', 'a guest certifying it (42501 otherwise)');
-  RESET ROLE;
-
-  -- The service role, and a job with no user JWT, can still change it. (The guard reads the JWT's role;
-  -- the service role also bypasses row security in Supabase, which this scratch database doesn't set up.)
-  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', false);
-  UPDATE public.chamber_sessions SET transcript = '[]' WHERE id = sid;
-  PERFORM pg_temp.as_job();
-  UPDATE public.chamber_sessions SET chosen_peo = NULL WHERE id = sid;
-  SELECT status, chosen_peo, data_version INTO row_ FROM public.chamber_sessions WHERE id = sid;
-  IF row_.status <> 'expired' OR row_.chosen_peo IS NOT NULL OR row_.data_version <> v + 2 THEN
-    RAISE EXCEPTION 'FAIL: privileged updates left status %, chosen %, version %', row_.status, row_.chosen_peo, row_.data_version;
-  END IF;
-  RAISE NOTICE 'intake_handoff: expired intake cases passed';
-END $$;
-
--- ---------- other intakes are untouched ----------
-DO $$
-DECLARE
-  uid uuid := gen_random_uuid();
-  live uuid;
-BEGIN
-  PERFORM pg_temp.as_user(uid);
-  SET LOCAL ROLE authenticated;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, '{"company_name":"Live Co"}') RETURNING id INTO live;
-  -- An intake that has not expired takes every kind of save, and an invalid answer is still EA001.
-  UPDATE public.chamber_sessions SET chamber_data = '{"company_name":"Live Co Inc"}', chosen_peo = 'Rippling' WHERE id = live;
-  PERFORM pg_temp.must_raise(live, format('UPDATE public.chamber_sessions SET chamber_data = %L WHERE id = %L', '{"employee_count":-1}', live),
-    'EA001', 'an invalid answer on a live intake');
-  IF (SELECT chamber_data ->> 'company_name' FROM public.chamber_sessions WHERE id = live) <> 'Live Co Inc' THEN
-    RAISE EXCEPTION 'FAIL: a live intake did not save';
-  END IF;
-  RESET ROLE;
-  RAISE NOTICE 'intake_handoff: live intake cases passed';
+  RAISE NOTICE 'intake_handoff: closed intake cases passed';
 END $$;
 
 DO $$ BEGIN RAISE NOTICE 'intake_handoff: all cases passed'; END $$;

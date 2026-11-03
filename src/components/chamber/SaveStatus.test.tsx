@@ -63,11 +63,10 @@ describe("SaveStatus", () => {
     expect(onStartNew).toHaveBeenCalledTimes(1);
   });
 
-  it("says the intake has expired, and offers a new one rather than a retry", () => {
+  it("says the intake expired and offers a new one, keeping what's on screen", () => {
     const onStartNew = vi.fn();
     render(<SaveStatus status="expired" onRetry={() => {}} onStartNew={onStartNew} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("Not saved: this intake has expired and can no longer be changed.");
-    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Not saved: this intake has expired.");
     fireEvent.click(screen.getByRole("button", { name: "Start a new intake" }));
     expect(onStartNew).toHaveBeenCalledTimes(1);
   });

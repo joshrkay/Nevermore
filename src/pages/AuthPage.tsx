@@ -13,9 +13,10 @@ const AuthPage = () => {
   const [password, setPassword] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [loading, setLoading] = useState(false);
-  // The address a confirmation link went to: after sign-up, or after a sign-in refused until it's confirmed.
+  // The address a confirmation email went to: after sign-up, or after a sign-in refused until it's
+  // confirmed (`unconfirmed`), so the code from that email can be entered either way.
   const [linkSentTo, setLinkSentTo] = useState<string | null>(null);
-  const [unconfirmed, setUnconfirmed] = useState<string | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const [resending, setResending] = useState(false);
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
   const [code, setCode] = useState("");
@@ -44,7 +45,7 @@ const AuthPage = () => {
     setLoading(true);
 
     setAlreadyRegistered(false);
-    setUnconfirmed(null);
+    setUnconfirmed(false);
     const address = email.trim();
 
     if (isSignUp) {
@@ -63,7 +64,8 @@ const AuthPage = () => {
       if (!error) {
         navigate(from, { replace: true });
       } else if ((error as { code?: string }).code === "email_not_confirmed" || /email not confirmed/i.test(error.message)) {
-        setUnconfirmed(address);
+        setUnconfirmed(true);
+        setLinkSentTo(address);
       } else {
         toast.error(error.message);
       }
@@ -88,7 +90,7 @@ const AuthPage = () => {
     setCodeError(null);
     const { error } = await verifySignupCode(linkSentTo, code.trim());
     setVerifying(false);
-    if (error) setCodeError("That code didn't work. Check it, or send a new email and use the newest code.");
+    if (error) setCodeError("That code didn't work. Check it, or send a new email and use the newest one.");
     else navigate(from, { replace: true });
   };
 
@@ -135,31 +137,21 @@ const AuthPage = () => {
             </p>
           )}
 
-          {unconfirmed && (
-            <div role="status" className="text-sm text-center bg-muted border border-border rounded-lg px-4 py-3 mb-6 space-y-2">
-              <p>Confirm your email first: open the link we sent to {unconfirmed}.</p>
-              <button
-                type="button"
-                onClick={() => resend(unconfirmed)}
-                disabled={resending}
-                className="text-primary hover:text-primary/80 transition-colors disabled:opacity-50"
-              >
-                {resending ? "Sending…" : "Send a new email"}
-              </button>
-            </div>
-          )}
-
           {linkSentTo ? (
             <div className="space-y-4 text-center">
               <p role="status" className="text-sm">
-                We sent a confirmation email to <span className="font-medium">{linkSentTo}</span>. Enter the
-                6-digit code from it, or open its link.
+                {unconfirmed && "Confirm your email first. "}
+                We sent a confirmation email to <span className="font-medium">{linkSentTo}</span>
+                {unconfirmed && " when you signed up"}. Open the link in it, or enter its 6-digit code here
+                if it has one.
               </p>
               <form onSubmit={verifyCode} className="space-y-3 text-left">
                 <label htmlFor="signup-code" className="block text-xs text-muted-foreground">6-digit code</label>
                 <div className="flex gap-2">
                   <input
                     id="signup-code"
+                    // The form that had focus is gone; put it where the next step is.
+                    autoFocus
                     inputMode="numeric"
                     autoComplete="one-time-code"
                     maxLength={6}
@@ -192,6 +184,7 @@ const AuthPage = () => {
                 type="button"
                 onClick={() => {
                   setLinkSentTo(null);
+                  setUnconfirmed(false);
                   setCode("");
                   setCodeError(null);
                 }}
@@ -256,7 +249,7 @@ const AuthPage = () => {
                 onClick={() => {
                   setIsSignUp(!isSignUp);
                   setAlreadyRegistered(false);
-                  setUnconfirmed(null);
+                  setUnconfirmed(false);
                 }}
                 className="text-primary hover:text-primary/80 transition-colors"
               >

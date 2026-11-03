@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { EmailOtpType, User, Session } from "@supabase/supabase-js";
+import { clearAllBackups } from "@/data/intakeBackup";
 import { authCallbackUrl } from "@/lib/authRedirect";
 
 /** Why a signed-in session is gone: the person signed out, or it ended on its own (expiry, another tab). */
@@ -19,6 +20,14 @@ interface AuthContextType {
   /** Confirms the emailed code, turning the guest into a verified account in place. */
   verifyEmailCode: (email: string, code: string) => Promise<{ error: Error | null }>;
   /**
+   * Emails a sign-in code to an existing account (never creates one), so someone can get back to their
+   * intake from another browser or after this one's data was cleared. `noAccount` means there is no
+   * account for that address; say the same thing either way, so the form doesn't reveal who has one.
+   */
+  requestSignInCode: (email: string) => Promise<{ error: Error | null; noAccount: boolean }>;
+  /** Signs in with the emailed code. The browser's current (guest) sign-in is replaced. */
+  verifySignInCode: (email: string, code: string) => Promise<{ error: Error | null }>;
+  /**
    * Creates an account and emails a confirmation link that comes back to /auth/callback, then `next`.
    * `alreadyRegistered` means the address has an account: Supabase answers as if it signed up, to
    * avoid revealing who has one, but sends no confirmation link.
@@ -28,8 +37,8 @@ interface AuthContextType {
   resendConfirmation: (email: string, next?: string) => Promise<{ error: Error | null }>;
   /** Confirms a sign-up with the 6-digit code from its email, signing the person in. */
   verifySignupCode: (email: string, code: string) => Promise<{ error: Error | null }>;
-  /** Verifies the token from an email link that points at this app (`?token_hash=…&type=…`), signing the person in. */
-  confirmEmailToken: (tokenHash: string, type: EmailOtpType) => Promise<{ error: Error | null }>;
+  /** Verifies the token from an email link that points at this app (`#token_hash=…&type=…`), signing the person in as `email`. */
+  confirmEmailToken: (tokenHash: string, type: EmailOtpType) => Promise<{ error: Error | null; email: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   /** Why the last signed-in session ended; null while signed in, and until someone has signed in. */
   sessionEnded: SessionEnded | null;
@@ -107,8 +116,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const confirmEmailToken = async (tokenHash: string, type: EmailOtpType) => {
-    const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
-    return { error: error as Error | null };
+    const { data, error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
+    return { error: error as Error | null, email: data?.user?.email ?? null };
   };
 
   const signIn = async (email: string, password: string) => {
@@ -135,15 +144,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return { error: error as Error | null };
   };
 
+  const requestSignInCode = async (email: string) => {
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+    const code = (error as { code?: string } | null)?.code;
+    const noAccount = code === "otp_disabled" || code === "user_not_found" || /signups? not allowed/i.test(error?.message ?? "");
+    return { error: noAccount ? null : (error as Error | null), noAccount };
+  };
+
+  const verifySignInCode = async (email: string, code: string) => {
+    const { error } = await supabase.auth.verifyOtp({ email, token: code, type: "email" });
+    return { error: error as Error | null };
+  };
+
   const signOut = async (reason: SessionEnded = "signed_out") => {
     requestedEnd.current = reason;
+    // Unsaved answers kept in this browser go with the person who chose to leave it.
+    if (reason === "signed_out") clearAllBackups();
     await supabase.auth.signOut();
   };
 
   return (
     <AuthContext.Provider value={{
         user, session, loading, isAnonymous: user?.is_anonymous === true, sessionEnded,
-        signInAnonymously, requestEmailCode, verifyEmailCode, signUp, resendConfirmation, verifySignupCode, confirmEmailToken, signIn, signOut,
+        signInAnonymously, requestEmailCode, verifyEmailCode, requestSignInCode, verifySignInCode, signUp, resendConfirmation, verifySignupCode, confirmEmailToken, signIn, signOut,
       }}>
       {children}
     </AuthContext.Provider>
