@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -36,20 +36,26 @@ function failureMessage(code: string): string {
   return "We couldn't confirm your email with this link. Sign in, or send yourself a new link.";
 }
 
-const Card = ({ title, children }: { title: string; children: ReactNode }) => (
-  <div className="min-h-screen bg-background flex items-center justify-center px-6 noise-overlay">
-    <div className="w-full max-w-md relative z-10">
-      <Link to="/" className="flex items-center justify-center gap-2 mb-10">
-        <RavenIcon className="w-8 h-8 text-primary" />
-        <span className="font-display text-lg">Edgar Allan Advisory</span>
-      </Link>
-      <div className="bg-card border border-border rounded-xl p-8 space-y-5">
-        <h1 className="font-display text-2xl font-bold text-center">{title}</h1>
-        {children}
+const Card = ({ title, children }: { title: string; children: ReactNode }) => {
+  // Each outcome replaces the last in the same place, sometimes under the button that had focus:
+  // move focus to the new heading so it is announced and focus isn't left on nothing.
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => heading.current?.focus(), [title]);
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center px-6 noise-overlay">
+      <div className="w-full max-w-md relative z-10">
+        <Link to="/" className="flex items-center justify-center gap-2 mb-10">
+          <RavenIcon className="w-8 h-8 text-primary" />
+          <span className="font-display text-lg">Edgar Allan Advisory</span>
+        </Link>
+        <div className="bg-card border border-border rounded-xl p-8 space-y-5">
+          <h1 ref={heading} tabIndex={-1} className="font-display text-2xl font-bold text-center outline-none">{title}</h1>
+          {children}
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 /** Sends a new confirmation link to an address the person types. */
 const ResendForm = ({ next }: { next: string }) => {

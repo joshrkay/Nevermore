@@ -193,6 +193,16 @@ describe("AuthCallbackPage", () => {
       expect(await screen.findByRole("heading", { name: "This link didn't work" })).toBeInTheDocument();
     });
 
+    it("moves focus to the failure's heading, since the button that had it is gone", async () => {
+      auth.confirmEmailToken.mockResolvedValue({ error: Object.assign(new Error("refused"), { code: "otp_expired", status: 403 }), email: null });
+      open(token);
+      const button = screen.getByRole("button", { name: "Confirm my email" });
+      button.focus();
+      fireEvent.click(button);
+      const heading = await screen.findByRole("heading", { name: "This link didn't work" });
+      expect(document.activeElement).toBe(heading);
+    });
+
     it("explains a token that no longer works", async () => {
       auth.confirmEmailToken.mockResolvedValue({ error: Object.assign(new Error("Token has expired or is invalid"), { code: "otp_expired", status: 403 }), email: null });
       open(token);
