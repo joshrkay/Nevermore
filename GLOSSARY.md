@@ -1,52 +1,167 @@
 # Edgar Allan Advisory
 
-PEO underwriting intake: a prospect describes their company to Lenore, certifies the answers, and the
-advisory team takes the submission from there.
+PEO underwriting intake. A prospect talks to Lenore in The Chamber, reviews and certifies their answers, and receives a PEO-neutral underwriting packet (The Manuscript). Advisors work the packets that come in.
 
 ## Language
 
-### Intake and submission
+### People
+
+**Prospect**:
+The employer, or the person acting for it, who gives the answers and certifies them.
+_Avoid_: user, customer, client, guest (a guest is only a prospect who hasn't verified an email yet)
+
+**Advisor**:
+A member of the advisory team who reviews certified intakes and works them through the pipeline.
+_Avoid_: agent, broker, reviewer
+
+**Lenore**:
+The AI intake guide the prospect talks to, by text or by voice. One persona, whichever mode is used.
+_Avoid_: the bot, the agent, the assistant, the model
+
+### The intake
 
 **Intake**:
-One company's answers, gathered in The Chamber, from the first message to the latest certification.
-_Avoid_: session, application
+One prospect's whole set of answers for one company, from first message to certification.
+_Avoid_: session, intake session, Chamber session, file, application
+
+**The Chamber**:
+The space where the prospect talks to Lenore and sees their answers fill in.
+_Avoid_: the app, the workspace (the workspace is the tabs inside The Chamber)
+
+**Field**:
+One underwriting question the intake can hold an answer to, such as company legal name, pay frequency or the census.
+_Avoid_: attribute, property, key
+
+**Census**:
+The list of the prospect's employees, one row per person, with the facts underwriting needs about each.
+_Avoid_: roster, employee list, employees
+
+**Employee**:
+One person in the census.
+_Avoid_: census row, worker, member
+
+**Dependent**:
+A spouse, domestic partner, child or other person covered through an employee in the census.
+
+**Required field**:
+A field an intake needs before it is ready to certify: company legal name, states of operation, pay frequency and the census.
+_Avoid_: core item, required for submission, mandatory field
+
+**Recommended field**:
+A field that is not required but strengthens the Manuscript. Each has a rank, and Lenore asks about them in rank order after the required fields.
+_Avoid_: optional field, nice-to-have, priority field
+
+**Ready to certify**:
+An intake is ready to certify when every required field is settled. Lenore says so once and keeps going with recommended fields; the prospect can certify before or after.
+_Avoid_: ready for review, complete, done, discovery complete
+
+**Open item**:
+Something the prospect still owes on a field: a required field with no answer, or any field that is inferred, incomplete, conflicting or unknown. A recommended field with no answer is not an open item.
+_Avoid_: gap, missing item, to-do, issue
+
+**Eligibility check**:
+A test of the intake's answers against what a PEO accepts, such as minimum headcount or industry exclusions. It passes, fails, or can't be told yet. It is not an open item.
+_Avoid_: requirement, open item
+
+**Advisor follow-up**:
+A field an advisor has marked as needing more from the prospect. It belongs to the advisor's review, not to the prospect's open items.
+_Avoid_: open item, flag
+
+### Certifying and what it produces
 
 **Certification**:
-A prospect's signed statement, made in The Reckoning, that an Intake's answers are accurate. An Intake
-is certified again whenever its answers change.
-_Avoid_: signing, sign-off
+The prospect's signed statement that the intake's answers are true, made in The Reckoning. Changing an answer afterwards withdraws it.
+_Avoid_: submit, sign-off, attestation
 
 **Submission**:
-An Intake that has been certified at least once. Certifying changed answers updates the same
-Submission rather than creating another. Every Submission is one the advisory team works; there is no
-separate qualifying step.
-_Avoid_: lead, submission record, qualified submission
+The answers and their field statuses exactly as they stood at certification, frozen.
+_Avoid_: snapshot, packet, application
 
-**File ID**:
-The identifier of one Intake, shown in the app, on the signed Manuscript and in every email about it.
-It is set when the Intake starts and never changes.
-_Avoid_: reference, submission reference, submission ID
+**The Manuscript**:
+The underwriting document rendered from a submission, for the prospect to send to PEOs. Advisors can render further versions of it.
+_Avoid_: packet, report, PDF, proposal
 
-### Communications
+**Reference**:
+The identifier a submission carries, such as EAA-2026-0042.
+_Avoid_: File ID, file number, case number
 
-**Advisor Alert**:
-The email telling the advisory team that a Submission arrived or was updated.
-_Avoid_: internal notification, new-submission notification
+**The Reckoning**:
+The last step in The Chamber, where the prospect certifies.
+_Avoid_: checkout, submit page
 
-**Confirmation**:
-The transactional email a prospect receives after each Certification, saying what was received and
-what happens next. It is a receipt, not marketing, so it needs no opt-in.
-_Avoid_: receipt, acknowledgement
+### Where an answer came from
 
-### Advisors
+**Extraction**:
+The answers Lenore takes from one thing the prospect said, typed or spoken.
+_Avoid_: parse, capture
 
-**Advisor Console**:
-The advisory team's operating workflow: every Submission with its pipeline status, notes and history.
-The team works Submissions here, not in a separate CRM.
-_Avoid_: CRM, admin queue
+**Document candidate**:
+An answer read from an uploaded document. It waits for the prospect to apply it, keep their own answer, or choose between the two.
+_Avoid_: suggestion, extracted value
+
+**Field source**:
+Where a field's current answer came from: something the prospect said (with the message it came from), an uploaded document (with where in it), or the prospect's own action in the workspace.
+_Avoid_: origin, provenance (provenance is the source and the field status together)
+
+**Evidence quote**:
+The prospect's own words that an extracted answer rests on, kept short.
+
+### Field status
+
+Every captured field has exactly one field status.
+
+**Confirmed**:
+The prospect typed the answer explicitly, or entered, applied or confirmed it in the workspace. A spoken answer is not confirmed until the prospect confirms it or types it.
+
+**Inferred**:
+Lenore derived or assumed the answer from what the prospect said, or heard it spoken, and the prospect hasn't confirmed it.
+_Avoid_: guessed, low confidence
+
+**Incomplete**:
+Only part of the answer has been given.
+_Avoid_: partial, missing (missing means no answer at all)
+
+**Conflicting**:
+Two sources give different answers and the prospect hasn't chosen between them. The first answer is kept until they do.
+_Avoid_: contradictory, disputed
+
+**Unknown**:
+The prospect said they don't know the answer yet. Lenore stops asking; the prospect still owes it.
+_Avoid_: missing, blank, TBD
+
+**Not applicable**:
+The prospect said the field doesn't apply to them. Only the prospect can mark it.
+_Avoid_: N/A as a value, none, skipped
+
+**Settled**:
+A field is settled when it holds an answer that is not conflicting or incomplete, or is marked unknown or not applicable. Lenore asks again only about fields that are not settled.
+
+### Other kinds of status
+
+Always say which kind; never a bare "status".
+
+**Intake status**:
+Where the intake stands for the prospect: in progress, submitted (certified), expired, archived (left with Start over) or revoked (closed by an admin).
+_Avoid_: status, state, session status
+
+**Pipeline stage**:
+Where an intake stands in the advisors' work, from draft through submitted, under review, information requested, sent to carrier and quoted, to won, lost or archived.
+_Avoid_: status, intake status, workflow status
+
+**Review state**:
+An advisor's verdict on one field: verified, incomplete or needs follow-up. Separate from the field status the prospect sees.
+_Avoid_: field status, status, advisor status
+
+**Document status**:
+How far reading an uploaded document has got, from uploaded through read to unreadable or failed.
+_Avoid_: status, extraction status
 
 ## Relationships
 
-- An **Intake** has one **File ID** and any number of **Certifications**; its first **Certification** makes it a **Submission**.
-- Each **Certification** of new answers produces one **Advisor Alert** and one **Confirmation**; certifying the same answers again produces neither.
-- Every **Submission** appears in the **Advisor Console**.
+- An **Intake** holds one answer per **Field**, a **Census**, and for every captured field one **Field status** and one **Field source**
+- An **Employee** in the **Census** has zero or more **Dependents**
+- An **Extraction** comes from one prospect message and proposes answers for several **Fields**
+- A **Document candidate** comes from one uploaded document and changes nothing until the **Prospect** applies it
+- A **Prospect**'s own action always beats an **Extraction** or a **Document candidate** for the same field
+- A **Certification** produces one **Submission**, which carries one **Reference**; **The Manuscript** is rendered from a **Submission**
+- An **Intake** can be certified more than once; each **Certification** produces a new **Submission**

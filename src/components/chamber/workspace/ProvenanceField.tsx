@@ -18,7 +18,12 @@ const BADGES: Record<FieldProvenance["status"], { text: string; color: string }>
   inferred: { text: "Lenore inferred this", color: "border border-warning/50 text-warning" },
   incomplete: { text: "Incomplete", color: "bg-warning/15 text-warning" },
   conflicting: { text: "Conflicting answers", color: "bg-destructive/15 text-destructive" },
+  unknown: { text: "Not known yet", color: "border border-warning/50 text-warning" },
+  not_applicable: { text: "Doesn't apply", color: "bg-muted text-muted-foreground" },
 };
+
+// Statuses that close or park a field without an answer.
+const NO_ANSWER_STATUSES: ReadonlySet<FieldProvenance["status"]> = new Set(["unknown", "not_applicable"]);
 
 // Prospect-facing wording; the Manuscript uses describeSource() for advisors.
 function sourceLine(source: FieldSource): string {
@@ -123,8 +128,9 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
             <input
               aria-label={label}
               aria-invalid={invalid}
-              type={kind === "number" ? "number" : "text"}
-              min={kind === "number" ? 0 : undefined}
+              type={kind === "number" || kind === "decimal" ? "number" : "text"}
+              min={kind === "number" || kind === "decimal" ? 0 : undefined}
+              step={kind === "decimal" ? "0.01" : undefined}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder={kind === "list" ? "Comma-separated" : undefined}
@@ -143,6 +149,12 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
         <div className="flex flex-wrap items-center gap-2">
           {children ?? <p className="text-sm font-medium">{display}</p>}
           {badge && <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${badge.color}`}>{badge.text}</span>}
+        </div>
+      ) : badge && status && NO_ANSWER_STATUSES.has(status) ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${badge.color}`}>{badge.text}</span>
+          {/* A required answer is still needed to certify (src/data/readiness.ts), whatever else is known about it. */}
+          {required && <p className="text-xs text-warning">Needed before you can certify.</p>}
         </div>
       ) : required ? (
         <p className="text-xs text-warning">Not provided yet. Needed before you can certify.</p>

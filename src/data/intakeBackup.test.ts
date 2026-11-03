@@ -63,7 +63,7 @@ describe("intake backup", () => {
     ["without a time", JSON.stringify(entry())],
     ["without a transcript list", JSON.stringify({ ...entry({ transcript: "hi" }), savedAt: "2026-11-03T11:00:00Z" })],
     ["with a bad base version", JSON.stringify({ ...entry({ baseVersion: "4" }), savedAt: "2026-11-03T11:00:00Z" })],
-    ["with answers intake schema v1 refuses", JSON.stringify({ ...entry({ chamber_data: { hq_state: "California", injected: true } }), savedAt: "2026-11-03T11:00:00Z" })],
+    ["with answers the intake schema refuses", JSON.stringify({ ...entry({ chamber_data: { hq_state: "California", injected: true } }), savedAt: "2026-11-03T11:00:00Z" })],
   ])("discards a copy that is %s", (_name, stored) => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     localStorage.setItem(`${BACKUP_PREFIX}u1:s1`, stored);
