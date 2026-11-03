@@ -1,0 +1,582 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:edgar-allan-advisory:intake:chamber-data:v1",
+  "title": "Intake answers (chamber_data), version 1",
+  "description": "What a prospect's intake holds. Every key is optional; an unanswered question is null (or an empty list). Generated from supabase/functions/_shared/intakeSchema.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "company_name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "industry": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "hq_state": {
+      "title": "a US state or territory code such as CA",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "AL",
+        "AK",
+        "AZ",
+        "AR",
+        "CA",
+        "CO",
+        "CT",
+        "DE",
+        "FL",
+        "GA",
+        "HI",
+        "ID",
+        "IL",
+        "IN",
+        "IA",
+        "KS",
+        "KY",
+        "LA",
+        "ME",
+        "MD",
+        "MA",
+        "MI",
+        "MN",
+        "MS",
+        "MO",
+        "MT",
+        "NE",
+        "NV",
+        "NH",
+        "NJ",
+        "NM",
+        "NY",
+        "NC",
+        "ND",
+        "OH",
+        "OK",
+        "OR",
+        "PA",
+        "RI",
+        "SC",
+        "SD",
+        "TN",
+        "TX",
+        "UT",
+        "VT",
+        "VA",
+        "WA",
+        "WV",
+        "WI",
+        "WY",
+        "DC",
+        "AS",
+        "GU",
+        "MP",
+        "PR",
+        "VI",
+        null
+      ]
+    },
+    "states": {
+      "type": "array",
+      "maxItems": 60,
+      "items": {
+        "$ref": "#/$defs/stateCode"
+      }
+    },
+    "employee_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "start_month": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "multiple_entities": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "fein_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "virgin_medical": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "current_carrier": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "renewal_date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "rate_history": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "benefits_waiting_period": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "ancillary_benefits": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "maxLength": 1000
+      }
+    },
+    "has_401k": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "retirement_type": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "employer_contributes": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "payroll_vendor": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "pay_frequency": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "funding_days": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "has_nonexempt": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "nonexempt_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "exempt_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "pto_types": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "maxLength": 1000
+      }
+    },
+    "accrual_method": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "has_handbook": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "handbook_last_updated": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "hr_staff_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "has_1099": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ca_contractors": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "uses_physical_clocks": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "uses_mobile_app": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "uses_computer_timekeeping": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "shift_differentials": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "hris_system": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "key_challenges": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "business_goals": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "census": {
+      "type": "array",
+      "maxItems": 5000,
+      "items": {
+        "$ref": "#/$defs/censusRow"
+      }
+    }
+  },
+  "$defs": {
+    "stateCode": {
+      "title": "a US state or territory code such as CA",
+      "type": "string",
+      "enum": [
+        "AL",
+        "AK",
+        "AZ",
+        "AR",
+        "CA",
+        "CO",
+        "CT",
+        "DE",
+        "FL",
+        "GA",
+        "HI",
+        "ID",
+        "IL",
+        "IN",
+        "IA",
+        "KS",
+        "KY",
+        "LA",
+        "ME",
+        "MD",
+        "MA",
+        "MI",
+        "MN",
+        "MS",
+        "MO",
+        "MT",
+        "NE",
+        "NV",
+        "NH",
+        "NJ",
+        "NM",
+        "NY",
+        "NC",
+        "ND",
+        "OH",
+        "OK",
+        "OR",
+        "PA",
+        "RI",
+        "SC",
+        "SD",
+        "TN",
+        "TX",
+        "UT",
+        "VT",
+        "VA",
+        "WA",
+        "WV",
+        "WI",
+        "WY",
+        "DC",
+        "AS",
+        "GU",
+        "MP",
+        "PR",
+        "VI"
+      ]
+    },
+    "censusRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "first_name",
+        "last_name",
+        "work_state",
+        "compensation_type",
+        "employment_type",
+        "classification"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "[^ ]"
+        },
+        "first_name": {
+          "type": "string",
+          "maxLength": 1000,
+          "pattern": "[^ ]"
+        },
+        "last_name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "dob": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "age": {
+          "type": "integer",
+          "minimum": 14,
+          "maximum": 100
+        },
+        "work_state": {
+          "title": "blank or a US state or territory code such as CA",
+          "type": "string",
+          "enum": [
+            "",
+            "AL",
+            "AK",
+            "AZ",
+            "AR",
+            "CA",
+            "CO",
+            "CT",
+            "DE",
+            "FL",
+            "GA",
+            "HI",
+            "ID",
+            "IL",
+            "IN",
+            "IA",
+            "KS",
+            "KY",
+            "LA",
+            "ME",
+            "MD",
+            "MA",
+            "MI",
+            "MN",
+            "MS",
+            "MO",
+            "MT",
+            "NE",
+            "NV",
+            "NH",
+            "NJ",
+            "NM",
+            "NY",
+            "NC",
+            "ND",
+            "OH",
+            "OK",
+            "OR",
+            "PA",
+            "RI",
+            "SC",
+            "SD",
+            "TN",
+            "TX",
+            "UT",
+            "VT",
+            "VA",
+            "WA",
+            "WV",
+            "WI",
+            "WY",
+            "DC",
+            "AS",
+            "GU",
+            "MP",
+            "PR",
+            "VI"
+          ]
+        },
+        "zip_code": {
+          "type": "string",
+          "pattern": "^[0-9]{5}(-[0-9]{4})?$"
+        },
+        "job_title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "annual_salary": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "compensation_type": {
+          "type": "string",
+          "enum": [
+            "salary",
+            "hourly"
+          ]
+        },
+        "employment_type": {
+          "type": "string",
+          "enum": [
+            "full_time",
+            "part_time"
+          ]
+        },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "w2",
+            "1099"
+          ]
+        },
+        "coverage_tier": {
+          "type": "string",
+          "enum": [
+            "EE",
+            "EE+SP",
+            "EE+CH",
+            "FAM",
+            "WAIVE"
+          ]
+        },
+        "class_code": {
+          "type": "string",
+          "pattern": "^[0-9]{4}$"
+        },
+        "dependents": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/dependent"
+          }
+        }
+      }
+    },
+    "dependent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "first_name"
+      ],
+      "properties": {
+        "first_name": {
+          "type": "string",
+          "maxLength": 1000,
+          "pattern": "[^ ]"
+        },
+        "last_name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "dob": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "relationship": {
+          "type": "string",
+          "enum": [
+            "spouse",
+            "domestic_partner",
+            "child",
+            "other"
+          ]
+        }
+      }
+    }
+  }
+}

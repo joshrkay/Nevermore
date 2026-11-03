@@ -6,14 +6,24 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 
 const AuthPage = () => {
-  const [isSignUp, setIsSignUp] = useState(false);
+  const location = useLocation();
+  // Sent here because guest sessions aren't available: most such visitors are new, so offer an account first.
+  const [isSignUp, setIsSignUp] = useState(() => (location.state as { reason?: string } | null)?.reason === "account_needed");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [loading, setLoading] = useState(false);
-  const { user, loading: authLoading, isAnonymous, signIn, signUp } = useAuth();
+  // The address a confirmation email went to: after sign-up, or after a sign-in refused until it's
+  // confirmed (`unconfirmed`), so the code from that email can be entered either way.
+  const [linkSentTo, setLinkSentTo] = useState<string | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [alreadyRegistered, setAlreadyRegistered] = useState(false);
+  const [code, setCode] = useState("");
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const { user, loading: authLoading, isAnonymous, signIn, signUp, resendConfirmation, verifySignupCode } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
   const routeState = location.state as {
     from?: { pathname: string; search?: string };
     audience?: string;
@@ -34,22 +44,54 @@ const AuthPage = () => {
     e.preventDefault();
     setLoading(true);
 
+    setAlreadyRegistered(false);
+    setUnconfirmed(false);
+    const address = email.trim();
+
     if (isSignUp) {
-      const { error } = await signUp(email, password, companyName.trim() || undefined);
+      const { error, alreadyRegistered } = await signUp(address, password, companyName.trim() || undefined, from);
       if (error) {
         toast.error(error.message);
+      } else if (alreadyRegistered) {
+        // Supabase sends no link for an address that has an account; sign in instead.
+        setIsSignUp(false);
+        setAlreadyRegistered(true);
       } else {
-        toast.success("Check your email to confirm your account.");
+        setLinkSentTo(address);
       }
     } else {
-      const { error } = await signIn(email, password);
-      if (error) {
-        toast.error(error.message);
-      } else {
+      const { error } = await signIn(address, password);
+      if (!error) {
         navigate(from, { replace: true });
+      } else if ((error as { code?: string }).code === "email_not_confirmed" || /email not confirmed/i.test(error.message)) {
+        setUnconfirmed(true);
+        setLinkSentTo(address);
+      } else {
+        toast.error(error.message);
       }
     }
     setLoading(false);
+  };
+
+  const resend = async (address: string) => {
+    setResending(true);
+    const { error } = await resendConfirmation(address, from);
+    setResending(false);
+    if (error) toast.error(error.message);
+    else toast.success(`We sent a new email to ${address}.`);
+  };
+
+  // The code in the email confirms the account here, so it works even when the link doesn't: a link
+  // opened on another device, or one a mail scanner opened first.
+  const verifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!linkSentTo) return;
+    setVerifying(true);
+    setCodeError(null);
+    const { error } = await verifySignupCode(linkSentTo, code.trim());
+    setVerifying(false);
+    if (error) setCodeError("That code didn't work. Check it, or send a new email and use the newest one.");
+    else navigate(from, { replace: true });
   };
 
   // A guest session isn't a sign-in: let the guest sign in properly (advisor pages send guests here).
@@ -71,14 +113,16 @@ const AuthPage = () => {
 
         <div className="bg-card border border-border rounded-xl p-8">
           <h1 className="font-display text-2xl font-bold text-center mb-2">
-            {forAdvisor ? "Advisor Sign In" : isSignUp ? "Enter The Chamber" : "Welcome Back"}
+            {linkSentTo ? "Check your email" : forAdvisor ? "Advisor Sign In" : isSignUp ? "Enter The Chamber" : "Welcome Back"}
           </h1>
           <p className="text-sm text-muted-foreground text-center mb-8">
-            {forAdvisor
-              ? "Sign in with your advisor account to continue."
-              : isSignUp
-                ? "Create your account to begin underwriting."
-                : "Sign in to continue your session."}
+            {linkSentTo
+              ? "One more step to finish your account."
+              : forAdvisor
+                ? "Sign in with your advisor account to continue."
+                : isSignUp
+                  ? "Create your account to begin underwriting."
+                  : "Sign in to continue your session."}
           </p>
 
           {notice && (
@@ -87,6 +131,69 @@ const AuthPage = () => {
             </p>
           )}
 
+          {alreadyRegistered && (
+            <p role="status" className="text-sm text-center bg-muted border border-border rounded-lg px-4 py-2.5 mb-6">
+              That email already has an account. Sign in with it below.
+            </p>
+          )}
+
+          {linkSentTo ? (
+            <div className="space-y-4 text-center">
+              <p role="status" className="text-sm">
+                {unconfirmed && "Confirm your email first. "}
+                We sent a confirmation email to <span className="font-medium">{linkSentTo}</span>
+                {unconfirmed && " when you signed up"}. Open the link in it, or enter its 6-digit code here
+                if it has one.
+              </p>
+              <form onSubmit={verifyCode} className="space-y-3 text-left">
+                <label htmlFor="signup-code" className="block text-xs text-muted-foreground">6-digit code</label>
+                <div className="flex gap-2">
+                  <input
+                    id="signup-code"
+                    // The form that had focus is gone; put it where the next step is.
+                    autoFocus
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground font-mono tracking-widest outline-none focus:border-primary/50 transition-colors"
+                  />
+                  <button
+                    type="submit"
+                    disabled={verifying || code.trim().length < 6}
+                    className="text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-40"
+                  >
+                    {verifying ? "…" : "Confirm"}
+                  </button>
+                </div>
+                {codeError && <p role="alert" className="text-sm text-warning">{codeError}</p>}
+              </form>
+              <p className="text-xs text-muted-foreground">
+                Nothing after a few minutes? Check spam, or send a new email. Only the newest one works.
+              </p>
+              <button
+                type="button"
+                onClick={() => resend(linkSentTo)}
+                disabled={resending}
+                className="w-full border border-border text-foreground font-medium py-3 rounded-lg hover:border-primary/50 transition-colors disabled:opacity-50"
+              >
+                {resending ? "Sending…" : "Send a new email"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLinkSentTo(null);
+                  setUnconfirmed(false);
+                  setCode("");
+                  setCodeError(null);
+                }}
+                className="text-sm text-primary hover:text-primary/80 transition-colors"
+              >
+                Use a different email
+              </button>
+            </div>
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {isSignUp && (
               <div>
@@ -132,13 +239,18 @@ const AuthPage = () => {
               {loading ? "..." : isSignUp ? "Create Account" : "Sign In"}
             </button>
           </form>
+          )}
 
-          {!forAdvisor && (
+          {!forAdvisor && !linkSentTo && (
             <p className="text-center text-sm text-muted-foreground mt-6">
               {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
               <button
                 type="button"
-                onClick={() => setIsSignUp(!isSignUp)}
+                onClick={() => {
+                  setIsSignUp(!isSignUp);
+                  setAlreadyRegistered(false);
+                  setUnconfirmed(false);
+                }}
                 className="text-primary hover:text-primary/80 transition-colors"
               >
                 {isSignUp ? "Sign in" : "Create one"}

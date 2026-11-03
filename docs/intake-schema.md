@@ -1,6 +1,6 @@
 # Intake schema
 
-The intake lives in `chamber_sessions`. The first section covers the answers themselves (`chamber_data`), the rest their provenance (`field_provenance`).
+The intake lives in `chamber_sessions`. The first section covers the answers themselves (`chamber_data`), then their provenance (`field_provenance`), then the session's lifecycle (`status`, expiry, archiving, revocation and the browser's backup of unsaved answers).
 
 ## Intake data (`chamber_data`)
 
@@ -143,9 +143,33 @@ Paths are zero-based: `hq_state`, `states[2]`, `census[3].dob`, `census[0].depen
 
 The migration must be deployed before the front end, which selects `data_version`.
 
+`chamber_sessions.schema_version` (smallint, default 1, migration `20261103091000`) records which version of the intake schema the row's answers follow. Version 1 is the only one, so every row is version 1 and the database refuses any other value. A later version changes the check in its own migration, says how rows move, and changes `INTAKE_SCHEMA_VERSION` with it.
+
+### JSON Schema v1 and strict checks on the way in
+
+The canonical schema is `supabase/functions/_shared/intakeSchema.ts`: `chamber_data` as a JSON Schema (draft 2020-12), published as [`docs/intake-schema.v1.json`](intake-schema.v1.json). Regenerate the file with `npm run schema:intake`; `src/data/intakeSchema.test.ts` fails while the two differ.
+
+It is the stricter statement of the same rules: every value it accepts, the database accepts. `src/data/schemaSync.test.ts` holds its state codes, caps, census value lists and field kinds to the migrations, and `src/data/chamberValidation.test.ts` checks that the sanitiser's output always passes it. It is stricter than the database in three ways:
+
+- An unknown key is refused at every level, including inside a census row or a dependent. The database tolerates those, so an older client can save a newer census.
+- `employees`, the roster's old name, is not part of v1. The database still accepts it.
+- A census row must carry `id`, `first_name`, `last_name`, `work_state`, `compensation_type`, `employment_type` and `classification`, as every v1 writer gives it. The database requires only `first_name`.
+
+The validator (`validateChamberData`, `validateIntakeField`) is strict. A value is accepted as sent or refused with a reason. Nothing is trimmed, upper-cased, split or converted. Issues name the path the way the database does (`states[1]`, `census[0].dependents[0].relationship`), never the value, and stop at 50. It implements only the keywords the schema uses (`type`, `enum`, `maxLength`, `pattern`, `minimum`, `maximum`, `maxItems`, `items`, `properties`, `required`, `additionalProperties: false`, local `$ref`), and refuses a schema with any other, so a rule can't be written into the schema and then go unenforced. Lengths count characters (code points), as Postgres does.
+
+Where it runs:
+
+| Data coming in | What happens to a value that breaks v1 |
+| --- | --- |
+| The model's extraction in `chamber-extract` | The field is refused and listed in the response's `rejected` (path and reason), along with its status, evidence and correction. The function logs `EXTRACTION_REFUSED request=… paths=…` (paths only). The browser never receives it. |
+| The browser's backup of unsaved answers (see "Session lifecycle") | The whole copy is discarded, not offered for restore, and a warning names the paths. |
+| A saved intake as the Chamber loads it | The mismatch is logged (paths and reasons). Rows saved by earlier versions stay editable: the sanitiser still loads what is valid. |
+
+Voice extractions (`<extract>` tags) still go through the sanitiser, which repairs what it can (a lower-case state, a comma list, `"1,200"`).
+
 ### Adding a field
 
-A new key in `ChamberData` needs a migration first: add it to `public.chamber_data_field_kind` with its kind, then to `EMPTY_CHAMBER_DATA`, `FIELD_SCHEMAS`, `FIELD_LABELS` and `FIELD_KINDS`. `src/data/schemaSync.test.ts` compares the SQL key list, state codes and caps with the client constants, so a field added on one side only fails CI. The database refuses an unknown top-level key, so a front end shipped ahead of its migration would fail every save.
+A new key in `ChamberData` needs a migration first: add it to `public.chamber_data_field_kind` with its kind, then to `EMPTY_CHAMBER_DATA`, `FIELD_SCHEMAS`, `FIELD_LABELS`, `FIELD_KINDS` and the JSON Schema's `properties` (then `npm run schema:intake`). `src/data/schemaSync.test.ts` compares the SQL key list, state codes and caps with the client constants and the schema, so a field added on one side only fails CI. The database refuses an unknown top-level key, so a front end shipped ahead of its migration would fail every save.
 
 ### Employee census (`chamber_data.census`)
 
@@ -265,3 +289,55 @@ Candidates never change `chamber_data` by themselves. In the Upload tab the pros
 ### Submission
 
 When the prospect signs, `submission.field_provenance` snapshots the provenance alongside `submission.chamber_data`. The Manuscript shows the status and source for each row, and adds the status-based open items to "Underwriting Readiness".
+
+## Session lifecycle
+
+Migration `20261103090000_intake_lifecycle.sql` (A-1.5). `supabase/tests/intake_lifecycle.sql` and `e2e/intake-lifecycle.spec.ts` cover it.
+
+### Status
+
+`chamber_sessions.status` is one of:
+
+| Status | Meaning | The prospect |
+| --- | --- | --- |
+| `in_progress` | A draft, or a certified intake whose answers changed since | Reads and changes it |
+| `submitted` | Certified | Reads it; changing an answer withdraws the certification (back to `in_progress`) |
+| `expired` | A draft that was never certified and went untouched past the retention window | Reads it, so the Chamber can say it expired; can't change it or add documents |
+| `archived` | A draft the prospect left with "Start over" | Can't read it, its documents or its stored files |
+| `revoked` | A draft an admin closed | Can't read it, its documents or its stored files |
+
+A check constraint holds the set. The browser can't set the last three. Row security turns a write to a closed intake into one that matches no row, and a trigger refuses one that gets past it with SQLSTATE `EA002` (DETAIL: the status). Advisors still read every intake.
+
+### Activity and expiry
+
+- `last_activity_at` is when the prospect last saved anything. Every write from the browser sets it to the current time. A client can't set it, and privileged roles (the jobs, the service role, an operator) may.
+- `expires_at` is `last_activity_at` + `public.intake_draft_retention()` (30 days, decision D4) for an intake that is in progress and was never certified. It is null for anything ever certified. An expired intake keeps the time it was due.
+- `public.expire_idle_intakes(p_limit default 500)` moves due drafts to `expired`, skipping rows being saved at that moment, and writes one `intake_lifecycle_events` row each. It never touches an intake that was ever certified, even one whose expiry was set another way. pg_cron runs it hourly as `expire-idle-intakes` (`17 * * * *`) when the project has pg_cron; otherwise the migration logs a notice and the function can be run from any scheduler with the service role. Only `service_role` may call it.
+- When the migration ran, existing drafts got a full window from that day (nothing expired on deploy day), and `last_activity_at` was backfilled from `updated_at` without bumping versions.
+- Changing the window means changing `intake_draft_retention()`, moving `expires_at` on existing drafts in the same migration, and changing `DRAFT_RETENTION_DAYS` (`src/data/intakeLifecycle.ts`), which the Chamber shows prospects. `schemaSync.test.ts` keeps that constant equal to the function.
+
+The Chamber resumes the prospect's latest `in_progress` intake by `last_activity_at`. With none open, if their most recent intake expired, it says so ("This intake has expired") and offers a new one. A linked intake that expired says the same. A tab that is open when its intake expires finds out at its next save ("Not saved: this intake has expired.", with "Start a new intake", which keeps what is on screen).
+
+### Start over and revocation
+
+- **Start over** (the Chamber's top bar, confirmed first) calls `public.archive_chamber_session(id)` after any save already on its way, then begins a blank intake. It archives the caller's own draft when it was never certified (`'archived'`, one audit row), and keeps anything certified, once certified or expired (`'kept'`). It answers `PT404` (HTTP 404) for an intake that isn't the caller's, or is already archived, so a retry reads as done.
+- **Revocation**: `public.revoke_chamber_session(id, reason)` is for admins only (`has_role('admin')`). It takes a draft that was never certified, in progress or expired, and needs a reason of 1 to 2,000 characters. It answers `PT404` for an unknown intake and refuses anything ever certified (`55000`) and records the admin and the reason. There is no screen for it yet: call it from the SQL editor as an admin's JWT, or through the API.
+- `intake_lifecycle_events` (append-only, advisors can read it) holds every expiry, archive and revocation: session, owner, from and to status, reason, actor (null for the job) and when.
+
+### The browser's copy of unsaved answers
+
+While a change hasn't been confirmed by the server, the Chamber keeps a copy in `localStorage` (`src/data/intakeBackup.ts`, key `eaa.intake-backup.v1:<user>:<intake>`), with the version it was made on. A confirmed save removes it. When the same person opens the same intake again and the copy differs from what the server has, the Chamber offers it back: "Restore my changes" saves it from the loaded version, or "Discard them". It warns when the intake was saved from somewhere else since. A copy the server already matches (the save sent as the page closed landed) is removed silently.
+
+- The census is never written to the browser (names, dates of birth, pay). A restore keeps the server's census.
+- A copy is kept for at most 7 days, is offered only to the user who wrote it, and every copy goes on a deliberate sign-out.
+- A copy that isn't the shape written, or breaks intake schema v1, is discarded.
+- Not covered: answers typed before the intake row was first created (if creating it fails), and storage that is blocked or full. The Chamber warns when the browser won't keep site data at all.
+
+### Getting back from another browser
+
+The intake belongs to the Supabase user that created it. A guest is anonymous until they verify an email (at certification). When a link can't be opened, usually because this browser no longer holds the sign-in (another device, a private window, cleared data), the Chamber explains why and offers to email a sign-in code to the address they verified (`signInWithOtp` with `shouldCreateUser: false`, then `verifyOtp` type `email`). It says the same thing whether or not the address has an account. A guest on a fresh intake gets the same offer ("Continue an earlier intake"). Once signed in, the Chamber drops the blank guest intake and opens the linked intake, or their latest one. An intake that never had an email verified can't be recovered from another browser. The code arrives in Supabase's "Magic Link" email template, which must contain `{{ .Token }}` (`npm run setup:supabase` sets it).
+
+### Transcript on resume
+
+A transcript is restored as saved, with repeated greetings removed: Lenore's opening line is marked `kind: "greeting"` (older openings are recognised by their words), and only the first greeting is kept. A voice session's own hello is not added again. The panel opens at the latest message without scrolling through the history, marks "Restored from your last visit" after the last restored message, and follows new messages only while the reader is at the bottom (otherwise it offers "New message"). The orb shows Lenore's latest line rather than a separate hello.
+

@@ -1,5 +1,6 @@
 // Turns the model's tool arguments into the response the browser reads. Only known fields get
-// through, and a status, evidence quote or correction survives only for a field that was actually
+// through, each one only if it is valid under the intake schema (v1, _shared/intakeSchema.ts) exactly as
+// the model sent it, and a status, evidence quote or correction survives only for a field that was
 // extracted. No Deno or network imports, so it is unit-tested with the frontend suite.
 
 import { FIELDS, FIELD_STATUSES, MAX_EVIDENCE_CHARS, PROMPT_VERSION } from "./schema.ts";
@@ -35,11 +36,17 @@ function pickPerField<T>(raw: unknown, extracted: Record<string, unknown>, ok: (
 }
 
 export function shapeExtraction(args: Record<string, unknown>): Extraction {
-  // Keep known fields only, without null/empty values.
+  // Keep known fields only, without null/empty values, and only values the schema accepts as sent: a
+  // value is not repaired (no trimming, upper-casing or splitting), so the browser never receives an
+  // answer the database would refuse, and what was refused is reported rather than guessed at.
   const extracted: Record<string, unknown> = {};
+  const rejected: IntakeIssue[] = [];
   for (const k of FIELDS) {
     const v = args[k];
-    if (v !== null && v !== undefined && v !== "") extracted[k] = v;
+    if (v === null || v === undefined || v === "") continue;
+    const issues = validateIntakeField(k, v);
+    if (issues.length > 0) rejected.push(...issues);
+    else extracted[k] = v;
   }
   const field_status = pickPerField(args.field_status, extracted, (v): v is string =>
     typeof v === "string" && FIELD_STATUSES.includes(v));

@@ -18,6 +18,8 @@ const SECRETS = {
 
 interface Fake {
   auth: Record<string, unknown>;
+  /** When set, reading the auth settings answers with this status. */
+  authReadStatus?: number;
   queries: string[];
   patches: Record<string, unknown>[];
   deployed: Set<string>;
@@ -69,6 +71,7 @@ function handle(req: IncomingMessage, body: string, res: ServerResponse) {
     return send(200, set.map((name: string) => ({ name, value: "digest" })));
   }
   if (p === `/v1/projects/${REF}/config/auth`) {
+    if (req.method === "GET" && fake.authReadStatus) return send(fake.authReadStatus, { message: "unavailable" });
     if (req.method === "PATCH") {
       const patch = JSON.parse(body);
       fake.patches.push(patch);
@@ -202,7 +205,8 @@ describe("supabase-setup", () => {
   });
 
   it("only reads in --check mode, and fails an empty project", async () => {
-    const { code, out } = await run(["--project-ref", REF, "--check"]);
+    // A missing secrets file, so a developer's own supabase/.env.production can't change the result.
+    const { code, out } = await run(["--project-ref", REF, "--check", "--secrets-file", path.join(dir, "none.env")]);
 
     expect(code).toBe(1);
     expect(out).toContain("✗ Migrations applied: 0 of");
@@ -212,13 +216,36 @@ describe("supabase-setup", () => {
     expect(fake.queries.every((q) => q.trim().toLowerCase().startsWith("select"))).toBe(true);
   });
 
+  it("--check compares the Site URL with APP_BASE_URL from the secrets file", async () => {
+    // Another working https site: without APP_BASE_URL this would pass.
+    fake.auth = { site_url: "https://old-preview.example.com", uri_allow_list: "https://old-preview.example.com/**" };
+    const { code, out } = await run(["--project-ref", REF, "--check", "--secrets-file", path.join(dir, "secrets.env")]);
+
+    expect(code).toBe(1);
+    expect(out).toContain("✗ Email links return to the site: Site URL is https://old-preview.example.com, not https://app.example.com");
+    expect(out).toContain("Redirect URLs lack https://app.example.com/**");
+    expect(fake.patches).toEqual([]);
+    expect(cliCalls()).toEqual([]);
+  });
+
   it("grants the advisor role without needing the secrets file or the CLI", async () => {
-    const { code, out } = await run(["--project-ref", REF, "--grant-advisor", "advisor@example.com"]);
+    const { code, out } = await run(["--project-ref", REF, "--grant-advisor", "advisor@example.com", "--secrets-file", path.join(dir, "none.env")]);
 
     expect(out).toContain("Granted.");
     expect(code).toBe(1); // the stand-in project is otherwise empty
     expect(cliCalls()).toEqual([]);
     expect(fake.queries.filter((q) => !q.trim().startsWith("select"))).toEqual([expect.stringContaining("lower('advisor@example.com')")]);
+  });
+
+  it("configures auth first, and stops without guessing when it can't read the current settings", async () => {
+    fake.authReadStatus = 503;
+    const { code, out } = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"]);
+
+    expect(code).toBe(1);
+    expect(out).toContain("Reading the auth settings failed (503); nothing was changed.");
+    // A blind patch would have replaced the Redirect URLs list; and no later step ran.
+    expect(fake.patches).toEqual([]);
+    expect(cliCalls().map((c) => c.args[0])).toEqual(["--version"]);
   });
 
   it("stops before changing anything when the secrets file is incomplete", async () => {

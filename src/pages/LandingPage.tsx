@@ -1,4 +1,5 @@
-import { Link } from "react-router-dom";
+import { useEffect } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { RavenIcon } from "@/components/RavenLogo";
 
@@ -14,7 +15,34 @@ const sectionFade = {
   viewport: { once: true },
 };
 
+// What a PEO's underwriting team gets in every Manuscript. Keep each point true of the PDF the
+// prospect sends (src/lib/manuscriptPdf.ts), not just the on-screen page; copy.guard.test.ts keeps it
+// PEO-neutral.
+const PEO_PARTNER_POINTS = [
+  {
+    title: "The same layout, every time",
+    desc: "Company profile, workforce and state breakdown, employee census, dependent tiers, current benefits and underwriting readiness, then the signed certification.",
+  },
+  {
+    title: "Open items are listed, not buried",
+    desc: "Underwriting readiness lists the checks that passed and every open item, including answers that were only inferred, are incomplete or conflict, so you know what to ask before you price.",
+  },
+  {
+    title: "Certified by a verified contact",
+    desc: "The prospect verifies their email, reviews the data and signs a certification before the packet is generated. Every packet carries a File ID.",
+  },
+];
+
 const LandingPage = () => {
+  // A page load of /#peo-partners renders the section after the browser has looked for it, so the
+  // browser can't scroll there itself. Do it once the page has rendered.
+  const { hash } = useLocation();
+  useEffect(() => {
+    // Only a plain section id: the hash can also hold an auth redirect's #access_token=… or #error=….
+    const id = hash.slice(1);
+    if (/^[a-z][a-z0-9-]*$/.test(id)) document.getElementById(id)?.scrollIntoView?.();
+  }, [hash]);
+
   return (
     <div className="min-h-screen bg-background relative noise-overlay">
       {/* Hero */}
@@ -99,8 +127,8 @@ const LandingPage = () => {
         </div>
       </section>
 
-      {/* How It Works */}
-      <section id="how-it-works" className="py-24 border-t border-border relative z-10">
+      {/* How It Works. scroll-mt keeps the heading clear of the fixed navbar when a link jumps here. */}
+      <section id="how-it-works" className="py-24 border-t border-border relative z-10 scroll-mt-16">
         <div className="container mx-auto px-6 max-w-4xl">
           <motion.h2 {...sectionFade} className="font-display text-3xl md:text-4xl font-bold text-center mb-16">
             Three steps. One document.
@@ -137,6 +165,46 @@ const LandingPage = () => {
               </motion.div>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* For PEO Partners: what a PEO's underwriters receive. Names no PEO, so it implies no affiliation. */}
+      <section id="peo-partners" className="py-24 border-t border-border relative z-10 scroll-mt-16">
+        <div className="container mx-auto px-6 max-w-4xl">
+          <motion.div {...sectionFade} className="text-center mb-14">
+            <p className="text-xs text-primary font-mono uppercase tracking-widest mb-4">For PEO Partners</p>
+            <h2 className="font-display text-3xl md:text-4xl font-bold mb-4">A packet your underwriters can work from.</h2>
+            <p className="text-muted-foreground text-sm leading-relaxed max-w-xl mx-auto">
+              Every Manuscript follows the same layout, whichever PEO the prospect chooses to send it to.
+              The facts that usually take three email threads to collect arrive in one document.
+            </p>
+          </motion.div>
+          <div className="grid md:grid-cols-3 gap-6">
+            {PEO_PARTNER_POINTS.map((item, i) => (
+              <motion.div
+                key={item.title}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.1 }}
+                className="bg-card border border-border rounded-xl p-8"
+              >
+                <h3 className="font-display text-lg font-bold mb-3">{item.title}</h3>
+                <p className="text-muted-foreground text-sm leading-relaxed">{item.desc}</p>
+              </motion.div>
+            ))}
+          </div>
+          <motion.div {...sectionFade} className="text-center mt-12">
+            <Link
+              to="/manuscript/demo"
+              className="inline-flex items-center justify-center gap-2 border border-border text-foreground font-medium px-6 py-3 rounded-lg hover:border-primary/50 transition-colors text-sm"
+            >
+              See a sample Manuscript →
+            </Link>
+            <p className="text-xs text-muted-foreground mt-4">
+              Edgar Allan Advisory is PEO-neutral: the prospect picks the PEO and sends the packet themselves.
+            </p>
+          </motion.div>
         </div>
       </section>
 
@@ -183,9 +251,10 @@ const LandingPage = () => {
             <p className="font-display text-sm italic text-muted-foreground">
               "Nevermore will HR slow you down."
             </p>
-            <div className="flex items-center gap-6 text-sm text-muted-foreground">
-              <a href="#how-it-works" className="hover:text-foreground transition-colors">How It Works</a>
-              <Link to="/start" className="hover:text-foreground transition-colors">Start Your Intake</Link>
+            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
+              <a href="#how-it-works" className="whitespace-nowrap hover:text-foreground transition-colors">How It Works</a>
+              <a href="#peo-partners" className="whitespace-nowrap hover:text-foreground transition-colors">For PEO Partners</a>
+              <Link to="/start" className="whitespace-nowrap hover:text-foreground transition-colors">Start Your Intake</Link>
             </div>
             <p className="text-xs text-muted-foreground mt-4">© Edgar Allan Advisory.</p>
           </div>
