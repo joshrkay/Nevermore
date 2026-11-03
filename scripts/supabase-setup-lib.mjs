@@ -116,15 +116,40 @@ export const EMAIL_CODE_TEMPLATE = [
 ].join("\n");
 
 /**
+ * The sign-up confirmation. Supabase's default is a single-use link to its own verify endpoint, which
+ * a mail scanner (Defender Safe Links, Mimecast, Proofpoint) opening it first uses up. This one
+ * carries a 6-digit code the sign-up page accepts, and a link to the app's callback page, which
+ * verifies the token only when the person clicks "Confirm my email". It needs the Site URL to be
+ * exactly the site's origin (authUrlProblems checks that).
+ */
+export const SIGNUP_CONFIRM_SUBJECT = "Confirm your email";
+export const SIGNUP_CONFIRM_TEMPLATE = [
+  "<h2>Confirm your email</h2>",
+  "<p>Enter this code on the sign-up page to finish creating your account:</p>",
+  "<p style=\"font-size:24px;font-weight:bold;letter-spacing:4px\">{{ .Token }}</p>",
+  "<p>Or <a href=\"{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email\">open this link</a> and click Confirm my email.</p>",
+  "<p>If you didn't sign up, you can ignore this email.</p>",
+].join("\n");
+
+/** True when a sign-up confirmation template carries both the code and a link that verifies only on a click. */
+export function signupTemplateOk(content) {
+  const text = String(content ?? "");
+  return /\{\{\s*\.Token\s*\}\}/.test(text) && /\{\{\s*\.TokenHash\s*\}\}/.test(text) && !text.includes(".ConfirmationURL");
+}
+
+/**
  * The auth settings to change, given the current ones (`null` when they couldn't be read). Only what
  * differs is sent, and nothing already customised is overwritten: extra redirect URLs are kept, a
- * template that already has the code stays, and SMTP that isn't Resend's is left alone. Resend's SMTP
+ * template that already has the code stays (for sign-up: the code and an app link, and no
+ * {{ .ConfirmationURL }}), and SMTP that isn't Resend's is left alone. `current` must be the
+ * project's settings: without them the patch would replace the Redirect URLs list. Resend's SMTP
  * settings are sent every time, so a rotated RESEND_API_KEY is picked up (the API doesn't return the
  * current password to compare). `notes` explain what was left as is. The patch can hold the SMTP
  * password: never print it.
  */
 export function authConfigPatch(current, env) {
-  const c = current ?? {};
+  if (!current) throw new Error("authConfigPatch needs the project's current auth settings");
+  const c = current;
   const origin = new URL(env.APP_BASE_URL).origin;
   const patch = {};
   const notes = [];
@@ -141,6 +166,10 @@ export function authConfigPatch(current, env) {
   if (!String(c.mailer_templates_email_change_content ?? "").includes(".Token")) {
     patch.mailer_subjects_email_change = EMAIL_CODE_SUBJECT;
     patch.mailer_templates_email_change_content = EMAIL_CODE_TEMPLATE;
+  }
+  if (!signupTemplateOk(c.mailer_templates_confirmation_content)) {
+    patch.mailer_subjects_confirmation = SIGNUP_CONFIRM_SUBJECT;
+    patch.mailer_templates_confirmation_content = SIGNUP_CONFIRM_TEMPLATE;
   }
 
   const sender = parseSender(env.EMAIL_FROM);
@@ -237,12 +266,38 @@ export function rowsFrom(body) {
 }
 
 /**
+ * Why the links in sign-up and email-change emails would not come back to the site, or [] when they
+ * would. Supabase sends a link's visitor to the redirect the app asked for only when it is on the
+ * Redirect URLs list, and otherwise to the Site URL: a new project's Site URL is
+ * http://localhost:3000, so an unset one turns every confirmation into a browser error page.
+ * `appBaseUrl` (APP_BASE_URL) pins the expected origin when it is known.
+ */
+export function authUrlProblems(authConfig, appBaseUrl) {
+  if (!authConfig) return ["auth config unreadable"];
+  let site;
+  try { site = new URL(String(authConfig.site_url ?? "")); } catch { return ["Site URL is not set (Authentication → URL Configuration)"]; }
+  const local = site.hostname === "localhost" || site.hostname === "127.0.0.1";
+  let expected = null;
+  try { expected = appBaseUrl ? new URL(appBaseUrl).origin : null; } catch { /* checkSecrets reports a bad APP_BASE_URL */ }
+
+  const problems = [];
+  if (expected && site.origin !== expected) problems.push(`Site URL is ${authConfig.site_url}, not ${expected}`);
+  else if (!expected && (local || site.protocol !== "https:")) problems.push(`Site URL is ${authConfig.site_url}: confirmation links send people there`);
+  // The sign-up email links to {{ .SiteURL }}/auth/callback, so a trailing slash or a path breaks it.
+  else if (authConfig.site_url !== site.origin) problems.push(`Site URL is ${authConfig.site_url}: make it exactly ${site.origin}, with no trailing slash or path`);
+  const origin = expected ?? site.origin;
+  const allowList = String(authConfig.uri_allow_list ?? "").split(",").map((u) => u.trim()).filter(Boolean);
+  if (!allowList.includes(`${origin}/**`)) problems.push(`Redirect URLs lack ${origin}/**`);
+  return problems;
+}
+
+/**
  * Turns everything the checks saw into lines. `seen` holds the status counts, the public auth
  * settings, the Management API's auth config, each function's probe and the secret names, any of
  * which may be missing. A check marked
  * `required: false` is a to-do (emails, advisor accounts), not a failed setup.
  */
-export function interpretChecks(seen, { localMigrations }) {
+export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
   const s = seen.status ?? {};
   const checks = [];
   const add = (name, ok, detail, required = true) => checks.push({ name, ok, detail, required });
@@ -261,7 +316,11 @@ export function interpretChecks(seen, { localMigrations }) {
 
   const ac = seen.authConfig;
   const codeOk = !!ac && ac.mailer_otp_length === 6 && String(ac.mailer_templates_email_change_content ?? "").includes(".Token");
+  const signupOk = !!ac && signupTemplateOk(ac.mailer_templates_confirmation_content);
+  add("Sign-up email survives mail scanners", signupOk, ac ? (signupOk ? "6-digit code and a link that confirms on a click" : "the Confirm signup template must carry {{ .Token }} and an app link with {{ .TokenHash }}, not {{ .ConfirmationURL }}") : "auth config unreadable");
   add("Email code message", codeOk, ac ? (codeOk ? "6-digit code in the email-change template" : "the email-change template must send a 6-digit {{ .Token }}") : "auth config unreadable");
+  const urlProblems = authUrlProblems(ac, appBaseUrl);
+  add("Email links return to the site", urlProblems.length === 0, urlProblems.length === 0 ? `Site URL ${ac.site_url}, redirects allowed under it` : urlProblems.join("; "));
   add("Sign-in emails reach prospects", !!ac?.smtp_host, ac ? (ac.smtp_host ? `custom SMTP (${ac.smtp_host})` : "built-in mailer: only your team's addresses get emails") : "auth config unreadable");
 
   for (const fn of FUNCTIONS) {

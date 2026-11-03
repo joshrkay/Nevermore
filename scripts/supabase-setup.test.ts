@@ -18,6 +18,8 @@ const SECRETS = {
 
 interface Fake {
   auth: Record<string, unknown>;
+  /** When set, reading the auth settings answers with this status. */
+  authReadStatus?: number;
   queries: string[];
   patches: Record<string, unknown>[];
   deployed: Set<string>;
@@ -69,6 +71,7 @@ function handle(req: IncomingMessage, body: string, res: ServerResponse) {
     return send(200, set.map((name: string) => ({ name, value: "digest" })));
   }
   if (p === `/v1/projects/${REF}/config/auth`) {
+    if (req.method === "GET" && fake.authReadStatus) return send(fake.authReadStatus, { message: "unavailable" });
     if (req.method === "PATCH") {
       const patch = JSON.parse(body);
       fake.patches.push(patch);
@@ -219,6 +222,17 @@ describe("supabase-setup", () => {
     expect(code).toBe(1); // the stand-in project is otherwise empty
     expect(cliCalls()).toEqual([]);
     expect(fake.queries.filter((q) => !q.trim().startsWith("select"))).toEqual([expect.stringContaining("lower('advisor@example.com')")]);
+  });
+
+  it("configures auth first, and stops without guessing when it can't read the current settings", async () => {
+    fake.authReadStatus = 503;
+    const { code, out } = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"]);
+
+    expect(code).toBe(1);
+    expect(out).toContain("Reading the auth settings failed (503); nothing was changed.");
+    // A blind patch would have replaced the Redirect URLs list; and no later step ran.
+    expect(fake.patches).toEqual([]);
+    expect(cliCalls().map((c) => c.args[0])).toEqual(["--version"]);
   });
 
   it("stops before changing anything when the secrets file is incomplete", async () => {

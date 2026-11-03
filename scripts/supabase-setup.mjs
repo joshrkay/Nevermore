@@ -137,6 +137,21 @@ function setSecrets(ref, secrets) {
 }
 
 async function setup(call, ref, secretsFile, env) {
+  // First, because it needs only the Management API: a failure in a later step (database password,
+  // migration, Docker) must not leave the Site URL at Supabase's default, which breaks every sign-up link.
+  step("Auth: guest sign-in, email confirmation, Site URL and redirects, the sign-up and email-change messages, sign-in email delivery");
+  const current = await call("GET", `/v1/projects/${ref}/config/auth`);
+  // Without the current settings the patch would replace the Redirect URLs list, so stop instead.
+  if (!current.ok || !current.body) fail(`Reading the auth settings failed (${current.status}); nothing was changed. Check the access token can manage this project, then run this again.`);
+  const { patch, notes } = authConfigPatch(current.body, env);
+  if (Object.keys(patch).length === 0) say("  Already set.");
+  else {
+    const res = await call("PATCH", `/v1/projects/${ref}/config/auth`, patch);
+    if (!res.ok) fail(`Updating auth settings failed (${res.status}). Set them in the dashboard (Authentication → Sign In / Providers, URL Configuration, Emails); docs/SUPABASE_SETUP.md lists them.`);
+    say(`  Updated: ${Object.keys(patch).filter((k) => k !== "smtp_pass").join(", ")}`);
+  }
+  for (const note of notes) say(`  Note: ${note}`);
+
   step("Linking this folder to the project (the CLI may ask for the database password)");
   if (!cliInteractive(["link", "--project-ref", ref])) fail("`supabase link` failed. Reset the database password in the dashboard (Project Settings → Database) if you don't have it, or set SUPABASE_DB_PASSWORD.");
 
@@ -156,17 +171,6 @@ async function setup(call, ref, secretsFile, env) {
     step(`Deploying ${fn}`);
     if (!cliInteractive(["functions", "deploy", fn, "--project-ref", ref])) fail(`Deploying ${fn} failed. If the CLI asked for Docker, update it or run \`supabase functions deploy ${fn} --use-api --project-ref ${ref}\`, then run this again.`);
   }
-
-  step("Auth: guest sign-in, email confirmation, redirect URL, the email code and sign-in email delivery");
-  const current = await call("GET", `/v1/projects/${ref}/config/auth`);
-  const { patch, notes } = authConfigPatch(current.ok ? current.body : null, env);
-  if (Object.keys(patch).length === 0) say("  Already set.");
-  else {
-    const res = await call("PATCH", `/v1/projects/${ref}/config/auth`, patch);
-    if (!res.ok) fail(`Updating auth settings failed (${res.status}). Set them in the dashboard (Authentication → Sign In / Providers, URL Configuration, Emails); docs/SUPABASE_SETUP.md lists them.`);
-    say(`  Updated: ${Object.keys(patch).filter((k) => k !== "smtp_pass").join(", ")}`);
-  }
-  for (const note of notes) say(`  Note: ${note}`);
 
   step("Email schedule: pg_cron, pg_net, the service-role key in Vault, and a run every minute");
   const ext = await runSql(call, ref, EXTENSIONS_SQL);
@@ -192,7 +196,7 @@ async function grantAdvisor(call, ref, email) {
   else say("  They already had it.");
 }
 
-async function check(call, ref) {
+async function check(call, ref, appBaseUrl) {
   step("Checking the project");
   const status = {};
   for (const [name, query] of Object.entries(STATUS_QUERIES)) {
@@ -235,7 +239,7 @@ async function check(call, ref) {
     authConfig: authConfigRes.ok ? authConfigRes.body : null,
     functions,
     secretNames: await secretNames(call, ref),
-  }, { localMigrations });
+  }, { localMigrations, appBaseUrl });
 
   for (const c of checks) say(`  ${c.ok ? "✓" : c.required ? "✗" : "…"} ${c.name}: ${c.detail}`);
   return checks;
@@ -264,13 +268,14 @@ async function main() {
   if (project.body?.status && project.body.status !== "ACTIVE_HEALTHY") say("Warning: the project isn't ACTIVE_HEALTHY. A paused project has to be restored in the dashboard first.");
 
   const writes = !opts.check;
+  const secretsFile = path.resolve(ROOT, opts["secrets-file"]);
+  // --check reads the file too when it is there, to compare the auth Site URL with APP_BASE_URL.
+  const env = existsSync(secretsFile) ? parseEnvFile(readFileSync(secretsFile, "utf8")) : null;
   if (writes && !opts["grant-advisor"]) {
-    const secretsFile = path.resolve(ROOT, opts["secrets-file"]);
-    if (!existsSync(secretsFile)) {
+    if (!env) {
       console.error(`No secrets file at ${path.relative(ROOT, secretsFile)}. Copy supabase/env.production.example there and fill it in.`);
       return 2;
     }
-    const env = parseEnvFile(readFileSync(secretsFile, "utf8"));
     const { errors, warnings } = checkSecrets(env);
     for (const w of warnings) say(`Note: ${w}`);
     // Every value must fit the env file `supabase secrets set` reads; find out now, before changing anything.
@@ -293,7 +298,7 @@ async function main() {
     await grantAdvisor(call, ref, opts["grant-advisor"]);
   }
 
-  const checks = await check(call, ref);
+  const checks = await check(call, ref, env?.APP_BASE_URL?.trim() || null);
   if (setupComplete(checks)) {
     say("\nThe project is set up. Items marked … are optional to-dos.");
     return 0;
