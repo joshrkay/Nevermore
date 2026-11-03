@@ -73,16 +73,38 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => subscription.unsubscribe();
   }, []);
 
-  const signUp = async (email: string, password: string, companyName?: string) => {
-    const { error } = await supabase.auth.signUp({
+  const signUp = async (email: string, password: string, companyName?: string, next?: string) => {
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        emailRedirectTo: `${window.location.origin}/start`,
+        // The confirmation link lands on a page that says whether it worked, then goes on to `next`.
+        emailRedirectTo: authCallbackUrl(window.location.origin, next),
         // Copied into the profile row by the handle_new_user trigger.
         data: companyName ? { company_name: companyName } : undefined,
       },
     });
+    const alreadyRegistered = !error && !!data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0;
+    return { error: error as Error | null, alreadyRegistered };
+  };
+
+  const resendConfirmation = async (email: string, next?: string) => {
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email,
+      options: { emailRedirectTo: authCallbackUrl(window.location.origin, next) },
+    });
+    return { error: error as Error | null };
+  };
+
+  const verifySignupCode = async (email: string, code: string) => {
+    // "email" covers a sign-up confirmation code (Supabase's older "signup" type is deprecated).
+    const { error } = await supabase.auth.verifyOtp({ email, token: code, type: "email" });
+    return { error: error as Error | null };
+  };
+
+  const confirmEmailToken = async (tokenHash: string, type: EmailOtpType) => {
+    const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
     return { error: error as Error | null };
   };
 
@@ -97,7 +119,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const requestEmailCode = async (email: string) => {
-    const { error } = await supabase.auth.updateUser({ email });
+    // The template should send a 6-digit code (docs/SUPABASE_SETUP.md). If it still sends Supabase's
+    // default link, the link comes back to the callback page instead of the Site URL.
+    const { error } = await supabase.auth.updateUser({ email }, { emailRedirectTo: authCallbackUrl(window.location.origin) });
     const code = (error as { code?: string } | null)?.code;
     const emailInUse = code === "email_exists" || /already (been )?registered/i.test(error?.message ?? "");
     return { error: error as Error | null, emailInUse };

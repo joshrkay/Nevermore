@@ -16,6 +16,7 @@ front end that uses it is deployed.
 
 | Step | How | Done by hand instead |
 |---|---|---|
+| Auth: guest sign-in on, email confirmation on, Site URL and Redirect URLs (below), the sign-up and email-change messages (below), sign-in emails through Resend's SMTP. First, so a later failure can't leave sign-up links broken | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
 | Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push` | SQL editor, file by file |
 | Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set` from a private temporary file | Edge Functions → Secrets |
 | Deploy `chamber-extract`, `document-extract`, `dispatch-outbox` | `supabase functions deploy` | (CLI only) |
@@ -62,6 +63,8 @@ and prints the checks:
 ```
   ✓ Migrations applied: N of N   (N = the files in supabase/migrations)
   ✓ Guest (anonymous) sign-in: anonymous_users=true
+  ✓ Email links return to the site: Site URL https://nevermore-gamma.vercel.app, redirects allowed under it
+  ✓ Sign-up email survives mail scanners: 6-digit code and a link that confirms on a click
   ✓ Function chamber-extract: answered 401 from the function itself
   …
   … Advisor accounts: none yet: sign up on the site, then run with --grant-advisor you@example.com
@@ -77,7 +80,9 @@ npm run setup:supabase -- --project-ref <ref> --check                          #
 npm run setup:supabase -- --project-ref <ref> --grant-advisor you@example.com  # after signing up
 ```
 
-`--secrets-file <path>` uses another secrets file; `--yes` skips the confirmation.
+`--secrets-file <path>` uses another secrets file; `--yes` skips the confirmation. `--check` reads the
+secrets file too when it exists, to compare the Site URL with `APP_BASE_URL`; without it, the check
+only rejects a localhost or non-https Site URL.
 
 ## After it passes
 
@@ -109,9 +114,27 @@ dashboard) puts `{{ .Token }}` in the magic-link template.
   before anything else changes.
 - **Deploying a function asks for Docker:** recent CLIs bundle on Supabase's side; update the CLI,
   or run `supabase functions deploy <name> --use-api --project-ref <ref>` and rerun the script.
+- **"Reading the auth settings failed":** the script stops rather than guess, because a patch built
+  without the current settings would replace the Redirect URLs list. Nothing was changed.
 - **Auth settings or the schedule:** the script calls the Management API endpoints listed above.
   If one is refused, make the same change in the dashboard (the table's last column) and rerun
   with `--check`.
 - **"Couldn't read the project's legacy service_role key":** `dispatch-outbox` authenticates the
   schedule with the legacy JWT service-role key. Re-enable legacy API keys (Project Settings → API
   Keys) and rerun.
+
+## If sign-up confirmation links fail
+
+What the person sees after clicking the link tells you which setting is wrong:
+
+- **The browser's "can't reach this site" or "localhost refused to connect" page:** the Site URL is
+  still `http://localhost:3000` and the site isn't on Redirect URLs. Supabase did confirm the account,
+  so the person can sign in at `/login` with their password now. Fix the URL Configuration above.
+- **Another site's home page:** the Site URL points at another domain (an old Lovable preview, say).
+  Fix it as above.
+- **"This link didn't work" on `/auth/callback`:** the link was used, expired (after an hour by
+  default) or replaced by a newer email. With Supabase's default template a mail scanner may have
+  used it, which also confirms the account, so signing in usually works; otherwise the page sends a
+  new email. Installing the sign-up template above stops scanners using the links up.
+
+`npm run setup:supabase -- --project-ref <ref>` sets all of it; `--check` confirms it.

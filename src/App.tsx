@@ -6,11 +6,13 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/useAuth";
 import ErrorBoundary from "./components/ErrorBoundary";
+import AuthRedirectGate from "./components/AuthRedirectGate";
 import Navbar from "./components/Navbar";
 import RequireAuth from "./components/RequireAuth";
 import RequireAdvisor from "./components/RequireAdvisor";
 import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
+import AuthCallbackPage from "./pages/AuthCallbackPage";
 import ChamberPage from "./pages/ChamberPage";
 import ProfilePage from "./pages/ProfilePage";
 import NotFound from "./pages/NotFound";
@@ -33,6 +35,7 @@ const App = () => (
         <BrowserRouter>
           <ErrorBoundary>
             <Suspense fallback={null}>
+              <AuthRedirectGate>
               <Routes>
                 <Route
                   path="/"
@@ -44,6 +47,7 @@ const App = () => (
                   }
                 />
                 <Route path="/login" element={<AuthPage />} />
+                <Route path="/auth/callback" element={<AuthCallbackPage />} />
                 <Route path="/start" element={<RequireAuth><ChamberPage /></RequireAuth>} />
                 <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
                 <Route path="/manuscript" element={<ManuscriptPage />} />
@@ -53,6 +57,7 @@ const App = () => (
                 <Route path="/advisor/outbox" element={<RequireAdvisor><AdvisorOutboxPage /></RequireAdvisor>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              </AuthRedirectGate>
             </Suspense>
           </ErrorBoundary>
         </BrowserRouter>

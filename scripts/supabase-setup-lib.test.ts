@@ -122,7 +122,7 @@ describe("parseSender", () => {
 
 describe("authConfigPatch", () => {
   it("sets everything on a fresh project, sending auth email through Resend", () => {
-    const { patch, notes } = authConfigPatch(null, goodEnv);
+    const { patch, notes } = authConfigPatch({}, goodEnv);
     expect(patch).toMatchObject({
       external_anonymous_users_enabled: true,
       mailer_autoconfirm: false,
@@ -142,8 +142,19 @@ describe("authConfigPatch", () => {
     expect(notes).toEqual([]);
   });
 
+  it("replaces Supabase's default sign-up link, which a mail scanner can use up, but keeps a template that's already safe", () => {
+    const fresh = authConfigPatch({ mailer_templates_confirmation_content: '<a href="{{ .ConfirmationURL }}">Confirm your mail</a>' }, goodEnv).patch;
+    expect(fresh.mailer_templates_confirmation_content).toContain("{{ .TokenHash }}");
+    const custom = '<p>Code: {{ .Token }}</p><a href="{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email">Go</a>';
+    expect(authConfigPatch({ mailer_templates_confirmation_content: custom }, goodEnv).patch).not.toHaveProperty("mailer_templates_confirmation_content");
+  });
+
+  it("refuses to build a patch without the current settings, which would replace the Redirect URLs", () => {
+    expect(() => authConfigPatch(null, goodEnv)).toThrow(/current auth settings/);
+  });
+
   it("only resends the SMTP settings once the rest is set", () => {
-    const { patch } = authConfigPatch(null, goodEnv);
+    const { patch } = authConfigPatch({}, goodEnv);
     const again = authConfigPatch({ ...patch }, goodEnv).patch;
     expect(Object.keys(again).every((k) => k.startsWith("smtp_"))).toBe(true);
     expect(authConfigPatch({ ...patch }, { ...goodEnv, RESEND_API_KEY: "" }).patch).toEqual({});
@@ -165,7 +176,7 @@ describe("authConfigPatch", () => {
   });
 
   it("says so when prospects can't get sign-in emails yet", () => {
-    const { patch, notes } = authConfigPatch(null, { ...goodEnv, RESEND_API_KEY: "" });
+    const { patch, notes } = authConfigPatch({}, { ...goodEnv, RESEND_API_KEY: "" });
     expect(patch).not.toHaveProperty("smtp_host");
     expect(notes[0]).toMatch(/only delivers to your team/);
   });
@@ -277,8 +288,54 @@ describe("interpretChecks", () => {
     expect(checks.find((c) => c.name === "Draft expiry schedule")?.detail).toMatch(/never expire/);
   });
 
+  it("fails while the sign-up email is Supabase's default link", () => {
+    const fresh = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_confirmation_content: '<a href="{{ .ConfirmationURL }}">Confirm</a>' } };
+    const checks = interpretChecks(fresh, { localMigrations: 16 });
+    expect(setupComplete(checks)).toBe(false);
+    expect(checks.find((c) => c.name === "Sign-up email survives mail scanners")?.ok).toBe(false);
+  });
+
   it("fails when prospects can't receive sign-in emails", () => {
     const builtIn = { ...allSet, authConfig: { ...allSet.authConfig, smtp_host: "" } };
     expect(setupComplete(interpretChecks(builtIn, { localMigrations: 16 }))).toBe(false);
+  });
+
+  it("fails when confirmation links would not come back to the site", () => {
+    const fresh = { ...allSet, authConfig: { ...allSet.authConfig, site_url: "http://localhost:3000", uri_allow_list: "" } };
+    const checks = interpretChecks(fresh, { localMigrations: 16 });
+    expect(setupComplete(checks)).toBe(false);
+    expect(checks.find((c) => c.name === "Email links return to the site")?.detail).toContain("http://localhost:3000");
+  });
+
+  it("compares the Site URL with APP_BASE_URL when it is known", () => {
+    expect(setupComplete(interpretChecks(allSet, { localMigrations: 16, appBaseUrl: "https://nevermore-gamma.vercel.app" }))).toBe(true);
+    expect(setupComplete(interpretChecks(allSet, { localMigrations: 16, appBaseUrl: "https://intake.example.com" }))).toBe(false);
+  });
+});
+
+describe("authUrlProblems", () => {
+  const site = "https://nevermore-gamma.vercel.app";
+
+  it("accepts the site as Site URL with everything under it allowed", () => {
+    expect(authUrlProblems({ site_url: site, uri_allow_list: `http://localhost:8080/**, ${site}/**` }, site)).toEqual([]);
+    // A trailing slash on the Site URL is the same origin.
+    expect(authUrlProblems({ site_url: `${site}/`, uri_allow_list: `${site}/**` }, site)).toEqual([]);
+  });
+
+  it("names a Site URL left at Supabase's default", () => {
+    expect(authUrlProblems({ site_url: "http://localhost:3000", uri_allow_list: "" }, null)).toEqual([
+      "Site URL is http://localhost:3000: confirmation links send people there",
+      "Redirect URLs lack http://localhost:3000/**",
+    ]);
+    expect(authUrlProblems({ site_url: "http://localhost:3000", uri_allow_list: "" }, site)).toEqual([
+      `Site URL is http://localhost:3000, not ${site}`,
+      `Redirect URLs lack ${site}/**`,
+    ]);
+  });
+
+  it("names a missing Site URL, a missing redirect entry and an unreadable config", () => {
+    expect(authUrlProblems({ site_url: "", uri_allow_list: `${site}/**` }, site)).toEqual(["Site URL is not set (Authentication → URL Configuration)"]);
+    expect(authUrlProblems({ site_url: site, uri_allow_list: `${site}/start` }, site)).toEqual([`Redirect URLs lack ${site}/**`]);
+    expect(authUrlProblems(null, site)).toEqual(["auth config unreadable"]);
   });
 });

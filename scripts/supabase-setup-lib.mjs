@@ -130,13 +130,16 @@ export const SIGN_IN_CODE_TEMPLATE = [
 /**
  * The auth settings to change, given the current ones (`null` when they couldn't be read). Only what
  * differs is sent, and nothing already customised is overwritten: extra redirect URLs are kept, a
- * template that already has the code stays, and SMTP that isn't Resend's is left alone. Resend's SMTP
+ * template that already has the code stays (for sign-up: the code and an app link, and no
+ * {{ .ConfirmationURL }}), and SMTP that isn't Resend's is left alone. `current` must be the
+ * project's settings: without them the patch would replace the Redirect URLs list. Resend's SMTP
  * settings are sent every time, so a rotated RESEND_API_KEY is picked up (the API doesn't return the
  * current password to compare). `notes` explain what was left as is. The patch can hold the SMTP
  * password: never print it.
  */
 export function authConfigPatch(current, env) {
-  const c = current ?? {};
+  if (!current) throw new Error("authConfigPatch needs the project's current auth settings");
+  const c = current;
   const origin = new URL(env.APP_BASE_URL).origin;
   const patch = {};
   const notes = [];
@@ -261,12 +264,36 @@ export function rowsFrom(body) {
 }
 
 /**
+ * Why the links in sign-up and email-change emails would not come back to the site, or [] when they
+ * would. Supabase sends a link's visitor to the redirect the app asked for only when it is on the
+ * Redirect URLs list, and otherwise to the Site URL: a new project's Site URL is
+ * http://localhost:3000, so an unset one turns every confirmation into a browser error page.
+ * `appBaseUrl` (APP_BASE_URL) pins the expected origin when it is known.
+ */
+export function authUrlProblems(authConfig, appBaseUrl) {
+  if (!authConfig) return ["auth config unreadable"];
+  let site;
+  try { site = new URL(String(authConfig.site_url ?? "")); } catch { return ["Site URL is not set (Authentication → URL Configuration)"]; }
+  const local = site.hostname === "localhost" || site.hostname === "127.0.0.1";
+  let expected = null;
+  try { expected = appBaseUrl ? new URL(appBaseUrl).origin : null; } catch { /* checkSecrets reports a bad APP_BASE_URL */ }
+
+  const problems = [];
+  if (expected && site.origin !== expected) problems.push(`Site URL is ${authConfig.site_url}, not ${expected}`);
+  else if (!expected && (local || site.protocol !== "https:")) problems.push(`Site URL is ${authConfig.site_url}: confirmation links send people there`);
+  const origin = expected ?? site.origin;
+  const allowList = String(authConfig.uri_allow_list ?? "").split(",").map((u) => u.trim()).filter(Boolean);
+  if (!allowList.includes(`${origin}/**`)) problems.push(`Redirect URLs lack ${origin}/**`);
+  return problems;
+}
+
+/**
  * Turns everything the checks saw into lines. `seen` holds the status counts, the public auth
  * settings, the Management API's auth config, each function's probe and the secret names, any of
  * which may be missing. A check marked
  * `required: false` is a to-do (emails, advisor accounts), not a failed setup.
  */
-export function interpretChecks(seen, { localMigrations }) {
+export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
   const s = seen.status ?? {};
   const checks = [];
   const add = (name, ok, detail, required = true) => checks.push({ name, ok, detail, required });
@@ -286,6 +313,8 @@ export function interpretChecks(seen, { localMigrations }) {
 
   const ac = seen.authConfig;
   const codeOk = !!ac && ac.mailer_otp_length === 6 && String(ac.mailer_templates_email_change_content ?? "").includes(".Token");
+  const signupOk = !!ac && signupTemplateOk(ac.mailer_templates_confirmation_content);
+  add("Sign-up email survives mail scanners", signupOk, ac ? (signupOk ? "6-digit code and a link that confirms on a click" : "the Confirm signup template must carry {{ .Token }} and an app link with {{ .TokenHash }}, not {{ .ConfirmationURL }}") : "auth config unreadable");
   add("Email code message", codeOk, ac ? (codeOk ? "6-digit code in the email-change template" : "the email-change template must send a 6-digit {{ .Token }}") : "auth config unreadable");
   const signInOk = !!ac && ac.mailer_otp_length === 6 && String(ac.mailer_templates_magic_link_content ?? "").includes(".Token");
   add("Sign-in code message", signInOk, ac ? (signInOk ? "6-digit code in the magic-link template" : "the magic-link template must send a 6-digit {{ .Token }} (returning prospects sign in with it)") : "auth config unreadable");
