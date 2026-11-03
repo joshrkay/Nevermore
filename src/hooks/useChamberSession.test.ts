@@ -585,6 +585,30 @@ describe("useChamberSession", () => {
       expect(result.current.fileId).toBe("EAA-2026-S7");
     });
 
+    it("keeps the File ID a certification already recorded, even one made from another year", async () => {
+      // Certified before File IDs took the start year: its recorded File ID stays the intake's.
+      resumeRow = serverRow({ id: "s7", status: "submitted", created_at: NEW_YEARS_EVE, submission: { ...submission, file_id: "EAA-2027-S7" } });
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(result.current.certification.status).not.toBe("none");
+      expect(result.current.fileId).toBe("EAA-2027-S7");
+    });
+
+    it("keeps it when the certification was withdrawn, so certifying again reuses it", async () => {
+      resumeRow = serverRow({ id: "s7", status: "in_progress", created_at: NEW_YEARS_EVE, submission: { ...submission, file_id: "EAA-2027-S7" } });
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(result.current.certification.status).toBe("stale");
+      expect(result.current.fileId).toBe("EAA-2027-S7");
+    });
+
+    it("makes one from the start year when the recorded File ID is blank", async () => {
+      resumeRow = serverRow({ id: "s7", status: "submitted", created_at: NEW_YEARS_EVE, submission: { ...submission, file_id: "  " } });
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(result.current.fileId).toBe("EAA-2026-S7");
+    });
+
     it("has none while there is no intake", async () => {
       latestError = { message: "network down" };
       const { result } = renderHook(() => useChamberSession());

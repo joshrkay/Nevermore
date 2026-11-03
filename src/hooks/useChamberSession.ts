@@ -1186,7 +1186,17 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     return true;
   }), [adoptVersion, blockedMessage, enqueue, markConflict, markExpired, markInvalid, markMissing, reconcile, rememberUnconfirmed, saveNow]);
 
-  const fileId = sessionId && startedAt ? fileIdForSession(sessionId, new Date(startedAt)) : null;
+  // A File ID already recorded on a certification (even a withdrawn one) stays the intake's, as the
+  // advisor views and the Manuscript read it: intakes certified before the start-year rule may carry
+  // another year. Only an intake with none recorded gets one made from when it started.
+  const recorded = certification.status === "none" ? null : certification.submission.file_id;
+  const fileId = !sessionId
+    ? null
+    : typeof recorded === "string" && recorded.trim()
+      ? recorded
+      : startedAt
+        ? fileIdForSession(sessionId, new Date(startedAt))
+        : null;
 
   return {
     sessionId,
