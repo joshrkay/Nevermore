@@ -441,7 +441,33 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
   - A test that holds the field table in `docs/intake-schema.md` to the schema.
 
 ##### US-2.4a Extraction events, intake id, error codes and a browser timeout
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + FE · **Depends:** none · **Milestone:** M1
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE + FE · **Depends:** none · **Milestone:** M1
+- **Built:**
+  - **Events table.** Migration `20261103110000_ai_extraction_events.sql` adds `ai_extraction_events`:
+    - Checks refuse anything in `fields` and `refused_paths` that isn't a field name or a schema path, so no prospect words can be stored.
+    - Advisors read events, and clients can't write them.
+    - `prune_ai_extraction_events()` runs daily under pg_cron, with 90-day retention.
+  - **Shared modules.** `_shared/ai/errors.ts` holds the codes, `_shared/ai/events.ts` the recorder, and each function's `PROMPT_VERSION` has a fingerprint test.
+  - **`chamber-extract`:**
+    - It checks the request before any quota is spent.
+    - It takes an optional `session_id` and refuses an intake that isn't the caller's, even for an advisor.
+    - An answer without the tool call is `invalid_response`.
+  - **`document-extract`.** Moved into a testable `handler.ts`, with the same codes and events. Its logs name an error's class only.
+  - **Browser.**
+    - The chat sends the intake id and gives up after 45 seconds. Each code gets its own message.
+    - The Upload tab says why the last read didn't go through.
+  - **Runbook.** `docs/AI_OPERATIONS.md` lists the codes, limits, event columns, queries and log lines.
+  - **Tests:**
+    - Handler tests per code for both functions.
+    - SQL tests: `ai_extraction_events.sql` (content checks, access, cascade, pruning), plus per-user quota cases in `ai_abuse_limits.sql`.
+    - Chat hook tests for each code and the timeout.
+    - The e2e chat writes a real event.
+- **Notes:**
+  - **Codes.** `provider_unavailable` from the scope above became two codes: `unavailable` (not set up, budget unreadable, provider can't pay) and `provider_error`. The prospect sees the same words for both.
+  - **Optional intake id.** `session_id` is optional for now, so a tab running the previous front end keeps working. Make it required once old bundles are gone.
+  - **Document reads have no browser timeout.** A read can take two 30-second attempts. A read left `processing` still shows as failed after 5 minutes, as before.
+  - **Reading events.** Events are read in SQL only; the advisor screens don't show them yet.
+  - **Deploy order:** the migration, then both functions, then the front end. A function deployed before the migration logs `AI_EVENT_NOT_RECORDED` and otherwise works.
 - **Scope:**
   - An extraction events table (D20).
   - Both AI functions receive the intake id and check the caller owns the intake. Each call writes one event:

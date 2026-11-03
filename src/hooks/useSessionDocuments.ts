@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { guessCategory, type DocumentCategory } from "@/data/documentCategories";
 import { parseExtraction, type CandidateField, type DocumentExtraction } from "@/data/documentCandidates";
 import { inspectUpload, MAX_DOCUMENTS_PER_INTAKE } from "@/lib/uploadCheck";
+import { describeInvokeError, failureKindFromCode, type AiFailureKind } from "@/data/aiFailure";
 
 export interface SessionDocument {
   id: string;
@@ -19,6 +20,11 @@ export interface SessionDocument {
   created_at: string;
   storage_path: string | null; // null while the upload is in flight
   extraction: DocumentExtraction;
+  /**
+   * Why the last read in this tab didn't go through (a rate limit, the daily cap, a timeout...), from the
+   * function's answer. Not stored: a reload shows the row's own status.
+   */
+  readIssue?: AiFailureKind | null;
 }
 
 /** Why a file wasn't uploaded, before or as it was stored. */
@@ -150,14 +156,22 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
     activeRef.current.add(doc.id);
     patchDoc(doc.id, { status: "processing" });
     try {
-      const { error } = await supabase.functions.invoke("document-extract", { body: { document_id: doc.id } });
-      if (error) console.error("Document extraction failed:", error.message);
+      const { data: answer, error } = await supabase.functions.invoke("document-extract", { body: { document_id: doc.id } });
+      let readIssue: AiFailureKind | null = null;
+      if (error) {
+        const info = await describeInvokeError(error);
+        readIssue = info.kind;
+        console.warn("Document not read:", info.kind, info.requestId ?? "");
+      } else if (answer && typeof answer.code === "string") {
+        // The function answered, and the read failed (the model timed out, say): the row says failed, this says why.
+        readIssue = failureKindFromCode(answer.code);
+      }
       // The function records its outcome on the row (or leaves it untouched if it never ran),
       // so the row is the source of truth either way.
       const { data } = await supabase.from("documents").select(COLUMNS).eq("id", doc.id).maybeSingle();
       if (sessionRef.current !== sid) return;
-      if (data) patchDoc(doc.id, fromRow(data as Row));
-      else patchDoc(doc.id, { status: "failed" });
+      if (data) patchDoc(doc.id, { ...fromRow(data as Row), readIssue });
+      else patchDoc(doc.id, { status: "failed", readIssue });
     } finally {
       activeRef.current.delete(doc.id);
     }

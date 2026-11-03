@@ -79,7 +79,7 @@ describe("checkAiBudget", () => {
   it("refuses, and spends nothing, when the service-role key or the address-hashing secret is missing", async () => {
     for (const missing of ["SUPABASE_SERVICE_ROLE_KEY", "IP_HASH_SECRET"]) {
       const t = setup({ env: { [missing]: undefined } });
-      expect(await checkAiBudget(t.request)).toMatchObject({ allowed: false, status: 503, reason: "config_missing" });
+      expect(await checkAiBudget(t.request)).toMatchObject({ allowed: false, status: 503, code: "unavailable", reason: "config_missing" });
       expect(t.calls).toEqual([]);
       expect(t.createAdmin).not.toHaveBeenCalled();
       expect(t.logs).toEqual(["AI_CONFIG_MISSING: SUPABASE_SERVICE_ROLE_KEY and IP_HASH_SECRET must both be set"]);
@@ -88,25 +88,25 @@ describe("checkAiBudget", () => {
 
   it("refuses an over-quota caller with a 429 before touching the address or global counts", async () => {
     const t = setup({ allow: { consume_ai_quota: false } });
-    expect(await checkAiBudget(t.request)).toMatchObject({ allowed: false, status: 429, reason: "user_quota" });
+    expect(await checkAiBudget(t.request)).toMatchObject({ allowed: false, status: 429, code: "rate_limited", reason: "user_quota" });
     expect(t.calls.map((c) => c.fn)).toEqual(["consume_ai_quota"]);
   });
 
   it("refuses an over-quota address with a 429 before the global count", async () => {
     const t = setup({ allow: { consume_ip_quota: false } });
-    expect(await checkAiBudget(t.request)).toMatchObject({ allowed: false, status: 429, reason: "ip_quota" });
+    expect(await checkAiBudget(t.request)).toMatchObject({ allowed: false, status: 429, code: "rate_limited", reason: "ip_quota" });
     expect(t.calls.map((c) => c.fn)).toEqual(["consume_ai_quota", "consume_ip_quota"]);
   });
 
   it("refuses everyone with a 503 once the daily ceiling is reached, and logs it", async () => {
     const t = setup({ allow: { consume_global_ai_budget: false } });
-    expect(await checkAiBudget(t.request)).toMatchObject({ allowed: false, status: 503, reason: "global_ceiling" });
+    expect(await checkAiBudget(t.request)).toMatchObject({ allowed: false, status: 503, code: "daily_cap", reason: "global_ceiling" });
     expect(t.logs[0]).toContain("AI_GLOBAL_CEILING_HIT");
   });
 
   it("refuses rather than allows when a count can't be checked", async () => {
     const t = setup({ rpcError: "connection reset" });
-    expect(await checkAiBudget(t.request)).toMatchObject({ allowed: false, status: 503, reason: "budget_unavailable" });
+    expect(await checkAiBudget(t.request)).toMatchObject({ allowed: false, status: 503, code: "unavailable", reason: "budget_unavailable" });
     expect(t.logs[0]).toContain("AI_BUDGET_CHECK_FAILED");
   });
 });

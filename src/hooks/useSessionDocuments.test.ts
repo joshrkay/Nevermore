@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 
 type Result = { data?: unknown; error: { message: string } | null };
 
@@ -9,6 +10,8 @@ let insertResult: Result = { data: null, error: null };
 let deleteResult: Result = { error: null };
 let storageRemoveResult: Result = { error: null };
 let uploadGate: Promise<void> | null = null;
+let invokeResult: { data: unknown; error: unknown } = { data: {}, error: null };
+let readBackStatus = "extracted";
 
 const row = (over: Record<string, unknown> = {}) => ({
   id: "d1", file_name: "census.csv", file_size: "1 KB", size_bytes: 1024, mime_type: "text/csv",
@@ -27,7 +30,7 @@ vi.mock("@/integrations/supabase/client", () => {
             log("select.eq", col, val);
             return {
               order: async () => ({ data: listRows, error: null }),
-              maybeSingle: async () => ({ data: row({ id: val, status: "extracted" }), error: null }),
+              maybeSingle: async () => ({ data: row({ id: val, status: readBackStatus }), error: null }),
             };
           },
         }),
@@ -44,7 +47,7 @@ vi.mock("@/integrations/supabase/client", () => {
           remove: async (paths: string[]) => { log("storage.remove", paths); return storageRemoveResult; },
         }),
       },
-      functions: { invoke: async (name: string, opts: unknown) => { log("invoke", name, opts); return { data: {}, error: null }; } },
+      functions: { invoke: async (name: string, opts: unknown) => { log("invoke", name, opts); return invokeResult; } },
     },
   };
 });
@@ -59,6 +62,41 @@ describe("useSessionDocuments", () => {
     deleteResult = { error: null };
     storageRemoveResult = { error: null };
     uploadGate = null;
+    invokeResult = { data: {}, error: null };
+    readBackStatus = "extracted";
+  });
+
+  describe("why a read didn't go through", () => {
+    const read = async () => {
+      listRows = [row({ id: "d1", status: "uploaded" })];
+      const { result } = renderHook(() => useSessionDocuments("s1"));
+      await waitFor(() => expect(result.current.docs).toHaveLength(1));
+      await act(async () => { await result.current.extract(result.current.docs[0]); });
+      return result.current.docs[0];
+    };
+
+    it("keeps the function's reason when the read was put off, such as the daily cap", async () => {
+      invokeResult = { data: null, error: new FunctionsHttpError(new Response(JSON.stringify({ code: "daily_cap", request_id: "r1" }), { status: 503 })) };
+      readBackStatus = "uploaded";
+      const doc = await read();
+      expect(doc.status).toBe("uploaded");
+      expect(doc.readIssue).toBe("daily_cap");
+    });
+
+    it("keeps the reason a read failed, from the function's answer", async () => {
+      invokeResult = { data: { status: "failed", code: "timeout", request_id: "r2" }, error: null };
+      readBackStatus = "failed";
+      const doc = await read();
+      expect(doc.status).toBe("failed");
+      expect(doc.readIssue).toBe("timeout");
+    });
+
+    it("has no reason when the read went through", async () => {
+      invokeResult = { data: { status: "extracted", request_id: "r3" }, error: null };
+      const doc = await read();
+      expect(doc.status).toBe("extracted");
+      expect(doc.readIssue).toBeNull();
+    });
   });
 
   it("lists only the open intake's documents", async () => {

@@ -18,6 +18,7 @@ import {
 } from "@/data/chamberValidation";
 import { FIELD_KINDS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
+import { AI_ERROR_CODES } from "../../supabase/functions/_shared/ai/errors";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
 
@@ -212,6 +213,11 @@ describe("server and client intake rules agree", () => {
       const dbKinds = Object.fromEntries([...serverKinds].filter(([key]) => !LEGACY_KEYS.includes(key)));
       expect(schemaKinds).toEqual(dbKinds);
     });
+  });
+
+  // An extraction event stores the code the function answered with, so both lists must be the same.
+  it("records exactly the error codes the AI functions answer with", () => {
+    expect(quoted(blocks("ai_error_codes").join("\n"))).toEqual([...AI_ERROR_CODES]);
   });
 
   // The Chamber tells a prospect how long a draft is kept; the database is what keeps (and expires) it.

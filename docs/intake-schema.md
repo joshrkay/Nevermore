@@ -276,7 +276,7 @@ Open items are listed conflicting first, then incomplete, unknown and inferred. 
 
 ### Extraction contract (`chamber-extract`)
 
-The response is `{ extracted, field_status, evidence, corrected_fields, reply, rejected }`. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`. A field enters `extracted` only if the intake schema accepts the model's value exactly as sent. A lower-case `"ny"`, a state list with one unknown code, `12.5` people or a string of digits is refused and listed in `rejected` as `{ path, reason }`. The browser ignores `rejected`.
+The request is `{ message, context, session_id }`: the prospect's message, the answers captured so far (the census left out), and the intake id, which must be the caller's own intake. The response is `{ extracted, field_status, evidence, corrected_fields, reply, rejected, request_id }`; a failure is `{ error, code, request_id }` (codes, limits and the extraction event each call leaves: `docs/AI_OPERATIONS.md`). An answer without the forced tool call is `invalid_response`, not an empty extraction. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`. A field enters `extracted` only if the intake schema accepts the model's value exactly as sent. A lower-case `"ny"`, a state list with one unknown code, `12.5` people or a string of digits is refused and listed in `rejected` as `{ path, reason }`. The browser ignores `rejected`.
 
 ### Document candidates (`document-extract`)
 
