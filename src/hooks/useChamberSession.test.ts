@@ -1963,6 +1963,19 @@ describe("useChamberSession", () => {
       expect(result.current.messages.map((m) => m.text)).toEqual([OPENING_MESSAGE]);
       expect(latestQueries.at(-1)?.[1]).toBe("u2");
     });
+
+    it("doesn't carry the guest's chosen PEO into the new person's blank intake", async () => {
+      const { result, rerender } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.choosePeo("Justworks"));
+      expect(result.current.chosenPeo).toBe("Justworks");
+
+      authUserId = "u2"; // no open intake of their own, so a blank one is made for them
+      rerender();
+      await waitFor(() => expect(inserts).toBe(2));
+      expect(insertedRows[1]).toMatchObject({ user_id: "u2", chosen_peo: null });
+      expect(result.current.chosenPeo).toBeNull();
+    });
   });
 
   describe("the conversation", () => {
