@@ -1878,7 +1878,7 @@ describe("useChamberSession", () => {
     });
   });
 
-  it("reports, by path only, saved answers that don't match intake schema v1, and loads what is valid", async () => {
+  it("reports, by path only, saved answers that don't match the intake schema, and loads what is valid", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     resumeRow = serverRow({ id: "s9", chamber_data: { company_name: "Acme", hq_state: "California", employees: [] } });
     const { result } = renderHook(() => useChamberSession("s9"));
@@ -1886,7 +1886,7 @@ describe("useChamberSession", () => {
     expect(result.current.chamberData.company_name).toBe("Acme");
     expect(result.current.chamberData.hq_state).toBeNull();
     const [message, issues] = warn.mock.calls[0];
-    expect(message).toMatch(/intake schema v1/);
+    expect(message).toMatch(/intake schema v2/);
     expect(issues).toEqual(["hq_state must be a US state or territory code such as CA", "employees is not a known intake field"]);
     expect(JSON.stringify(warn.mock.calls)).not.toContain("California");
     warn.mockRestore();

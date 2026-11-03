@@ -1,0 +1,864 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:edgar-allan-advisory:intake:chamber-data:v2",
+  "title": "Intake answers (chamber_data), version 2",
+  "description": "What a prospect's intake holds. Every key is optional; an unanswered question is null (or an empty list). Each property's x-intake gives its label, its section, whether an intake needs it to be ready to certify (required), and the order Lenore asks in (rank, 1 first). Version 2 adds the workers' comp block to version 1. Generated from supabase/functions/_shared/intakeSchema.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "company_name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Company legal name",
+        "section": "company",
+        "required": true,
+        "rank": 1
+      }
+    },
+    "industry": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Industry",
+        "section": "company",
+        "required": false,
+        "rank": 6
+      }
+    },
+    "hq_state": {
+      "title": "a US state or territory code such as CA",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "AL",
+        "AK",
+        "AZ",
+        "AR",
+        "CA",
+        "CO",
+        "CT",
+        "DE",
+        "FL",
+        "GA",
+        "HI",
+        "ID",
+        "IL",
+        "IN",
+        "IA",
+        "KS",
+        "KY",
+        "LA",
+        "ME",
+        "MD",
+        "MA",
+        "MI",
+        "MN",
+        "MS",
+        "MO",
+        "MT",
+        "NE",
+        "NV",
+        "NH",
+        "NJ",
+        "NM",
+        "NY",
+        "NC",
+        "ND",
+        "OH",
+        "OK",
+        "OR",
+        "PA",
+        "RI",
+        "SC",
+        "SD",
+        "TN",
+        "TX",
+        "UT",
+        "VT",
+        "VA",
+        "WA",
+        "WV",
+        "WI",
+        "WY",
+        "DC",
+        "AS",
+        "GU",
+        "MP",
+        "PR",
+        "VI",
+        null
+      ],
+      "x-intake": {
+        "label": "HQ state",
+        "section": "locations",
+        "required": false,
+        "rank": 7
+      }
+    },
+    "states": {
+      "type": "array",
+      "maxItems": 60,
+      "items": {
+        "$ref": "#/$defs/stateCode"
+      },
+      "x-intake": {
+        "label": "States of operation",
+        "section": "locations",
+        "required": true,
+        "rank": 2
+      }
+    },
+    "employee_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000,
+      "x-intake": {
+        "label": "Employee count",
+        "section": "company",
+        "required": false,
+        "rank": 5
+      }
+    },
+    "start_month": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Target start",
+        "section": "company",
+        "required": false,
+        "rank": 15
+      }
+    },
+    "multiple_entities": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "Multiple entities",
+        "section": "company",
+        "required": false,
+        "rank": 16
+      }
+    },
+    "fein_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000,
+      "x-intake": {
+        "label": "FEIN count",
+        "section": "company",
+        "required": false,
+        "rank": 17
+      }
+    },
+    "virgin_medical": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "First-time medical coverage",
+        "section": "benefits",
+        "required": false,
+        "rank": 18
+      }
+    },
+    "current_carrier": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Current carrier",
+        "section": "benefits",
+        "required": false,
+        "rank": 8
+      }
+    },
+    "renewal_date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Renewal date",
+        "section": "benefits",
+        "required": false,
+        "rank": 9
+      }
+    },
+    "rate_history": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Rate history",
+        "section": "benefits",
+        "required": false,
+        "rank": 19
+      }
+    },
+    "benefits_waiting_period": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Waiting period",
+        "section": "benefits",
+        "required": false,
+        "rank": 20
+      }
+    },
+    "ancillary_benefits": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "maxLength": 1000
+      },
+      "x-intake": {
+        "label": "Ancillary benefits",
+        "section": "benefits",
+        "required": false,
+        "rank": 21
+      }
+    },
+    "has_401k": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "Retirement plan",
+        "section": "benefits",
+        "required": false,
+        "rank": 22
+      }
+    },
+    "retirement_type": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Retirement plan type",
+        "section": "benefits",
+        "required": false,
+        "rank": 23
+      }
+    },
+    "employer_contributes": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "Employer retirement contribution",
+        "section": "benefits",
+        "required": false,
+        "rank": 24
+      }
+    },
+    "payroll_vendor": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Payroll vendor",
+        "section": "payroll",
+        "required": false,
+        "rank": 10
+      }
+    },
+    "pay_frequency": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Pay frequency",
+        "section": "payroll",
+        "required": true,
+        "rank": 3
+      }
+    },
+    "funding_days": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000,
+      "x-intake": {
+        "label": "Funding lead time",
+        "section": "payroll",
+        "required": false,
+        "rank": 25
+      }
+    },
+    "has_nonexempt": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "Nonexempt employees",
+        "section": "payroll",
+        "required": false,
+        "rank": 26
+      }
+    },
+    "nonexempt_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000,
+      "x-intake": {
+        "label": "Nonexempt count",
+        "section": "payroll",
+        "required": false,
+        "rank": 27
+      }
+    },
+    "exempt_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000,
+      "x-intake": {
+        "label": "Exempt count",
+        "section": "payroll",
+        "required": false,
+        "rank": 28
+      }
+    },
+    "pto_types": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "maxLength": 1000
+      },
+      "x-intake": {
+        "label": "PTO types",
+        "section": "payroll",
+        "required": false,
+        "rank": 29
+      }
+    },
+    "accrual_method": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Accrual method",
+        "section": "payroll",
+        "required": false,
+        "rank": 30
+      }
+    },
+    "has_handbook": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "Employee handbook",
+        "section": "operations",
+        "required": false,
+        "rank": 31
+      }
+    },
+    "handbook_last_updated": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Handbook last updated",
+        "section": "operations",
+        "required": false,
+        "rank": 32
+      }
+    },
+    "hr_staff_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1000000,
+      "x-intake": {
+        "label": "In-house HR staff",
+        "section": "operations",
+        "required": false,
+        "rank": 33
+      }
+    },
+    "has_1099": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "1099 contractors",
+        "section": "census",
+        "required": false,
+        "rank": 34
+      }
+    },
+    "ca_contractors": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "California contractors",
+        "section": "census",
+        "required": false,
+        "rank": 35
+      }
+    },
+    "uses_physical_clocks": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "Physical time clocks",
+        "section": "operations",
+        "required": false,
+        "rank": 36
+      }
+    },
+    "uses_mobile_app": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "Mobile timekeeping",
+        "section": "operations",
+        "required": false,
+        "rank": 37
+      }
+    },
+    "uses_computer_timekeeping": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "Computer timekeeping",
+        "section": "operations",
+        "required": false,
+        "rank": 38
+      }
+    },
+    "shift_differentials": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "Shift differentials",
+        "section": "operations",
+        "required": false,
+        "rank": 39
+      }
+    },
+    "hris_system": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "HRIS system",
+        "section": "operations",
+        "required": false,
+        "rank": 40
+      }
+    },
+    "key_challenges": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Key challenges",
+        "section": "operations",
+        "required": false,
+        "rank": 41
+      }
+    },
+    "business_goals": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Business goals",
+        "section": "operations",
+        "required": false,
+        "rank": 42
+      }
+    },
+    "wc_carrier": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Workers' comp carrier",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 11
+      }
+    },
+    "wc_renewal_date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Workers' comp renewal date",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 12
+      }
+    },
+    "wc_experience_mod": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 10,
+      "x-intake": {
+        "label": "Experience mod",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 13
+      }
+    },
+    "wc_annual_premium": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 100000000,
+      "x-intake": {
+        "label": "Workers' comp annual premium",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 14
+      }
+    },
+    "census": {
+      "type": "array",
+      "maxItems": 5000,
+      "items": {
+        "$ref": "#/$defs/censusRow"
+      },
+      "x-intake": {
+        "label": "Employee census",
+        "section": "census",
+        "required": true,
+        "rank": 4
+      }
+    }
+  },
+  "$defs": {
+    "stateCode": {
+      "title": "a US state or territory code such as CA",
+      "type": "string",
+      "enum": [
+        "AL",
+        "AK",
+        "AZ",
+        "AR",
+        "CA",
+        "CO",
+        "CT",
+        "DE",
+        "FL",
+        "GA",
+        "HI",
+        "ID",
+        "IL",
+        "IN",
+        "IA",
+        "KS",
+        "KY",
+        "LA",
+        "ME",
+        "MD",
+        "MA",
+        "MI",
+        "MN",
+        "MS",
+        "MO",
+        "MT",
+        "NE",
+        "NV",
+        "NH",
+        "NJ",
+        "NM",
+        "NY",
+        "NC",
+        "ND",
+        "OH",
+        "OK",
+        "OR",
+        "PA",
+        "RI",
+        "SC",
+        "SD",
+        "TN",
+        "TX",
+        "UT",
+        "VT",
+        "VA",
+        "WA",
+        "WV",
+        "WI",
+        "WY",
+        "DC",
+        "AS",
+        "GU",
+        "MP",
+        "PR",
+        "VI"
+      ]
+    },
+    "censusRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "first_name",
+        "last_name",
+        "work_state",
+        "compensation_type",
+        "employment_type",
+        "classification"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "[^ ]"
+        },
+        "first_name": {
+          "type": "string",
+          "maxLength": 1000,
+          "pattern": "[^ ]"
+        },
+        "last_name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "dob": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "age": {
+          "type": "integer",
+          "minimum": 14,
+          "maximum": 100
+        },
+        "work_state": {
+          "title": "blank or a US state or territory code such as CA",
+          "type": "string",
+          "enum": [
+            "",
+            "AL",
+            "AK",
+            "AZ",
+            "AR",
+            "CA",
+            "CO",
+            "CT",
+            "DE",
+            "FL",
+            "GA",
+            "HI",
+            "ID",
+            "IL",
+            "IN",
+            "IA",
+            "KS",
+            "KY",
+            "LA",
+            "ME",
+            "MD",
+            "MA",
+            "MI",
+            "MN",
+            "MS",
+            "MO",
+            "MT",
+            "NE",
+            "NV",
+            "NH",
+            "NJ",
+            "NM",
+            "NY",
+            "NC",
+            "ND",
+            "OH",
+            "OK",
+            "OR",
+            "PA",
+            "RI",
+            "SC",
+            "SD",
+            "TN",
+            "TX",
+            "UT",
+            "VT",
+            "VA",
+            "WA",
+            "WV",
+            "WI",
+            "WY",
+            "DC",
+            "AS",
+            "GU",
+            "MP",
+            "PR",
+            "VI"
+          ]
+        },
+        "zip_code": {
+          "type": "string",
+          "pattern": "^[0-9]{5}(-[0-9]{4})?$"
+        },
+        "job_title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "annual_salary": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "compensation_type": {
+          "type": "string",
+          "enum": [
+            "salary",
+            "hourly"
+          ]
+        },
+        "employment_type": {
+          "type": "string",
+          "enum": [
+            "full_time",
+            "part_time"
+          ]
+        },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "w2",
+            "1099"
+          ]
+        },
+        "coverage_tier": {
+          "type": "string",
+          "enum": [
+            "EE",
+            "EE+SP",
+            "EE+CH",
+            "FAM",
+            "WAIVE"
+          ]
+        },
+        "class_code": {
+          "type": "string",
+          "pattern": "^[0-9]{4}$"
+        },
+        "dependents": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/dependent"
+          }
+        }
+      }
+    },
+    "dependent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "first_name"
+      ],
+      "properties": {
+        "first_name": {
+          "type": "string",
+          "maxLength": 1000,
+          "pattern": "[^ ]"
+        },
+        "last_name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "dob": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "relationship": {
+          "type": "string",
+          "enum": [
+            "spouse",
+            "domestic_partner",
+            "child",
+            "other"
+          ]
+        }
+      }
+    }
+  }
+}

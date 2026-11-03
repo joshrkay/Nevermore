@@ -392,7 +392,29 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **US-2.4 AI safety, error handling and observability.** AI failures show a friendly retry state. An invalid extraction never corrupts the intake. Logs capture failures and validation errors without unnecessary sensitive content. Failed extractions can be found by intake. Rate limits and timeouts are defined and tested. *Children:* 2.4a, plus the golden transcripts in 2.3a.
 
 ##### US-2.1a Intake schema v2: field metadata, the workers' comp block, and two new field statuses
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + FE · **Depends:** none · **Milestone:** M1
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE + FE · **Depends:** none · **Milestone:** M1
+- **Built:**
+  - **Migrations.** `20261103100000_intake_schema_v2_workers_comp.sql` adds the four keys and two kinds to `chamber_data_field_kind` and `chamber_data_error`:
+    - `experience_mod`: a JSON number from 0 to 10.
+    - `dollars`: whole dollars from 0 to 100,000,000.
+  - **Version move.** `20261103100100_intake_schema_v2_version.sql` moves every row to `schema_version` 2 with the table's triggers off, so it is not a save. It sets the default to 2 and refuses any other value.
+  - **Schema module.** `supabase/functions/_shared/intakeSchema.ts` holds `INTAKE_SCHEMA_V2`, published as `docs/intake-schema.v2.json`:
+    - Each property's `x-intake` gives its label, section, required flag and rank.
+    - `INTAKE_FIELDS` lists the fields in rank order, and `REQUIRED_FIELDS` names the core four.
+    - `FIELD_LABELS` now comes from the schema.
+  - **Statuses.** `provenance.ts` adds `unknown` (open item "Prospect to provide") and `not_applicable` (closed, and never changed by an extraction or document candidate). The workspace and the Manuscript show both as badges in place of an answer.
+  - **Client.** The sanitiser reads "$18,400" and "0.92", and the edit control takes a decimal mod.
+  - **Docs.** `docs/intake-schema.md` has the field table by section, generated from the schema.
+  - **Tests:**
+    - SQL: 10 new rejection cases and the version move in `intake_lifecycle.sql`.
+    - `intakeSchema.test.ts`: v2 is a superset of `docs/intake-schema.v1.json`, plus metadata and ranking checks.
+    - `intakeSchemaDoc.test.ts`: the doc's field table matches the schema.
+    - `schemaSync.test.ts`: now reads each `sync:` block from the latest migration that defines its function. Before, a block was keyed by name only, so replacing one function would have stopped the test from checking another function's `caps`.
+    - Provenance and component tests for both statuses.
+- **Notes:**
+  - **Writers today.** Nothing writes `unknown` until 2.1b (the model) and nothing writes `not_applicable` until 2.2a (the "Doesn't apply" control). Only voice `<extract>` writes the workers' comp fields until 2.1b, and they have no workspace home until 2.2a.
+  - **Advisor queue.** Its open-field count still counts only inferred, incomplete and conflicting fields. 2.2a brings it in line with the open items.
+  - **Deploy order:** the two migrations, then the front end. A tab still running the old bundle reads a row holding workers' comp answers without them, and its next save drops them, so prospects with an intake open should reload after the deploy (as in A-2.2).
 - **Scope:**
   - Intake schema v2 is v1 plus four workers' comp fields (D18):
     - `wc_carrier`: text.

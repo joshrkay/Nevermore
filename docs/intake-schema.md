@@ -4,7 +4,7 @@ The intake lives in `chamber_sessions`. The first section covers the answers the
 
 ## Intake data (`chamber_data`)
 
-`chamber_sessions.chamber_data` is a jsonb object with the 38 keys of `ChamberData` (`src/data/chamberTypes.ts`), and the database also accepts `employees`, the roster's name before the census (migration `20261029092000` added `census`). The browser sanitises it (`src/data/chamberValidation.ts`) and the database refuses anything outside the same rules (`public.chamber_data_error`, migration `20261027090000_intake_validation_and_versioning.sql`). The client is the stricter side: it drops or truncates, so valid client output is never refused.
+`chamber_sessions.chamber_data` is a jsonb object with the 42 keys of `ChamberData` (`src/data/chamberTypes.ts`), the fields of intake schema v2, and the database also accepts `employees`, the roster's name before the census (migration `20261029092000` added `census`). The browser sanitises it (`src/data/chamberValidation.ts`) and the database refuses anything outside the same rules (`public.chamber_data_error`, migration `20261027090000_intake_validation_and_versioning.sql`). The client is the stricter side: it drops or truncates, so valid client output is never refused.
 
 ### Rules by kind
 
@@ -13,6 +13,8 @@ The intake lives in `chamber_sessions`. The first section covers the answers the
 | text | `null` or a string of at most 1,000 characters (`TEXT_MAX`) | Trimmed; blank or longer is dropped |
 | count | `null` or a whole JSON number, 0 to 1,000,000 (`COUNT_MAX`) | Numeric strings are coerced ("1,200"); anything else is dropped |
 | boolean | `null`, `true` or `false` | Anything else is dropped |
+| experience mod | `null` or a JSON number from 0 to 10 (`EXPERIENCE_MOD_MAX`), such as 0.92 | Numeric text is read ("0.92"); kept to two decimal places; out of range is dropped |
+| dollars | `null` or a whole JSON number from 0 to 100,000,000 (`DOLLARS_MAX`) | `$`, commas and spaces are removed ("$18,400"); cents are rounded; over the cap is dropped, not capped |
 | state | `null` or one of the 56 codes in "State codes" | Upper-cased after trimming; an unlisted value is dropped |
 | state list | Array of listed codes, at most 60 (`MAX_STATES`) | Comma strings accepted; unlisted entries and duplicates dropped |
 | text list | Array of text, at most 100 (`MAX_LIST_ITEMS`) | Invalid entries dropped, then truncated to 100 |
@@ -46,50 +48,66 @@ Postgres jsonb refuses NUL and unpaired surrogate characters before any trigger 
 
 ### Fields
 
+Every field belongs to a section and is either required or recommended, with a rank: see "Sections, required fields and rank" below. The table is generated from the schema's `x-intake` annotations, and `src/data/intakeSchemaDoc.test.ts` fails while it differs from them.
+
 Writers: **C** chat extraction (`chamber-extract`), **D** document candidates (`document-extract`; a census sheet also supplies `census`, `employee_count`, `states`, `has_1099` and `ca_contractors`), **V** voice `<extract>` JSON (accepts any key), **E** hand edit in the workspace.
 
-| Key | Kind | Writers |
-| --- | --- | --- |
-| `company_name` | text | C D V E |
-| `industry` | text | C D V E |
-| `hq_state` | state | C D V E |
-| `states` | state list | C D V E |
-| `employee_count` | count | C D V E |
-| `start_month` | text | C D V E |
-| `multiple_entities` | boolean | V E |
-| `fein_count` | count | V |
-| `virgin_medical` | boolean | C D V |
-| `current_carrier` | text | C D V E |
-| `renewal_date` | text | C D V E |
-| `rate_history` | text | D V E |
-| `benefits_waiting_period` | text | D V E |
-| `ancillary_benefits` | text list | D V E |
-| `has_401k` | boolean | C D V E |
-| `retirement_type` | text | D V |
-| `employer_contributes` | boolean | D V |
-| `payroll_vendor` | text | C D V E |
-| `pay_frequency` | text (free text, not an enum) | C D V E |
-| `funding_days` | count | V E |
-| `has_nonexempt` | boolean | V |
-| `nonexempt_count` | count | D V |
-| `exempt_count` | count | D V |
-| `pto_types` | text list | V E |
-| `accrual_method` | text | V E |
-| `has_handbook` | boolean | C D V |
-| `handbook_last_updated` | text | V |
-| `hr_staff_count` | count | V |
-| `has_1099` | boolean | C D V |
-| `ca_contractors` | boolean | C D V |
-| `uses_physical_clocks` | boolean | V |
-| `uses_mobile_app` | boolean | V |
-| `uses_computer_timekeeping` | boolean | V |
-| `shift_differentials` | boolean | V |
-| `hris_system` | text | V |
-| `key_challenges` | text | C V |
-| `business_goals` | text | C V |
-| `census` | census (read-only in the workspace) | D V |
+| Section | Key | Label | Kind | Required | Rank | Writers |
+| --- | --- | --- | --- | --- | --- | --- |
+| Company | `company_name` | Company legal name | text | Required | 1 | C D V E |
+| Company | `employee_count` | Employee count | count | Recommended | 5 | C D V E |
+| Company | `industry` | Industry | text | Recommended | 6 | C D V E |
+| Company | `start_month` | Target start | text | Recommended | 15 | C D V E |
+| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 16 | V E |
+| Company | `fein_count` | FEIN count | count | Recommended | 17 | V |
+| Locations | `states` | States of operation | state list | Required | 2 | C D V E |
+| Locations | `hq_state` | HQ state | state | Recommended | 7 | C D V E |
+| Census | `census` | Employee census | census (read-only in the workspace) | Required | 4 | D V |
+| Census | `has_1099` | 1099 contractors | boolean | Recommended | 34 | C D V |
+| Census | `ca_contractors` | California contractors | boolean | Recommended | 35 | C D V |
+| Benefits | `current_carrier` | Current carrier | text | Recommended | 8 | C D V E |
+| Benefits | `renewal_date` | Renewal date | text | Recommended | 9 | C D V E |
+| Benefits | `virgin_medical` | First-time medical coverage | boolean | Recommended | 18 | C D V |
+| Benefits | `rate_history` | Rate history | text | Recommended | 19 | D V E |
+| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 20 | D V E |
+| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 21 | D V E |
+| Benefits | `has_401k` | Retirement plan | boolean | Recommended | 22 | C D V E |
+| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 23 | D V |
+| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 24 | D V |
+| Payroll | `pay_frequency` | Pay frequency | text (free text, not an enum) | Required | 3 | C D V E |
+| Payroll | `payroll_vendor` | Payroll vendor | text | Recommended | 10 | C D V E |
+| Payroll | `funding_days` | Funding lead time | count | Recommended | 25 | V E |
+| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 26 | V |
+| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 27 | D V |
+| Payroll | `exempt_count` | Exempt count | count | Recommended | 28 | D V |
+| Payroll | `pto_types` | PTO types | text list | Recommended | 29 | V E |
+| Payroll | `accrual_method` | Accrual method | text | Recommended | 30 | V E |
+| Workers' comp | `wc_carrier` | Workers' comp carrier | text | Recommended | 11 | V |
+| Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | V |
+| Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | V |
+| Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | V |
+| Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 31 | C D V |
+| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 32 | V |
+| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 33 | V |
+| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 36 | V |
+| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 37 | V |
+| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 38 | V |
+| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 39 | V |
+| Operations & HR | `hris_system` | HRIS system | text | Recommended | 40 | V |
+| Operations & HR | `key_challenges` | Key challenges | text | Recommended | 41 | C V |
+| Operations & HR | `business_goals` | Business goals | text | Recommended | 42 | C V |
 
-Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `dob`) are free text. `transcript`, `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks.
+Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`, `dob`) are free text. `transcript`, `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks.
+
+### Sections, required fields and rank
+
+Each field's `x-intake` annotation in the schema names its label, its section, whether it is required, and its rank. The vocabulary is `GLOSSARY.md`'s.
+
+- **Sections:** Company, Locations, Census, Benefits, Payroll, Workers' comp, and Operations & HR. Dependents have no section of their own: they sit inside each employee in the census. Locations are `hq_state`, `states` and each employee's `work_state` and `zip_code`; there is no list of worksites (decision D18). Workers' comp is the four `wc_` fields plus each employee's `class_code`.
+- **Required fields** are the four an intake needs before it is *ready to certify*: company legal name, states of operation, pay frequency and the census (D17). This is report-only for now: certification does not check it (C-1.3).
+- **Recommended fields** are every other field. None is needed to certify.
+- **Rank** is the order Lenore asks in, 1 first. The required fields rank first, then the recommended fields in the order of decision D25 (employee count, industry, HQ state, current medical carrier, renewal date, payroll vendor, then the four workers' comp fields), then the rest in the order the schema lists them. The product team owns the order; change `REQUIRED_FIELDS` or `RANKED_RECOMMENDED` in `supabase/functions/_shared/intakeSchema.ts`, then regenerate the published schema.
+- **Open items** are not stored. They are worked out from the answers and their field statuses (see "Field provenance").
 
 ### State codes
 
@@ -143,23 +161,25 @@ Paths are zero-based: `hq_state`, `states[2]`, `census[3].dob`, `census[0].depen
 
 The migration must be deployed before the front end, which selects `data_version`.
 
-`chamber_sessions.schema_version` (smallint, default 1, migration `20261103091000`) records which version of the intake schema the row's answers follow. Version 1 is the only one, so every row is version 1 and the database refuses any other value. A later version changes the check in its own migration, says how rows move, and changes `INTAKE_SCHEMA_VERSION` with it.
+`chamber_sessions.schema_version` (smallint, migration `20261103091000`) records which version of the intake schema the row's answers follow. The current version is 2, the default, and the database refuses any other value. Version 2 (migrations `20261103100000` and `20261103100100`) is version 1 plus the workers' comp block, with nothing in v1 changed, so every row moved to 2 without its answers being rewritten. The move was not a save: no `data_version`, `updated_at` or `last_activity_at` changed. A later version changes the check in its own migration, says how rows move, and changes `INTAKE_SCHEMA_VERSION` with it.
 
-### JSON Schema v1 and strict checks on the way in
+### JSON Schema v2 and strict checks on the way in
 
-The canonical schema is `supabase/functions/_shared/intakeSchema.ts`: `chamber_data` as a JSON Schema (draft 2020-12), published as [`docs/intake-schema.v1.json`](intake-schema.v1.json). Regenerate the file with `npm run schema:intake`; `src/data/intakeSchema.test.ts` fails while the two differ.
+The canonical schema is `supabase/functions/_shared/intakeSchema.ts`: `chamber_data` as a JSON Schema (draft 2020-12), published as [`docs/intake-schema.v2.json`](intake-schema.v2.json). Regenerate the file with `npm run schema:intake`; `src/data/intakeSchema.test.ts` fails while the two differ. [`docs/intake-schema.v1.json`](intake-schema.v1.json) is version 1 as it was published; the same test checks that v2 only adds to it.
+
+Each top-level property carries an `x-intake` annotation: `{ "label", "section", "required", "rank" }`. Validators ignore it; it is how the schema publishes each field's required status and the order Lenore asks in.
 
 It is the stricter statement of the same rules: every value it accepts, the database accepts. `src/data/schemaSync.test.ts` holds its state codes, caps, census value lists and field kinds to the migrations, and `src/data/chamberValidation.test.ts` checks that the sanitiser's output always passes it. It is stricter than the database in three ways:
 
 - An unknown key is refused at every level, including inside a census row or a dependent. The database tolerates those, so an older client can save a newer census.
-- `employees`, the roster's old name, is not part of v1. The database still accepts it.
-- A census row must carry `id`, `first_name`, `last_name`, `work_state`, `compensation_type`, `employment_type` and `classification`, as every v1 writer gives it. The database requires only `first_name`.
+- `employees`, the roster's old name, is not part of the schema. The database still accepts it.
+- A census row must carry `id`, `first_name`, `last_name`, `work_state`, `compensation_type`, `employment_type` and `classification`, as every writer gives it. The database requires only `first_name`.
 
-The validator (`validateChamberData`, `validateIntakeField`) is strict. A value is accepted as sent or refused with a reason. Nothing is trimmed, upper-cased, split or converted. Issues name the path the way the database does (`states[1]`, `census[0].dependents[0].relationship`), never the value, and stop at 50. It implements only the keywords the schema uses (`type`, `enum`, `maxLength`, `pattern`, `minimum`, `maximum`, `maxItems`, `items`, `properties`, `required`, `additionalProperties: false`, local `$ref`), and refuses a schema with any other, so a rule can't be written into the schema and then go unenforced. Lengths count characters (code points), as Postgres does.
+The validator (`validateChamberData`, `validateIntakeField`) is strict. A value is accepted as sent or refused with a reason. Nothing is trimmed, upper-cased, split or converted. Issues name the path the way the database does (`states[1]`, `census[0].dependents[0].relationship`), never the value, and stop at 50. It implements only the keywords the schema uses (`type`, `enum`, `maxLength`, `pattern`, `minimum`, `maximum`, `maxItems`, `items`, `properties`, `required`, `additionalProperties: false`, local `$ref`, and the `x-intake` annotation), and refuses a schema with any other, so a rule can't be written into the schema and then go unenforced. Lengths count characters (code points), as Postgres does.
 
 Where it runs:
 
-| Data coming in | What happens to a value that breaks v1 |
+| Data coming in | What happens to a value that breaks the schema |
 | --- | --- |
 | The model's extraction in `chamber-extract` | The field is refused and listed in the response's `rejected` (path and reason), along with its status, evidence and correction. The function logs `EXTRACTION_REFUSED request=… paths=…` (paths only). The browser never receives it. |
 | The browser's backup of unsaved answers (see "Session lifecycle") | The whole copy is discarded, not offered for restore, and a warning names the paths. |
@@ -169,7 +189,13 @@ Voice extractions (`<extract>` tags) still go through the sanitiser, which repai
 
 ### Adding a field
 
-A new key in `ChamberData` needs a migration first: add it to `public.chamber_data_field_kind` with its kind, then to `EMPTY_CHAMBER_DATA`, `FIELD_SCHEMAS`, `FIELD_LABELS`, `FIELD_KINDS` and the JSON Schema's `properties` (then `npm run schema:intake`). `src/data/schemaSync.test.ts` compares the SQL key list, state codes and caps with the client constants and the schema, so a field added on one side only fails CI. The database refuses an unknown top-level key, so a front end shipped ahead of its migration would fail every save.
+A new field is a new schema version, because the schema refuses unknown keys. As v2 did:
+
+1. A migration adds the key to `public.chamber_data_field_kind` with its kind, and a second one moves `schema_version` on (see "Versions").
+2. In `supabase/functions/_shared/intakeSchema.ts`, add the field to `FIELDS` (rule, section, label), rank it if it belongs before schema order, and raise `INTAKE_SCHEMA_VERSION`. Then add it to `ChamberData`, `EMPTY_CHAMBER_DATA`, `FIELD_SCHEMAS` and `FIELD_KINDS`.
+3. Run `npm run schema:intake` to publish `docs/intake-schema.v<N>.json`, and regenerate the field table above.
+
+`src/data/schemaSync.test.ts` compares the SQL key list, kinds, state codes and caps with the client constants and the schema, reading each `sync:` block from the latest migration that defines its function, so a field added on one side only fails CI. The database refuses an unknown top-level key, so a front end shipped ahead of its migration would fail every save.
 
 ### Employee census (`chamber_data.census`)
 
@@ -224,6 +250,10 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
 | `inferred` | Lenore derived or assumed it from what was said. | "Please confirm" |
 | `incomplete` | Only part of the answer was given. | "Incomplete" |
 | `conflicting` | Two sources disagree. The first value is kept until the prospect picks one. | "Conflicting answers" |
+| `unknown` | The prospect said they don't know yet. Holds no answer; Lenore stops asking. | "Prospect to provide" |
+| `not_applicable` | The prospect said the field doesn't apply to them. Holds no answer. Only the prospect sets it (decision D31). | — (it closes the field) |
+
+Open items are listed conflicting first, then incomplete, unknown and inferred. Statuses are defined in `GLOSSARY.md`.
 
 #### Source
 
@@ -236,17 +266,17 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
 ### Merge rules (`applyExtraction`)
 
 1. Values are validated per field (`sanitizeChamberPatch`). Invalid and empty values are dropped.
-2. A field whose source is `prospect_edit` is never changed by AI extraction.
+2. A field whose source is `prospect_edit` is never changed by AI extraction, and neither is a field marked `not_applicable`, whatever source it records. An answer replaces `unknown`.
 3. A new field takes the value, with the model's status (default `inferred`).
 4. If AI sources (transcript or document) give a different value, the old value is kept and the field becomes `conflicting`, with both candidates. Two exceptions:
    - The model lists the field in `corrected_fields`, meaning the prospect explicitly corrected it. The new value replaces the old one.
    - The new value only adds entries to a list, or the field is the `census`. The new value replaces the old one.
 5. When the same value is heard again, the source is refreshed. The status can go up from `inferred` to `confirmed`, but never down.
-6. Prospect actions (`applyFieldAction`) set the status to `confirmed` and the source to `prospect_edit`, and clear any candidates. Confirming a conflicting field requires choosing a candidate first.
+6. Prospect actions (`applyFieldAction`) set the status to `confirmed` and the source to `prospect_edit`, and clear any candidates. Confirming a conflicting field requires choosing a candidate first, and a field with no answer (unknown or not applicable) has nothing to confirm; entering an answer is how the prospect takes it back.
 
 ### Extraction contract (`chamber-extract`)
 
-The response is `{ extracted, field_status, evidence, corrected_fields, reply, rejected }`. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`. A field enters `extracted` only if intake schema v1 accepts the model's value exactly as sent. A lower-case `"ny"`, a state list with one unknown code, `12.5` people or a string of digits is refused and listed in `rejected` as `{ path, reason }`. The browser ignores `rejected`.
+The response is `{ extracted, field_status, evidence, corrected_fields, reply, rejected }`. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`. A field enters `extracted` only if the intake schema accepts the model's value exactly as sent. A lower-case `"ny"`, a state list with one unknown code, `12.5` people or a string of digits is refused and listed in `rejected` as `{ path, reason }`. The browser ignores `rejected`.
 
 ### Document candidates (`document-extract`)
 
@@ -311,7 +341,7 @@ While a change hasn't been confirmed by the server, the Chamber keeps a copy in 
 
 - The census is never written to the browser (names, dates of birth, pay). A restore keeps the server's census.
 - A copy is kept for at most 7 days, is offered only to the user who wrote it, and every copy goes on a deliberate sign-out.
-- A copy that isn't the shape written, or breaks intake schema v1, is discarded.
+- A copy that isn't the shape written, or breaks the intake schema, is discarded.
 - Not covered: answers typed before the intake row was first created (if creating it fails), and storage that is blocked or full. The Chamber warns when the browser won't keep site data at all.
 
 ### Getting back from another browser
