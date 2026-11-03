@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
-import { findPeo, PEO_CATALOG, peoFit, type PeoRecord } from "./peoCatalog";
+import { cleanPeoName, findPeo, PEO_CATALOG, PEO_NAME_MAX, peoFit, type PeoRecord } from "./peoCatalog";
 
 const peo = (overrides: Partial<PeoRecord> = {}): PeoRecord => ({
   name: "Example PEO",
@@ -71,5 +71,22 @@ describe("PEO_CATALOG", () => {
   it("finds a PEO by name regardless of case, and returns nothing for an unlisted one", () => {
     expect(findPeo("justworks")?.name).toBe("Justworks");
     expect(findPeo("Acme PEO")).toBeUndefined();
+  });
+});
+
+describe("cleanPeoName", () => {
+  it("keeps a name as typed, trimmed", () => {
+    expect(cleanPeoName("  Justworks ")).toBe("Justworks");
+    expect(cleanPeoName("Acme PEO, Inc.")).toBe("Acme PEO, Inc.");
+  });
+
+  it("reads anything that isn't a name as no choice", () => {
+    for (const value of [null, undefined, "", "   ", 42, {}, ["Justworks"]]) expect(cleanPeoName(value)).toBeNull();
+  });
+
+  it("cuts a long name to the limit the database accepts, by character", () => {
+    expect(cleanPeoName("P".repeat(PEO_NAME_MAX + 5))).toBe("P".repeat(PEO_NAME_MAX));
+    // Each emoji is two UTF-16 units: cutting by unit would leave half of the last one.
+    expect(cleanPeoName("🦅".repeat(PEO_NAME_MAX + 1))).toBe("🦅".repeat(PEO_NAME_MAX));
   });
 });

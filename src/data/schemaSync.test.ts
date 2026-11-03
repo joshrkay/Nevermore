@@ -15,6 +15,7 @@ import {
   US_STATE_CODES,
 } from "@/data/chamberValidation";
 import { FIELD_KINDS } from "@/data/provenance";
+import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
 
 // The server (supabase/migrations/20261027090000_intake_validation_and_versioning.sql, and later
@@ -113,6 +114,12 @@ describe("server and client intake rules agree", () => {
     expect(MAX_CENSUS_ROWS).toBe(MAX_EMPLOYEES);
     expect(CENSUS_MAX_DEPENDENTS).toBe(MAX_DEPENDENTS);
     expect(MAX_ANNUAL_SALARY).toBe(SALARY_MAX);
+  });
+
+  it("keeps the same longest PEO name", () => {
+    const [sql] = blocks("chosen_peo_length");
+    const limits = /BETWEEN\s+(\d+)\s+AND\s+(\d+)/.exec(sql);
+    expect(limits?.slice(1).map(Number)).toEqual([1, PEO_NAME_MAX]);
   });
 
   // document-extract can't import from src/, so it keeps its own copies of the roster cap and the state list.

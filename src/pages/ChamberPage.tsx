@@ -1,10 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLenoreVoice } from "@/hooks/useLenoreVoice";
 import { useLenoreChat } from "@/hooks/useLenoreChat";
 import { useChamberSession } from "@/hooks/useChamberSession";
+import { useAuth } from "@/hooks/useAuth";
 import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import TranscriptPanel from "@/components/chamber/TranscriptPanel";
@@ -22,12 +23,14 @@ const ChamberPage = () => {
   const chatInputRef = useRef<HTMLInputElement>(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
+  const { isAnonymous } = useAuth();
   const {
     sessionId,
     resumeFailed,
     startNew,
     loadFailed,
     retryLoad,
+    expired,
     chamberData,
     provenance,
     messages,
@@ -37,6 +40,8 @@ const ChamberPage = () => {
     addMessage,
     submit,
     certification,
+    chosenPeo,
+    choosePeo,
     saveStatus,
     retrySave,
     loadLatest,
@@ -95,14 +100,14 @@ const ChamberPage = () => {
     chatInputRef.current?.focus();
   };
 
-  if (resumeFailed) {
+  if (expired) {
     return (
       <div className="h-screen flex items-center justify-center bg-background px-6">
         <div className="text-center max-w-md">
-          <h1 className="font-display text-xl font-bold mb-3">We couldn't open that intake</h1>
+          <h1 className="font-display text-xl font-bold mb-3">Your intake has expired</h1>
           <p className="text-muted-foreground mb-6">
-            The link may be out of date, or it belongs to a different account. Nothing has been changed.
-            You can start a new intake, or sign in with the account you started it on.
+            An intake that has expired can no longer be opened or changed, so its answers aren't shown here. Start a
+            new intake to continue.
           </p>
           <button
             onClick={startNew}
@@ -110,6 +115,47 @@ const ChamberPage = () => {
           >
             Start a new intake
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (resumeFailed) {
+    // Signing in brings the prospect back to the intake they asked for.
+    const requested = { pathname: "/start", search: `?${new URLSearchParams({ session: searchParams.get("session") ?? "" })}` };
+    return (
+      <div className="h-screen flex items-center justify-center bg-background px-6">
+        <div className="text-center max-w-md">
+          <h1 className="font-display text-xl font-bold mb-3">We couldn't open that intake</h1>
+          {isAnonymous ? (
+            <p className="text-muted-foreground mb-6">
+              It may have been removed, or it was started in another browser or under a different account. Nothing
+              has been changed. An intake started as a guest can only be reopened in the browser it was started in. If
+              you started it with an account and password, sign in to open it.
+            </p>
+          ) : (
+            <p className="text-muted-foreground mb-6">
+              It may have been removed, or it belongs to a different account. Nothing has been changed. You can start
+              a new intake.
+            </p>
+          )}
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={startNew}
+              className="bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors"
+            >
+              Start a new intake
+            </button>
+            {isAnonymous && (
+              <Link
+                to="/login"
+                state={{ from: requested }}
+                className="border border-border font-medium px-5 py-2.5 rounded-lg hover:bg-muted transition-colors"
+              >
+                Sign in
+              </Link>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -205,6 +251,8 @@ const ChamberPage = () => {
             onFieldAction={handleFieldAction}
             certification={certification}
             updateIntake={updateIntake}
+            chosenPeo={chosenPeo}
+            onChoosePeo={choosePeo}
           />
         </div>
       </div>

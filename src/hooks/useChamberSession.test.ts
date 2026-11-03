@@ -24,6 +24,10 @@ let insertError: { message: string } | null = null;
 let latestRow: { id: string } | null = null;
 let latestError: { message: string } | null = null;
 const latestQueries: unknown[][] = [];
+// The prospect's most recent intake of any status, looked up when there is no unfinished one to pick up.
+let latestAnyRow: { status: string } | null = null;
+let latestAnyError: { message: string } | null = null;
+const latestAnyQueries: unknown[][] = [];
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" }, session: { access_token: "tok" } }) }));
 vi.mock("@/lib/dispatchOutbox", () => ({ dispatchOutbox: vi.fn() }));
@@ -40,14 +44,26 @@ vi.mock("@/integrations/supabase/client", () => ({
                 },
               }
             : {
+                // The unfinished intake to pick up: everything but submitted and expired ones.
                 neq: (notColumn: string, notValue: unknown) => ({
-                  order: (orderColumn: string, order: unknown) => ({
-                    limit: (n: number) => ({
-                      maybeSingle: async () => {
-                        latestQueries.push([column, value, notColumn, notValue, orderColumn, order, n]);
-                        return latestError ? { data: null, error: latestError } : { data: latestRow, error: null };
-                      },
+                  neq: (notColumn2: string, notValue2: unknown) => ({
+                    order: (orderColumn: string, order: unknown) => ({
+                      limit: (n: number) => ({
+                        maybeSingle: async () => {
+                          latestQueries.push([column, value, notColumn, notValue, notColumn2, notValue2, orderColumn, order, n]);
+                          return latestError ? { data: null, error: latestError } : { data: latestRow, error: null };
+                        },
+                      }),
                     }),
+                  }),
+                }),
+                // The most recent intake of any status.
+                order: (orderColumn: string, order: unknown) => ({
+                  limit: (n: number) => ({
+                    maybeSingle: async () => {
+                      latestAnyQueries.push([columns, column, value, orderColumn, order, n]);
+                      return latestAnyError ? { data: null, error: latestAnyError } : { data: latestAnyRow, error: null };
+                    },
                   }),
                 }),
               },
@@ -133,6 +149,9 @@ describe("useChamberSession", () => {
     latestRow = null;
     latestError = null;
     latestQueries.length = 0;
+    latestAnyRow = null;
+    latestAnyError = null;
+    latestAnyQueries.length = 0;
     vi.mocked(dispatchOutbox).mockClear();
   });
   afterEach(() => {
@@ -452,10 +471,10 @@ describe("useChamberSession", () => {
       expect(inserts).toBe(0);
     });
 
-    it("looks only at the prospect's own intakes that aren't submitted, most recently changed first", async () => {
+    it("looks only at the prospect's own intakes that aren't submitted or expired, most recently changed first", async () => {
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.sessionId).toBe("s1"));
-      expect(latestQueries).toEqual([["user_id", "u1", "status", "submitted", "updated_at", { ascending: false }, 1]]);
+      expect(latestQueries).toEqual([["user_id", "u1", "status", "submitted", "status", "expired", "updated_at", { ascending: false }, 1]]);
     });
 
     it("starts a new intake when they have no unfinished one", async () => {
@@ -1423,6 +1442,307 @@ describe("useChamberSession", () => {
         expect(ok).toEqual({ message: expect.stringContaining("no longer be saved") });
         expect(result.current.saveStatus).toBe("missing");
       });
+    });
+  });
+
+  describe("an expired intake", () => {
+    const expiredRow = (over: Record<string, unknown> = {}) =>
+      serverRow({ id: "s7", data_version: 9, status: "expired", chamber_data: { company_name: "Gone Co" }, chosen_peo: "TriNet", ...over });
+    const openRow = { id: "s7", data_version: 2, chamber_data: { company_name: "Acme" }, field_provenance: {}, transcript: [], status: "in_progress", submission: null };
+
+    describe("when opening it", () => {
+      it("says a linked intake has expired, without loading it or making a new one", async () => {
+        resumeRow = expiredRow();
+        const { result } = renderHook(() => useChamberSession("s7"));
+        await waitFor(() => expect(result.current.expired).toBe(true));
+        expect(result.current.isLoading).toBe(false);
+        expect(result.current.resumeFailed).toBe(false);
+        expect(result.current.sessionId).toBeNull();
+        expect(result.current.chamberData.company_name).toBeNull();
+        expect(result.current.chosenPeo).toBeNull();
+        expect(inserts).toBe(0);
+        expect(latestQueries).toEqual([]);
+      });
+
+      it("starts an empty intake from there when the prospect asks for one", async () => {
+        resumeRow = expiredRow();
+        const { result } = renderHook(() => useChamberSession("s7"));
+        await waitFor(() => expect(result.current.expired).toBe(true));
+        act(() => result.current.startNew());
+        await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+        expect(result.current.expired).toBe(false);
+        expect(inserts).toBe(1);
+        expect(insertedRows[0]).toMatchObject({ chosen_peo: null });
+        expect(insertedRows[0]).not.toHaveProperty("chamber_data.company_name", "Gone Co");
+      });
+
+      it("tells a returning prospect their most recent intake expired, rather than handing them an empty one", async () => {
+        latestAnyRow = { status: "expired" };
+        const { result } = renderHook(() => useChamberSession());
+        await waitFor(() => expect(result.current.expired).toBe(true));
+        expect(latestAnyQueries).toEqual([["status", "user_id", "u1", "updated_at", { ascending: false }, 1]]);
+        expect(result.current.sessionId).toBeNull();
+        expect(inserts).toBe(0);
+      });
+
+      it("starts a new intake, as before, when their most recent intake was submitted", async () => {
+        latestAnyRow = { status: "submitted" };
+        const { result } = renderHook(() => useChamberSession());
+        await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+        expect(result.current.expired).toBe(false);
+      });
+
+      it("starts a new intake when it can't tell whether the last one expired", async () => {
+        latestAnyError = { message: "network down" };
+        const { result } = renderHook(() => useChamberSession());
+        await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+        expect(result.current.expired).toBe(false);
+        expect(result.current.loadFailed).toBe(false);
+      });
+
+      it("picks up an unfinished intake without asking about expired ones", async () => {
+        latestRow = { id: "s7" };
+        resumeRow = openRow;
+        const { result } = renderHook(() => useChamberSession());
+        await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+        expect(latestAnyQueries).toEqual([]);
+      });
+
+      it("says it expired when the intake found expires before it opens", async () => {
+        latestRow = { id: "s7" };
+        resumeRow = expiredRow();
+        const { result } = renderHook(() => useChamberSession());
+        await waitFor(() => expect(result.current.expired).toBe(true));
+        expect(result.current.loadFailed).toBe(false);
+        expect(inserts).toBe(0);
+      });
+    });
+
+    describe("while it is open", () => {
+      const edit = (result: { current: ReturnType<typeof useChamberSession> }, name = "Acme") =>
+        act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: name })));
+      const autosave = async () => { await act(async () => { vi.advanceTimersByTime(2000); }); };
+      const open = async () => {
+        const hook = renderHook(() => useChamberSession());
+        await waitFor(() => expect(hook.result.current.sessionId).toBe("s1"));
+        vi.useFakeTimers();
+        return hook;
+      };
+      const expiredError: MockError = { message: "This intake has expired", code: "EA002" };
+
+      it("says so when the server refuses a save as expired, and sends nothing more", async () => {
+        const { result } = await open();
+        edit(result);
+        await autosave();
+        updates[0].resolve({ error: expiredError });
+        await drain();
+        expect(result.current.saveStatus).toBe("expired");
+
+        edit(result, "Acme 2");
+        act(() => result.current.retrySave());
+        await act(async () => { vi.advanceTimersByTime(60_000); });
+        expect(updates).toHaveLength(1);
+        expect(result.current.saveStatus).toBe("expired");
+        expect(result.current.chamberData.company_name).toBe("Acme 2"); // still on screen
+      });
+
+      it("says it expired, not that another tab saved, when a save from before then matches no row", async () => {
+        // Expiring the intake moved its version on, so the save names a version the row no longer has.
+        const { result } = await open();
+        edit(result);
+        await autosave();
+        resumeRow = expiredRow({ id: "s1", data_version: 2 });
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).toBe("expired");
+        await act(async () => { vi.advanceTimersByTime(60_000); });
+        expect(updates).toHaveLength(1);
+      });
+
+      it("refuses to certify it, and says why", async () => {
+        const { result } = await open();
+        let ok: SubmitResult | undefined;
+        const pending = result.current.submit(submission).then((r) => { ok = r; });
+        await drain();
+        expect(updates[0].payload).toMatchObject({ status: "submitted" });
+        await act(async () => { updates[0].resolve({ error: expiredError }); await pending; });
+        expect(ok).toEqual({ message: expect.stringContaining("has expired") });
+        expect(result.current.saveStatus).toBe("expired");
+        expect(result.current.certification.status).toBe("none");
+        expect(dispatchOutbox).not.toHaveBeenCalled();
+
+        // Asking again sends nothing.
+        await act(async () => { ok = await result.current.submit(submission); });
+        expect(ok).toEqual({ message: expect.stringContaining("has expired") });
+        expect(updates).toHaveLength(1);
+      });
+
+      it("says it expired when the certification's write matches no row because the intake expired", async () => {
+        const { result } = await open();
+        let ok: SubmitResult | undefined;
+        const pending = result.current.submit(submission).then((r) => { ok = r; });
+        await drain();
+        resumeRow = expiredRow({ id: "s1", data_version: 2 });
+        await act(async () => { updates[0].resolve({ error: null, data: [] }); await pending; });
+        expect(ok).toEqual({ message: expect.stringContaining("has expired") });
+        expect(result.current.saveStatus).toBe("expired");
+      });
+
+      it("says it expired when discarding a refused answer finds the intake expired", async () => {
+        const { result } = await open();
+        edit(result);
+        await autosave();
+        updates[0].resolve({ error: { message: "Invalid intake data at employee_count: too big", code: "EA001", details: "employee_count" } });
+        await drain();
+        expect(result.current.saveStatus).toBe("invalid");
+        resumeRow = expiredRow({ id: "s1" });
+        act(() => result.current.discardChanges());
+        await drain();
+        expect(result.current.saveStatus).toBe("expired");
+        expect(result.current.chamberData.company_name).toBe("Acme");
+      });
+
+      it("sends nothing as the page unloads once it has expired", async () => {
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+        const { result } = await open();
+        edit(result);
+        await autosave();
+        updates[0].resolve({ error: expiredError });
+        await drain();
+        edit(result, "Acme 2");
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        expect(fetchSpy).not.toHaveBeenCalled();
+        fetchSpy.mockRestore();
+      });
+
+      it("starts a new intake from what's on screen when the prospect asks for one", async () => {
+        const { result } = await open();
+        edit(result);
+        act(() => result.current.choosePeo("Justworks"));
+        await autosave();
+        updates[0].resolve({ error: expiredError });
+        await drain();
+        vi.useRealTimers();
+
+        act(() => result.current.startNew());
+        await waitFor(() => expect(inserts).toBe(2));
+        expect(insertedRows[1]).toMatchObject({ chamber_data: { company_name: "Acme" }, chosen_peo: "Justworks" });
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
+        expect(result.current.saveStatus).not.toBe("expired");
+      });
+    });
+  });
+
+  describe("the chosen PEO", () => {
+    const autosave = async () => { await act(async () => { vi.advanceTimersByTime(2000); }); };
+    const open = async () => {
+      const hook = renderHook(() => useChamberSession());
+      await waitFor(() => expect(hook.result.current.sessionId).toBe("s1"));
+      vi.useFakeTimers();
+      return hook;
+    };
+
+    it("starts with none", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(result.current.chosenPeo).toBeNull();
+      expect(insertedRows[0]).toMatchObject({ chosen_peo: null });
+    });
+
+    it("is saved with the intake, in the same versioned write as the answers", async () => {
+      const { result } = await open();
+      act(() => result.current.choosePeo("Justworks"));
+      expect(result.current.chosenPeo).toBe("Justworks");
+      expect(result.current.saveStatus).toBe("saving");
+      await autosave();
+      expect(updates).toHaveLength(1);
+      expect(updates[0].filters).toEqual({ id: "s1", data_version: 1 });
+      expect(updates[0].payload).toMatchObject({ chosen_peo: "Justworks" });
+      expect(updates[0].payload).toHaveProperty("chamber_data");
+      updates[0].resolve({ error: null });
+      await drain();
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("is restored when the intake is opened again", async () => {
+      resumeRow = serverRow({ id: "s9", chosen_peo: "TriNet" });
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+      expect(result.current.chosenPeo).toBe("TriNet");
+    });
+
+    it("reads a row saved before the choice was kept as no choice", async () => {
+      resumeRow = serverRow({ id: "s9" }); // no chosen_peo column value at all
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+      expect(result.current.chosenPeo).toBeNull();
+    });
+
+    it("goes out with the keepalive request when the page unloads", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+      const { result } = await open();
+      act(() => result.current.choosePeo("Insperity"));
+      window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string)).toMatchObject({ chosen_peo: "Insperity" });
+      fetchSpy.mockRestore();
+    });
+
+    it("is trimmed, and choosing the same PEO again saves nothing", async () => {
+      const { result } = await open();
+      act(() => result.current.choosePeo("  Justworks "));
+      expect(result.current.chosenPeo).toBe("Justworks");
+      await autosave();
+      updates[0].resolve({ error: null });
+      await drain();
+      act(() => result.current.choosePeo("Justworks"));
+      await autosave();
+      expect(updates).toHaveLength(1);
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("is taken from the server's row when the prospect loads the latest after a conflict", async () => {
+      const { result } = await open();
+      act(() => result.current.choosePeo("Justworks"));
+      await autosave();
+      resumeRow = serverRow({ chosen_peo: "Rippling" });
+      updates[0].resolve({ error: null, data: [] });
+      await drain();
+      expect(result.current.saveStatus).toBe("conflict");
+      act(() => result.current.loadLatest());
+      expect(result.current.chosenPeo).toBe("Rippling");
+    });
+
+    it("reports a conflict when only the chosen PEO differs from what was sent", async () => {
+      const { result } = await open();
+      act(() => result.current.choosePeo("Justworks"));
+      await autosave();
+      const sent = JSON.parse(JSON.stringify(updates[0].payload));
+      resumeRow = serverRow({ data_version: 2, chamber_data: sent.chamber_data, field_provenance: sent.field_provenance, transcript: sent.transcript, chosen_peo: "TriNet" });
+      updates[0].resolve({ error: null, data: [] });
+      await drain();
+      expect(result.current.saveStatus).toBe("conflict");
+    });
+
+    it("recognises its own write by the chosen PEO when only the response was lost", async () => {
+      const { result } = await open();
+      act(() => result.current.choosePeo("Justworks"));
+      await autosave();
+      const sent = JSON.parse(JSON.stringify(updates[0].payload));
+      resumeRow = serverRow({ data_version: 2, ...sent });
+      updates[0].resolve({ error: null, data: [] });
+      await drain();
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("keeps a certification when a different PEO is chosen, as the answers it covers are unchanged", async () => {
+      resumeRow = { id: "s9", data_version: 3, chamber_data: parseChamberData({ company_name: "Acme" }), transcript: [], status: "submitted", submission: { ...submission, peo: "Justworks" }, chosen_peo: "Justworks" };
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.certification.status).toBe("certified"));
+      act(() => result.current.choosePeo("TriNet"));
+      expect(result.current.certification.status).toBe("certified");
+      expect(result.current.chosenPeo).toBe("TriNet");
     });
   });
 });

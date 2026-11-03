@@ -132,6 +132,8 @@ A refused write changes nothing and raises SQLSTATE `EA001`. PostgREST answers a
 
 Paths are zero-based: `hq_state`, `states[2]`, `census[3].dob`, `census[0].dependents[1].relationship`. A value that is not an object is `chamber_data`. `23514` is not used because the certification trigger already raises it.
 
+Any change a prospect makes to an expired intake is refused with `EA002` instead, before any other check (see [Expired intakes](#expired-intakes)).
+
 ### Versions
 
 `chamber_sessions.data_version` (integer, default 1) counts saves. The server sets it: 1 on insert, +1 on every update, ignoring any value a client sends. A client therefore:
@@ -139,6 +141,7 @@ Paths are zero-based: `hq_state`, `states[2]`, `census[3].dob`, `census[0].depen
 1. Saves with `.eq("id", id).eq("data_version", lastSeen).select("id, data_version")` and never puts `data_version` in a body.
 2. Treats zero returned rows as a possible conflict: reads the row back, and only when the server's version differs and its content isn't what was just sent does it report a conflict (offering "Load latest" or "Keep my changes", which resends at the server's version).
 3. Treats `EA001` as not retryable: stops the automatic retry, keeps the edit pending and names the field from the path. Network, 5xx and auth errors are retried as before.
+   `EA002` is not retried either, and neither is a read-back that finds the row `expired`: the save status says the intake has expired and offers a new intake.
 4. Adds the same `data_version` condition to the keepalive save on page unload, which can't read the response.
 
 The migration must be deployed before the front end, which selects `data_version`.
@@ -246,3 +249,21 @@ Candidates never change `chamber_data` by themselves. In the Upload tab the pros
 ### Submission
 
 When the prospect signs, `submission.field_provenance` snapshots the provenance alongside `submission.chamber_data`. The Manuscript shows the status and source for each row, and adds the status-based open items to "Underwriting Readiness".
+
+## The chosen PEO (`chosen_peo`)
+
+`chamber_sessions.chosen_peo` (text, nullable, migration `20261103090000_chosen_peo_and_expired_intakes.sql`) is the PEO the prospect picked on PEO Match, kept so that a reload during the final steps doesn't lose it. It is `NULL` until they pick one, which they never have to: we don't rank PEOs or choose for them. It can be a listed PEO or one the prospect typed in.
+
+- It is saved by the same versioned write as the answers (`chamber_data`, `field_provenance`, `transcript`), sent with the keepalive save on page unload, and set on insert. A read-back after a write that matched no row compares it too, so a different choice saved elsewhere is a conflict.
+- It is not an answer. It is outside `chamber_data`, so changing it doesn't move the certification hash or withdraw a certification. The certified PEO is `submission.peo`. When the two differ, The Reckoning asks the prospect to certify again (in the browser only; the database doesn't enforce it).
+- A CHECK constraint keeps it trimmed and 1 to 80 characters (`PEO_NAME_MAX` in `src/data/peoCatalog.ts`, compared by `src/data/schemaSync.test.ts`). `cleanPeoName` trims and cuts by character before saving, so the app never sends a value the constraint refuses.
+
+## Expired intakes
+
+An intake whose `status` is `expired` is closed. Nothing sets that status yet: when intakes expire, and what happens to their data, is the retention decision (plan D4) and its job (plan A-1.5). Migration `20261103090000` makes an expired intake behave as one wherever a prospect meets it:
+
+- **Database.** The owner can still read it. Any update a prospect sends (a request whose JWT role is `anon` or `authenticated`) is refused with `EA002`, message `This intake has expired`, and changes nothing, whatever it touches: answers, transcript, `chosen_peo`, `status` or a certification. The trigger (`chamber_sessions_a_refuse_expired`) sorts first, so expiry is the reason given ahead of a refused answer (`EA001`) or a guest certifying (`42501`). The service role and connections with no user JWT, such as a scheduled job, are not refused. Documents in an expired intake are not covered yet.
+- **Opening it.** A link to it (`/start?session=<id>`) shows "Your intake has expired" with **Start a new intake**, and loads nothing. A bare `/start` picks up the prospect's latest intake that is neither submitted nor expired (expiring touches `updated_at`, which would otherwise put an expired intake ahead of one in use). When there is none and their most recent intake expired, it shows the same notice instead of an empty intake.
+- **While it is open.** The next save is refused, or (because expiring moves `data_version` on) matches no row and the read-back finds it expired. Either way the save status says "this intake has expired" and offers a new intake started from what is on screen. Certifying says the same. Nothing more is sent, including on page unload.
+- **The Manuscript.** `/manuscript?session=<id>` says the intake has expired and links to The Chamber.
+
