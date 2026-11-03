@@ -119,6 +119,19 @@ describe("AdvisorDashboardPage", () => {
     expect(within(await cell("Never Co")).getByText("Not certified")).toBeInTheDocument();
   });
 
+  it("says when a draft can no longer be opened by its prospect", async () => {
+    listSubmissions.mockResolvedValue([
+      row({ session_id: "e", company_name: "Idle Co", submitted_at: null, intake_status: "expired", signer_name: null, pipeline_status: "draft" }),
+      row({ session_id: "a", company_name: "Restarted Co", submitted_at: null, intake_status: "archived", signer_name: null, pipeline_status: "draft" }),
+      row({ session_id: "r", company_name: "Closed Co", submitted_at: null, intake_status: "revoked", signer_name: null, pipeline_status: "draft" }),
+    ]);
+    renderAt();
+    const cell = async (name: string) => (await screen.findByRole("link", { name })).closest("tr")!;
+    expect(within(await cell("Idle Co")).getByText("Expired (idle draft)")).toBeInTheDocument();
+    expect(within(await cell("Restarted Co")).getByText("Archived by prospect")).toBeInTheDocument();
+    expect(within(await cell("Closed Co")).getByText("Revoked")).toBeInTheDocument();
+  });
+
   it("only lists what an advisor needs to triage, nothing sensitive", async () => {
     listSubmissions.mockResolvedValue([row()]);
     renderAt();

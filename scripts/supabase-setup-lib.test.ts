@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cronScheduleSql, envFileLine, FUNCTIONS, interpretChecks,
+  advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, FUNCTIONS, interpretChecks,
   isProjectRef, parseEnvFile, parseSender, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete,
   sqlLiteral, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
@@ -137,6 +137,8 @@ describe("authConfigPatch", () => {
       smtp_sender_name: "Edgar Allan Advisory",
     });
     expect(patch.mailer_templates_email_change_content).toContain("{{ .Token }}");
+    expect(patch.mailer_templates_magic_link_content).toContain("{{ .Token }}");
+    expect(patch.mailer_subjects_magic_link).toBe("Your sign-in code");
     expect(patch.mailer_templates_confirmation_content).toContain("{{ .Token }}");
     // Back to the address the app asked for (the deployment signed up on, with its next), token in the fragment.
     expect(patch.mailer_templates_confirmation_content).toContain('href="{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email"');
@@ -167,15 +169,24 @@ describe("authConfigPatch", () => {
     expect(authConfigPatch({ ...patch }, { ...goodEnv, RESEND_API_KEY: "" }).patch).toEqual({});
   });
 
+  it("replaces a magic-link template that sends only the token hash, not the 6-digit code", () => {
+    const linkOnly = { mailer_templates_magic_link_content: '<a href="{{ .SiteURL }}/auth/callback#token_hash={{ .TokenHash }}">Sign in</a>' };
+    const { patch } = authConfigPatch(linkOnly, goodEnv);
+    expect(patch.mailer_templates_magic_link_content).toContain("{{ .Token }}");
+    expect(authConfigPatch({ mailer_templates_magic_link_content: "Code: {{.Token}}" }, goodEnv).patch).not.toHaveProperty("mailer_templates_magic_link_content");
+  });
+
   it("keeps redirect URLs, templates and SMTP someone set by hand", () => {
     const current = {
       uri_allow_list: "https://preview.example.com/**",
       mailer_templates_email_change_content: "Your code: {{ .Token }}",
+      mailer_templates_magic_link_content: "Sign in with {{ .Token }}",
       smtp_host: "smtp.sendgrid.net",
     };
     const { patch, notes } = authConfigPatch(current, goodEnv);
     expect(patch.uri_allow_list).toBe("https://preview.example.com/**,https://nevermore-gamma.vercel.app/**");
     expect(patch).not.toHaveProperty("mailer_templates_email_change_content");
+    expect(patch).not.toHaveProperty("mailer_templates_magic_link_content");
     expect(patch).not.toHaveProperty("smtp_host");
     expect(notes[0]).toMatch(/smtp\.sendgrid\.net/);
   });
@@ -226,6 +237,13 @@ describe("SQL", () => {
     expect(() => cronScheduleSql("bad'ref")).toThrow();
   });
 
+  it("schedules draft expiry exactly as the migration does", () => {
+    const migration = readFileSync("supabase/migrations/20261103090000_intake_lifecycle.sql", "utf8");
+    const scheduled = /PERFORM cron\.schedule\(('[^']+'), ('[^']+'), ('[^']+')\)/.exec(migration);
+    expect(scheduled).not.toBeNull();
+    expect(EXPIRY_SCHEDULE_SQL).toBe(`select cron.schedule(${scheduled![1]}, ${scheduled![2]}, ${scheduled![3]});`);
+  });
+
   it("grants the advisor role by email, escaped", () => {
     const sql = advisorSql("o'brien@example.com");
     expect(sql).toContain("lower('o''brien@example.com')");
@@ -242,10 +260,10 @@ describe("SQL", () => {
 
 describe("interpretChecks", () => {
   const allSet = {
-    status: { migrations: 16, intake_table: 1, table_grants: 1, buckets: 2, extensions: 2, vault_secret: 1, schedule: 1, role_grants: 0 },
+    status: { migrations: 16, intake_table: 1, table_grants: 1, buckets: 2, extensions: 2, vault_secret: 1, schedule: 1, expiry_schedule: 1, role_grants: 0 },
     auth: { external: { anonymous_users: true }, mailer_autoconfirm: false },
     authConfig: {
-      mailer_otp_length: 6, mailer_templates_email_change_content: "{{ .Token }}", smtp_host: "smtp.resend.com",
+      mailer_otp_length: 6, mailer_templates_email_change_content: "{{ .Token }}", mailer_templates_magic_link_content: "{{ .Token }}", smtp_host: "smtp.resend.com",
       site_url: "https://nevermore-gamma.vercel.app", uri_allow_list: "https://nevermore-gamma.vercel.app/**",
       mailer_templates_confirmation_content: "{{ .Token }} {{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email",
     },
@@ -277,6 +295,19 @@ describe("interpretChecks", () => {
     expect(setupComplete(interpretChecks(allSet, { localMigrations: 17 }))).toBe(false);
     const noCode = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_email_change_content: "{{ .ConfirmationURL }}" } };
     expect(setupComplete(interpretChecks(noCode, { localMigrations: 16 }))).toBe(false);
+    const hashOnly = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_magic_link_content: "{{ .RedirectTo }}#token_hash={{ .TokenHash }}" } };
+    expect(setupComplete(interpretChecks(hashOnly, { localMigrations: 16 }))).toBe(false);
+    const linkOnly = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_magic_link_content: "{{ .ConfirmationURL }}" } };
+    const checks = interpretChecks(linkOnly, { localMigrations: 16 });
+    expect(setupComplete(checks)).toBe(false);
+    expect(checks.find((c) => c.name === "Sign-in code message")?.detail).toMatch(/magic-link template/);
+  });
+
+  it("fails when idle drafts would never expire", () => {
+    const unscheduled = { ...allSet, status: { ...allSet.status, expiry_schedule: 0 } };
+    const checks = interpretChecks(unscheduled, { localMigrations: 16 });
+    expect(setupComplete(checks)).toBe(false);
+    expect(checks.find((c) => c.name === "Draft expiry schedule")?.detail).toMatch(/never expire/);
   });
 
   it("fails while the sign-up email is Supabase's default link", () => {
