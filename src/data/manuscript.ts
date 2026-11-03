@@ -3,6 +3,7 @@ import { COVERAGE_TIER_LABELS, isW2, type CensusEmployee } from "./census";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
 import { fieldOpenItems, type FieldKey, type ProvenanceMap } from "./provenance";
+import { missingRecommendedItems, missingRequired } from "./readiness";
 
 /** Signed attestation stored on chamber_sessions.submission. */
 export interface ChamberSubmission {
@@ -296,12 +297,8 @@ export function buildManuscript(
   const tiers = tierCounts.get(WAIVED) ? [...TIERS, WAIVED] : TIERS;
 
   const checks = eligibilityChecks(data);
-  const missingCore = [
-    ["Company legal name", !data.company_name],
-    ["States of operation", allStates.length === 0],
-    ["Pay frequency", !data.pay_frequency],
-    ["Employee census", data.census.length === 0],
-  ].flatMap(([label, missing]) => (missing ? [`${label} — not provided`] : []));
+  // The answers certification requires (always present on a certified packet), then the recommended census.
+  const missingCore = [...missingRequired(data), ...missingRecommendedItems(data)].map((item) => `${item.label} — not provided`);
   const provenance = opts.provenance ?? {};
   const fieldItems = fieldOpenItems(provenance).map((i) => `${i.label} — ${i.reason.toLowerCase()}`);
   const flags = data.census.flatMap((e) => {

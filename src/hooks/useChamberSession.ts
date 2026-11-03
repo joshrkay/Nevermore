@@ -12,6 +12,7 @@ import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup }
 import { validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
+import { describeMissingKeys } from "@/data/readiness";
 import {
   certificationFromRow,
   fileIdForSession,
@@ -125,6 +126,9 @@ const INVALID_DATA_CODE = "EA001";
 // Raised when a write reaches an intake that is closed (DETAIL: expired, archived or revoked). Row security
 // normally turns such a write into one that matches no row, which is read back instead.
 const CLOSED_INTAKE_CODE = "EA002";
+// Raised when a certification arrives without the answers it requires; DETAIL lists their keys. The
+// Reckoning doesn't send one, so this means the answers changed under it. Nothing was written.
+const NOT_READY_CODE = "EA003";
 // Archiving an intake that is already archived, or isn't this person's: either way it is out of the Chamber.
 // (PostgREST answers this SQLSTATE with HTTP 404.)
 const NOT_FOUND_CODE = "PT404";
@@ -1150,6 +1154,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       if (error.details === "expired") markExpired();
       else markMissing();
       return blockedMessage();
+    } else if (error?.code === NOT_READY_CODE) {
+      // A definite refusal: nothing changed, and saving goes on as before.
+      const missing = describeMissingKeys(error.details);
+      return { message: `Add ${missing.length > 0 ? missing.join(", ").toLowerCase() : "the required answers"} on the Review tab, then certify.` };
     } else if (error) {
       // It may have landed anyway; a later write has to be able to tell.
       rememberUnconfirmed(version, { submitted: submission, chamber_data: storedData }, isOwnSubmission);

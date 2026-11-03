@@ -17,6 +17,7 @@ import {
 import { FIELD_KINDS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
+import { REQUIRED_ITEMS } from "@/data/readiness";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
 import { INTAKE_SCHEMA_V1, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
 
@@ -116,6 +117,11 @@ describe("server and client intake rules agree", () => {
     expect(MAX_CENSUS_ROWS).toBe(MAX_EMPLOYEES);
     expect(CENSUS_MAX_DEPENDENTS).toBe(MAX_DEPENDENTS);
     expect(MAX_ANNUAL_SALARY).toBe(SALARY_MAX);
+  });
+
+  it("requires the same answers before certifying", () => {
+    const keys = [...blocks("required_items").join("\n").matchAll(/THEN '(\w+)' END/g)].map((m) => m[1]);
+    expect(keys).toEqual(REQUIRED_ITEMS.map((item) => item.key));
   });
 
   it("keeps the same longest PEO name", () => {

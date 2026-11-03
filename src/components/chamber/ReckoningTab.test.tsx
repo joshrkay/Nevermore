@@ -370,3 +370,70 @@ describe("ReckoningTab on an intake that is already certified", () => {
     expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeInTheDocument();
   });
 });
+
+describe("ReckoningTab required answers", () => {
+  const onSubmit = vi.fn();
+  const submitButton = () => screen.getByRole("button", { name: /Generate The Manuscript/ });
+  const signAndTry = () => {
+    screen.getAllByRole("checkbox").forEach((c) => fireEvent.click(c));
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Jo Doe" } });
+    fireEvent.change(screen.getByLabelText("Role"), { target: { value: "CEO" } });
+    fireEvent.click(screen.getByText("Click to sign digitally"));
+    fireEvent.click(submitButton());
+  };
+
+  beforeEach(() => {
+    auth.isAnonymous = false;
+    onSubmit.mockReset().mockResolvedValue(true);
+  });
+
+  it("won't generate The Manuscript while a required answer is missing, and says which", () => {
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
+    const callout = screen.getByRole("alert", { name: "Answers still needed" });
+    expect(callout).toHaveTextContent("Before The Manuscript can be generated, add:");
+    expect(callout).toHaveTextContent("Pay frequency");
+    expect(callout).not.toHaveTextContent("Company legal name");
+
+    signAndTry();
+    expect(submitButton()).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Add pay frequency");
+  });
+
+  it("sends the prospect back to Review to add them", () => {
+    const onReview = vi.fn();
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, company_name: null, states: [], census: [] }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} onReview={onReview} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("alert", { name: "Answers still needed" })).toHaveTextContent(/Company legal name.*States of operation/);
+    fireEvent.click(screen.getByRole("button", { name: "Go to Review" }));
+    expect(onReview).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells a guest too, before they verify their email", () => {
+    auth.isAnonymous = true;
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, company_name: null }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("alert", { name: "Answers still needed" })).toHaveTextContent("Company legal name");
+  });
+
+  it("says nothing when every required answer is there, census or not", () => {
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, census: [] }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("alert", { name: "Answers still needed" })).not.toBeInTheDocument();
+    signAndTry();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+});
