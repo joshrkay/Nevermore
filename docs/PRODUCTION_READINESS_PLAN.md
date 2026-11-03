@@ -321,6 +321,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 *As built:* Provenance, conflict handling, confirm-or-edit controls and failure states are built. The extraction function loads and is tested, and the follow-up policy, prompt versioning and golden tests are not started.
 
+*Re-scoped (2026-11-03):* the remaining work in this epic is planned as US-2.1 to US-2.4 and their nine child stories, under "US-2.1 to US-2.4" at the end of this epic (decisions D17 to D33). Vocabulary follows `GLOSSARY.md`.
+
 #### B-1.1 Extraction response contract and parser
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1 · **Milestone:** M1
 - **Built:** `chamber-extract` keeps only 17 allow-listed fields with a per-field `field_status` and `evidence` (up to 200 characters) and returns `{extracted, field_status, evidence, corrected_fields, reply}`; the shaping is in `extraction.ts` and the tool schema now asks the model for all of it. The client's `sanitizeChamberPatch` validates. An empty extraction yields a fallback reply.
@@ -377,6 +379,165 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-3.1 · **Milestone:** M1
 - **Built:** `failureLogLine` and `unexpectedErrorLine` emit only fixed fields (request id, provider, kind, status, attempts, latency), and the handler uses them: the raw provider body is no longer logged. Tests assert that a provider body and an unexpected error's message appear in neither the logs nor the response.
 - **Remaining:** No session id is logged or sent, so a failure cannot be found by session.
+
+#### US-2.1 to US-2.4: re-scoped (D17 to D33)
+
+Four parent stories, delivered as nine child stories. Each child ships alone, migration first, in the order below (D32). They absorb what is left of B-1.1, B-1.3, B-1.4, B-2.2, B-3.1 and B-3.3, the workers' comp part of D-1.3, and A-2.1's notes on required fields and workers' comp. Terms are defined in `GLOSSARY.md`.
+
+**Parents and their acceptance criteria** (as written by the product team):
+
+- **US-2.1 Structured intake schema and extraction contract.** A documented schema covers company, locations, census, dependents, benefits, payroll, workers' comp and open items. Each field has a type, a validation rule and a required status. Extraction outputs are validated before being saved. Unknown, low-confidence or contradictory information is identified rather than overwritten. The Manuscript mapper consumes the same schema. *Children:* 2.1a, 2.1b, 2.1c.
+- **US-2.2 Confidence and source tracking.** Extracted fields keep a field source. Fields carry a field status. Review clearly tells inferred answers from confirmed ones. The prospect's own edits beat AI answers. Inferred and conflicting fields appear as open items. *Children:* 2.1a (statuses), 2.2a.
+- **US-2.3 Lenore's discovery prompts and fallback.** Lenore asks targeted questions about missing high-priority fields. She does not re-ask settled fields. Text stays fully usable without voice. A voice failure falls back clearly to text. A defined completion state (*ready to certify*) shows when there is enough for review. *Children:* 2.3a, 2.3b, 2.3c, 2.3d.
+- **US-2.4 AI safety, error handling and observability.** AI failures show a friendly retry state. An invalid extraction never corrupts the intake. Logs capture failures and validation errors without unnecessary sensitive content. Failed extractions can be found by intake. Rate limits and timeouts are defined and tested. *Children:* 2.4a, plus the golden transcripts in 2.3a.
+
+##### US-2.1a Intake schema v2: field metadata, the workers' comp block, and two new field statuses
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + FE · **Depends:** none · **Milestone:** M1
+- **Scope:**
+  - Intake schema v2 is v1 plus four workers' comp fields (D18):
+    - `wc_carrier`: text.
+    - `wc_renewal_date`: free text, like the other dates.
+    - `wc_experience_mod`: a number from 0 to 10.
+    - `wc_annual_premium`: whole dollars from 0 to 100,000,000.
+  - Each top-level field carries its label, section, whether it is required, and its rank in the published schema (D17, D25):
+    - Sections: company, locations, census, benefits, payroll, workers' comp and operations. Dependents sit inside each employee in the census.
+    - The required fields rank first.
+  - Migration first: the database accepts the four keys and their two new kinds, and every intake records schema version 2.
+  - Field statuses gain `unknown` and `not_applicable` (D23), with labels and badges. Neither stores an answer. `unknown` is an open item ("Prospect to provide"), and `not_applicable` closes one.
+  - `docs/intake-schema.md` lists every field by section with its kind, rule, required flag and rank.
+- **AC:**
+  - `docs/intake-schema.v2.json` gives every field a type, a rule, a label, a section, a required flag and a rank. Every required field ranks before every recommended field.
+  - v2 only adds to v1: every v1 property and definition is unchanged.
+  - The database accepts each workers' comp answer within its rule. It refuses one outside its rule with `EA001` and the field's path. Every intake records schema version 2.
+  - A stored `unknown` or `not_applicable` survives a reload. `unknown` is listed as an open item, and `not_applicable` is not.
+  - An extracted answer replaces `unknown`. No extraction or document candidate changes a field the prospect marked `not_applicable`.
+- **Tests:**
+  - SQL: rejection cases for each new kind and the version check.
+  - The sync test: covers the new kinds and caps, reading each `sync:` block from the latest migration that defines its function.
+  - Schema tests: metadata, ranking, and v2 being a superset of v1.
+  - Provenance tests: both new statuses.
+  - A test that holds the field table in `docs/intake-schema.md` to the schema.
+
+##### US-2.4a Extraction events, intake id, error codes and a browser timeout
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + FE · **Depends:** none · **Milestone:** M1
+- **Scope:**
+  - An extraction events table (D20).
+  - Both AI functions receive the intake id and check the caller owns the intake. Each call writes one event:
+    - the request id, the function and the outcome;
+    - the error kind and the refused field paths;
+    - the prompt and contract version, the provider, the model and the latency.
+  - Events hold no prospect words. Advisors can read them, and they are pruned after 90 days.
+  - Error responses carry a code: `rate_limited`, `daily_cap`, `provider_unavailable`, `timeout`, `invalid_response` or `bad_request`. The request id is returned to the browser.
+  - The browser shows a different message for each code, gives up after 45 seconds, and treats a model reply with no tool call as `invalid_response`.
+  - Quota is spent only after a request passes validation.
+  - `document-extract` logs only the error class, and records why a read failed.
+- **AC:**
+  - Every call to either AI function leaves one event, findable by intake id or request id, with no prospect words in it.
+  - A daily cap, a rate limit, a provider outage and a timeout each show a different message, with Try again.
+  - A request with no answer after 45 seconds ends in the retry state.
+  - A malformed or oversized request spends no quota.
+- **Tests:**
+  - Handler tests for each code, for both functions.
+  - SQL tests: event access, pruning, and the per-user quota (untested today).
+  - Browser tests: each message and the timeout.
+
+##### US-2.1b The extraction contract and Lenore's context
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** 2.1a, 2.4a · **Milestone:** M1
+- **Scope:**
+  - `chamber-extract` extracts every top-level field of schema v2 except the census. Each answer has a field status (`confirmed`, `inferred`, `incomplete` or `unknown`; never `conflicting` or `not_applicable`, D31) and an evidence quote. Each answer is checked against schema v2, and refused paths go into the event.
+  - Each call carries (D22):
+    - the captured answers and their field statuses;
+    - the unsettled fields by rank;
+    - the last ~10 transcript messages, redacted, inside the 20,000-character cap.
+    The function checks the shape and size of all of it.
+  - The prompt and tool schema carry a version, recorded on each event.
+- **AC:**
+  - Any top-level field except the census can be answered in chat. It is captured with its field status and evidence quote.
+  - A one-word answer ("Yes") to Lenore's yes-or-no question is captured against the field she asked about.
+  - An answer that breaks schema v2 is not applied, and its path is in the event.
+  - "I don't know" about a field records it as `unknown`, with no answer.
+- **Tests:** contract tests per kind, context-size tests, and the golden transcripts shared with 2.3a.
+
+##### US-2.3a Follow-up policy, ready to certify, wrap-up and golden transcripts
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** 2.1b · **Milestone:** M1
+- **Scope:**
+  - One shared function returns two things from the answers and field statuses (D26, D27): the unsettled fields by rank, and whether the intake is ready to certify.
+  - The prompt names the next few unsettled fields, and Lenore asks about one at a time.
+  - When the intake first becomes ready to certify, she says so once and points to Review. She then carries on with recommended fields, and wraps up when none are left (D29).
+  - For the census she points to the upload and the template (2.3d).
+  - The Chamber shows "Ready for your review" while the intake is ready to certify.
+  - About ten golden transcripts run in CI against a stubbed model.
+- **AC:**
+  - The prompt never names a settled field, and names unsettled fields in rank order.
+  - An intake is ready to certify exactly when every required field is settled. A conflicting required field keeps it not ready.
+  - Lenore announces readiness once per intake.
+  - The canned "Could you tell me more about your team?" reply is gone.
+- **Tests:** unit tests for the shared function, and golden transcripts covering the field order, a conflict, unknown answers and the wrap-up.
+
+##### US-2.2a Review lists every field, "Doesn't apply", and one open-items list
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** FE + BE · **Depends:** 2.1a · **Milestone:** M1
+- **Scope:**
+  - Review lists every field by section, each with its badge and Confirm/Edit (D28).
+  - "Doesn't apply" marks a field `not_applicable` as a prospect action, and can be undone (D31).
+  - Open items, as the glossary defines them, are computed by one function, used by Review, the Manuscript and the advisor queue. The advisor queue's SQL copy is held to it by a sync test.
+  - The Census tab shows the census's field status and source.
+- **AC:**
+  - Every schema field appears in Review with its badge.
+  - Review, the Manuscript and the advisor queue list the same open items for the same intake.
+  - "Doesn't apply" removes the open item, and no extraction undoes it.
+  - A recommended field with no answer is not an open item.
+- **Tests:** component tests, open-items unit tests, and the advisor-queue sync test.
+
+##### US-2.3b Voice answers through `chamber-extract`, with live context
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** FE + BE · **Depends:** 2.1b, 2.3a · **Milestone:** M2
+- **Scope:**
+  - Each finished prospect utterance in a call goes to `chamber-extract`, marked as spoken (ADR 0001, D19). Agent `<extract>` tags are stripped and ignored, and the direct merge with no transcript message is removed.
+  - A spoken answer is stored as `inferred` at most (D33).
+  - After each extraction the agent receives the next unsettled fields and the settled ones, by label only (D24).
+  - The agent's prompt lives in the repo with a version.
+- **AC:**
+  - A voice answer is checked against schema v2 and records the utterance it came from.
+  - No spoken answer is stored as `confirmed` until the prospect confirms it.
+  - An `<extract>` tag in an agent reply changes nothing.
+  - The agent is told the next fields after every extraction.
+- **Tests:** hook tests with a fake conversation, and a merge test for the spoken cap.
+
+##### US-2.3c Voice failure states and the mobile transcript
+- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** none · **Milestone:** M1
+- **Scope:**
+  - "Speak with Lenore" is hidden when voice isn't configured, so no setup instructions reach prospects.
+  - Connecting times out after 15 seconds.
+  - A denied microphone, a failed connection and a dropped call each get their own message, with "Continue in text", which focuses the text input.
+  - A second click while connecting starts nothing.
+  - On a phone, the full transcript is readable.
+- **AC:**
+  - Every voice failure shows a message and leaves text usable, and nothing spins longer than 15 seconds.
+  - Prospects never see setup instructions.
+  - On a phone, every Lenore reply can be read in full.
+- **Tests:** hook tests for each failure and the timeout, and a component test for the mobile transcript.
+
+##### US-2.1c Manuscript coverage
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** FE · **Depends:** 2.1a · **Milestone:** M1
+- **Scope:**
+  - A workers' comp section with the four fields and the census class codes.
+  - An "Operations & HR" section with the 13 fields not mapped today (D30).
+  - Census rows keep their class code and ZIP.
+  - The page and the PDF show the same sections.
+- **AC:**
+  - Every schema field appears in the Manuscript, or is listed as deliberately excluded with a reason.
+  - The workers' comp section shows the four fields and the class codes.
+- **Tests:** mapper tests, a coverage test that fails on an unmapped field, and a PDF test.
+
+##### US-2.3d Census template
+- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** FE + PM · **Depends:** none · **Milestone:** M1
+- **Scope:**
+  - The Upload tab offers a CSV template (D21). It has one row per employee and the columns `document-extract` reads:
+    - first and last name, date of birth, work state and ZIP;
+    - job title, annual salary, compensation type and employment type;
+    - classification, coverage tier and class code.
+  - It has no SSN or bank columns. Lenore points to it (with 2.3a).
+- **AC:** a filled-in template uploads and reads with every column matched and no skipped-column notes.
+- **Tests:** a `parse.ts` test reads the template's header with every column matched.
 
 ---
 
