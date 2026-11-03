@@ -219,7 +219,7 @@ describe("useAuth email sign-up", () => {
     currentSession = null;
     authApi.signUp.mockReset().mockResolvedValue({ data: { user: { id: "u1", identities: [{ id: "i1" }] }, session: null }, error: null });
     authApi.resend.mockReset().mockResolvedValue({ data: { user: null, session: null }, error: null });
-    authApi.verifyOtp.mockReset().mockResolvedValue({ data: { user: null, session: null }, error: null });
+    authApi.verifyOtp.mockReset().mockResolvedValue({ data: { user: { id: "u1", email: "jo@acme.com" }, session: null }, error: null });
   });
 
   it("sends the confirmation link to the callback page, which then goes on to the Chamber", async () => {
@@ -273,11 +273,12 @@ describe("useAuth email sign-up", () => {
 
   it("verifies a token from a link that points at the app", async () => {
     const { result } = await mountAuth();
-    let outcome: { error: Error | null } | undefined;
+    let outcome: { error: Error | null; email: string | null } | undefined;
     await act(async () => {
       outcome = await result.current.confirmEmailToken("hash123", "email");
     });
     expect(authApi.verifyOtp).toHaveBeenCalledWith({ token_hash: "hash123", type: "email" });
-    expect(outcome?.error).toBeNull();
+    // Which account the link signed in to, so the page can say so.
+    expect(outcome).toEqual({ error: null, email: "jo@acme.com" });
   });
 });

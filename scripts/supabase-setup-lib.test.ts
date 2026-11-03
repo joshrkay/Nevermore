@@ -153,6 +153,11 @@ describe("authConfigPatch", () => {
     expect(authConfigPatch({ mailer_templates_confirmation_content: custom }, goodEnv).patch).not.toHaveProperty("mailer_templates_confirmation_content");
   });
 
+  it("doesn't count a link to Supabase's verify endpoint as scanner-safe, since any GET confirms it", () => {
+    const verifyLink = '<p>{{ .Token }}</p><a href="https://abc.supabase.co/auth/v1/verify?token={{ .TokenHash }}&type=signup&redirect_to={{ .RedirectTo }}">Go</a>';
+    expect(authConfigPatch({ mailer_templates_confirmation_content: verifyLink }, goodEnv).patch.mailer_templates_confirmation_content).toContain("#token_hash=");
+  });
+
   it("refuses to build a patch without the current settings, which would replace the Redirect URLs", () => {
     expect(() => authConfigPatch(null, goodEnv)).toThrow(/current auth settings/);
   });
@@ -333,26 +338,38 @@ describe("interpretChecks", () => {
 describe("authUrlProblems", () => {
   const site = "https://nevermore-gamma.vercel.app";
 
-  it("accepts the site as Site URL with everything under it allowed", () => {
+  it("accepts the site as Site URL, with or without a Redirect URLs entry for it", () => {
     expect(authUrlProblems({ site_url: site, uri_allow_list: `http://localhost:8080/**, ${site}/**` }, site)).toEqual([]);
     // A trailing slash on the Site URL is the same origin.
     expect(authUrlProblems({ site_url: `${site}/`, uri_allow_list: `${site}/**` }, site)).toEqual([]);
+    // Supabase always allows the Site URL's own host, so the list isn't needed for it.
+    expect(authUrlProblems({ site_url: site, uri_allow_list: "" }, site)).toEqual([]);
+    expect(authUrlProblems({ site_url: site, uri_allow_list: `${site}/start` }, site)).toEqual([]);
   });
 
   it("names a Site URL left at Supabase's default", () => {
     expect(authUrlProblems({ site_url: "http://localhost:3000", uri_allow_list: "" }, null)).toEqual([
       "Site URL is http://localhost:3000: confirmation links send people there",
-      "Redirect URLs lack http://localhost:3000/**",
     ]);
     expect(authUrlProblems({ site_url: "http://localhost:3000", uri_allow_list: "" }, site)).toEqual([
       `Site URL is http://localhost:3000, not ${site}`,
       `Redirect URLs lack ${site}/**`,
     ]);
+    // A wrong Site URL with the site on the list still sends links home, but the Site URL is still named.
+    expect(authUrlProblems({ site_url: "http://localhost:3000", uri_allow_list: `${site}/**` }, site)).toEqual([
+      `Site URL is http://localhost:3000, not ${site}`,
+    ]);
   });
 
-  it("names a missing Site URL, a missing redirect entry and an unreadable config", () => {
+  it("names a missing Site URL and an unreadable config", () => {
     expect(authUrlProblems({ site_url: "", uri_allow_list: `${site}/**` }, site)).toEqual(["Site URL is not set (Authentication → URL Configuration)"]);
-    expect(authUrlProblems({ site_url: site, uri_allow_list: `${site}/start` }, site)).toEqual([`Redirect URLs lack ${site}/**`]);
     expect(authUrlProblems(null, site)).toEqual(["auth config unreadable"]);
   });
+
+  it("says so when APP_BASE_URL can't be compared, instead of passing quietly", () => {
+    expect(authUrlProblems({ site_url: "https://old-preview.lovable.app", uri_allow_list: "" }, "nevermore-gamma.vercel.app")).toEqual([
+      "APP_BASE_URL (nevermore-gamma.vercel.app) isn't a URL, so the Site URL wasn't compared with it",
+    ]);
+  });
 });
+
