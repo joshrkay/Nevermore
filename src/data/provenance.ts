@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
+import { INTAKE_FIELDS, INTAKE_SCHEMA } from "./intakeSchema";
 import { redactSensitive } from "./sensitive";
 
 // Every captured field records how sure we are of it and where it came from, so the
@@ -10,11 +11,13 @@ import { redactSensitive } from "./sensitive";
 
 export type FieldKey = keyof ChamberData;
 
-export const FIELD_STATUSES = ["confirmed", "inferred", "incomplete", "conflicting"] as const;
+// The field statuses of GLOSSARY.md. `unknown` (the prospect doesn't know yet) and `not_applicable` (the
+// field doesn't apply to them) hold no answer (D23); only the prospect marks a field not applicable (D31).
+export const FIELD_STATUSES = ["confirmed", "inferred", "incomplete", "conflicting", "unknown", "not_applicable"] as const;
 export type FieldStatus = (typeof FIELD_STATUSES)[number];
 
 /** Statuses the extraction model may assign; only a disagreement makes a field conflicting. */
-export type ExtractedStatus = Exclude<FieldStatus, "conflicting">;
+export type ExtractedStatus = "confirmed" | "inferred" | "incomplete";
 
 export type FieldSource =
   | { kind: "transcript"; message_id: string; quote?: string }
@@ -42,48 +45,17 @@ export interface IntakeState {
   provenance: ProvenanceMap;
 }
 
-export const FIELD_LABELS: Record<FieldKey, string> = {
-  company_name: "Company legal name",
-  industry: "Industry",
-  hq_state: "HQ state",
-  states: "States of operation",
-  employee_count: "Employee count",
-  start_month: "Target start",
-  multiple_entities: "Multiple entities",
-  fein_count: "FEIN count",
-  virgin_medical: "First-time medical coverage",
-  current_carrier: "Current carrier",
-  renewal_date: "Renewal date",
-  rate_history: "Rate history",
-  benefits_waiting_period: "Waiting period",
-  ancillary_benefits: "Ancillary benefits",
-  has_401k: "Retirement plan",
-  retirement_type: "Retirement plan type",
-  employer_contributes: "Employer retirement contribution",
-  payroll_vendor: "Payroll vendor",
-  pay_frequency: "Pay frequency",
-  funding_days: "Funding lead time",
-  has_nonexempt: "Nonexempt employees",
-  nonexempt_count: "Nonexempt count",
-  exempt_count: "Exempt count",
-  pto_types: "PTO types",
-  accrual_method: "Accrual method",
-  has_handbook: "Employee handbook",
-  handbook_last_updated: "Handbook last updated",
-  hr_staff_count: "In-house HR staff",
-  has_1099: "1099 contractors",
-  ca_contractors: "California contractors",
-  uses_physical_clocks: "Physical time clocks",
-  uses_mobile_app: "Mobile timekeeping",
-  uses_computer_timekeeping: "Computer timekeeping",
-  shift_differentials: "Shift differentials",
-  hris_system: "HRIS system",
-  key_challenges: "Key challenges",
-  business_goals: "Business goals",
-  census: "Employee census",
-};
+/**
+ * Each field's label, from the intake schema (supabase/functions/_shared/intakeSchema.ts), in the order the
+ * schema lists the fields (grouped as the workspace groups them), not rank order: lists built from it,
+ * such as the advisor's field review, keep their order.
+ */
+const LABEL_BY_KEY = new Map(INTAKE_FIELDS.map((f) => [f.key, f.label]));
+export const FIELD_LABELS = Object.fromEntries(
+  Object.keys(INTAKE_SCHEMA.properties as object).map((key) => [key, LABEL_BY_KEY.get(key)!]),
+) as Record<FieldKey, string>;
 
-export type FieldKind = "text" | "number" | "boolean" | "list";
+export type FieldKind = "text" | "number" | "decimal" | "boolean" | "list";
 
 /** Input kind per field, for editing. The census has its own tab and isn't edited here. */
 export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
@@ -124,6 +96,10 @@ export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
   hris_system: "text",
   key_challenges: "text",
   business_goals: "text",
+  wc_carrier: "text",
+  wc_renewal_date: "text",
+  wc_experience_mod: "decimal",
+  wc_annual_premium: "number",
 };
 
 const FIELD_KEYS = Object.keys(FIELD_LABELS) as FieldKey[];
@@ -212,6 +188,8 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
     const prevValue = data[field];
 
     if (prev?.source.kind === "prospect_edit") continue;
+    // Only the prospect marks a field not applicable, and only they can take it back.
+    if (prev?.status === "not_applicable") continue;
 
     const replaces =
       !prev || // nothing recorded yet (or a session saved before provenance existed)
@@ -260,6 +238,7 @@ export function applyFieldAction(state: IntakeState, action: FieldAction, now = 
 
   if (action.type === "confirm") {
     if (state.provenance[field]?.status === "conflicting") return state; // must pick a value first
+    if (isEmpty(state.data[field])) return state; // nothing to confirm (an unknown or not applicable field holds no answer)
     return { data: state.data, provenance: { ...state.provenance, [field]: confirmed() } };
   }
 
@@ -275,7 +254,7 @@ export function applyFieldAction(state: IntakeState, action: FieldAction, now = 
 
 // ---------- Open items ----------
 
-export type FieldOpenReason = "Conflicting answers" | "Incomplete" | "Please confirm";
+export type FieldOpenReason = "Conflicting answers" | "Incomplete" | "Prospect to provide" | "Please confirm";
 
 export interface FieldOpenItem {
   field: FieldKey;
@@ -286,12 +265,16 @@ export interface FieldOpenItem {
 const REASONS: Partial<Record<FieldStatus, FieldOpenReason>> = {
   conflicting: "Conflicting answers",
   incomplete: "Incomplete",
+  unknown: "Prospect to provide",
   inferred: "Please confirm",
 };
 
-/** Fields that still need the prospect: conflicts first, then incomplete, then inferred. */
+/**
+ * Fields that still need the prospect: conflicts first, then incomplete, then unknown, then inferred.
+ * A field marked not applicable is closed and never listed.
+ */
 export function fieldOpenItems(provenance: ProvenanceMap): FieldOpenItem[] {
-  const order: FieldStatus[] = ["conflicting", "incomplete", "inferred"];
+  const order: FieldStatus[] = ["conflicting", "incomplete", "unknown", "inferred"];
   return order.flatMap((status) =>
     FIELD_KEYS.filter((f) => provenance[f]?.status === status).map((field) => ({
       field,
@@ -329,6 +312,8 @@ export const STATUS_LABELS: Record<FieldStatus, string> = {
   inferred: "Inferred",
   incomplete: "Incomplete",
   conflicting: "Conflicting",
+  unknown: "Not known yet",
+  not_applicable: "Doesn't apply",
 };
 
 /** Parses the model's per-field status map, ignoring unknown fields and statuses. */

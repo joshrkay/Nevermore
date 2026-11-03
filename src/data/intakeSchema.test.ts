@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import {
   assertSupportedSchema,
-  INTAKE_SCHEMA_V1,
+  FIELD_SECTIONS,
+  INTAKE_FIELDS,
+  INTAKE_SCHEMA,
   INTAKE_SCHEMA_VERSION,
+  type JsonSchema,
   MAX_ISSUES,
+  REQUIRED_FIELDS,
   validateChamberData,
   validateIntakeField,
 } from "../../supabase/functions/_shared/intakeSchema";
@@ -22,18 +26,60 @@ const row = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-describe("intake schema v1", () => {
-  it("is published as docs/intake-schema.v1.json (regenerate with npm run schema:intake)", () => {
-    expect(readFileSync("docs/intake-schema.v1.json", "utf8")).toBe(`${JSON.stringify(INTAKE_SCHEMA_V1, null, 2)}\n`);
+describe("intake schema v2", () => {
+  const props = INTAKE_SCHEMA.properties as Record<string, JsonSchema>;
+
+  it("is published as docs/intake-schema.v2.json (regenerate with npm run schema:intake)", () => {
+    expect(readFileSync("docs/intake-schema.v2.json", "utf8")).toBe(`${JSON.stringify(INTAKE_SCHEMA, null, 2)}\n`);
   });
 
-  it("is version 1 and a draft 2020-12 JSON Schema", () => {
-    expect(INTAKE_SCHEMA_VERSION).toBe(1);
-    expect(INTAKE_SCHEMA_V1.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
+  it("is version 2 and a draft 2020-12 JSON Schema", () => {
+    expect(INTAKE_SCHEMA_VERSION).toBe(2);
+    expect(INTAKE_SCHEMA.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
+    expect(INTAKE_SCHEMA.$id).toBe("urn:edgar-allan-advisory:intake:chamber-data:v2");
   });
 
   it("names exactly the answers an intake holds", () => {
-    expect(Object.keys(INTAKE_SCHEMA_V1.properties as object).sort()).toEqual(Object.keys(EMPTY_CHAMBER_DATA).sort());
+    expect(Object.keys(props).sort()).toEqual(Object.keys(EMPTY_CHAMBER_DATA).sort());
+  });
+
+  // A v1 answer set must stay valid, so v2 may only add optional answers to the v1 published in docs/.
+  it("only adds the workers' comp block to v1, changing nothing v1 had", () => {
+    const v1 = JSON.parse(readFileSync("docs/intake-schema.v1.json", "utf8")) as JsonSchema;
+    const v1Props = v1.properties as Record<string, JsonSchema>;
+    const withoutMeta = ({ "x-intake": _meta, ...rule }: JsonSchema) => rule;
+    expect(Object.keys(props).filter((key) => !(key in v1Props)).sort()).toEqual(["wc_annual_premium", "wc_carrier", "wc_experience_mod", "wc_renewal_date"]);
+    for (const [key, rule] of Object.entries(v1Props)) expect(withoutMeta(props[key]), key).toEqual(rule);
+    expect(INTAKE_SCHEMA.$defs).toEqual(v1.$defs);
+    expect(INTAKE_SCHEMA.additionalProperties).toBe(false);
+  });
+
+  it("gives every field a label, a section, a required flag and a rank", () => {
+    for (const [key, schema] of Object.entries(props)) {
+      const meta = schema["x-intake"] as Record<string, unknown>;
+      expect(Object.keys(meta), key).toEqual(["label", "section", "required", "rank"]);
+      expect(typeof meta.label === "string" && meta.label.trim() !== "", key).toBe(true);
+      expect(FIELD_SECTIONS, key).toContain(meta.section);
+    }
+    expect(new Set(INTAKE_FIELDS.map((f) => f.label)).size).toBe(INTAKE_FIELDS.length);
+    expect(INTAKE_FIELDS.map((f) => f.section).filter((s, i, all) => all.indexOf(s) === i).sort()).toEqual([...FIELD_SECTIONS].sort());
+  });
+
+  it("requires exactly the core four, and ranks them first, in the order Lenore asks", () => {
+    expect(INTAKE_FIELDS.filter((f) => f.required).map((f) => f.key)).toEqual([...REQUIRED_FIELDS]);
+    expect(INTAKE_FIELDS.map((f) => f.rank)).toEqual(INTAKE_FIELDS.map((_, i) => i + 1));
+    expect(INTAKE_FIELDS.slice(0, REQUIRED_FIELDS.length).every((f) => f.required)).toBe(true);
+    expect(INTAKE_FIELDS.slice(0, 14).map((f) => f.key)).toEqual([
+      "company_name", "states", "pay_frequency", "census",
+      "employee_count", "industry", "hq_state", "current_carrier", "renewal_date", "payroll_vendor",
+      "wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium",
+    ]);
+  });
+
+  it("puts the workers' comp block in its own section", () => {
+    expect(INTAKE_FIELDS.filter((f) => f.section === "workers_comp").map((f) => f.key).sort()).toEqual([
+      "wc_annual_premium", "wc_carrier", "wc_experience_mod", "wc_renewal_date",
+    ]);
   });
 
   it("refuses to run a schema that uses a keyword the validator doesn't implement", () => {
@@ -41,7 +87,7 @@ describe("intake schema v1", () => {
     expect(() => assertSupportedSchema({ properties: { a: { oneOf: [] } } })).toThrow(/oneOf at #\/properties\/a/);
     expect(() => assertSupportedSchema({ additionalProperties: { type: "string" } })).toThrow(/additionalProperties: false/);
     expect(() => assertSupportedSchema({ $ref: "https://example.com/x.json" })).toThrow(/local/);
-    expect(() => assertSupportedSchema(INTAKE_SCHEMA_V1)).not.toThrow();
+    expect(() => assertSupportedSchema(INTAKE_SCHEMA)).not.toThrow();
   });
 });
 
@@ -105,7 +151,20 @@ describe("validateChamberData", () => {
     ]);
   });
 
-  it("refuses the legacy roster key, which v1 writers never send", () => {
+  it("holds the workers' comp block to its rules: a fractional mod, whole dollars", () => {
+    expect(validateChamberData({ wc_carrier: "Pinnacle Mutual", wc_renewal_date: "July 2026", wc_experience_mod: 0.92, wc_annual_premium: 18400 })).toEqual([]);
+    expect(validateChamberData({ wc_experience_mod: 0, wc_annual_premium: 0 })).toEqual([]);
+    expect(validateChamberData({ wc_experience_mod: 10, wc_annual_premium: 100_000_000 })).toEqual([]);
+    expect(validateChamberData({ wc_experience_mod: null, wc_annual_premium: null })).toEqual([]);
+    expect(validateChamberData({ wc_experience_mod: 10.01, wc_annual_premium: 100_000_001 })).toEqual([
+      { path: "wc_experience_mod", reason: "must be at most 10" },
+      { path: "wc_annual_premium", reason: "must be at most 100,000,000" },
+    ]);
+    expect(paths({ wc_experience_mod: "0.92", wc_annual_premium: 1200.5 })).toEqual(["wc_experience_mod", "wc_annual_premium"]);
+    expect(paths({ wc_experience_mod: -0.1, wc_annual_premium: "$18,400" })).toEqual(["wc_experience_mod", "wc_annual_premium"]);
+  });
+
+  it("refuses the legacy roster key, which no writer sends any more", () => {
     expect(paths({ employees: [] })).toEqual(["employees"]);
   });
 

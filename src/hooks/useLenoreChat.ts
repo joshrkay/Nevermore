@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { describeInvokeError, type AiFailureKind } from "@/data/aiFailure";
 import { mergeChamberData } from "@/data/chamberValidation";
 import type { ChamberData } from "@/data/chamberTypes";
 import { redactSensitive } from "@/data/sensitive";
@@ -10,10 +10,21 @@ import type { OrbState } from "@/components/chamber/VoiceOrb";
 export interface ChatFailure {
   /** The message Lenore didn't get to answer, kept so "Try again" can resend it. */
   text: string;
-  kind: "rate_limited" | "failed";
+  /** Why, as the prospect is told it (see CHAT_FAILURE_MESSAGES). */
+  kind: AiFailureKind;
+  /** The function's request id, which finds the call's extraction event. */
+  requestId?: string;
 }
 
+/**
+ * How long the browser waits for Lenore before offering "Try again" (US-2.4a). Longer than the
+ * function's worst case (two 20-second attempts and a one-second pause), so a slow answer still lands.
+ */
+export const CHAT_TIMEOUT_MS = 45_000;
+
 interface UseLenoreChatOptions {
+  /** The intake the conversation belongs to; the function checks it is the caller's and records it. */
+  intakeId?: string | null;
   chamberData: ChamberData;
   setChamberData: (updater: (prev: ChamberData) => ChamberData) => void;
   /** May return the stored message so extracted values can point back to it. */
@@ -38,11 +49,13 @@ const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
  */
-export function useLenoreChat({ chamberData, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
+export function useLenoreChat({ intakeId, chamberData, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
   const [failure, setFailure] = useState<ChatFailure | null>(null);
   const [pending, setPending] = useState(false);
   const dataRef = useRef(chamberData);
   dataRef.current = chamberData;
+  const intakeIdRef = useRef(intakeId);
+  intakeIdRef.current = intakeId;
   // The recorded message behind the current failure, so a retry still cites it. Each request
   // otherwise carries its own message, so overlapping sends can't be attributed to each other.
   const failedMessageRef = useRef<{ id: string; text: string } | null>(null);
@@ -62,10 +75,19 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
     const replaced = () => !Object.is(epochRef.current, askedIn);
     setPending(true);
     onOrbStateChange("thinking");
+    // The browser's own limit, so a request that never answers ends in "Try again" rather than waiting forever.
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, CHAT_TIMEOUT_MS);
     try {
       // The roster isn't extracted from chat and holds personal details, so leave it out of the context.
       const { census: _census, ...context } = dataRef.current;
-      const { data, error } = await supabase.functions.invoke("chamber-extract", { body: { message: text, context } });
+      const body: Record<string, unknown> = { message: text, context };
+      if (intakeIdRef.current) body.session_id = intakeIdRef.current;
+      const { data, error } = await supabase.functions.invoke("chamber-extract", { body, signal: controller.signal });
       // The conversation was replaced while Lenore was answering: her answer belongs to the old one.
       if (replaced()) {
         onOrbStateChange("idle");
@@ -91,9 +113,10 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
       const unrecorded = unrecordedFunctionFailure("chat", err);
       if (unrecorded) reportOpsEvent("ai_failed", { code: unrecorded, detail: errorDetail(err) });
       failedMessageRef.current = message;
-      setFailure({ text, kind: rateLimited ? "rate_limited" : "failed" });
+      setFailure({ text, ...info });
       return false;
     } finally {
+      clearTimeout(timer);
       setPending(false);
     }
   }, [addLenoreMessage, onOrbStateChange, setChamberData, onExtracted]);

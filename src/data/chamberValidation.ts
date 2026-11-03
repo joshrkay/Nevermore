@@ -23,6 +23,8 @@ export const MAX_STATES = 60;
 export const MAX_LIST_ITEMS = 100;
 export const COUNT_MAX = 1_000_000;
 export const SALARY_MAX = 1_000_000;
+export const EXPERIENCE_MOD_MAX = 10;
+export const DOLLARS_MAX = 100_000_000;
 export const TEXT_MAX = 1000;
 export const NAME_MAX = 200;
 export const DOB_MAX = 40;
@@ -65,6 +67,22 @@ const countUpTo = (max: number) =>
     z.number().int().nonnegative().max(max),
   );
 const count = countUpTo(COUNT_MAX);
+
+// Numbers people write with symbols: "$18,400", "0.92". Anything else is left for the schema to refuse.
+const numberText = (strip: RegExp) => (v: unknown) =>
+  typeof v === "string" && v.trim() !== "" ? Number(v.replace(strip, "")) : v;
+
+// An experience mod such as 0.92, kept to two decimal places as carriers publish it.
+const experienceMod = z.preprocess(
+  numberText(/[\s,]/g),
+  z.number().finite().min(0).max(EXPERIENCE_MOD_MAX).transform((n) => Math.round(n * 100) / 100),
+);
+
+// Whole dollars: cents are rounded away, and a figure over the cap is dropped rather than capped.
+const dollars = z.preprocess(
+  numberText(/[\s$,]/g),
+  z.number().finite().nonnegative().transform(Math.round).pipe(z.number().max(DOLLARS_MAX)),
+);
 
 type FieldSchemas = { [K in keyof ChamberData]: z.ZodType<ChamberData[K], z.ZodTypeDef, unknown> };
 
@@ -109,6 +127,11 @@ const FIELD_SCHEMAS: FieldSchemas = {
   hris_system: nullableText,
   key_challenges: nullableText,
   business_goals: nullableText,
+
+  wc_carrier: nullableText,
+  wc_renewal_date: nullableText,
+  wc_experience_mod: experienceMod.nullable(),
+  wc_annual_premium: dollars.nullable(),
 
   // Rows are checked one by one (supabase/functions/_shared/census.ts): an invalid row is dropped and the
   // census stops at the most the intake holds.

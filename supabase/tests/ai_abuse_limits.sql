@@ -6,6 +6,13 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN; END IF;
 END $$;
+-- The per-user quota runs as the signed-in caller, so it needs Supabase's auth.uid() and users table.
+CREATE SCHEMA IF NOT EXISTS auth;
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
+  $$ SELECT (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;
+CREATE TABLE IF NOT EXISTS auth.users (id uuid PRIMARY KEY);
+GRANT USAGE ON SCHEMA auth TO anon, authenticated;
+\i supabase/migrations/20261020190000_ai_rate_limit.sql
 \i supabase/migrations/20261020220000_guest_abuse_limits.sql
 
 DO $$
@@ -70,4 +77,59 @@ BEGIN
   PERFORM public.consume_ip_quota('x', 100, 100);
   RESET ROLE;
   RAISE NOTICE 'ai_abuse_limits: all cases passed';
+END $$;
+
+-- ---------- per-user quota (consume_ai_quota), as the signed-in caller ----------
+DO $$
+DECLARE
+  a uuid := gen_random_uuid();
+  b uuid := gen_random_uuid();
+  logged int;
+BEGIN
+  INSERT INTO auth.users (id) VALUES (a), (b);
+
+  -- No signed-in user: refused, and nothing is recorded.
+  PERFORM set_config('request.jwt.claims', '', true);
+  ASSERT NOT (SELECT public.consume_ai_quota(10, 10)), 'a caller with no user is refused';
+  ASSERT (SELECT count(*) FROM public.ai_request_log) = 0, 'a refused anonymous call is not recorded';
+
+  -- Per minute.
+  PERFORM set_config('request.jwt.claims', jsonb_build_object('sub', a)::text, true);
+  ASSERT (SELECT public.consume_ai_quota(2, 100)), 'a 1';
+  ASSERT (SELECT public.consume_ai_quota(2, 100)), 'a 2';
+  ASSERT NOT (SELECT public.consume_ai_quota(2, 100)), 'a 3 is over the per-minute limit';
+  ASSERT (SELECT count(*) FROM public.ai_request_log WHERE user_id = a) = 2, 'a refused call is not counted';
+
+  -- Each user has their own allowance.
+  PERFORM set_config('request.jwt.claims', jsonb_build_object('sub', b)::text, true);
+  ASSERT (SELECT public.consume_ai_quota(2, 100)), 'b is unaffected by a';
+
+  -- Per day: calls older than a minute still count within the day.
+  INSERT INTO public.ai_request_log (user_id, created_at) SELECT b, now() - interval '2 hours' FROM generate_series(1, 4);
+  ASSERT NOT (SELECT public.consume_ai_quota(100, 5)), 'b is over the per-day limit';
+
+  -- Calls older than a day are pruned for the caller as it goes, and no longer count.
+  INSERT INTO public.ai_request_log (user_id, created_at) SELECT b, now() - interval '25 hours' FROM generate_series(1, 50);
+  ASSERT (SELECT public.consume_ai_quota(100, 7)), 'yesterday no longer counts';
+  SELECT count(*) INTO logged FROM public.ai_request_log WHERE user_id = b AND created_at < now() - interval '1 day';
+  ASSERT logged = 0, 'stale rows are pruned';
+  ASSERT (SELECT count(*) FROM public.ai_request_log WHERE user_id = a) = 2, 'pruning is per caller';
+END $$;
+
+-- Signed-in callers spend their own quota; signed-out callers can't call it.
+DO $$
+DECLARE u uuid := gen_random_uuid();
+BEGIN
+  INSERT INTO auth.users (id) VALUES (u);
+  PERFORM set_config('request.jwt.claims', jsonb_build_object('sub', u)::text, true);
+  SET LOCAL ROLE authenticated;
+  ASSERT (SELECT public.consume_ai_quota(1, 1)), 'authenticated can spend its quota';
+  RESET ROLE;
+  SET LOCAL ROLE anon;
+  BEGIN
+    PERFORM public.consume_ai_quota(1, 1);
+    RAISE EXCEPTION 'FAIL: anon could call consume_ai_quota';
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  RESET ROLE;
+  RAISE NOTICE 'ai_abuse_limits: per-user quota cases passed';
 END $$;

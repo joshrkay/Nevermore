@@ -26,7 +26,13 @@ const STATUS_MARKER_CLASS: Record<FieldProvenance["status"], string> = {
   inferred: "bg-warning/15 text-warning",
   incomplete: "bg-warning/15 text-warning",
   conflicting: "bg-destructive/15 text-destructive",
+  unknown: "bg-warning/15 text-warning",
+  not_applicable: "bg-muted text-muted-foreground",
 };
+
+// Unknown and not applicable hold no answer, but say more than "Not provided" does.
+const showsStatus = (value: string, provenance?: FieldProvenance): provenance is FieldProvenance =>
+  Boolean(provenance) && (value !== NOT_PROVIDED || provenance!.status === "unknown" || provenance!.status === "not_applicable");
 
 // Shows whether a value was confirmed or only inferred, and where it came from.
 const DataRow = ({ label, value, provenance }: { label: string; value: string; provenance?: FieldProvenance }) => (
@@ -35,14 +41,14 @@ const DataRow = ({ label, value, provenance }: { label: string; value: string; p
       <span className="text-muted-foreground text-sm">{label}</span>
       <span className="font-mono text-sm text-foreground text-right">
         {value}
-        {provenance && value !== NOT_PROVIDED && (
+        {showsStatus(value, provenance) && (
           <span className={`ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded-full ${STATUS_MARKER_CLASS[provenance.status]}`}>
             {STATUS_LABELS[provenance.status]}
           </span>
         )}
       </span>
     </div>
-    {provenance && value !== NOT_PROVIDED && (
+    {showsStatus(value, provenance) && (
       <p className="text-[11px] text-muted-foreground text-right mt-0.5">{describeSource(provenance.source)}</p>
     )}
   </div>

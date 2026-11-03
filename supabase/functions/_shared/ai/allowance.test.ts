@@ -23,7 +23,7 @@ describe("checkAiAllowance", () => {
   it("refuses an over-quota user without spending IP or global budget", async () => {
     const d = deps({ consumeUserQuota: vi.fn(async () => false) });
     const result = await checkAiAllowance(d, "hash-1");
-    expect(result).toMatchObject({ allowed: false, status: 429, reason: "user_quota" });
+    expect(result).toMatchObject({ allowed: false, status: 429, code: "rate_limited", reason: "user_quota" });
     expect(d.consumeIpQuota).not.toHaveBeenCalled();
     expect(d.consumeGlobalBudget).not.toHaveBeenCalled();
   });
@@ -31,14 +31,14 @@ describe("checkAiAllowance", () => {
   it("refuses an over-limit IP without spending global budget", async () => {
     const d = deps({ consumeIpQuota: vi.fn(async () => false) });
     const result = await checkAiAllowance(d, "hash-1");
-    expect(result).toMatchObject({ allowed: false, status: 429, reason: "ip_quota" });
+    expect(result).toMatchObject({ allowed: false, status: 429, code: "rate_limited", reason: "ip_quota" });
     expect(d.consumeGlobalBudget).not.toHaveBeenCalled();
   });
 
   it("stops everyone, with a calm message, once the global ceiling is hit, and logs it", async () => {
     const d = deps({ consumeGlobalBudget: vi.fn(async () => false) });
     const result = await checkAiAllowance(d, "hash-1");
-    expect(result).toMatchObject({ allowed: false, status: 503, reason: "global_ceiling" });
+    expect(result).toMatchObject({ allowed: false, status: 503, code: "daily_cap", reason: "global_ceiling" });
     expect(result.allowed === false && result.error).toMatch(/resting/i);
     expect(d.log).toHaveBeenCalledWith(expect.stringContaining("AI_GLOBAL_CEILING_HIT"));
   });
@@ -48,7 +48,7 @@ describe("checkAiAllowance", () => {
     async (failing) => {
       const d = deps({ [failing]: vi.fn(async () => { throw new Error("db down"); }) });
       const result = await checkAiAllowance(d, "hash-1");
-      expect(result).toMatchObject({ allowed: false, status: 503, reason: "budget_unavailable" });
+      expect(result).toMatchObject({ allowed: false, status: 503, code: "unavailable", reason: "budget_unavailable" });
       expect(d.log).toHaveBeenCalledWith(expect.stringContaining("AI_BUDGET_CHECK_FAILED"));
     },
   );

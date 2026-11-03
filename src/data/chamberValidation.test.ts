@@ -4,6 +4,8 @@ import type { ChamberData } from "./chamberTypes";
 import { CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES } from "./census";
 import {
   COUNT_MAX,
+  DOLLARS_MAX,
+  EXPERIENCE_MOD_MAX,
   MAX_DEPENDENTS,
   NAME_MAX,
   MAX_EMPLOYEES,
@@ -110,6 +112,18 @@ describe("sanitizeChamberPatch", () => {
     });
     expect(patch.key_challenges).toBe("Owner SSN is [redacted]; payroll from acct [redacted]");
     expect(patch.company_name).toBe("Acme [redacted]");
+  });
+
+  it("reads a workers' comp mod and premium as people write them", () => {
+    expect(sanitizeChamberPatch({ wc_experience_mod: "0.92", wc_annual_premium: "$18,400" })).toEqual({ wc_experience_mod: 0.92, wc_annual_premium: 18400 });
+    // Two decimal places for the mod, whole dollars for the premium.
+    expect(sanitizeChamberPatch({ wc_experience_mod: 1.126, wc_annual_premium: 18400.6 })).toEqual({ wc_experience_mod: 1.13, wc_annual_premium: 18401 });
+    expect(sanitizeChamberPatch({ wc_experience_mod: 0, wc_annual_premium: DOLLARS_MAX })).toEqual({ wc_experience_mod: 0, wc_annual_premium: DOLLARS_MAX });
+    expect(sanitizeChamberPatch({ wc_experience_mod: EXPERIENCE_MOD_MAX, wc_annual_premium: null })).toEqual({ wc_experience_mod: EXPERIENCE_MOD_MAX, wc_annual_premium: null });
+    // Out of range or not a number: dropped, not capped.
+    expect(sanitizeChamberPatch({ wc_experience_mod: 10.5, wc_annual_premium: DOLLARS_MAX + 1 })).toEqual({});
+    expect(sanitizeChamberPatch({ wc_experience_mod: "about one", wc_annual_premium: -5 })).toEqual({});
+    expect(sanitizeChamberPatch({ wc_carrier: " Pinnacle Mutual ", wc_renewal_date: "July 2026" })).toEqual({ wc_carrier: "Pinnacle Mutual", wc_renewal_date: "July 2026" });
   });
 });
 
@@ -272,14 +286,16 @@ function serverRefusal(d: unknown): string | null {
   const isState = (v: unknown) => typeof v === "string" && US_STATE_CODES.includes(v);
   if (!isObj(d)) return "chamber_data";
   const kinds: Record<string, string> = {};
-  for (const k of ["company_name", "industry", "start_month", "current_carrier", "renewal_date", "rate_history", "benefits_waiting_period", "retirement_type", "payroll_vendor", "pay_frequency", "accrual_method", "handbook_last_updated", "hris_system", "key_challenges", "business_goals"]) kinds[k] = "text";
+  for (const k of ["company_name", "industry", "start_month", "current_carrier", "renewal_date", "rate_history", "benefits_waiting_period", "retirement_type", "payroll_vendor", "pay_frequency", "accrual_method", "handbook_last_updated", "hris_system", "key_challenges", "business_goals", "wc_carrier", "wc_renewal_date"]) kinds[k] = "text";
   for (const k of ["employee_count", "fein_count", "funding_days", "nonexempt_count", "exempt_count", "hr_staff_count"]) kinds[k] = "count";
   for (const k of ["multiple_entities", "virgin_medical", "has_401k", "employer_contributes", "has_nonexempt", "has_handbook", "has_1099", "ca_contractors", "uses_physical_clocks", "uses_mobile_app", "uses_computer_timekeeping", "shift_differentials"]) kinds[k] = "bool";
-  for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"]]) kinds[k] = kind;
+  for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"], ["wc_experience_mod", "experience_mod"], ["wc_annual_premium", "dollars"]]) kinds[k] = kind;
   for (const [k, v] of Object.entries(d)) {
     switch (kinds[k]) {
       case "text": if (v !== null && !isText(v, TEXT_MAX)) return k; break;
       case "count": if (v !== null && !isCount(v, COUNT_MAX)) return k; break;
+      case "experience_mod": if (v !== null && !(typeof v === "number" && v >= 0 && v <= EXPERIENCE_MOD_MAX)) return k; break;
+      case "dollars": if (v !== null && !isCount(v, DOLLARS_MAX)) return k; break;
       case "bool": if (v !== null && typeof v !== "boolean") return k; break;
       case "state": if (v !== null && !isState(v)) return k; break;
       case "states":
@@ -364,6 +380,9 @@ describe("sanitiser output the server must accept", () => {
     expect(serverRefusal({ census: [{ first_name: "A", classification: "W2" }] })).toBe("census[0].classification");
     expect(serverRefusal({ census: [{ first_name: "A", annual_salary: 1_000_001 }] })).toBe("census[0].annual_salary");
     expect(serverRefusal({ employees: [{ first_name: "A", dependents: Array.from({ length: 21 }, () => ({ first_name: "D" })) }] })).toBe("employees[0].dependents");
+    expect(serverRefusal({ wc_experience_mod: 10.5 })).toBe("wc_experience_mod");
+    expect(serverRefusal({ wc_annual_premium: 12.5 })).toBe("wc_annual_premium");
+    expect(serverRefusal({ wc_annual_premium: 100_000_001 })).toBe("wc_annual_premium");
     expect(serverRefusal({ extra: 1 })).toBe("extra");
     expect(serverRefusal([])).toBe("chamber_data");
     expect(serverRefusal({})).toBeNull();
@@ -424,7 +443,7 @@ describe("sanitiser output the server must accept", () => {
     expect(serverRefusal(mergeChamberData(DEMO_CHAMBER_DATA, raw))).toBeNull();
     // and the stored form survives a JSON round trip unchanged, so what the server holds is what we sent
     expect(parseChamberData(JSON.parse(JSON.stringify(data)))).toEqual(data);
-    // and it is canonical: intake schema v1 accepts it exactly as it is
+    // and it is canonical: the intake schema accepts it exactly as it is
     expect(validateChamberData(data)).toEqual([]);
     expect(validateChamberData(sanitizeChamberPatch(raw))).toEqual([]);
   });
@@ -461,8 +480,8 @@ describe("sanitiser output the server must accept", () => {
     let seed = 20261029;
     const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
     const pick = <T,>(a: readonly T[]): T => a[Math.floor(rnd() * a.length)];
-    const strings = ["", " ", "CA", "ca", " ca ", "California", "ZZ", "AE", "DC", "PR", "12", "1,200", "1e3", "yes", "Acme, Inc.", "x".repeat(41), "x".repeat(201), "x".repeat(1001), "😀".repeat(600), "a\u0000b", "\ud800", "CA, TX, ZZ", "W2", "1099", "contractor", "Hourly", "spouse", "kid"];
-    const numbers = [0, -1, 12, 12.5, 999999, 1000000, 1000001, 2 ** 53, 1e21, null, true, false];
+    const strings = ["", " ", "CA", "ca", " ca ", "California", "ZZ", "AE", "DC", "PR", "12", "1,200", "1e3", "yes", "Acme, Inc.", "x".repeat(41), "x".repeat(201), "x".repeat(1001), "😀".repeat(600), "a\u0000b", "\ud800", "CA, TX, ZZ", "W2", "1099", "contractor", "Hourly", "spouse", "kid", "$18,400", "0.92", "1.126", "$ 1,200.50"];
+    const numbers = [0, -1, 0.92, 10, 10.01, 12, 12.5, 999999, 1000000, 1000001, 100000000, 100000001, 2 ** 53, 1e21, null, true, false];
     const junk = [[], {}, [1, 2], { a: 1 }, null, undefined];
     const any = (): unknown => { const r = rnd(); return r < 0.5 ? pick(strings) : r < 0.8 ? pick(numbers) : pick(junk); };
     const maybe = <T,>(f: () => T) => (rnd() < 0.85 ? f() : undefined);

@@ -4,6 +4,10 @@
 import type { ExtractionTool } from "../_shared/ai/model.ts";
 import { DOCUMENT_FIELDS } from "./parse.ts";
 
+// Recorded on every extraction event. Raise it with any change to SYSTEM_PROMPT or REPORT_TOOL: promptVersion.test.ts
+// fails until you do, so an event always says which prompt produced it.
+export const PROMPT_VERSION = 1;
+
 export const SYSTEM_PROMPT = `You read business documents (benefits summaries, payroll reports, workers' comp pages, invoices) for an HR/PEO intake.
 Report only company-level facts the document clearly states. Never report details about an individual person.
 The text is split into numbered sections marked [[Section N]]; give the section number each fact came from.

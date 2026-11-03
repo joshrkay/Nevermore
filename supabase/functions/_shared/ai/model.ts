@@ -1,6 +1,8 @@
 // Calls the AI provider with a timeout and one retry, and reports failures as structured kinds
 // (never as provider response bodies, which can echo the prospect's text). Shared by every
-// function that reads text with the model. No imports, so it runs under Deno and Vitest alike.
+// function that reads text with the model. No remote imports, so it runs under Deno and Vitest alike.
+
+import type { AiErrorCode } from "./errors.ts";
 
 export interface ModelRequest {
   system: string;
@@ -18,6 +20,8 @@ export interface ExtractionTool {
 /** Maps our request and the provider's response to and from one provider's wire format. */
 export interface ProviderAdapter {
   name: string;
+  /** The model asked, as the provider names it; recorded on each extraction event. */
+  model: string;
   buildRequest: (req: ModelRequest) => { url: string; headers: Record<string, string>; body: unknown };
   /** The extracted fields, or null if the model returned none. Throws if the response is malformed. */
   parseResponse: (json: unknown) => Record<string, unknown> | null;
@@ -93,16 +97,18 @@ export async function callModel(adapter: ProviderAdapter, req: ModelRequest, dep
 }
 
 /** What we tell the browser. Calm, and never mentions provider billing or internals. */
-export function failureResponse(kind: ModelFailureKind): { status: 429 | 502 | 503 | 504; message: string } {
+export function failureResponse(kind: ModelFailureKind): { status: 429 | 502 | 503 | 504; code: AiErrorCode; message: string } {
   switch (kind) {
     case "timeout":
-      return { status: 504, message: "Lenore is taking too long to answer. Please try again." };
+      return { status: 504, code: "timeout", message: "Lenore is taking too long to answer. Please try again." };
     case "rate_limited":
-      return { status: 429, message: "Rate limited, please try again shortly." };
+      return { status: 429, code: "rate_limited", message: "Rate limited, please try again shortly." };
     case "credits":
-      return { status: 503, message: "Lenore is unavailable right now. Please try again later." };
+      return { status: 503, code: "unavailable", message: "Lenore is unavailable right now. Please try again later." };
+    case "invalid_response":
+      return { status: 502, code: "invalid_response", message: "Lenore's answer didn't come through. Please try again." };
     default:
-      return { status: 502, message: "Lenore couldn't respond. Please try again." };
+      return { status: 502, code: "provider_error", message: "Lenore couldn't respond. Please try again." };
   }
 }
 
@@ -110,9 +116,9 @@ export function failureResponse(kind: ModelFailureKind): { status: 429 | 502 | 5
  * One line, fixed fields only. Built from structured values, never from the provider's response
  * or the prospect's message, so it can't carry either into the logs.
  */
-export function failureLogLine(info: { requestId: string; provider: string; result: Extract<ModelResult, { ok: false }> }): string {
-  const { requestId, provider, result } = info;
-  return `AI_CALL_FAILED request=${requestId} provider=${provider} kind=${result.kind} status=${result.httpStatus ?? "-"} attempts=${result.attempts} latency_ms=${result.latencyMs}`;
+export function failureLogLine(info: { requestId: string; provider: string; result: Extract<ModelResult, { ok: false }>; sessionId?: string | null }): string {
+  const { requestId, provider, result, sessionId } = info;
+  return `AI_CALL_FAILED request=${requestId} session=${sessionId ?? "-"} provider=${provider} kind=${result.kind} status=${result.httpStatus ?? "-"} attempts=${result.attempts} latency_ms=${result.latencyMs}`;
 }
 
 /** For the catch-all: the error's class only. Its message (a JSON.parse failure, say) can quote the request body. */

@@ -10,14 +10,31 @@ import { buildPromptText, shapeAiCandidates, type Candidate, type TextSection } 
 import { SYSTEM_PROMPT } from "./schema.ts";
 
 /** The model call was refused by a rate limit; the document stays ready to read later. */
-export class AiQuotaError extends Error {}
+export class AiQuotaError extends Error {
+  readonly code = "rate_limited" as const;
+}
 
 /** AI can't be used right now (the daily ceiling is reached, or it isn't set up); the document stays ready to read later. */
-export class AiUnavailableError extends Error {}
+export class AiUnavailableError extends Error {
+  readonly code: "daily_cap" | "unavailable";
+  constructor(message: string, code: "daily_cap" | "unavailable" = "unavailable") {
+    super(message);
+    this.code = code;
+  }
+}
+
+/** The model was asked and failed (timed out, errored, or answered without the tool): the read failed. */
+export class AiCallError extends Error {
+  readonly code: AiErrorCode;
+  constructor(code: AiErrorCode) {
+    super("AI extraction failed");
+    this.code = code;
+  }
+}
 
 /** What a budget refusal means for the document: a 429 is a rate limit, anything else is unavailable. */
 export function refusalError(refusal: Refusal): Error {
-  return refusal.status === 429 ? new AiQuotaError() : new AiUnavailableError(refusal.error);
+  return refusal.status === 429 ? new AiQuotaError() : new AiUnavailableError(refusal.error, refusal.code === "daily_cap" ? "daily_cap" : "unavailable");
 }
 
 // A document read sends up to 20,000 characters of text and asks for a list of facts, a larger
@@ -30,6 +47,8 @@ export interface AskDeps {
   adapter: ProviderAdapter;
   model: Pick<ModelDeps, "fetch" | "sleep" | "now">;
   requestId: string;
+  /** The intake the document belongs to, for the failure log. */
+  sessionId?: string | null;
   log: (line: string) => void;
   /**
    * Records a failed model call for monitoring, with a code such as `provider_error:503` (index.ts writes
@@ -48,6 +67,7 @@ export async function askForCandidates(sections: TextSection[], deps: AskDeps): 
     },
     { ...deps.model, timeoutMs: DOCUMENT_TIMEOUT_MS },
   );
+  deps.onResult?.(result);
   if (!result.ok) {
     // Fixed fields only: a provider's response can echo the document's text.
     deps.log(failureLogLine({ requestId: deps.requestId, provider: deps.adapter.name, result }));
@@ -57,7 +77,7 @@ export async function askForCandidates(sections: TextSection[], deps: AskDeps): 
       // Monitoring never changes the outcome.
     }
     if (result.kind === "rate_limited") throw new AiQuotaError();
-    throw new Error("AI extraction failed");
+    throw new AiCallError(failureResponse(result.kind).code);
   }
   if (!result.args) return [];
   return shapeAiCandidates(result.args.fields, sections);
@@ -67,9 +87,9 @@ export async function askForCandidates(sections: TextSection[], deps: AskDeps): 
  * For an error that means "read this document again later": the status and message to answer with.
  * Null for any other error, which marks the document failed.
  */
-export function retryLater(e: unknown): { status: 429 | 503; message: string } | null {
-  if (e instanceof AiQuotaError) return { status: 429, message: "Rate limited, please try again shortly." };
-  if (e instanceof AiUnavailableError) return { status: 503, message: e.message };
+export function retryLater(e: unknown): { status: 429 | 503; code: "rate_limited" | "daily_cap" | "unavailable"; message: string } | null {
+  if (e instanceof AiQuotaError) return { status: 429, code: "rate_limited", message: "Rate limited, please try again shortly." };
+  if (e instanceof AiUnavailableError) return { status: 503, code: e.code, message: e.message };
   return null;
 }
 

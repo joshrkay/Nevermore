@@ -1,5 +1,9 @@
-// The canonical intake schema, version 1: chamber_data as JSON Schema (draft 2020-12), and a strict
-// validator for it. Strict means a value is accepted as it is or refused with a reason. Nothing is
+// The canonical intake schema, version 2: chamber_data as JSON Schema (draft 2020-12), and a strict
+// validator for it. Version 2 is version 1 plus the workers' comp block (decision D18); nothing in v1
+// changed, so every v1 answer set is a v2 one.
+//
+// Each top-level property also carries an `x-intake` annotation (label, section, required, rank: see
+// IntakeFieldMeta). It is part of the published contract, and the validator ignores it. Strict means a value is accepted as it is or refused with a reason. Nothing is
 // trimmed, upper-cased, split or converted, and an unknown key is an error at every level.
 //
 // Where it runs (data that reaches an intake from outside the browser's own edits):
@@ -12,14 +16,16 @@
 // accepts, the database accepts: the caps, codes and value lists are the same, and
 // src/data/schemaSync.test.ts compares them with the migrations. This schema is stricter in three
 // ways: unknown keys inside a census row or a dependent are refused (the database tolerates them so an
-// older client can save a newer census), the legacy `employees` roster is not part of v1, and a census
-// row must carry the fields every v1 writer gives it.
+// older client can save a newer census), the legacy `employees` roster is not part of the schema, and a
+// census row must carry the fields every writer gives it.
 //
-// docs/intake-schema.v1.json is this schema, printed. src/data/intakeSchema.test.ts keeps the two equal.
+// docs/intake-schema.v2.json is this schema, printed (npm run schema:intake). docs/intake-schema.v1.json is
+// version 1 as it was published. src/data/intakeSchema.test.ts keeps the first equal to this schema and
+// checks that v2 only adds to v1.
 //
 // No imports: it runs under Deno (the edge functions) and Vite (the app) alike.
 
-export const INTAKE_SCHEMA_VERSION = 1;
+export const INTAKE_SCHEMA_VERSION = 2;
 
 // The 50 states, DC and the five inhabited territories (the migrations' sync block us_state_codes).
 export const STATE_CODES = [
@@ -40,7 +46,48 @@ export const LIMITS = {
   census: 5000,
   dependents: 20,
   censusId: 64,
+  experienceMod: 10,
+  dollars: 100_000_000,
 } as const;
+
+// ---------- What the schema says about each field, beyond its rule ----------
+
+/** Where a field belongs. Dependents sit inside each employee in the census, so they have no section of their own. */
+export const FIELD_SECTIONS = ["company", "locations", "census", "benefits", "payroll", "workers_comp", "operations"] as const;
+export type FieldSection = (typeof FIELD_SECTIONS)[number];
+
+export const SECTION_LABELS: Record<FieldSection, string> = {
+  company: "Company",
+  locations: "Locations",
+  census: "Census",
+  benefits: "Benefits",
+  payroll: "Payroll",
+  workers_comp: "Workers' comp",
+  operations: "Operations & HR",
+};
+
+/**
+ * Published on each top-level property as `x-intake`.
+ * - `required`: the intake needs the field before it is ready to certify (GLOSSARY.md, D17). Report-only:
+ *   certification does not check it yet (C-1.3).
+ * - `rank`: the order Lenore asks in, 1 first. Every required field ranks before every recommended one (D25).
+ */
+export interface IntakeFieldMeta {
+  label: string;
+  section: FieldSection;
+  required: boolean;
+  rank: number;
+}
+
+// The required fields, in the order Lenore asks for them.
+export const REQUIRED_FIELDS = ["company_name", "states", "pay_frequency", "census"] as const;
+
+// The recommended fields ranked first (D25, a draft for the product team to edit). Every other field
+// follows in the order the schema lists it.
+const RANKED_RECOMMENDED = [
+  "employee_count", "industry", "hq_state", "current_carrier", "renewal_date", "payroll_vendor",
+  "wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium",
+] as const;
 
 /** A JSON Schema, as far as this module reads one. */
 export type JsonSchema = { [keyword: string]: unknown };
@@ -52,60 +99,88 @@ const text = (maxLength: number = LIMITS.text): JsonSchema => ({ type: ["string"
 const count: JsonSchema = { type: ["integer", "null"], minimum: 0, maximum: LIMITS.count };
 const flag: JsonSchema = { type: ["boolean", "null"] };
 const textList: JsonSchema = { type: "array", maxItems: LIMITS.listItems, items: { type: "string", maxLength: LIMITS.text } };
+// An experience modification factor such as 0.92: a fraction, so not a count.
+const experienceMod: JsonSchema = { type: ["number", "null"], minimum: 0, maximum: LIMITS.experienceMod };
+const dollars: JsonSchema = { type: ["integer", "null"], minimum: 0, maximum: LIMITS.dollars };
 
-export const INTAKE_SCHEMA_V1: JsonSchema = {
+// Each answer's rule, section and label, in the order the schema lists them.
+const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: string][] = [
+  ["company_name", text(), "company", "Company legal name"],
+  ["industry", text(), "company", "Industry"],
+  ["hq_state", { title: "a US state or territory code such as CA", type: ["string", "null"], enum: [...STATE_CODES, null] }, "locations", "HQ state"],
+  ["states", { type: "array", maxItems: LIMITS.states, items: { $ref: "#/$defs/stateCode" } }, "locations", "States of operation"],
+  ["employee_count", count, "company", "Employee count"],
+  ["start_month", text(), "company", "Target start"],
+  ["multiple_entities", flag, "company", "Multiple entities"],
+  ["fein_count", count, "company", "FEIN count"],
+
+  ["virgin_medical", flag, "benefits", "First-time medical coverage"],
+  ["current_carrier", text(), "benefits", "Current carrier"],
+  ["renewal_date", text(), "benefits", "Renewal date"],
+  ["rate_history", text(), "benefits", "Rate history"],
+  ["benefits_waiting_period", text(), "benefits", "Waiting period"],
+  ["ancillary_benefits", textList, "benefits", "Ancillary benefits"],
+  ["has_401k", flag, "benefits", "Retirement plan"],
+  ["retirement_type", text(), "benefits", "Retirement plan type"],
+  ["employer_contributes", flag, "benefits", "Employer retirement contribution"],
+
+  ["payroll_vendor", text(), "payroll", "Payroll vendor"],
+  ["pay_frequency", text(), "payroll", "Pay frequency"],
+  ["funding_days", count, "payroll", "Funding lead time"],
+  ["has_nonexempt", flag, "payroll", "Nonexempt employees"],
+  ["nonexempt_count", count, "payroll", "Nonexempt count"],
+  ["exempt_count", count, "payroll", "Exempt count"],
+  ["pto_types", textList, "payroll", "PTO types"],
+  ["accrual_method", text(), "payroll", "Accrual method"],
+
+  ["has_handbook", flag, "operations", "Employee handbook"],
+  ["handbook_last_updated", text(), "operations", "Handbook last updated"],
+  ["hr_staff_count", count, "operations", "In-house HR staff"],
+  ["has_1099", flag, "census", "1099 contractors"],
+  ["ca_contractors", flag, "census", "California contractors"],
+  ["uses_physical_clocks", flag, "operations", "Physical time clocks"],
+  ["uses_mobile_app", flag, "operations", "Mobile timekeeping"],
+  ["uses_computer_timekeeping", flag, "operations", "Computer timekeeping"],
+  ["shift_differentials", flag, "operations", "Shift differentials"],
+  ["hris_system", text(), "operations", "HRIS system"],
+  ["key_challenges", text(), "operations", "Key challenges"],
+  ["business_goals", text(), "operations", "Business goals"],
+
+  // New in v2 (D18).
+  ["wc_carrier", text(), "workers_comp", "Workers' comp carrier"],
+  ["wc_renewal_date", text(), "workers_comp", "Workers' comp renewal date"],
+  ["wc_experience_mod", experienceMod, "workers_comp", "Experience mod"],
+  ["wc_annual_premium", dollars, "workers_comp", "Workers' comp annual premium"],
+
+  ["census", { type: "array", maxItems: LIMITS.census, items: { $ref: "#/$defs/censusRow" } }, "census", "Employee census"],
+];
+
+const RANKED_KEYS: string[] = [
+  ...REQUIRED_FIELDS,
+  ...RANKED_RECOMMENDED,
+  ...FIELDS.map(([key]) => key).filter((key) => !(REQUIRED_FIELDS as readonly string[]).includes(key) && !(RANKED_RECOMMENDED as readonly string[]).includes(key)),
+];
+
+export const INTAKE_SCHEMA_V2: JsonSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
-  $id: "urn:edgar-allan-advisory:intake:chamber-data:v1",
-  title: "Intake answers (chamber_data), version 1",
+  $id: "urn:edgar-allan-advisory:intake:chamber-data:v2",
+  title: "Intake answers (chamber_data), version 2",
   description:
     "What a prospect's intake holds. Every key is optional; an unanswered question is null (or an empty list). " +
+    "Each property's x-intake gives its label, its section, whether an intake needs it to be ready to certify " +
+    "(required), and the order Lenore asks in (rank, 1 first). Version 2 adds the workers' comp block to version 1. " +
     "Generated from supabase/functions/_shared/intakeSchema.ts.",
   type: "object",
   additionalProperties: false,
-  properties: {
-    company_name: text(),
-    industry: text(),
-    hq_state: { title: "a US state or territory code such as CA", type: ["string", "null"], enum: [...STATE_CODES, null] },
-    states: { type: "array", maxItems: LIMITS.states, items: { $ref: "#/$defs/stateCode" } },
-    employee_count: count,
-    start_month: text(),
-    multiple_entities: flag,
-    fein_count: count,
-
-    virgin_medical: flag,
-    current_carrier: text(),
-    renewal_date: text(),
-    rate_history: text(),
-    benefits_waiting_period: text(),
-    ancillary_benefits: textList,
-    has_401k: flag,
-    retirement_type: text(),
-    employer_contributes: flag,
-
-    payroll_vendor: text(),
-    pay_frequency: text(),
-    funding_days: count,
-    has_nonexempt: flag,
-    nonexempt_count: count,
-    exempt_count: count,
-    pto_types: textList,
-    accrual_method: text(),
-
-    has_handbook: flag,
-    handbook_last_updated: text(),
-    hr_staff_count: count,
-    has_1099: flag,
-    ca_contractors: flag,
-    uses_physical_clocks: flag,
-    uses_mobile_app: flag,
-    uses_computer_timekeeping: flag,
-    shift_differentials: flag,
-    hris_system: text(),
-    key_challenges: text(),
-    business_goals: text(),
-
-    census: { type: "array", maxItems: LIMITS.census, items: { $ref: "#/$defs/censusRow" } },
-  },
+  properties: Object.fromEntries(FIELDS.map(([key, rule, section, label]) => {
+    const meta: IntakeFieldMeta = {
+      label,
+      section,
+      required: (REQUIRED_FIELDS as readonly string[]).includes(key),
+      rank: RANKED_KEYS.indexOf(key) + 1,
+    };
+    return [key, { ...rule, "x-intake": meta }];
+  })),
   $defs: {
     stateCode: { title: "a US state or territory code such as CA", type: "string", enum: [...STATE_CODES] },
     censusRow: {
@@ -154,9 +229,17 @@ export interface IntakeIssue {
   reason: string;
 }
 
+/** The schema the intake follows now. */
+export const INTAKE_SCHEMA = INTAKE_SCHEMA_V2;
+
+/** Every top-level field with its x-intake metadata, in rank order (the order Lenore asks in). */
+export const INTAKE_FIELDS: readonly ({ key: string } & IntakeFieldMeta)[] = Object.entries(INTAKE_SCHEMA.properties as Record<string, JsonSchema>)
+  .map(([key, schema]) => ({ key, ...(schema["x-intake"] as IntakeFieldMeta) }))
+  .sort((a, b) => a.rank - b.rank);
+
 // The keywords this validator implements. Anything else in a schema is an error, so a rule can't be
-// written into the schema and then silently not enforced.
-const ANNOTATIONS = new Set(["$schema", "$id", "title", "description", "deprecated", "$defs"]);
+// written into the schema and then silently not enforced. `x-intake` is this project's annotation.
+const ANNOTATIONS = new Set(["$schema", "$id", "title", "description", "deprecated", "$defs", "x-intake"]);
 const ASSERTIONS = new Set([
   "type", "enum", "maxLength", "pattern", "minimum", "maximum", "maxItems", "items", "properties", "required",
   "additionalProperties", "$ref",
@@ -177,7 +260,7 @@ export function assertSupportedSchema(schema: JsonSchema, at = "#"): void {
   for (const [path, child] of children) assertSupportedSchema(child as JsonSchema, path);
 }
 
-assertSupportedSchema(INTAKE_SCHEMA_V1);
+assertSupportedSchema(INTAKE_SCHEMA_V2);
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -274,14 +357,14 @@ export function validateAgainst(schema: JsonSchema, value: unknown, path = "", r
   return issues.slice(0, MAX_ISSUES);
 }
 
-/** Checks a whole chamber_data object (or a patch of some of its keys) against intake schema v1. */
+/** Checks a whole chamber_data object (or a patch of some of its keys) against the current intake schema. */
 export function validateChamberData(value: unknown): IntakeIssue[] {
-  return validateAgainst(INTAKE_SCHEMA_V1, value);
+  return validateAgainst(INTAKE_SCHEMA, value);
 }
 
 /** Checks one top-level answer. An unknown field is an issue too. */
 export function validateIntakeField(field: string, value: unknown): IntakeIssue[] {
-  const properties = INTAKE_SCHEMA_V1.properties as Record<string, JsonSchema>;
+  const properties = INTAKE_SCHEMA.properties as Record<string, JsonSchema>;
   if (!Object.prototype.hasOwnProperty.call(properties, field)) return [{ path: field, reason: "is not a known intake field" }];
-  return validateAgainst(properties[field], value, field, INTAKE_SCHEMA_V1);
+  return validateAgainst(properties[field], value, field, INTAKE_SCHEMA);
 }

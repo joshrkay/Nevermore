@@ -20,6 +20,11 @@ export interface SessionDocument {
   created_at: string;
   storage_path: string | null; // null while the upload is in flight
   extraction: DocumentExtraction;
+  /**
+   * Why the last read in this tab didn't go through (a rate limit, the daily cap, a timeout...), from the
+   * function's answer. Not stored: a reload shows the row's own status.
+   */
+  readIssue?: AiFailureKind | null;
 }
 
 /** Why a file wasn't uploaded, before or as it was stored. */
@@ -189,8 +194,8 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
       // so the row is the source of truth either way.
       const { data } = await supabase.from("documents").select(COLUMNS).eq("id", doc.id).maybeSingle();
       if (sessionRef.current !== sid) return;
-      if (data) patchDoc(doc.id, fromRow(data as Row));
-      else patchDoc(doc.id, { status: "failed" });
+      if (data) patchDoc(doc.id, { ...fromRow(data as Row), readIssue });
+      else patchDoc(doc.id, { status: "failed", readIssue });
     } finally {
       activeRef.current.delete(doc.id);
     }
