@@ -1,5 +1,7 @@
 // Decides whether an AI request may proceed. Shared by every function that calls the model. No
-// imports, so it runs under Deno (the edge functions) and under Vitest alike.
+// remote imports, so it runs under Deno (the edge functions) and under Vitest alike.
+
+import type { AiErrorCode } from "./errors.ts";
 
 export interface AllowanceDeps {
   /** Per-user rate limit. */
@@ -16,6 +18,8 @@ export type AllowanceResult =
   | {
       allowed: false;
       status: 429 | 503;
+      /** What the browser is told: rate_limited, daily_cap or unavailable. */
+      code: Extract<AiErrorCode, "rate_limited" | "daily_cap" | "unavailable">;
       error: string;
       reason: "user_quota" | "ip_quota" | "global_ceiling" | "budget_unavailable" | "config_missing";
     };
@@ -33,17 +37,18 @@ export const UNAVAILABLE = "Lenore is unavailable right now. Please try again in
 export async function checkAiAllowance(deps: AllowanceDeps, ipHash: string | null): Promise<AllowanceResult> {
   try {
     if (!(await deps.consumeUserQuota())) {
-      return { allowed: false, status: 429, error: RATE_LIMITED, reason: "user_quota" };
+      return { allowed: false, status: 429, code: "rate_limited", error: RATE_LIMITED, reason: "user_quota" };
     }
     // Requests with no usable address share one bucket rather than bypassing the limit.
     if (!(await deps.consumeIpQuota(ipHash ?? "unknown"))) {
-      return { allowed: false, status: 429, error: RATE_LIMITED, reason: "ip_quota" };
+      return { allowed: false, status: 429, code: "rate_limited", error: RATE_LIMITED, reason: "ip_quota" };
     }
     if (!(await deps.consumeGlobalBudget())) {
       deps.log("AI_GLOBAL_CEILING_HIT: daily AI call ceiling reached; refusing all AI requests until tomorrow (UTC)");
       return {
         allowed: false,
         status: 503,
+        code: "daily_cap",
         error: "Lenore is resting for the day. Please come back tomorrow, or continue filling in the workspace by hand.",
         reason: "global_ceiling",
       };
@@ -54,6 +59,7 @@ export async function checkAiAllowance(deps: AllowanceDeps, ipHash: string | nul
     return {
       allowed: false,
       status: 503,
+      code: "unavailable",
       error: UNAVAILABLE,
       reason: "budget_unavailable",
     };

@@ -114,6 +114,7 @@ const ChamberPage = () => {
 
   const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
     epoch: conversationEpoch,
+    intakeId: sessionId,
     chamberData,
     setChamberData,
     addUserMessage: (text) => {

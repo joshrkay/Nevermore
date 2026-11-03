@@ -1,4 +1,5 @@
 import { Loader2 } from "lucide-react";
+import { CHAT_FAILURE_MESSAGES } from "@/data/aiFailure";
 import type { ChatFailure } from "@/hooks/useLenoreChat";
 
 interface ChatFailureNoticeProps {
@@ -11,11 +12,7 @@ interface ChatFailureNoticeProps {
 /** Shown when Lenore couldn't answer. The prospect's message stays in the conversation. */
 const ChatFailureNotice = ({ failure, pending, onRetry, onDismiss }: ChatFailureNoticeProps) => (
   <div role="alert" className="mx-2 mb-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs">
-    <p className="text-foreground mb-2">
-      {failure.kind === "rate_limited"
-        ? "You're writing faster than Lenore can keep up. Give her a minute, then try again."
-        : "Lenore couldn't respond. Your message is saved."}
-    </p>
+    <p className="text-foreground mb-2">{CHAT_FAILURE_MESSAGES[failure.kind]}</p>
     <div className="flex gap-2">
       <button
         onClick={onRetry}
