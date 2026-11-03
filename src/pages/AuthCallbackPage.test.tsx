@@ -39,7 +39,7 @@ describe("AuthCallbackPage", () => {
     auth.user = null;
     auth.loading = false;
     auth.isAnonymous = false;
-    auth.confirmEmailToken.mockReset().mockResolvedValue({ error: null });
+    auth.confirmEmailToken.mockReset().mockResolvedValue({ error: null, email: null });
     auth.resendConfirmation.mockReset().mockResolvedValue({ error: null });
     toast.success.mockReset();
   });
@@ -87,11 +87,14 @@ describe("AuthCallbackPage", () => {
       expect(screen.getByRole("heading", { name: "Your email is confirmed" })).toBeInTheDocument();
     });
 
-    it("does not treat a guest session as a confirmed account", () => {
+    it("sends a guest back to their intake, since a guest's link is an email change with no password or sign-up", () => {
       auth.user = { id: "guest" };
       auth.isAnonymous = true;
       open(expired);
       expect(screen.getByRole("heading", { name: "This link didn't work" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Back to your intake" })).toHaveAttribute("href", "/start");
+      expect(screen.queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Email you signed up with")).not.toBeInTheDocument();
     });
   });
 
@@ -108,7 +111,8 @@ describe("AuthCallbackPage", () => {
       auth.user = confirmedUser;
       open(granted);
       expect(await screen.findByText("The Chamber")).toBeInTheDocument();
-      expect(toast.success).toHaveBeenCalledWith("Email confirmed. You're signed in.");
+      // Names the account, since a link someone else sent would sign this browser in as them.
+      expect(toast.success).toHaveBeenCalledWith("Email confirmed. You're signed in as pat@example.com.");
     });
 
     it("goes where the person was headed, but only on this site", async () => {
@@ -133,10 +137,23 @@ describe("AuthCallbackPage", () => {
     const token = "/auth/callback?token_hash=hash123&type=email";
 
     it("verifies only when the person clicks, so a mail scanner opening the link can't use it up", async () => {
+      auth.confirmEmailToken.mockResolvedValue({ error: null, email: "pat@example.com" });
       open(token);
       expect(auth.confirmEmailToken).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole("button", { name: "Confirm my email" }));
       await waitFor(() => expect(auth.confirmEmailToken).toHaveBeenCalledWith("hash123", "email"));
+      expect(await screen.findByText("The Chamber")).toBeInTheDocument();
+      expect(toast.success).toHaveBeenCalledWith("Email confirmed. You're signed in as pat@example.com.");
+    });
+
+    it("keeps the button after a request that never got an answer, since the token wasn't spent", async () => {
+      const offline = Object.assign(new Error("Failed to fetch"), { status: 0, name: "AuthRetryableFetchError" });
+      auth.confirmEmailToken.mockResolvedValueOnce({ error: offline, email: null }).mockResolvedValueOnce({ error: null, email: "pat@example.com" });
+      open(token);
+      fireEvent.click(screen.getByRole("button", { name: "Confirm my email" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't reach the server.");
+      expect(screen.queryByRole("heading", { name: "This link didn't work" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Confirm my email" }));
       expect(await screen.findByText("The Chamber")).toBeInTheDocument();
     });
 
@@ -148,7 +165,7 @@ describe("AuthCallbackPage", () => {
     });
 
     it("explains a token that no longer works", async () => {
-      auth.confirmEmailToken.mockResolvedValue({ error: Object.assign(new Error("Token has expired or is invalid"), { code: "otp_expired" }) });
+      auth.confirmEmailToken.mockResolvedValue({ error: Object.assign(new Error("Token has expired or is invalid"), { code: "otp_expired", status: 403 }), email: null });
       open(token);
       fireEvent.click(screen.getByRole("button", { name: "Confirm my email" }));
       expect(await screen.findByRole("heading", { name: "This link didn't work" })).toBeInTheDocument();

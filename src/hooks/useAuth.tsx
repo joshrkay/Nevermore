@@ -28,8 +28,8 @@ interface AuthContextType {
   resendConfirmation: (email: string, next?: string) => Promise<{ error: Error | null }>;
   /** Confirms a sign-up with the 6-digit code from its email, signing the person in. */
   verifySignupCode: (email: string, code: string) => Promise<{ error: Error | null }>;
-  /** Verifies the token from an email link that points at this app (`?token_hash=…&type=…`), signing the person in. */
-  confirmEmailToken: (tokenHash: string, type: EmailOtpType) => Promise<{ error: Error | null }>;
+  /** Verifies the token from an email link that points at this app (`#token_hash=…&type=…`), signing the person in as `email`. */
+  confirmEmailToken: (tokenHash: string, type: EmailOtpType) => Promise<{ error: Error | null; email: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   /** Why the last signed-in session ended; null while signed in, and until someone has signed in. */
   sessionEnded: SessionEnded | null;
@@ -107,8 +107,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const confirmEmailToken = async (tokenHash: string, type: EmailOtpType) => {
-    const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
-    return { error: error as Error | null };
+    const { data, error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
+    return { error: error as Error | null, email: data?.user?.email ?? null };
   };
 
   const signIn = async (email: string, password: string) => {

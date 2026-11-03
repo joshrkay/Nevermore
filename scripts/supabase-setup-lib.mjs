@@ -127,7 +127,7 @@ export const EMAIL_CODE_TEMPLATE = [
 export const SIGNUP_CONFIRM_SUBJECT = "Confirm your email";
 export const SIGNUP_CONFIRM_TEMPLATE = [
   "<h2>Confirm your email</h2>",
-  "<p>Enter this code on the sign-up page to finish creating your account:</p>",
+  "<p>Enter this code where you signed up (or sign in, and you'll be asked for it) to finish creating your account:</p>",
   "<p style=\"font-size:24px;font-weight:bold;letter-spacing:4px\">{{ .Token }}</p>",
   "<p>Or <a href=\"{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email\">open this link</a> and click Confirm my email.</p>",
   "<p>If you didn't sign up, you can ignore this email.</p>",

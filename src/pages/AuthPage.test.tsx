@@ -153,13 +153,20 @@ describe("AuthPage", () => {
     });
   });
 
-  it("explains a sign-in refused until the email is confirmed, and offers a new link", async () => {
+  it("takes a sign-in refused until the email is confirmed to the code entry, with a new email on offer", async () => {
     auth.signIn.mockResolvedValue({ error: Object.assign(new Error("Email not confirmed"), { code: "email_not_confirmed" }) });
     renderLogin();
     signInAs("pat@example.com");
-    expect(await screen.findByRole("status")).toHaveTextContent("Confirm your email first: open the link we sent to pat@example.com.");
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Confirm your email first. We sent a confirmation email to pat@example.com when you signed up. Open the link in it, or enter its 6-digit code here",
+    );
     expect(toast.error).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Send a new email" }));
     await waitFor(() => expect(auth.resendConfirmation).toHaveBeenCalledWith("pat@example.com", "/start"));
+    // The new email's code goes in right here.
+    fireEvent.change(screen.getByLabelText("6-digit code"), { target: { value: "654321" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(auth.verifySignupCode).toHaveBeenCalledWith("pat@example.com", "654321"));
+    expect(await screen.findByText("The Chamber")).toBeInTheDocument();
   });
 });
