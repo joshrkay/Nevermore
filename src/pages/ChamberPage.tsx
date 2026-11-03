@@ -61,6 +61,7 @@ const ChamberPage = () => {
     conversationEpoch,
     chamberData,
     provenance,
+    verifiedFields,
     messages,
     isLoading: sessionLoading,
     updateIntake,
@@ -284,6 +285,7 @@ const ChamberPage = () => {
             sessionId={sessionId}
             onSubmit={submit}
             provenance={provenance}
+            verified={verifiedFields}
             onFieldAction={handleFieldAction}
             certification={certification}
             updateIntake={updateIntake}

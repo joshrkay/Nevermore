@@ -168,6 +168,10 @@ function extendsList(prev: unknown, next: unknown): boolean {
 
 // ---------- Parsing stored provenance ----------
 
+// public.provenance_entry_status (migration 20261103110000) keeps and drops the same entries, so the
+// database's required items read provenance as the browser does; change both together
+// (src/data/requiredItems.cases.json tests them against each other).
+
 const sourceSchema: z.ZodType<FieldSource, z.ZodTypeDef, unknown> = z.union([
   z.object({
     kind: z.literal("transcript"),
@@ -420,20 +424,24 @@ export interface FieldOpenItem {
   reason: FieldOpenReason;
 }
 
-const REASONS: Partial<Record<FieldStatus, FieldOpenReason>> = {
+/** What the prospect is told about a field in each status that still needs them. */
+export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed">, FieldOpenReason> = {
   conflicting: "Conflicting answers",
   incomplete: "Incomplete",
   inferred: "Please confirm",
 };
 
-/** Fields that still need the prospect: conflicts first, then incomplete, then inferred. */
-export function fieldOpenItems(provenance: ProvenanceMap): FieldOpenItem[] {
-  const order: FieldStatus[] = ["conflicting", "incomplete", "inferred"];
+/**
+ * Fields that still need the prospect: conflicts first, then incomplete, then inferred. A field in
+ * `verified` (an advisor verified it) is settled whatever its status, so it is left out.
+ */
+export function fieldOpenItems(provenance: ProvenanceMap, verified: ReadonlySet<string> = new Set()): FieldOpenItem[] {
+  const order = ["conflicting", "incomplete", "inferred"] as const;
   return order.flatMap((status) =>
-    FIELD_KEYS.filter((f) => provenance[f]?.status === status).map((field) => ({
+    FIELD_KEYS.filter((f) => provenance[f]?.status === status && !verified.has(f)).map((field) => ({
       field,
       label: FIELD_LABELS[field],
-      reason: REASONS[status]!,
+      reason: FIELD_OPEN_REASONS[status],
     })),
   );
 }

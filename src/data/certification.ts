@@ -1,3 +1,5 @@
+import type { RequiredItem } from "./requiredItems";
+
 // The wording a prospect certifies. The version is stored with every certification so we can
 // always tell which text a signer agreed to; bump it whenever any wording below changes.
 //
@@ -22,17 +24,25 @@ export interface SignerDetails {
   title: string;
 }
 
-/** Why certification can't be completed yet; empty when it can. Drives the submit button and its hint. */
+/**
+ * Why certification can't be completed yet; empty when it can. Drives the submit button and its hint.
+ * A required item whose answers conflict blocks it; the full completeness rule is C-1.3's.
+ */
 export function certificationBlockers(opts: {
   acknowledged: boolean[];
   signer: SignerDetails;
   signed: boolean;
   hasFileId: boolean;
   isGuest: boolean;
+  requiredItems: readonly RequiredItem[];
 }): string[] {
   const blockers: string[] = [];
   if (opts.isGuest) blockers.push("Verify your email");
   if (!opts.hasFileId) blockers.push("Wait for your intake to finish saving");
+  // States of operation that only repeats the census's conflict is the census's blocker.
+  for (const item of opts.requiredItems) {
+    if (item.state === "conflicting" && !item.viaCensus) blockers.push(`Resolve the conflicting answers for ${item.label}`);
+  }
   if (!opts.acknowledged.every(Boolean)) blockers.push("Check every statement");
   if (!opts.signer.name.trim()) blockers.push("Enter your full name");
   if (!opts.signer.title.trim()) blockers.push("Enter your role");

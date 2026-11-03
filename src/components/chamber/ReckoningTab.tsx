@@ -5,6 +5,8 @@ import { CheckCircle2, Download, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
+import type { ProvenanceMap } from "@/data/provenance";
+import { NO_VERIFIED_FIELDS, requiredItems } from "@/data/requiredItems";
 import { fileIdForSession, NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
 import {
   CONSENT_IS_DRAFT,
@@ -19,6 +21,10 @@ import VerifyEmailGate from "./VerifyEmailGate";
 
 interface ReckoningTabProps {
   data: ChamberData;
+  /** Status of each field, so a required item whose answers conflict can hold certification back. */
+  provenance?: ProvenanceMap;
+  /** Fields an advisor verified: settled whatever their status. */
+  verified?: ReadonlySet<string>;
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
   sessionId: string | null;
@@ -34,7 +40,15 @@ interface ReckoningTabProps {
 const formatSigned = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
-const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certification = NO_CERTIFICATION }: ReckoningTabProps) => {
+const ReckoningTab = ({
+  data,
+  provenance = {},
+  verified = NO_VERIFIED_FIELDS,
+  peoName: chosenPeo,
+  sessionId,
+  onSubmit,
+  certification = NO_CERTIFICATION,
+}: ReckoningTabProps) => {
   const peoName = chosenPeo ?? "your PEO";
   const { isAnonymous } = useAuth();
   // A returning signer doesn't retype their name and role to certify again.
@@ -75,6 +89,7 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
     signed,
     hasFileId: !!fileId,
     isGuest: isAnonymous,
+    requiredItems: requiredItems(data, provenance, verified),
   });
   const allChecked = blockers.length === 0;
   const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";

@@ -111,6 +111,42 @@ describe("buildManuscriptPdf", () => {
     expect(filename).toBe(`The_Manuscript_${FILE_ID}_Meridian_Creative_Group.pdf`);
   });
 
+  it("marks every value whose answers conflict as unresolved, as the web Manuscript's chip does, unless an advisor verified it", async () => {
+    const at = "2026-05-01T00:00:00Z";
+    const said = { kind: "transcript" as const, message_id: "m1" };
+    const conflict = { status: "conflicting" as const, source: said, updated_at: at, candidates: [] };
+    const m = buildManuscript(
+      { ...DEMO_CHAMBER_DATA, pay_frequency: "Bi-weekly", exempt_count: 4, nonexempt_count: 9, start_month: null },
+      {
+        fileId: FILE_ID,
+        submission,
+        provenance: {
+          pay_frequency: conflict,
+          industry: conflict,
+          current_carrier: conflict,
+          hq_state: { ...conflict, status: "inferred" },
+          // Part of a combined value, and a value never given.
+          nonexempt_count: conflict,
+          start_month: conflict,
+        },
+        // Verified by an advisor: settled, so no marker though its stored answers conflict.
+        verified: new Set(["industry"]),
+      },
+    );
+    // Text-drawing operators escape parentheses; the reader here drops the dash.
+    const text = (await readPdf(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob)).replace(/\\([()])/g, "$1");
+    const unresolved = (value: string) => new RegExp(`\\(${value} \\(unresolved \\W*see open items\\)\\)`);
+    expect(text).toMatch(unresolved("Bi-weekly"));
+    expect(text).toMatch(unresolved(DEMO_CHAMBER_DATA.current_carrier!));
+    expect(text).not.toMatch(unresolved(DEMO_CHAMBER_DATA.industry!));
+    expect(text).toContain(`(${DEMO_CHAMBER_DATA.industry})`);
+    expect(text).toMatch(unresolved("4 / 9"));
+    expect(text).toMatch(unresolved("Not provided"));
+    // Only inferred: the bare value.
+    expect(text).toContain(`(${DEMO_CHAMBER_DATA.hq_state})`);
+    expect(text.match(/unresolved/g)).toHaveLength(4);
+  });
+
   it("labels a sample packet as fictional", async () => {
     const { text } = await render(DEMO_CHAMBER_DATA, { sample: true }, null);
     expect(text).toContain("sample manuscript built from fictional data");

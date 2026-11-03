@@ -8,9 +8,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
-import { buildManuscript, fileIdForSession, maskDob, NOT_PROVIDED, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
+import { buildManuscript, fileIdForSession, maskDob, NOT_PROVIDED, rowProvenance, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
 import { describeSource, parseProvenance, STATUS_LABELS, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
+import { fetchVerifiedFields } from "@/lib/verifiedFields";
 import { downloadBlob } from "@/lib/downloadFile";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
 
@@ -27,30 +28,30 @@ const STATUS_MARKER_CLASS: Record<FieldProvenance["status"], string> = {
   conflicting: "bg-destructive/15 text-destructive",
 };
 
-// Shows whether a value was confirmed or only inferred, and where it came from.
-const DataRow = ({ label, value, provenance }: { label: string; value: string; provenance?: FieldProvenance }) => (
-  <div className="py-2 border-b border-border last:border-0">
-    <div className="flex justify-between gap-4">
-      <span className="text-muted-foreground text-sm">{label}</span>
-      <span className="font-mono text-sm text-foreground text-right">
-        {value}
-        {provenance && value !== NOT_PROVIDED && (
-          <span className={`ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded-full ${STATUS_MARKER_CLASS[provenance.status]}`}>
-            {STATUS_LABELS[provenance.status]}
-          </span>
-        )}
-      </span>
+// Shows whether a value was confirmed or only inferred, and where it came from. A conflict always shows,
+// as the PDF marks it, even beside "Not provided".
+const DataRow = ({ label, value, provenance }: { label: string; value: string; provenance?: FieldProvenance }) => {
+  const shown = provenance && (value !== NOT_PROVIDED || provenance.status === "conflicting") ? provenance : null;
+  return (
+    <div className="py-2 border-b border-border last:border-0">
+      <div className="flex justify-between gap-4">
+        <span className="text-muted-foreground text-sm">{label}</span>
+        <span className="font-mono text-sm text-foreground text-right">
+          {value}
+          {shown && (
+            <span className={`ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded-full ${STATUS_MARKER_CLASS[shown.status]}`}>
+              {STATUS_LABELS[shown.status]}
+            </span>
+          )}
+        </span>
+      </div>
+      {shown && <p className="text-[11px] text-muted-foreground text-right mt-0.5">{describeSource(shown.source)}</p>}
     </div>
-    {provenance && value !== NOT_PROVIDED && (
-      <p className="text-[11px] text-muted-foreground text-right mt-0.5">{describeSource(provenance.source)}</p>
-    )}
-  </div>
-);
+  );
+};
 
 const renderRows = (rows: ManuscriptRow[], provenance: ProvenanceMap) =>
-  rows.map(([label, value, field]) => (
-    <DataRow key={label} label={label} value={value} provenance={field ? provenance[field] : undefined} />
-  ));
+  rows.map((row) => <DataRow key={row[0]} label={row[0]} value={row[1]} provenance={rowProvenance(row, provenance)} />);
 
 
 type LoadState =
@@ -61,7 +62,15 @@ type LoadState =
   | { kind: "unsigned" }
   | { kind: "recertify" }
   | { kind: "expired" }
-  | { kind: "ready"; data: ChamberData; provenance: ProvenanceMap; submission: ChamberSubmission | null; fileId: string };
+  | {
+      kind: "ready";
+      data: ChamberData;
+      provenance: ProvenanceMap;
+      /** Fields an advisor has verified since: settled, so not open items. */
+      verified: ReadonlySet<string>;
+      submission: ChamberSubmission | null;
+      fileId: string;
+    };
 
 // `demo` renders the fictional sample; the live route never does.
 const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
@@ -87,12 +96,15 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
     }
     let cancelled = false;
     setState({ kind: "loading" });
-    supabase
-      .from("chamber_sessions")
-      .select("chamber_data, field_provenance, submission, status, created_at")
-      .eq("id", sessionId)
-      .maybeSingle()
-      .then(({ data, error }) => {
+    Promise.all([
+      supabase
+        .from("chamber_sessions")
+        .select("chamber_data, field_provenance, submission, status, created_at")
+        .eq("id", sessionId)
+        .maybeSingle(),
+      fetchVerifiedFields(sessionId),
+    ])
+      .then(([{ data, error }, verified]) => {
         if (cancelled) return;
         if (error || !data) {
           setState({ kind: "error", message: "We couldn't find that Manuscript. The link may be out of date, or it belongs to a different account." });
@@ -119,6 +131,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           data: parseChamberData(submission.chamber_data ?? data.chamber_data),
           // Pair provenance with whichever copy of the data is shown, so it never describes other values.
           provenance: parseProvenance(submission.chamber_data ? submission.field_provenance : data.field_provenance),
+          verified,
           submission,
           fileId: submission.file_id || fileIdForSession(sessionId, new Date(data.created_at)),
         });
@@ -127,7 +140,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
   }, [sessionId, demo, user, authLoading]);
 
   const d = useMemo(() => {
-    if (state.kind === "ready") return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, provenance: state.provenance });
+    if (state.kind === "ready") {
+      return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, provenance: state.provenance, verified: state.verified });
+    }
     if (state.kind === "sample") return buildManuscript(DEMO_CHAMBER_DATA, { fileId: SAMPLE_FILE_ID });
     return null;
   }, [state]);

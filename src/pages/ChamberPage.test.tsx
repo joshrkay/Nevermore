@@ -28,10 +28,12 @@ const session = {
   certification: { status: "none" as string },
   updateIntake: vi.fn(),
   addMessage: vi.fn(),
+  verifiedFields: new Set<string>() as ReadonlySet<string>,
 };
 
 // What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
 const hooks = {
+  workspace: null as null | { verified?: ReadonlySet<string> },
   voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
   chat: null as null | { onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string }) => void },
 };
@@ -57,7 +59,12 @@ vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
 // The orb only shows what Lenore last said; the workspace panes are not what these tests are about.
 vi.mock("@/components/chamber/VoiceOrb", () => ({ default: ({ lastSpokenText }: { lastSpokenText: string }) => <p data-testid="orb">{lastSpokenText}</p> }));
 vi.mock("@/components/chamber/TranscriptPanel", () => ({ default: () => null }));
-vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({ default: () => null }));
+vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
+  default: (props: typeof hooks.workspace) => {
+    hooks.workspace = props;
+    return null;
+  },
+}));
 vi.mock("@/hooks/useLenoreChat", () => ({
   useLenoreChat: (options: typeof hooks.chat) => {
     hooks.chat = options;
@@ -82,6 +89,7 @@ describe("ChamberPage", () => {
     session.backupOffer = null;
     session.messages = [];
     session.certification = { status: "none" };
+    session.verifiedFields = new Set();
     session.startOver.mockReset().mockResolvedValue(true);
     auth.isAnonymous = true;
     storageWorks = true;
@@ -213,6 +221,13 @@ describe("ChamberPage", () => {
     session.sessionId = "s1";
     renderPage();
     expect(screen.getByText(/isn't keeping site data/)).toBeInTheDocument();
+  });
+
+  it("hands the workspace the fields an advisor verified on the intake", () => {
+    session.sessionId = "s1";
+    session.verifiedFields = new Set(["company_name"]);
+    renderPage();
+    expect(hooks.workspace?.verified).toBe(session.verifiedFields);
   });
 
   it("shows Lenore's latest line under the orb, not a second hello", () => {

@@ -14,6 +14,7 @@ import {
   referenceOf,
   reviewMap,
   sha256Hex,
+  verifiedFieldsOf,
   type FieldReview,
 } from "./advisor";
 import type { ProvenanceMap } from "./provenance";
@@ -109,6 +110,19 @@ describe("applyAdvisorReview", () => {
     const packet = applyAdvisorReview(data, {}, reviews);
     expect(packet.data.employee_count).toBe(12);
     expect(packet.corrections).toEqual([]);
+  });
+});
+
+describe("verifiedFieldsOf", () => {
+  it("names the fields marked verified, the census under its current name, as the prospect is told them", () => {
+    const reviews = reviewMap([
+      review({ field: "company_name", review_state: "verified" }),
+      review({ field: "pay_frequency", review_state: "follow_up" }),
+      review({ field: "states", review_state: null }),
+      review({ field: "employees" as never, review_state: "verified" }),
+    ]);
+    expect([...verifiedFieldsOf(reviews)].sort()).toEqual(["census", "company_name"]);
+    expect(verifiedFieldsOf({}).size).toBe(0);
   });
 });
 

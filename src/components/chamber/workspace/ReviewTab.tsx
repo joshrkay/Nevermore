@@ -1,7 +1,8 @@
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay } from "@/data/census";
-import { fieldOpenItems, formatFieldValue, type FieldAction, type ProvenanceMap } from "@/data/provenance";
+import { fieldOpenItems, formatFieldValue, isEmpty, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
+import { NO_VERIFIED_FIELDS, REQUIRED_ITEM_REASONS, requiredItems } from "@/data/requiredItems";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
 import { CheckCircle, AlertTriangle, HelpCircle, FileText } from "lucide-react";
@@ -17,14 +18,25 @@ interface ReviewDocument {
 interface ReviewTabProps {
   data: ChamberData;
   provenance?: ProvenanceMap;
+  /** Fields an advisor verified: settled whatever their status, so never listed. */
+  verified?: ReadonlySet<string>;
   onAction?: (action: FieldAction) => void;
   onProceed: () => void;
   documents?: ReviewDocument[];
 }
 
-const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] }: ReviewTabProps) => {
+const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAction, onProceed, documents = [] }: ReviewTabProps) => {
   const eeCount = headcount(data);
-  const needsReview = fieldOpenItems(provenance);
+  // The required items that aren't settled come first, in their fixed order; then every other field
+  // that still needs the prospect. A field is listed once. While the census decides States of operation,
+  // the census's own item asks for it. A required item still missing is listed even if an advisor
+  // verified its field: verifying never supplies a value.
+  const items = requiredItems(data, provenance, verified);
+  const required = items.flatMap((i) =>
+    i.state === "settled" || i.viaCensus ? [] : [{ field: i.field, label: i.label, reason: REQUIRED_ITEM_REASONS[i.state] }],
+  );
+  const listed = new Set<FieldKey>(items.flatMap((i) => (i.state === "settled" ? [] : [i.field])));
+  const needsReview = [...required, ...fieldOpenItems(provenance, verified).filter((i) => !listed.has(i.field))];
   const checks = eligibilityChecks(data);
   const flaggedEmployees = data.census.filter(e => employeeFlag(e) !== null);
   const uploaded = documents.filter((d) => d.status !== "uploading");
@@ -40,7 +52,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
         </p>
       </div>
 
-      {/* Inferred, incomplete, and conflicting values */}
+      {/* Required items not yet settled, then inferred, incomplete, and conflicting values */}
       {needsReview.length > 0 && (
         <div className="bg-card border border-warning/40 rounded-xl p-6 space-y-4">
           <p className="text-xs font-mono text-warning uppercase tracking-wider">
@@ -52,7 +64,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
               <ProvenanceField
                 label={item.label}
                 field={item.field}
-                display={formatFieldValue(data[item.field])}
+                display={isEmpty(data[item.field]) ? null : formatFieldValue(data[item.field])}
                 raw={data[item.field]}
                 provenance={provenance[item.field]}
                 onAction={onAction}

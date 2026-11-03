@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
-import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { applyExtraction, applyFieldAction, type IntakeState } from "@/data/provenance";
 import CompanyTab from "./CompanyTab";
 import ReviewTab from "./ReviewTab";
@@ -65,7 +65,9 @@ describe("provenance in the workspace", () => {
 
   it("lists fields needing review and resolves a conflict", () => {
     const conflict = applyExtraction(inferred, { employee_count: 45 }, { source: { kind: "transcript", message_id: "m2" } });
-    render(<Harness initial={conflict} tab="review" />);
+    // The other required items are answered, so the conflict is the only thing listed.
+    const answered = { ...conflict, data: { ...conflict.data, states: ["CA"], pay_frequency: "Weekly", census: DEMO_CHAMBER_DATA.census } };
+    render(<Harness initial={answered} tab="review" />);
     const list = screen.getByText(/Needs your review — 1 item/).parentElement!;
     expect(within(list).getAllByText("Conflicting answers").length).toBeGreaterThan(0);
     fireEvent.click(within(list).getByRole("button", { name: "Use 45 for Employee count" }));

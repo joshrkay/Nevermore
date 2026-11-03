@@ -2,7 +2,8 @@ import type { ChamberData } from "./chamberTypes";
 import { COVERAGE_TIER_LABELS, isW2, type CensusEmployee } from "./census";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
-import { fieldOpenItems, type FieldKey, type ProvenanceMap } from "./provenance";
+import { fieldOpenItems, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
+import { NO_VERIFIED_FIELDS, requiredItems } from "./requiredItems";
 
 /** Signed attestation stored on chamber_sessions.submission. */
 export interface ChamberSubmission {
@@ -222,8 +223,36 @@ const classificationLabel = (e: CensusEmployee) =>
 const salaryLabel = (e: CensusEmployee) =>
   e.annual_salary ? `$${e.annual_salary.toLocaleString()}${e.compensation_type === "hourly" ? " (hourly)" : ""}` : NOT_PROVIDED;
 
-/** Label, display value, and the field whose status and source the row shows. */
-export type ManuscriptRow = [label: string, value: string, field?: FieldKey];
+/**
+ * Label, display value, the field whose status and source the row shows, and any other fields the value
+ * is built from (a conflict in one of those shows too).
+ */
+export type ManuscriptRow = [label: string, value: string, field?: FieldKey, alsoFrom?: readonly FieldKey[]];
+
+/**
+ * The status and source a row shows: those of the first of its fields whose answers conflict, so no
+ * conflict in any part of the value is hidden, or else its own field's. The web Manuscript's chip and
+ * the PDF's "unresolved" marker both read it.
+ */
+/**
+ * The provenance the Manuscript shows: a field an advisor verified is settled, so it reads as confirmed
+ * with no rival answers (as the advisor's packet shows it, applyAdvisorReview) rather than keeping a
+ * "Conflicting" chip or an "unresolved" marker that points to an open item the list no longer has.
+ */
+function settleVerified(provenance: ProvenanceMap, verified: ReadonlySet<string>): ProvenanceMap {
+  if (verified.size === 0) return provenance;
+  const shown: ProvenanceMap = { ...provenance };
+  for (const field of Object.keys(shown) as (keyof ProvenanceMap)[]) {
+    const entry = shown[field];
+    if (entry && verified.has(field) && entry.status !== "confirmed") shown[field] = { ...entry, status: "confirmed", candidates: undefined };
+  }
+  return shown;
+}
+
+export function rowProvenance([, , field, alsoFrom = []]: ManuscriptRow, provenance: ProvenanceMap): FieldProvenance | undefined {
+  const fields = field ? [field, ...alsoFrom] : alsoFrom;
+  return fields.map((f) => provenance[f]).find((p) => p?.status === "conflicting") ?? (field ? provenance[field] : undefined);
+}
 
 export interface Manuscript {
   fileId: string;
@@ -268,6 +297,8 @@ export function buildManuscript(
     submission?: ChamberSubmission | null;
     date?: Date;
     provenance?: ProvenanceMap;
+    /** Fields an advisor verified: settled whatever their status, so never an open item. */
+    verified?: ReadonlySet<string>;
     /** For an advisor-generated packet; `followUps` are added to the open items. */
     advisor?: ManuscriptAdvisorReview & { followUps: string[] };
   },
@@ -292,14 +323,12 @@ export function buildManuscript(
   const tiers = tierCounts.get(WAIVED) ? [...TIERS, WAIVED] : TIERS;
 
   const checks = eligibilityChecks(data);
-  const missingCore = [
-    ["Company legal name", !data.company_name],
-    ["States of operation", allStates.length === 0],
-    ["Pay frequency", !data.pay_frequency],
-    ["Employee census", data.census.length === 0],
-  ].flatMap(([label, missing]) => (missing ? [`${label} — not provided`] : []));
   const provenance = opts.provenance ?? {};
-  const fieldItems = fieldOpenItems(provenance).map((i) => `${i.label} — ${i.reason.toLowerCase()}`);
+  const verified = opts.verified ?? NO_VERIFIED_FIELDS;
+  const missingRequired = requiredItems(data, provenance, verified).flatMap((i) =>
+    i.state === "missing" ? [`${i.label} — not provided`] : [],
+  );
+  const fieldItems = fieldOpenItems(provenance, verified).map((i) => `${i.label} — ${i.reason.toLowerCase()}`);
   const flags = data.census.flatMap((e) => {
     const flag = employeeFlag(e);
     return flag ? [`${e.first_name} ${e.last_name}: ${flag}`] : [];
@@ -314,7 +343,7 @@ export function buildManuscript(
       ["Legal Name", orNotProvided(data.company_name), "company_name"],
       ["HQ State", orNotProvided(data.hq_state), "hq_state"],
       ["Industry", orNotProvided(data.industry), "industry"],
-      ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? `Multiple (${orNotProvided(data.fein_count)} FEINs)` : "Single entity", "multiple_entities"],
+      ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? `Multiple (${orNotProvided(data.fein_count)} FEINs)` : "Single entity", "multiple_entities", data.multiple_entities ? ["fein_count"] : []],
       ["Target Start", orNotProvided(data.start_month), "start_month"],
       ["Current Payroll", orNotProvided(data.payroll_vendor), "payroll_vendor"],
       ["Pay Frequency", orNotProvided(data.pay_frequency), "pay_frequency"],
@@ -322,9 +351,9 @@ export function buildManuscript(
     ],
     workforceRows: [
       ["Reported Headcount", orNotProvided(data.employee_count), "employee_count"],
-      ["W-2 Employees on Census", String(w2.length)],
-      ["1099 Contractors on Census", data.census.length ? String(contractors.length) : yesNo(data.has_1099)],
-      ["Exempt / Nonexempt", data.exempt_count === null && data.nonexempt_count === null ? NOT_PROVIDED : `${orNotProvided(data.exempt_count)} / ${orNotProvided(data.nonexempt_count)}`],
+      ["W-2 Employees on Census", String(w2.length), undefined, ["census"]],
+      ["1099 Contractors on Census", data.census.length ? String(contractors.length) : yesNo(data.has_1099), undefined, [data.census.length ? "census" : "has_1099"]],
+      ["Exempt / Nonexempt", data.exempt_count === null && data.nonexempt_count === null ? NOT_PROVIDED : `${orNotProvided(data.exempt_count)} / ${orNotProvided(data.nonexempt_count)}`, undefined, ["exempt_count", "nonexempt_count"]],
       ["In-house HR Staff", orNotProvided(data.hr_staff_count), "hr_staff_count"],
       ["Employee Handbook", yesNo(data.has_handbook), "has_handbook"],
     ],
@@ -350,18 +379,18 @@ export function buildManuscript(
       ["Rate History", orNotProvided(data.rate_history), "rate_history"],
       ["Waiting Period", orNotProvided(data.benefits_waiting_period), "benefits_waiting_period"],
       ["Ancillary Benefits", data.ancillary_benefits.length ? data.ancillary_benefits.join(", ") : NOT_PROVIDED, "ancillary_benefits"],
-      ["Retirement", data.has_401k === null ? NOT_PROVIDED : data.has_401k ? `${data.retirement_type || "401(k)"}${data.employer_contributes ? " · employer contributes" : ""}` : "None", "has_401k"],
+      ["Retirement", data.has_401k === null ? NOT_PROVIDED : data.has_401k ? `${data.retirement_type || "401(k)"}${data.employer_contributes ? " · employer contributes" : ""}` : "None", "has_401k", data.has_401k ? ["retirement_type", "employer_contributes"] : []],
     ],
     resolved: checks.filter((c) => c.status === "pass").map((c) => c.label),
     open: [
-      ...missingCore,
+      ...missingRequired,
       ...fieldItems,
       ...checks.filter((c) => c.status === "fail").map((c) => `${c.label} — not met`),
       ...checks.filter((c) => c.status === "unknown").map((c) => `${c.label} — not yet verified`),
       ...flags,
       ...(opts.advisor?.followUps ?? []),
     ],
-    provenance,
+    provenance: settleVerified(provenance, verified),
     signer: opts.submission
       ? {
           name: opts.submission.signer_name,

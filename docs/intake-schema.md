@@ -201,7 +201,7 @@ Social Security numbers and bank account details are not stored anywhere. `redac
 
 Each field in `chamber_sessions.chamber_data` (see `src/data/chamberTypes.ts`) has a status and a source. These are stored beside the data in `chamber_sessions.field_provenance` (jsonb, keyed by field name, default `{}`). Fields with no entry have not been captured yet, or were captured before provenance existed.
 
-The model, merge rules and open items are in `src/data/provenance.ts`.
+The model, merge rules and open items are in `src/data/provenance.ts`. Which items an intake must hold, and how settled each is, is under "Required items" below.
 
 ### Entry shape
 
@@ -302,7 +302,7 @@ Candidates never change `chamber_data` by themselves. In the Upload tab the pros
 
 ### Submission
 
-When the prospect signs, `submission.field_provenance` snapshots the provenance alongside `submission.chamber_data`. The Manuscript shows the status and source for each row, and adds the status-based open items to "Underwriting Readiness".
+When the prospect signs, `submission.field_provenance` snapshots the provenance alongside `submission.chamber_data`. The Manuscript shows the status and source for each row, and adds the open items (see "Required items") to "Underwriting Readiness".
 
 ### The chosen PEO (`chosen_peo`)
 
@@ -311,6 +311,40 @@ When the prospect signs, `submission.field_provenance` snapshots the provenance 
 - It is saved by the same versioned write as the answers (`chamber_data`, `field_provenance`, `transcript`), sent with the keepalive save on page unload, and set on insert. A read-back after a write that matched no row compares it too, so a different choice saved elsewhere is a conflict. Start over clears it with the rest of the screen. The browser's copy of unsaved answers does not include it.
 - It is not an answer. It is outside `chamber_data`, so changing it doesn't move the certification hash or withdraw a certification. The certified PEO is `submission.peo`. When the two differ, The Reckoning asks the prospect to certify again (in the browser only; the database doesn't enforce it).
 - A CHECK constraint keeps it trimmed and 1 to 80 characters (`PEO_NAME_MAX` in `src/data/peoCatalog.ts`, compared by `src/data/schemaSync.test.ts`). `cleanPeoName` trims and cuts by character before saving, so the app never sends a value the constraint refuses. A closed intake refuses a change to it like any other (see Session lifecycle).
+
+## Required items
+
+Decision D2: an intake must hold four items, in this order, with these labels:
+
+| Item | Label | Present when |
+| --- | --- | --- |
+| `company_legal_name` | Company legal name | `company_name` has text |
+| `states_of_operation` | States of operation | `states` holds a state code, or a census row names one as its work state |
+| `pay_frequency` | Pay frequency | `pay_frequency` has text |
+| `employee_census` | Employee census | the census has at least one row |
+
+Text counts when something other than whitespace is left (trimmed as `String.prototype.trim` trims, on both sides). A state counts when it is a state or territory code, in any case and with whitespace around it ignored, as the browser reads it; a roster saved before 20261027 can hold a `state` such as `NA`, which names no state. The census is `census`, or `employees` on an intake saved before the census contract that has no `census`; a row's work state is `work_state`, or `state` on such a roster. There is no "Not applicable" status and no "Document needed" item: no document is ever required.
+
+Each item is in one state:
+
+| State | When |
+| --- | --- |
+| `missing` | Not present. An advisor verifying the field doesn't change that. |
+| `settled` | Present, and its field is `confirmed` (whoever confirmed it: the model, a document the prospect applied, or the prospect), or an advisor verified it, or it has no provenance entry. Every AI value carries provenance, so a value without any was typed by the prospect or predates provenance. |
+| `conflicting`, `incomplete`, `unconfirmed` | Present and none of the above: the field's status, with `inferred` read as `unconfirmed`. |
+
+A provenance entry counts only when `parseProvenance` would keep it (a known status, a string `updated_at`, a valid source, and a valid source on every candidate); any other entry is read as none. The census's provenance is its `census` entry, or `employees` when there is none (as `parseProvenance` reads it). States of operation is settled by `states`, or by a settled census whose rows name a work state. Otherwise it takes the state of `states` when that holds anything, or else the census's state when only the census names states (the browser's copy marks that item `viaCensus`).
+
+**One definition.** `public.intake_required_items(data, provenance, verified)` (migration `20261103110000_required_items.sql`) returns the items as `[{ item, label, field, state }]`, in order, from its arguments alone. The advisor queue's `missing_required` is the labels it reports `missing`. `src/data/requiredItems.ts` (`requiredItems`) mirrors it in the browser. `src/data/requiredItems.cases.json` holds the cases both are tested against: `supabase/tests/required_items.sql` passes each stored intake straight to the function, and `src/data/requiredItems.test.ts` loads it as the Chamber does first (`parseChamberData`, `parseProvenance`). The database reads stored values as the browser loads them, state codes and provenance included (`public.provenance_entry_status` mirrors `parseProvenance`; nothing on the server checks `field_provenance` itself), so the two agree on stored intakes, older `employees` rosters too. They can still differ on values the app never stores, most of which the database refuses on write: a state's full name (the browser's sanitiser reads "Oregon" as `OR`), a census row the sanitiser drops, or a `states` string rather than a list.
+
+**Where it shows.**
+
+- The Review tab's "Needs your review" lists the required items that aren't settled first, in order, as "Not provided", "Conflicting answers", "Incomplete" or "Please confirm", then every other field `fieldOpenItems` lists. Each field appears once, and the count includes both kinds. A field an advisor verified is never listed, unless it is a required item still not provided. While only the census names states, States of operation is left to the Employee census item, which asks the same thing.
+- The Manuscript's open items start with "<label> — not provided" for each missing item, then the other open fields less the verified ones, then the unmet or unverified eligibility checks, census flags and an advisor's follow-ups.
+- A row whose field's status is `conflicting` shows a red "Conflicting" chip on the web Manuscript, and the PDF prints it as "<value> (unresolved — see open items)". A row built from several fields (entity structure and FEIN count, exempt and nonexempt counts, retirement, the census counts) takes its chip and marker from any of them that conflicts (`rowProvenance` in `src/data/manuscript.ts`). A field an advisor verified is settled, so the Manuscript shows it confirmed and marks it neither way, as the advisor's packet does.
+- The Reckoning won't submit while a required item's answers conflict ("Resolve the conflicting answers for <label>"; a conflict States of operation only takes from the census is listed once, for the census). That is the browser's check only, and only for conflicts: the full completeness gate, and enforcing it in the database, are C-1.3's.
+
+**Fields an advisor verified.** A field an advisor marked `verified` in `advisor_field_reviews` is settled whatever its status. `public.session_verified_fields(session_id)` returns those field names, sorted, to the intake's owner while they can read the intake (not once it is archived or revoked) and to advisors. Anyone else gets an empty list, and signed-out callers can't call it. It gives the names only: no other review state, note, reviewer or corrected value, and `advisor_field_reviews` itself stays advisor-only. A census review stored under `employees` counts as the census's unless the census has a review of its own. The Chamber asks once, when it opens an intake (`useChamberSession`'s `verifiedFields`), and the prospect's Manuscript page when it loads; the advisor's Manuscript uses the reviews the page already has. If the call fails, no field counts as verified and the prospect isn't told.
 
 ## Session lifecycle
 

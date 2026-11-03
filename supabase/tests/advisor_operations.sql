@@ -97,6 +97,17 @@ INSERT INTO public.chamber_sessions (id, user_id) VALUES ('00000000-0000-0000-00
 \i supabase/migrations/20261024100000_advisor_queue.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
 \i supabase/migrations/20261029091000_census_advisor_review.sql
+-- The queue's missing items now come from public.intake_required_items; the checks below still hold. It
+-- reads state codes through is_us_state_code, as 20261027090000 defines it; that migration validates
+-- intakes, which would refuse this file's seed data, so the function alone is copied here.
+CREATE FUNCTION public.is_us_state_code(code text) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+  SELECT coalesce(code = ANY (ARRAY[
+    'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD',
+    'MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC',
+    'SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC','AS','GU','MP','PR','VI'
+  ]), false);
+$$;
+\i supabase/migrations/20261103110000_required_items.sql
 
 -- Runs `stmt` as `who` and fails the run unless it's refused (permission, row security or a
 -- deliberate check).

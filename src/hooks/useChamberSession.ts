@@ -12,6 +12,8 @@ import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup }
 import { validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
+import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
+import { fetchVerifiedFields } from "@/lib/verifiedFields";
 import {
   certificationFromRow,
   NO_CERTIFICATION,
@@ -84,6 +86,11 @@ interface UseChamberSessionReturn {
   chamberData: ChamberData;
   /** Status and source of each captured field. */
   provenance: ProvenanceMap;
+  /**
+   * The fields an advisor verified on this intake, read once when it is opened. Settled whatever their
+   * status; empty for a new intake, or when they couldn't be read.
+   */
+  verifiedFields: ReadonlySet<string>;
   messages: ChatMessage[];
   isLoading: boolean;
   setChamberData: (updater: ChamberData | ((prev: ChamberData) => ChamberData)) => void;
@@ -237,6 +244,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [expired, setExpired] = useState<{ at: string | null } | null>(null);
   const [backupOffer, setBackupOffer] = useState<BackupOffer | null>(null);
   const [restoredThrough, setRestoredThrough] = useState<string | null>(null);
+  // Kept with the intake they belong to, so another intake on screen never shows them.
+  const [verified, setVerified] = useState<{ sessionId: string; fields: ReadonlySet<string> } | null>(null);
   // Changes whenever the conversation on screen is replaced by a blank one (start over, another person
   // signing in), so a reply or a voice line meant for the old conversation is never added to the new one.
   const [conversationEpoch, setConversationEpoch] = useState(0);
@@ -762,6 +771,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       const loaded = messagesRef.current;
       setRestoredThrough(loaded.some((m) => m.sender === "user") ? loaded[loaded.length - 1].id : null);
       offerBackup(data);
+      void fetchVerifiedFields(data.id).then((fields) => {
+        if (!cancelled) setVerified({ sessionId: data.id, fields });
+      });
       return "opened";
     };
 
@@ -1191,6 +1203,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     conversationEpoch,
     chamberData,
     provenance,
+    verifiedFields: verified && verified.sessionId === sessionId ? verified.fields : NO_VERIFIED_FIELDS,
     messages,
     isLoading,
     setChamberData,

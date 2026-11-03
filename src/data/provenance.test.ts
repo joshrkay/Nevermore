@@ -463,6 +463,15 @@ describe("fieldOpenItems", () => {
     state = applyExtraction(state, { industry: "Retail" }, { source: msg("m3") });
     expect(fieldOpenItems(state.provenance)).toEqual([{ field: "industry", label: "Industry", reason: "Please confirm" }]);
   });
+
+  it("leaves out fields an advisor verified, whatever their status", () => {
+    let state = applyExtraction(EMPTY, { employee_count: 40, industry: "Retail" }, { source: msg("m1") });
+    state = applyExtraction(state, { employee_count: 45 }, { source: msg("m2") });
+    expect(fieldOpenItems(state.provenance, new Set(["employee_count"]))).toEqual([
+      { field: "industry", label: "Industry", reason: "Please confirm" },
+    ]);
+    expect(fieldOpenItems(state.provenance, new Set(["employee_count", "industry"]))).toEqual([]);
+  });
 });
 
 describe("parsing", () => {

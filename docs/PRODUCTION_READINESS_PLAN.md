@@ -142,7 +142,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 |---|---|---|---|---|---|---|
 | 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
 | A Durable session | 7 | 0 | 4 | 0 | 0 | 11 |
-| B AI extraction | 3 | 5 | 0 | 1 | 0 | 9 |
+| B AI extraction | 4 | 4 | 0 | 1 | 0 | 9 |
 | C Review, certify, submit | 1 | 7 | 0 | 2 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
 | E Documents | 5 | 1 | 3 | 2 | 0 | 11 |
@@ -151,9 +151,9 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **26** | **44** | **10** | **20** | **6** | **106** |
+| **Total** | **27** | **43** | **10** | **20** | **6** | **106** |
 
-22 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+23 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 15 of 39 M2; 2 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -176,7 +176,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | ID | Decision | Status and evidence | Owner | Blocks |
 |---|---|---|---|---|
 | D1 | How does a guest return to their intake? | **Decided in code, with a different design** (see D14). Supabase anonymous auth persisted in browser storage; the session id in `?session=`; owner RLS gates resume. Email upgrade is a 6-digit code (`updateUser`, then `verifyOtp`), refused if the email already has an account ('we can't yet move your answers'). A guest who verified an email can get back to the intake from another browser, or after this one's data was cleared, by signing in with a 6-digit code emailed to that address (A-1.3); the Chamber then opens the linked intake or their latest one. **Gap:** a guest who never verified an email has no way back from another browser, and nothing sets a password. | PM | none |
-| D2 | Minimum data required before certification | **Partly decided, not enforced.** A four-item minimum is reported (company legal name, states of operation, pay frequency, a non-empty census) in the Manuscript open items and the advisor queue, but `certificationBlockers` checks none of it. It differs from the recommended default: there is no EIN field, the contact comes from `profiles.contact_name`, total employee count is not required, and pay frequency is. There is no 'Not applicable' status. | PM + Advisory lead | C-1.3, C-2.1, B-1.3 |
+| D2 | Minimum data required before certification | **Decided** (B-2.2). Four required items, in this order: company legal name, states of operation (the states given, or the census's work states), pay frequency, and a census with at least one row. A present item is settled when its field is confirmed (by the model, a document the prospect applied, or the prospect), an advisor verified it, or it has no provenance (the prospect typed it, or it predates provenance); otherwise it is conflicting, incomplete or unconfirmed. There is no 'Not applicable' status and no 'Document needed' item. One SQL function, `public.intake_required_items`, defines it, and `src/data/requiredItems.ts` mirrors it. For now certification is blocked only by a required item whose answers conflict, and only in the browser; the full gate is C-1.3's, which this unblocks. It differs from the recommended default: there is no EIN field, the contact comes from `profiles.contact_name`, total employee count is not required, and pay frequency is. | PM + Advisory lead | none |
 | D3 | Certification and consent wording | **Open.** The placeholder `2026-10-draft-1` is marked DRAFT in the Reckoning. A second, unused wording (`2026-10-v1`) exists (C-2.4). No intake-consent text exists (H-2.2). | LEGAL | C-2.4, H-2.2 |
 | D4 | Retention windows | **Partly decided in code, to confirm.** An uncertified draft expires 30 days after its last change (A-1.5, `public.intake_draft_retention()`); an expired draft keeps its data until H-1.2 purges it. A browser's copy of unsaved answers is kept at most 7 days (A-1.4). Nothing else is windowed; AI rate-limit logs are pruned after a day. | LEGAL + PM | H-1.x, E-4.2 |
 | D5 | Advisor roles and permissions | **Decided and implemented**: `advisor` and `admin` in `user_roles`. In the repo `admin` has no power beyond `advisor` (tests assert it cannot grant roles or delete intakes). | PM | none |
@@ -261,7 +261,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE + FS · **Depends:** D2 · **Milestone:** M1
 - **Built:** `ChamberData` (37 flat fields plus an `employees` array) in `chamberTypes.ts`. Zod rules in `chamberValidation.ts` sanitise in the browser, and the database enforces the same limits (A-2.2). Provenance in a sibling `field_provenance` jsonb column. `docs/intake-schema.md` exists. Zero counts are accepted.
 - **JSON Schema and strict checks:** `supabase/functions/_shared/intakeSchema.ts` is the canonical schema, v1, as a draft 2020-12 JSON Schema, published as `docs/intake-schema.v1.json` (`npm run schema:intake`; a test fails while they differ). Its validator is strict: no coercion, unknown keys refused at every level, paths named like the database's, values never echoed, and any keyword it doesn't implement refused. It runs where data comes in: `chamber-extract` refuses each extracted field that breaks it and returns `rejected`, logging paths only; a local backup is checked before it is offered; a saved row is checked as it loads and mismatches are logged. Everything it accepts the database accepts: `schemaSync.test.ts` holds its codes, caps, value lists and kinds to the migrations, and the sanitiser's output always passes it (golden and seeded random inputs). `chamber_sessions.schema_version` (migration `20261103091000`) records v1 on every row and refuses any other value.
-- **Notes:** Provenance stays a sibling map rather than a `{value, status, source, …}` envelope, as D14 recommends; amend the AC. Statuses lack `not_applicable` and sources lack `advisor_edit` and `system` (advisor changes live in `advisor_field_reviews`). There is no per-field required-for-submission flag (D2), and no workers' comp, EIN or contractor sections. These wait on D2. Voice `<extract>` data still goes through the lenient sanitiser. `chamber-extract` keeps its own 17-field list, now checked value by value against the schema. Nothing checks the field table in `docs/intake-schema.md` against the code (the JSON file is checked). Zero-versus-absent is untested, and the Review tab shows 0 as a dash.
+- **Notes:** Provenance stays a sibling map rather than a `{value, status, source, …}` envelope, as D14 recommends; amend the AC. Statuses lack `not_applicable` and sources lack `advisor_edit` and `system` (advisor changes live in `advisor_field_reviews`). There is no per-field required-for-submission flag: D2 is decided as four required items in one SQL function (B-2.2). D2 adds no workers' comp, EIN or contractor sections. Voice `<extract>` data still goes through the lenient sanitiser. `chamber-extract` keeps its own 17-field list, now checked value by value against the schema. Nothing checks the field table in `docs/intake-schema.md` against the code (the JSON file is checked). Zero-versus-absent is untested, and the Review tab shows 0 as a dash.
 
 #### A-2.2 Server-side validation and versioned writes
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1, A-1.2 · **Milestone:** M1
@@ -331,7 +331,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### B-1.3 Lenore follow-up policy and completion state
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** B-1.2, D2 · **Milestone:** M1
 - **Built:** The prompt has no missing-field list, no 'ask one item' rule and no 'do not re-ask' rule. Nothing sets `ready_for_review`.
-- **Remaining:** Needs D2 first.
+- **Remaining:** All of it. D2 is decided: the required items and their states are `public.intake_required_items` (B-2.2).
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Compute the list of missing required fields and conflicts on the server. Pass the top priority items into the prompt. Lenore asks about one missing item per turn and does not re-ask a confirmed field. The session becomes `ready_for_review` when every required field is confirmed or marked not applicable and no conflicts remain.
   - **AC:**
@@ -358,9 +358,24 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Notes:** The copy differs from the plan: 'Lenore inferred this' with a Confirm button.
 
 #### B-2.2 Derive open items from the schema
-- **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-1.2, A-2.1 · **Milestone:** M1
-- **Built:** `fieldOpenItems` derives 'Conflicting answers', 'Incomplete' and 'Please confirm', and items clear when the issue is resolved. The Manuscript adds `<field> not provided` for the four core items.
-- **Remaining:** Derived in the browser, not on the server. No 'Document needed' reason (missing recommended documents show as an informational line in Review). The reasons differ from the approved four.
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-1.2, A-2.1 · **Milestone:** M1
+- **Built:** The required items (D2) are one SQL function, `public.intake_required_items(data, provenance, verified)` (migration `20261103110000`), mirrored in the browser by `requiredItems` (`src/data/requiredItems.ts`). Both run the same cases, `src/data/requiredItems.cases.json`: the SQL test passes each stored intake straight to the function, and the vitest loads it as the Chamber does first. Each item, in order, is missing, conflicting, incomplete, unconfirmed or settled. A present item is settled when its field is confirmed (by anyone), an advisor verified it, or it has no provenance; otherwise it takes its field's status. States of operation is also settled by a settled census that names a work state. The advisor queue's `missing_required` now reads the function: `advisor_list_submissions` keeps its arguments and columns, and the rule written out in three migrations is gone. `public.session_verified_fields(id)` gives the intake's owner (under the owner's read rule, so never for an archived or revoked intake) and advisors the names of the fields an advisor verified, and nothing else of the review; `advisor_field_reviews` stays advisor-only. The Chamber reads it once when it opens an intake (`useChamberSession`, an empty list on any error), as does the prospect's Manuscript page; the advisor's Manuscript uses the reviews the page has loaded. The Review tab's 'Needs your review' lists unsettled required items first, in order, as 'Not provided', 'Conflicting answers', 'Incomplete' or 'Please confirm', then the other open fields, each field once, and its count includes both. A field an advisor verified is settled, so it is listed only while it is a required item still not provided (`fieldOpenItems` takes the verified fields). While only the census names states, States of operation takes the census's state and is left to the census's own item. The Manuscript lists '<item> — not provided' from the rule, then the open fields less the verified ones. The Reckoning won't submit while a required item's answers conflict ('Resolve the conflicting answers for <item>'; a conflict States of operation only takes from the census is the census's blocker). The PDF prints a value whose field's status is conflicting as '<value> (unresolved — see open items)' wherever the web Manuscript shows the red chip; a row built from several fields (entity structure, exempt and nonexempt counts, retirement, the census counts) takes the chip and the marker from any of them that conflicts (`rowProvenance`). Tested in `required_items.sql` (the shared cases, malformed input, who may read verified fields, the queue against its old definition), `advisor_operations.sql` (the queue's earlier checks, now on the new definition), `requiredItems.test.ts`, `provenance.test.ts`, `ReviewTab.test.tsx`, `LiveWorkspace.test.tsx`, `manuscript.test.ts`, `manuscriptPdf.test.ts`, `certification.test.ts`, `ReckoningTab.test.tsx`, `useChamberSession.test.ts`, `ManuscriptPage.test.tsx`, `ChamberPage.test.tsx`, `advisor.test.ts` and `verifiedFields.test.ts`. The rule is in `docs/intake-schema.md` → "Required items".
+- **Notes:**
+  - **Revised.** The required rule is one SQL function mirrored in TypeScript, held together by a shared case table, rather than read from a per-field flag in the schema. The per-field reasons (inferred, incomplete, conflicting) stay in the browser, from provenance.
+  - No 'Document needed' reason: missing recommended documents stay an informational line in Review, and no document is required (D2).
+  - Certification blocks only on a conflicting required item, and only in the browser. The full completeness gate, and enforcing it in the database's certification check, are C-1.3's (with C-2.1).
+  - The database reads stored values as the browser loads them, so the two agree on stored intakes: a state counts only when it is a state or territory code (any case, whitespace around it ignored), which also covers rosters saved before 20261027 with a `state` such as 'NA'; and a provenance entry counts only when `parseProvenance` keeps it (`provenance_entry_status`), since nothing on the server checks `field_provenance`. The shared cases cover both. They can still differ on values the app never stores, most of which the database refuses on write: a state's full name, which the browser reads as its code, a census row the browser can't read, or a `states` string rather than a list.
+  - A conflicting field an advisor verified is settled: it is not an open item, and the Manuscript shows it confirmed, with no red chip on the web and no "unresolved" marker in the PDF, as the advisor's packet does (`applyAdvisorReview`).
+  - The census's older name: `employees` in the answers or the provenance is read as the census when there is no `census`, and an advisor's review under `employees` counts as the census's unless the census has its own.
+  - `chamber-extract`'s prompt did not change, so neither did `PROMPT_VERSION`.
+- *Revised scope, AC and tests:*
+  - **Scope:** One definition of the four required items and how settled each is, in the database, mirrored in the browser and tested against the same cases. Open items list unsettled required items first, then the other fields that need the prospect, never a field an advisor verified unless it is a required item still not provided. A conflicting required item holds certification back in the browser.
+  - **AC:**
+    - The advisor queue, the Review tab, the Manuscript and certification read one rule, and the browser's copy gives the database's answer on every shared case.
+    - A field an advisor verified is settled. Its owner can learn which fields those are, and nothing else of the review.
+    - The Review tab lists each field once, required items first, with a reason.
+    - A required item whose answers conflict blocks certification.
+  - **Tests:** The shared case table in SQL and vitest, with every state of every item, and stored provenance and state codes read as the browser reads them; verified fields as the owner, another user, an advisor, a guest token and a signed-out caller, and for an archived intake; the Review list's order, reasons and count; the Manuscript's open items; the PDF marker and the web chip, combined rows included; the certification blocker.
 
 #### B-3.1 Timeouts, retries, and rate limits
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** B-1.1, F-0.2 · **Milestone:** M1
@@ -386,7 +401,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### C-1.1 Read-only review by Manuscript section
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** A-2.3 · **Milestone:** M1
 - **Built:** The Review tab (tab 7 of the workspace) shows the live session only. There is no `/review` route: owner RLS replaces the token.
-- **Remaining:** No per-section status (Complete, Needs confirmation, Incomplete, Not applicable) and no D2 rules. Review shows eligibility, six company fields, census and documents; benefits, payroll, dependents, workers' comp and open items are missing. Only documents are tested.
+- **Remaining:** No per-section status (Complete, Needs confirmation, Incomplete, Not applicable). The D2 required items that aren't settled lead 'Needs your review' (B-2.2), but not by section. Review shows eligibility, six company fields, census and documents; benefits, payroll, dependents, workers' comp and open items are missing. Only documents are tested.
 
 #### C-1.2 Inline editing that writes to the canonical record
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** C-1.1, A-2.2 · **Milestone:** M1
@@ -395,8 +410,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### C-1.3 Readiness gate with jump links
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** C-1.1, B-2.2, D2 · **Milestone:** M1
-- **Built:** `certificationBlockers` checks only email verification, file id, acknowledgements, signer name, role and signature. The four-item minimum (company legal name, states, pay frequency, a non-empty census) exists only as reporting, in the advisor `missing_required` and the Manuscript open items.
-- **Remaining:** Needs D2 and D16 first.
+- **Built:** `certificationBlockers` checks email verification, file id, acknowledgements, signer name, role and signature, and (B-2.2) a required item whose answers conflict. D2's four required items and their states are `public.intake_required_items`, mirrored in `requiredItems.ts`; the advisor `missing_required`, the Review tab and the Manuscript open items read them.
+- **Remaining:** D2 is decided (B-2.2), so this story is unblocked by it: build the full gate on `intake_required_items` (missing, incomplete and unconfirmed items too, each linked to its section) and enforce it in the certification trigger (C-2.1). There is no 'Not applicable' status (D2). Needs D16 first.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** List missing required fields, each linked to the section that needs it. "Continue to certification" is enabled only when every required field is confirmed or validly marked not applicable. The reason for "not applicable" is stored.
   - **AC:**
@@ -994,11 +1009,11 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | Tier | Stories | Why |
 |---|---|---|
 | 0: put the fixes in front of users | Confirm which builds of `chamber-extract` and `document-extract` are deployed, deploy both (and check the deploy bundles `supabase/functions/_shared`), and make one real Lenore exchange and one real document read in preview (the open part of F-0.2). | The fixes are verified in code, tests, a Deno run and a CI run, not live. |
-| 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.4 (make the checks required), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus making the end-to-end test (I-4.3, built) a required check. C-1.3, C-2.1 and B-1.3 wait for D2. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
+| 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.4 (make the checks required), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus making the end-to-end test (I-4.3, built) a required check. D2 is decided (B-2.2), so C-1.3, C-2.1 and B-1.3 can start. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
 | 2: gate the private pilot (M2) | All M2 stories, plus the M1-tagged hardening stories that do not block the demo path: B-1.1, B-1.3, B-1.4, B-2.2, D-1.1 to D-1.4, D-2.2, D-3.1 to D-3.3, E-4.1, I-4.2. In practice: E-4.1, E-4.3, E-4.2, F-2.1, F-4.1, F-4.3, G-1.1 (schedule in a migration), G-1.3, H-1.1 to H-1.3, H-2.1, H-2.3, H-3.1, H-3.3, H-4.1 to H-4.3, I-1.x, I-2.x | Retention, deletion, upload hardening, an admin view of failed emails, legal pages, alerting, a runbook, and accessibility. Most wait on D3, D4, D10 and D13. |
 | 3: public launch (M3) | G-2.2, G-3.x, I-5.x, J-1.2, J-2.x, J-3.x | Bounces, CRM, voice reliability, domain, analytics and the launch checklist. G-3.x waits for D6. |
 
-**Critical path to a credible demo:** `C-1.3 → C-2.1 → C-3.1 → D-1.5` (A-2.2, the first step, is done), with the end-to-end test (I-4.3, built) kept passing as each lands. D2 and D15 must close before C-1.3 and C-3.1 start.
+**Critical path to a credible demo:** `C-1.3 → C-2.1 → C-3.1 → D-1.5` (A-2.2, the first step, is done), with the end-to-end test (I-4.3, built) kept passing as each lands. D15 must close before C-3.1 starts; D2 is decided (B-2.2).
 
 ---
 
@@ -1060,7 +1075,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | B-1.3 | Lenore follow-up policy and completion state | M | Highest | M1 | NOT STARTED |
 | B-1.4 | Prompt versioning and golden-transcript fixtures | S | High | M1 | PARTIAL |
 | B-2.1 | Provenance badges and confirm-or-edit controls | M | High | M2 | DONE |
-| B-2.2 | Derive open items from the schema | S | High | M1 | PARTIAL |
+| B-2.2 | Derive open items from the schema | S | High | M1 | DONE |
 | B-3.1 | Timeouts, retries, and rate limits | M | High | M1 | PARTIAL |
 | B-3.2 | User-facing failure states | S | High | M1 | DONE |
 | B-3.3 | Operational logs with redaction | S | High | M1 | PARTIAL |
@@ -1265,7 +1280,7 @@ A story is done only when all of the following are true:
 | The AI functions now import shared code from `supabase/functions/_shared`. A deploy that uploads only a function's own folder would fail to resolve it. | Both AI functions fail to start. | Deploy through the Supabase CLI, which bundles relative imports, and smoke-test a preview deploy first. |
 | Deployed environments may differ from `main`. This refresh could not see them. | Statuses here could be wrong about production in either direction. | Confirm deployed function versions, secrets, the cron schedule and Turnstile before the demo. |
 | Repeated 'repair main after merge' commits. | Overlapping branches keep breaking `main`. | Smaller pull requests, F-0.4, and required checks on `main`. |
-| Decisions D2, D3, D4, D14, D15 stay open. | Blocks the M1 critical path. | Start on the recommended defaults. Revisit at the next review. |
+| Decisions D3, D4, D14, D15 stay open. | Blocks the M1 critical path. | Start on the recommended defaults. Revisit at the next review. |
 | Guests who upgrade cannot return from another device. | Lost intakes and support load. | D1, A-1.3. |
 | Prospect data leaks through a URL or log. | Serious privacy incident. | The session id is not a credential, signed URLs last 60 seconds, log redaction (B-3.3), scan tests (H-3.3). |
 | Lenore provider choice changes late. | Extraction behavior shifts. | The adapter (F-0.2) and the extraction eval against a recorded baseline (B-1.4). |
