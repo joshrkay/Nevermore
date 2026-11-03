@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createChatMessage, parseTranscript } from "./chat";
+import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
+import { chatContext, createChatMessage, parseTranscript } from "./chat";
 
 describe("parseTranscript", () => {
   it("returns an empty transcript for non-arrays", () => {
@@ -26,5 +27,14 @@ describe("sensitive numbers in the transcript", () => {
     expect(createChatMessage("user", "SSN 123-45-6789").text).toBe("SSN [redacted]");
     const [m] = parseTranscript([{ id: "m1", sender: "user", text: "routing 021000021", timestamp: "" }]);
     expect(m.text).toBe("routing [redacted]");
+  });
+});
+
+describe("chatContext", () => {
+  it("is the intake without the roster, which chat never extracts and which holds personal details", () => {
+    const context = chatContext({ ...EMPTY_CHAMBER_DATA, company_name: "Acme" });
+    expect(context).not.toHaveProperty("census");
+    expect(Object.keys(context)).toEqual(Object.keys(EMPTY_CHAMBER_DATA).filter((k) => k !== "census"));
+    expect(context.company_name).toBe("Acme");
   });
 });

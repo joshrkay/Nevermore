@@ -143,7 +143,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 |---|---|---|---|---|---|---|
 | 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
 | A Durable session | 2 | 4 | 4 | 1 | 0 | 11 |
-| B AI extraction | 2 | 4 | 1 | 2 | 0 | 9 |
+| B AI extraction | 2 | 5 | 1 | 1 | 0 | 9 |
 | C Review, certify, submit | 1 | 7 | 0 | 2 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
 | E Documents | 5 | 1 | 3 | 2 | 0 | 11 |
@@ -152,7 +152,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **20** | **47** | **11** | **22** | **6** | **106** |
+| **Total** | **20** | **48** | **11** | **21** | **6** | **106** |
 
 17 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
@@ -307,12 +307,12 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic B: Make AI Extraction Auditable and Useful
 
-*As built:* Provenance, conflict handling, confirm-or-edit controls and failure states are built. The extraction function loads and is tested, and the follow-up policy, prompt versioning and golden tests are not started.
+*As built:* Provenance, conflict handling, confirm-or-edit controls and failure states are built. The extraction function loads and is tested. Prompt versioning and a live extraction eval are built and wait on a first recorded baseline, and the follow-up policy is not started.
 
 #### B-1.1 Extraction response contract and parser
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1 · **Milestone:** M1
-- **Built:** `chamber-extract` keeps only 17 allow-listed fields with a per-field `field_status` and `evidence` (up to 200 characters) and returns `{extracted, field_status, evidence, corrected_fields, reply}`; the shaping is in `extraction.ts` and the tool schema now asks the model for all of it. The client's `sanitizeChamberPatch` validates. An empty extraction yields a fallback reply.
-- **Remaining:** Invalid fields are dropped one by one in the browser rather than rejecting the whole response. Unknown field paths are dropped without being logged. No contract version is stored with an extraction.
+- **Built:** `chamber-extract` keeps only 17 allow-listed fields with a per-field `field_status` and `evidence` (up to 200 characters) and returns `{extracted, field_status, evidence, corrected_fields, reply}` (plus `prompt_version`, B-1.4); the shaping is in `extraction.ts` and the tool schema now asks the model for all of it. The client's `sanitizeChamberPatch` validates. An empty extraction yields a fallback reply.
+- **Remaining:** Invalid fields are dropped one by one in the browser rather than rejecting the whole response. Unknown field paths are dropped without being logged. The contract version moved to B-1.4 (`PROMPT_VERSION`, one version for the prompt, the tool schema and the response shape).
 
 #### B-1.2 Merge policy and conflict capture
 - **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** B-1.1, A-2.2 · **Milestone:** M1
@@ -332,14 +332,16 @@ Status is the state of each decision in the code today. Engineering proceeds on 
   - **Tests:** Scripted transcript fills required fields in order and reaches `ready_for_review`. Scripted transcript with a conflict stays out of `ready_for_review`.
 
 #### B-1.4 Prompt versioning and golden-transcript fixtures
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-1.1 · **Milestone:** M1
-- **Built:** No prompt version is recorded and there are no golden transcripts.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Store the prompt version on every extraction. Create 10 golden transcripts with expected extractions and run them in CI with a stubbed model.
+- **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-1.1 · **Milestone:** M1
+- **Built:** `PROMPT_VERSION` (`chamber-extract/schema.ts`) versions the whole extraction contract: the system prompt, the tool schema and the response shape. `schema.test.ts` hashes the prompt and tool schema and fails CI when either changes without a new version, naming the hash to record. Every successful response, an empty one included, carries `prompt_version`, and the browser stores it on the field's transcript source (`transcriptExtraction` in `provenance.ts`); stored provenance without it still parses, and a malformed one is dropped. Voice extractions, whose prompt lives in the ElevenLabs agent, carry none: `voiceExtraction` drops any version the agent writes. `npm run eval:extraction` (`scripts/extraction-eval`) sends 10 synthetic transcripts through the production path (the browser's redaction and context, the handler's prompt, now `buildUserPrompt` in `prompt.ts`, the shared adapter, `shapeExtraction`, then `applyExtraction` as the Chamber merges a reply) against the configured provider. It scores each asserted field's final value and status (a field left conflicting fails unless the fixture expects the conflict), fields that must stay empty and an SSN that must never be stored, prints a table and the accuracy, and exits 1 on any cell that passed in the committed baseline and fails now. Its scoring, baseline comparison, fixtures and the whole path against a stub model are unit-tested in CI. The rule and the commands are in `docs/intake-schema.md`.
+- **Remaining:** Record the first baseline with a live provider key; no key is available in the build environment.
+- *Revised scope, AC and tests:*
+  - **Scope:** One version string for the extraction contract, stored on each transcript provenance source rather than an extraction row (there is no extraction table). The golden suite is a live, on-demand eval against a committed baseline rather than a stubbed CI suite: a stub can only replay answers we wrote, while the risk is a prompt or model change that alters what the model extracts.
   - **AC:**
-    - Each extraction row records the prompt and contract version.
-    - Golden tests fail when the parser output changes for a fixture.
-  - **Tests:** Golden suite runs in CI with the stub.
+    - Every value extracted from a chat message records the contract version on its provenance source.
+    - Changing the prompt or tool schema without a new version fails CI.
+    - The eval fails when a cell that passed in the baseline fails, and a baseline is recorded and committed with each prompt change.
+  - **Tests:** Hash test in CI. Scoring, baseline comparison, fixture validity and the pipeline against a stub model in CI. The eval itself against a live provider, before merging a prompt change.
 
 #### B-2.1 Provenance badges and confirm-or-edit controls
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** FE · **Depends:** B-1.2 · **Milestone:** M2
@@ -1047,7 +1049,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | B-1.1 | Extraction response contract and parser | M | Highest | M1 | PARTIAL |
 | B-1.2 | Merge policy and conflict capture | M | Highest | M1 | SUPERSEDED |
 | B-1.3 | Lenore follow-up policy and completion state | M | Highest | M1 | NOT STARTED |
-| B-1.4 | Prompt versioning and golden-transcript fixtures | S | High | M1 | NOT STARTED |
+| B-1.4 | Prompt versioning and golden-transcript fixtures | S | High | M1 | PARTIAL |
 | B-2.1 | Provenance badges and confirm-or-edit controls | M | High | M2 | DONE |
 | B-2.2 | Derive open items from the schema | S | High | M1 | PARTIAL |
 | B-3.1 | Timeouts, retries, and rate limits | M | High | M1 | PARTIAL |
@@ -1252,7 +1254,7 @@ A story is done only when all of the following are true:
 | Decisions D2, D3, D4, D14, D15 stay open. | Blocks the M1 critical path. | Start on the recommended defaults. Revisit at the next review. |
 | Guests who upgrade cannot return from another device. | Lost intakes and support load. | D1, A-1.3. |
 | Prospect data leaks through a URL or log. | Serious privacy incident. | The session id is not a credential, signed URLs last 60 seconds, log redaction (B-3.3), scan tests (H-3.3). |
-| Lenore provider choice changes late. | Extraction behavior shifts. | The adapter (F-0.2) and golden fixtures (B-1.4). |
+| Lenore provider choice changes late. | Extraction behavior shifts. | The adapter (F-0.2) and the extraction eval against a recorded baseline (B-1.4). |
 | Voice behaves differently in production. | Users stall at the voice step. | Text-first path, state machine (I-5.1), I-5.2 fallback. |
 | Legal copy not approved in time. | Public launch delayed. | Placeholders marked DRAFT (C-2.2, C-2.4). Legal approval is an M3 exit criterion. |
 | Single-person knowledge of the stack. | Slow incident response. | Runbook (H-4.2) and named owners (J-3.2). |

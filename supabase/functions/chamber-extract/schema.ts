@@ -1,6 +1,14 @@
 // The extraction prompt, field list and tool schema, shared by every provider adapter and by the
 // handler's response shaping. No imports, so it runs under Deno and Vitest alike.
 
+/**
+ * Versions the whole extraction contract: SYSTEM_PROMPT, EXTRACT_TOOL and the response shape. Every
+ * response carries it and the browser stores it on the field's provenance, so a value can be traced
+ * to the prompt that produced it. schema.test.ts fails when the prompt or tool changes without a
+ * new version; see "Extraction contract version and eval" in docs/intake-schema.md.
+ */
+export const PROMPT_VERSION = "2026-11-03.1";
+
 export const FIELD_TYPES: Record<string, unknown> = {
   company_name: { type: "string" },
   industry: { type: "string" },

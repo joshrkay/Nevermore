@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleRequest, type HandlerDeps, type SupabaseLike } from "./handler";
-import { EXTRACT_TOOL, SYSTEM_PROMPT } from "./schema";
+import { EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 
 const ENV: Record<string, string | undefined> = {
   SUPABASE_URL: "https://project.test",
@@ -190,7 +190,7 @@ describe("chamber-extract handler: the request", () => {
 });
 
 describe("chamber-extract handler: the response", () => {
-  it("returns what the model extracted with its status, evidence, corrections and reply", async () => {
+  it("returns what the model extracted with its status, evidence, corrections, reply and the contract version", async () => {
     const t = setup({
       responses: [gatewayReply({
         employee_count: 45,
@@ -208,14 +208,15 @@ describe("chamber-extract handler: the response", () => {
       evidence: { employee_count: "actually it's 45 people" },
       corrected_fields: ["employee_count"],
       reply: "Thank you. And which states?",
+      prompt_version: PROMPT_VERSION,
     });
   });
 
-  it("returns nothing extracted and no reply when the model made no tool call", async () => {
+  it("returns nothing extracted and no reply, still versioned, when the model made no tool call", async () => {
     const t = setup({ responses: [new Response(JSON.stringify({ choices: [{ message: { content: "hello" } }] }), { status: 200 })] });
     const { status, body } = await read(await handleRequest(post({ message: "hi" }), t.deps));
     expect(status).toBe(200);
-    expect(body).toEqual({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null });
+    expect(body).toEqual({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null, prompt_version: PROMPT_VERSION });
   });
 });
 

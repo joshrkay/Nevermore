@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { emptyExtraction, shapeExtraction } from "./extraction";
-import { EXTRACT_TOOL, FIELDS, MAX_EVIDENCE_CHARS, SYSTEM_PROMPT } from "./schema";
+import { EXTRACT_TOOL, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 
 describe("shapeExtraction", () => {
   it("keeps the fields the model extracted, with their status, evidence and corrections", () => {
@@ -18,6 +18,7 @@ describe("shapeExtraction", () => {
       evidence: { employee_count: "actually it's 45", states: "mainly CA and TX" },
       corrected_fields: ["employee_count"],
       reply: "Thank you.",
+      prompt_version: PROMPT_VERSION,
     });
   });
 
@@ -66,6 +67,11 @@ describe("shapeExtraction", () => {
     expect(shaped).toMatchObject({ field_status: {}, evidence: {}, corrected_fields: [] });
   });
 
+  it("stamps the contract version, whatever the model sent for it", () => {
+    expect(shapeExtraction({ company_name: "Acme" }).prompt_version).toBe(PROMPT_VERSION);
+    expect(shapeExtraction({ company_name: "Acme", prompt_version: "1999-01-01.1" }).prompt_version).toBe(PROMPT_VERSION);
+  });
+
   it("returns no reply when the model sent none or a blank or non-text one", () => {
     expect(shapeExtraction({ company_name: "Acme" }).reply).toBeNull();
     expect(shapeExtraction({ reply: "   " }).reply).toBeNull();
@@ -74,8 +80,15 @@ describe("shapeExtraction", () => {
 });
 
 describe("emptyExtraction", () => {
-  it("is nothing extracted and no reply, so the browser falls back to its own line", () => {
-    expect(emptyExtraction()).toEqual({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null });
+  it("is nothing extracted and no reply, so the browser falls back to its own line, under the current contract version", () => {
+    expect(emptyExtraction()).toEqual({
+      extracted: {},
+      field_status: {},
+      evidence: {},
+      corrected_fields: [],
+      reply: null,
+      prompt_version: PROMPT_VERSION,
+    });
   });
 
   it("hands out a fresh object each time", () => {

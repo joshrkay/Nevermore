@@ -2,7 +2,7 @@
 // through, and a status, evidence quote or correction survives only for a field that was actually
 // extracted. No Deno or network imports, so it is unit-tested with the frontend suite.
 
-import { FIELDS, FIELD_STATUSES, MAX_EVIDENCE_CHARS } from "./schema.ts";
+import { FIELDS, FIELD_STATUSES, MAX_EVIDENCE_CHARS, PROMPT_VERSION } from "./schema.ts";
 
 export interface Extraction {
   extracted: Record<string, unknown>;
@@ -10,10 +10,19 @@ export interface Extraction {
   evidence: Record<string, string>;
   corrected_fields: string[];
   reply: string | null;
+  /** The contract this answer was produced under, which the browser stores with each value. */
+  prompt_version: string;
 }
 
 /** What the browser gets when the model made no tool call: nothing extracted, and no reply of ours. */
-export const emptyExtraction = (): Extraction => ({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null });
+export const emptyExtraction = (): Extraction => ({
+  extracted: {},
+  field_status: {},
+  evidence: {},
+  corrected_fields: [],
+  reply: null,
+  prompt_version: PROMPT_VERSION,
+});
 
 // Keeps only entries for fields that were actually extracted.
 function pickPerField<T>(raw: unknown, extracted: Record<string, unknown>, ok: (v: unknown) => v is T): Record<string, T> {
@@ -42,5 +51,5 @@ export function shapeExtraction(args: Record<string, unknown>): Extraction {
     ? args.corrected_fields.filter((f: unknown): f is string => typeof f === "string" && f in extracted)
     : [];
   const reply = typeof args.reply === "string" && args.reply.trim() ? args.reply : null;
-  return { extracted, field_status, evidence, corrected_fields, reply };
+  return { extracted, field_status, evidence, corrected_fields, reply, prompt_version: PROMPT_VERSION };
 }

@@ -17,7 +17,9 @@ export type FieldStatus = (typeof FIELD_STATUSES)[number];
 export type ExtractedStatus = Exclude<FieldStatus, "conflicting">;
 
 export type FieldSource =
-  | { kind: "transcript"; message_id: string; quote?: string }
+  // prompt_version is chamber-extract's PROMPT_VERSION for a chat extraction. Voice extractions, whose
+  // prompt lives in the ElevenLabs agent, and entries saved before versioning have none.
+  | { kind: "transcript"; message_id: string; quote?: string; prompt_version?: string }
   // A value the prospect applied from an uploaded document (document-extract's candidates).
   | { kind: "document"; document_id: string; document_name?: string; location?: string }
   | { kind: "prospect_edit" };
@@ -135,10 +137,19 @@ const MAX_QUOTE_CHARS = 200;
 const clip = (s: string) =>
   s.length > MAX_QUOTE_CHARS ? `${s.slice(0, MAX_QUOTE_CHARS - 1).replace(/[\uD800-\uDBFF]$/, "")}…` : s;
 
+const MAX_PROMPT_VERSION_CHARS = 40;
+const promptVersionSchema = z.string().min(1).max(MAX_PROMPT_VERSION_CHARS);
+
 // ---------- Parsing stored provenance ----------
 
 const sourceSchema: z.ZodType<FieldSource, z.ZodTypeDef, unknown> = z.union([
-  z.object({ kind: z.literal("transcript"), message_id: z.string().min(1), quote: z.string().max(MAX_QUOTE_CHARS).optional() }),
+  z.object({
+    kind: z.literal("transcript"),
+    message_id: z.string().min(1),
+    quote: z.string().max(MAX_QUOTE_CHARS).optional(),
+    // Only a label for tracing, so a malformed one is dropped rather than losing the whole entry.
+    prompt_version: promptVersionSchema.optional().catch(undefined),
+  }),
   z.object({
     kind: z.literal("document"),
     document_id: z.string().min(1),
@@ -173,7 +184,7 @@ export function parseProvenance(raw: unknown): ProvenanceMap {
 
 // ---------- Merging extractions ----------
 
-const isEmpty = (v: unknown) => v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
+export const isEmpty = (v: unknown) => v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 // A list that only adds entries ("also Texas") extends the old one rather than contradicting it.
@@ -357,15 +368,30 @@ export function parseFieldList(raw: unknown): FieldKey[] {
 
 /**
  * Extraction options for a reply to a transcript message. `meta` carries the model's
- * optional field_status, evidence and corrected_fields; the message text is the
- * fallback quote for fields with no evidence of their own.
+ * optional field_status, evidence and corrected_fields, and chamber-extract's prompt_version;
+ * the message text is the fallback quote for fields with no evidence of their own.
  */
 export function transcriptExtraction(message: { id: string; text: string }, meta: unknown): ExtractionOptions {
   const m = (typeof meta === "object" && meta !== null ? meta : {}) as Record<string, unknown>;
+  const version = promptVersionSchema.safeParse(m.prompt_version);
   return {
-    source: { kind: "transcript", message_id: message.id, quote: clip(message.text.trim()) },
+    source: {
+      kind: "transcript",
+      message_id: message.id,
+      quote: clip(message.text.trim()),
+      ...(version.success ? { prompt_version: version.data } : {}),
+    },
     statuses: parseExtractedStatuses(m.field_status),
     evidence: parseEvidence(m.evidence),
     corrections: parseFieldList(m.corrected_fields),
   };
+}
+
+/**
+ * Extraction options for a voice <extract>. The agent's prompt lives in ElevenLabs, outside
+ * PROMPT_VERSION, so a prompt_version in what it wrote is never stored as chamber-extract's.
+ */
+export function voiceExtraction(message: { id: string; text: string }, data: unknown): ExtractionOptions {
+  const { prompt_version: _unversioned, ...meta } = (typeof data === "object" && data !== null ? data : {}) as Record<string, unknown>;
+  return transcriptExtraction(message, meta);
 }

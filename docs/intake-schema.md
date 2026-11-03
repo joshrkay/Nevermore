@@ -184,7 +184,7 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
 ```json
 {
   "status": "inferred",
-  "source": { "kind": "transcript", "message_id": "<chat message id>", "quote": "about 40 of us" },
+  "source": { "kind": "transcript", "message_id": "<chat message id>", "quote": "about 40 of us", "prompt_version": "2026-11-03.1" },
   "updated_at": "2026-10-21T09:00:00.000Z",
   "candidates": [{ "value": 40, "source": { "...": "..." } }]
 }
@@ -205,7 +205,7 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
 
 | `kind` | Fields | Produced by |
 | --- | --- | --- |
-| `transcript` | `message_id` (the `ChatMessage.id` in `transcript`), optional `quote` (≤ 200 chars) | Chat extraction (`chamber-extract`) and voice `<extract>` tags |
+| `transcript` | `message_id` (the `ChatMessage.id` in `transcript`), optional `quote` (≤ 200 chars), optional `prompt_version` (≤ 40 chars; see "Extraction contract version and eval" below) | Chat extraction (`chamber-extract`) and voice `<extract>` tags |
 | `document` | `document_id`, optional `document_name`, `location` (e.g. sheet/row or page) | A value the prospect applied from an uploaded document (see "Document candidates" below) |
 | `prospect_edit` | — | Confirm, Edit, Add, or "Use this" in the workspace |
 
@@ -222,7 +222,26 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
 
 ### Extraction contract (`chamber-extract`)
 
-The response is `{ extracted, field_status, evidence, corrected_fields, reply }`. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`.
+The response is `{ extracted, field_status, evidence, corrected_fields, reply, prompt_version }`. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`.
+
+### Extraction contract version and eval
+
+`PROMPT_VERSION` in `supabase/functions/chamber-extract/schema.ts` (a date and a sequence number, such as `2026-11-03.1`) versions the whole extraction contract: `SYSTEM_PROMPT`, `EXTRACT_TOOL` and the response shape. Every successful response carries it as `prompt_version`, even when nothing was extracted, and the browser stores it on the transcript source of each value a chat message produced. Voice extractions (the ElevenLabs agent has its own prompt; `voiceExtraction` drops any version its `<extract>` names) and entries saved before versioning have none. A malformed stored version is dropped and the entry kept.
+
+`chamber-extract/schema.test.ts` takes the sha256 of the canonical JSON of `SYSTEM_PROMPT`, `EXTRACT_TOOL` and the user turn (`buildUserPrompt` in `prompt.ts`, rendered for fixed inputs) and compares it with the hash recorded for `PROMPT_VERSION`. Editing any of them without a new version fails CI, and the failure gives the new hash to record. The response shape is not hashed: bump the version by hand when it changes.
+
+The extraction eval (`scripts/extraction-eval`) sends 10 synthetic transcripts through the path a chat message takes in production: the browser's redaction and context, the handler's prompt, the shared provider adapter, `shapeExtraction`, then `applyExtraction` as the Chamber merges a reply. It scores each asserted field's final value (strings ignoring case and surrounding space, lists as sets) and, where the fixture names one, its status (where it names none, a field left `conflicting` fails); fields that must stay empty; and digits (an SSN) that must never be stored. It calls a real model, so it runs on demand and never in CI:
+
+```sh
+LOVABLE_API_KEY=… npm run eval:extraction                            # the default provider
+AI_PROVIDER=anthropic ANTHROPIC_API_KEY=… npm run eval:extraction
+npm run eval:extraction -- --only contradiction                      # one fixture
+npm run eval:extraction -- --update-baseline                         # record baseline.json
+```
+
+`AI_MODEL` overrides the provider's default model, as it does for the function. The variables can also go in `.env.local`, which the runner (vite-node) reads. The run prints a fixture-by-field table and the overall accuracy, then compares it with `scripts/extraction-eval/baseline.json`: a cell that passed there and fails now is a regression, and a regression, a failed model call or a missing key exits 1. New cells, and baseline cells no longer asserted (a deleted or renamed fixture), are reported. With no baseline the run reports any failed model calls, says how to record one and exits 0.
+
+Before merging any change to the prompt, the tool schema or the response shape: bump `PROMPT_VERSION` and record its hash, run the eval, review the regressions, then record a new baseline with `--update-baseline` and commit it with the change. No baseline is committed yet: the first needs a live provider key.
 
 ### Document candidates (`document-extract`)
 

@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "setup:supabase": "node scripts/supabase-setup.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "eval:extraction": "vite-node scripts/extraction-eval/run.ts"
   },
   "dependencies": {
     "@elevenlabs/react": "^0.14.3",

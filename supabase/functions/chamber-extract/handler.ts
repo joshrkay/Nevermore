@@ -7,6 +7,7 @@ import { checkAiBudget } from "../_shared/ai/budget.ts";
 import { callModel, failureLogLine, failureResponse, unexpectedErrorLine } from "../_shared/ai/model.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
 import { emptyExtraction, shapeExtraction } from "./extraction.ts";
+import { buildUserPrompt, serializeContext } from "./prompt.ts";
 import { EXTRACT_TOOL, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
@@ -82,19 +83,14 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (message.length > MAX_MESSAGE_CHARS) {
       return json({ error: `message must be at most ${MAX_MESSAGE_CHARS} characters` }, 413);
     }
-    const contextJson = context ? JSON.stringify(context) : "";
+    const contextJson = serializeContext(context);
     if (contextJson.length > MAX_CONTEXT_CHARS) {
       return json({ error: "context too large" }, 413);
     }
 
-    // JSON.stringify quotes and escapes the message so it can't break out of its slot.
-    const userPrompt = contextJson
-      ? `Previous context (already captured data): ${contextJson}\n\nNew user message: ${JSON.stringify(message)}`
-      : `User message: ${JSON.stringify(message)}`;
-
     const result = await callModel(
       chosen.adapter,
-      { system: SYSTEM_PROMPT, user: userPrompt },
+      { system: SYSTEM_PROMPT, user: buildUserPrompt(message, contextJson) },
       { fetch: deps.fetch, sleep: deps.sleep, now: deps.now },
     );
     if (!result.ok) {

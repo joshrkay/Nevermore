@@ -13,7 +13,7 @@ import SaveStatus from "@/components/chamber/SaveStatus";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import { createChatMessage } from "@/data/chat";
 import { mergeChamberData } from "@/data/chamberValidation";
-import { applyExtraction, applyFieldAction, transcriptExtraction, type FieldAction } from "@/data/provenance";
+import { applyExtraction, applyFieldAction, transcriptExtraction, voiceExtraction, type FieldAction } from "@/data/provenance";
 
 const ChamberPage = () => {
   const isMobile = useIsMobile();
@@ -64,7 +64,7 @@ const ChamberPage = () => {
     // Voice extractions with no prospect message to point to keep the old, untracked merge.
     onExtract: (data, message) =>
       message
-        ? updateIntake((prev) => applyExtraction(prev, data, transcriptExtraction(message, data)))
+        ? updateIntake((prev) => applyExtraction(prev, data, voiceExtraction(message, data)))
         : setChamberData((prev) => mergeChamberData(prev, data)),
   });
 

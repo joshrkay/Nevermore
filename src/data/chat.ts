@@ -1,3 +1,4 @@
+import type { ChamberData } from "./chamberTypes";
 import { redactSensitive } from "./sensitive";
 
 export interface ChatMessage {
@@ -31,4 +32,13 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
       timestamp: typeof timestamp === "string" ? timestamp : "",
     }];
   });
+}
+
+/**
+ * The intake as Lenore's chat sends it to chamber-extract for context. The roster isn't extracted
+ * from chat and holds personal details, so it is left out. scripts/extraction-eval replays it too.
+ */
+export function chatContext(data: ChamberData): Omit<ChamberData, "census"> {
+  const { census: _census, ...context } = data;
+  return context;
 }

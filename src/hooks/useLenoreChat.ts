@@ -3,6 +3,7 @@ import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { mergeChamberData } from "@/data/chamberValidation";
 import type { ChamberData } from "@/data/chamberTypes";
+import { chatContext } from "@/data/chat";
 import { redactSensitive } from "@/data/sensitive";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 
@@ -47,9 +48,9 @@ export function useLenoreChat({ chamberData, setChamberData, addUserMessage, add
     setPending(true);
     onOrbStateChange("thinking");
     try {
-      // The roster isn't extracted from chat and holds personal details, so leave it out of the context.
-      const { census: _census, ...context } = dataRef.current;
-      const { data, error } = await supabase.functions.invoke("chamber-extract", { body: { message: text, context } });
+      const { data, error } = await supabase.functions.invoke("chamber-extract", {
+        body: { message: text, context: chatContext(dataRef.current) },
+      });
       if (error) throw error;
 
       if (data?.extracted) {

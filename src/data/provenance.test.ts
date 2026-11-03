@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PROMPT_VERSION } from "../../supabase/functions/chamber-extract/schema.ts";
 import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import {
   applyExtraction,
@@ -8,6 +9,7 @@ import {
   parseExtractedStatuses,
   parseProvenance,
   transcriptExtraction,
+  voiceExtraction,
   type FieldSource,
   type IntakeState,
 } from "./provenance";
@@ -178,6 +180,21 @@ describe("parsing", () => {
     expect(parseEvidence({ key_challenges: "my SSN 123-45-6789" })).toEqual({ key_challenges: "my SSN [redacted]" });
   });
 
+  it("keeps a transcript source's prompt version, and still reads entries saved without one", () => {
+    const versioned = { status: "confirmed", source: { kind: "transcript", message_id: "m1", quote: "40 of us", prompt_version: "2026-11-03.1" }, updated_at: "x" };
+    const unversioned = { status: "inferred", source: { kind: "transcript", message_id: "m2" }, updated_at: "x" };
+    expect(parseProvenance({ employee_count: versioned, industry: unversioned })).toEqual({ employee_count: versioned, industry: unversioned });
+  });
+
+  it("drops a malformed prompt version but keeps the rest of the entry", () => {
+    for (const prompt_version of [42, "", "x".repeat(41), null]) {
+      const parsed = parseProvenance({
+        employee_count: { status: "confirmed", source: { kind: "transcript", message_id: "m1", prompt_version }, updated_at: "x" },
+      });
+      expect(parsed.employee_count?.source).toEqual({ kind: "transcript", message_id: "m1" });
+    }
+  });
+
   it("reads the census entry saved under the roster's old name", () => {
     const entry = { status: "confirmed", source: { kind: "document", document_id: "d1" }, updated_at: "x" };
     expect(parseProvenance({ employees: entry })).toEqual({ census: entry });
@@ -187,6 +204,29 @@ describe("parsing", () => {
 });
 
 describe("transcriptExtraction", () => {
+  it("stamps chamber-extract's prompt version on the source, so each value records the prompt behind it", () => {
+    const opts = transcriptExtraction({ id: "m1", text: "We have 40 people" }, { prompt_version: PROMPT_VERSION, evidence: { employee_count: "40 people" } });
+    expect(opts.source).toEqual({ kind: "transcript", message_id: "m1", quote: "We have 40 people", prompt_version: PROMPT_VERSION });
+    const next = applyExtraction(EMPTY, { employee_count: 40 }, { ...opts, now: NOW });
+    expect(next.provenance.employee_count?.source).toEqual({ kind: "transcript", message_id: "m1", quote: "40 people", prompt_version: PROMPT_VERSION });
+  });
+
+  it("leaves the source unversioned when the reply carries no valid version, as a voice extraction doesn't", () => {
+    for (const meta of [{ employee_count: 40 }, { prompt_version: 7 }, { prompt_version: "" }, { prompt_version: "x".repeat(41) }, null]) {
+      expect(transcriptExtraction({ id: "m1", text: "hi" }, meta).source).not.toHaveProperty("prompt_version");
+    }
+  });
+
+  it("never stamps a voice extraction, even when the agent's <extract> names a prompt version", () => {
+    const data = { employee_count: 40, prompt_version: PROMPT_VERSION, evidence: { employee_count: "40 people" } };
+    const opts = voiceExtraction({ id: "m1", text: "We have 40 people" }, data);
+    expect(opts.source).toEqual({ kind: "transcript", message_id: "m1", quote: "We have 40 people" });
+    expect(opts.evidence).toEqual({ employee_count: "40 people" });
+    const next = applyExtraction(EMPTY, { employee_count: 40 }, { ...opts, now: NOW });
+    expect(next.provenance.employee_count?.source).not.toHaveProperty("prompt_version");
+    expect(voiceExtraction({ id: "m1", text: "hi" }, null).source).toEqual({ kind: "transcript", message_id: "m1", quote: "hi" });
+  });
+
   it("never leaves half an emoji in the quote, which Postgres jsonb refuses", () => {
     const text = `${"a".repeat(198)}😀${"b".repeat(20)}`;
     const { source } = transcriptExtraction({ id: "m1", text }, {});
