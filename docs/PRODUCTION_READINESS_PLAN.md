@@ -144,7 +144,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
 | A Durable session | 7 | 0 | 4 | 0 | 0 | 11 |
 | B AI extraction | 2 | 4 | 1 | 2 | 0 | 9 |
-| C Review, certify, submit | 1 | 7 | 0 | 2 | 0 | 10 |
+| C Review, certify, submit | 2 | 7 | 0 | 1 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
 | E Documents | 5 | 1 | 3 | 2 | 0 | 11 |
 | F Advisor | 4 | 6 | 1 | 0 | 0 | 11 |
@@ -152,9 +152,9 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **25** | **43** | **11** | **21** | **6** | **106** |
+| **Total** | **26** | **43** | **11** | **20** | **6** | **106** |
 
-22 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+23 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -177,7 +177,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | ID | Decision | Status and evidence | Owner | Blocks |
 |---|---|---|---|---|
 | D1 | How does a guest return to their intake? | **Decided in code, with a different design** (see D14). Supabase anonymous auth persisted in browser storage; the session id in `?session=`; owner RLS gates resume. Email upgrade is a 6-digit code (`updateUser`, then `verifyOtp`), refused if the email already has an account ('we can't yet move your answers'). A guest who verified an email can get back to the intake from another browser, or after this one's data was cleared, by signing in with a 6-digit code emailed to that address (A-1.3); the Chamber then opens the linked intake or their latest one. **Gap:** a guest who never verified an email has no way back from another browser, and nothing sets a password. | PM | none |
-| D2 | Minimum data required before certification | **Partly decided, not enforced.** A four-item minimum is reported (company legal name, states of operation, pay frequency, a non-empty census) in the Manuscript open items and the advisor queue, but `certificationBlockers` checks none of it. It differs from the recommended default: there is no EIN field, the contact comes from `profiles.contact_name`, total employee count is not required, and pay frequency is. There is no 'Not applicable' status. | PM + Advisory lead | C-1.3, C-2.1, B-1.3 |
+| D2 | Minimum data required before certification | **Decided for certification (2026-11-03, US-1.2).** Company legal name, states of operation (a code in `states`, or a work state on the census) and pay frequency are required: the Reckoning won't generate The Manuscript without them, and the database refuses a certification from the browser (`EA003`, `public.intake_missing_required`). The census is recommended, not required, because today it can only come from an uploaded file and no document is required. It is listed as an open item and never blocks; the advisor queue still counts it under `missing_required`. One list in `src/data/readiness.ts`, compared with the database by `schemaSync.test.ts`. Still differs from the v1.0 default: no EIN field, no total-employee-count requirement, no 'Not applicable' status. | PM + Advisory lead | B-1.3 |
 | D3 | Certification and consent wording | **Open.** The placeholder `2026-10-draft-1` is marked DRAFT in the Reckoning. A second, unused wording (`2026-10-v1`) exists (C-2.4). No intake-consent text exists (H-2.2). | LEGAL | C-2.4, H-2.2 |
 | D4 | Retention windows | **Partly decided in code, to confirm.** An uncertified draft expires 30 days after its last change (A-1.5, `public.intake_draft_retention()`); an expired draft keeps its data until H-1.2 purges it. A browser's copy of unsaved answers is kept at most 7 days (A-1.4). Nothing else is windowed; AI rate-limit logs are pruned after a day. | LEGAL + PM | H-1.x, E-4.2 |
 | D5 | Advisor roles and permissions | **Decided and implemented**: `advisor` and `admin` in `user_roles`. In the repo `admin` has no power beyond `advisor` (tests assert it cannot grant roles or delete intakes). | PM | none |
@@ -371,18 +371,18 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### C-1.1 Read-only review by Manuscript section
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** A-2.3 · **Milestone:** M1
-- **Built:** The Review tab (tab 7 of the workspace) shows the live session only. There is no `/review` route: owner RLS replaces the token.
-- **Remaining:** No per-section status (Complete, Needs confirmation, Incomplete, Not applicable) and no D2 rules. Review shows eligibility, six company fields, census and documents; benefits, payroll, dependents, workers' comp and open items are missing. Only documents are tested.
+- **Built:** The Review tab (tab 7 of the workspace) shows the live session only. There is no `/review` route: owner RLS replaces the token. Since US-1.2 (2026-11-03) it shows every answer the Manuscript draws on in five sections (Company, Workforce, Locations, Payroll, Benefits) plus the census table, its dependents and the census state mix, and the open items: required answers still needed (with a link to each), the recommended census, fields still inferred, incomplete or conflicting, and the eligibility checks. Tested in `ReviewTab.test.tsx` and `e2e/review-readiness.spec.ts`.
+- **Remaining:** No per-section status chip (Complete, Needs confirmation, Incomplete, Not applicable). No workers' comp section, because there are no workers' comp fields yet.
 
 #### C-1.2 Inline editing that writes to the canonical record
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** C-1.1, A-2.2 · **Milestone:** M1
 - **Built:** Company, Payroll and Benefits edits go through `ProvenanceField` and `applyFieldAction` (source `prospect_edit`). Invalid input is refused. Autosave writes through supabase-js.
-- **Remaining:** The edit is local and optimistic: the prospect does not see it after server confirmation, and the save status (A-1.4) reports the server's answer, not the field. Census and dependents are read-only. The Review tab edits only flagged items. No edit, reload, confirm test.
+- **Remaining:** The edit is local and optimistic: the prospect does not see it after server confirmation, and the save status (A-1.4) reports the server's answer, not the field. Census and dependents are read-only (a corrected file replaces them, through the conflict dialog). Since US-1.2 every scalar answer is editable in the Review tab too, and `e2e/review-readiness.spec.ts` adds answers there and checks the database and the other tabs.
 
 #### C-1.3 Readiness gate with jump links
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** C-1.1, B-2.2, D2 · **Milestone:** M1
-- **Built:** `certificationBlockers` checks only email verification, file id, acknowledgements, signer name, role and signature. The four-item minimum (company legal name, states, pay frequency, a non-empty census) exists only as reporting, in the advisor `missing_required` and the Manuscript open items.
-- **Remaining:** Needs D2 and D16 first.
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** C-1.1, B-2.2, D2 · **Milestone:** M1
+- **Built (2026-11-03, US-1.2):** The required answers (D2) are marked "Required" wherever they appear. The Review step lists the missing ones, each with a hint and a link that brings its field into view with the Add button focused. The Reckoning lists them with "Go to Review", and `certificationBlockers` puts them first, so Generate stays disabled until they're given. The database refuses a certification from the browser without them (migration `20261103110000_certification_readiness.sql`, `EA003`, the missing keys in DETAIL), and the client turns that refusal into the same advice. Tested in unit tests, `supabase/tests/certification_readiness.sql` and `e2e/review-readiness.spec.ts`.
+- **Notes:** There is no 'Not applicable' status: optional answers never block, so there is nothing to mark. The AC's "Continue" is the Reckoning's Generate button; moving on to PEO Match stays open.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** List missing required fields, each linked to the section that needs it. "Continue to certification" is enabled only when every required field is confirmed or validly marked not applicable. The reason for "not applicable" is stored.
   - **AC:**
@@ -1052,7 +1052,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | B-3.3 | Operational logs with redaction | S | High | M1 | PARTIAL |
 | C-1.1 | Read-only review by Manuscript section | M | Highest | M1 | PARTIAL |
 | C-1.2 | Inline editing that writes to the canonical record | M | Highest | M1 | PARTIAL |
-| C-1.3 | Readiness gate with jump links | M | Highest | M1 | NOT STARTED |
+| C-1.3 | Readiness gate with jump links | M | Highest | M1 | DONE |
 | C-2.1 | Certification record and endpoint | M | Highest | M1 | PARTIAL |
 | C-2.2 | Certification screen | S | Highest | M1 | DONE |
 | C-2.3 | Re-certification after material changes | M | Highest | M1 | PARTIAL |

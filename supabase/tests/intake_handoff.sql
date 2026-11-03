@@ -93,7 +93,7 @@ DO $$
 DECLARE
   uid uuid := pg_temp.new_user();
   sid uuid;
-  data jsonb := '{"company_name":"Acme"}';
+  data jsonb := '{"company_name":"Acme","states":["NY"],"pay_frequency":"bi-weekly"}';
   v integer;
   row_ record;
   longest text := repeat('P', 80);

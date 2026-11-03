@@ -11,6 +11,7 @@ import {
   type FieldProvenance,
   type FieldSource,
 } from "@/data/provenance";
+import { isRequiredField } from "@/data/readiness";
 
 const BADGES: Record<FieldProvenance["status"], { text: string; color: string }> = {
   confirmed: { text: "Confirmed", color: "bg-success/15 text-success" },
@@ -59,9 +60,11 @@ interface ProvenanceFieldProps {
   editable?: boolean;
   /** Custom rendering for the captured value. */
   children?: ReactNode;
+  /** Marks an answer needed before certifying. Defaults to the required answers (src/data/readiness.ts). */
+  required?: boolean;
 }
 
-const ProvenanceField = ({ label, field, display, raw, provenance, onAction, editable = true, children }: ProvenanceFieldProps) => {
+const ProvenanceField = ({ label, field, display, raw, provenance, onAction, editable = true, children, required = isRequiredField(field) }: ProvenanceFieldProps) => {
   const kind = field === "census" ? null : FIELD_KINDS[field];
   const canEdit = Boolean(onAction && editable && kind);
   const [editing, setEditing] = useState(false);
@@ -90,7 +93,12 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-      <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+        {label}
+        {required && (
+          <span className="ml-1.5 normal-case tracking-normal font-medium text-primary">Required</span>
+        )}
+      </p>
 
       {editing ? (
         <form
@@ -136,6 +144,8 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
           {children ?? <p className="text-sm font-medium">{display}</p>}
           {badge && <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${badge.color}`}>{badge.text}</span>}
         </div>
+      ) : required ? (
+        <p className="text-xs text-warning">Not provided yet. Needed before you can certify.</p>
       ) : (
         <p className="text-xs text-muted-foreground/50 italic">Lenore will fill this in...</p>
       )}

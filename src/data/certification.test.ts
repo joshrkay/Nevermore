@@ -21,8 +21,17 @@ describe("certificationBlockers", () => {
     ["a blank name", { signer: { name: "  ", title: "CEO" } }, "Enter your full name"],
     ["a blank role", { signer: { name: "Jo", title: " " } }, "Enter your role"],
     ["no signature", { signed: false }, "Sign"],
+    ["a missing required answer", { missingAnswers: ["Pay frequency"] }, "Add pay frequency"],
   ])("blocks on %s", (_label, override, expected) => {
     expect(certificationBlockers({ ...ready, ...override })).toEqual([expected]);
+  });
+
+  it("puts what the intake still needs before what the signer has to do", () => {
+    expect(certificationBlockers({ ...ready, signed: false, missingAnswers: ["Company legal name", "States of operation"] })).toEqual([
+      "Add company legal name",
+      "Add states of operation",
+      "Sign",
+    ]);
   });
 });
 

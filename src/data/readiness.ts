@@ -1,0 +1,81 @@
+// What an intake needs before it can be certified and made into a Manuscript (US-1.2, decision D2).
+//
+// Three answers are required: without them the Reckoning won't generate The Manuscript, and the database
+// refuses a certification sent from the browser (public.intake_missing_required, migration
+// 20261103110000_certification_readiness.sql; src/data/schemaSync.test.ts keeps the two lists equal).
+// The employee census is recommended, not required: today it can only come from an uploaded file, and no
+// document is required, so a missing census is listed as an open item but never blocks.
+import type { ChamberData } from "./chamberTypes";
+import type { FieldKey } from "./provenance";
+
+/** Where an item is answered in the Review step. */
+export type ReviewSection = "company" | "workforce" | "locations" | "payroll" | "benefits";
+
+export interface ReadinessItem {
+  /** The key the database reports for it. */
+  key: string;
+  label: string;
+  /** The answer that settles it, when it is a single field. */
+  field?: FieldKey;
+  section: ReviewSection;
+  /** What to tell the prospect to do about it. */
+  hint: string;
+  missing: (data: ChamberData) => boolean;
+}
+
+const blank = (value: string | null | undefined) => !value || value.trim() === "";
+
+export const REQUIRED_ITEMS: readonly ReadinessItem[] = [
+  {
+    key: "company_name",
+    label: "Company legal name",
+    field: "company_name",
+    section: "company",
+    hint: "The name the company is registered under.",
+    missing: (d) => blank(d.company_name),
+  },
+  {
+    key: "states",
+    label: "States of operation",
+    field: "states",
+    section: "locations",
+    hint: "Every state where employees work, as two-letter codes such as NY, CA.",
+    // A work state on the census counts too, as it does in the Manuscript's state breakdown.
+    missing: (d) => !d.states.some((s) => !blank(s)) && !d.census.some((e) => !blank(e.work_state)),
+  },
+  {
+    key: "pay_frequency",
+    label: "Pay frequency",
+    field: "pay_frequency",
+    section: "payroll",
+    hint: "How often employees are paid, for example bi-weekly.",
+    missing: (d) => blank(d.pay_frequency),
+  },
+];
+
+export const RECOMMENDED_ITEMS: readonly ReadinessItem[] = [
+  {
+    key: "census",
+    label: "Employee census",
+    section: "workforce",
+    hint: "Upload a census on the Upload tab. Underwriters will ask for one, but you can certify without it.",
+    missing: (d) => d.census.length === 0,
+  },
+];
+
+/** The required answers this intake doesn't have yet, in the order they are shown. */
+export const missingRequired = (data: ChamberData): ReadinessItem[] => REQUIRED_ITEMS.filter((item) => item.missing(data));
+
+/** The recommended answers this intake doesn't have yet. They never block certification. */
+export const missingRecommendedItems = (data: ChamberData): ReadinessItem[] => RECOMMENDED_ITEMS.filter((item) => item.missing(data));
+
+const REQUIRED_FIELDS: ReadonlySet<FieldKey> = new Set(REQUIRED_ITEMS.flatMap((item) => (item.field ? [item.field] : [])));
+
+/** Whether a field has to be answered before the intake can be certified. */
+export const isRequiredField = (field: FieldKey): boolean => REQUIRED_FIELDS.has(field);
+
+/** The labels for the keys the database names when it refuses an unready certification (SQLSTATE EA003). */
+export function describeMissingKeys(keys: string | null | undefined): string[] {
+  const named = (keys ?? "").split(",").map((k) => k.trim()).filter(Boolean);
+  return named.map((key) => REQUIRED_ITEMS.find((item) => item.key === key)?.label ?? key);
+}

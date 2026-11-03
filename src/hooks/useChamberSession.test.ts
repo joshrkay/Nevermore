@@ -1427,6 +1427,28 @@ describe("useChamberSession", () => {
         });
       });
 
+      it("names the missing answers when the database refuses an unready certification, and keeps saving", async () => {
+        const { result } = await open();
+        let ok: SubmitResult | undefined;
+        const pending = result.current.submit(submission).then((r) => { ok = r; });
+        await drain();
+        expect(updates[0].payload).toMatchObject({ status: "submitted" });
+        updates[0].resolve({ error: { message: "This intake can't be certified yet: it needs company_name, pay_frequency", code: "EA003", details: "company_name,pay_frequency" } });
+        await act(async () => { await pending; });
+        expect(ok).toEqual({ message: "Add company legal name, pay frequency on the Review tab, then certify." });
+        expect(result.current.certification.status).toBe("none");
+        expect(dispatchOutbox).not.toHaveBeenCalled();
+
+        // A definite refusal: nothing is left in doubt, and the next edit saves normally.
+        edit(result, "Acme Inc");
+        await autosave();
+        expect(updates).toHaveLength(2);
+        expect(updates[1].payload).not.toHaveProperty("status");
+        updates[1].resolve({ error: null });
+        await drain();
+        expect(result.current.saveStatus).toBe("saved");
+      });
+
       it("says which answer was refused when the submission write itself is refused", async () => {
         // Certifying re-checks the answers even when nothing was edited, so an older row can fail here.
         const { result } = await open();
