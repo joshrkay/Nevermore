@@ -35,17 +35,19 @@ account. The script sets, and `--check` verifies:
   `https://nevermore-gamma.vercel.app`. Supabase falls back to it when the address the app asked for
   isn't allowed.
 - **Redirect URLs**: `https://nevermore-gamma.vercel.app/**`. The script keeps entries already there.
-  To finish sign-ups on Vercel preview deployments, add `https://nevermore-*-cartboost.vercel.app/**`
-  by hand (the team slug is in the preview URL); for local development add `http://localhost:8080/**`.
+  Every entry is a place Supabase will send sign-in tokens, so list only hosts you control. Don't add
+  a wildcard such as `https://nevermore-*.vercel.app/**`: anyone can name a Vercel project to match
+  it. A sign-up on a preview deployment needs no entry: its 6-digit code works there, and its link
+  confirms on the production site instead.
 - **Confirm signup** template (Authentication → Emails): a 6-digit `{{ .Token }}`, which the sign-up
   page accepts, and a link to `{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email`, which
   confirms only when the person clicks **Confirm my email**. `{{ .RedirectTo }}` is the callback
-  address the app asked for, so the link returns to the deployment the person signed up on (a
-  preview or localhost too, once allowed above) and keeps where they were headed. The token rides in
-  the fragment, which never reaches a server. Supabase's default links straight to its verify endpoint and
-  works once, so a mail scanner (Microsoft Defender Safe Links, Mimecast, Proofpoint) that opens it
-  first uses it up. The script replaces a template that still uses `{{ .ConfirmationURL }}`; the text
-  it installs is `SIGNUP_CONFIRM_TEMPLATE` in `scripts/supabase-setup-lib.mjs`, to paste by hand.
+  address the app asked for when Supabase allows it (otherwise the Site URL), so the link keeps where
+  the person was headed. The token rides in the fragment, which never reaches a server. Supabase's
+  default links straight to its verify endpoint and works once, so a mail scanner (Microsoft
+  Defender Safe Links, Mimecast, Proofpoint) that opens it first uses it up. The script replaces a
+  template that still uses `{{ .ConfirmationURL }}`; the text it installs is
+  `SIGNUP_CONFIRM_TEMPLATE` in `scripts/supabase-setup-lib.mjs`, to paste by hand.
 - **Change email address** template: the 6-digit `{{ .Token }}` a guest types to certify.
 
 Deploy the front end with `/auth/callback` before installing the sign-up template: an older

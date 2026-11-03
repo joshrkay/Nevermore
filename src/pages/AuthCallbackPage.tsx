@@ -164,16 +164,8 @@ const AuthCallbackPage = () => {
     );
   }
 
-  // Already confirmed in this browser, e.g. the link was opened a second time.
-  if (signedIn && user.email_confirmed_at) {
-    return (
-      <Card title="Your email is confirmed">
-        <p className="text-sm text-muted-foreground text-center">You're signed in as {user.email}.</p>
-        {continueLink}
-      </Card>
-    );
-  }
-
+  // A refused link reads as refused even when this browser is signed in: the error doesn't say whose
+  // link it was, and the account signed in here may be another one (an advisor testing a sign-up).
   if (redirect?.kind === "error" || tokenState === "failed" || redirect?.kind === "session") {
     const message =
       redirect?.kind === "error"
@@ -182,10 +174,27 @@ const AuthCallbackPage = () => {
     return (
       <Card title="This link didn't work">
         <p role="alert" className="text-sm text-muted-foreground text-center">{message}</p>
-        {signInLink}
+        {signedIn ? (
+          <>
+            <p className="text-sm text-center">This browser is signed in as {user.email}.</p>
+            {continueLink}
+          </>
+        ) : (
+          signInLink
+        )}
         <div className="border-t border-border pt-5">
           <ResendForm next={next} />
         </div>
+      </Card>
+    );
+  }
+
+  // Opened with no link, already signed in.
+  if (signedIn && user.email_confirmed_at) {
+    return (
+      <Card title="Your email is confirmed">
+        <p className="text-sm text-muted-foreground text-center">You're signed in as {user.email}.</p>
+        {continueLink}
       </Card>
     );
   }

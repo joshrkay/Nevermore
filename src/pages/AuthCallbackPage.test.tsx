@@ -71,12 +71,20 @@ describe("AuthCallbackPage", () => {
       warn.mockRestore();
     });
 
-    it("tells a person already confirmed in this browser that they're fine (a link opened twice)", () => {
-      auth.user = confirmedUser;
+    it("still says the link failed when this browser is signed in, since it may be someone else's link", () => {
+      auth.user = { ...confirmedUser, email: "advisor@example.com" };
       open(expired);
-      expect(screen.getByRole("heading", { name: "Your email is confirmed" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "This link didn't work" })).toBeInTheDocument();
+      expect(screen.getByText("This browser is signed in as advisor@example.com.")).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Continue" }));
       expect(screen.getByText("The Chamber")).toBeInTheDocument();
+    });
+
+    it("tells a signed-in person who opens the page with no link that they're confirmed", () => {
+      auth.user = confirmedUser;
+      open("/auth/callback");
+      expect(screen.getByRole("heading", { name: "Your email is confirmed" })).toBeInTheDocument();
     });
 
     it("does not treat a guest session as a confirmed account", () => {
