@@ -33,6 +33,7 @@
 \i supabase/migrations/20261103090000_intake_lifecycle.sql
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
+\i supabase/migrations/20261103110000_document_storage_path.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

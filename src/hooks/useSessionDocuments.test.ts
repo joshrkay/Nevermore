@@ -7,7 +7,10 @@ const calls: { op: string; args: unknown[] }[] = [];
 let listRows: Record<string, unknown>[] = [];
 let insertResult: Result = { data: null, error: null };
 let deleteResult: Result = { error: null };
-let storageRemoveResult: Result = { error: null };
+// Storage lists what it deleted; an empty list means it deleted nothing.
+let storageRemoveResult: Result = { data: [{ name: "x" }], error: null };
+// What storage.exists says: true or false, or an error it throws (a network failure).
+let existsResult: boolean | Error = false;
 let uploadGate: Promise<void> | null = null;
 
 const row = (over: Record<string, unknown> = {}) => ({
@@ -42,6 +45,11 @@ vi.mock("@/integrations/supabase/client", () => {
         from: () => ({
           upload: async (path: string) => { log("storage.upload", path); await uploadGate; return { error: null }; },
           remove: async (paths: string[]) => { log("storage.remove", paths); return storageRemoveResult; },
+          exists: async (path: string) => {
+            log("storage.exists", path);
+            if (existsResult instanceof Error) throw existsResult;
+            return existsResult ? { data: true, error: null } : { data: false, error: { message: "Object not found", status: 404 } };
+          },
         }),
       },
       functions: { invoke: async (name: string, opts: unknown) => { log("invoke", name, opts); return { data: {}, error: null }; } },
@@ -57,7 +65,8 @@ describe("useSessionDocuments", () => {
     listRows = [];
     insertResult = { data: null, error: null };
     deleteResult = { error: null };
-    storageRemoveResult = { error: null };
+    storageRemoveResult = { data: [{ name: "x" }], error: null };
+    existsResult = false;
     uploadGate = null;
   });
 
@@ -151,28 +160,83 @@ describe("useSessionDocuments", () => {
     expect(outcome).toEqual({ saved: 1, failed: [], rejected: [{ name: "two.csv", reason: "limit" }] });
   });
 
-  it("deletes both the record and the stored file", async () => {
-    listRows = [row()];
-    const { result } = renderHook(() => useSessionDocuments("s1"));
-    await waitFor(() => expect(result.current.docs).toHaveLength(1));
+  const removeFirst = async () => {
+    const hook = renderHook(() => useSessionDocuments("s1"));
+    await waitFor(() => expect(hook.result.current.docs).toHaveLength(1));
     let ok: boolean | undefined;
-    await act(async () => { ok = await result.current.remove(result.current.docs[0]); });
+    await act(async () => { ok = await hook.result.current.remove(hook.result.current.docs[0]); });
+    return { ...hook, ok };
+  };
+  const ops = () => calls.map((c) => c.op).filter((op) => op === "storage.remove" || op === "storage.exists" || op === "delete" || op === "insert");
+
+  it("deletes the stored file, then the record", async () => {
+    listRows = [row()];
+    const { result, ok } = await removeFirst();
     expect(ok).toBe(true);
-    expect(calls).toContainEqual({ op: "delete", args: ["d1"] });
     expect(calls).toContainEqual({ op: "storage.remove", args: [["u1/s1/x_census.csv"]] });
+    expect(calls).toContainEqual({ op: "delete", args: ["d1"] });
+    expect(ops()).toEqual(["storage.remove", "delete"]);
     expect(result.current.docs).toEqual([]);
   });
 
-  it("puts the record back if the stored file can't be removed", async () => {
+  it("keeps the record if the stored file can't be deleted", async () => {
     listRows = [row()];
-    storageRemoveResult = { error: { message: "nope" } };
-    const { result } = renderHook(() => useSessionDocuments("s1"));
-    await waitFor(() => expect(result.current.docs).toHaveLength(1));
-    let ok: boolean | undefined;
-    await act(async () => { ok = await result.current.remove(result.current.docs[0]); });
+    storageRemoveResult = { data: null, error: { message: "nope" } };
+    const { result, ok } = await removeFirst();
     expect(ok).toBe(false);
-    expect(calls.find((c) => c.op === "insert")!.args[0]).toMatchObject({ id: "d1", session_id: "s1", storage_path: "u1/s1/x_census.csv" });
+    expect(ops()).toEqual(["storage.remove"]);
     expect(result.current.docs).toHaveLength(1);
+  });
+
+  it("keeps the record when storage deleted nothing and the file is still there", async () => {
+    // Storage answers success with an empty list when its policies refuse a delete.
+    listRows = [row()];
+    storageRemoveResult = { data: [], error: null };
+    existsResult = true;
+    const { result, ok } = await removeFirst();
+    expect(ok).toBe(false);
+    expect(calls).toContainEqual({ op: "storage.exists", args: ["u1/s1/x_census.csv"] });
+    expect(ops()).toEqual(["storage.remove", "storage.exists"]);
+    expect(result.current.docs).toHaveLength(1);
+  });
+
+  it("keeps the record when it can't tell whether the file is gone", async () => {
+    listRows = [row()];
+    storageRemoveResult = { data: [], error: null };
+    existsResult = new Error("network down");
+    const { result, ok } = await removeFirst();
+    expect(ok).toBe(false);
+    expect(ops()).toEqual(["storage.remove", "storage.exists"]);
+    expect(result.current.docs).toHaveLength(1);
+  });
+
+  it("deletes the record of a file that is already gone", async () => {
+    listRows = [row()];
+    storageRemoveResult = { data: [], error: null };
+    existsResult = false;
+    const { result, ok } = await removeFirst();
+    expect(ok).toBe(true);
+    expect(ops()).toEqual(["storage.remove", "storage.exists", "delete"]);
+    expect(result.current.docs).toEqual([]);
+  });
+
+  it("keeps the record listed if it can't be deleted after its file, and a second try finishes", async () => {
+    listRows = [row()];
+    deleteResult = { error: { message: "network down" } };
+    const { result, ok } = await removeFirst();
+    expect(ok).toBe(false);
+    expect(result.current.docs).toHaveLength(1);
+    // Nothing is put back: the record was never deleted.
+    expect(ops()).toEqual(["storage.remove", "delete"]);
+
+    // The file is gone now, so storage deletes nothing on the second try.
+    deleteResult = { error: null };
+    storageRemoveResult = { data: [], error: null };
+    existsResult = false;
+    let again: boolean | undefined;
+    await act(async () => { again = await result.current.remove(result.current.docs[0]); });
+    expect(again).toBe(true);
+    expect(result.current.docs).toEqual([]);
   });
 
   it("starts empty for a new intake", async () => {
