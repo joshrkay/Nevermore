@@ -164,6 +164,13 @@ describe("authConfigPatch", () => {
     expect(authConfigPatch({ ...patch }, { ...goodEnv, RESEND_API_KEY: "" }).patch).toEqual({});
   });
 
+  it("replaces an email-change template that sends only the token hash, not the 6-digit code a guest types", () => {
+    const hashOnly = { mailer_templates_email_change_content: '<a href="{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email_change">Confirm</a>' };
+    const { patch } = authConfigPatch(hashOnly, goodEnv);
+    expect(patch.mailer_templates_email_change_content).toContain("{{ .Token }}");
+    expect(authConfigPatch({ mailer_templates_email_change_content: "Code: {{.Token}}" }, goodEnv).patch).not.toHaveProperty("mailer_templates_email_change_content");
+  });
+
   it("replaces a magic-link template that sends only the token hash, not the 6-digit code", () => {
     const linkOnly = { mailer_templates_magic_link_content: '<a href="{{ .SiteURL }}/auth/callback#token_hash={{ .TokenHash }}">Sign in</a>' };
     const { patch } = authConfigPatch(linkOnly, goodEnv);
@@ -292,6 +299,10 @@ describe("interpretChecks", () => {
     expect(setupComplete(interpretChecks(noCode, { localMigrations: 16 }))).toBe(false);
     const hashOnly = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_magic_link_content: "{{ .RedirectTo }}#token_hash={{ .TokenHash }}" } };
     expect(setupComplete(interpretChecks(hashOnly, { localMigrations: 16 }))).toBe(false);
+    const changeHashOnly = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_email_change_content: "{{ .RedirectTo }}#token_hash={{ .TokenHash }}" } };
+    const changeChecks = interpretChecks(changeHashOnly, { localMigrations: 16 });
+    expect(setupComplete(changeChecks)).toBe(false);
+    expect(changeChecks.find((c) => c.name === "Email code message")?.ok).toBe(false);
     const linkOnly = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_magic_link_content: "{{ .ConfirmationURL }}" } };
     const checks = interpretChecks(linkOnly, { localMigrations: 16 });
     expect(setupComplete(checks)).toBe(false);

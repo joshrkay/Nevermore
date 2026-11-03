@@ -141,7 +141,7 @@ export function sendsOtpCode(content) {
 /** True when a sign-up confirmation template carries both the code and a link that verifies only on a click. */
 export function signupTemplateOk(content) {
   const text = String(content ?? "");
-  return /\{\{\s*\.Token\s*\}\}/.test(text) && /\{\{\s*\.TokenHash\s*\}\}/.test(text) && !text.includes(".ConfirmationURL");
+  return sendsOtpCode(text) && /\{\{\s*\.TokenHash\s*\}\}/.test(text) && !text.includes(".ConfirmationURL");
 }
 
 /**
@@ -182,7 +182,7 @@ export function authConfigPatch(current, env) {
   if (!allowList.includes(redirect)) patch.uri_allow_list = [...allowList, redirect].join(",");
 
   if (c.mailer_otp_length !== 6) patch.mailer_otp_length = 6;
-  if (!String(c.mailer_templates_email_change_content ?? "").includes(".Token")) {
+  if (!sendsOtpCode(c.mailer_templates_email_change_content)) {
     patch.mailer_subjects_email_change = EMAIL_CODE_SUBJECT;
     patch.mailer_templates_email_change_content = EMAIL_CODE_TEMPLATE;
   }
@@ -345,7 +345,7 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
   add("Email confirmation required", auth ? auth.mailer_autoconfirm === false : false, auth ? `mailer_autoconfirm=${auth.mailer_autoconfirm}` : "settings unreadable");
 
   const ac = seen.authConfig;
-  const codeOk = !!ac && ac.mailer_otp_length === 6 && String(ac.mailer_templates_email_change_content ?? "").includes(".Token");
+  const codeOk = !!ac && ac.mailer_otp_length === 6 && sendsOtpCode(ac.mailer_templates_email_change_content);
   const signupOk = !!ac && signupTemplateOk(ac.mailer_templates_confirmation_content);
   add("Sign-up email survives mail scanners", signupOk, ac ? (signupOk ? "6-digit code and a link that confirms on a click" : "the Confirm signup template must carry {{ .Token }} and an app link with {{ .TokenHash }}, not {{ .ConfirmationURL }}") : "auth config unreadable");
   add("Email code message", codeOk, ac ? (codeOk ? "6-digit code in the email-change template" : "the email-change template must send a 6-digit {{ .Token }}") : "auth config unreadable");
