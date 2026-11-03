@@ -210,11 +210,12 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
   "status": "inferred",
   "source": { "kind": "transcript", "message_id": "<chat message id>", "quote": "about 40 of us", "prompt_version": "2026-11-03.1" },
   "updated_at": "2026-10-21T09:00:00.000Z",
-  "candidates": [{ "value": 40, "source": { "...": "..." } }]
+  "candidates": [{ "value": 40, "source": { "...": "..." } }],
+  "also_heard": [{ "value": 45, "source": { "kind": "document", "document_id": "<document id>" } }]
 }
 ```
 
-`candidates` is present only while the field is `conflicting`.
+`candidates` is present only while the field is `conflicting`. `also_heard` is present only when a source gave a value the field doesn't hold (see "Also heard" below).
 
 #### Status
 
@@ -223,7 +224,7 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
 | `confirmed` | The prospect stated it explicitly, or confirmed or entered it in the workspace. | — |
 | `inferred` | Lenore derived or assumed it from what was said. | "Please confirm" |
 | `incomplete` | Only part of the answer was given. | "Incomplete" |
-| `conflicting` | Two sources disagree. The first value is kept until the prospect picks one. | "Conflicting answers" |
+| `conflicting` | Two sources of the same rank disagree. The first value is kept until the prospect picks one. | "Conflicting answers" |
 
 #### Source
 
@@ -235,14 +236,27 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
 
 ### Merge rules (`applyExtraction`)
 
+Every AI value reaches the intake through `applyExtraction`: a chat reply (`useLenoreChat` hands each one to the Chamber with the prospect's message it answers), a voice `<extract>` (one with no prospect message to cite is dropped, never merged untracked), and a document candidate the prospect applies.
+
 1. Values are validated per field (`sanitizeChamberPatch`). Invalid and empty values are dropped.
-2. A field whose source is `prospect_edit` is never changed by AI extraction.
-3. A new field takes the value, with the model's status (default `inferred`).
-4. If AI sources (transcript or document) give a different value, the old value is kept and the field becomes `conflicting`, with both candidates. Two exceptions:
-   - The model lists the field in `corrected_fields`, meaning the prospect explicitly corrected it. The new value replaces the old one.
-   - The new value only adds entries to a list, or the field is the `census`. The new value replaces the old one.
-5. When the same value is heard again, the source is refreshed. The status can go up from `inferred` to `confirmed`, but never down.
-6. Prospect actions (`applyFieldAction`) set the status to `confirmed` and the source to `prospect_edit`, and clear any candidates. Confirming a conflicting field requires choosing a candidate first.
+2. Sources rank `prospect_edit` (3) above `document` (2) above `transcript` (1, chat and voice). A field whose source is `prospect_edit` is never changed by an extraction, and nothing is noted on it.
+3. A field with no value takes the new one, with the model's status (default `inferred`; a document's value is `confirmed`).
+4. The same value heard again can raise the status from `inferred` to `confirmed`, never lower it. The source becomes the new one unless it ranks lower, in which case the higher-ranked source stays. A list with the same entries in another order is the same value, and the stored order is kept.
+5. A different value:
+   - **From a higher-ranked source** replaces the value, with its own status and source, and the replaced value is noted in `also_heard`. A `conflicting` field is settled by it: every candidate is noted.
+   - **From a lower-ranked source** is noted in `also_heard`; the value and status stay. A `conflicting` field stays conflicting.
+   - **From a source of the same rank** (chat against chat, document against document) makes the field `conflicting`, with both values as candidates.
+6. Two exceptions to rule 5:
+   - **Corrections.** The model lists the field in `corrected_fields`, meaning the prospect explicitly corrected it in chat. The new value replaces anything but a `prospect_edit`, a document's value included, and settles a conflict. A replaced value from another kind of source is noted in `also_heard`; a replaced chat value is what they corrected and is not.
+   - **Lists that only add entries** ("also Texas": every old entry and at least one new one) replace the old list, which is not noted. From a lower-ranked source (chat adding to a document's list), the field takes chat's source, with its quote, and the status `inferred`, so the prospect confirms the whole list; from the same or a higher rank it takes the new source and status. The field is then chat-sourced, so a later different value from a document outranks it. A competing value the new list doesn't include is noted.
+7. The `census` is not ranked: an extracted roster replaces the old one (it is rebuilt as it grows), and a document's census is merged in the Upload tab (see "Document candidates" below).
+8. Prospect actions (`applyFieldAction`) set the status to `confirmed` and the source to `prospect_edit`, and clear any candidates and `also_heard`. Confirming a conflicting field requires choosing a candidate first. The prospect choosing a document's value in the Upload tab's conflict dialog is the exception: it keeps `also_heard` and notes the value it replaced (see "Document candidates" below). An advisor verifying a field leaves `also_heard` as it is.
+
+These rules run in the browser, and the database checks only that `field_provenance` is an object. That is by design: every AI value reaches the database through the prospect's own browser, which can already save any value as the prospect's own edit, so a database check of precedence would stop nothing.
+
+#### Also heard
+
+`also_heard` is a list of `{ value, source }`, the same shape as a candidate. It is a note, not a choice: it never changes the status or adds an open item. It holds at most 5 entries, newest last, one per value (a value heard again moves to the end, keeping the higher-ranked of the sources that gave it, or the latest if they rank the same), and never the field's current value. It is only stored for now; the workspace and the advisor view don't show it yet. Entries saved before it existed have none, and a malformed note is dropped without losing the rest of the entry.
 
 ### Extraction contract (`chamber-extract`)
 
@@ -283,8 +297,8 @@ CSV, XLSX and XLS sheets, and tables in a `.docx`, are searched for a census. Co
 
 Candidates never change `chamber_data` by themselves. In the Upload tab the prospect sees each candidate next to what the intake holds (a census as rows, with a count of people missing an age, work state, title or salary) and can:
 
-- **Apply** a value the intake doesn't have yet (`applyDocumentCandidates` in `src/data/documentCandidates.ts`). It goes through `applyExtraction` with status `confirmed` and a `document` source, so a prospect's own value is never changed.
-- **Resolve** a value that differs from the intake's, in the conflict dialog. Nothing is pre-selected for a single value: they pick the intake's or the document's, and the one they keep is recorded as `confirmed`. For a census the dialog lists who is in both, whose details differ, who is only in the file and who is only in the intake, and offers **Merge** (the default: people in both take the facts the file stated, new people are added, the rest stay, and everyone keeps their id and dependents), **Replace** with the file's census, or **Keep my census**. A choice is applied by `resolveCandidate`; a kept answer shows as "Kept yours".
+- **Apply** a value the intake doesn't have yet, or holds only from the conversation, which a document outranks (shown as "Replaces what you told Lenore: …"; `planCandidateMerge` calls it `replace`). It goes through `applyDocumentCandidates` in `src/data/documentCandidates.ts` and so `applyExtraction`, with status `confirmed` and a `document` source: a chat value gives way to the document's and is noted in `also_heard`. The merge rules also hold if a value has arrived meanwhile: a prospect's own value is never changed, and a different document's value makes the field `conflicting`. "Apply all new" applies only values the intake doesn't have; replacing an answer is one click per value.
+- **Resolve** a value that differs from the prospect's own answer or another document's (or one with no provenance), in the conflict dialog. Nothing is pre-selected for a single value: they pick the intake's or the document's, and the one they keep is recorded as `confirmed`. Keeping the intake's value records it as their own (`prospect_edit`) and clears `also_heard`, as any confirm does. Choosing the document's value (`applyChosenValue` in `provenance.ts`) replaces the intake's, their own answer included, with the document as the source; as with a correction, a replaced value from another kind of source (their own answer, or chat) is noted in `also_heard` beside what was already noted, and one from another document is not. For a census the dialog lists who is in both, whose details differ, who is only in the file and who is only in the intake, and offers **Merge** (the default: people in both take the facts the file stated, new people are added, the rest stay, and everyone keeps their id and dependents), **Replace** with the file's census, or **Keep my census**. A choice is applied by `resolveCandidate`; a kept answer shows as "Kept yours".
 
 ### Submission
 

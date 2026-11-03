@@ -139,8 +139,3 @@ export function sanitizeChamberPatch(raw: unknown): Partial<ChamberData> {
 export function parseChamberData(raw: unknown): ChamberData {
   return { ...EMPTY_CHAMBER_DATA, ...sanitizeChamberPatch(raw) };
 }
-
-/** Merges an untrusted patch into existing data. */
-export function mergeChamberData(prev: ChamberData, raw: unknown): ChamberData {
-  return { ...prev, ...sanitizeChamberPatch(raw) };
-}

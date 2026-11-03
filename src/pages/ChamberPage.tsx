@@ -19,7 +19,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { createChatMessage } from "@/data/chat";
 import { browserStorageWorks } from "@/data/intakeBackup";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
-import { mergeChamberData } from "@/data/chamberValidation";
 import { applyExtraction, applyFieldAction, transcriptExtraction, voiceExtraction, type FieldAction } from "@/data/provenance";
 
 const spokenLine = (text: string) => (text.length > 120 ? text.slice(0, 120) + "..." : text);
@@ -64,7 +63,6 @@ const ChamberPage = () => {
     provenance,
     messages,
     isLoading: sessionLoading,
-    setChamberData,
     updateIntake,
     addMessage,
     submit,
@@ -102,17 +100,16 @@ const ChamberPage = () => {
     onOrbStateChange: setOrbState,
     onNewMessage: addMessage,
     onLastSpokenText: setLastSpokenText,
-    // Voice extractions with no prospect message to point to keep the old, untracked merge.
-    onExtract: (data, message) =>
-      message
-        ? updateIntake((prev) => applyExtraction(prev, data, voiceExtraction(message, data)))
-        : setChamberData((prev) => mergeChamberData(prev, data)),
+    // Every AI value is merged with its provenance, so an extraction with no prospect message to
+    // cite (Lenore speaking before the prospect has said anything) is dropped.
+    onExtract: (data, message) => {
+      if (message) updateIntake((prev) => applyExtraction(prev, data, voiceExtraction(message, data)));
+    },
   });
 
   const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
     epoch: conversationEpoch,
     chamberData,
-    setChamberData,
     addUserMessage: (text) => {
       const message = createChatMessage("user", text);
       addMessage(message);

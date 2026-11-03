@@ -87,6 +87,12 @@ describe("applyAdvisorReview", () => {
     expect(provenance.company_name?.status).toBe("inferred");
   });
 
+  it("leaves what else was heard for a field as it is when verifying it", () => {
+    const heard = [{ value: "Acme Holdings", source: { kind: "document" as const, document_id: "d1" } }];
+    const packet = applyAdvisorReview(data, { company_name: { ...provenance.company_name!, also_heard: heard } }, reviewMap([review({ field: "company_name", review_state: "verified" })]));
+    expect(packet.provenance.company_name).toMatchObject({ status: "confirmed", also_heard: heard });
+  });
+
   it("lists fields an advisor marked incomplete as open items", () => {
     const packet = applyAdvisorReview(data, {}, reviewMap([review({ field: "census", review_state: "incomplete" })]));
     expect(packet.followUps).toEqual(["Employee census — marked incomplete by an advisor"]);

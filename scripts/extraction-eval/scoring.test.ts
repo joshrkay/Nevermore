@@ -82,6 +82,15 @@ describe("scoreFixture", () => {
     expect(scoreFixture(f, candidate)["f/no_digits:123456789"].actual).toEqual(["employee_count"]);
   });
 
+  it("finds forbidden digits kept only in what else was heard, as a value or a quote", () => {
+    const f = fixture({ forbidden_digits: ["4417"] });
+    const noted = (also_heard: { value: unknown; source: ReturnType<typeof source> }[]) =>
+      state({ pto_types: ["Vacation", "Sick"] }, { pto_types: { status: "inferred", source: source(), updated_at: "x", also_heard } });
+    expect(scoreFixture(f, noted([{ value: ["Plan 4417"], source: source() }]))["f/no_digits:4417"].actual).toEqual(["pto_types"]);
+    expect(scoreFixture(f, noted([{ value: ["PTO"], source: source("plan 44-17") }]))["f/no_digits:4417"].actual).toEqual(["pto_types"]);
+    expect(scoreFixture(f, noted([{ value: ["PTO"], source: source("plan four") }]))["f/no_digits:4417"]).toMatchObject({ pass: true, actual: [] });
+  });
+
   it("fails every cell of a fixture that didn't finish, saying why", () => {
     const f = fixture({ expected: { employee_count: { value: 1 } }, absent: ["industry"], forbidden_digits: ["123456789"] });
     const cells = scoreFixture(f, state({ employee_count: 1 }), "turn 1: model call failed (timeout, HTTP -)");

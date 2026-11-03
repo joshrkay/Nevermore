@@ -50,13 +50,14 @@ const containsDigits = (value: unknown, digits: string): boolean => {
   return false;
 };
 
-/** Fields whose value, quote or conflict candidates contain the digits. */
+/** Fields whose value, quote, conflict candidates or also_heard notes contain the digits. */
 export function fieldsContainingDigits(state: IntakeState, digits: string): string[] {
   const fields = new Set([...Object.keys(state.data), ...Object.keys(state.provenance)]) as Set<FieldKey>;
   return [...fields].filter((field) => {
     const p = state.provenance[field];
-    const quotes = [p?.source, ...(p?.candidates ?? []).map((c) => c.source)].map((s) => (s?.kind === "transcript" ? s.quote : undefined));
-    return containsDigits([state.data[field], quotes, (p?.candidates ?? []).map((c) => c.value)], digits);
+    const others = [...(p?.candidates ?? []), ...(p?.also_heard ?? [])];
+    const quotes = [p?.source, ...others.map((c) => c.source)].map((s) => (s?.kind === "transcript" ? s.quote : undefined));
+    return containsDigits([state.data[field], quotes, others.map((c) => c.value)], digits);
   });
 }
 

@@ -141,7 +141,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 |---|---|---|---|---|---|---|
 | 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
 | A Durable session | 2 | 4 | 4 | 1 | 0 | 11 |
-| B AI extraction | 2 | 5 | 1 | 1 | 0 | 9 |
+| B AI extraction | 3 | 5 | 0 | 1 | 0 | 9 |
 | C Review, certify, submit | 1 | 7 | 0 | 2 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
 | E Documents | 5 | 1 | 3 | 2 | 0 | 11 |
@@ -150,7 +150,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **20** | **48** | **11** | **21** | **6** | **106** |
+| **Total** | **21** | **48** | **10** | **21** | **6** | **106** |
 
 22 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
@@ -159,7 +159,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 ## 2. Delivery Principles
 
 1. **Text is the dependable path.** Voice enhances intake and must never block it. *Holds: voice is opt-in and the text input is always present.*
-2. **The prospect controls their data.** AI proposes values. The prospect confirms material facts. *Holds in the browser. The database validates answers and refuses stale saves (A-2.2), but does not enforce that an AI value never overwrites a prospect's edit (B-1.2).*
+2. **The prospect controls their data.** AI proposes values. The prospect confirms material facts. *Holds, and is enforced in the browser by design (B-1.2): every AI value reaches the intake through the prospect's own browser, which can already save any value as the prospect's own edit, so a database check that an AI value never overwrites a prospect's edit would stop nothing. The database validates answers and refuses stale saves (A-2.2).*
 3. **No fabricated data.** Unknown underwriting data stays unknown, shown as "Not provided" or listed as an open item. *Holds for the Manuscript and the PEO catalog. Demo data remains in `chamberTypes.ts` (D-1.5).*
 4. **Sensitive data stays private.** Census, payroll, benefits, and workers' compensation data are never publicly reachable. *Holds: private buckets, owner and advisor RLS, a test that every public table has row security.*
 5. **One source of truth.** The saved intake session feeds the Chamber, the review, the Manuscript, and the advisor view. Submitted packets are frozen as snapshots. *Holds, with the snapshot gaps in C-3.2.*
@@ -310,9 +310,22 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Remaining:** Invalid fields are dropped one by one in the browser rather than rejecting the whole response. Unknown field paths are dropped without being logged. The contract version moved to B-1.4 (`PROMPT_VERSION`, one version for the prompt, the tool schema and the response shape).
 
 #### B-1.2 Merge policy and conflict capture
-- **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** B-1.1, A-2.2 · **Milestone:** M1
-- **Built:** Client-side `applyExtraction` (`provenance.ts`): an AI value never overwrites a `prospect_edit`, a differing AI value makes the field `conflicting` with both candidates, and an explicit correction replaces. Tested.
-- **Remaining:** All three ACs hold in intent. Not met: the full precedence ladder (document, then transcript, then system; AI against AI keeps the first value and flags a conflict) and server-side enforcement, since a client can write any value. The database now checks the shape of every answer (A-2.2) but still not provenance or precedence, so the ladder stays in the client.
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** B-1.1, A-2.2 · **Milestone:** M1
+- **Built:** `applyExtraction` (`provenance.ts`) ranks sources: the prospect's edit, then a document they applied, then chat (`transcript`, voice included). An AI value never touches a `prospect_edit`. When two values disagree, the higher-ranked one stands and the other is kept on the field as `also_heard` (value and source; newest last, one per value, at most 5, never the field's own value), and a higher-ranked value settles a conflict between lower-ranked ones, keeping every candidate as `also_heard`. Two values of the same rank (chat against chat, document against document) still make the field `conflicting`. An explicit correction (`corrected_fields`) still replaces anything but a prospect's edit, a document's value included, and keeps a replaced value from another kind of source. A list that only adds entries still extends: added to from chat, a document's list takes chat's source and `inferred`, so the prospect confirms the whole list. The same value heard again (a list in any order) never trades its source for a lower-ranked one, and a note heard again keeps its higher-ranked source. The census is not ranked. Applying a document candidate over a chat value now replaces it instead of raising a conflict: the Upload tab offers Apply for it ("Replaces what you told Lenore: …"; `planCandidateMerge` kind `replace`), which keeps the chat value as `also_heard`, and keeps the conflict dialog for a differing prospect's or document's value, or one with no provenance. Choosing the document's value in that dialog (`applyChosenValue`) replaces the intake's and, as a correction does, keeps a replaced value from another kind of source (the prospect's own answer included) as `also_heard`. The prospect confirming, editing or resolving a field, or keeping their answer in the dialog, clears `also_heard`; an advisor verifying it does not. The untracked merges are gone: a voice `<extract>` with no prospect message to cite is dropped, `useLenoreChat` hands every extraction to the Chamber's `applyExtraction`, and `mergeChamberData` is removed. `parseProvenance` reads entries saved without `also_heard` and drops a malformed note without losing the entry. The database checks only that `field_provenance` is an object, so no migration. Tested in `provenance.test.ts` (each rank pair both ways, conflicts settled, corrections across kinds, lists across ranks, repeated values and reordered lists, the notes' cap, de-duplication and clearing, old entries), `documentCandidates.test.ts`, `DocumentCandidates.test.tsx`, `useLenoreChat.test.ts` and `ChamberPage.test.tsx`. The rules are in `docs/intake-schema.md`.
+- **Notes:**
+  - **No server-side enforcement, by decision.** Every AI value reaches the database through the prospect's own browser, which can already save any value as the prospect's own edit, so a database check of provenance or precedence would stop nothing the prospect couldn't do anyway. That part of v1.0's AC is dropped for good, not deferred. The database validates the answers themselves (A-2.2).
+  - There is no `system` rung: nothing writes a system value.
+  - `also_heard` is stored only. Showing it in the workspace and the advisor view is B-2.1's.
+  - `scripts/extraction-eval` drives chat only, so its scoring is unchanged, except that its forbidden-digits check now also scans `also_heard`. The prompt did not change, so neither did `PROMPT_VERSION`.
+- *Revised scope, AC and tests:*
+  - **Scope:** One precedence ladder in the browser's merge: prospect edit, then document, then chat. A value that loses is kept on the field as a note rather than discarded or raised as a conflict, and values of the same rank still conflict. No AI value reaches the intake except through the merge.
+  - **AC:**
+    - An AI value never changes a prospect's edit.
+    - A higher-ranked value replaces a lower-ranked one and the replaced value is kept; a lower-ranked value never replaces a higher-ranked one and is kept.
+    - Two different values of the same rank make the field `conflicting` with both candidates.
+    - An explicit correction replaces any value except a prospect's edit.
+    - Every chat and voice extraction is merged with its provenance, or not at all.
+  - **Tests:** Unit tests for each rank pair in both orders, conflict settlement, corrections across kinds, list extension across ranks, repeated values, the notes' cap, de-duplication and clearing, reading old entries, and the chat and voice call sites.
 
 #### B-1.3 Lenore follow-up policy and completion state
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** B-1.2, D2 · **Milestone:** M1
@@ -1042,7 +1055,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | A-3.1 | Store transcript messages as ordered rows | S | High | M1 | SUPERSEDED |
 | A-3.2 | Restore the transcript on resume | S | High | M1 | DONE |
 | B-1.1 | Extraction response contract and parser | M | Highest | M1 | PARTIAL |
-| B-1.2 | Merge policy and conflict capture | M | Highest | M1 | SUPERSEDED |
+| B-1.2 | Merge policy and conflict capture | M | Highest | M1 | DONE |
 | B-1.3 | Lenore follow-up policy and completion state | M | Highest | M1 | NOT STARTED |
 | B-1.4 | Prompt versioning and golden-transcript fixtures | S | High | M1 | PARTIAL |
 | B-2.1 | Provenance badges and confirm-or-edit controls | M | High | M2 | DONE |
@@ -1247,7 +1260,7 @@ A story is done only when all of the following are true:
 | Risk | Impact | Mitigation |
 |---|---|---|
 | Edge-function type check uses declarations for URL imports, so a wrong remote URL or a wrong call into a remote package is not caught. A broken merge reached `main` with green CI before the check existed. | A function can still fail at deploy or run time on a dependency the check cannot see. | F-0.4 catches local faults. Smoke-test each function after deploy. |
-| The browser writes intake data directly under RLS. The database validates `chamber_data` and refuses stale saves (A-2.2), but not the transcript or provenance. | A stale tab's last edits are refused and, if it is closed, lost; provenance and the AI precedence ladder are still the client's word. | A-2.2 (built), B-1.2 for precedence, and the keepalive Note in A-2.2. |
+| The browser writes intake data directly under RLS. The database validates `chamber_data` and refuses stale saves (A-2.2), but not the transcript or provenance. | A stale tab's last edits are refused and, if it is closed, lost; provenance and the AI precedence ladder are the client's word, by design (B-1.2). | A-2.2 (built) and the keepalive Note in A-2.2. Precedence stays in the browser by decision: the prospect could save any value as their own edit anyway (B-1.2). |
 | The AI functions now import shared code from `supabase/functions/_shared`. A deploy that uploads only a function's own folder would fail to resolve it. | Both AI functions fail to start. | Deploy through the Supabase CLI, which bundles relative imports, and smoke-test a preview deploy first. |
 | Deployed environments may differ from `main`. This refresh could not see them. | Statuses here could be wrong about production in either direction. | Confirm deployed function versions, secrets, the cron schedule and Turnstile before the demo. |
 | Repeated 'repair main after merge' commits. | Overlapping branches keep breaking `main`. | Smaller pull requests, F-0.4, and required checks on `main`. |

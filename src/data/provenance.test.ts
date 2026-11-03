@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PROMPT_VERSION } from "../../supabase/functions/chamber-extract/schema.ts";
 import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import {
+  applyChosenValue,
   applyExtraction,
   applyFieldAction,
   fieldOpenItems,
@@ -10,6 +11,7 @@ import {
   parseProvenance,
   transcriptExtraction,
   voiceExtraction,
+  type ExtractionOptions,
   type FieldSource,
   type IntakeState,
 } from "./provenance";
@@ -69,17 +71,11 @@ describe("applyExtraction", () => {
     ]);
   });
 
-  it("conflicts between a document and the transcript", () => {
-    const doc = applyExtraction(EMPTY, { employee_count: 30 }, { source: { kind: "document", document_id: "d1" } });
-    const next = applyExtraction(doc, { employee_count: 32 }, { source: msg("m1") });
-    expect(next.provenance.employee_count?.status).toBe("conflicting");
-  });
-
-  it("lets an explicit prospect correction in chat replace an earlier inference", () => {
+  it("lets an explicit prospect correction in chat replace an earlier inference, noting nothing", () => {
     const first = applyExtraction(EMPTY, { employee_count: 40 }, { source: msg("m1") });
     const next = applyExtraction(first, { employee_count: 45 }, { source: msg("m2"), corrections: ["employee_count"] });
     expect(next.data.employee_count).toBe(45);
-    expect(next.provenance.employee_count).toMatchObject({ status: "inferred", source: msg("m2") });
+    expect(next.provenance.employee_count).toEqual({ status: "inferred", source: msg("m2"), updated_at: expect.any(String) });
   });
 
   it("treats a list that only adds entries as an update, not a conflict", () => {
@@ -101,6 +97,294 @@ describe("applyExtraction", () => {
     const legacy: IntakeState = { data: { ...EMPTY_CHAMBER_DATA, employee_count: 10 }, provenance: {} };
     const next = applyExtraction(legacy, { employee_count: 12 }, { source: msg("m1") });
     expect(next.data.employee_count).toBe(12);
+  });
+});
+
+describe("applyExtraction's precedence ladder", () => {
+  const T0 = new Date("2026-11-01T00:00:00Z");
+  const doc = (id: string): FieldSource => ({ kind: "document", document_id: id, document_name: `${id}.pdf` });
+  // A document's values reach applyExtraction confirmed, as applyDocumentCandidates applies them.
+  const fromDoc = (state: IntakeState, id: string, patch: Record<string, unknown>, now = NOW) =>
+    applyExtraction(state, patch, {
+      source: doc(id),
+      statuses: Object.fromEntries(Object.keys(patch).map((k) => [k, "confirmed"])),
+      now,
+    });
+  const fromChat = (state: IntakeState, id: string, patch: Record<string, unknown>, opts: Partial<ExtractionOptions> = {}) =>
+    applyExtraction(state, patch, { source: msg(id), now: NOW, ...opts });
+  const edited = (field: "employee_count" | "states", value: unknown) => applyFieldAction(EMPTY, { type: "edit", field, value }, T0);
+
+  describe("between different ranks", () => {
+    it("a document replaces a chat value, which is kept as also heard", () => {
+      const chat = applyExtraction(EMPTY, { employee_count: 40 }, { source: msg("m1"), now: T0 });
+      const next = fromDoc(chat, "d1", { employee_count: 30 });
+      expect(next.data.employee_count).toBe(30);
+      expect(next.provenance.employee_count).toEqual({
+        status: "confirmed",
+        source: doc("d1"),
+        updated_at: NOW.toISOString(),
+        also_heard: [{ value: 40, source: msg("m1") }],
+      });
+    });
+
+    it("chat never replaces a document value: the chat value is only noted", () => {
+      const fromFile = fromDoc(EMPTY, "d1", { employee_count: 30 }, T0);
+      const next = fromChat(fromFile, "m1", { employee_count: 32 }, { statuses: { employee_count: "confirmed" }, evidence: { employee_count: "32 now" } });
+      expect(next.data.employee_count).toBe(30);
+      expect(next.provenance.employee_count).toEqual({
+        status: "confirmed",
+        source: doc("d1"),
+        updated_at: NOW.toISOString(),
+        also_heard: [{ value: 32, source: { ...msg("m1"), quote: "32 now" } }],
+      });
+    });
+
+    it("neither a document nor chat touches the prospect's own answer, or notes anything on it", () => {
+      const own = edited("employee_count", 42);
+      expect(fromDoc(own, "d1", { employee_count: 30 })).toEqual(own);
+      expect(fromChat(own, "m1", { employee_count: 32 })).toEqual(own);
+      expect(fromChat(own, "m1", { employee_count: 32 }, { corrections: ["employee_count"] })).toEqual(own);
+      const ownList = edited("states", ["CA"]);
+      expect(fromChat(ownList, "m1", { states: ["CA", "TX"] })).toEqual(ownList);
+    });
+
+    it("a document settles a conflict between chat answers, noting every one it replaced", () => {
+      const conflict = fromChat(fromChat(EMPTY, "m1", { employee_count: 40 }), "m2", { employee_count: 45 });
+      expect(conflict.provenance.employee_count?.status).toBe("conflicting");
+      const next = fromDoc(conflict, "d1", { employee_count: 50 });
+      expect(next.data.employee_count).toBe(50);
+      expect(next.provenance.employee_count).toEqual({
+        status: "confirmed",
+        source: doc("d1"),
+        updated_at: NOW.toISOString(),
+        also_heard: [{ value: 40, source: msg("m1") }, { value: 45, source: msg("m2") }],
+      });
+    });
+
+    it("a document that agrees with one of the conflicting chat answers settles on it", () => {
+      const conflict = fromChat(fromChat(EMPTY, "m1", { employee_count: 40 }), "m2", { employee_count: 45 });
+      for (const [value, other] of [[45, 40], [40, 45]]) {
+        const next = fromDoc(conflict, "d1", { employee_count: value });
+        expect(next.data.employee_count).toBe(value);
+        expect(next.provenance.employee_count).toMatchObject({ status: "confirmed", source: doc("d1"), also_heard: [{ value: other }] });
+        expect(next.provenance.employee_count).not.toHaveProperty("candidates");
+      }
+    });
+
+    it("chat against conflicting documents is noted, and the field stays conflicting", () => {
+      const conflict = fromDoc(fromDoc(EMPTY, "d1", { employee_count: 30 }), "d2", { employee_count: 32 });
+      const next = fromChat(conflict, "m1", { employee_count: 35 });
+      expect(next.data.employee_count).toBe(30);
+      expect(next.provenance.employee_count).toEqual({
+        ...conflict.provenance.employee_count,
+        also_heard: [{ value: 35, source: msg("m1") }],
+      });
+      // Chat repeating one of the documents' values adds nothing.
+      expect(fromChat(conflict, "m1", { employee_count: 32 })).toEqual(conflict);
+    });
+  });
+
+  describe("within one rank", () => {
+    it("conflicts between two documents, as between two chat answers", () => {
+      const next = fromDoc(fromDoc(EMPTY, "d1", { employee_count: 30 }), "d2", { employee_count: 32 });
+      expect(next.data.employee_count).toBe(30);
+      expect(next.provenance.employee_count).toMatchObject({
+        status: "conflicting",
+        source: doc("d1"),
+        candidates: [{ value: 30, source: doc("d1") }, { value: 32, source: doc("d2") }],
+      });
+      expect(next.provenance.employee_count).not.toHaveProperty("also_heard");
+    });
+
+    it("keeps what was heard earlier when a field becomes conflicting", () => {
+      const noted = fromChat(fromDoc(EMPTY, "d1", { employee_count: 30 }), "m1", { employee_count: 35 });
+      const next = fromDoc(noted, "d2", { employee_count: 32 });
+      expect(next.provenance.employee_count).toMatchObject({ status: "conflicting", also_heard: [{ value: 35, source: msg("m1") }] });
+    });
+  });
+
+  describe("explicit corrections", () => {
+    const corrected = { corrections: ["employee_count" as const] };
+
+    it("replace a document value, which is noted because it came from another kind of source", () => {
+      const fromFile = fromDoc(EMPTY, "d1", { employee_count: 30 });
+      const next = fromChat(fromFile, "m1", { employee_count: 35 }, corrected);
+      expect(next.data.employee_count).toBe(35);
+      expect(next.provenance.employee_count).toEqual({
+        status: "inferred",
+        source: msg("m1"),
+        updated_at: NOW.toISOString(),
+        also_heard: [{ value: 30, source: doc("d1") }],
+      });
+    });
+
+    it("settle a conflict, noting only the candidates from another kind of source", () => {
+      const docs = fromDoc(fromDoc(EMPTY, "d1", { employee_count: 30 }), "d2", { employee_count: 32 });
+      const overDocs = fromChat(docs, "m1", { employee_count: 35 }, corrected);
+      expect(overDocs.data.employee_count).toBe(35);
+      expect(overDocs.provenance.employee_count?.also_heard?.map((h) => h.value)).toEqual([30, 32]);
+      expect(overDocs.provenance.employee_count).not.toHaveProperty("candidates");
+
+      const chats = fromChat(fromChat(EMPTY, "m1", { employee_count: 40 }), "m2", { employee_count: 45 });
+      const overChats = fromChat(chats, "m3", { employee_count: 45 }, corrected);
+      expect(overChats.data.employee_count).toBe(45);
+      expect(overChats.provenance.employee_count).toEqual({ status: "inferred", source: msg("m3"), updated_at: NOW.toISOString() });
+    });
+
+    it("drop a noted value once it becomes the field's value", () => {
+      const noted = fromChat(fromDoc(EMPTY, "d1", { employee_count: 30 }), "m1", { employee_count: 32 });
+      const next = fromChat(noted, "m2", { employee_count: 32 }, corrected);
+      expect(next.data.employee_count).toBe(32);
+      expect(next.provenance.employee_count?.also_heard).toEqual([{ value: 30, source: doc("d1") }]);
+    });
+  });
+
+  describe("lists that only add entries", () => {
+    it("chat extending a document's list keeps every entry, takes the chat source and asks the prospect to confirm", () => {
+      const fromFile = fromDoc(EMPTY, "d1", { states: ["CA", "NY"] });
+      const next = fromChat(fromFile, "m1", { states: ["CA", "NY", "TX"] }, {
+        statuses: { states: "confirmed" },
+        evidence: { states: "also Texas" },
+      });
+      expect(next.data.states).toEqual(["CA", "NY", "TX"]);
+      expect(next.provenance.states).toEqual({
+        status: "inferred",
+        source: { ...msg("m1"), quote: "also Texas" },
+        updated_at: NOW.toISOString(),
+      });
+    });
+
+    it("a document extending a chat list takes the document's source and status", () => {
+      const chat = fromChat(EMPTY, "m1", { states: ["CA"] });
+      const next = fromDoc(chat, "d1", { states: ["CA", "NY"] });
+      expect(next.data.states).toEqual(["CA", "NY"]);
+      expect(next.provenance.states).toEqual({ status: "confirmed", source: doc("d1"), updated_at: NOW.toISOString() });
+    });
+
+    it("an extension from the same rank keeps the model's status", () => {
+      const chat = fromChat(EMPTY, "m1", { states: ["CA"] });
+      const next = fromChat(chat, "m2", { states: ["CA", "TX"] }, { statuses: { states: "confirmed" } });
+      expect(next.provenance.states).toMatchObject({ status: "confirmed", source: msg("m2") });
+    });
+
+    it("once chat has extended it, a different document list outranks it", () => {
+      const extended = fromChat(fromDoc(EMPTY, "d1", { states: ["CA", "NY"] }), "m1", { states: ["CA", "NY", "TX"] });
+      const next = fromDoc(extended, "d2", { states: ["CA"] });
+      expect(next.data.states).toEqual(["CA"]);
+      expect(next.provenance.states).toMatchObject({
+        status: "confirmed",
+        source: doc("d2"),
+        also_heard: [{ value: ["CA", "NY", "TX"], source: msg("m1") }],
+      });
+    });
+
+    it("an extension that settles a conflict notes the competing list it didn't include", () => {
+      const conflict = fromChat(fromChat(EMPTY, "m1", { states: ["CA"] }), "m2", { states: ["NY"] });
+      const next = fromChat(conflict, "m3", { states: ["CA", "TX"] });
+      expect(next.data.states).toEqual(["CA", "TX"]);
+      expect(next.provenance.states).toMatchObject({ status: "inferred", source: msg("m3"), also_heard: [{ value: ["NY"], source: msg("m2") }] });
+      expect(next.provenance.states).not.toHaveProperty("candidates");
+    });
+  });
+
+  describe("the same value heard again", () => {
+    it("from chat keeps the document as the source, though it can still raise the status", () => {
+      const inferredDoc = applyExtraction(EMPTY, { employee_count: 30 }, { source: doc("d1"), now: T0 });
+      const up = fromChat(inferredDoc, "m1", { employee_count: 30 }, { statuses: { employee_count: "confirmed" } });
+      expect(up.provenance.employee_count).toEqual({ status: "confirmed", source: doc("d1"), updated_at: NOW.toISOString() });
+      const confirmedDoc = fromDoc(EMPTY, "d1", { employee_count: 30 });
+      expect(fromChat(confirmedDoc, "m1", { employee_count: 30 }).provenance.employee_count).toMatchObject({ status: "confirmed", source: doc("d1") });
+    });
+
+    it("from a document takes over as the source", () => {
+      const chat = fromChat(EMPTY, "m1", { employee_count: 30 });
+      const next = fromDoc(chat, "d1", { employee_count: 30 });
+      expect(next.provenance.employee_count).toEqual({ status: "confirmed", source: doc("d1"), updated_at: NOW.toISOString() });
+    });
+
+    it("never lowers a list's status", () => {
+      const chat = fromChat(EMPTY, "m1", { states: ["CA"] }, { statuses: { states: "confirmed" } });
+      expect(fromChat(chat, "m2", { states: ["CA"] }).provenance.states).toMatchObject({ status: "confirmed", source: msg("m2") });
+    });
+
+    it("is a list with the same entries in another order: a document's list keeps its source, status and order", () => {
+      const fromFile = fromDoc(EMPTY, "d1", { states: ["CA", "NY"] });
+      const next = fromChat(fromFile, "m1", { states: ["NY", "CA"] }, { statuses: { states: "confirmed" } });
+      expect(next.data.states).toEqual(["CA", "NY"]);
+      expect(next.provenance.states).toEqual({ status: "confirmed", source: doc("d1"), updated_at: NOW.toISOString() });
+      expect(fromChat(fromFile, "m1", { states: ["NY", "CA"] }).provenance.states).toMatchObject({ status: "confirmed", source: doc("d1") });
+      // Nor does a reordered list settle a conflict as though it had added an entry.
+      const conflict = fromChat(fromChat(EMPTY, "m1", { states: ["CA", "NY"] }), "m2", { states: ["TX"] });
+      expect(fromChat(conflict, "m3", { states: ["NY", "CA"] })).toEqual(conflict);
+    });
+
+    it("keeps what was heard", () => {
+      const noted = fromChat(fromDoc(EMPTY, "d1", { employee_count: 30 }), "m1", { employee_count: 32 });
+      expect(fromDoc(noted, "d2", { employee_count: 30 }).provenance.employee_count).toMatchObject({
+        source: doc("d2"),
+        also_heard: [{ value: 32, source: msg("m1") }],
+      });
+    });
+  });
+
+  it("leaves the census out of the ladder: the roster is rebuilt as it grows, and nothing is noted", () => {
+    const ann = { first_name: "Ann", last_name: "Lee", work_state: "CA" };
+    const fromFile = fromDoc(EMPTY, "d1", { census: [ann] });
+    const next = fromChat(fromFile, "m1", { census: [ann, { ...ann, first_name: "Bo" }] });
+    expect(next.data.census.map((r) => r.first_name)).toEqual(["Ann", "Bo"]);
+    expect(next.provenance.census).toEqual({ status: "inferred", source: msg("m1"), updated_at: NOW.toISOString() });
+  });
+
+  describe("also heard", () => {
+    const fromFile = fromDoc(EMPTY, "d1", { employee_count: 30 });
+
+    it("keeps the five newest, one per value, with the latest source for a value heard again from the same rank", () => {
+      let state = fromFile;
+      for (const [i, n] of [31, 32, 33, 34, 35, 36].entries()) state = fromChat(state, `m${i + 1}`, { employee_count: n });
+      expect(state.provenance.employee_count?.also_heard?.map((h) => h.value)).toEqual([32, 33, 34, 35, 36]);
+      state = fromChat(state, "m9", { employee_count: 33 });
+      expect(state.provenance.employee_count?.also_heard).toEqual([
+        { value: 32, source: msg("m2") },
+        { value: 34, source: msg("m4") },
+        { value: 35, source: msg("m5") },
+        { value: 36, source: msg("m6") },
+        { value: 33, source: msg("m9") },
+      ]);
+      expect(state.data.employee_count).toBe(30);
+      expect(state.provenance.employee_count?.status).toBe("confirmed");
+    });
+
+    it("keeps a document as the source of a noted value that chat repeats", () => {
+      const corrected = fromChat(fromFile, "m1", { employee_count: 35 }, { corrections: ["employee_count"] });
+      const outranked = fromDoc(corrected, "d2", { employee_count: 32 });
+      expect(outranked.provenance.employee_count?.also_heard).toEqual([{ value: 30, source: doc("d1") }, { value: 35, source: msg("m1") }]);
+      const repeated = fromChat(outranked, "m2", { employee_count: 30 });
+      expect(repeated.provenance.employee_count?.also_heard).toEqual([{ value: 35, source: msg("m1") }, { value: 30, source: doc("d1") }]);
+    });
+
+    it("never holds the field's own value", () => {
+      const chat = fromChat(EMPTY, "m1", { employee_count: 40 });
+      const replaced = fromDoc(chat, "d1", { employee_count: 30 });
+      const back = fromDoc(replaced, "d2", { employee_count: 40 });
+      expect(back.provenance.employee_count?.status).toBe("conflicting");
+      const settled = fromChat(back, "m2", { employee_count: 40 }, { corrections: ["employee_count"] });
+      expect(settled.data.employee_count).toBe(40);
+      expect(settled.provenance.employee_count?.also_heard?.map((h) => h.value)).toEqual([30]);
+    });
+
+    it("is cleared when the prospect confirms, edits or resolves the field", () => {
+      const noted = fromChat(fromFile, "m1", { employee_count: 32 });
+      expect(noted.provenance.employee_count?.also_heard).toHaveLength(1);
+      expect(applyFieldAction(noted, { type: "confirm", field: "employee_count" }, NOW).provenance.employee_count).toEqual({
+        status: "confirmed",
+        source: { kind: "prospect_edit" },
+        updated_at: NOW.toISOString(),
+      });
+      expect(applyFieldAction(noted, { type: "edit", field: "employee_count", value: 33 }).provenance.employee_count).not.toHaveProperty("also_heard");
+      const conflict = fromDoc(noted, "d2", { employee_count: 31 });
+      expect(conflict.provenance.employee_count?.also_heard).toHaveLength(1);
+      expect(applyFieldAction(conflict, { type: "resolve", field: "employee_count", candidate: 1 }).provenance.employee_count).not.toHaveProperty("also_heard");
+    });
   });
 });
 
@@ -131,6 +415,32 @@ describe("applyFieldAction", () => {
     expect(next.data.employee_count).toBe(45);
     expect(next.provenance.employee_count).toMatchObject({ status: "confirmed" });
     expect(next.provenance.employee_count?.candidates).toBeUndefined();
+  });
+});
+
+describe("applyChosenValue", () => {
+  const doc: FieldSource = { kind: "document", document_id: "d1" };
+  const own = applyFieldAction(EMPTY, { type: "edit", field: "employee_count", value: 40 }, NOW);
+
+  it("replaces even the prospect's own answer, confirmed with the chosen source, keeping the answer as also heard", () => {
+    const next = applyChosenValue(own, "employee_count", 30, doc, NOW);
+    expect(next.data.employee_count).toBe(30);
+    expect(next.provenance.employee_count).toEqual({
+      status: "confirmed",
+      source: doc,
+      updated_at: NOW.toISOString(),
+      also_heard: [{ value: 40, source: { kind: "prospect_edit" } }],
+    });
+  });
+
+  it("notes nothing replaced from the same kind of source, and keeps what was already noted", () => {
+    const noted = applyExtraction(applyExtraction(EMPTY, { employee_count: 40 }, { source: { kind: "document", document_id: "d0" }, now: NOW }), { employee_count: 45 }, { source: msg("m1"), now: NOW });
+    expect(noted.provenance.employee_count?.also_heard).toEqual([{ value: 45, source: msg("m1") }]);
+    expect(applyChosenValue(noted, "employee_count", 30, doc, NOW).provenance.employee_count?.also_heard).toEqual([{ value: 45, source: msg("m1") }]);
+  });
+
+  it("rejects an invalid value without changing anything", () => {
+    expect(applyChosenValue(own, "hq_state", "Nowhere", doc, NOW)).toBe(own);
   });
 });
 
@@ -193,6 +503,40 @@ describe("parsing", () => {
       });
       expect(parsed.employee_count?.source).toEqual({ kind: "transcript", message_id: "m1" });
     }
+  });
+
+  it("round-trips what else was heard, and still reads entries saved before it existed", () => {
+    const doc: FieldSource = { kind: "document", document_id: "d1" };
+    let state = applyExtraction(EMPTY, { employee_count: 30 }, { source: doc, statuses: { employee_count: "confirmed" } });
+    state = applyExtraction(state, { employee_count: 32 }, { source: { kind: "transcript", message_id: "m1", quote: "32 of us", prompt_version: PROMPT_VERSION } });
+    const stored = JSON.parse(JSON.stringify(state.provenance));
+    expect(stored.employee_count.also_heard).toHaveLength(1);
+    expect(parseProvenance(stored)).toEqual(state.provenance);
+    const legacy = { status: "confirmed", source: doc, updated_at: "x" };
+    expect(parseProvenance({ employee_count: legacy })).toEqual({ employee_count: legacy });
+  });
+
+  it("drops malformed also_heard entries but keeps the rest of the field's provenance", () => {
+    const entry = { status: "confirmed", source: { kind: "document", document_id: "d1" }, updated_at: "x" };
+    const good = { value: 32, source: msg("m1") };
+    const parsed = parseProvenance({
+      employee_count: {
+        ...entry,
+        also_heard: [good, { value: 33, source: { kind: "hearsay" } }, { source: msg("m2") }, { value: "", source: msg("m3") }, "x", null, { value: 34, source: msg("m4") }],
+      },
+    });
+    expect(parsed.employee_count).toEqual({ ...entry, also_heard: [good, { value: 34, source: msg("m4") }] });
+    for (const also_heard of ["32", { value: 32 }, 7, null, [], [null]]) {
+      const kept = parseProvenance({ employee_count: { ...entry, also_heard } });
+      expect(kept.employee_count).toEqual(entry);
+      expect(kept.employee_count?.also_heard).toBeUndefined();
+    }
+  });
+
+  it("keeps only the five newest also_heard entries from storage", () => {
+    const also_heard = [1, 2, 3, 4, 5, 6, 7].map((n) => ({ value: n, source: msg(`m${n}`) }));
+    const parsed = parseProvenance({ employee_count: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "x", also_heard } });
+    expect(parsed.employee_count?.also_heard?.map((h) => h.value)).toEqual([3, 4, 5, 6, 7]);
   });
 
   it("reads the census entry saved under the roster's old name", () => {

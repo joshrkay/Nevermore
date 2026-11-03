@@ -1,13 +1,14 @@
 import type { CensusEmployee, ChamberData } from "./chamberTypes";
 import { CENSUS_FACTS, samePerson, type CensusFact } from "./census";
 import { sanitizeChamberPatch } from "./chamberValidation";
-import { applyExtraction, applyFieldAction, type FieldSource, type IntakeState } from "./provenance";
+import { applyChosenValue, applyExtraction, applyFieldAction, outranks, type FieldSource, type IntakeState, type ProvenanceMap } from "./provenance";
 
 // Values read out of an uploaded document are candidates, not answers: they are stored on the
 // document (with where they were found) and only reach the intake when the prospect applies
-// them. A candidate never replaces a value already in the intake unless the prospect chooses the
-// document's value in the conflict dialog. Applied values carry a `document` source in the field
-// provenance (see docs/intake-schema.md).
+// them. The Upload tab offers Apply for a value the intake doesn't hold yet, or holds only from
+// the conversation, which a document outranks; a value that differs from the prospect's own or
+// another document's is settled by the prospect in the conflict dialog. Applied values carry a
+// `document` source in the field provenance (see docs/intake-schema.md).
 
 export type CandidateField = keyof ChamberData;
 
@@ -96,7 +97,12 @@ const normalize = (v: unknown): string =>
           : v,
   );
 
-export type MergeKind = "new" | "same" | "conflict";
+/**
+ * "replace": the intake's value came from the conversation, which a document outranks, so applying
+ * the candidate replaces it and keeps it as also_heard. "conflict": it is the prospect's own or
+ * another document's, so the prospect settles it in the conflict dialog.
+ */
+export type MergeKind = "new" | "same" | "replace" | "conflict";
 
 export interface PlannedCandidate {
   candidate: DocumentCandidate;
@@ -104,15 +110,18 @@ export interface PlannedCandidate {
   current: unknown;
 }
 
-/** How each candidate relates to what the intake already holds. */
-export function planCandidateMerge(data: ChamberData, candidates: DocumentCandidate[]): PlannedCandidate[] {
+/** How each candidate relates to what the intake already holds, and where that came from. */
+export function planCandidateMerge(data: ChamberData, candidates: DocumentCandidate[], provenance: ProvenanceMap = {}): PlannedCandidate[] {
   return candidates.map((candidate) => {
     const current = data[candidate.field];
+    const entry = provenance[candidate.field];
     const same =
       candidate.field === "census"
         ? censusAgrees(compareCensus(data.census, candidate.value as CensusEmployee[], candidate.facts))
         : normalize(current) === normalize(candidate.value);
-    const kind: MergeKind = isEmpty(current) ? "new" : same ? "same" : "conflict";
+    // A census is always compared in the dialog, since it merges person by person.
+    const replaces = candidate.field !== "census" && entry !== undefined && outranks("document", entry);
+    const kind: MergeKind = isEmpty(current) ? "new" : same ? "same" : replaces ? "replace" : "conflict";
     return { candidate, kind, current };
   });
 }
@@ -192,9 +201,12 @@ export function documentSource(doc: { id: string; file_name: string }, c: Docume
 
 /**
  * Applies candidates the prospect chose. They reviewed each value, so it is recorded as
- * confirmed, with the document as its source. Without `replace`, the usual merge rules hold:
- * a value the prospect entered is never changed, and a different existing value becomes a
- * conflict rather than being overwritten. `replace` is the prospect choosing the document's value.
+ * confirmed, with the document as its source. Without `replace`, the merge ladder holds
+ * (applyExtraction): a value the prospect entered is never changed, a value from chat gives way
+ * to the document's and is kept as also_heard, and a different value from another document
+ * becomes a conflict. `replace` is the prospect choosing the document's value in the conflict
+ * dialog (applyChosenValue): it replaces their own answer too, and keeps a replaced value from
+ * another kind of source as also_heard.
  */
 export function applyDocumentCandidates(
   state: IntakeState,
@@ -205,15 +217,9 @@ export function applyDocumentCandidates(
   const now = opts.now ?? new Date();
   return chosen.reduce<IntakeState>((acc, c) => {
     const source = documentSource(doc, c);
-    if (!opts.replace) {
-      return applyExtraction(acc, { [c.field]: c.value }, { source, statuses: { [c.field]: "confirmed" }, now });
-    }
-    const patch = sanitizeChamberPatch({ [c.field]: c.value });
-    if (!(c.field in patch)) return acc;
-    return {
-      data: { ...acc.data, [c.field]: patch[c.field] },
-      provenance: { ...acc.provenance, [c.field]: { status: "confirmed", source, updated_at: now.toISOString() } },
-    };
+    return opts.replace
+      ? applyChosenValue(acc, c.field, c.value, source, now)
+      : applyExtraction(acc, { [c.field]: c.value }, { source, statuses: { [c.field]: "confirmed" }, now });
   }, state);
 }
 

@@ -11,31 +11,39 @@ const { useLenoreChat } = await import("./useLenoreChat");
 const httpError = (status: number) => new FunctionsHttpError(new Response("{}", { status }));
 
 const setup = () => {
-  const addUserMessage = vi.fn();
+  const addUserMessage = vi.fn((text: string) => ({ id: "m1", text }));
   const addLenoreMessage = vi.fn();
-  const setChamberData = vi.fn();
+  const onExtracted = vi.fn();
   const onOrbStateChange = vi.fn();
   const data = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", census: [{ id: "e1", first_name: "Ada", last_name: "L", dob: "1990-01-01", work_state: "TX", job_title: "Eng", annual_salary: 1, compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }] };
   const hook = renderHook(() =>
-    useLenoreChat({ chamberData: data, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange }),
+    useLenoreChat({ chamberData: data, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted }),
   );
-  return { ...hook, addUserMessage, addLenoreMessage, setChamberData, onOrbStateChange };
+  return { ...hook, addUserMessage, addLenoreMessage, onExtracted, onOrbStateChange };
 };
 
 describe("useLenoreChat", () => {
   beforeEach(() => { invoke.mockReset(); });
 
-  it("records the prospect's message, merges what Lenore extracted, and shows her reply", async () => {
-    invoke.mockResolvedValue({ data: { extracted: { employee_count: 12 }, reply: "Twelve — lovely." }, error: null });
-    const { result, addUserMessage, addLenoreMessage, setChamberData } = setup();
+  it("records the prospect's message, hands what Lenore extracted to onExtracted with it, and shows her reply", async () => {
+    const response = { extracted: { employee_count: 12 }, field_status: { employee_count: "confirmed" }, reply: "Twelve — lovely." };
+    invoke.mockResolvedValue({ data: response, error: null });
+    const { result, addUserMessage, addLenoreMessage, onExtracted } = setup();
     await act(async () => { await result.current.send("We have 12 staff"); });
 
     expect(addUserMessage).toHaveBeenCalledWith("We have 12 staff");
     expect(addLenoreMessage).toHaveBeenCalledWith("Twelve — lovely.");
-    expect(setChamberData).toHaveBeenCalledTimes(1);
-    const merged = (setChamberData.mock.calls[0][0] as (prev: typeof EMPTY_CHAMBER_DATA) => typeof EMPTY_CHAMBER_DATA)(EMPTY_CHAMBER_DATA);
-    expect(merged.employee_count).toBe(12);
+    expect(onExtracted).toHaveBeenCalledTimes(1);
+    expect(onExtracted).toHaveBeenCalledWith({ employee_count: 12 }, response, { id: "m1", text: "We have 12 staff" });
     expect(result.current.failure).toBeNull();
+  });
+
+  it("hands nothing on when Lenore extracted nothing", async () => {
+    invoke.mockResolvedValue({ data: { reply: "Tell me more." }, error: null });
+    const { result, addLenoreMessage, onExtracted } = setup();
+    await act(async () => { await result.current.send("hello"); });
+    expect(onExtracted).not.toHaveBeenCalled();
+    expect(addLenoreMessage).toHaveBeenCalledWith("Tell me more.");
   });
 
   it("removes a Social Security number before the message is kept or sent", async () => {
@@ -134,14 +142,14 @@ describe("useLenoreChat", () => {
     invoke.mockResolvedValueOnce({ data: { extracted: { employee_count: 12 }, reply: "ok" }, error: null });
     const onExtracted = vi.fn();
     const addUserMessage = vi.fn(() => ({ id: "m1", text: "We have 12 staff" }));
-    const setChamberData = vi.fn();
     const { result } = renderHook(() =>
-      useLenoreChat({ chamberData: EMPTY_CHAMBER_DATA, setChamberData, addUserMessage, addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted }),
+      useLenoreChat({ chamberData: EMPTY_CHAMBER_DATA, addUserMessage, addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted }),
     );
     await act(async () => { await result.current.send("We have 12 staff"); });
     await act(async () => { await result.current.retry(); });
+    expect(addUserMessage).toHaveBeenCalledTimes(1);
+    expect(onExtracted).toHaveBeenCalledTimes(1);
     expect(onExtracted).toHaveBeenCalledWith({ employee_count: 12 }, expect.anything(), { id: "m1", text: "We have 12 staff" });
-    expect(setChamberData).not.toHaveBeenCalled();
   });
 
   it("cites the message each answer belongs to when sends overlap", async () => {
@@ -151,7 +159,7 @@ describe("useLenoreChat", () => {
     let n = 0;
     const addUserMessage = vi.fn((text: string) => ({ id: `m${++n}`, text }));
     const { result } = renderHook(() =>
-      useLenoreChat({ chamberData: EMPTY_CHAMBER_DATA, setChamberData: vi.fn(), addUserMessage, addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted }),
+      useLenoreChat({ chamberData: EMPTY_CHAMBER_DATA, addUserMessage, addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted }),
     );
     let first!: Promise<void>, second!: Promise<void>;
     act(() => { first = result.current.send("We have 12 staff"); });
@@ -172,20 +180,19 @@ describe("useLenoreChat when the conversation is replaced", () => {
 
   const mount = () => {
     const addLenoreMessage = vi.fn();
-    const setChamberData = vi.fn();
     const onExtracted = vi.fn();
     const hook = renderHook(({ epoch }) =>
       useLenoreChat({
-        epoch, chamberData: EMPTY_CHAMBER_DATA, setChamberData, addLenoreMessage, onOrbStateChange: vi.fn(), onExtracted,
+        epoch, chamberData: EMPTY_CHAMBER_DATA, addLenoreMessage, onOrbStateChange: vi.fn(), onExtracted,
         addUserMessage: (text) => ({ id: "m1", text }),
       }), { initialProps: { epoch: 0 } });
-    return { ...hook, addLenoreMessage, setChamberData, onExtracted };
+    return { ...hook, addLenoreMessage, onExtracted };
   };
 
   it("drops an answer that arrives after the conversation was replaced", async () => {
     let answer!: (value: unknown) => void;
     invoke.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
-    const { result, rerender, addLenoreMessage, setChamberData, onExtracted } = mount();
+    const { result, rerender, addLenoreMessage, onExtracted } = mount();
     let sending!: Promise<void>;
     act(() => { sending = result.current.send("We're Acme, 12 people"); });
     rerender({ epoch: 1 });
@@ -194,7 +201,6 @@ describe("useLenoreChat when the conversation is replaced", () => {
       await sending;
     });
     expect(addLenoreMessage).not.toHaveBeenCalled();
-    expect(setChamberData).not.toHaveBeenCalled();
     expect(onExtracted).not.toHaveBeenCalled();
     expect(result.current.pending).toBe(false);
     expect(result.current.failure).toBeNull();

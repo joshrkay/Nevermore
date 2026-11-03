@@ -56,6 +56,33 @@ describe("document candidates", () => {
     expect(plan[2].current).toBe("Gusto");
   });
 
+  it("plans a value from the conversation as replaced, and a prospect's or another document's as a conflict", () => {
+    const data = { ...EMPTY_CHAMBER_DATA, payroll_vendor: "Gusto", employee_count: 40, current_carrier: "Aetna", pay_frequency: "Weekly" };
+    const chat = { kind: "transcript" as const, message_id: "m1" };
+    const provenance = {
+      payroll_vendor: { status: "confirmed" as const, source: chat, updated_at: "x" },
+      employee_count: { status: "conflicting" as const, source: chat, updated_at: "x", candidates: [{ value: 40, source: chat }, { value: 45, source: chat }] },
+      current_carrier: { status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "x" },
+      pay_frequency: { status: "confirmed" as const, source: { kind: "document" as const, document_id: "d0" }, updated_at: "x" },
+    };
+    const plan = planCandidateMerge(data, [
+      { field: "payroll_vendor", value: "ADP", location: null },
+      { field: "employee_count", value: 50, location: null },
+      { field: "current_carrier", value: "Cigna", location: null },
+      { field: "pay_frequency", value: "Bi-weekly", location: null },
+    ], provenance);
+    expect(plan.map((p) => [p.candidate.field, p.kind])).toEqual([
+      ["payroll_vendor", "replace"],
+      ["employee_count", "replace"],
+      ["current_carrier", "conflict"],
+      ["pay_frequency", "conflict"],
+    ]);
+    // A census from the conversation is still compared in the dialog, person by person.
+    const census = { census: { status: "inferred" as const, source: chat, updated_at: "x" } };
+    const withTeam = { ...EMPTY_CHAMBER_DATA, census: [{ ...employee, first_name: "Bo" }] };
+    expect(planCandidateMerge(withTeam, [{ field: "census", value: [employee], location: null }], census)[0].kind).toBe("conflict");
+  });
+
   it("treats a roster as a conflict when the intake already has a different census", () => {
     const roster = { field: "census" as const, value: [employee], location: "CSV, rows 2–2" };
     expect(planCandidateMerge(EMPTY_CHAMBER_DATA, [roster])[0].kind).toBe("new");
@@ -102,14 +129,31 @@ describe("document candidates", () => {
     const replaced = applyDocumentCandidates(prev, doc, [candidate], { replace: true, now });
     expect(replaced.data.payroll_vendor).toBe("ADP");
     expect(replaced.provenance.payroll_vendor?.source).toMatchObject({ kind: "document", location: "Page 2" });
+    // Their own answer came from another kind of source, so it is kept as also heard.
+    expect(replaced.provenance.payroll_vendor?.also_heard).toEqual([{ value: "Gusto", source: { kind: "prospect_edit" } }]);
   });
 
-  it("turns a different AI-sourced value into a conflict instead of replacing it", () => {
+  it("replaces a value from chat, which a document outranks, and keeps the chat value as also heard", () => {
+    const chat = { kind: "transcript" as const, message_id: "m1", quote: "we use Gusto" };
     const prev = {
       data: { ...EMPTY_CHAMBER_DATA, payroll_vendor: "Gusto" },
-      provenance: {
-        payroll_vendor: { status: "inferred" as const, source: { kind: "transcript" as const, message_id: "m1" }, updated_at: "x" },
-      },
+      provenance: { payroll_vendor: { status: "inferred" as const, source: chat, updated_at: "x" } },
+    };
+    const next = applyDocumentCandidates(prev, doc, [{ field: "payroll_vendor", value: "ADP", location: "Page 2" }], { now });
+    expect(next.data.payroll_vendor).toBe("ADP");
+    expect(next.provenance.payroll_vendor).toEqual({
+      status: "confirmed",
+      source: { kind: "document", document_id: "d1", document_name: "census.xlsx", location: "Page 2" },
+      updated_at: now.toISOString(),
+      also_heard: [{ value: "Gusto", source: chat }],
+    });
+  });
+
+  it("turns a different value from another document into a conflict instead of replacing it", () => {
+    const other = { kind: "document" as const, document_id: "d0", document_name: "invoice.pdf" };
+    const prev = {
+      data: { ...EMPTY_CHAMBER_DATA, payroll_vendor: "Gusto" },
+      provenance: { payroll_vendor: { status: "confirmed" as const, source: other, updated_at: "x" } },
     };
     const next = applyDocumentCandidates(prev, doc, [{ field: "payroll_vendor", value: "ADP", location: null }], { now });
     expect(next.data.payroll_vendor).toBe("Gusto");
@@ -175,20 +219,45 @@ describe("resolveCandidate", () => {
     provenance: { payroll_vendor: { status: "inferred" as const, source: { kind: "transcript" as const, message_id: "m1" }, updated_at: "x" } },
   };
 
-  it("uses the document's value, recorded as confirmed from the document", () => {
+  it("uses the document's value, recorded as confirmed from the document, and keeps the replaced value as also heard", () => {
     const next = resolveCandidate(prospect, doc, { type: "use_document", candidate: candidate({}) }, now);
     expect(next.data.payroll_vendor).toBe("ADP");
     expect(next.provenance.payroll_vendor).toEqual({
       status: "confirmed",
       source: { kind: "document", document_id: "d1", document_name: "roster.xlsx", location: "Page 2" },
       updated_at: now.toISOString(),
+      also_heard: [{ value: "Gusto", source: prospect.provenance.payroll_vendor.source }],
     });
+  });
+
+  it("notes nothing when the document's value replaces another document's", () => {
+    const other = { kind: "document" as const, document_id: "d0", document_name: "invoice.pdf" };
+    const fromFile = { data: prospect.data, provenance: { payroll_vendor: { status: "confirmed" as const, source: other, updated_at: "x" } } };
+    const next = resolveCandidate(fromFile, doc, { type: "use_document", candidate: candidate({}) }, now);
+    expect(next.data.payroll_vendor).toBe("ADP");
+    expect(next.provenance.payroll_vendor).not.toHaveProperty("also_heard");
   });
 
   it("keeps the intake's value and records that the prospect confirmed it", () => {
     const next = resolveCandidate(prospect, doc, { type: "keep_current", candidate: candidate({}) }, now);
     expect(next.data.payroll_vendor).toBe("Gusto");
     expect(next.provenance.payroll_vendor).toEqual({ status: "confirmed", source: { kind: "prospect_edit" }, updated_at: now.toISOString() });
+  });
+
+  describe("with values already noted as also heard", () => {
+    const paychex = { value: "Paychex", source: { kind: "transcript" as const, message_id: "m0" } };
+    const noted = { data: prospect.data, provenance: { payroll_vendor: { ...prospect.provenance.payroll_vendor, also_heard: [paychex] } } };
+
+    it("keeps them, and adds the replaced value, when the prospect picks the document's value", () => {
+      expect(resolveCandidate(noted, doc, { type: "use_document", candidate: candidate({}) }, now).provenance.payroll_vendor?.also_heard).toEqual([
+        paychex,
+        { value: "Gusto", source: prospect.provenance.payroll_vendor.source },
+      ]);
+    });
+
+    it("clears them when the prospect keeps their own answer", () => {
+      expect(resolveCandidate(noted, doc, { type: "keep_current", candidate: candidate({}) }, now).provenance.payroll_vendor).not.toHaveProperty("also_heard");
+    });
   });
 
   it("settles a conflict that was already recorded when the prospect picks a side", () => {
@@ -206,6 +275,8 @@ describe("resolveCandidate", () => {
     const next = resolveCandidate(conflicting, doc, { type: "use_document", candidate: candidate({}) }, now);
     expect(next.provenance.payroll_vendor?.status).toBe("confirmed");
     expect(next.provenance.payroll_vendor).not.toHaveProperty("candidates");
+    // The candidate it settled on is the field's value now, so only the other is kept.
+    expect(next.provenance.payroll_vendor?.also_heard).toEqual([{ value: "Gusto", source: prospect.provenance.payroll_vendor.source }]);
   });
 
   it("leaves a census the prospect keeps exactly as it is", () => {
@@ -230,6 +301,9 @@ describe("resolveCandidate", () => {
     const incoming = [{ ...employee, id: "n2", first_name: "Bo" }];
     const next = resolveCandidate(withTeam, doc, { type: "use_document", candidate: { field: "census", value: incoming, location: null } }, now);
     expect(next.data.census.map((r) => r.first_name)).toEqual(["Bo"]);
+    // The census isn't ranked, so the replaced roster isn't kept as also heard.
+    const fromChat = { ...withTeam, provenance: { census: { status: "inferred" as const, source: { kind: "transcript" as const, message_id: "m1" }, updated_at: "x" } } };
+    expect(resolveCandidate(fromChat, doc, { type: "use_document", candidate: { field: "census", value: incoming, location: null } }, now).provenance.census).not.toHaveProperty("also_heard");
   });
 
   it("names the fields a resolution settles", () => {
