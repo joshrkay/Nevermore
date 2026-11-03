@@ -112,9 +112,13 @@ export function manuscriptFilename(fileId: string, companyName: string | null): 
   return `The_Manuscript_${fileId}_${slug || "Company"}.pdf`;
 }
 
-/** Stable, human-readable file id derived from the session id. */
-export function fileIdForSession(sessionId: string, date = new Date()): string {
-  return `EAA-${date.getFullYear()}-${sessionId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+/**
+ * The intake's File ID, from its id and when it started. The year is the start's, in UTC, exactly as
+ * the database builds it when a certification carries none, so one intake has one File ID for good:
+ * never today's year, and never the browser's time zone.
+ */
+export function fileIdForSession(sessionId: string, startedAt: Date): string {
+  return `EAA-${startedAt.getUTCFullYear()}-${sessionId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
 }
 
 // ---------- Eligibility ----------

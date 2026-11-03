@@ -5,7 +5,7 @@ import { CheckCircle2, Download, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
-import { fileIdForSession, NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
+import { NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
 import {
   CONSENT_IS_DRAFT,
   CONSENT_SIGNING_STATEMENT,
@@ -22,6 +22,8 @@ interface ReckoningTabProps {
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
   sessionId: string | null;
+  /** The intake's File ID, as the session gives it; null while there is no intake. */
+  fileId: string | null;
   /**
    * `signedDataKey` is the answers as signed; the save is refused if they have moved on. Resolves
    * `true` once certified, otherwise `false` or the reason, in words for the prospect.
@@ -34,7 +36,7 @@ interface ReckoningTabProps {
 const formatSigned = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
-const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certification = NO_CERTIFICATION }: ReckoningTabProps) => {
+const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION }: ReckoningTabProps) => {
   const peoName = chosenPeo ?? "your PEO";
   const { isAnonymous } = useAuth();
   // A returning signer doesn't retype their name and role to certify again.
@@ -67,7 +69,6 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
     setNeedsRecertify(true);
   }, [dataKey, signedDataKey]);
 
-  const fileId = useMemo(() => (sessionId ? fileIdForSession(sessionId) : null), [sessionId]);
   const signed = signedAt !== null;
   const blockers = certificationBlockers({
     acknowledged: checks,

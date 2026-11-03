@@ -22,6 +22,8 @@ let inserts = 0;
 const insertedRows: Record<string, unknown>[] = [];
 const insertedColumns: string[] = [];
 let insertError: { message: string } | null = null;
+// When the server says a new intake was created.
+let insertedCreatedAt = "2026-05-01T12:00:00Z";
 // The prospect's latest unfinished intake, as the lookup on a bare /start finds it.
 let latestRow: { id: string; status?: string } | null = null;
 let latestError: { message: string } | null = null;
@@ -75,7 +77,9 @@ vi.mock("@/integrations/supabase/client", () => ({
             insertedColumns.push(columns);
             return {
               single: async () =>
-                insertError ? { data: null, error: insertError } : { data: { id: "s1", data_version: 1 }, error: null },
+                insertError
+                  ? { data: null, error: insertError }
+                  : { data: { id: "s1", data_version: 1, created_at: insertedCreatedAt }, error: null },
             };
           },
         };
@@ -129,6 +133,7 @@ const serverRow = (over: Record<string, unknown> = {}) => ({
   field_provenance: {},
   transcript: [],
   submission: null,
+  created_at: "2026-05-01T12:00:00Z",
   ...over,
 });
 
@@ -147,6 +152,7 @@ describe("useChamberSession", () => {
     inserts = 0;
     insertedRows.length = 0;
     insertError = null;
+    insertedCreatedAt = "2026-05-01T12:00:00Z";
     latestRow = null;
     latestError = null;
     lastClosedRow = null;
@@ -556,6 +562,37 @@ describe("useChamberSession", () => {
     });
   });
 
+  describe("the File ID", () => {
+    // Late on New Year's Eve: the intake starts in one year and is certified in the next.
+    const NEW_YEARS_EVE = "2026-12-31T23:59:00Z";
+    const NEXT_YEAR = new Date("2027-01-02T10:00:00Z");
+
+    it("takes a new intake's year from when the server created it, not from today", async () => {
+      insertedCreatedAt = NEW_YEARS_EVE;
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(NEXT_YEAR);
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(result.current.fileId).toBe("EAA-2026-S1");
+    });
+
+    it("keeps a resumed intake's File ID from the year it started, so certifying again later can't change it", async () => {
+      resumeRow = serverRow({ id: "s7", created_at: NEW_YEARS_EVE });
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(NEXT_YEAR);
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
+      expect(result.current.fileId).toBe("EAA-2026-S7");
+    });
+
+    it("has none while there is no intake", async () => {
+      latestError = { message: "network down" };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.loadFailed).toBe(true));
+      expect(result.current.fileId).toBeNull();
+    });
+  });
+
   describe("save status", () => {
     const edit = (result: { current: ReturnType<typeof useChamberSession> }) =>
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
@@ -660,7 +697,7 @@ describe("useChamberSession", () => {
 
     it("writes against the version the server gave a new intake, naming only the row and the version", async () => {
       const { result } = await open();
-      expect(insertedColumns).toEqual(["id, data_version"]);
+      expect(insertedColumns).toEqual(["id, data_version, created_at"]);
       edit(result);
       await autosave();
       expect(updates[0].filters).toEqual({ id: "s1", data_version: 1 });

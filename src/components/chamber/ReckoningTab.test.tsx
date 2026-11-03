@@ -19,7 +19,7 @@ const { CONSENT_TEXT_VERSION } = await import("@/data/certification");
 const renderReckoning = () =>
   render(
     <MemoryRouter>
-      <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={null} sessionId="s1" onSubmit={async () => true} />
+      <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={async () => true} />
     </MemoryRouter>,
   );
 
@@ -82,7 +82,7 @@ describe("ReckoningTab certification", () => {
   const mount = (data = DEMO_CHAMBER_DATA) => {
     const tree = (d: typeof data) => (
       <MemoryRouter>
-        <ReckoningTab data={d} peoName={null} sessionId="s1" onSubmit={onSubmit} />
+        <ReckoningTab data={d} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
       </MemoryRouter>
     );
     const view = render(tree(data));
@@ -149,6 +149,8 @@ describe("ReckoningTab certification", () => {
     expect(sent).toMatchObject({
       signer_name: "Jo Doe",
       signer_title: "CEO",
+      // The intake's own File ID, as the session gave it: never one made up from today's date.
+      file_id: "EAA-2026-S1",
       // One version, under both names: the app's and the one the database's certification check reads.
       consent_text_version: CONSENT_TEXT_VERSION,
       consent_version: CONSENT_TEXT_VERSION,
@@ -169,7 +171,7 @@ describe("ReckoningTab certification", () => {
     fireEvent.click(submitButton());
     expect(await screen.findByText("Certification recorded")).toBeInTheDocument();
     expect(screen.getByText(/Certified by Jo Doe, CEO/)).toBeInTheDocument();
-    expect(screen.getByText(/File ID: EAA-/)).toBeInTheDocument();
+    expect(screen.getByText("File ID: EAA-2026-S1")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Download The Manuscript/ })).toHaveAttribute("href", "/manuscript?session=s1");
     expect(toast.success).toHaveBeenCalled();
   });
@@ -268,7 +270,7 @@ describe("ReckoningTab on an intake that is already certified", () => {
   const mountWith = (certification: React.ComponentProps<typeof ReckoningTab>["certification"], peoName: string | null = null) =>
     render(
       <MemoryRouter>
-        <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={peoName} sessionId="s1" onSubmit={onSubmit} certification={certification} />
+        <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={peoName} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} certification={certification} />
       </MemoryRouter>,
     );
 
@@ -296,7 +298,7 @@ describe("ReckoningTab on an intake that is already certified", () => {
   it("brings the form back if a signature made this visit is voided, even before the saved state catches up", () => {
     const tree = (d: typeof DEMO_CHAMBER_DATA, certification: React.ComponentProps<typeof ReckoningTab>["certification"]) => (
       <MemoryRouter>
-        <ReckoningTab data={d} peoName={null} sessionId="s1" onSubmit={onSubmit} certification={certification} />
+        <ReckoningTab data={d} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} certification={certification} />
       </MemoryRouter>
     );
     const view = render(tree(DEMO_CHAMBER_DATA, { status: "none" }));
