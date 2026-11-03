@@ -1348,7 +1348,7 @@ BEGIN
   PERFORM pg_temp.mk_event(sid, 'dead', 5);
 END $$;
 
-\i supabase/migrations/20261027090000_outbox_operations.sql
+\i supabase/migrations/20261027090100_outbox_operations.sql
 
 DO $$
 DECLARE

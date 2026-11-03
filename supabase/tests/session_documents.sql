@@ -221,11 +221,11 @@ END $$;
 
 RESET ROLE;
 
--- ---------- A row points into its own intake's folder (20261103110000_document_storage_path.sql) ----------
+-- ---------- A row points into its own intake's folder (20261103110100_document_storage_path.sql) ----------
 
 -- The rows above use made-up paths; clear them so the migration has nothing to report.
 DELETE FROM public.documents;
-\i supabase/migrations/20261103110000_document_storage_path.sql
+\i supabase/migrations/20261103110100_document_storage_path.sql
 
 SET ROLE authenticated;
 
