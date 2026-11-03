@@ -133,10 +133,19 @@ export const SIGNUP_CONFIRM_TEMPLATE = [
   "<p>If you didn't sign up, you can ignore this email.</p>",
 ].join("\n");
 
-/** True when a sign-up confirmation template carries both the code and a link that verifies only on a click. */
+/**
+ * True when a sign-up confirmation template carries both the code and a link that verifies only on a
+ * click: the token hash goes to the app as `token_hash=`, never to Supabase's verify endpoint, which
+ * confirms on any GET.
+ */
 export function signupTemplateOk(content) {
   const text = String(content ?? "");
-  return /\{\{\s*\.Token\s*\}\}/.test(text) && /\{\{\s*\.TokenHash\s*\}\}/.test(text) && !text.includes(".ConfirmationURL");
+  return (
+    /\{\{\s*\.Token\s*\}\}/.test(text) &&
+    /token_hash=\{\{\s*\.TokenHash\s*\}\}/.test(text) &&
+    !text.includes(".ConfirmationURL") &&
+    !text.includes("/auth/v1/verify")
+  );
 }
 
 /**
@@ -269,10 +278,11 @@ export function rowsFrom(body) {
 
 /**
  * Why the links in sign-up and email-change emails would not come back to the site, or [] when they
- * would. Supabase sends a link's visitor to the redirect the app asked for only when it is on the
- * Redirect URLs list, and otherwise to the Site URL: a new project's Site URL is
- * http://localhost:3000, so an unset one turns every confirmation into a browser error page.
- * `appBaseUrl` (APP_BASE_URL) pins the expected origin when it is known.
+ * would. Supabase sends a link's visitor to the redirect the app asked for when it is on the Site
+ * URL's own scheme, host and port, or on the Redirect URLs list, and otherwise to the Site URL: a new
+ * project's Site URL is http://localhost:3000, so an unset one turns every confirmation into a browser
+ * error page. With the Site URL right, the list isn't needed for the site itself. `appBaseUrl`
+ * (APP_BASE_URL) pins the expected origin when it is known.
  */
 export function authUrlProblems(authConfig, appBaseUrl) {
   if (!authConfig) return ["auth config unreadable"];
@@ -280,14 +290,19 @@ export function authUrlProblems(authConfig, appBaseUrl) {
   try { site = new URL(String(authConfig.site_url ?? "")); } catch { return ["Site URL is not set (Authentication → URL Configuration)"]; }
   const local = site.hostname === "localhost" || site.hostname === "127.0.0.1";
   let expected = null;
-  try { expected = appBaseUrl ? new URL(appBaseUrl).origin : null; } catch { /* checkSecrets reports a bad APP_BASE_URL */ }
-
   const problems = [];
-  if (expected && site.origin !== expected) problems.push(`Site URL is ${authConfig.site_url}, not ${expected}`);
-  else if (!expected && (local || site.protocol !== "https:")) problems.push(`Site URL is ${authConfig.site_url}: confirmation links send people there`);
-  const origin = expected ?? site.origin;
+  if (appBaseUrl) {
+    try { expected = new URL(appBaseUrl).origin; } catch {
+      problems.push(`APP_BASE_URL (${appBaseUrl}) isn't a URL, so the Site URL wasn't compared with it`);
+    }
+  }
+
+  const siteWrong = expected ? site.origin !== expected : local || site.protocol !== "https:";
+  if (!siteWrong) return problems;
+  problems.push(expected ? `Site URL is ${authConfig.site_url}, not ${expected}` : `Site URL is ${authConfig.site_url}: confirmation links send people there`);
+  // With the Site URL wrong, only a Redirect URLs entry brings links back to the site.
   const allowList = String(authConfig.uri_allow_list ?? "").split(",").map((u) => u.trim()).filter(Boolean);
-  if (!allowList.includes(`${origin}/**`)) problems.push(`Redirect URLs lack ${origin}/**`);
+  if (expected && !allowList.includes(`${expected}/**`)) problems.push(`Redirect URLs lack ${expected}/**`);
   return problems;
 }
 

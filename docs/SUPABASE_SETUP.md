@@ -25,16 +25,18 @@ front end that uses it is deployed.
 
 ### Auth URLs and emails
 
-Every link in a sign-up or email-change email goes through Supabase, which then sends the person to
-the address the app asked for (`/auth/callback`), but only if that address is allowed. Otherwise it
-sends them to the **Site URL**, and a new project's Site URL is `http://localhost:3000`: the person
-sees their browser's "can't reach this site" page, although Supabase has already confirmed the
-account. The script sets, and `--check` verifies:
+Supabase builds the links in sign-up and email-change emails from the address the app asked for
+(`/auth/callback`), but only if that address is on the Site URL's own host or on the Redirect URLs
+list. Otherwise it uses the **Site URL**, and a new project's Site URL is `http://localhost:3000`:
+the person sees their browser's "can't reach this site" page. The script sets, and `--check`
+verifies:
 
 - **Site URL** (Authentication → URL Configuration): `APP_BASE_URL`, e.g.
   `https://nevermore-gamma.vercel.app`. Supabase falls back to it when the address the app asked for
   isn't allowed.
-- **Redirect URLs**: `https://nevermore-gamma.vercel.app/**`. The script keeps entries already there.
+- **Redirect URLs**: `https://nevermore-gamma.vercel.app/**` (the script adds it; with the Site URL
+  right it isn't strictly needed, and `--check` asks for it only when the Site URL is wrong). The
+  script keeps entries already there.
   Every entry is a place Supabase will send sign-in tokens, so list only hosts you control. Don't add
   a wildcard such as `https://nevermore-*.vercel.app/**`: anyone can name a Vercel project to match
   it. A sign-up on a preview deployment needs no entry: its 6-digit code works there, and its link
@@ -155,13 +157,15 @@ code and an app link, with no `{{ .ConfirmationURL }}`).
 What the person sees after clicking the link tells you which setting is wrong:
 
 - **The browser's "can't reach this site" or "localhost refused to connect" page:** the Site URL is
-  still `http://localhost:3000` and the site isn't on Redirect URLs. Supabase did confirm the account,
-  so the person can sign in at `/login` with their password now. Fix the URL Configuration above.
+  still `http://localhost:3000` and the site isn't on Redirect URLs. Fix the URL Configuration above.
+  With Supabase's default email, Supabase confirmed the account before redirecting, so the person can
+  sign in at `/login` with their password now. With the sign-up template above installed, nothing
+  was confirmed: the person signs in at `/login` and enters the 6-digit code from the email.
 - **Another site's home page:** the Site URL points at another domain (an old Lovable preview, say).
   Fix it as above.
 - **"This link didn't work" on `/auth/callback`:** the link was used, expired (after an hour by
-  default) or replaced by a newer email. With Supabase's default template a mail scanner may have
-  used it, which also confirms the account, so signing in usually works; otherwise the page sends a
-  new email. Installing the sign-up template above stops scanners using the links up.
+  default) or replaced by a newer email. With Supabase's default email a mail scanner may have used
+  it, which also confirms the account, so signing in usually works; otherwise the page sends a new
+  email. Installing the sign-up template above stops scanners using the links up.
 
 `npm run setup:supabase -- --project-ref <ref>` sets all of it; `--check` confirms it.
