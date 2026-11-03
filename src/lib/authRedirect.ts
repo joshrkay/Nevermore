@@ -99,8 +99,3 @@ export function takeInitialAuthRedirect(): AuthRedirect | null {
   initialRedirectTaken = true;
   return parseAuthRedirect(initialHref);
 }
-
-/** Test hook: forget that the initial redirect was taken. */
-export function resetInitialAuthRedirectForTests() {
-  initialRedirectTaken = false;
-}
