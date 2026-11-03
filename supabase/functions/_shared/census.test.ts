@@ -107,6 +107,8 @@ describe("normalizeCensusRow", () => {
       compensation_type: "salary",
       employment_type: "full_time",
       classification: "w2",
+      // The file said neither, so both are recorded as defaults, not answers.
+      assumed: ["classification", "employment_type"],
     });
   });
 
@@ -157,7 +159,49 @@ describe("normalizeCensusRow", () => {
 
   it("drops values that aren't valid and keeps the row", () => {
     const row = normalizeCensusRow({ first_name: "Ana", dob: "soon", age: 7, zip_code: "n/a", coverage_tier: "gold", class_code: "x", annual_salary: -5 }, NOW);
-    expect(row).toEqual({ first_name: "Ana", last_name: "", work_state: "", compensation_type: "salary", employment_type: "full_time", classification: "w2" });
+    expect(row).toEqual({
+      first_name: "Ana", last_name: "", work_state: "", compensation_type: "salary", employment_type: "full_time", classification: "w2",
+      assumed: ["classification", "employment_type"],
+    });
+  });
+});
+
+describe("normalizeCensusRow: defaults are recorded, never passed off as answers", () => {
+  it("records nothing when the row states everything", () => {
+    const row = normalizeCensusRow({ first_name: "Ana", classification: "1099", employment_type: "part_time", annual_salary: 50000 }, NOW);
+    expect(row).not.toHaveProperty("assumed");
+  });
+
+  it("takes employment type from weekly hours as an answer", () => {
+    expect(normalizeCensusRow({ first_name: "Ana", classification: "W2", hours_per_week: 20 }, NOW)?.assumed).toBeUndefined();
+    expect(normalizeCensusRow({ first_name: "Ana", classification: "W2", hours_per_week: 40 }, NOW)).toMatchObject({ employment_type: "full_time" });
+  });
+
+  it("marks a year's pay worked out at assumed full-time hours, but not one at stated hours", () => {
+    const assumedHours = normalizeCensusRow({ first_name: "Ana", classification: "w2", employment_type: "full_time", hourly_rate: 20 }, NOW);
+    expect(assumedHours).toMatchObject({ annual_salary: 41600, compensation_type: "hourly", assumed: ["annual_salary"] });
+    const statedHours = normalizeCensusRow({ first_name: "Ana", classification: "w2", hourly_rate: 20, hours_per_week: 30 }, NOW);
+    expect(statedHours).toMatchObject({ annual_salary: 31200 });
+    expect(statedHours).not.toHaveProperty("assumed");
+  });
+
+  it("keeps what a saved row recorded, as long as the value is still the default", () => {
+    const saved = normalizeCensusRow({ first_name: "Ana", annual_salary: 41600, compensation_type: "hourly", employment_type: "full_time", classification: "w2", assumed: ["classification", "employment_type", "annual_salary"] }, NOW);
+    expect(saved?.assumed).toEqual(["classification", "employment_type", "annual_salary"]);
+    // A value that is no longer the default was answered since: the old record of a default goes.
+    const answered = normalizeCensusRow({ first_name: "Ana", classification: "1099", employment_type: "part_time", assumed: ["classification", "employment_type"] }, NOW);
+    expect(answered).not.toHaveProperty("assumed");
+  });
+
+  it("ignores anything in a saved list it doesn't know", () => {
+    const row = normalizeCensusRow({ first_name: "Ana", classification: "w2", employment_type: "full_time", assumed: ["ssn", 4, "classification"] }, NOW);
+    expect(row?.assumed).toEqual(["classification"]);
+  });
+
+  it("survives being read again unchanged", () => {
+    const once = normalizeCensus([{ first_name: "Ana", hourly_rate: 20 }], NOW);
+    expect(normalizeCensus(once, NOW)).toEqual(once);
+    expect(once[0].assumed).toEqual(["classification", "employment_type", "annual_salary"]);
   });
 });
 

@@ -1,8 +1,9 @@
 // The census contract lives beside the edge functions so document-extract and the app read a row
 // the same way. See supabase/functions/_shared/census.ts.
-import { ageOn, COVERAGE_TIER_LABELS, type CensusEmployee } from "../../supabase/functions/_shared/census.ts";
+import { ageOn, COVERAGE_TIER_LABELS, isAssumed as isAssumedFact, type CensusEmployee } from "../../supabase/functions/_shared/census.ts";
 
 export {
+  CENSUS_ASSUMABLE,
   CLASSIFICATIONS,
   COMPENSATION_TYPES,
   COVERAGE_TIER_LABELS,
@@ -13,12 +14,15 @@ export {
   MAX_DEPENDENTS,
   ageOn,
   censusGaps,
+  classificationLabel,
+  isAssumed,
   isW2,
   normalizeCensus,
   samePerson,
   stripUnstorable,
 } from "../../supabase/functions/_shared/census.ts";
 export type {
+  CensusAssumable,
   CensusDependent,
   CensusEmployee,
   CensusGap,
@@ -31,9 +35,14 @@ export type {
 /** Age today, from the date of birth when there is one. */
 export const censusAge = (e: CensusEmployee): number | undefined => (e.dob ? ageOn(e.dob) : e.age);
 
-/** Annual pay for a table cell: "$85,000", "$41,600 (hourly)" for an hourly worker, or "—". */
+/**
+ * Annual pay for a table cell: "$85,000", "$41,600 (hourly)" for an hourly worker, "(hourly, est.)" when the
+ * year's pay assumes full-time hours, or "—".
+ */
 export const censusPay = (e: CensusEmployee): string =>
-  e.annual_salary ? `$${e.annual_salary.toLocaleString()}${e.compensation_type === "hourly" ? " (hourly)" : ""}` : "—";
+  e.annual_salary
+    ? `$${e.annual_salary.toLocaleString()}${e.compensation_type === "hourly" ? (isAssumedFact(e, "annual_salary") ? " (hourly, est.)" : " (hourly)") : ""}`
+    : "—";
 
 /** Facts of a census row a document can state; the rest of a row is its name and id. */
 export const CENSUS_FACTS = [

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
-import { censusPay } from "@/data/census";
+import { censusPay, classificationLabel, isAssumed } from "@/data/census";
 import { fieldOpenItems, formatFieldValue, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import { missingRecommendedItems, missingRequired, type ReadinessItem, type ReviewSection } from "@/data/readiness";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
@@ -292,8 +292,10 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
                             <td className="py-1.5 pr-3 text-right font-mono">{censusPay(emp)}</td>
                             <td className="py-1.5 text-center">
                               <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                                emp.classification === "1099" ? "bg-warning/15 text-warning" : "bg-success/15 text-success"
-                              }`}>{emp.classification === "1099" ? "1099" : "W-2"}</span>
+                                isAssumed(emp, "classification")
+                                  ? "bg-muted text-muted-foreground"
+                                  : emp.classification === "1099" ? "bg-warning/15 text-warning" : "bg-success/15 text-success"
+                              }`}>{classificationLabel(emp)}</span>
                               {employeeFlag(emp) && (
                                 <span title={employeeFlag(emp) ?? undefined} className="ml-1 text-[10px] text-warning">⚠</span>
                               )}
