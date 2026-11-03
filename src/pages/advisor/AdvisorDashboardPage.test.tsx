@@ -220,7 +220,7 @@ describe("AdvisorDashboardPage", () => {
       row({ session_id: "s3", company_name: "Gamma", contact_name: "Pat Gamma", file_id: "EAA-2026-CCCC3333" }),
     ];
 
-    it("narrows the list by company, contact or reference without reloading", async () => {
+    it("narrows the list by company, contact or File ID without reloading", async () => {
       listSubmissions.mockResolvedValue(rows);
       renderAt();
       await screen.findByRole("link", { name: "Acme Holdings" });
