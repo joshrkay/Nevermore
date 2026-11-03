@@ -59,6 +59,7 @@ const ChamberPage = () => {
     restoreBackup,
     discardBackup,
     restoredThrough,
+    conversationEpoch,
     chamberData,
     provenance,
     messages,
@@ -97,6 +98,7 @@ const ChamberPage = () => {
   }, [addMessage]);
 
   const { startVoice, isConnected, hasAgentId } = useLenoreVoice({
+    epoch: conversationEpoch,
     onOrbStateChange: setOrbState,
     onNewMessage: addMessage,
     onLastSpokenText: setLastSpokenText,
@@ -108,6 +110,7 @@ const ChamberPage = () => {
   });
 
   const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
+    epoch: conversationEpoch,
     chamberData,
     setChamberData,
     addUserMessage: (text) => {

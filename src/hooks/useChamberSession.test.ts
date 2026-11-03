@@ -1610,6 +1610,27 @@ describe("useChamberSession", () => {
       expect(inserts).toBe(1);
     });
 
+    it("keeps saving the intake it couldn't set aside: the edit held back for the archive still goes out", async () => {
+      rpcResult = { data: null, error: { message: "Failed to fetch" } };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      vi.useFakeTimers();
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      await act(async () => { await result.current.startOver(); });
+      expect(updates).toHaveLength(0);
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      expect(updates).toHaveLength(1);
+      expect(updates[0].payload.chamber_data).toMatchObject({ company_name: "Acme" });
+    });
+
+    it("marks the conversation as replaced, so chat and voice drop what belonged to the old one", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      const before = result.current.conversationEpoch;
+      await act(async () => { await result.current.startOver(); });
+      expect(result.current.conversationEpoch).not.toBe(before);
+    });
+
     it("goes ahead when the intake was already archived (a retry after a lost answer)", async () => {
       rpcResult = { data: null, error: { message: "Intake not found", code: "PT404" } };
       const { result } = renderHook(() => useChamberSession());

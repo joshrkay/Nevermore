@@ -7,10 +7,12 @@ type Handlers = {
   onMessage: (m: { message: string; role: "user" | "agent" }) => void;
 };
 let handlers: Handlers | null = null;
+let voiceStatus = "disconnected";
+const endSession = vi.fn(async () => {});
 vi.mock("@elevenlabs/react", () => ({
   useConversation: (options: Handlers) => {
     handlers = options;
-    return { status: "disconnected", isSpeaking: false, startSession: vi.fn(), endSession: vi.fn() };
+    return { status: voiceStatus, isSpeaking: false, startSession: vi.fn(), endSession };
   },
 }));
 
@@ -51,5 +53,29 @@ describe("useLenoreVoice greetings", () => {
     said("Hi, we're Acme.", "user");
     said("Thank you.", "agent");
     expect(onNewMessage.mock.calls.at(-1)?.[0].kind).toBeUndefined();
+  });
+});
+
+describe("useLenoreVoice when the conversation is replaced", () => {
+  it("ends the open voice session, and keeps nothing it still says", () => {
+    voiceStatus = "connected";
+    endSession.mockClear();
+    const onNewMessage = vi.fn();
+    const { rerender } = renderHook(({ epoch }) => useLenoreVoice({ epoch, onOrbStateChange: vi.fn(), onNewMessage, onLastSpokenText: vi.fn(), onExtract: vi.fn() }), { initialProps: { epoch: 0 } });
+    act(() => handlers?.onConnect());
+    said("Hello.", "agent");
+    expect(onNewMessage).toHaveBeenCalledTimes(1);
+
+    rerender({ epoch: 1 });
+    expect(endSession).toHaveBeenCalledTimes(1);
+    said("We're Acme.", "user");
+    said("Noted.", "agent");
+    expect(onNewMessage).toHaveBeenCalledTimes(1);
+
+    // A session opened in the new conversation is heard again.
+    act(() => handlers?.onConnect());
+    said("Hello again.", "agent");
+    expect(onNewMessage).toHaveBeenCalledTimes(2);
+    voiceStatus = "disconnected";
   });
 });

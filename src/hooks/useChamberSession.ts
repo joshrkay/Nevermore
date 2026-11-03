@@ -75,6 +75,11 @@ interface UseChamberSessionReturn {
   discardBackup: () => void;
   /** The last message loaded with the intake, when it was opened with a conversation in it. */
   restoredThrough: string | null;
+  /**
+   * Changes when the conversation on screen is replaced by a blank one ("Start over", or another person
+   * signing in in this tab). Chat and voice drop anything that answers an earlier conversation.
+   */
+  conversationEpoch: number;
   chamberData: ChamberData;
   /** Status and source of each captured field. */
   provenance: ProvenanceMap;
@@ -225,6 +230,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [expired, setExpired] = useState<{ at: string | null } | null>(null);
   const [backupOffer, setBackupOffer] = useState<BackupOffer | null>(null);
   const [restoredThrough, setRestoredThrough] = useState<string | null>(null);
+  // Changes whenever the conversation on screen is replaced by a blank one (start over, another person
+  // signing in), so a reply or a voice line meant for the old conversation is never added to the new one.
+  const [conversationEpoch, setConversationEpoch] = useState(0);
   // The kept answers on offer. While the prospect hasn't decided, the copy in storage is left alone.
   const backupRef = useRef<IntakeBackup | null>(null);
   const userIdRef = useRef(userId);
@@ -651,6 +659,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     setMessages(opening);
     certificationRef.current = NO_CERTIFICATION;
     setCertification(NO_CERTIFICATION);
+    setConversationEpoch((n) => n + 1);
   }, []);
 
   // After an intake is loaded: offers this browser's copy of answers that never reached the server, unless
@@ -863,7 +872,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           return false;
         }
       });
-      if (!archived) return false;
+      if (!archived) {
+        // The prospect keeps this intake: send the edit whose save was held back for the archive.
+        if (dirtyRef.current && !saveTimerRef.current) scheduleSave();
+        return false;
+      }
       const uid = userIdRef.current;
       if (uid) clearBackup(uid, sid);
     }
@@ -872,7 +885,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     blankIntake();
     startNew();
     return true;
-  }, [blankIntake, enqueue, startNew, stopTimer]);
+  }, [blankIntake, enqueue, scheduleSave, startNew, stopTimer]);
 
   const discardBackup = useCallback(() => {
     const backup = backupRef.current;
@@ -1132,6 +1145,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     restoreBackup,
     discardBackup,
     restoredThrough,
+    conversationEpoch,
     chamberData,
     provenance,
     messages,

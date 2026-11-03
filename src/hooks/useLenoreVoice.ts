@@ -12,6 +12,11 @@ interface UseLenoreVoiceOptions {
   onLastSpokenText: (text: string) => void;
   /** `message` is the prospect's message the extraction answers, when there is one. */
   onExtract: (data: unknown, message: ChatMessage | null) => void;
+  /**
+   * Which conversation this is (useChamberSession's `conversationEpoch`). When it changes, a voice session
+   * still open belongs to the old conversation: it is ended, and nothing more it says is kept.
+   */
+  epoch?: unknown;
 }
 
 export function useLenoreVoice({
@@ -19,6 +24,7 @@ export function useLenoreVoice({
   onNewMessage,
   onLastSpokenText,
   onExtract,
+  epoch,
 }: UseLenoreVoiceOptions) {
   const [isConnected, setIsConnected] = useState(false);
   const callbacksRef = useRef({ onOrbStateChange, onNewMessage, onLastSpokenText, onExtract });
@@ -26,6 +32,9 @@ export function useLenoreVoice({
   // The agent opens each voice session with its own hello. Its first line, if it comes before the prospect
   // says anything, is marked as a greeting so the transcript keeps only one (see useChamberSession).
   const awaitingGreetingRef = useRef(false);
+  const epochRef = useRef(epoch);
+  // The conversation the open voice session was started in.
+  const sessionEpochRef = useRef<unknown>(epoch);
 
   // Keep refs fresh without re-creating the hook
   useEffect(() => {
@@ -36,6 +45,7 @@ export function useLenoreVoice({
     onConnect: () => {
       console.log("Lenore voice connected");
       awaitingGreetingRef.current = true;
+      sessionEpochRef.current = epochRef.current;
       setIsConnected(true);
       callbacksRef.current.onOrbStateChange("listening");
     },
@@ -46,6 +56,8 @@ export function useLenoreVoice({
     },
     onMessage: ({ message, role }) => {
       if (!message) return;
+      // Still arriving from a session opened in a conversation that has since been replaced.
+      if (!Object.is(sessionEpochRef.current, epochRef.current)) return;
 
       if (role === "user") {
         awaitingGreetingRef.current = false;
@@ -80,6 +92,14 @@ export function useLenoreVoice({
       callbacksRef.current.onOrbStateChange("idle");
     },
   });
+
+  // A new conversation: end a voice session that belongs to the old one.
+  useEffect(() => {
+    if (Object.is(epochRef.current, epoch)) return;
+    epochRef.current = epoch;
+    if (conversation.status === "connected") void conversation.endSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [epoch]);
 
   // Sync orb state with isSpeaking
   useEffect(() => {
