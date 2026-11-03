@@ -164,6 +164,13 @@ describe("authConfigPatch", () => {
     expect(authConfigPatch({ ...patch }, { ...goodEnv, RESEND_API_KEY: "" }).patch).toEqual({});
   });
 
+  it("replaces a magic-link template that sends only the token hash, not the 6-digit code", () => {
+    const linkOnly = { mailer_templates_magic_link_content: '<a href="{{ .SiteURL }}/auth/callback#token_hash={{ .TokenHash }}">Sign in</a>' };
+    const { patch } = authConfigPatch(linkOnly, goodEnv);
+    expect(patch.mailer_templates_magic_link_content).toContain("{{ .Token }}");
+    expect(authConfigPatch({ mailer_templates_magic_link_content: "Code: {{.Token}}" }, goodEnv).patch).not.toHaveProperty("mailer_templates_magic_link_content");
+  });
+
   it("keeps redirect URLs, templates and SMTP someone set by hand", () => {
     const current = {
       uri_allow_list: "https://preview.example.com/**",
@@ -283,6 +290,8 @@ describe("interpretChecks", () => {
     expect(setupComplete(interpretChecks(allSet, { localMigrations: 17 }))).toBe(false);
     const noCode = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_email_change_content: "{{ .ConfirmationURL }}" } };
     expect(setupComplete(interpretChecks(noCode, { localMigrations: 16 }))).toBe(false);
+    const hashOnly = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_magic_link_content: "{{ .RedirectTo }}#token_hash={{ .TokenHash }}" } };
+    expect(setupComplete(interpretChecks(hashOnly, { localMigrations: 16 }))).toBe(false);
     const linkOnly = { ...allSet, authConfig: { ...allSet.authConfig, mailer_templates_magic_link_content: "{{ .ConfirmationURL }}" } };
     const checks = interpretChecks(linkOnly, { localMigrations: 16 });
     expect(setupComplete(checks)).toBe(false);

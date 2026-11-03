@@ -1752,6 +1752,44 @@ describe("useChamberSession", () => {
       expect(readBackup("u1", "s7")).toBeNull();
     });
 
+    it("leaves another tab's copy alone when this tab's save is confirmed", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Tab A" })));
+      await act(async () => { void result.current.retrySave(); });
+      expect(updates).toHaveLength(1);
+      // Meanwhile another tab of the same intake keeps answers of its own that it hasn't saved.
+      writeBackup({ userId: "u1", sessionId: "s1", baseVersion: 1, chamber_data: { ...parseChamberData({ company_name: "Tab B" }) } as unknown as Record<string, unknown>, field_provenance: {}, transcript: [] });
+      await act(async () => { updates[0].resolve({ error: null }); });
+      await waitFor(() => expect(result.current.saveStatus).toBe("saved"));
+      expect(readBackup("u1", "s1")?.chamber_data.company_name).toBe("Tab B");
+    });
+
+    it("forgets this tab's copy when the prospect loads what another tab saved instead", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Mine" })));
+      await waitFor(() => expect(readBackup("u1", "s1")?.chamber_data.company_name).toBe("Mine"));
+      await act(async () => { void result.current.retrySave(); });
+      resumeRow = serverRow({ id: "s1", data_version: 3 });
+      await act(async () => { updates[0].resolve({ error: null, data: [] }); });
+      await waitFor(() => expect(result.current.saveStatus).toBe("conflict"));
+      act(() => result.current.loadLatest());
+      expect(readBackup("u1", "s1")).toBeNull();
+    });
+
+    it("keeps the edits made while the old copy was on offer once the prospect discards it", async () => {
+      keptCopy();
+      resumeRow = savedRow();
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.backupOffer).not.toBeNull());
+      act(() => result.current.setChamberData((prev) => ({ ...prev, industry: "Retail" })));
+      act(() => result.current.discardBackup());
+      const now = readBackup("u1", "s7");
+      expect(now?.chamber_data.industry).toBe("Retail");
+      expect(now?.chamber_data.company_name).toBe("Acme");
+    });
+
     it("never offers one person's copy to another", async () => {
       keptCopy({ userId: "u2" });
       resumeRow = savedRow();

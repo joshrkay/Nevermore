@@ -133,6 +133,11 @@ export const SIGNUP_CONFIRM_TEMPLATE = [
   "<p>If you didn't sign up, you can ignore this email.</p>",
 ].join("\n");
 
+/** True when a template sends the 6-digit code itself: `{{ .Token }}`, not just `{{ .TokenHash }}`. */
+export function sendsOtpCode(content) {
+  return /\{\{\s*\.Token\s*\}\}/.test(String(content ?? ""));
+}
+
 /** True when a sign-up confirmation template carries both the code and a link that verifies only on a click. */
 export function signupTemplateOk(content) {
   const text = String(content ?? "");
@@ -181,7 +186,7 @@ export function authConfigPatch(current, env) {
     patch.mailer_subjects_email_change = EMAIL_CODE_SUBJECT;
     patch.mailer_templates_email_change_content = EMAIL_CODE_TEMPLATE;
   }
-  if (!String(c.mailer_templates_magic_link_content ?? "").includes(".Token")) {
+  if (!sendsOtpCode(c.mailer_templates_magic_link_content)) {
     patch.mailer_subjects_magic_link = SIGN_IN_CODE_SUBJECT;
     patch.mailer_templates_magic_link_content = SIGN_IN_CODE_TEMPLATE;
   }
@@ -346,7 +351,7 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
   add("Email code message", codeOk, ac ? (codeOk ? "6-digit code in the email-change template" : "the email-change template must send a 6-digit {{ .Token }}") : "auth config unreadable");
   const urlProblems = authUrlProblems(ac, appBaseUrl);
   add("Email links return to the site", urlProblems.length === 0, urlProblems.length === 0 ? `Site URL ${ac.site_url}, redirects allowed under it` : urlProblems.join("; "));
-  const signInOk = !!ac && ac.mailer_otp_length === 6 && String(ac.mailer_templates_magic_link_content ?? "").includes(".Token");
+  const signInOk = !!ac && ac.mailer_otp_length === 6 && sendsOtpCode(ac.mailer_templates_magic_link_content);
   add("Sign-in code message", signInOk, ac ? (signInOk ? "6-digit code in the magic-link template" : "the magic-link template must send a 6-digit {{ .Token }} (returning prospects sign in with it)") : "auth config unreadable");
   add("Sign-in emails reach prospects", !!ac?.smtp_host, ac ? (ac.smtp_host ? `custom SMTP (${ac.smtp_host})` : "built-in mailer: only your team's addresses get emails") : "auth config unreadable");
 

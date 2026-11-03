@@ -280,7 +280,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   useEffect(() => { pruneBackups(); }, []);
 
   // Keep what the server hasn't confirmed in this browser, so a failed save survives a reload or a crash.
-  useEffect(() => {
+  // Nothing is written while an older copy is on offer: the prospect hasn't decided about it yet.
+  const backupNow = useCallback(() => {
     const sid = sessionIdRef.current;
     const uid = userIdRef.current;
     if (!sid || !uid || !dirtyRef.current || backupRef.current) return;
@@ -292,13 +293,25 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       field_provenance: provenanceRef.current as unknown as Record<string, unknown>,
       transcript: messagesRef.current,
     });
-  }, [chamberData, provenance, messages]);
-
-  // Everything on screen is saved: the browser's copy is no longer needed.
-  const forgetBackup = useCallback((sid: string) => {
-    const uid = userIdRef.current;
-    if (uid && !backupRef.current) clearBackup(uid, sid);
   }, []);
+  useEffect(() => { backupNow(); }, [chamberData, provenance, messages, backupNow]);
+
+  // Removes the browser's copy once what it holds is on the server, or this tab chose to drop it. Every tab
+  // of the same intake shares the copy, so one holding other answers belongs to another tab and stays.
+  const forgetBackup = useCallback((sid: string, held: { chamber_data: unknown; field_provenance: unknown; transcript: unknown }) => {
+    const uid = userIdRef.current;
+    if (!uid || backupRef.current) return;
+    const stored = readBackup(uid, sid);
+    if (stored
+        && sameJson(stored.chamber_data, withoutCensus(asStored(held.chamber_data)))
+        && sameJson(stored.field_provenance, asStored(held.field_provenance))
+        && sameJson(stored.transcript, asStored(held.transcript))) {
+      clearBackup(uid, sid);
+    }
+  }, []);
+
+  // What this tab has on screen, in the shape forgetBackup compares.
+  const onScreen = useCallback(() => ({ chamber_data: dataRef.current, field_provenance: provenanceRef.current, transcript: messagesRef.current }), []);
   const report = useCallback((status: SaveStatus) => {
     if (mountedRef.current) setSaveStatus(status);
   }, []);
@@ -509,7 +522,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     if (!error && data && data.length > 0) {
       adoptVersion(sid, data[0].data_version);
       clearBlock();
-      if (!dirtyRef.current) forgetBackup(sid);
+      if (!dirtyRef.current) forgetBackup(sid, sent);
       if (mountedRef.current) setSaveStatus(dirtyRef.current ? "saving" : "saved");
       return true;
     }
@@ -536,7 +549,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         // Our write did land; only its response was lost. Take the version, keep what is on screen.
         adoptVersion(sid, outcome.row.data_version);
         clearBlock();
-        if (!dirtyRef.current) forgetBackup(sid);
+        if (!dirtyRef.current) forgetBackup(sid, sent);
         if (mountedRef.current) setSaveStatus(dirtyRef.current ? "saving" : "saved");
         return true;
       case "earlier": {
@@ -669,14 +682,14 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     if (!uid) return;
     const backup = readBackup(uid, row.id);
     if (!backup) return;
-    const onScreen = {
+    const shown = {
       chamber_data: withoutCensus(asStored(dataRef.current)),
       field_provenance: asStored(provenanceRef.current),
       transcript: asStored(messagesRef.current),
     };
-    if (sameJson(backup.chamber_data, onScreen.chamber_data)
-        && sameJson(backup.field_provenance, onScreen.field_provenance)
-        && sameJson(backup.transcript, onScreen.transcript)) {
+    if (sameJson(backup.chamber_data, shown.chamber_data)
+        && sameJson(backup.field_provenance, shown.field_provenance)
+        && sameJson(backup.transcript, shown.transcript)) {
       clearBackup(uid, row.id);
       return;
     }
@@ -892,7 +905,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     backupRef.current = null;
     setBackupOffer(null);
     if (backup) clearBackup(backup.userId, backup.sessionId);
-  }, []);
+    // Edits made while the old copy was on offer weren't kept (see backupNow): keep them now.
+    backupNow();
+  }, [backupNow]);
 
   const retryLoad = useCallback(() => {
     setLoadFailed(false);
@@ -917,10 +932,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     stopTimer();
     dirtyRef.current = false;
     clearBlock();
+    const dropped = onScreen();
     applyRow(row);
-    forgetBackup(row.id);
+    forgetBackup(row.id, dropped);
     report("saved");
-  }, [applyRow, clearBlock, forgetBackup, report, stopTimer]);
+  }, [applyRow, clearBlock, forgetBackup, onScreen, report, stopTimer]);
 
   const keepMine = useCallback(() => {
     const row = conflictRef.current;
@@ -963,11 +979,12 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       }
       dirtyRef.current = false;
       clearBlock();
+      const dropped = onScreen();
       applyRow(data);
-      forgetBackup(sid);
+      forgetBackup(sid, dropped);
       report("saved");
     });
-  }, [applyRow, clearBlock, enqueue, forgetBackup, markExpired, markMissing, report, stopTimer]);
+  }, [applyRow, clearBlock, enqueue, forgetBackup, markExpired, markMissing, onScreen, report, stopTimer]);
 
   // Certification covers the answers as they were signed. The database withdraws it the
   // moment the saved answers differ; mirror that here so the prospect sees it right away.
