@@ -204,6 +204,9 @@ export const INTAKE_SCHEMA_V2: JsonSchema = {
         coverage_tier: { type: "string", enum: ["EE", "EE+SP", "EE+CH", "FAM", "WAIVE"] },
         class_code: { type: "string", pattern: "^[0-9]{4}$" },
         dependents: { type: "array", maxItems: LIMITS.dependents, items: { $ref: "#/$defs/dependent" } },
+        // Which of the row's values are defaults rather than answers (CENSUS_ASSUMABLE in census.ts).
+        // Added to v1 without a new version: it is optional, and the database already tolerated it.
+        assumed: { type: "array", maxItems: 3, items: { type: "string", enum: ["classification", "employment_type", "annual_salary"] } },
       },
     },
     dependent: {

@@ -93,7 +93,7 @@ export function referenceOf(row: Pick<QueueRow, "session_id" | "file_id" | "crea
 }
 
 /**
- * True when every word typed appears in the company, contact or reference the row shows. Nothing
+ * True when every word typed appears in the company, contact or File ID the row shows. Nothing
  * else is searched, so a search can't surface (or be matched against) a detail the list hides.
  */
 export function matchesSearch(row: QueueRow, query: string): boolean {

@@ -1,5 +1,5 @@
 import type { CensusEmployee, ChamberData } from "./chamberTypes";
-import { CENSUS_FACTS, samePerson, type CensusFact } from "./census";
+import { CENSUS_FACTS, isAssumed, samePerson, type CensusFact } from "./census";
 import { sanitizeChamberPatch } from "./chamberValidation";
 import { applyExtraction, applyFieldAction, type FieldSource, type IntakeState } from "./provenance";
 
@@ -136,9 +136,14 @@ export interface CensusComparison {
 
 const hasValue = (v: unknown) => v !== undefined && v !== null && v !== "";
 
+/** Whether the document stated `fact` for this row: a column it had, a value in it, and not a default. */
+const statesFact = (row: CensusEmployee, fact: CensusFact, facts: readonly CensusFact[]) =>
+  facts.includes(fact) && hasValue(row[fact]) && !isAssumed(row, fact);
+
 /**
  * Lines a document's census up against the intake's, person by person (same name, and birth dates
- * that don't disagree). Only facts the document stated count as changes.
+ * that don't disagree). Only facts the document stated count as changes: a default it filled in for a
+ * blank cell never replaces what the intake says.
  */
 export function compareCensus(current: CensusEmployee[], incoming: CensusEmployee[], facts: readonly CensusFact[] = CENSUS_FACTS): CensusComparison {
   const unmatched = [...current];
@@ -152,7 +157,7 @@ export function compareCensus(current: CensusEmployee[], incoming: CensusEmploye
     }
     const [existing] = unmatched.splice(i, 1);
     const changes = facts
-      .filter((f) => hasValue(row[f]) && row[f] !== existing[f])
+      .filter((f) => statesFact(row, f, facts) && row[f] !== existing[f])
       .map((f) => ({ fact: f, from: existing[f], to: row[f] }));
     matched.push({ current: existing, incoming: row, changes });
   }
@@ -175,6 +180,10 @@ export function mergeCensus(current: CensusEmployee[], incoming: CensusEmployee[
     if (!m) return row;
     const next = { ...row };
     for (const { fact, to } of m.changes) (next as Record<string, unknown>)[fact] = to;
+    // What the document states is an answer now, whether or not it changed the value.
+    const stillAssumed = (row.assumed ?? []).filter((fact) => !statesFact(m.incoming, fact, facts));
+    if (stillAssumed.length > 0) next.assumed = stillAssumed;
+    else delete next.assumed;
     return next;
   });
   const ids = new Set(merged.map((r) => r.id));

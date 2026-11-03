@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES, MAX_ANNUAL_SALARY, MAX_CENSUS_ROWS, MAX_DEPENDENTS as CENSUS_MAX_DEPENDENTS } from "@/data/census";
+import { CENSUS_ASSUMABLE, CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES, MAX_ANNUAL_SALARY, MAX_CENSUS_ROWS, MAX_DEPENDENTS as CENSUS_MAX_DEPENDENTS } from "@/data/census";
 import {
   COUNT_MAX,
   DOB_MAX,
@@ -203,6 +203,12 @@ describe("server and client intake rules agree", () => {
       expect(row.employment_type.enum).toEqual(server("census_employment_types"));
       expect(row.classification.enum).toEqual(server("census_classifications"));
       expect(row.coverage_tier.enum).toEqual(server("census_coverage_tiers"));
+    });
+
+    it("lists the same defaulted facts a census row can carry", () => {
+      const items = row.assumed.items as JsonSchema;
+      expect(items.enum).toEqual([...CENSUS_ASSUMABLE]);
+      expect(row.assumed.maxItems).toBe(CENSUS_ASSUMABLE.length);
     });
 
     it("checks each key as the kind the database checks it as", () => {

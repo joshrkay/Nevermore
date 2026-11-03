@@ -209,13 +209,23 @@ The roster is an array of rows (`CensusEmployee`, defined in `supabase/functions
 | `age` | Whole years, 14 to 100. Used when a file gives an age and no date of birth. |
 | `work_state` | Two-letter uppercase, from a code or a name; `""` until known. |
 | `zip_code` | `12345` or `12345-6789`; a ZIP Excel stripped a zero from is padded. |
-| `job_title`, `annual_salary` | Salary is whole dollars a year. An hourly rate becomes a year's pay at the stated weekly hours, or at 2,080 hours for a full-time worker. |
+| `job_title`, `annual_salary` | Salary is whole dollars a year. An hourly rate becomes a year's pay at the stated weekly hours, or at 2,080 hours for a full-time worker (recorded in `assumed` when the hours weren't given). |
 | `compensation_type` | `salary` or `hourly`. |
-| `employment_type` | `full_time` or `part_time`; weekly hours of 30 or more are full time. |
-| `classification` | `w2` or `1099`. A blank label means W-2; a label that is neither (a K-1 owner) drops the row rather than guess. |
-| `coverage_tier` | `EE`, `EE+SP`, `EE+CH`, `FAM` or `WAIVE`. When absent, the Manuscript derives a tier from `dependents`. |
+| `employment_type` | `full_time` or `part_time`; weekly hours of 30 or more are full time. Full time when nothing says, recorded in `assumed`. |
+| `classification` | `w2` or `1099`. A blank label is stored as W-2 and recorded in `assumed`; a label that is neither (a K-1 owner) drops the row rather than guess. |
+| `coverage_tier` | `EE`, `EE+SP`, `EE+CH`, `FAM` or `WAIVE`. When absent, the Manuscript derives a tier from the `dependents` named, and otherwise shows it as not provided. |
 | `class_code` | Four-digit workers' comp code. |
 | `dependents` | Named in conversation, never read from a document. |
+| `assumed` | Which of `classification`, `employment_type` and `annual_salary` hold a default rather than an answer. Absent when none do. |
+
+#### Defaults are recorded, not passed off as answers
+
+A row always has a classification, an employment type and a pay type, so a file that doesn't say gets a default. `assumed` (US-1.4) lists the ones that are only defaults, so nothing downstream presents them as answers:
+
+- **Reading a row** (`normalizeCensusRow`) adds a fact to `assumed` when it filled the value in, and keeps a fact a saved row already lists as long as the value is still the default. A row saved before the list existed has none: its values can't be told apart.
+- **Merging a document's census** (`mergeCensus`) never lets a default replace an answer, even in a column the file has, and drops a fact from a person's `assumed` once a document states it.
+- **The Manuscript** shows a defaulted classification as "Not provided" and counts it apart from W-2 and 1099, marks a year's pay worked out at assumed hours "(hourly, est.)", and lists each kind as an open item with a count. It never prints "Employee Only" or a dependent count nobody gave: a person with no tier and no named dependents is "Not provided", and the total says how many people it leaves out. The workspace's census tables show the same labels.
+- **The database** tolerated unknown keys in a census row already, so no migration was needed. Intake schema v1 now lists `assumed` as an optional key of a census row (`docs/intake-schema.v1.json`), without a new version: it is optional, and nothing that validates against v1 runs outside the app that writes it.
 
 Intakes, provenance entries, advisor reviews and signed snapshots saved before the census contract call the roster `employees` and use `state`, `title`, `salary` and `"W2"`. They are read as `census` and never rewritten, so a signed Manuscript still renders. A census row with no first name, or a `classification` that isn't W-2 or 1099, is dropped when read.
 
