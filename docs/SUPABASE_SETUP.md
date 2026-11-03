@@ -142,6 +142,40 @@ code and an app link, with no `{{ .ConfirmationURL }}`). A project set up
 before the sign-in code existed fails `--check` on "Sign-in code message" until a rerun (or the
 dashboard) puts `{{ .Token }}` in the magic-link template.
 
+## Migration versions
+
+`supabase db push` records each migration by the number before the first underscore in its file name.
+Two files with one number can't both be applied: the push applies the first, fails on the second, and
+applies nothing after it. Every file therefore has its own number, and `src/data/migrations.test.ts`
+fails CI when two share one.
+
+Two pairs once shared a number. The second file of each was renumbered (2026-11-03), keeping the order
+they always ran in:
+
+| Was | Now |
+| --- | --- |
+| `20261027090000_outbox_operations.sql` | `20261027090001_outbox_operations.sql` |
+| `20261103110000_document_storage_path.sql` | `20261103110001_document_storage_path.sql` |
+
+A project pushed with the old names has the first file of each pair recorded under the shared number and
+the second never applied, along with everything after it. Before pushing again, list what is recorded:
+
+```sh
+supabase migration list --linked
+```
+
+- `20261027090001` and `20261103110001` show as not applied, and the project was only ever updated with
+  `supabase db push` (this script): push. They run now, followed by everything the failed push left out.
+- Either was applied some other way (the SQL editor, for example): neither is safe to run twice, so mark
+  it applied before pushing. `outbox_operations` ran if the index `public.outbox_events_status_created_idx`
+  exists; `document_storage_path` ran if the policy "Users can insert documents into their own sessions"
+  on `public.documents` checks `storage_path`.
+
+  ```sh
+  supabase migration repair --status applied 20261027090001 --linked
+  supabase migration repair --status applied 20261103110001 --linked
+  ```
+
 ## If a step fails
 
 - **`supabase link` or `db push`:** usually the database password. A failed `db push` stops
