@@ -16,20 +16,22 @@ vi.mock("sonner", () => ({ toast }));
 
 const { default: AuthCallbackPage } = await import("./AuthCallbackPage");
 
+const tree = (entry: string) => (
+  <MemoryRouter initialEntries={[entry]}>
+    <Routes>
+      <Route path="/auth/callback" element={<AuthCallbackPage />} />
+      <Route path="/start" element={<p>The Chamber</p>} />
+      <Route path="/advisor" element={<p>Advisor queue</p>} />
+      <Route path="/login" element={<p>Login page</p>} />
+    </Routes>
+  </MemoryRouter>
+);
+
 /** Opens the callback page as if the browser had loaded `address`. */
 const open = (address: string) => {
   window.history.replaceState(null, "", address);
   const url = new URL(address, window.location.origin);
-  return render(
-    <MemoryRouter initialEntries={[url.pathname + url.search]}>
-      <Routes>
-        <Route path="/auth/callback" element={<AuthCallbackPage />} />
-        <Route path="/start" element={<p>The Chamber</p>} />
-        <Route path="/advisor" element={<p>Advisor queue</p>} />
-        <Route path="/login" element={<p>Login page</p>} />
-      </Routes>
-    </MemoryRouter>,
-  );
+  return render(tree(url.pathname + url.search));
 };
 
 const confirmedUser = { id: "u1", email: "pat@example.com", email_confirmed_at: "2026-11-03T12:00:00Z" };
@@ -101,10 +103,15 @@ describe("AuthCallbackPage", () => {
   describe("when Supabase verified the link and sent a session", () => {
     const granted = "/auth/callback#access_token=a.b.c&expires_in=3600&refresh_token=r1&token_type=bearer&type=signup";
 
-    it("waits while supabase-js signs the person in", () => {
+    it("waits while supabase-js signs the person in, then goes on once the session arrives", async () => {
       auth.loading = true;
-      open(granted);
+      const view = open(granted);
       expect(screen.getByRole("heading", { name: "Confirming your email" })).toBeInTheDocument();
+      auth.loading = false;
+      auth.user = confirmedUser;
+      view.rerender(tree("/auth/callback"));
+      expect(await screen.findByText("The Chamber")).toBeInTheDocument();
+      expect(toast.success).toHaveBeenCalledWith("Email confirmed. You're signed in as pat@example.com.");
     });
 
     it("goes on to the Chamber and says the email is confirmed", async () => {
@@ -162,6 +169,28 @@ describe("AuthCallbackPage", () => {
       fireEvent.click(screen.getByRole("button", { name: "Confirm my email" }));
       await waitFor(() => expect(auth.confirmEmailToken).toHaveBeenCalledWith("hash456", "email"));
       expect(await screen.findByText("Advisor queue")).toBeInTheDocument();
+    });
+
+    it.each([
+      ["rate-limited", { status: 429 }],
+      ["a server error", { status: 500 }],
+      ["a gateway error", { status: 502 }],
+    ])("keeps the button after %s, since the token was never looked at", async (_, fields) => {
+      auth.confirmEmailToken.mockResolvedValue({ error: Object.assign(new Error("try later"), fields), email: null });
+      open(token);
+      fireEvent.click(screen.getByRole("button", { name: "Confirm my email" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't reach the server.");
+      expect(screen.getByRole("button", { name: "Confirm my email" })).toBeInTheDocument();
+    });
+
+    it.each([
+      ["a 403 with no code", { status: 403 }],
+      ["otp_expired with no status", { code: "otp_expired" }],
+    ])("treats %s as a refused token", async (_, fields) => {
+      auth.confirmEmailToken.mockResolvedValue({ error: Object.assign(new Error("refused"), fields), email: null });
+      open(token);
+      fireEvent.click(screen.getByRole("button", { name: "Confirm my email" }));
+      expect(await screen.findByRole("heading", { name: "This link didn't work" })).toBeInTheDocument();
     });
 
     it("explains a token that no longer works", async () => {

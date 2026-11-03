@@ -205,7 +205,8 @@ describe("supabase-setup", () => {
   });
 
   it("only reads in --check mode, and fails an empty project", async () => {
-    const { code, out } = await run(["--project-ref", REF, "--check"]);
+    // A missing secrets file, so a developer's own supabase/.env.production can't change the result.
+    const { code, out } = await run(["--project-ref", REF, "--check", "--secrets-file", path.join(dir, "none.env")]);
 
     expect(code).toBe(1);
     expect(out).toContain("✗ Migrations applied: 0 of");
@@ -215,8 +216,20 @@ describe("supabase-setup", () => {
     expect(fake.queries.every((q) => q.trim().toLowerCase().startsWith("select"))).toBe(true);
   });
 
+  it("--check compares the Site URL with APP_BASE_URL from the secrets file", async () => {
+    // Another working https site: without APP_BASE_URL this would pass.
+    fake.auth = { site_url: "https://old-preview.example.com", uri_allow_list: "https://old-preview.example.com/**" };
+    const { code, out } = await run(["--project-ref", REF, "--check", "--secrets-file", path.join(dir, "secrets.env")]);
+
+    expect(code).toBe(1);
+    expect(out).toContain("✗ Email links return to the site: Site URL is https://old-preview.example.com, not https://app.example.com");
+    expect(out).toContain("Redirect URLs lack https://app.example.com/**");
+    expect(fake.patches).toEqual([]);
+    expect(cliCalls()).toEqual([]);
+  });
+
   it("grants the advisor role without needing the secrets file or the CLI", async () => {
-    const { code, out } = await run(["--project-ref", REF, "--grant-advisor", "advisor@example.com"]);
+    const { code, out } = await run(["--project-ref", REF, "--grant-advisor", "advisor@example.com", "--secrets-file", path.join(dir, "none.env")]);
 
     expect(out).toContain("Granted.");
     expect(code).toBe(1); // the stand-in project is otherwise empty
