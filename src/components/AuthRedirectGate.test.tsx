@@ -70,6 +70,11 @@ describe("AuthRedirectGate", () => {
     expect(screen.getByTestId("where")).toHaveTextContent(/^\/auth\/callback$/);
   });
 
+  it("sends a sign-up email's token that landed on the bare Site URL to the callback page", async () => {
+    await openApp("/#token_hash=abc&type=email");
+    expect(screen.getByTestId("where")).toHaveTextContent(/^\/auth\/callback$/);
+  });
+
   it("leaves a link that already landed on the callback page alone", async () => {
     await openApp("/auth/callback?token_hash=abc&type=email");
     expect(screen.getByTestId("where")).toHaveTextContent("/auth/callback?token_hash=abc&type=email");

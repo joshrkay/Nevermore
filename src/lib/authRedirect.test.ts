@@ -26,6 +26,16 @@ describe("parseAuthRedirect", () => {
     });
   });
 
+  it("reads the token from the fragment the sign-up email puts it in, next to the app's own query", () => {
+    expect(parseAuthRedirect(`${SITE}/auth/callback?next=%2Fadvisor#token_hash=abc123&type=email`)).toEqual({
+      kind: "token",
+      tokenHash: "abc123",
+      type: "email",
+    });
+    // Where Supabase fell back to the bare Site URL.
+    expect(parseAuthRedirect(`${SITE}#token_hash=abc123&type=email`)).toEqual({ kind: "token", tokenHash: "abc123", type: "email" });
+  });
+
   it("ignores a token of a type Supabase doesn't verify", () => {
     expect(parseAuthRedirect(`${SITE}/auth/callback?token_hash=abc123&type=sms`)).toBeNull();
   });

@@ -138,7 +138,8 @@ describe("authConfigPatch", () => {
     });
     expect(patch.mailer_templates_email_change_content).toContain("{{ .Token }}");
     expect(patch.mailer_templates_confirmation_content).toContain("{{ .Token }}");
-    expect(patch.mailer_templates_confirmation_content).toContain("{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email");
+    // Back to the address the app asked for (the deployment signed up on, with its next), token in the fragment.
+    expect(patch.mailer_templates_confirmation_content).toContain('href="{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email"');
     expect(patch.mailer_templates_confirmation_content).not.toContain("ConfirmationURL");
     expect(notes).toEqual([]);
   });
@@ -146,7 +147,7 @@ describe("authConfigPatch", () => {
   it("replaces Supabase's default sign-up link, which a mail scanner can use up, but keeps a template that's already safe", () => {
     const fresh = authConfigPatch({ mailer_templates_confirmation_content: '<a href="{{ .ConfirmationURL }}">Confirm your mail</a>' }, goodEnv).patch;
     expect(fresh.mailer_templates_confirmation_content).toContain("{{ .TokenHash }}");
-    const custom = '<p>Code: {{ .Token }}</p><a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email">Go</a>';
+    const custom = '<p>Code: {{ .Token }}</p><a href="{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email">Go</a>';
     expect(authConfigPatch({ mailer_templates_confirmation_content: custom }, goodEnv).patch).not.toHaveProperty("mailer_templates_confirmation_content");
   });
 
@@ -241,7 +242,7 @@ describe("interpretChecks", () => {
     authConfig: {
       mailer_otp_length: 6, mailer_templates_email_change_content: "{{ .Token }}", smtp_host: "smtp.resend.com",
       site_url: "https://nevermore-gamma.vercel.app", uri_allow_list: "https://nevermore-gamma.vercel.app/**",
-      mailer_templates_confirmation_content: "{{ .Token }} {{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email",
+      mailer_templates_confirmation_content: "{{ .Token }} {{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email",
     },
     functions: Object.fromEntries(FUNCTIONS.map((fn) => [fn, { status: 401, ourError: true }])),
     secretNames: ["LOVABLE_API_KEY", "IP_HASH_SECRET", "APP_BASE_URL"],
@@ -303,12 +304,8 @@ describe("authUrlProblems", () => {
 
   it("accepts the site as Site URL with everything under it allowed", () => {
     expect(authUrlProblems({ site_url: site, uri_allow_list: `http://localhost:8080/**, ${site}/**` }, site)).toEqual([]);
-  });
-
-  it("wants the Site URL to be exactly the origin, since the sign-up email appends /auth/callback to it", () => {
-    expect(authUrlProblems({ site_url: `${site}/`, uri_allow_list: `${site}/**` }, site)).toEqual([
-      `Site URL is ${site}/: make it exactly ${site}, with no trailing slash or path`,
-    ]);
+    // A trailing slash on the Site URL is the same origin.
+    expect(authUrlProblems({ site_url: `${site}/`, uri_allow_list: `${site}/**` }, site)).toEqual([]);
   });
 
   it("names a Site URL left at Supabase's default", () => {

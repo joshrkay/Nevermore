@@ -31,23 +31,25 @@ sends them to the **Site URL**, and a new project's Site URL is `http://localhos
 sees their browser's "can't reach this site" page, although Supabase has already confirmed the
 account. The script sets, and `--check` verifies:
 
-- **Site URL** (Authentication → URL Configuration): exactly `APP_BASE_URL`, e.g.
-  `https://nevermore-gamma.vercel.app`, with no trailing slash or path. The sign-up email appends
-  `/auth/callback` to it.
+- **Site URL** (Authentication → URL Configuration): `APP_BASE_URL`, e.g.
+  `https://nevermore-gamma.vercel.app`. Supabase falls back to it when the address the app asked for
+  isn't allowed.
 - **Redirect URLs**: `https://nevermore-gamma.vercel.app/**`. The script keeps entries already there.
   To finish sign-ups on Vercel preview deployments, add `https://nevermore-*-cartboost.vercel.app/**`
   by hand (the team slug is in the preview URL); for local development add `http://localhost:8080/**`.
 - **Confirm signup** template (Authentication → Emails): a 6-digit `{{ .Token }}`, which the sign-up
-  page accepts, and a link to
-  `{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email`, which confirms only when the
-  person clicks **Confirm my email**. Supabase's default links straight to its verify endpoint and
+  page accepts, and a link to `{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email`, which
+  confirms only when the person clicks **Confirm my email**. `{{ .RedirectTo }}` is the callback
+  address the app asked for, so the link returns to the deployment the person signed up on (a
+  preview or localhost too, once allowed above) and keeps where they were headed. The token rides in
+  the fragment, which never reaches a server. Supabase's default links straight to its verify endpoint and
   works once, so a mail scanner (Microsoft Defender Safe Links, Mimecast, Proofpoint) that opens it
   first uses it up. The script replaces a template that still uses `{{ .ConfirmationURL }}`; the text
   it installs is `SIGNUP_CONFIRM_TEMPLATE` in `scripts/supabase-setup-lib.mjs`, to paste by hand.
 - **Change email address** template: the 6-digit `{{ .Token }}` a guest types to certify.
 
-Deploy the front end with `/auth/callback` before installing the sign-up template, or its links land
-on the 404 page.
+Deploy the front end with `/auth/callback` before installing the sign-up template: an older
+front end ignores the token in the link.
 
 Sign-in emails matter for submissions, not just convenience: a guest certifies only after confirming
 an email with a 6-digit code, and Supabase's built-in mailer only delivers to your own team's

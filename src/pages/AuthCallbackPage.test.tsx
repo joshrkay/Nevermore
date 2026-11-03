@@ -132,6 +132,13 @@ describe("AuthCallbackPage", () => {
       expect(await screen.findByText("The Chamber")).toBeInTheDocument();
     });
 
+    it("takes the token from the fragment and keeps where the person was headed", async () => {
+      open("/auth/callback?next=%2Fadvisor#token_hash=hash456&type=email");
+      fireEvent.click(screen.getByRole("button", { name: "Confirm my email" }));
+      await waitFor(() => expect(auth.confirmEmailToken).toHaveBeenCalledWith("hash456", "email"));
+      expect(await screen.findByText("Advisor queue")).toBeInTheDocument();
+    });
+
     it("explains a token that no longer works", async () => {
       auth.confirmEmailToken.mockResolvedValue({ error: Object.assign(new Error("Token has expired or is invalid"), { code: "otp_expired" }) });
       open(token);

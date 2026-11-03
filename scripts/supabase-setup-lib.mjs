@@ -119,15 +119,17 @@ export const EMAIL_CODE_TEMPLATE = [
  * The sign-up confirmation. Supabase's default is a single-use link to its own verify endpoint, which
  * a mail scanner (Defender Safe Links, Mimecast, Proofpoint) opening it first uses up. This one
  * carries a 6-digit code the sign-up page accepts, and a link to the app's callback page, which
- * verifies the token only when the person clicks "Confirm my email". It needs the Site URL to be
- * exactly the site's origin (authUrlProblems checks that).
+ * verifies the token only when the person clicks "Confirm my email". The link is {{ .RedirectTo }}
+ * (the callback address the app asked for, or the Site URL when Supabase didn't allow it), so it
+ * returns to the deployment the person signed up on and keeps where they were headed. The token goes
+ * in the fragment: that appends to any address, and never reaches a server or a Referer header.
  */
 export const SIGNUP_CONFIRM_SUBJECT = "Confirm your email";
 export const SIGNUP_CONFIRM_TEMPLATE = [
   "<h2>Confirm your email</h2>",
   "<p>Enter this code on the sign-up page to finish creating your account:</p>",
   "<p style=\"font-size:24px;font-weight:bold;letter-spacing:4px\">{{ .Token }}</p>",
-  "<p>Or <a href=\"{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email\">open this link</a> and click Confirm my email.</p>",
+  "<p>Or <a href=\"{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email\">open this link</a> and click Confirm my email.</p>",
   "<p>If you didn't sign up, you can ignore this email.</p>",
 ].join("\n");
 
@@ -283,8 +285,6 @@ export function authUrlProblems(authConfig, appBaseUrl) {
   const problems = [];
   if (expected && site.origin !== expected) problems.push(`Site URL is ${authConfig.site_url}, not ${expected}`);
   else if (!expected && (local || site.protocol !== "https:")) problems.push(`Site URL is ${authConfig.site_url}: confirmation links send people there`);
-  // The sign-up email links to {{ .SiteURL }}/auth/callback, so a trailing slash or a path breaks it.
-  else if (authConfig.site_url !== site.origin) problems.push(`Site URL is ${authConfig.site_url}: make it exactly ${site.origin}, with no trailing slash or path`);
   const origin = expected ?? site.origin;
   const allowList = String(authConfig.uri_allow_list ?? "").split(",").map((u) => u.trim()).filter(Boolean);
   if (!allowList.includes(`${origin}/**`)) problems.push(`Redirect URLs lack ${origin}/**`);
