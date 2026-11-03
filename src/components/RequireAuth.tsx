@@ -43,7 +43,8 @@ const RequireAuth = ({ children }: { children: ReactNode }) => {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
+    // A visitor sent here has no account yet as often as not, so the page opens on creating one.
+    return <Navigate to="/login" replace state={{ from: location, reason: "account_needed" }} />;
   }
 
   return <>{children}</>;

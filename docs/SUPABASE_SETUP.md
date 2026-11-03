@@ -16,12 +16,42 @@ front end that uses it is deployed.
 
 | Step | How | Done by hand instead |
 |---|---|---|
+| Auth: guest sign-in on, email confirmation on, Site URL and Redirect URLs (below), the sign-up, email-change and sign-in (magic-link) messages (below), sign-in emails through Resend's SMTP. First, so a later failure can't leave sign-up links broken | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
 | Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push` | SQL editor, file by file |
 | Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set` from a private temporary file | Edge Functions → Secrets |
 | Deploy `chamber-extract`, `document-extract`, `dispatch-outbox` | `supabase functions deploy` | (CLI only) |
-| Auth: guest sign-in on, email confirmation on, site URL and redirect, the email-change message and the magic-link (sign-in) message carry the 6-digit code, sign-in emails through Resend's SMTP | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails (both templates must contain `{{ .Token }}`), SMTP Settings |
 | Schedules: `pg_cron`, `pg_net`, the service-role key in Vault, `dispatch-outbox` every minute, and `expire-idle-intakes` hourly (uncertified drafts idle for 30 days expire) | Management API SQL endpoint | SQL editor, `docs/NOTIFICATIONS.md` → Schedule; `select cron.schedule('expire-idle-intakes', '17 * * * *', 'select public.expire_idle_intakes();');` |
-| Check all of the above, and that each function boots | SQL counts, the public auth settings, a signed-out call to each function (a deployed one answers its own 401) | |
+| Check all of the above, and that each function boots | SQL counts, the public auth settings, the auth config (Site URL, Redirect URLs, templates), a signed-out call to each function (a deployed one answers its own 401) | |
+
+### Auth URLs and emails
+
+Every link in a sign-up or email-change email goes through Supabase, which then sends the person to
+the address the app asked for (`/auth/callback`), but only if that address is allowed. Otherwise it
+sends them to the **Site URL**, and a new project's Site URL is `http://localhost:3000`: the person
+sees their browser's "can't reach this site" page, although Supabase has already confirmed the
+account. The script sets, and `--check` verifies:
+
+- **Site URL** (Authentication → URL Configuration): `APP_BASE_URL`, e.g.
+  `https://nevermore-gamma.vercel.app`. Supabase falls back to it when the address the app asked for
+  isn't allowed.
+- **Redirect URLs**: `https://nevermore-gamma.vercel.app/**`. The script keeps entries already there.
+  To finish sign-ups on Vercel preview deployments, add `https://nevermore-*-cartboost.vercel.app/**`
+  by hand (the team slug is in the preview URL); for local development add `http://localhost:8080/**`.
+- **Confirm signup** template (Authentication → Emails): a 6-digit `{{ .Token }}`, which the sign-up
+  page accepts, and a link to `{{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email`, which
+  confirms only when the person clicks **Confirm my email**. `{{ .RedirectTo }}` is the callback
+  address the app asked for, so the link returns to the deployment the person signed up on (a
+  preview or localhost too, once allowed above) and keeps where they were headed. The token rides in
+  the fragment, which never reaches a server. Supabase's default links straight to its verify endpoint and
+  works once, so a mail scanner (Microsoft Defender Safe Links, Mimecast, Proofpoint) that opens it
+  first uses it up. The script replaces a template that still uses `{{ .ConfirmationURL }}`; the text
+  it installs is `SIGNUP_CONFIRM_TEMPLATE` in `scripts/supabase-setup-lib.mjs`, to paste by hand.
+- **Change email address** template: the 6-digit `{{ .Token }}` a guest types to certify.
+- **Magic link** template: the 6-digit `{{ .Token }}` a returning prospect types to get back to an intake
+  from another browser (`RecoverIntake`). The text the script installs is `SIGN_IN_CODE_TEMPLATE`.
+
+Deploy the front end with `/auth/callback` before installing the sign-up template: an older
+front end ignores the token in the link.
 
 Sign-in emails matter for submissions, not just convenience: a guest certifies only after confirming
 an email with a 6-digit code, a returning prospect on another browser signs back in with one (the
@@ -62,6 +92,8 @@ and prints the checks:
 ```
   ✓ Migrations applied: N of N   (N = the files in supabase/migrations)
   ✓ Guest (anonymous) sign-in: anonymous_users=true
+  ✓ Email links return to the site: Site URL https://nevermore-gamma.vercel.app, redirects allowed under it
+  ✓ Sign-up email survives mail scanners: 6-digit code and a link that confirms on a click
   ✓ Function chamber-extract: answered 401 from the function itself
   …
   … Advisor accounts: none yet: sign up on the site, then run with --grant-advisor you@example.com
@@ -77,7 +109,9 @@ npm run setup:supabase -- --project-ref <ref> --check                          #
 npm run setup:supabase -- --project-ref <ref> --grant-advisor you@example.com  # after signing up
 ```
 
-`--secrets-file <path>` uses another secrets file; `--yes` skips the confirmation.
+`--secrets-file <path>` uses another secrets file; `--yes` skips the confirmation. `--check` reads the
+secrets file too when it exists, to compare the Site URL with `APP_BASE_URL`; without it, the check
+only rejects a localhost or non-https Site URL.
 
 ## After it passes
 
@@ -99,7 +133,8 @@ npm run setup:supabase -- --project-ref <ref> --grant-advisor you@example.com  #
 A rerun applies new migrations, sets the secrets again (an existing `IP_HASH_SECRET` is kept),
 redeploys the functions, re-sends the Resend SMTP settings (so a rotated key is picked up), replaces
 the Vault copy of the service-role key and re-creates the schedule under the same name. It doesn't
-remove redirect URLs or replace an email template that already sends the code. A project set up
+remove redirect URLs or replace an email template that already sends the code (for sign-up: the
+code and an app link, with no `{{ .ConfirmationURL }}`). A project set up
 before the sign-in code existed fails `--check` on "Sign-in code message" until a rerun (or the
 dashboard) puts `{{ .Token }}` in the magic-link template.
 
@@ -109,9 +144,27 @@ dashboard) puts `{{ .Token }}` in the magic-link template.
   before anything else changes.
 - **Deploying a function asks for Docker:** recent CLIs bundle on Supabase's side; update the CLI,
   or run `supabase functions deploy <name> --use-api --project-ref <ref>` and rerun the script.
+- **"Reading the auth settings failed":** the script stops rather than guess, because a patch built
+  without the current settings would replace the Redirect URLs list. Nothing was changed.
 - **Auth settings or the schedule:** the script calls the Management API endpoints listed above.
   If one is refused, make the same change in the dashboard (the table's last column) and rerun
   with `--check`.
 - **"Couldn't read the project's legacy service_role key":** `dispatch-outbox` authenticates the
   schedule with the legacy JWT service-role key. Re-enable legacy API keys (Project Settings → API
   Keys) and rerun.
+
+## If sign-up confirmation links fail
+
+What the person sees after clicking the link tells you which setting is wrong:
+
+- **The browser's "can't reach this site" or "localhost refused to connect" page:** the Site URL is
+  still `http://localhost:3000` and the site isn't on Redirect URLs. Supabase did confirm the account,
+  so the person can sign in at `/login` with their password now. Fix the URL Configuration above.
+- **Another site's home page:** the Site URL points at another domain (an old Lovable preview, say).
+  Fix it as above.
+- **"This link didn't work" on `/auth/callback`:** the link was used, expired (after an hour by
+  default) or replaced by a newer email. With Supabase's default template a mail scanner may have
+  used it, which also confirms the account, so signing in usually works; otherwise the page sends a
+  new email. Installing the sign-up template above stops scanners using the links up.
+
+`npm run setup:supabase -- --project-ref <ref>` sets all of it; `--check` confirms it.

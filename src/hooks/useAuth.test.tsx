@@ -16,6 +16,8 @@ const authApi = {
   updateUser: vi.fn(),
   verifyOtp: vi.fn(),
   signInWithOtp: vi.fn(),
+  signUp: vi.fn(),
+  resend: vi.fn(),
 };
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { auth: authApi } }));
 
@@ -69,7 +71,7 @@ describe("useAuth guest accounts", () => {
     const { result } = await mountAuth();
     let outcome: { error: Error | null; emailInUse: boolean } | undefined;
     await act(async () => { outcome = await result.current.requestEmailCode("jo@acme.com"); });
-    expect(authApi.updateUser).toHaveBeenCalledWith({ email: "jo@acme.com" });
+    expect(authApi.updateUser).toHaveBeenCalledWith({ email: "jo@acme.com" }, { emailRedirectTo: `${window.location.origin}/auth/callback` });
     expect(outcome).toEqual({ error: null, emailInUse: false });
   });
 
@@ -207,5 +209,75 @@ describe("useAuth session ending", () => {
     act(() => listener?.("SIGNED_IN", account));
     act(() => listener?.("SIGNED_OUT", null));
     expect(result.current.sessionEnded).toBe("expired");
+  });
+});
+
+describe("useAuth email sign-up", () => {
+  const callback = () => `${window.location.origin}/auth/callback`;
+
+  beforeEach(() => {
+    currentSession = null;
+    authApi.signUp.mockReset().mockResolvedValue({ data: { user: { id: "u1", identities: [{ id: "i1" }] }, session: null }, error: null });
+    authApi.resend.mockReset().mockResolvedValue({ data: { user: null, session: null }, error: null });
+    authApi.verifyOtp.mockReset().mockResolvedValue({ data: { user: null, session: null }, error: null });
+  });
+
+  it("sends the confirmation link to the callback page, which then goes on to the Chamber", async () => {
+    const { result } = await mountAuth();
+    let outcome: Awaited<ReturnType<typeof result.current.signUp>> | undefined;
+    await act(async () => {
+      outcome = await result.current.signUp("jo@acme.com", "secret12", "Acme");
+    });
+    expect(outcome).toEqual({ error: null, alreadyRegistered: false });
+    expect(authApi.signUp).toHaveBeenCalledWith({
+      email: "jo@acme.com",
+      password: "secret12",
+      options: { emailRedirectTo: callback(), data: { company_name: "Acme" } },
+    });
+  });
+
+  it("carries where the person was headed through the link", async () => {
+    const { result } = await mountAuth();
+    await act(async () => {
+      await result.current.signUp("jo@acme.com", "secret12", undefined, "/advisor");
+    });
+    expect(authApi.signUp.mock.calls[0][0].options.emailRedirectTo).toBe(`${callback()}?next=%2Fadvisor`);
+  });
+
+  it("recognises Supabase's answer for an address that already has an account", async () => {
+    // With confirmation on, Supabase hides that the address exists: a user with no identities, no email sent.
+    authApi.signUp.mockResolvedValue({ data: { user: { id: "obfuscated", identities: [] }, session: null }, error: null });
+    const { result } = await mountAuth();
+    let outcome: Awaited<ReturnType<typeof result.current.signUp>> | undefined;
+    await act(async () => {
+      outcome = await result.current.signUp("jo@acme.com", "secret12");
+    });
+    expect(outcome).toEqual({ error: null, alreadyRegistered: true });
+  });
+
+  it("resends the confirmation link to the callback page", async () => {
+    const { result } = await mountAuth();
+    await act(async () => {
+      await result.current.resendConfirmation("jo@acme.com");
+    });
+    expect(authApi.resend).toHaveBeenCalledWith({ type: "signup", email: "jo@acme.com", options: { emailRedirectTo: callback() } });
+  });
+
+  it("confirms a sign-up with the emailed code", async () => {
+    const { result } = await mountAuth();
+    await act(async () => {
+      await result.current.verifySignupCode("jo@acme.com", "123456");
+    });
+    expect(authApi.verifyOtp).toHaveBeenCalledWith({ email: "jo@acme.com", token: "123456", type: "email" });
+  });
+
+  it("verifies a token from a link that points at the app", async () => {
+    const { result } = await mountAuth();
+    let outcome: { error: Error | null } | undefined;
+    await act(async () => {
+      outcome = await result.current.confirmEmailToken("hash123", "email");
+    });
+    expect(authApi.verifyOtp).toHaveBeenCalledWith({ token_hash: "hash123", type: "email" });
+    expect(outcome?.error).toBeNull();
   });
 });
