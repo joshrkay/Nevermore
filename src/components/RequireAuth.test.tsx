@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 const auth = {
   user: null as { id: string } | null,
@@ -46,6 +46,23 @@ describe("RequireAuth", () => {
     auth.signInAnonymously = vi.fn().mockResolvedValue({ error: new Error("Anonymous sign-ins are disabled") });
     renderGuarded();
     expect(await screen.findByText("Login page")).toBeInTheDocument();
+  });
+
+  it("tells the login page the visitor needs an account, and where they were going", async () => {
+    auth.signInAnonymously = vi.fn().mockResolvedValue({ error: new Error("Anonymous sign-ins are disabled") });
+    const LoginState = () => {
+      const state = useLocation().state as { from?: { pathname: string }; reason?: string };
+      return <p>Login page {state?.reason} {state?.from?.pathname}</p>;
+    };
+    render(
+      <MemoryRouter initialEntries={["/start"]}>
+        <Routes>
+          <Route path="/start" element={<RequireAuth><p>The Chamber</p></RequireAuth>} />
+          <Route path="/login" element={<LoginState />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Login page account_needed /start")).toBeInTheDocument();
   });
 
   it("asks for a guest session only once while it is being created", async () => {
