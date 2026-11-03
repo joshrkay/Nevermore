@@ -69,6 +69,8 @@ const ChamberPage = () => {
     addMessage,
     submit,
     certification,
+    chosenPeo,
+    choosePeo,
     saveStatus,
     retrySave,
     loadLatest,
@@ -288,6 +290,8 @@ const ChamberPage = () => {
             onFieldAction={handleFieldAction}
             certification={certification}
             updateIntake={updateIntake}
+            chosenPeo={chosenPeo}
+            onChoosePeo={choosePeo}
           />
         </div>
       </div>

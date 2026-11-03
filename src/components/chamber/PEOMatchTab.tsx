@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Users, UserPlus, DollarSign, MapPin, Shield, Zap } from "lucide-react";
 import type { ChamberData } from "@/data/chamberTypes";
-import { PEO_CATALOG, findPeo, peoFit, type FitStatus } from "@/data/peoCatalog";
+import { PEO_CATALOG, PEO_NAME_MAX, findPeo, peoFit, type FitStatus } from "@/data/peoCatalog";
 
 interface PEOMatchTabProps {
   data: ChamberData;
@@ -124,7 +124,7 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
               id="other-peo"
               value={otherName}
               onChange={(e) => setOtherName(e.target.value)}
-              maxLength={80}
+              maxLength={PEO_NAME_MAX}
               className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm"
             />
             <button

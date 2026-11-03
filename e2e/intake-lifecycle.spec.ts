@@ -89,8 +89,8 @@ test("an intake left idle past the window expires, says so, and starts fresh", a
     await expect(later.getByRole("heading", { name: "This intake has expired" })).toBeVisible();
     await expect(later.getByText(/kept for 30 days after the last change/)).toBeVisible();
     await later.getByRole("button", { name: "Start a new intake", exact: true }).click();
-    await expect(later).toHaveURL(SESSION_URL);
-    expect(SESSION_URL.exec(later.url())![1]).not.toBe(sessionId);
+    // The expired intake's own link matches SESSION_URL too, so wait until the address names another intake.
+    await expect(later).toHaveURL((url) => (SESSION_URL.exec(url.href)?.[1] ?? sessionId) !== sessionId);
   });
 });
 

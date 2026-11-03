@@ -94,6 +94,8 @@ export type Database = {
       chamber_sessions: {
         Row: {
           chamber_data: Json
+          // The PEO chosen on PEO Match, kept across reloads. The certified PEO is submission.peo.
+          chosen_peo: string | null
           created_at: string
           // Set by the database: 1 on insert, +1 on every update. Writes name the version they saw.
           data_version: number
@@ -114,6 +116,7 @@ export type Database = {
         }
         Insert: {
           chamber_data?: Json
+          chosen_peo?: string | null
           created_at?: string
           data_version?: never
           expires_at?: never
@@ -129,6 +132,7 @@ export type Database = {
         }
         Update: {
           chamber_data?: Json
+          chosen_peo?: string | null
           created_at?: string
           data_version?: never
           expires_at?: never

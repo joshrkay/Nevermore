@@ -1427,6 +1427,28 @@ describe("useChamberSession", () => {
         });
       });
 
+      it("names the missing answers when the database refuses an unready certification, and keeps saving", async () => {
+        const { result } = await open();
+        let ok: SubmitResult | undefined;
+        const pending = result.current.submit(submission).then((r) => { ok = r; });
+        await drain();
+        expect(updates[0].payload).toMatchObject({ status: "submitted" });
+        updates[0].resolve({ error: { message: "This intake can't be certified yet: it needs company_name, pay_frequency", code: "EA003", details: "company_name,pay_frequency" } });
+        await act(async () => { await pending; });
+        expect(ok).toEqual({ message: "Add company legal name, pay frequency on the Review tab, then certify." });
+        expect(result.current.certification.status).toBe("none");
+        expect(dispatchOutbox).not.toHaveBeenCalled();
+
+        // A definite refusal: nothing is left in doubt, and the next edit saves normally.
+        edit(result, "Acme Inc");
+        await autosave();
+        expect(updates).toHaveLength(2);
+        expect(updates[1].payload).not.toHaveProperty("status");
+        updates[1].resolve({ error: null });
+        await drain();
+        expect(result.current.saveStatus).toBe("saved");
+      });
+
       it("says which answer was refused when the submission write itself is refused", async () => {
         // Certifying re-checks the answers even when nothing was edited, so an older row can fail here.
         const { result } = await open();
@@ -1456,6 +1478,128 @@ describe("useChamberSession", () => {
         expect(ok).toEqual({ message: expect.stringContaining("no longer be saved") });
         expect(result.current.saveStatus).toBe("missing");
       });
+    });
+  });
+
+  describe("the chosen PEO", () => {
+    const autosave = async () => { await act(async () => { vi.advanceTimersByTime(2000); }); };
+    const open = async () => {
+      const hook = renderHook(() => useChamberSession());
+      await waitFor(() => expect(hook.result.current.sessionId).toBe("s1"));
+      vi.useFakeTimers();
+      return hook;
+    };
+
+    it("starts with none", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(result.current.chosenPeo).toBeNull();
+      expect(insertedRows[0]).toMatchObject({ chosen_peo: null });
+    });
+
+    it("is saved with the intake, in the same versioned write as the answers", async () => {
+      const { result } = await open();
+      act(() => result.current.choosePeo("Justworks"));
+      expect(result.current.chosenPeo).toBe("Justworks");
+      expect(result.current.saveStatus).toBe("saving");
+      await autosave();
+      expect(updates).toHaveLength(1);
+      expect(updates[0].filters).toEqual({ id: "s1", data_version: 1 });
+      expect(updates[0].payload).toMatchObject({ chosen_peo: "Justworks" });
+      expect(updates[0].payload).toHaveProperty("chamber_data");
+      updates[0].resolve({ error: null });
+      await drain();
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("is restored when the intake is opened again", async () => {
+      resumeRow = serverRow({ id: "s9", chosen_peo: "TriNet" });
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+      expect(result.current.chosenPeo).toBe("TriNet");
+    });
+
+    it("reads a row saved before the choice was kept as no choice", async () => {
+      resumeRow = serverRow({ id: "s9" }); // no chosen_peo value at all
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+      expect(result.current.chosenPeo).toBeNull();
+    });
+
+    it("goes out with the keepalive request when the page unloads", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+      const { result } = await open();
+      act(() => result.current.choosePeo("Insperity"));
+      window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string)).toMatchObject({ chosen_peo: "Insperity" });
+      fetchSpy.mockRestore();
+    });
+
+    it("is trimmed, and choosing the same PEO again saves nothing", async () => {
+      const { result } = await open();
+      act(() => result.current.choosePeo("  Justworks "));
+      expect(result.current.chosenPeo).toBe("Justworks");
+      await autosave();
+      updates[0].resolve({ error: null });
+      await drain();
+      act(() => result.current.choosePeo("Justworks"));
+      await autosave();
+      expect(updates).toHaveLength(1);
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("is taken from the server's row when the prospect loads the latest after a conflict", async () => {
+      const { result } = await open();
+      act(() => result.current.choosePeo("Justworks"));
+      await autosave();
+      resumeRow = serverRow({ chosen_peo: "Rippling" });
+      updates[0].resolve({ error: null, data: [] });
+      await drain();
+      expect(result.current.saveStatus).toBe("conflict");
+      act(() => result.current.loadLatest());
+      expect(result.current.chosenPeo).toBe("Rippling");
+    });
+
+    it("reports a conflict when only the chosen PEO differs from what was sent", async () => {
+      const { result } = await open();
+      act(() => result.current.choosePeo("Justworks"));
+      await autosave();
+      const sent = JSON.parse(JSON.stringify(updates[0].payload));
+      resumeRow = serverRow({ data_version: 2, chamber_data: sent.chamber_data, field_provenance: sent.field_provenance, transcript: sent.transcript, chosen_peo: "TriNet" });
+      updates[0].resolve({ error: null, data: [] });
+      await drain();
+      expect(result.current.saveStatus).toBe("conflict");
+    });
+
+    it("recognises its own write by the chosen PEO when only the response was lost", async () => {
+      const { result } = await open();
+      act(() => result.current.choosePeo("Justworks"));
+      await autosave();
+      const sent = JSON.parse(JSON.stringify(updates[0].payload));
+      resumeRow = serverRow({ data_version: 2, ...sent });
+      updates[0].resolve({ error: null, data: [] });
+      await drain();
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("keeps a certification when a different PEO is chosen, as the answers it covers are unchanged", async () => {
+      resumeRow = { id: "s9", data_version: 3, chamber_data: parseChamberData({ company_name: "Acme" }), transcript: [], status: "submitted", submission: { ...submission, peo: "Justworks" }, chosen_peo: "Justworks" };
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.certification.status).toBe("certified"));
+      act(() => result.current.choosePeo("TriNet"));
+      expect(result.current.certification.status).toBe("certified");
+      expect(result.current.chosenPeo).toBe("TriNet");
+    });
+
+    it("is cleared when the prospect starts over, and the new intake starts with none", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.choosePeo("Justworks"));
+      await act(async () => { await result.current.startOver(); });
+      await waitFor(() => expect(inserts).toBe(2));
+      expect(result.current.chosenPeo).toBeNull();
+      expect(insertedRows[1]).toMatchObject({ chosen_peo: null });
     });
   });
 
@@ -1840,6 +1984,19 @@ describe("useChamberSession", () => {
       expect(result.current.chamberData.company_name).toBe("Mine Inc");
       expect(result.current.messages.map((m) => m.text)).toEqual([OPENING_MESSAGE]);
       expect(latestQueries.at(-1)?.[1]).toBe("u2");
+    });
+
+    it("doesn't carry the guest's chosen PEO into the new person's blank intake", async () => {
+      const { result, rerender } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.choosePeo("Justworks"));
+      expect(result.current.chosenPeo).toBe("Justworks");
+
+      authUserId = "u2"; // no open intake of their own, so a blank one is made for them
+      rerender();
+      await waitFor(() => expect(inserts).toBe(2));
+      expect(insertedRows[1]).toMatchObject({ user_id: "u2", chosen_peo: null });
+      expect(result.current.chosenPeo).toBeNull();
     });
   });
 

@@ -301,6 +301,30 @@ Candidates never change `chamber_data` by themselves. In the Upload tab the pros
 
 When the prospect signs, `submission.field_provenance` snapshots the provenance alongside `submission.chamber_data`. The Manuscript shows the status and source for each row, and adds the status-based open items to "Underwriting Readiness".
 
+### Required answers
+
+Three answers are required before an intake can be certified, and so before The Manuscript can be generated (decision D2, US-1.2). The one list is `REQUIRED_ITEMS` in `src/data/readiness.ts`:
+
+| Key | Answer | Counts as given when |
+| --- | --- | --- |
+| `company_name` | Company legal name | it isn't blank |
+| `states` | States of operation | `states` holds a code, or a census row (or a row of the older `employees` roster) has a work state |
+| `pay_frequency` | Pay frequency | it isn't blank |
+
+The employee census is recommended, not required (`RECOMMENDED_ITEMS`): it can only come from an uploaded file today, and no document is required. A missing census is an open item in the Review step and the Manuscript, and never blocks.
+
+- **In the app.** These fields are marked "Required" wherever they appear (`ProvenanceField`), and say they're needed while empty. The Review step lists what is still missing, with a link to each field. The Reckoning lists them with a way back to Review, and keeps Generate disabled (`certificationBlockers`). The Manuscript lists them as "not provided" open items, as the advisor queue does.
+- **In the database.** `public.intake_missing_required(chamber_data)` returns the missing keys in the order above. A certification sent from the browser (`current_user` `anon` or `authenticated`) is refused while any are missing, with SQLSTATE `EA003` and the keys, comma-separated, in DETAIL (`company_name,pay_frequency`). Nothing is written. Other saves, existing certifications and privileged writes are not checked. `src/data/schemaSync.test.ts` compares the function's keys with `REQUIRED_ITEMS`.
+- **On `EA003`.** The client names the missing answers and points to the Review tab. It is a definite refusal: saving carries on as before.
+
+### The chosen PEO (`chosen_peo`)
+
+`chamber_sessions.chosen_peo` (text, nullable, migration `20261103100000_chosen_peo.sql`) is the PEO the prospect picked on PEO Match, kept so that a reload during the final steps doesn't lose it. It is `NULL` until they pick one, which they never have to: we don't rank PEOs or choose for them. It can be a listed PEO or one the prospect typed in.
+
+- It is saved by the same versioned write as the answers (`chamber_data`, `field_provenance`, `transcript`), sent with the keepalive save on page unload, and set on insert. A read-back after a write that matched no row compares it too, so a different choice saved elsewhere is a conflict. Start over clears it with the rest of the screen. The browser's copy of unsaved answers does not include it.
+- It is not an answer. It is outside `chamber_data`, so changing it doesn't move the certification hash or withdraw a certification. The certified PEO is `submission.peo`. When the two differ, The Reckoning asks the prospect to certify again (in the browser only; the database doesn't enforce it).
+- A CHECK constraint keeps it trimmed and 1 to 80 characters (`PEO_NAME_MAX` in `src/data/peoCatalog.ts`, compared by `src/data/schemaSync.test.ts`). `cleanPeoName` trims and cuts by character before saving, so the app never sends a value the constraint refuses. A closed intake refuses a change to it like any other (see Session lifecycle).
+
 ## Session lifecycle
 
 Migration `20261103090000_intake_lifecycle.sql` (A-1.5). `supabase/tests/intake_lifecycle.sql` and `e2e/intake-lifecycle.spec.ts` cover it.

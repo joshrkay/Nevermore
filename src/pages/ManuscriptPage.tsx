@@ -66,6 +66,7 @@ type LoadState =
   | { kind: "error"; message: string }
   | { kind: "unsigned" }
   | { kind: "recertify" }
+  | { kind: "expired" }
   | { kind: "ready"; data: ChamberData; provenance: ProvenanceMap; submission: ChamberSubmission | null; fileId: string };
 
 // `demo` renders the fictional sample; the live route never does.
@@ -104,6 +105,10 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           return;
         }
         const submission = (data.submission as unknown as ChamberSubmission | null) ?? null;
+        if (data.status === "expired") {
+          setState({ kind: "expired" });
+          return;
+        }
         // Only a signed submission becomes a certified manuscript. A signed one whose status
         // moved back means the information changed after certification.
         if (data.status !== "submitted" && submission?.signer_name) {
@@ -183,6 +188,22 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           </p>
           <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
             Back to The Chamber
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.kind === "expired") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-6">
+        <div className="text-center max-w-md">
+          <p className="text-muted-foreground mb-4">
+            This intake has expired, so it can no longer be certified or made into a Manuscript. Start a new intake
+            in The Chamber to continue.
+          </p>
+          <Link to="/start" className="text-primary underline hover:text-primary/90">
+            Go to The Chamber
           </Link>
         </div>
       </div>

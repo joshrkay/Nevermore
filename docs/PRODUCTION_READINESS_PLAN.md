@@ -116,7 +116,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | The consent wording is defined twice (`2026-10-draft-1` and an unused `2026-10-v1` with no draft flag). The Manuscript page and PDF print the signed consent with no DRAFT marker. | `certification.ts`, `manuscript.ts` | C-2.4 |
 | The reference is not unique or server-assigned, and a repeat submit adds another certification row. | `manuscript.ts`, `useChamberSession.ts` | C-3.1 |
 | The owner's update policy lets a prospect write `documents.status`, so it cannot carry a scan verdict. | `20261021100000_session_documents.sql` | E-4.3 |
-| Upload limits (20 MB, file types) are enforced only in the browser. The bucket has no size or type limit. | `UploadTab.tsx`, `config.toml` | E-4.1 |
+| Only the browser checks a file's contents before upload. The `documents` bucket refuses files over 20 MB and undeclared types (migration `20261029090000`), but it checks the type the client declares, not the bytes. | `uploadCheck.ts`, `20261029090000_document_ingestion.sql` | E-4.1 |
 | Two rapid loads or two tabs can still create two sessions (a bare `/start` resumes the latest open one). Orphan drafts now expire after 30 days idle (A-1.5). | `useChamberSession.ts` | A-1.3 |
 | The advisor queue has no `LIMIT` and the page loads every row. | `20261024100000_advisor_queue.sql` | F-2.1 |
 | The opening message tells the prospect the workspace is 'a demonstration'. | `useChamberSession.ts` | A-2.3 |
@@ -131,6 +131,8 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-10-21 | Vercel configuration. Epic E document handling finished. Advisor session states, the access matrix and the searchable queue. CI for lint, tests, build and SQL tests. Advisor and prospect notifications on submission. Re-certification when a different PEO is chosen. A verify skill that drives the app against a local stand-in. |
 | 2026-10-22 | Supabase URL and key read from Vercel's integration variables. Outbox hardening: queueing faults heal and sends are frozen so a sender change cannot duplicate. |
 | 2026-10-29 | Epic E census ingestion (branch `claude/adoring-dijkstra-2fcocb`, not yet merged): the roster is `chamber_data.census` with the spec's `CensusEmployee` row, and older `employees` data is read as it; `document-extract` matches census columns by header, reads `.docx`, never reads or keeps SSN or bank details; upload checks by contents with a SHA-256 and duplicate refusal; category names and per-intake limits in the database; a review step that shows census rows and settles differences in a dialog. Deploy order: the migrations (including `20261029092000`, which teaches the A-2.2 intake validator the `census` key and still accepts `employees`), then `document-extract` (it imports `_shared`), then the front end. See `docs/intake-schema.md`. |
+| 2026-11-03 | US-1.3, the hand-off to The Reckoning: the chosen PEO is saved with the intake (`chamber_sessions.chosen_peo`, migration `20261103100000`, deploy it before the front end), and the Manuscript page says when an intake has expired instead of calling it unsigned. See A-1.3. |
+| 2026-11-03 | Document fixes from the US-3 review: a new document row must point into its own intake's folder (migration `20261103110000`, which only changes a policy and can deploy before or after the front end), and removing a document deletes the stored file before its row and treats storage's empty answer as "not deleted" unless the file is gone. See E-1.2 and E-1.3. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -142,7 +144,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
 | A Durable session | 7 | 0 | 4 | 0 | 0 | 11 |
 | B AI extraction | 2 | 4 | 1 | 2 | 0 | 9 |
-| C Review, certify, submit | 1 | 7 | 0 | 2 | 0 | 10 |
+| C Review, certify, submit | 2 | 7 | 0 | 1 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
 | E Documents | 5 | 1 | 3 | 2 | 0 | 11 |
 | F Advisor | 4 | 6 | 1 | 0 | 0 | 11 |
@@ -150,9 +152,9 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **25** | **43** | **11** | **21** | **6** | **106** |
+| **Total** | **26** | **43** | **11** | **20** | **6** | **106** |
 
-22 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+23 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 13 of 39 M2; 1 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -164,7 +166,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 4. **Sensitive data stays private.** Census, payroll, benefits, and workers' compensation data are never publicly reachable. *Holds: private buckets, owner and advisor RLS, a test that every public table has row security.*
 5. **One source of truth.** The saved intake session feeds the Chamber, the review, the Manuscript, and the advisor view. Submitted packets are frozen as snapshots. *Holds, with the snapshot gaps in C-3.2.*
 6. **Every story is independently releasable** and no larger than M.
-7. **Access is enforced in the backend.** A hidden button is not access control. *Holds for advisors and prospects through RLS. Upload limits are the exception (E-4.1).*
+7. **Access is enforced in the backend.** A hidden button is not access control. *Holds for advisors and prospects through RLS. Checking a file's contents is the exception: storage enforces the size and declared type, and only the browser reads the bytes (E-4.1).*
 
 ---
 
@@ -175,7 +177,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | ID | Decision | Status and evidence | Owner | Blocks |
 |---|---|---|---|---|
 | D1 | How does a guest return to their intake? | **Decided in code, with a different design** (see D14). Supabase anonymous auth persisted in browser storage; the session id in `?session=`; owner RLS gates resume. Email upgrade is a 6-digit code (`updateUser`, then `verifyOtp`), refused if the email already has an account ('we can't yet move your answers'). A guest who verified an email can get back to the intake from another browser, or after this one's data was cleared, by signing in with a 6-digit code emailed to that address (A-1.3); the Chamber then opens the linked intake or their latest one. **Gap:** a guest who never verified an email has no way back from another browser, and nothing sets a password. | PM | none |
-| D2 | Minimum data required before certification | **Partly decided, not enforced.** A four-item minimum is reported (company legal name, states of operation, pay frequency, a non-empty census) in the Manuscript open items and the advisor queue, but `certificationBlockers` checks none of it. It differs from the recommended default: there is no EIN field, the contact comes from `profiles.contact_name`, total employee count is not required, and pay frequency is. There is no 'Not applicable' status. | PM + Advisory lead | C-1.3, C-2.1, B-1.3 |
+| D2 | Minimum data required before certification | **Decided for certification (2026-11-03, US-1.2).** Company legal name, states of operation (a code in `states`, or a work state on the census) and pay frequency are required: the Reckoning won't generate The Manuscript without them, and the database refuses a certification from the browser (`EA003`, `public.intake_missing_required`). The census is recommended, not required, because today it can only come from an uploaded file and no document is required. It is listed as an open item and never blocks; the advisor queue still counts it under `missing_required`. One list in `src/data/readiness.ts`, compared with the database by `schemaSync.test.ts`. Still differs from the v1.0 default: no EIN field, no total-employee-count requirement, no 'Not applicable' status. | PM + Advisory lead | B-1.3 |
 | D3 | Certification and consent wording | **Open.** The placeholder `2026-10-draft-1` is marked DRAFT in the Reckoning. A second, unused wording (`2026-10-v1`) exists (C-2.4). No intake-consent text exists (H-2.2). | LEGAL | C-2.4, H-2.2 |
 | D4 | Retention windows | **Partly decided in code, to confirm.** An uncertified draft expires 30 days after its last change (A-1.5, `public.intake_draft_retention()`); an expired draft keeps its data until H-1.2 purges it. A browser's copy of unsaved answers is kept at most 7 days (A-1.4). Nothing else is windowed; AI rate-limit logs are pruned after a day. | LEGAL + PM | H-1.x, E-4.2 |
 | D5 | Advisor roles and permissions | **Decided and implemented**: `advisor` and `admin` in `user_roles`. In the repo `admin` has no power beyond `advisor` (tests assert it cannot grant roles or delete intakes). | PM | none |
@@ -255,7 +257,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### A-1.3 Restore a session after refresh, with a recovery screen
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** A-1.2, A-2.3, A-3.2 · **Milestone:** M1
 - **Built:** The Supabase auth session persists in browser storage and the session id travels in `?session=` (`ChamberPage.tsx`). Resume is gated by RLS. A bare `/start` resumes the prospect's latest open intake (by `last_activity_at`), and offers a retry rather than a new intake when it can't be checked or opened. When a linked intake can't be opened, the recovery screen says why: for a guest, that this browser no longer holds the sign-in (another device, a private window, cleared data). It offers to email a 6-digit sign-in code to the address they verified (`RecoverIntake.tsx`, `useAuth().requestSignInCode` / `verifySignInCode`: `signInWithOtp` with `shouldCreateUser: false`, then `verifyOtp` type `email`). The reply is the same whether or not the address has an account. A guest on a fresh intake gets the same offer ("Continue an earlier intake"). Once signed in, the hook drops what was on screen and opens the linked intake, or the person's latest one; a link that named the guest's own blank intake is dropped. The Chamber warns when the browser won't keep site data at all. `npm run setup:supabase` puts the code in the magic-link template and `--check` verifies it. Unit tests cover the screen, the form, the auth calls and the switch to another user. The browser path of the email code is not in the end-to-end test (the stand-in has no `/otp`).
-- **Notes:** A guest who never verified an email can't come back from another browser, and the screen says so. Nothing sets a password. Two rapid loads or two tabs can still create two rows; such orphans now expire (A-1.5). The chosen PEO is still local state (C-3.x).
+- **Notes:** A guest who never verified an email can't come back from another browser, and the screen says so. Nothing sets a password. Two rapid loads or two tabs can still create two rows; such orphans now expire (A-1.5). The chosen PEO is saved with the intake (`chamber_sessions.chosen_peo`, migration `20261103100000`, US-1.3), so a reload in The Reckoning keeps it (end-to-end tested). A reload still returns to the first workspace tab.
 
 #### A-1.4 Autosave with visible status and local backup
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** A-1.2, A-2.2 · **Milestone:** M1
@@ -303,7 +305,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### A-2.3 Hydrate the Chamber workspace from saved data
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** A-2.1, A-2.2 · **Milestone:** M1
 - **Built:** The workspace tabs render the hydrated `chamberData` with `isDemo={false}`. Company, Payroll and Benefits show status badges and empty-state text. Sample data appears only on `/manuscript/demo` and in tests.
-- **Notes:** Census and Dependents have no badge or edit path. The chosen PEO is not saved (A-1.3). The opening message still tells the prospect the workspace is 'a demonstration' (`OPENING_MESSAGE` in `useChamberSession.ts`): rewrite it.
+- **Notes:** Census and Dependents have no badge or edit path. The chosen PEO is saved with the intake (A-1.3). The opening message still tells the prospect the workspace is 'a demonstration' (`OPENING_MESSAGE` in `useChamberSession.ts`): rewrite it.
 
 #### A-3.1 Store transcript messages as ordered rows
 - **Status:** **SUPERSEDED** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** A-1.2 · **Milestone:** M1
@@ -569,18 +571,18 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 
 #### C-1.1 Read-only review by Manuscript section
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FE · **Depends:** A-2.3 · **Milestone:** M1
-- **Built:** The Review tab (tab 7 of the workspace) shows the live session only. There is no `/review` route: owner RLS replaces the token.
-- **Remaining:** No per-section status (Complete, Needs confirmation, Incomplete, Not applicable) and no D2 rules. Review shows eligibility, six company fields, census and documents; benefits, payroll, dependents, workers' comp and open items are missing. Only documents are tested.
+- **Built:** The Review tab (tab 7 of the workspace) shows the live session only. There is no `/review` route: owner RLS replaces the token. Since US-1.2 (2026-11-03) it shows every answer the Manuscript draws on in five sections (Company, Workforce, Locations, Payroll, Benefits) plus the census table, its dependents and the census state mix, and the open items: required answers still needed (with a link to each), the recommended census, fields still inferred, incomplete or conflicting, and the eligibility checks. Tested in `ReviewTab.test.tsx` and `e2e/review-readiness.spec.ts`.
+- **Remaining:** No per-section status chip (Complete, Needs confirmation, Incomplete, Not applicable). No workers' comp section, because there are no workers' comp fields yet.
 
 #### C-1.2 Inline editing that writes to the canonical record
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** C-1.1, A-2.2 · **Milestone:** M1
 - **Built:** Company, Payroll and Benefits edits go through `ProvenanceField` and `applyFieldAction` (source `prospect_edit`). Invalid input is refused. Autosave writes through supabase-js.
-- **Remaining:** The edit is local and optimistic: the prospect does not see it after server confirmation, and the save status (A-1.4) reports the server's answer, not the field. Census and dependents are read-only. The Review tab edits only flagged items. No edit, reload, confirm test.
+- **Remaining:** The edit is local and optimistic: the prospect does not see it after server confirmation, and the save status (A-1.4) reports the server's answer, not the field. Census and dependents are read-only (a corrected file replaces them, through the conflict dialog). Since US-1.2 every scalar answer is editable in the Review tab too, and `e2e/review-readiness.spec.ts` adds answers there and checks the database and the other tabs.
 
 #### C-1.3 Readiness gate with jump links
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** C-1.1, B-2.2, D2 · **Milestone:** M1
-- **Built:** `certificationBlockers` checks only email verification, file id, acknowledgements, signer name, role and signature. The four-item minimum (company legal name, states, pay frequency, a non-empty census) exists only as reporting, in the advisor `missing_required` and the Manuscript open items.
-- **Remaining:** Needs D2 and D16 first.
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** FS · **Depends:** C-1.1, B-2.2, D2 · **Milestone:** M1
+- **Built (2026-11-03, US-1.2):** The required answers (D2) are marked "Required" wherever they appear. The Review step lists the missing ones, each with a hint and a link that brings its field into view with the Add button focused. The Reckoning lists them with "Go to Review", and `certificationBlockers` puts them first, so Generate stays disabled until they're given. The database refuses a certification from the browser without them (migration `20261103110000_certification_readiness.sql`, `EA003`, the missing keys in DETAIL), and the client turns that refusal into the same advice. Tested in unit tests, `supabase/tests/certification_readiness.sql` and `e2e/review-readiness.spec.ts`.
+- **Notes:** There is no 'Not applicable' status: optional answers never block, so there is nothing to mark. The AC's "Continue" is the Reckoning's Generate button; moving on to PEO Match stays open.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** List missing required fields, each linked to the section that needs it. "Continue to certification" is enabled only when every required field is confirmed or validly marked not applicable. The reason for "not applicable" is stored.
   - **AC:**
@@ -719,12 +721,12 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 
 #### E-1.2 Upload list, refresh, and removal in the UI
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** FE · **Depends:** E-1.1, A-1.3 · **Milestone:** M1
-- **Built:** The list loads by session. Remove deletes the row then the object and restores the row on failure. Tested.
+- **Built:** The list loads by session. Remove deletes the stored file, then the row. Storage answers success with an empty list when it deleted nothing (including when its policies refused), so an empty answer is checked with `exists()`: a file still there keeps the row, a file already gone lets the row go. A row that can't be deleted stays listed, and the next try finds its file gone and finishes. Nothing is put back, so an expired intake (which refuses new rows) can't leave a stored file with no row. Tested in `useSessionDocuments.test.ts`.
 - **Notes:** Progress is a spinner, not a percentage.
 
 #### E-1.3 Document access isolation
 - **Status:** **SUPERSEDED** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** E-1.1 · **Milestone:** M1
-- **Built:** No tokens. The storage select policy needs the folder to equal `auth.uid()` and an owned intake. Only advisors get signed URLs (`SIGNED_URL_SECONDS = 60`). Prospects have no download UI. Cross-user reads are denied in `session_documents.sql`.
+- **Built:** No tokens. The storage select policy needs the folder to equal `auth.uid()` and an owned intake. Only advisors get signed URLs (`SIGNED_URL_SECONDS = 60`). Prospects have no download UI. Cross-user reads are denied in `session_documents.sql`. A new row's `storage_path` must be `{user_id}/{session_id}/{file}` (migration `20261103110000`), so a prospect can't add a row that points at another user's file for an advisor to open; also in `session_documents.sql`.
 - **Remaining:** The URL lifetime is 60 seconds, not 5 minutes (shorter is stricter: amend the AC). No test covers signed-URL issuance or expiry, only row visibility.
 
 #### E-2.1 Document categories and guidance
@@ -1250,7 +1252,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | B-3.3 | Operational logs with redaction | S | High | M1 | PARTIAL |
 | C-1.1 | Read-only review by Manuscript section | M | Highest | M1 | PARTIAL |
 | C-1.2 | Inline editing that writes to the canonical record | M | Highest | M1 | PARTIAL |
-| C-1.3 | Readiness gate with jump links | M | Highest | M1 | NOT STARTED |
+| C-1.3 | Readiness gate with jump links | M | Highest | M1 | DONE |
 | C-2.1 | Certification record and endpoint | M | Highest | M1 | PARTIAL |
 | C-2.2 | Certification screen | S | Highest | M1 | DONE |
 | C-2.3 | Re-certification after material changes | M | Highest | M1 | PARTIAL |
