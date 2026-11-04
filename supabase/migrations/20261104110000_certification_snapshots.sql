@@ -29,11 +29,9 @@ WHERE s.id = c.session_id
   AND s.submission ? 'chamber_data'
   AND c.data_sha256 = s.submission ->> 'data_sha256'
   AND c.signed_at = (s.submission ->> 'signed_at')::timestamptz
-  AND c.id = (
-    SELECT latest.id FROM public.chamber_certifications latest
-    WHERE latest.session_id = s.id
-    ORDER BY latest.recorded_at DESC, latest.id DESC
-    LIMIT 1
+  AND NOT EXISTS (
+    SELECT 1 FROM public.chamber_certifications later
+    WHERE later.session_id = c.session_id AND later.recorded_at > c.recorded_at
   );
 
 -- As before, plus the snapshot.

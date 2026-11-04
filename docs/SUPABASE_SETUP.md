@@ -218,7 +218,9 @@ that brought them together also dropped both copies of the two files above. `req
 whatever came after. `required_items` only replaces functions and grants, so running it again is safe.
 A project set up from that `main` never got `outbox_operations` or `document_storage_path`. They sort before
 migrations it has already applied, so `supabase db push` asks for `--include-all` to apply them; check
-`supabase migration list --linked` first, and only use it for these files.
+`supabase migration list --linked` first, and only use it for these files. Both are safe to run there:
+`outbox_operations` adds only the columns, indexes and functions that are missing, and leaves the later,
+suppression-aware queue functions and status check from `20261028090000_email_delivery_events` as they are.
 
 Two fixes landed at once and briefly left a second copy of each renumbered file, as `20261027090001` and
 `20261103110001`; those copies were removed (applying `outbox_operations` twice fails on the column its first run adds).
