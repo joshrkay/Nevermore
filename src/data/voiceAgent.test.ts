@@ -100,8 +100,9 @@ const fenced = (doc: string, heading: string): string | undefined =>
 const promptParts = (doc: string) => ({ firstMessage: fenced(doc, "First message"), systemPrompt: fenced(doc, "System prompt") });
 
 const PROMPT_KNOWN: Record<number, string> = {
-  // 1: conversation only, following the intake updates; answers go through chamber-extract (US-2.3b).
-  1: "48c5f9ab1c540e39cef9706cd1362a0a763ba8571f4fd5286a98512067a8c0c6",
+  // 1: conversation only, following the intake updates; answers go through chamber-extract (US-2.3b). Points to the
+  // census template as typed chat does since US-2.3d (recorded before v1 was first deployed).
+  1: "9e23211bb8bd3f21851753ce31aca1bc07d316bba946208fe630bdb20bda0044",
 };
 // The update's wording for fixed intakes: nothing captured, an answer with a census, and everything settled.
 const UPDATES = () => [
@@ -146,6 +147,11 @@ describe("Lenore's voice prompt", () => {
   it("never asks Lenore to write answers into her replies (ADR 0001)", () => {
     for (const part of [firstMessage, systemPrompt]) expect(part).not.toMatch(/<extract|extract>|JSON\s*block/i);
     expect(systemPrompt).toMatch(/never write answers down yourself/);
+  });
+
+  it("points the prospect to the census template for the roster, as typed chat does (US-2.3d, D21)", () => {
+    expect(systemPrompt).toMatch(/point them to the census template on the Upload tab/);
+    expect(systemPrompt).toMatch(/invite them to share one with the census template/);
   });
 
   it("tells her a spoken answer waits for the prospect's confirmation on the Review tab when she wraps up (D33)", () => {
