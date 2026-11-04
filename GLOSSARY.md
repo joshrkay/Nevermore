@@ -48,7 +48,7 @@ A field an intake needs before it can be certified: company legal name, states o
 _Avoid_: core item, required for submission, mandatory field
 
 **Recommended field**:
-A field that is not required but strengthens the Manuscript. Each has a rank, and Lenore asks about them in rank order after the required fields.
+A field that is not required but strengthens the Manuscript. Each has a rank, and Lenore asks about them in rank order after the required fields, the census first.
 _Avoid_: optional field, nice-to-have, priority field
 
 **Ready to certify**:
@@ -56,7 +56,7 @@ An intake is ready to certify when every required field holds an answer that isn
 _Avoid_: ready for review, complete, done, discovery complete
 
 **Open item**:
-Something the prospect still owes on a field: a required field with no answer, or any field that is inferred, incomplete, conflicting or unknown. A recommended field with no answer is not an open item.
+Something the prospect still owes on a field: a required field with no answer, or any field that is inferred, incomplete, conflicting or unknown. A recommended field with no answer is not an open item, except the census: a missing census is listed as an open item, under Recommended, and never blocks.
 _Avoid_: gap, missing item, to-do, issue
 
 **Eligibility check**:
@@ -74,7 +74,7 @@ The prospect's signed statement that the intake's answers are true, made in The 
 _Avoid_: submit, sign-off, attestation
 
 **Submission**:
-The answers and their field statuses exactly as they stood at certification, frozen.
+The answers and their field statuses exactly as they stood at certification, frozen, with the documents as they stood and a version number (1, 2, ...) within the intake.
 _Avoid_: snapshot, packet, application
 
 **The Manuscript**:
@@ -82,8 +82,8 @@ The underwriting document rendered from a submission, for the prospect to send t
 _Avoid_: packet, report, PDF, proposal
 
 **Reference**:
-The identifier a submission carries, such as EAA-2026-0042.
-_Avoid_: File ID, file number, case number
+The identifier a submission carries, such as EAA-2026-0042: assigned by the database the first time an intake is certified, and kept by every later version of its submission. The product shows it as the "File ID".
+_Avoid_: file number, case number
 
 **The Reckoning**:
 The last step in The Chamber, where the prospect certifies.
@@ -134,7 +134,7 @@ The prospect said the field doesn't apply to them. Only the prospect can mark it
 _Avoid_: N/A as a value, none, skipped
 
 **Settled**:
-A field is settled when it holds an answer that is not conflicting or incomplete, or is marked unknown or not applicable. Lenore asks again only about fields that are not settled.
+A field is settled when it holds an answer that is not conflicting or incomplete, or is marked unknown or not applicable, or an advisor has verified it. Lenore asks again only about fields that are not settled.
 
 ### Other kinds of status
 
@@ -148,8 +148,12 @@ _Avoid_: status, state, session status
 Where an intake stands in the advisors' work, from draft through submitted, under review, information requested, sent to carrier and quoted, to won, lost or archived.
 _Avoid_: status, intake status, workflow status
 
+**Also heard**:
+An answer Lenore heard for a field from a lower-ranked source than the one kept (a chat answer beside a document's, say). It is shown under the answer to the prospect and to the advisor, never in The Manuscript, and goes when the prospect confirms or edits the field.
+_Avoid_: alternative, rejected value
+
 **Review state**:
-An advisor's verdict on one field: verified, incomplete or needs follow-up. Separate from the field status the prospect sees.
+An advisor's verdict on one field: verified, incomplete or needs follow-up. Separate from the field status the prospect sees, though a verified field reads as settled to the prospect too ("Verified by your advisor").
 _Avoid_: field status, status, advisor status
 
 **Document status**:

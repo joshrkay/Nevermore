@@ -23,8 +23,10 @@ import { INTAKE_CONSENT_VERSION } from "@/data/intakeConsent";
 import { AI_ERROR_CODES } from "../../supabase/functions/_shared/ai/errors";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
-import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
+import { isFileId } from "@/data/manuscript";
+import { OPEN_ITEM_STATUSES } from "@/data/openItems";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
+import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
 
@@ -152,6 +154,11 @@ describe("server and client intake rules agree", () => {
     expect(keys).toEqual(REQUIRED_ITEMS.map((item) => item.key));
   });
 
+  it("blocks certification on a conflict in the same required fields", () => {
+    const keys = quoted(blocks("required_conflict_fields").join("\n"));
+    expect(keys).toEqual(REQUIRED_ITEMS.flatMap((item) => (item.field ? [item.field] : [])));
+  });
+
   it("holds transcript messages to the same senders and lengths", () => {
     const [sql] = blocks("transcript_rules");
     const limit = (key: string) => Number(new RegExp(`char_length\\(m ->> '${key}'\\) > (\\d+)`).exec(sql)?.[1]);
@@ -160,6 +167,23 @@ describe("server and client intake rules agree", () => {
     expect(limit("timestamp")).toBe(MAX_TIMESTAMP_CHARS);
     const senders = /NOT IN \(([^)]*)\)/.exec(sql)?.[1] ?? "";
     expect(quoted(senders)).toEqual([...TRANSCRIPT_SENDERS]);
+  });
+
+  // The File ID the database assigns (D15) is one the Manuscript route accepts.
+  it("assigns File IDs in the form the Manuscript route accepts", () => {
+    const sql = blocks("reference_format").join("\n");
+    expect(sql).toMatch(/format\('EAA-%s-%s', p_year, lpad\(n::text, greatest\(4, length\(n::text\)\), '0'\)\)/);
+    expect(isFileId("EAA-2026-0001")).toBe(true);
+    expect(isFileId("EAA-2026-12345")).toBe(true);
+  });
+
+  it("counts the same open items in the advisor queue as Review and The Manuscript list (US-2.2a)", () => {
+    expect(quoted(blocks("open_item_statuses").join("\n"))).toEqual([...OPEN_ITEM_STATUSES]);
+  });
+
+  it("lets advisors review every answer of the intake schema", () => {
+    const reviewable = quoted(blocks("reviewable_fields").join("\n"));
+    expect(reviewable.filter((f) => f !== "employees").sort()).toEqual(Object.keys(INTAKE_SCHEMA.properties as object).sort());
   });
 
   it("keeps the same longest PEO name", () => {

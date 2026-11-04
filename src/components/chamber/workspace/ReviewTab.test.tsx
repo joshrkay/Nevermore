@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import type { ProvenanceMap } from "@/data/provenance";
+import { applyFieldAction, FIELD_LABELS, type FieldKey, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import ReviewTab from "./ReviewTab";
+import { REVIEW_FIELDS } from "@/data/reviewFields";
 
 describe("ReviewTab documents", () => {
   it("lists uploaded files with their status and the helpful ones still missing", () => {
@@ -77,7 +79,7 @@ describe("ReviewTab needs your review", () => {
     render(<ReviewTab data={data} provenance={provenance} onAction={() => {}} onProceed={() => {}} />);
     // Missing and conflicting both hold certification back; the census is only recommended.
     expect(stillNeeded()).toEqual(["States of operation", "Pay frequency"]);
-    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Your answers conflict");
+    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("You've given two different answers");
     expect(screen.queryByText(/Every required answer is here/)).not.toBeInTheDocument();
     expect(screen.getByText("Needs your review — 3 items")).toBeInTheDocument();
     expectListed([
@@ -95,6 +97,12 @@ describe("ReviewTab needs your review", () => {
     );
     expect(screen.getByText("Needs your review — 1 item")).toBeInTheDocument();
     expectListed([["Incomplete", "Employee count"]]);
+  });
+
+  it("still needs a required answer in conflict, even if an advisor verified its field, as the database refuses it", () => {
+    render(<ReviewTab data={data} provenance={provenance} verified={new Set(["pay_frequency"])} onAction={() => {}} onProceed={() => {}} />);
+    expect(stillNeeded()).toEqual(["States of operation", "Pay frequency"]);
+    expect(screen.getByRole("button", { name: "Choose pay frequency" })).toBeInTheDocument();
   });
 
   it("still needs a required answer that was never given, even if an advisor verified its field", () => {
@@ -169,7 +177,55 @@ describe("ReviewTab sections", () => {
     expect(section("Payroll")).toHaveTextContent("3 days");
     expect(section("Payroll")).toHaveTextContent("Vacation, Sick");
     expect(section("Benefits")).toHaveTextContent("Aetna");
-    expect(section("Benefits")).toHaveTextContent("No retirement plan");
+    expect(section("Benefits")).toHaveTextContent("Retirement planNo");
+  });
+
+  it("lists every answer in the intake schema, each with its badge, and says how much of each section is settled (D28)", () => {
+    const fields = Object.keys(FIELD_LABELS).filter((f) => f !== "census") as FieldKey[];
+    expect(Object.values(REVIEW_FIELDS).flat().sort()).toEqual([...fields].sort());
+    const inferred: ProvenanceMap = Object.fromEntries(
+      fields.map((f) => [f, { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-04T00:00:00Z" }]),
+    );
+    const data = { ...complete, industry: "Print", employee_count: 3, wc_carrier: "Hartford", has_handbook: true } as typeof complete;
+    render(<ReviewTab data={data} provenance={inferred} onAction={() => {}} onProceed={() => {}} />);
+    for (const name of ["Workers' comp", "Operations & HR"]) expect(section(name)).toBeInTheDocument();
+    for (const f of ["company_name", "industry", "employee_count", "wc_carrier", "has_handbook"] as FieldKey[]) {
+      const row = document.getElementById(`review-field-${f}`)!;
+      expect(row, f).not.toBeNull();
+      expect(within(row).getByText("Lenore captured this — please confirm"), f).toBeInTheDocument();
+    }
+    expect(screen.getByTestId("progress-company")).toHaveTextContent("2 of 5 settled");
+    expect(screen.getByTestId("progress-locations")).toHaveTextContent("1 of 2 settled");
+    expect(screen.getByTestId("progress-workforce")).toHaveTextContent("1 of 7 settled");
+  });
+
+  it("lets the prospect say an unanswered field doesn't apply, which closes it, and take that back", () => {
+    function Harness() {
+      const [state, setState] = useState<IntakeState>({ data: complete, provenance: {} });
+      return (
+        <ReviewTab
+          data={state.data}
+          provenance={state.provenance}
+          onAction={(a) => setState((s) => applyFieldAction(s, a))}
+          onProceed={() => {}}
+        />
+      );
+    }
+    render(<Harness />);
+    // Not offered for an answer certification needs, nor for one already given.
+    expect(screen.queryByRole("button", { name: "Pay frequency doesn't apply" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Company legal name doesn't apply" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("0 of 4 settled");
+
+    fireEvent.click(screen.getByRole("button", { name: "Workers' comp carrier doesn't apply" }));
+    const row = document.getElementById("review-field-wc_carrier")!;
+    expect(within(row).getByText("Doesn't apply")).toBeInTheDocument();
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("1 of 4 settled");
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo: Workers' comp carrier doesn't apply" }));
+    expect(screen.queryByRole("button", { name: "Undo: Workers' comp carrier doesn't apply" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Workers' comp carrier doesn't apply" })).toBeInTheDocument();
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("0 of 4 settled");
   });
 
   it("marks the required answers wherever they sit, and only those", () => {
@@ -212,13 +268,13 @@ describe("ReviewTab sections", () => {
     const needed = section("Still needed");
     expect(needed).toHaveTextContent("Still needed before The Manuscript can be generated: 1");
     expect(needed).toHaveTextContent("Company legal name");
-    expect(needed).toHaveTextContent("Your answers conflict. Choose which is right.");
+    expect(needed).toHaveTextContent("You've given two different answers");
     // A recommended field in conflict stays in "Needs your review", never in what's needed.
     expect(needed).not.toHaveTextContent("Industry");
     expect(screen.queryByText(/Every required answer is here/)).not.toBeInTheDocument();
     expect(screen.getByText(/You can choose a PEO now/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Go to company legal name" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose company legal name" }));
     expect(document.activeElement?.closest("#review-field-company_name")).not.toBeNull();
   });
 
@@ -255,5 +311,37 @@ describe("ReviewTab sections", () => {
   it("is read-only without an edit handler", () => {
     render(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} />);
     expect(screen.queryByRole("button", { name: /^Add / })).not.toBeInTheDocument();
+  });
+});
+
+describe("ReviewTab section status and nav (C-1)", () => {
+  const complete = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY"], pay_frequency: "bi-weekly" };
+  const at = "2026-11-04T00:00:00Z";
+  const inferred = { status: "inferred" as const, source: { kind: "transcript" as const, message_id: "m1" }, updated_at: at };
+
+  it("says where each section stands, in words, beside how much of it is settled", () => {
+    render(<ReviewTab data={{ ...complete, industry: "Retail", census: DEMO_CHAMBER_DATA.census }} provenance={{ industry: inferred }} onProceed={() => {}} />);
+    expect(screen.getByTestId("status-company")).toHaveTextContent("Needs confirmation");
+    expect(screen.getByTestId("status-workforce")).toHaveTextContent("Complete");
+    expect(screen.getByTestId("status-benefits")).toHaveTextContent("Complete");
+    render(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} />);
+    expect(screen.getAllByTestId("status-company").some((chip) => chip.textContent === "Incomplete")).toBe(true);
+  });
+
+  it("lets the prospect jump to a section from the list of sections", () => {
+    render(<ReviewTab data={EMPTY_CHAMBER_DATA} provenance={{}} onAction={() => {}} onProceed={() => {}} />);
+    const nav = screen.getByRole("navigation", { name: "Sections" });
+    fireEvent.click(within(nav).getByRole("button", { name: /Payroll/ }));
+    expect(document.activeElement?.closest("#review-section-payroll")).not.toBeNull();
+    // Pay frequency is a required answer, so Payroll is incomplete; an empty recommended section owes nothing.
+    expect(within(nav).getByRole("button", { name: /Payroll/ })).toHaveTextContent("Incomplete");
+    expect(within(nav).getByRole("button", { name: /Workers' comp/ })).toHaveTextContent("Complete");
+  });
+
+  it("calls a section not applicable once every answer in it is marked so", () => {
+    const na = { status: "not_applicable" as const, source: { kind: "prospect_edit" as const }, updated_at: at };
+    const provenance = { wc_carrier: na, wc_renewal_date: na, wc_experience_mod: na, wc_annual_premium: na };
+    render(<ReviewTab data={complete} provenance={provenance} onProceed={() => {}} />);
+    expect(screen.getByTestId("status-workers_comp")).toHaveTextContent("Not applicable");
   });
 });

@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatMessage } from "@/data/chat";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
+import type { ChatMessage } from "@/data/chat";
 import type { IntakeState, ProvenanceMap } from "@/data/provenance";
 import { READY_MESSAGE } from "@/data/followUp";
 
@@ -30,12 +30,11 @@ const session = {
   certification: { status: "none" as string },
   updateIntake: vi.fn(),
   addMessage: vi.fn(),
-  verifiedFields: new Set<string>() as ReadonlySet<string>,
   conversationEpoch: {} as object,
+  verifiedFields: new Set<string>() as ReadonlySet<string>,
   chamberData: { ...EMPTY_CHAMBER_DATA } as ChamberData,
   provenance: {} as ProvenanceMap,
 };
-const voice = { isConnected: false };
 
 // What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
 const hooks = {
@@ -43,6 +42,7 @@ const hooks = {
   voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
   chat: null as null | { onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string }) => void },
 };
+const voice = { isConnected: false };
 const auth = {
   isAnonymous: true,
   requestSignInCode: vi.fn(async () => ({ error: null, noAccount: false })),

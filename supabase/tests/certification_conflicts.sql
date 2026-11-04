@@ -1,11 +1,10 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh certification_conflicts
--- A required answer in conflict blocks certification (B-2, D26; 20261104100000_certification_conflicts.sql, with its
--- rule now B-2.2's intake_required_items, 20261104103000_certification_gate_items.sql): that the prospect can't certify
--- while one is in conflict, that the refusal names them and changes nothing, that missing answers are still named
--- first, that a settled census settles states and an advisor's verification settles a field, and that a recommended
--- field's conflict, other saves, an existing certification and privileged writes are untouched. Everything a prospect does
+-- A required answer in conflict blocks certification (B-2, D26, 20261104100000_certification_conflicts.sql):
+-- which fields count, that the prospect can't certify while one is in conflict, that the refusal names them
+-- and changes nothing, that missing answers are still named first, and that a recommended field's conflict,
+-- other saves, an existing certification and privileged writes are untouched. Everything a prospect does
 -- runs as `authenticated` with their JWT claims, so row security is on.
 \set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
@@ -26,7 +25,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090100_outbox_operations.sql
+\i supabase/migrations/20261027090001_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -36,7 +35,7 @@
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
-\i supabase/migrations/20261103110100_document_storage_path.sql
+\i supabase/migrations/20261103110001_document_storage_path.sql
 \i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
 \i supabase/migrations/20261103120100_intake_schema_v2_version.sql
 \i supabase/migrations/20261103120200_ai_extraction_events.sql
@@ -45,11 +44,6 @@
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
 \i supabase/migrations/20261104100000_certification_conflicts.sql
-\i supabase/migrations/20261104100100_required_items.sql
-\i supabase/migrations/20261104101000_transcript_validation.sql
-\i supabase/migrations/20261104102000_one_open_draft.sql
-\i supabase/migrations/20261104103000_certification_gate_items.sql
-\i supabase/migrations/20261104104000_notification_headcount_census.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -111,6 +105,41 @@ CREATE FUNCTION pg_temp.prov(status text) RETURNS jsonb LANGUAGE sql AS $$
     'candidates', '[{"value":"Acme","source":{"kind":"transcript","message_id":"m1"}},{"value":"Acme LLC","source":{"kind":"document","document_id":"d1"}}]'::jsonb)
   ELSE jsonb_build_object('status', status, 'source', '{"kind":"prospect_edit"}'::jsonb, 'updated_at', '2026-11-01T12:00:00Z') END
 $$;
+
+-- ---------- which fields count as in conflict ----------
+DO $$
+DECLARE
+  cases jsonb[] := ARRAY[
+    '{}',
+    jsonb_build_object('company_name', pg_temp.prov('conflicting')),
+    jsonb_build_object('company_name', pg_temp.prov('confirmed'), 'states', pg_temp.prov('inferred'), 'pay_frequency', pg_temp.prov('incomplete')),
+    jsonb_build_object('pay_frequency', pg_temp.prov('conflicting'), 'company_name', pg_temp.prov('conflicting'), 'states', pg_temp.prov('conflicting')),
+    -- A recommended field in conflict is an open item, not a blocker.
+    jsonb_build_object('employee_count', pg_temp.prov('conflicting'), 'industry', pg_temp.prov('conflicting')),
+    jsonb_build_object('states', pg_temp.prov('conflicting'), 'industry', pg_temp.prov('conflicting')),
+    -- Malformed provenance holds no conflict.
+    '{"company_name":"conflicting"}', '{"company_name":{"status":["conflicting"]}}', '[]', 'null', '"text"'
+  ]::jsonb[];
+  expected text[] := ARRAY[
+    '{}',
+    '{company_name}',
+    '{}',
+    '{company_name,states,pay_frequency}',
+    '{}',
+    '{states}',
+    '{}', '{}', '{}', '{}', '{}'
+  ];
+  got text[];
+BEGIN
+  FOR i IN 1 .. array_length(cases, 1) LOOP
+    got := public.intake_conflicting_required(cases[i]);
+    IF got IS DISTINCT FROM expected[i]::text[] THEN
+      RAISE EXCEPTION 'FAIL: intake_conflicting_required(%) = %, expected %', cases[i], got, expected[i];
+    END IF;
+  END LOOP;
+  IF public.intake_conflicting_required(NULL) IS DISTINCT FROM '{}'::text[] THEN RAISE EXCEPTION 'FAIL: NULL provenance'; END IF;
+  RAISE NOTICE 'certification_conflicts: % conflict cases passed', array_length(cases, 1) + 1;
+END $$;
 
 -- ---------- the prospect can't certify until each conflict is settled ----------
 DO $$
@@ -179,44 +208,6 @@ BEGIN
   UPDATE public.chamber_sessions SET status = 'submitted', submission = pg_temp.certification(complete || '{"industry":"Print"}') WHERE id = sid;
   IF (SELECT status FROM public.chamber_sessions WHERE id = sid) <> 'submitted' THEN RAISE EXCEPTION 'FAIL: a privileged certification was refused'; END IF;
   RAISE NOTICE 'certification_conflicts: unchecked cases passed';
-END $$;
-
-
--- ---------- B-2.2's rule: what settles a required answer besides choosing one ----------
-DO $$
-DECLARE
-  uid uuid := pg_temp.new_prospect();
-  advisor uuid := gen_random_uuid();
-  sid uuid;
-  outcome text;
-  census_rows jsonb := '[{"id":"e1","first_name":"Ada","last_name":"L","work_state":"NY","compensation_type":"salary","employment_type":"full_time","classification":"w2"}]';
-BEGIN
-  PERFORM pg_temp.as_user(uid);
-  SET LOCAL ROLE authenticated;
-  -- States in conflict, but a census (with no provenance of its own, so settled) names the work states.
-  INSERT INTO public.chamber_sessions (user_id, chamber_data, field_provenance)
-  VALUES (uid, jsonb_build_object('company_name', 'Acme', 'states', '["NY"]'::jsonb, 'pay_frequency', 'weekly', 'census', census_rows),
-          jsonb_build_object('states', pg_temp.prov('conflicting'), 'pay_frequency', pg_temp.prov('conflicting')))
-  RETURNING id INTO sid;
-  outcome := pg_temp.certify(sid);
-  IF outcome <> 'EA008 pay_frequency' THEN RAISE EXCEPTION 'FAIL: a settled census should settle states: %', outcome; END IF;
-  RESET ROLE;
-
-  -- An advisor verifies the pay frequency: it is settled, and the intake certifies.
-  INSERT INTO auth.users (id, aud, role, email, is_anonymous, created_at, updated_at)
-  VALUES (advisor, 'authenticated', 'authenticated', 'adv@example.test', false, now(), now());
-  INSERT INTO public.user_roles (user_id, role) VALUES (advisor, 'advisor');
-  PERFORM set_config('request.jwt.claims', jsonb_build_object('sub', advisor, 'role', 'authenticated', 'is_anonymous', false, 'email', 'adv@example.test')::text, false);
-  SET LOCAL ROLE authenticated;
-  PERFORM public.review_submission_field(sid, 'pay_frequency', 'verified');
-  RESET ROLE;
-
-  PERFORM pg_temp.as_user(uid);
-  SET LOCAL ROLE authenticated;
-  outcome := pg_temp.certify(sid);
-  IF outcome <> 'ok' THEN RAISE EXCEPTION 'FAIL: a field an advisor verified still blocked: %', outcome; END IF;
-  RESET ROLE;
-  RAISE NOTICE 'certification_conflicts: required-items cases passed';
 END $$;
 
 DO $$ BEGIN RAISE NOTICE 'certification_conflicts: all cases passed'; END $$;

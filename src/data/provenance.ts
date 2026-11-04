@@ -3,6 +3,7 @@ import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
 import { INTAKE_FIELDS, INTAKE_SCHEMA } from "./intakeSchema";
 import { redactSensitive } from "./sensitive";
+import { CERTIFICATION_REQUIRED } from "../../supabase/functions/_shared/followUp.ts";
 
 // Every captured field records how sure we are of it and where it came from, so the
 // prospect and advisor can tell what Lenore inferred from what someone confirmed.
@@ -204,6 +205,23 @@ export function parseProvenance(raw: unknown): ProvenanceMap {
   return map;
 }
 
+/**
+ * Whether an advisor's verification settles an answer in this status for what the prospect and the Manuscript
+ * show: one that still needs the prospect (inferred, incomplete, in conflict). A confirmed answer is already
+ * settled, and unknown or not applicable hold no answer. The open-items list, the required-items rule and the
+ * advisor's packet settle every status instead, since none of them shows a badge for it.
+ */
+export const verificationSettles = (status: FieldStatus | undefined): boolean =>
+  status === "inferred" || status === "incomplete" || status === "conflicting";
+
+/**
+ * The also-heard notes worth showing: those that aren't already one of a conflict's rival answers, which the
+ * prospect and the advisor see in the candidate list.
+ */
+export function visibleAlsoHeard(entry: FieldProvenance): FieldCandidate[] {
+  return (entry.also_heard ?? []).filter((heard) => !entry.candidates?.some((c) => same(c.value, heard.value)));
+}
+
 // ---------- Merging extractions ----------
 
 // Which source stands when two disagree: the prospect's own answer, then a document they applied,
@@ -364,7 +382,17 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
 export type FieldAction =
   | { type: "confirm"; field: FieldKey }
   | { type: "edit"; field: FieldKey; value: unknown }
-  | { type: "resolve"; field: FieldKey; candidate: number };
+  | { type: "resolve"; field: FieldKey; candidate: number }
+  // "Doesn't apply" (D31): only the prospect closes a field this way, and can take it back with "reopen".
+  | { type: "not_applicable"; field: FieldKey }
+  | { type: "reopen"; field: FieldKey };
+
+/**
+ * Whether the prospect may mark a field "Doesn't apply": a field they haven't answered that certification doesn't
+ * need. A required answer is needed whatever the business, and the census is a document.
+ */
+export const canMarkNotApplicable = (field: FieldKey, data: ChamberData): boolean =>
+  field !== "census" && !(CERTIFICATION_REQUIRED as readonly string[]).includes(field) && isEmpty(data[field]);
 
 /** Applies a prospect's confirm, edit, or conflict resolution. Invalid edits change nothing. */
 export function applyFieldAction(state: IntakeState, action: FieldAction, now = new Date()): IntakeState {
@@ -375,6 +403,20 @@ export function applyFieldAction(state: IntakeState, action: FieldAction, now = 
     if (state.provenance[field]?.status === "conflicting") return state; // must pick a value first
     if (isEmpty(state.data[field])) return state; // nothing to confirm (an unknown or not applicable field holds no answer)
     return { data: state.data, provenance: { ...state.provenance, [field]: confirmed() } };
+  }
+
+  if (action.type === "not_applicable") {
+    if (!canMarkNotApplicable(field, state.data)) return state;
+    return {
+      data: state.data,
+      provenance: { ...state.provenance, [field]: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: now.toISOString() } },
+    };
+  }
+
+  if (action.type === "reopen") {
+    if (state.provenance[field]?.status !== "not_applicable") return state;
+    const { [field]: _closed, ...rest } = state.provenance;
+    return { data: state.data, provenance: rest };
   }
 
   const value = action.type === "edit" ? action.value : state.provenance[field]?.candidates?.[action.candidate]?.value;
@@ -421,6 +463,12 @@ export interface FieldOpenItem {
   reason: FieldOpenReason;
 }
 
+/**
+ * The statuses that leave a field open, most pressing first. The advisor queue counts the same ones
+ * (`open_item_statuses` in its migration; src/data/schemaSync.test.ts compares them).
+ */
+export const OPEN_FIELD_STATUSES = ["conflicting", "incomplete", "unknown", "inferred"] as const satisfies readonly FieldStatus[];
+
 /** What the prospect is told about a field in each status that still needs them. */
 export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_applicable">, FieldOpenReason> = {
   conflicting: "Conflicting answers",
@@ -435,8 +483,7 @@ export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_
  * verified it) is settled whatever its status, so it is left out too.
  */
 export function fieldOpenItems(provenance: ProvenanceMap, verified: ReadonlySet<string> = new Set()): FieldOpenItem[] {
-  const order = ["conflicting", "incomplete", "unknown", "inferred"] as const;
-  return order.flatMap((status) =>
+  return OPEN_FIELD_STATUSES.flatMap((status) =>
     FIELD_KEYS.filter((f) => provenance[f]?.status === status && !verified.has(f)).map((field) => ({
       field,
       label: FIELD_LABELS[field],
@@ -514,6 +561,7 @@ export function parseFieldList(raw: unknown): FieldKey[] {
  */
 export function transcriptExtraction(message: { id: string; text: string; spoken?: boolean }, meta: unknown): ExtractionOptions {
   const m = (typeof meta === "object" && meta !== null ? meta : {}) as Record<string, unknown>;
+  const version = promptVersionSchema.safeParse(m.prompt_version);
   const statuses = parseExtractedStatuses(m.field_status);
   const unknown = parseUnknownFields(m.field_status);
   // Speech-to-text mishears ("fifteen" as 50), so a spoken answer is at most inferred until the prospect
@@ -521,10 +569,13 @@ export function transcriptExtraction(message: { id: string; text: string; spoken
   if (message.spoken) {
     for (const field of Object.keys(statuses) as FieldKey[]) if (statuses[field] === "confirmed") statuses[field] = "inferred";
   }
-  // The contract the answer came from (B-1.4), stored with each value it gave.
-  const version = typeof m.prompt_version === "number" && Number.isInteger(m.prompt_version) && m.prompt_version > 0 ? m.prompt_version : undefined;
   return {
-    source: { kind: "transcript", message_id: message.id, quote: clip(message.text.trim()), ...(version !== undefined ? { prompt_version: version } : {}) },
+    source: {
+      kind: "transcript",
+      message_id: message.id,
+      quote: clip(message.text.trim()),
+      ...(version.success ? { prompt_version: version.data } : {}),
+    },
     statuses,
     evidence: parseEvidence(m.evidence),
     corrections: parseFieldList(m.corrected_fields),

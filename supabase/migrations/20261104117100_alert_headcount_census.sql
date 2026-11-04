@@ -1,8 +1,14 @@
--- The advisor alert's headcount reads the census. The fallback for an intake with no stated
--- employee_count read only the legacy `employees` roster (classification 'W2'), so an intake whose
--- roster is the current `census` (classification 'w2', src/data/headcount.ts) sent "Not provided".
--- Now: the stated count, else the census's W-2 rows, else the legacy roster's, else nothing. Rows are
--- only counted, never copied. The rest of the function is unchanged from 20261027090100.
+-- The advisor alert's headcount counts the census (US-1.4's canonical roster) when no headcount was stated.
+--
+-- enqueue_certification_notifications (20261027090001_outbox_operations) fell back to the W-2 rows of
+-- `employees`, the roster's name before the census contract. Intakes since then keep their rows in `census`,
+-- classified 'w2' or '1099', so an intake whose headcount came only from an uploaded census reached the
+-- advisor with no employee count, though the Manuscript shows one (src/data/headcount.ts). The fallback now
+-- reads `census` first, then `employees` for an intake saved before it. Nothing else changes: the stated
+-- count still wins, a roster with no W-2 rows still gives no count, and rows are only counted, never copied.
+--
+-- Deploy order: either. Certifications already queued keep the payload they were queued with.
+
 CREATE OR REPLACE FUNCTION public.enqueue_certification_notifications(p_certification_id uuid)
 RETURNS void
 LANGUAGE plpgsql
@@ -52,16 +58,13 @@ BEGIN
     WHEN jsonb_typeof(s.chamber_data -> 'employee_count') = 'number' THEN
       CASE WHEN (s.chamber_data ->> 'employee_count')::numeric BETWEEN 0 AND 10000000
            THEN round((s.chamber_data ->> 'employee_count')::numeric)::integer END
-    ELSE COALESCE(
-      CASE WHEN jsonb_typeof(s.chamber_data -> 'census') = 'array' THEN
-        NULLIF((SELECT count(*)::integer FROM jsonb_array_elements(s.chamber_data -> 'census') r
-                WHERE r ->> 'classification' = 'w2'), 0)
-      END,
-      CASE WHEN jsonb_typeof(s.chamber_data -> 'employees') = 'array' THEN
-        NULLIF((SELECT count(*)::integer FROM jsonb_array_elements(s.chamber_data -> 'employees') r
-                WHERE r ->> 'classification' = 'W2'), 0)
-      END
-    )
+    -- The census (src/data/headcount.ts: W-2 rows, classification 'w2'), then a roster saved before it.
+    WHEN jsonb_typeof(s.chamber_data -> 'census') = 'array' THEN
+      NULLIF((SELECT count(*)::integer FROM jsonb_array_elements(s.chamber_data -> 'census') r
+              WHERE jsonb_typeof(r) = 'object' AND r ->> 'classification' = 'w2'), 0)
+    WHEN jsonb_typeof(s.chamber_data -> 'employees') = 'array' THEN
+      NULLIF((SELECT count(*)::integer FROM jsonb_array_elements(s.chamber_data -> 'employees') r
+              WHERE jsonb_typeof(r) = 'object' AND r ->> 'classification' = 'W2'), 0)
   END;
   hq := CASE
     WHEN jsonb_typeof(s.chamber_data -> 'hq_state') = 'string' AND (s.chamber_data ->> 'hq_state') ~ '^[A-Za-z]{2}$'
@@ -108,3 +111,5 @@ BEGIN
   UPDATE public.chamber_certifications SET outbox_queued_at = now() WHERE id = p_certification_id;
 END;
 $$;
+
+REVOKE ALL ON FUNCTION public.enqueue_certification_notifications(uuid) FROM PUBLIC, anon, authenticated, service_role;

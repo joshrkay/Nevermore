@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { isSettled, readyToCertify, requiredItemStates, unsettledFields } from "./followUp";
+import { isSettled, readyToCertify, unsettledFields } from "./followUp";
 import { parseChamberData } from "../../../src/data/chamberValidation";
 import { parseProvenance } from "../../../src/data/provenance";
-import { censusSummary, statusesOf } from "../../../src/data/followUp";
+import { censusSummary, isReadyToCertify, statusesOf } from "../../../src/data/followUp";
 import { INTAKE_FIELDS } from "./intakeSchema";
 
 describe("isSettled (D26)", () => {
@@ -75,34 +75,45 @@ describe("readyToCertify (D26, D2)", () => {
 
   it("asks nothing about states the census already gives", () => {
     expect(unsettledFields({}, {}, { census: { rows: 2, workStates: true } }).map((f) => f.key)).not.toContain("states");
-    expect(unsettledFields({}, { states: "conflicting" }, { census: { rows: 2, workStates: true } }).map((f) => f.key)).not.toContain("states");
-    // Unless the census itself is in conflict: then the states question is still open.
+    // Unless the states answer or the census itself is in conflict: then the states question is still open.
+    expect(unsettledFields({}, { states: "conflicting" }, { census: { rows: 2, workStates: true } }).map((f) => f.key)).toContain("states");
     expect(unsettledFields({}, { census: "conflicting" }, { census: { rows: 2, workStates: true } }).map((f) => f.key)).toContain("states");
   });
 });
 
 describe("readiness and the certification gate agree", () => {
-  it("doesn't call states from a census in conflict ready: the gate refuses it (EA008)", () => {
-    const answers = { company_name: "Acme", states: [], pay_frequency: "weekly" };
-    expect(readyToCertify(answers, { census: "conflicting" }, { rows: 2, workStates: true })).toBe(false);
-    expect(readyToCertify(answers, { census: "inferred" }, { rows: 2, workStates: true })).toBe(true);
-    expect(readyToCertify(answers, {}, { rows: 2, workStates: true })).toBe(true);
-    // A settled census settles states even when the states answer is in conflict.
-    expect(readyToCertify({ ...answers, states: ["NY"] }, { states: "conflicting" }, { rows: 2, workStates: true })).toBe(true);
-    // And an advisor's verification settles a field.
-    expect(readyToCertify(answers, { pay_frequency: "conflicting" }, { rows: 2, workStates: true }, new Set(["pay_frequency"]))).toBe(true);
+  const answers = { company_name: "Acme", states: [], pay_frequency: "weekly" };
+  const census = { rows: 2, workStates: true };
+
+  it("doesn't call states from a census in conflict ready: the gate refuses it", () => {
+    expect(readyToCertify(answers, { census: "conflicting" }, census)).toBe(false);
+    expect(readyToCertify(answers, { census: "inferred" }, census)).toBe(true);
+    expect(readyToCertify(answers, {}, census)).toBe(true);
+    // The database never reads the census, so an advisor's verification of it settles it.
+    expect(readyToCertify(answers, { census: "conflicting" }, census, new Set(["census"]))).toBe(true);
   });
 
-  it("gives B-2.2's item state for every one of its shared cases (src/data/requiredItems.cases.json)", () => {
+  it("doesn't call a required answer in conflict ready, verified or not: the gate reads the field's own status (EA008)", () => {
+    expect(readyToCertify({ ...answers, states: ["NY"] }, { states: "conflicting" }, census)).toBe(false);
+    expect(readyToCertify(answers, { pay_frequency: "conflicting" }, census)).toBe(false);
+    expect(readyToCertify(answers, { pay_frequency: "conflicting" }, census, new Set(["pay_frequency"]))).toBe(false);
+    // An advisor's verification does settle an answer that is only incomplete or unconfirmed.
+    expect(readyToCertify(answers, { pay_frequency: "incomplete" }, census)).toBe(false);
+    expect(readyToCertify(answers, { pay_frequency: "incomplete" }, census, new Set(["pay_frequency"]))).toBe(true);
+  });
+
+  it("is the browser's rule for every one of B-2.2's shared cases (src/data/requiredItems.cases.json)", () => {
     const { cases } = JSON.parse(readFileSync("src/data/requiredItems.cases.json", "utf8")) as {
       cases: { name: string; data: Record<string, unknown>; provenance: Record<string, unknown>; verified: string[]; expected: Record<string, string> }[];
     };
+    expect(cases.length).toBeGreaterThan(0);
     for (const c of cases) {
       // What the browser sends: the answers and statuses as it loads them, and the census as a summary.
       const data = parseChamberData(c.data);
-      const statuses = statusesOf(parseProvenance(c.provenance));
-      const got = requiredItemStates(data as unknown as Record<string, unknown>, statuses, censusSummary(data), new Set(c.verified));
-      for (const key of ["company_name", "states", "pay_frequency"] as const) expect(got[key], `${c.name}: ${key}`).toBe(c.expected[key]);
+      const provenance = parseProvenance(c.provenance);
+      const verified = new Set(c.verified);
+      const shared = readyToCertify(data as unknown as Record<string, unknown>, statusesOf(provenance), censusSummary(data), verified);
+      expect(shared, c.name).toBe(isReadyToCertify(data, provenance, verified));
     }
   });
 });

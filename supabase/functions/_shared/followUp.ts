@@ -65,7 +65,8 @@ const hasText = (v: unknown) => typeof v === "string" && v.trim() !== "";
  * present answer is settled when it has no provenance or is confirmed, not applicable or verified by an advisor;
  * inferred or unknown is unconfirmed; incomplete and conflicting are themselves. States of operation is settled by
  * `states`, or by a settled census that names work states; while only the census names states, it takes the
- * census's state, so a census in conflict holds it back too. Pass `verified` where it is known (the browser).
+ * census's state, so a census in conflict holds it back too. A required answer whose own status is conflicting stays
+ * in conflict, verified or not, as the gate has it. Pass `verified` where it is known (the browser).
  */
 export function requiredItemStates(
   answers: Record<string, unknown>,
@@ -86,10 +87,14 @@ export function requiredItemStates(
   const statesState = state(statesListed, "states");
   const censusState = state(census.rows > 0, "census");
   const statesViaCensus = statesState !== "settled" && census.workStates && (censusState === "settled" || statesState === "missing");
+  // A required answer whose own status is `conflicting` stays in conflict whoever verified it and whatever the census
+  // says: the gate reads the field statuses, not the advisor's reviews (EA008; certificationBlockingItems).
+  const refused = (key: (typeof CERTIFICATION_REQUIRED)[number], item: RequiredItemState): RequiredItemState =>
+    item !== "missing" && statuses[key] === "conflicting" ? "conflicting" : item;
   return {
-    company_name: state(hasText(answers.company_name), "company_name"),
-    states: statesViaCensus ? censusState : statesState,
-    pay_frequency: state(hasText(answers.pay_frequency), "pay_frequency"),
+    company_name: refused("company_name", state(hasText(answers.company_name), "company_name")),
+    states: refused("states", statesViaCensus ? censusState : statesState),
+    pay_frequency: refused("pay_frequency", state(hasText(answers.pay_frequency), "pay_frequency")),
   };
 }
 

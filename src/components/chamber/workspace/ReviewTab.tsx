@@ -2,9 +2,13 @@ import { useEffect, useRef, type ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
-import { fieldOpenItems, formatFieldValue, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
+import { FIELD_LABELS, formatFieldValue, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
+import { isSettled } from "@/data/followUp";
+import { openItems } from "@/data/openItems";
+import { REVIEW_FIELDS } from "@/data/reviewFields";
+import { SECTION_STATUS_LABELS, sectionStatus, type SectionStatus } from "@/data/sectionStatus";
 import { missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
-import { NO_VERIFIED_FIELDS, REQUIRED_ITEM_REASONS, requiredItems, type RequiredItem } from "@/data/requiredItems";
+import { certificationBlockingItems, NO_VERIFIED_FIELDS, requiredItems, type RequiredItem } from "@/data/requiredItems";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
 import { CheckCircle, AlertTriangle, HelpCircle, FileText } from "lucide-react";
@@ -48,70 +52,39 @@ const SECTIONS: { key: ReviewSection; title: string }[] = [
   { key: "locations", title: "Locations" },
   { key: "payroll", title: "Payroll" },
   { key: "benefits", title: "Benefits" },
+  { key: "workers_comp", title: "Workers' comp" },
+  { key: "operations", title: "Operations & HR" },
 ];
+
+const displayOf = (field: FieldKey, value: unknown): string | null => {
+  const text = shown(value);
+  if (text === null) return null;
+  if (field === "funding_days") return `${text} days`;
+  if (field === "wc_annual_premium" && typeof value === "number") return `$${value.toLocaleString()}`;
+  return text;
+};
 
 // Every answer the Manuscript draws on, by section, each editable in place.
 function rowsBySection(data: ChamberData): Record<ReviewSection, Row[]> {
-  return {
-    company: [
-      { label: "Company legal name", field: "company_name", display: shown(data.company_name) },
-      { label: "Industry", field: "industry", display: shown(data.industry) },
-      {
-        label: "Entity structure",
-        field: "multiple_entities",
-        display: data.multiple_entities === null ? null : data.multiple_entities ? `Multiple (${data.fein_count ?? "?"} FEINs)` : "Single entity",
-      },
-      { label: "Target start", field: "start_month", display: shown(data.start_month) },
-      {
-        label: "Health coverage today",
-        field: "virgin_medical",
-        display: data.virgin_medical === null ? null : data.virgin_medical ? "None yet: first employer plan" : "Switching existing coverage",
-      },
-    ],
-    workforce: [
-      { label: "Employee count", field: "employee_count", display: shown(data.employee_count) },
-      {
-        label: "Nonexempt / exempt",
-        field: "has_nonexempt",
-        display: data.has_nonexempt !== null ? `${data.nonexempt_count ?? 0} nonexempt · ${data.exempt_count ?? 0} exempt` : null,
-        editable: false,
-      },
-      { label: "1099 contractors", field: "has_1099", display: shown(data.has_1099) },
-      { label: "In-house HR staff", field: "hr_staff_count", display: shown(data.hr_staff_count) },
-      { label: "Employee handbook", field: "has_handbook", display: shown(data.has_handbook) },
-    ],
-    locations: [
-      { label: "HQ state", field: "hq_state", display: shown(data.hq_state) },
-      { label: "States of operation", field: "states", display: shown(data.states) },
-    ],
-    payroll: [
-      { label: "Payroll vendor", field: "payroll_vendor", display: shown(data.payroll_vendor) },
-      { label: "Pay frequency", field: "pay_frequency", display: shown(data.pay_frequency) },
-      { label: "Funding lead time", field: "funding_days", display: data.funding_days !== null ? `${data.funding_days} days` : null },
-      { label: "Accrual method", field: "accrual_method", display: shown(data.accrual_method) },
-      { label: "PTO types", field: "pto_types", display: shown(data.pto_types) },
-    ],
-    benefits: [
-      { label: "Current carrier", field: "current_carrier", display: shown(data.current_carrier) },
-      { label: "Renewal date", field: "renewal_date", display: shown(data.renewal_date) },
-      { label: "Waiting period", field: "benefits_waiting_period", display: shown(data.benefits_waiting_period) },
-      { label: "Rate history", field: "rate_history", display: shown(data.rate_history) },
-      { label: "Ancillary benefits", field: "ancillary_benefits", display: shown(data.ancillary_benefits) },
-      {
-        label: "Retirement plan",
-        field: "has_401k",
-        display:
-          data.has_401k === null
-            ? null
-            : data.has_401k
-              ? `${data.retirement_type || "401(k)"} · ${data.employer_contributes ? "employer contributes" : "no employer match"}`
-              : "No retirement plan",
-      },
-    ],
-  };
+  return Object.fromEntries(
+    SECTIONS.map(({ key }) => [key, REVIEW_FIELDS[key].map((field) => ({ label: FIELD_LABELS[field], field, display: displayOf(field, data[field]) }))]),
+  ) as Record<ReviewSection, Row[]>;
+}
+
+/** How many of a section's answers are settled (an answer, or "Doesn't apply" or "Not known yet"), of how many. */
+function sectionProgress(section: ReviewSection, data: ChamberData, provenance: ProvenanceMap): { settled: number; total: number } {
+  const fields = REVIEW_FIELDS[section];
+  const settled = fields.filter((f) => isSettled(data[f], provenance[f]?.status)).length;
+  // The census counts in Workforce, settled once one is uploaded.
+  return section === "workforce"
+    ? { settled: settled + (data.census.length > 0 ? 1 : 0), total: fields.length + 1 }
+    : { settled, total: fields.length };
 }
 
 const rowId = (field: FieldKey) => `review-field-${field}`;
+// What the open-items list says of a field that is open for its status, as against a required answer still to give.
+const STATUS_REASONS: ReadonlySet<string> = new Set(["Conflicting answers", "Incomplete", "Prospect to provide", "Please confirm"]);
+
 const sectionId = (section: ReviewSection) => `review-section-${section}`;
 
 /** Brings an answer into view and puts the keyboard on its Add or Edit button. */
@@ -130,13 +103,34 @@ const stillNeededNote = (item: RequiredItem): string =>
     ? item.readiness.hint
     : item.viaCensus
       ? "The census's answers conflict, and it gives your states. Choose which is right."
-      : "Your answers conflict. Choose which is right.";
+      : "You've given two different answers. Choose the right one.";
 
-const Section = ({ section, title, children }: { section: ReviewSection; title: string; children: ReactNode }) => (
+const STATUS_STYLES: Record<SectionStatus, string> = {
+  complete: "bg-success/15 text-success",
+  needs_confirmation: "bg-warning/15 text-warning",
+  incomplete: "bg-destructive/15 text-destructive",
+  not_applicable: "bg-muted text-muted-foreground",
+};
+
+const StatusChip = ({ status, section }: { status: SectionStatus; section: ReviewSection }) => (
+  <span data-testid={`status-${section}`} className={`text-[10px] px-2 py-0.5 rounded-full font-medium normal-case tracking-normal ${STATUS_STYLES[status]}`}>
+    {SECTION_STATUS_LABELS[status]}
+  </span>
+);
+
+const Section = ({ section, title, progress, status, children }: { section: ReviewSection; title: string; progress: { settled: number; total: number }; status: SectionStatus; children: ReactNode }) => (
   <section id={sectionId(section)} aria-labelledby={`${sectionId(section)}-title`} className="bg-card border border-border rounded-xl p-6 space-y-4">
-    <h3 id={`${sectionId(section)}-title`} className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
-      {title}
-    </h3>
+    <div className="flex items-baseline justify-between gap-2">
+      <h3 id={`${sectionId(section)}-title`} className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        {title}
+      </h3>
+      <div className="flex items-center gap-2">
+        <StatusChip status={status} section={section} />
+        <p className="text-[10px] text-muted-foreground" data-testid={`progress-${section}`}>
+          {progress.settled === progress.total ? "Complete" : `${progress.settled} of ${progress.total} settled`}
+        </p>
+      </div>
+    </div>
     {children}
   </section>
 );
@@ -147,29 +141,32 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
     if (focusRequest > 0) headingRef.current?.focus();
   }, [focusRequest]);
   const eeCount = headcount(data);
-  const required = requiredItems(data, provenance, verified).filter((i) => i.required);
-  // Still needed: the required answers that block certification, missing (US-1.2) or in conflict (B-2.2),
-  // in their fixed order. A missing one is listed even if an advisor verified its field: verifying never
-  // supplies a value.
-  const stillNeeded = required.filter((i) => i.state === "missing" || i.state === "conflicting");
-  // Then the required answers given but not settled, in order, ahead of every other field that still needs
-  // the prospect. A field is listed once, and never one an advisor verified. While the census decides States
-  // of operation, the census is the answer to confirm.
-  const toSettle = required.flatMap((i) =>
-    i.state === "incomplete" || i.state === "unconfirmed"
-      ? [i.viaCensus ? { field: "census" as FieldKey, label: "Employee census", reason: REQUIRED_ITEM_REASONS[i.state] } : { field: i.field, label: i.label, reason: REQUIRED_ITEM_REASONS[i.state] }]
-      : [],
-  );
-  const listed = new Set<FieldKey>([...stillNeeded.flatMap((i) => (i.viaCensus ? [i.field, "census" as FieldKey] : [i.field])), ...toSettle.map((i) => i.field)]);
-  const needsReview = [...toSettle, ...fieldOpenItems(provenance, verified).filter((i) => !listed.has(i.field))];
+  // Still needed: the required answers that block certification, missing (US-1.2) or in conflict (B-2 D26),
+  // in their fixed order, as certificationBlockingItems decides for the Reckoning too. A missing one is
+  // listed even if an advisor verified its field (verifying never supplies a value), and so is one in
+  // conflict (the database refuses it whoever verified it).
+  const stillNeeded = certificationBlockingItems(data, provenance, verified);
+  // One list of open items (src/data/openItems.ts), shared with The Manuscript and the advisor queue. The census
+  // is "Recommended", and fields by status are "Needs your review", never one an advisor verified. A field is
+  // listed once: not under "Needs your review" when "Still needed" lists it already. While the census decides
+  // States of operation, the census is the answer to confirm.
+  const open = openItems(data, provenance, verified);
+  const stillListed = new Set<string>(stillNeeded.flatMap((i) => (i.viaCensus ? [i.field, "census"] : [i.field])));
+  // The required answers given but not settled come first, in their fixed order, ahead of every other field that
+  // still needs the prospect (the sort is stable, so the rest keep the list's order).
+  const requiredOrder: string[] = requiredItems(data, provenance, verified).flatMap((i) => (i.required ? [i.viaCensus ? "census" : i.field] : []));
+  const priority = (field: string) => (requiredOrder.includes(field) ? requiredOrder.indexOf(field) : requiredOrder.length);
+  const needsReview = open
+    .flatMap((item) => (item.field && STATUS_REASONS.has(item.reason) && !stillListed.has(item.field) ? [{ ...item, field: item.field }] : []))
+    .sort((a, b) => priority(a.field) - priority(b.field));
   const checks = eligibilityChecks(data);
   const flaggedEmployees = data.census.filter(e => employeeFlag(e) !== null);
   const uploaded = documents.filter((d) => d.status !== "uploading");
   const missing = missingRecommended(uploaded);
   const submitted = submittedCategories(uploaded);
-  const blocking = stillNeeded.length;
-  const recommended = missingRecommendedItems(data);
+  const recommended = missingRecommendedItems(data).filter((item) => open.some((o) => o.key === item.key));
   const rows = rowsBySection(data);
+  const statuses = Object.fromEntries(SECTIONS.map(({ key }) => [key, sectionStatus(key, data, provenance, verified, open)])) as Record<ReviewSection, SectionStatus>;
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
   const censusStates = [...data.census.reduce((counts, e) => {
     if (e.work_state) counts.set(e.work_state, (counts.get(e.work_state) ?? 0) + 1);
@@ -188,6 +185,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
             provenance={provenance[row.field]}
             onAction={onAction}
             editable={row.editable}
+            allowNotApplicable
           />
         </div>
       ))}
@@ -205,19 +203,20 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
         </p>
       </div>
 
-      {/* What's still needed: required answers block certification, recommended ones never do */}
-      {blocking > 0 ? (
+      {/* What's still needed: required answers missing or in conflict block certification; recommended ones never do */}
+      {stillNeeded.length > 0 ? (
         <div role="region" aria-label="Still needed" className="bg-card border border-destructive/40 rounded-xl p-6 space-y-3">
           <p className="text-xs font-mono text-destructive uppercase tracking-wider">
-            Still needed before The Manuscript can be generated: {blocking}
+            Still needed before The Manuscript can be generated: {stillNeeded.length}
           </p>
           <ul className="space-y-2">
             {stillNeeded.map((item) => (
               <li key={item.item} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
                 <span className="font-medium">{item.label}</span>
                 <span className="text-muted-foreground text-xs">{stillNeededNote(item)}</span>
+                {/* A required answer given two ways is settled where it sits, by picking one ("Use this"). */}
                 <button type="button" onClick={() => jumpTo(item.viaCensus ? CENSUS_SPOT : item.readiness)} className="text-xs font-medium text-primary underline underline-offset-2">
-                  Go to {(item.viaCensus ? "Employee census" : item.label).toLowerCase()}
+                  {item.state === "conflicting" && !item.viaCensus ? "Choose" : "Go to"} {(item.viaCensus ? "Employee census" : item.label).toLowerCase()}
                 </button>
               </li>
             ))}
@@ -263,6 +262,24 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
         </div>
       )}
 
+      {/* Where each section stands, and a way to the one that needs work (C-1) */}
+      <nav aria-label="Sections" className="bg-card border border-border rounded-xl p-4">
+        <ul className="flex flex-wrap gap-2">
+          {SECTIONS.map(({ key, title }) => (
+            <li key={key}>
+              <button
+                type="button"
+                onClick={() => jumpTo({ section: key })}
+                className="flex items-center gap-2 text-xs border border-border rounded-full px-3 py-1 hover:bg-muted"
+              >
+                {title}
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[statuses[key]]}`}>{SECTION_STATUS_LABELS[statuses[key]]}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
       {/* Eligibility check */}
       <div className="bg-card border border-border rounded-xl p-6 space-y-3">
         <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">Eligibility Check</p>
@@ -287,7 +304,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
       </div>
 
       {SECTIONS.map(({ key, title }) => (
-        <Section key={key} section={key} title={title}>
+        <Section key={key} section={key} title={title} progress={sectionProgress(key, data, provenance)} status={statuses[key]}>
           {renderRows(rows[key])}
 
           {key === "workforce" && (
@@ -394,7 +411,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
         </dl>
       </div>
 
-      {blocking > 0 && (
+      {stillNeeded.length > 0 && (
         <p className="text-xs text-muted-foreground">
           You can choose a PEO now. The answers marked Required are needed, each with one answer, before The Manuscript can be generated.
         </p>

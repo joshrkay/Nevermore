@@ -16,6 +16,8 @@ export type Database = {
     Tables: {
       advisor_field_reviews: {
         Row: {
+          answer_changed_at: string | null
+          answer_changed_from: Json | null
           corrected_value: Json | null
           field: string
           has_correction: boolean
@@ -27,6 +29,25 @@ export type Database = {
           updated_by_email: string | null
         }
         // Written only through review_submission_field().
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      document_events: {
+        Row: {
+          actor_email: string | null
+          actor_id: string | null
+          created_at: string
+          document_id: string
+          file_name: string
+          from_value: string | null
+          id: number
+          kind: string
+          session_id: string | null
+          storage_path: string | null
+          to_value: string | null
+        }
+        // Written only by the documents trigger.
         Insert: never
         Update: never
         Relationships: []
@@ -55,7 +76,10 @@ export type Database = {
       advisor_review_events: {
         Row: {
           actor_email: string | null
-          actor_id: string
+          actor_id: string | null
+          answer_from: Json | null
+          answer_to: Json | null
+          cause: string
           correction_changed: boolean
           created_at: string
           field: string
@@ -102,6 +126,9 @@ export type Database = {
           // When an uncertified draft expires; null once it was ever certified. Set by the database.
           expires_at: string | null
           field_provenance: Json
+          // The File ID (EAA-<year>-<number>), assigned by the database at the first certification and kept
+          // for good; null until then. Nothing the browser sends sets or changes it.
+          file_id: string | null
           id: string
           // The agreement (intake_consents) the intake was started under. Set by the database.
           intake_consent_id: string | null
@@ -123,6 +150,7 @@ export type Database = {
           data_version?: never
           expires_at?: never
           field_provenance?: Json
+          file_id?: never
           id?: string
           intake_consent_id?: never
           last_activity_at?: never
@@ -140,6 +168,7 @@ export type Database = {
           data_version?: never
           expires_at?: never
           field_provenance?: Json
+          file_id?: never
           id?: string
           intake_consent_id?: never
           last_activity_at?: never
@@ -230,6 +259,7 @@ export type Database = {
       }
       manuscript_versions: {
         Row: {
+          certified_at: string | null
           certified_data_hash: string
           certified_signed_at: string
           corrections_applied: number
@@ -357,7 +387,7 @@ export type Database = {
         }[]
       }
       advisor_list_submissions: {
-        Args: { p_status?: string | null }
+        Args: { p_status?: string | null; p_search?: string | null; p_limit?: number | null; p_offset?: number }
         Returns: {
           company_name: string | null
           contact_name: string | null
@@ -373,6 +403,7 @@ export type Database = {
           signer_name: string | null
           states: string[]
           submitted_at: string | null
+          total_count: number
           updated_at: string
           verified_fields: number
         }[]
@@ -417,6 +448,10 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: string | null
       }
+      prospect_final_manuscript: {
+        Args: { p_session_id: string }
+        Returns: { version: number; storage_path: string; generated_at: string; corrections_applied: number }[]
+      }
       record_intake_consent: {
         Args: { p_text: string; p_version: string }
         // When the server received the agreement (the first one, when agreeing again).
@@ -424,6 +459,8 @@ export type Database = {
       }
       record_manuscript_version: {
         Args: {
+          p_certified_at: string | null
+          p_certified_data_hash: string | null
           p_corrections_applied: number
           p_pdf_sha256: string
           p_review_event_id: number
@@ -447,6 +484,7 @@ export type Database = {
       }
       review_submission_field: {
         Args: {
+          p_answer?: Json | null
           p_correction?: string
           p_field: string
           p_reason?: string | null

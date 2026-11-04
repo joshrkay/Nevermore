@@ -18,7 +18,7 @@ import { FIELD_STATUSES as CONTEXT_STATUSES, type CensusSummary } from "../_shar
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactSensitive } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
-import { buildUserPrompt, followUp, NEXT_FIELDS, type UserTurn } from "./prompt.ts";
+import { buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn } from "./prompt.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, FIELD_QUESTION, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
@@ -176,9 +176,9 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (!recent.ok) return await fail(aiError("bad_request", { message: recent.message }));
     const census = readCensus(rawCensus);
     if (!census.ok) return await fail(aiError("bad_request", { message: census.message }));
-    const contextJson = context ? JSON.stringify(context) : "";
-    const statusesJson = JSON.stringify(statuses.statuses);
-    const recentJson = JSON.stringify(recent.messages);
+    // The same serialisation is measured here and sent to the model (prompt.ts, shared with the eval).
+    const turn = { context, statuses: statuses.statuses, recent: recent.messages, census: census.census };
+    const { contextJson, statusesJson, recentJson } = serializeTurn(turn);
     if (contextJson.length + statusesJson.length + recentJson.length > MAX_CONTEXT_CHARS) {
       return await fail(aiError("bad_request", { status: 413, message: "context too large" }));
     }
@@ -218,19 +218,11 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     });
     if (!budget.allowed) return await fail(aiError(budget.code, { status: budget.status, message: budget.error }));
 
-    // 5. Ask the model, with the user turn the extraction eval sends too (prompt.ts).
-    const turn: UserTurn = {
-      message,
-      contextJson,
-      answers: isObject(context) ? context : {},
-      statuses: statuses.statuses,
-      recent: recent.messages,
-      census: census.census,
-    };
-    const { unsettled } = followUp(turn);
+    // 5. Ask the model, with the user turn built as the extraction eval builds it (prompt.ts).
+    const unsettled = unsettledForTurn(turn);
     const result = await callModel(
       chosen.adapter,
-      { system: SYSTEM_PROMPT, user: buildUserPrompt(turn) },
+      { system: SYSTEM_PROMPT, user: buildUserPrompt({ message, ...turn }) },
       { fetch: deps.fetch, sleep: deps.sleep, now: deps.now },
     );
     event.attempts = result.attempts;

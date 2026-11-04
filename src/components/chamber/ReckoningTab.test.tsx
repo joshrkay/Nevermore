@@ -173,7 +173,7 @@ describe("ReckoningTab certification", () => {
     expect(await screen.findByText("Certification recorded")).toBeInTheDocument();
     expect(screen.getByText(/Certified by Jo Doe, CEO/)).toBeInTheDocument();
     expect(screen.getByText("File ID: EAA-2026-S1")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Download The Manuscript/ })).toHaveAttribute("href", "/manuscript?session=s1");
+    expect(screen.getByRole("link", { name: /Download The Manuscript/ })).toHaveAttribute("href", "/manuscript/EAA-2026-S1");
     expect(toast.success).toHaveBeenCalled();
   });
 
@@ -187,7 +187,69 @@ describe("ReckoningTab certification", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("We couldn't save your submission. Please try again."));
     expect(screen.queryByText("Certification recorded")).not.toBeInTheDocument();
     expect(toast.success).not.toHaveBeenCalled();
-    expect(submitButton()).toBeEnabled(); // can retry
+    // The failure stays on screen, the signature is kept, and the same button tries again.
+    expect(screen.getByRole("alert", { name: "Submission not saved" })).toHaveTextContent(/Nothing has been recorded; your signature is still here/);
+    expect(screen.getByText("Jo Doe, CEO")).toBeInTheDocument();
+    expect(submitButton()).toBeEnabled();
+    expect(submitButton()).toHaveTextContent("Try again");
+  });
+
+  it("sends one certification for a double click", async () => {
+    let finish!: (ok: boolean) => void;
+    onSubmit.mockImplementation(() => new Promise<boolean>((r) => { finish = r; }));
+    mount();
+    checkAll();
+    fillSigner();
+    sign();
+    const button = submitButton();
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    await act(async () => { finish(true); });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Certification recorded")).toBeInTheDocument();
+  });
+
+  it("shows the company and the File ID the database assigned on the confirmation", async () => {
+    const tree = (fileId: string | null) => (
+      <MemoryRouter>
+        <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={null} sessionId="s1" fileId={fileId} onSubmit={onSubmit} />
+      </MemoryRouter>
+    );
+    const view = render(tree(null));
+    // Before the first certification there is no File ID: that is not a blocker.
+    expect(screen.queryByTestId("certification-blockers")).toHaveTextContent(/Check every statement/);
+    expect(screen.getByTestId("certification-blockers")).not.toHaveTextContent(/finish saving/);
+    checkAll();
+    fillSigner();
+    sign();
+    const sent = onSubmit.mock.calls.length;
+    onSubmit.mockImplementation(async () => {
+      view.rerender(tree("EAA-2026-0042")); // the session hook learns the File ID from the save
+      return true;
+    });
+    fireEvent.click(submitButton());
+    expect(await screen.findByText("Certification recorded")).toBeInTheDocument();
+    expect(onSubmit).toHaveBeenCalledTimes(sent + 1);
+    expect(screen.getByText("File ID: EAA-2026-0042")).toBeInTheDocument();
+    expect(screen.getByText("Meridian Creative Group")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Download The Manuscript/ })).toHaveAttribute("href", "/manuscript/EAA-2026-0042");
+  });
+
+  it("blocks on a required answer that is conflicting, and says what to do", () => {
+    render(
+      <MemoryRouter>
+        <ReckoningTab
+          data={DEMO_CHAMBER_DATA}
+          provenance={{ company_name: { status: "conflicting", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-04T00:00:00Z", candidates: [] } }}
+          peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit}
+        />
+      </MemoryRouter>,
+    );
+    const callout = screen.getByRole("alert", { name: "Answers still needed" });
+    expect(callout).toHaveTextContent("Company legal name");
+    expect(callout).toHaveTextContent("You've given two different answers.");
+    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Choose one answer for company legal name");
   });
 
   it("shows the reason, not the generic message, when the save says why it was refused", async () => {
@@ -271,31 +333,49 @@ describe("ReckoningTab certification", () => {
       // Only conflicts hold certification back for now; an unconfirmed item doesn't.
       company_name: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-03T12:00:00Z" },
     };
-    const mountWith = (verified?: ReadonlySet<string>) =>
+    const mount = (provenance: ProvenanceMap, data = DEMO_CHAMBER_DATA, verified?: ReadonlySet<string>) =>
       render(
         <MemoryRouter>
-          <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={conflicting} verified={verified} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+          <ReckoningTab data={data} provenance={provenance} verified={verified} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
         </MemoryRouter>,
       );
 
     it("won't submit until the prospect settles it, and says which one", () => {
-      mountWith();
+      mount(conflicting);
       checkAll();
       fillSigner();
       sign();
       expect(submitButton()).toBeDisabled();
-      expect(screen.getByTestId("certification-blockers")).toHaveTextContent(
-        "Before you can submit: Resolve the conflicting answers for Pay frequency",
-      );
+      expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for pay frequency");
     });
 
-    it("lets it through once an advisor has verified the field", () => {
-      mountWith(new Set(["pay_frequency"]));
+    // States of operation that only the census gives: the database lets it through, the browser asks first (B-2.2).
+    it("names the census when its conflict is what gives the states of operation", () => {
+      const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+      mount({ census: { ...conflicting.pay_frequency!, candidates: [] } }, { ...DEMO_CHAMBER_DATA, states: [], census });
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeDisabled();
+      expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for employee census");
+      expect(screen.getByRole("alert", { name: "Answers still needed" })).toHaveTextContent("Its answers conflict, and it gives your states.");
+    });
+
+    it("still holds back a field in conflict that an advisor verified, as the database refuses it", () => {
+      mount(conflicting, DEMO_CHAMBER_DATA, new Set(["pay_frequency"]));
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeDisabled();
+    });
+
+    it("lets the census's states through once an advisor verified the census", () => {
+      const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+      mount({ census: { ...conflicting.pay_frequency!, candidates: [] } }, { ...DEMO_CHAMBER_DATA, states: [], census }, new Set(["census"]));
       checkAll();
       fillSigner();
       sign();
       expect(submitButton()).toBeEnabled();
-      expect(screen.queryByTestId("certification-blockers")).not.toBeInTheDocument();
     });
   });
 });
@@ -325,7 +405,7 @@ describe("ReckoningTab on an intake that is already certified", () => {
   it("is read-only while nothing has changed, so it can't be certified again by accident", () => {
     mountWith({ status: "certified", submission });
     expect(screen.getByRole("status")).toHaveTextContent(/Certified by Jo Doe, CEO/);
-    expect(screen.getByRole("link", { name: "View The Manuscript" })).toHaveAttribute("href", "/manuscript?session=s1");
+    expect(screen.getByRole("link", { name: "View The Manuscript" })).toHaveAttribute("href", "/manuscript/EAA-2026-S1");
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     expect(screen.queryByText("Click to sign digitally")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Generate The Manuscript/ })).not.toBeInTheDocument();
@@ -494,26 +574,17 @@ describe("ReckoningTab required answers", () => {
     signAndTry();
     expect(submitButton()).toBeDisabled();
     expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Resolve the conflicting answers for Company legal name");
+    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for company legal name");
   });
 
   it("names missing answers and conflicts together", () => {
     render(
       <MemoryRouter>
-        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} provenance={{ company_name: conflict }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} provenance={{ states: conflict }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
       </MemoryRouter>,
     );
     const callout = screen.getByRole("alert", { name: "Answers still needed" });
-    expect(callout).toHaveTextContent(/add:.*Pay frequency.*And choose one answer for:.*Company legal name/);
-  });
-
-  it("doesn't count a states conflict the census settles (B-2.2): its work states answer the question", () => {
-    render(
-      <MemoryRouter>
-        <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={{ states: conflict }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
-      </MemoryRouter>,
-    );
-    expect(screen.queryByRole("alert", { name: "Answers still needed" })).not.toBeInTheDocument();
+    expect(callout).toHaveTextContent(/add:.*Pay frequency.*And choose one answer for:.*States of operation/);
   });
 
   it("lets a settled conflict be certified", () => {

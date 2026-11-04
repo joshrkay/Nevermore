@@ -3,54 +3,54 @@
 // (_shared/intakeSchema.ts), so chat can answer every top-level field but the census, and nothing the schema
 // doesn't know. Relative imports only, so it runs under Deno and Vitest alike.
 
-import { INTAKE_FIELDS, INTAKE_SCHEMA, type JsonSchema } from "../_shared/intakeSchema.ts";
+import { INTAKE_FIELDS, INTAKE_SCHEMA, LIMITS, type JsonSchema } from "../_shared/intakeSchema.ts";
 
 /**
- * What each field means, for the model: B-1.1's definitions, which name the flag each dependent count needs.
- * Every field the chat extracts has one (extraction.test.ts checks).
+ * What each field means, for the model. Every field the chat extracts has one (extraction.test.ts checks). An
+ * answer the workspace only shows beside its flag says to report the flag with it.
  */
 export const FIELD_GUIDE: Record<string, string> = {
-  company_name: "Company or business name",
-  industry: "Industry or business type",
-  hq_state: "Two-letter US state code for headquarters",
-  states: "Array of two-letter state codes where employees work",
-  employee_count: "Total number of employees (integer)",
-  start_month: "Desired benefits start date",
-  multiple_entities: "true if the business is more than one legal entity (separate companies or FEINs), false if it is one",
-  fein_count: "How many FEINs (federal employer ID numbers) the business has (integer); report multiple_entities with it",
-  virgin_medical: "true if they've never had employer-sponsored health insurance, false if switching",
-  current_carrier: "Current insurance carrier name",
-  renewal_date: "Current policy renewal date",
-  rate_history: "How their health insurance rates changed at recent renewals, as they describe it (e.g. \"up 12% last year\")",
-  benefits_waiting_period: "How long a new hire waits before benefits start (e.g. \"30 days\")",
-  ancillary_benefits: "Array of benefits they offer besides medical and retirement (e.g. dental, vision, life insurance), one benefit per item",
+  company_name: "The company's legal or business name",
+  industry: "What the business does, its industry",
+  hq_state: "Two-letter US state code of the headquarters, such as CA",
+  states: "Two-letter US state codes of every state where employees work, one state per item",
+  employee_count: "Total number of employees (a whole number)",
+  start_month: "When they want PEO coverage or benefits to start, as they said it",
+  multiple_entities: "true if the business runs as more than one legal entity (separate companies or FEINs), false if it is one",
+  fein_count: "How many federal employer ID numbers (FEINs) the business has (a whole number); report multiple_entities with it",
+  virgin_medical: "true if they have never offered employer medical coverage, false if they have it now",
+  current_carrier: "Their current medical insurance carrier",
+  renewal_date: "When their current medical plan renews, as they said it",
+  rate_history: "How their medical rates changed at recent renewals, as they describe it (such as \"up 12% last year\")",
+  benefits_waiting_period: "How long new hires wait before benefits start (such as \"30 days\")",
+  ancillary_benefits: "Benefits they offer besides medical and retirement, such as dental, vision or life insurance, one benefit per item",
   has_401k: "true if they offer any employer retirement plan (a 401(k), 403(b), SIMPLE IRA or similar), false if they offer none",
-  retirement_type: "The kind of retirement plan they offer (e.g. \"traditional 401(k)\", \"SIMPLE IRA\"); report has_401k with it",
+  retirement_type: "What kind of retirement plan, such as traditional 401(k), SIMPLE IRA or 403(b); report has_401k with it",
   employer_contributes: "true if the employer contributes to or matches the retirement plan, false if it doesn't; report has_401k with it",
-  payroll_vendor: "Current payroll provider",
-  pay_frequency: "How often they run payroll (weekly, bi-weekly, semi-monthly, monthly)",
-  funding_days: "How many days before payday payroll must be funded (integer)",
-  has_nonexempt: "true if any employees are non-exempt (hourly, paid overtime), false if all are exempt (salaried)",
-  nonexempt_count: "Number of non-exempt (hourly, overtime-eligible) employees (integer); report has_nonexempt with it",
-  exempt_count: "Number of exempt (salaried, not overtime-eligible) employees (integer); report has_nonexempt with it",
-  pto_types: "Array of the kinds of paid time off they offer (e.g. vacation, sick, holidays), one kind per item",
-  accrual_method: "How employees earn paid time off (e.g. per pay period, all at the start of the year)",
-  has_handbook: "Whether they have an employee handbook",
-  handbook_last_updated: "When the employee handbook was last updated (e.g. \"2024\")",
-  hr_staff_count: "Number of people on staff who handle HR (integer)",
-  has_1099: "Whether they have 1099 contractors",
-  ca_contractors: "Whether they have contractors in California",
+  payroll_vendor: "Who runs their payroll now, such as Gusto or ADP",
+  pay_frequency: "How often they run payroll: weekly, bi-weekly, semi-monthly or monthly",
+  funding_days: "How many days before payday they fund payroll (a whole number)",
+  has_nonexempt: "true if any employees are hourly or overtime-eligible (nonexempt), false if all are salaried and exempt",
+  nonexempt_count: "How many employees are nonexempt, hourly or overtime-eligible (a whole number); report has_nonexempt with it",
+  exempt_count: "How many employees are exempt, salaried and not overtime-eligible (a whole number); report has_nonexempt with it",
+  pto_types: "Kinds of paid time off they offer, such as vacation, sick or holidays, one kind per item",
+  accrual_method: "How paid time off accrues, such as per pay period or all at the start of the year",
+  has_handbook: "true if they have an employee handbook",
+  handbook_last_updated: "When the handbook was last updated, as they said it (such as \"2024\")",
+  hr_staff_count: "How many people handle HR in-house (a whole number)",
+  has_1099: "true if they use 1099 contractors",
+  ca_contractors: "true if any contractors work in California",
   uses_physical_clocks: "true if employees clock in on a physical time clock, false if not",
-  uses_mobile_app: "true if employees track time on a mobile app, false if not",
+  uses_mobile_app: "true if employees track time in a mobile app, false if not",
   uses_computer_timekeeping: "true if employees track time on a computer, false if not",
-  shift_differentials: "true if they pay a different rate for some shifts (nights, weekends), false if not",
+  shift_differentials: "true if some shifts (nights, weekends) pay a different rate, false if not",
   hris_system: "The HR information system (HRIS) or tool they keep employee records in, by name",
-  key_challenges: "Main HR/compliance challenges described",
-  business_goals: "Business goals mentioned",
-  wc_carrier: "Their current workers' compensation insurance carrier, by name",
-  wc_renewal_date: "When their workers' compensation policy renews",
-  wc_experience_mod: "Their workers' compensation experience modification factor, a decimal such as 0.92 (from 0 to 10)",
-  wc_annual_premium: "What they pay for workers' compensation a year, in whole US dollars (integer, from 0 to 100,000,000)",
+  key_challenges: "The HR or compliance challenges they describe",
+  business_goals: "The business goals they mention",
+  wc_carrier: "Their current workers' compensation carrier, by name",
+  wc_renewal_date: "When their workers' comp policy renews, as they said it",
+  wc_experience_mod: "Their workers' comp experience modification factor, a decimal such as 0.92 (from 0 to 10)",
+  wc_annual_premium: "Their annual workers' comp premium in whole US dollars (a whole number, from 0 to 100,000,000)",
 };
 
 /**
@@ -132,8 +132,13 @@ const perField = (schema: unknown) => ({
   additionalProperties: false,
 });
 
-// Recorded on every extraction event. Raise it with any change to SYSTEM_PROMPT or EXTRACT_TOOL: promptVersion.test.ts
-// fails until you do, so an event always says which prompt produced it.
+// Versions the whole extraction contract: SYSTEM_PROMPT, EXTRACT_TOOL, the user turn (prompt.ts) and the
+// response shape. Recorded on every extraction event (US-2.4a), returned with every extraction, and stored
+// by the browser on each value's provenance (B-1.4), so a value can be traced to the prompt that produced
+// it. Raise it with any change to them: _shared/ai/promptVersion.test.ts fails until you do. See
+// "Extraction contract version and eval" in docs/intake-schema.md. Version 2 named two contracts built at
+// the same time (US-2.1b and B-1.1); 3 is the two merged; 4 adds how Lenore replies and the user turn's ready and
+// census lines (US-2.3a).
 export const PROMPT_VERSION = 4;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
@@ -146,7 +151,7 @@ You MUST use the extract_chamber_data tool to return the extracted fields. Only 
 Field definitions:
 ${fieldLines}
 
-Integers are whole numbers from 0 to 1,000,000 unless a field says otherwise. Text is at most 1,000 characters. An array holds at most 100 items, one entry per item, never a comma-separated string.
+Integers are whole numbers from 0 to ${LIMITS.count.toLocaleString("en-US")} unless a field says otherwise. Text is at most ${LIMITS.text.toLocaleString("en-US")} characters. An array holds at most ${LIMITS.listItems} items, one entry per item, never a comma-separated string.
 
 Never extract the employee census or details of individual employees: the roster comes only from an uploaded file.
 

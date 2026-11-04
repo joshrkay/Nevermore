@@ -1,24 +1,35 @@
 import { useState } from "react";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { applyAdvisorReview, verifiedFieldsOf } from "@/data/advisor";
+import { applyAdvisorReview, isCurrentVersion, isStaleRefusal, verifiedFieldsOf } from "@/data/advisor";
 import { buildManuscript, manuscriptFilename } from "@/data/manuscript";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
 import { manuscriptUrl, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
 import { formatDateTime } from "./format";
 
-const versionFilename = (detail: SubmissionDetail, version: number) =>
-  manuscriptFilename(`${detail.fileId}-v${version}`, detail.data.company_name);
+const versionFilename = (detail: SubmissionDetail, fileId: string, version: number) =>
+  manuscriptFilename(fileId, detail.data.company_name, {
+    version: detail.submission?.version ?? null,
+    date: detail.submission?.certified_at ?? detail.submission?.signed_at ?? null,
+    suffix: `advisor-v${version}`,
+  });
 
-/** Download or regenerate the advisor-reviewed Manuscript, one stored version per generation. */
-const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; onGenerated: () => void }) => {
+/**
+ * Download or regenerate the advisor-reviewed Manuscript, one stored version per generation. Each
+ * version names the certification and review state it was built from; `onChanged` reloads the
+ * submission after a version is stored, or when the database refuses one because either has moved on.
+ */
+const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onChanged: () => void }) => {
   const [revealSensitive, setRevealSensitive] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [opening, setOpening] = useState<string | null>(null);
   const latestEventId = detail.reviewEvents[0]?.id ?? 0;
   const latest = detail.versions[0];
   const pending = Object.values(detail.reviews).filter((r) => r?.has_correction && r.review_state !== "verified").length;
+  const answersChanged = Object.values(detail.reviews).filter((r) => r?.answer_changed_at).length;
+  // Only a version built from the current certification is offered to the prospect (and is current).
+  const current = (v: ManuscriptVersion) => detail.certified && isCurrentVersion(v, detail.submission);
 
   const generate = async () => {
     setGenerating(true);
@@ -26,7 +37,7 @@ const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; on
       const version = (latest?.version ?? 0) + 1;
       const packet = applyAdvisorReview(detail.data, detail.provenance, detail.reviews);
       const manuscript = buildManuscript(packet.data, {
-        fileId: detail.fileId,
+        fileId: detail.fileId ?? "EAA-UNCERTIFIED",
         submission: detail.submission,
         provenance: packet.provenance,
         verified: verifiedFieldsOf(detail.reviews),
@@ -40,13 +51,21 @@ const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; on
         reviewEventId: latestEventId,
         correctionsApplied: packet.corrections.length,
         sensitiveRevealed: revealSensitive,
+        certifiedDataHash: detail.submission?.data_sha256 ?? null,
+        certifiedAt: detail.submission?.certified_at ?? null,
       });
-      downloadBlob(pdf.blob, versionFilename(detail, version));
+      downloadBlob(pdf.blob, versionFilename(detail, detail.fileId ?? "EAA-UNCERTIFIED", version));
       toast.success(`Manuscript v${version} saved.`);
-      onGenerated();
+      onChanged();
     } catch (err) {
       console.error("Failed to generate manuscript:", err);
-      toast.error((err as Error).message || "We couldn't generate the Manuscript.");
+      if (isStaleRefusal(err)) {
+        // Built from answers or a review that are no longer current: show the current ones.
+        toast.error(`${(err as Error).message}. The page now shows the latest answers and review.`);
+        onChanged();
+      } else {
+        toast.error((err as Error).message || "We couldn't generate the Manuscript.");
+      }
     } finally {
       setGenerating(false);
     }
@@ -55,7 +74,7 @@ const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; on
   const open = async (v: ManuscriptVersion) => {
     setOpening(v.id);
     try {
-      window.location.assign(await manuscriptUrl(v, versionFilename(detail, v.version)));
+      window.location.assign(await manuscriptUrl(v, versionFilename(detail, v.file_id, v.version)));
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -75,9 +94,22 @@ const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; on
         </p>
       ) : (
         <div className="space-y-2">
+          {latest && !current(latest) && (
+            <p className="text-xs text-warning" role="status">
+              The prospect certified again after v{latest.version} was generated, so it shows answers they've since
+              changed and isn't offered to them. Generate a new version from their current answers.
+            </p>
+          )}
           {latest && latest.review_event_id !== latestEventId && (
             <p className="text-xs text-warning" role="status">
               The review has changed since v{latest.version}. Generate a new version to include it.
+            </p>
+          )}
+          {answersChanged > 0 && (
+            <p className="text-xs text-warning" role="status">
+              {answersChanged === 1
+                ? "The prospect changed 1 answer after it was reviewed, so its review was reset. Review it again before generating."
+                : `The prospect changed ${answersChanged} answers after they were reviewed, so their reviews were reset. Review them again before generating.`}
             </p>
           )}
           {pending > 0 && (
@@ -85,6 +117,10 @@ const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; on
               {pending} correction{pending === 1 ? " isn't" : "s aren't"} verified yet and won't be included.
             </p>
           )}
+          <p className="text-xs text-muted-foreground">
+            The latest version is the prospect's final Manuscript: they can download it from their Manuscript page and
+            send it on. Correction reasons are printed in it.
+          </p>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={revealSensitive} onChange={(e) => setRevealSensitive(e.target.checked)} />
             Include full dates of birth
@@ -113,6 +149,8 @@ const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; on
                   Certified {formatDateTime(v.certified_signed_at)} · {v.corrections_applied} correction
                   {v.corrections_applied === 1 ? "" : "s"} · {v.sensitive_revealed ? "full DOBs" : "DOBs masked"}
                 </p>
+                {v === latest && current(v) && <p className="text-xs text-success">Shared with the prospect as their final Manuscript</p>}
+                {detail.certified && !current(v) && <p className="text-xs text-warning">Built from an earlier certification</p>}
               </div>
               <button
                 onClick={() => void open(v)}

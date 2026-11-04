@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
 import {
   correctionInput,
+  isStaleRefusal,
   parseCorrection,
   REVIEW_LABELS,
   REVIEW_STATES,
@@ -18,7 +19,9 @@ import {
   STATUS_LABELS,
   type FieldKey,
   type ProvenanceMap,
+  visibleAlsoHeard,
 } from "@/data/provenance";
+import type { Json } from "@/integrations/supabase/types";
 import { reviewField, type CorrectionChange } from "@/lib/advisorApi";
 import { formatDateTime } from "./format";
 
@@ -33,6 +36,8 @@ const REVIEW_CLASS: Record<ReviewState, string> = {
 interface FieldReviewPanelProps {
   sessionId: string;
   data: ChamberData;
+  /** `data` exactly as stored; each review names the stored answer it was made on. */
+  storedAnswers: Record<string, Json | undefined>;
   provenance: ProvenanceMap;
   reviews: ReviewMap;
   /** Messages that exist in the transcript, so evidence links never point nowhere. */
@@ -66,6 +71,7 @@ const FieldRow = ({
   field,
   sessionId,
   data,
+  storedAnswers,
   provenance,
   reviews,
   messageIds,
@@ -86,11 +92,13 @@ const FieldRow = ({
   const save = async (state: ReviewState | null, correction: CorrectionChange, why = "") => {
     setSaving(true);
     try {
-      await reviewField(sessionId, field, state, correction, why);
+      await reviewField(sessionId, field, state, correction, why, storedAnswers[field]);
       setEditing(false);
       onChanged();
     } catch (err) {
       toast.error((err as Error).message);
+      // The prospect changed this answer after the page loaded: reload to show the advisor the current one.
+      if (isStaleRefusal(err)) onChanged();
     } finally {
       setSaving(false);
     }
@@ -133,9 +141,20 @@ const FieldRow = ({
             Conflicting answers: {prov.candidates.map((c) => formatFieldValue(c.value)).join(" vs ")}
           </p>
         )}
+        {prov && visibleAlsoHeard(prov).map((heard, i) => (
+          <p key={i} className="text-xs text-muted-foreground mt-1">
+            {`Also heard: ${formatFieldValue(heard.value)} — ${describeSource(heard.source)}`}
+          </p>
+        ))}
       </div>
 
       <div>
+        {review?.answer_changed_at && (
+          <p className="text-xs text-warning mb-1" role="status">
+            The prospect changed this answer after it was reviewed (it was{" "}
+            <span className="font-mono">{formatFieldValue(review.answer_changed_from)}</span>). Review it again.
+          </p>
+        )}
         {review?.has_correction && (
           <div className="text-sm">
             <p className="text-xs text-muted-foreground">Advisor correction</p>
@@ -162,7 +181,7 @@ const FieldRow = ({
               />
             </label>
             <label className="block text-xs text-muted-foreground">
-              Reason
+              Reason (printed in the final Manuscript the prospect receives)
               <input
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
