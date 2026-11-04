@@ -3,7 +3,8 @@
 import type { ChamberData } from "./chamberTypes";
 import type { ChatMessage } from "./chat";
 import type { ProvenanceMap } from "./provenance";
-import { readyToCertify, type CensusSummary } from "../../supabase/functions/_shared/followUp.ts";
+import { type CensusSummary } from "../../supabase/functions/_shared/followUp.ts";
+import { NO_VERIFIED_FIELDS, requiredItems } from "./requiredItems";
 
 export { CERTIFICATION_REQUIRED, isSettled, readyToCertify, unsettledFields } from "../../supabase/functions/_shared/followUp.ts";
 
@@ -17,9 +18,13 @@ export const censusSummary = (data: ChamberData): CensusSummary => ({
   workStates: data.census.some((e) => Boolean(e.work_state?.trim())),
 });
 
-/** Whether the intake is ready to certify: every answer certification needs is given, none in conflict or incomplete. */
-export const isReadyToCertify = (data: ChamberData, provenance: ProvenanceMap): boolean =>
-  readyToCertify(data as unknown as Record<string, unknown>, statusesOf(provenance), censusSummary(data));
+/**
+ * Whether the intake is ready to certify: every answer certification needs is given, none in conflict or incomplete.
+ * Read from B-2.2's required items (with the fields an advisor verified), the rule the Reckoning and the database's
+ * gate use, so Lenore and the badge never call an intake ready that certification would refuse.
+ */
+export const isReadyToCertify = (data: ChamberData, provenance: ProvenanceMap, verified: ReadonlySet<string> = NO_VERIFIED_FIELDS): boolean =>
+  requiredItems(data, provenance, verified).every((item) => !item.required || item.state === "settled" || item.state === "unconfirmed");
 
 /**
  * What Lenore says, once per intake, when it first becomes ready to certify (D29). It is recognised by its words,

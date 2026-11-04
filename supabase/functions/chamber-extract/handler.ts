@@ -248,7 +248,11 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     const shaped = shapeExtraction(result.args);
     // No reply of the model's own: ask about the next field this message didn't settle, or wrap up (US-2.3a).
     if (!shaped.reply) {
-      const answered = new Set([...Object.keys(shaped.extracted), ...Object.keys(shaped.field_status)]);
+      // An incomplete answer is still to settle, so it is asked about again; "don't know" settles a field.
+      const answered = new Set([
+        ...Object.keys(shaped.extracted).filter((k) => shaped.field_status[k] !== "incomplete"),
+        ...Object.entries(shaped.field_status).flatMap(([k, v]) => (v === "unknown" ? [k] : [])),
+      ]);
       const ask = unsettled.find((f) => !answered.has(f.key));
       shaped.reply = ask ? `Thank you, I've noted that. ${FIELD_QUESTION[ask.key]}` : "Thank you. That is everything I need: you can review your intake on the Review tab.";
     }

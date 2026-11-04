@@ -336,6 +336,12 @@ describe("chamber-extract handler: what is sent to the model", () => {
     expect(body.reply).not.toContain("team");
   });
 
+  it("asks again about an answer the model marked incomplete, rather than moving on or wrapping up", async () => {
+    const t = setup({ responses: [gatewayReply({ states: ["CA", "OR"], field_status: { states: "incomplete" } })] });
+    const { body } = await read(await handleRequest(post({ message: "CA, OR and some others", context: { company_name: "Acme" } }), t.deps));
+    expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
+  });
+
   it("removes Social Security and account numbers from the recent conversation it passes on", async () => {
     const t = setup();
     await handleRequest(post({ message: "ok", recent: [{ sender: "user", text: "my SSN is 123-45-6789" }] }), t.deps);
