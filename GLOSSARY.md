@@ -116,7 +116,7 @@ An answer read from an uploaded document. It waits for the prospect to apply it,
 _Avoid_: suggestion, extracted value
 
 **Field source**:
-Where a field's current answer came from: something the prospect said (with the message it came from), an uploaded document (with where in it), or the prospect's own action in the workspace.
+Where a field's current answer came from: something the prospect said (with the message it came from), an uploaded document (with where in it), or the prospect's own action in the workspace. Typed and spoken messages are the same kind of source: when they give different answers, the field is conflicting and the prospect chooses.
 _Avoid_: origin, provenance (provenance is the source and the field status together)
 
 **Evidence quote**:
