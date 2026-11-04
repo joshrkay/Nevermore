@@ -67,7 +67,14 @@ a sign-out the app asked for is remembered until the event arrives.
   added, renamed or re-categorised after certification. Every document change is appended to
   `document_events` (who, when; advisors only, nobody can change it). While an intake is certified,
   a certified document's stored file stays when the prospect removes the document, so it can still
-  be opened; the prospect's screen still shows it removed (migration `20261104091000`).
+  be opened; the prospect's screen still shows it removed (migration `20261104091000`). A document
+  counts as the certified one only while it has the certified file: a row re-created under the same id
+  with another file shows as the certified one removed and a new one added. Once the certification
+  moves on (the prospect withdraws or certifies again), a kept file is no longer listed in the app;
+  its `removed` event records its path, and purging such files is retention's job (H-1.2).
+- "Certified at least once" (which unlocks every status, and decides whether a certification is the
+  intake's first) means a certification row or a history row that reached `submitted`, so intakes
+  certified before certification rows existed count (migration `20261104094000`).
 - Add internal notes (`advisor_notes`); notes can't be edited or deleted and prospects can't read them.
 - Read `intake_lifecycle_events`: every draft that expired, was archived by its prospect ("Start
   over") or was revoked, with who and why. The queue lists those intakes with their intake status

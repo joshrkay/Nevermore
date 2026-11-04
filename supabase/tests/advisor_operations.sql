@@ -102,6 +102,7 @@ INSERT INTO public.chamber_sessions (id, user_id) VALUES ('00000000-0000-0000-00
 \i supabase/migrations/20261104091000_certified_evidence.sql
 \i supabase/migrations/20261104092000_share_reviewed_manuscript.sql
 \i supabase/migrations/20261104093000_paged_advisor_queue.sql
+\i supabase/migrations/20261104094000_advisor_review_followups.sql
 
 -- Runs `stmt` as `who` and fails the run unless it's refused (permission, row security or a
 -- deliberate check).
@@ -683,7 +684,7 @@ BEGIN
   FOR rec IN
     SELECT p.oid, p.proname FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
      WHERE ns.nspname = 'public' AND p.proname IN ('advisor_visible_answers', 'reset_reviews_on_answer_change', 'advisor_supplied',
-                                                   'snapshot_certified_evidence', 'record_document_event')
+                                                   'snapshot_certified_evidence', 'record_document_event', 'intake_ever_certified')
   LOOP
     IF has_function_privilege('anon', rec.oid, 'EXECUTE') OR has_function_privilege('authenticated', rec.oid, 'EXECUTE') THEN
       RAISE EXCEPTION 'FAIL: API callers can execute %', rec.proname;
@@ -1016,6 +1017,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM storage.objects WHERE name = p2) THEN RAISE EXCEPTION 'FAIL: a certified document''s file was removed'; END IF;
   IF EXISTS (SELECT 1 FROM storage.objects WHERE name = p3) THEN RAISE EXCEPTION 'FAIL: an uncertified file could not be removed'; END IF;
   SELECT * INTO r FROM public.document_events WHERE document_id = d2 AND kind = 'removed';
+  IF r.storage_path IS DISTINCT FROM p2 THEN RAISE EXCEPTION 'FAIL: the removal didn''t record the file it had'; END IF;
   IF r.actor_id IS DISTINCT FROM owner OR r.actor_email IS DISTINCT FROM 'o@example.com' OR r.file_name IS DISTINCT FROM 'losses.pdf'
      OR r.from_value IS DISTINCT FROM 'workers_comp_loss_runs' OR r.session_id IS DISTINCT FROM sid THEN
     RAISE EXCEPTION 'FAIL: the removal was recorded as %', r;
@@ -1231,4 +1233,96 @@ BEGIN
   RESET ROLE;
 
   RAISE NOTICE 'queue completeness, search and pages: all cases passed';
+END $$;
+
+-- ====================================================================================
+-- Follow-ups (20261104094000): intakes certified before certification rows existed, an intake
+-- created already certified, history read in the order it was written, and Manuscript versions
+-- recorded before certified_at.
+-- ====================================================================================
+
+DO $$
+DECLARE
+  adv uuid := gen_random_uuid();
+  owner uuid := gen_random_uuid();
+  legacy uuid := gen_random_uuid();
+  direct uuid;
+  data jsonb := '{"company_name":"Acme","states":["CA"],"pay_frequency":"Bi-weekly"}';
+  cert jsonb := '{"signer_name":"Jo Doe","signer_title":"CEO","signed_at":"2026-01-10T12:00:00Z","file_id":"EAA-2026-OLD00001","consent_version":"v1","consent_text":"I certify."}';
+  r record;
+  n bigint;
+BEGIN
+  INSERT INTO auth.users (id) VALUES (adv), (owner);
+  INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor');
+
+  -- An intake certified before chamber_certifications existed: submitted, no certification row, and
+  -- the pipeline row and history the advisor migration backfilled.
+  SET LOCAL session_replication_role = replica;
+  INSERT INTO public.chamber_sessions (id, user_id, chamber_data, status, submission)
+  VALUES (legacy, owner, data, 'submitted', cert || jsonb_build_object('chamber_data', data));
+  INSERT INTO public.submission_workflow (session_id, status) VALUES (legacy, 'submitted');
+  INSERT INTO public.submission_status_history (session_id, from_status, to_status, note) VALUES (legacy, NULL, 'submitted', 'Added to the advisor pipeline');
+  SET LOCAL session_replication_role = origin;
+  IF EXISTS (SELECT 1 FROM public.chamber_certifications WHERE session_id = legacy) THEN RAISE EXCEPTION 'FAIL: setup made a certification row'; END IF;
+
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.as_user(adv, 'adv@example.com');
+  PERFORM public.set_submission_status(legacy, 'quoted', 'Older intake, still workable');
+  IF (SELECT status FROM public.submission_workflow WHERE session_id = legacy) IS DISTINCT FROM 'quoted' THEN
+    RAISE EXCEPTION 'FAIL: an intake certified before certification rows was archive-only';
+  END IF;
+  -- Its next certification isn't its first: the advisor's status stays.
+  PERFORM pg_temp.as_user(owner, 'o@example.com');
+  UPDATE public.chamber_sessions SET submission = cert || jsonb_build_object('chamber_data', data, 'signed_at', '2026-05-01T12:00:00Z') WHERE id = legacy;
+  RESET ROLE;
+  SELECT * INTO r FROM public.submission_status_history WHERE session_id = legacy ORDER BY id DESC LIMIT 1;
+  IF (SELECT status FROM public.submission_workflow WHERE session_id = legacy) IS DISTINCT FROM 'quoted'
+     OR r.note IS DISTINCT FROM 'Prospect certified the intake again' THEN
+    RAISE EXCEPTION 'FAIL: re-certifying an older intake was treated as its first: %', r;
+  END IF;
+
+  -- An intake created already certified is recorded as certified.
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.as_user(owner, 'o@example.com');
+  INSERT INTO public.chamber_sessions (user_id, chamber_data, status, submission)
+  VALUES (owner, data, 'submitted', cert || jsonb_build_object('chamber_data', data)) RETURNING id INTO direct;
+  RESET ROLE;
+  SELECT * INTO r FROM public.submission_status_history WHERE session_id = direct;
+  IF r.to_status IS DISTINCT FROM 'submitted' OR r.note IS DISTINCT FROM 'Prospect certified the intake' OR r.changed_by IS DISTINCT FROM owner THEN
+    RAISE EXCEPTION 'FAIL: an intake created certified was recorded as %', r;
+  END IF;
+
+  -- The prospect's status follows the order rows were written, not their transaction's start time:
+  -- a certification that waited on an advisor's request writes its row later with an earlier time.
+  INSERT INTO public.submission_status_history (session_id, from_status, to_status, note, changed_by, changed_at)
+  VALUES (direct, 'submitted', 'information_requested', 'Need the register', adv, now()),
+         (direct, 'information_requested', 'submitted', 'Prospect certified their updated intake, answering the request for information', owner, now() - interval '1 second');
+  UPDATE public.submission_workflow SET status = 'submitted' WHERE session_id = direct;
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.as_user(owner, 'o@example.com');
+  IF public.prospect_submission_status(direct) IS DISTINCT FROM 'submitted' THEN
+    RAISE EXCEPTION 'FAIL: the prospect was told % from a row written earlier', public.prospect_submission_status(direct);
+  END IF;
+  RESET ROLE;
+
+  -- A version recorded before certified_at is still the final Manuscript when it matches the certification.
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', direct || '/v1.pdf');
+  INSERT INTO public.manuscript_versions (session_id, version, file_id, storage_path, pdf_sha256, certified_data_hash, certified_signed_at, certified_at, generated_by)
+  SELECT direct, 1, 'EAA-2026-OLD00001', direct || '/v1.pdf', repeat('a', 64), submission ->> 'data_sha256', (submission ->> 'signed_at')::timestamptz, NULL, adv
+  FROM public.chamber_sessions WHERE id = direct;
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.as_user(owner, 'o@example.com');
+  IF (SELECT version FROM public.prospect_final_manuscript(direct)) IS DISTINCT FROM 1 THEN
+    RAISE EXCEPTION 'FAIL: a version recorded before certified_at wasn''t offered';
+  END IF;
+  SELECT count(*) INTO n FROM storage.objects WHERE bucket_id = 'manuscripts' AND name = direct || '/v1.pdf';
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: the prospect can''t read that version''s file'; END IF;
+  -- ...but not once the prospect has certified again.
+  UPDATE public.chamber_sessions SET submission = submission || '{"signed_at":"2026-06-01T12:00:00Z"}' WHERE id = direct;
+  IF EXISTS (SELECT 1 FROM public.prospect_final_manuscript(direct)) THEN
+    RAISE EXCEPTION 'FAIL: an older version was offered after a re-certification';
+  END IF;
+  RESET ROLE;
+
+  RAISE NOTICE 'review follow-ups: all cases passed';
 END $$;

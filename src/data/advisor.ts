@@ -263,6 +263,8 @@ export interface DocumentRecord {
   status: string;
   storage_path: string;
   created_at: string;
+  /** SHA-256 of the stored bytes, when known. */
+  file_sha256?: string | null;
 }
 
 /** A document as an advisor reviews it: where it stands against what the prospect certified. */
@@ -291,21 +293,29 @@ const asDocumentRecord = (v: unknown): DocumentRecord | null => {
     status: text(d.status),
     storage_path: d.storage_path,
     created_at: text(d.created_at),
+    file_sha256: typeof d.file_sha256 === "string" ? d.file_sha256 : null,
   };
 };
 
+/** The same stored file: same path, and the same bytes when both say what they are. */
+const sameFile = (a: DocumentRecord, b: DocumentRecord) =>
+  a.storage_path === b.storage_path && (!a.file_sha256 || !b.file_sha256 || a.file_sha256 === b.file_sha256);
+
 /**
  * The live documents set against the list the intake was certified with (`submission.documents`),
- * newest first. Without a certified list, the live documents as they are.
+ * newest first. Without a certified list, the live documents as they are. A document is the certified
+ * one only while it still has the certified file: a row re-created under the same id with another file
+ * shows as the certified one removed and a new one added.
  */
 export function reconcileDocuments(live: readonly DocumentRecord[], certified: unknown): ReviewedDocument[] {
   if (!Array.isArray(certified)) return [...live];
   const certifiedDocs = certified.map(asDocumentRecord).filter((d): d is DocumentRecord => d !== null);
-  const certifiedIds = new Set(certifiedDocs.map((d) => d.id));
   const liveById = new Map(live.map((d) => [d.id, d]));
+  const kept = new Set<DocumentRecord>();
   const out: ReviewedDocument[] = certifiedDocs.map((c) => {
     const now = liveById.get(c.id);
-    if (!now) return { ...c, certification: "removed" };
+    if (!now || !sameFile(now, c)) return { ...c, certification: "removed" };
+    kept.add(now);
     return {
       ...now,
       certification: "certified",
@@ -313,7 +323,7 @@ export function reconcileDocuments(live: readonly DocumentRecord[], certified: u
       ...(now.file_name !== c.file_name ? { certifiedFileName: c.file_name } : {}),
     };
   });
-  for (const d of live) if (!certifiedIds.has(d.id)) out.push({ ...d, certification: "added" });
+  for (const d of live) if (!kept.has(d)) out.push({ ...d, certification: "added" });
   return out.sort((a, b) => b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id));
 }
 
@@ -333,7 +343,8 @@ export function isCurrentVersion(
 ): boolean {
   if (!submission) return false;
   return (
-    sameInstant(v.certified_at ?? null, submission.certified_at ?? null) &&
+    // A version recorded before certified_at existed is matched by its signing time and data alone.
+    (v.certified_at == null || sameInstant(v.certified_at, submission.certified_at ?? null)) &&
     sameInstant(v.certified_signed_at, submission.signed_at) &&
     v.certified_data_hash === (submission.data_sha256 ?? null)
   );

@@ -42,7 +42,8 @@ const DocumentsPanel = ({ documents, events, prospectUserId }: DocumentsPanelPro
       ) : (
         <ul className="space-y-2">
           {documents.map((doc) => (
-            <li key={doc.id} className="flex items-start justify-between gap-3 text-sm" data-testid={`document-${doc.id}`}>
+            // A document re-created under its id with another file appears twice: certified (removed) and added.
+            <li key={`${doc.id}:${doc.certification ?? ""}:${doc.storage_path}`} className="flex items-start justify-between gap-3 text-sm" data-testid={`document-${doc.id}`}>
               <div className="min-w-0">
                 <p className={`truncate ${doc.certification === "removed" ? "line-through text-muted-foreground" : ""}`}>{doc.file_name}</p>
                 <p className="text-xs text-muted-foreground">

@@ -37,10 +37,14 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
   const [saving, setSaving] = useState(false);
   const seen = prospectStatusAfter(next, history);
   const seenMessage = seen ? PROSPECT_STATUS_MESSAGES[seen] : undefined;
+  // While withdrawn, the prospect sees it once they certify again, and certifying at "information
+  // requested" answers the request (the database returns it to Submitted).
+  const afterCertifying = next === "information_requested" ? "submitted" : seen;
+  const afterCertifyingMessage = afterCertifying ? PROSPECT_STATUS_MESSAGES[afterCertifying] : undefined;
   const hint = !certifiedOnce
     ? "The prospect hasn't certified this intake, so it can only be archived. They see no status until they certify."
     : !certified
-      ? `The prospect sees no status while their certification is withdrawn${seenMessage ? `; once they certify again: “${seenMessage}”` : ""}.`
+      ? `The prospect sees no status while their certification is withdrawn${afterCertifyingMessage ? `; once they certify again: “${afterCertifyingMessage}”` : ""}.`
       : seenMessage
         ? `The prospect will see: “${seenMessage}”${PROSPECT_STATUS_MESSAGES[next] ? "" : " (the status itself stays internal)"}`
         : "Internal only. The prospect sees no status.";

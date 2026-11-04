@@ -44,6 +44,7 @@ export type Database = {
           id: number
           kind: string
           session_id: string | null
+          storage_path: string | null
           to_value: string | null
         }
         // Written only by the documents trigger.

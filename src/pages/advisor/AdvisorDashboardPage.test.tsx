@@ -254,6 +254,18 @@ describe("AdvisorDashboardPage", () => {
       expect(screen.getByTestId("location")).toHaveTextContent("?q=pat+gamma");
     });
 
+    it("keeps a space typed just before a pause", async () => {
+      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+      renderAt();
+      await screen.findByRole("link", { name: "Acme Holdings" });
+      const box = screen.getByLabelText("Search");
+      fireEvent.change(box, { target: { value: "pat " } });
+      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ search: "pat" })));
+      expect(box).toHaveValue("pat ");
+      fireEvent.change(box, { target: { value: "pat gamma" } });
+      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ search: "pat gamma" })));
+    });
+
     it("says how many match, across every page", async () => {
       listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
       renderAt();
@@ -317,6 +329,26 @@ describe("AdvisorDashboardPage", () => {
       expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
       fireEvent.click(screen.getByRole("button", { name: "Previous" }));
       expect(await screen.findByText("26–50 of 60 submissions")).toBeInTheDocument();
+    });
+
+    it("lets the browser's Back undo a page change", async () => {
+      listSubmissions.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 60));
+      const BackButton = () => {
+        const navigate = useNavigate();
+        return <button onClick={() => navigate(-1)}>Browser back</button>;
+      };
+      render(
+        <MemoryRouter initialEntries={["/advisor"]}>
+          <Routes>
+            <Route path="/advisor" element={<><AdvisorDashboardPage /><BackButton /></>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      expect(await screen.findByText("1–25 of 60 submissions")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      expect(await screen.findByText("26–50 of 60 submissions")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Browser back" }));
+      expect(await screen.findByText("1–25 of 60 submissions")).toBeInTheDocument();
     });
 
     it("starts from the first page when the filter changes", async () => {

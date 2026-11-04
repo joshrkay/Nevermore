@@ -11,7 +11,7 @@ import NotesPanel from "@/components/advisor/NotesPanel";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
-import { censusPay } from "@/data/census";
+import { censusPay, isW2 } from "@/data/census";
 import { coverageTier } from "@/data/manuscript";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
 import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
@@ -216,8 +216,8 @@ const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
                   {e.employment_type === "part_time" && " PT"}
                 </td>
                 <td className="py-1 pr-3">
-                  {coverageTier(e)}
-                  {!e.coverage_tier && (e.dependents?.length ?? 0) > 0 && (
+                  {isW2(e) ? coverageTier(e) : "Not applicable"}
+                  {isW2(e) && !e.coverage_tier && (e.dependents?.length ?? 0) > 0 && (
                     <span className="block text-xs text-muted-foreground">from dependents</span>
                   )}
                 </td>

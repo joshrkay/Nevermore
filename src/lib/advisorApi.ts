@@ -28,7 +28,7 @@ export type StatusHistoryRow = Tables["submission_status_history"]["Row"];
 export type AdvisorNote = Tables["advisor_notes"]["Row"];
 export type ReviewEvent = Tables["advisor_review_events"]["Row"];
 export type ManuscriptVersion = Tables["manuscript_versions"]["Row"];
-export type UploadedDocument = Pick<Tables["documents"]["Row"], "id" | "file_name" | "file_size" | "category" | "status" | "storage_path" | "created_at">;
+export type UploadedDocument = Pick<Tables["documents"]["Row"], "id" | "file_name" | "file_size" | "category" | "status" | "storage_path" | "created_at" | "file_sha256">;
 export type DocumentEvent = Tables["document_events"]["Row"];
 
 export class AdvisorApiError extends Error {
@@ -187,7 +187,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   const [docs, profile, docEvents] = await Promise.all([
     supabase
       .from("documents")
-      .select("id, file_name, file_size, category, status, storage_path, created_at")
+      .select("id, file_name, file_size, category, status, storage_path, created_at, file_sha256")
       // This intake's uploads only, not everything the same prospect has ever uploaded.
       .eq("session_id", id)
       .order("created_at", { ascending: false }),
@@ -290,7 +290,8 @@ async function signedUrl(bucket: "documents" | "manuscripts", path: string, down
   return data!.signedUrl;
 }
 
-export const documentUrl = (doc: UploadedDocument) => signedUrl("documents", doc.storage_path, doc.file_name);
+export const documentUrl = (doc: Pick<UploadedDocument, "storage_path" | "file_name">) =>
+  signedUrl("documents", doc.storage_path, doc.file_name);
 
 export const manuscriptUrl = (v: ManuscriptVersion, filename: string) => signedUrl("manuscripts", v.storage_path, filename);
 

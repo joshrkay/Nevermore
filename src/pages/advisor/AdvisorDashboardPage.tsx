@@ -91,15 +91,17 @@ const AdvisorDashboardPage = () => {
           if (!("page" in changes)) next.delete("page");
           return next;
         },
-        { replace: true },
+        // Moving between pages is a step Back should undo; filtering and typing replace the entry.
+        { replace: !("page" in changes) },
       );
     },
     [setSearchParams],
   );
   const setParam = (key: "status" | "q", value: string) => setParams({ [key]: value });
 
-  // Follow the URL when it changes from outside (Back, a shared link).
-  useEffect(() => setTyped(query), [query]);
+  // Follow the URL when it changes from outside (Back, a shared link), but not when it only caught up
+  // with what's being typed: that would drop a space typed just before a pause.
+  useEffect(() => setTyped((t) => (t.trim() === query.trim() ? t : query)), [query]);
   useEffect(() => {
     if (typed.trim() === query.trim()) return;
     const timer = setTimeout(() => setParams({ q: typed.trim() }), SEARCH_DELAY_MS);

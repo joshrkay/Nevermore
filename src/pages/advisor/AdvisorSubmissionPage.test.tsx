@@ -152,6 +152,14 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(panel).getByText(/sees no status while their certification is withdrawn; once they certify again/)).toBeInTheDocument();
   });
 
+  it("says certifying again answers an open request for information", async () => {
+    api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", pipelineStatus: "information_requested" }));
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    expect(within(panel).getByLabelText("Change status to")).toHaveValue("information_requested");
+    expect(within(panel).getByText(/once they certify again: “Received\. An advisor will review your submission\.”/)).toBeInTheDocument();
+  });
+
   it("shows a history row that kept the status as the status and its note, not a change", async () => {
     api.loadSubmission.mockResolvedValue(
       detail({
@@ -180,8 +188,8 @@ describe("AdvisorSubmissionPage", () => {
           { id: "d1", file_name: "census.xlsx", file_size: "12 KB", category: "other", status: "uploaded", storage_path: "p/s/census.xlsx", created_at: "2026-10-01T00:00:00Z", certification: "certified", certifiedCategory: "employee_census" },
         ],
         documentEvents: [
-          { id: 3, session_id: "s1", document_id: "d2", kind: "removed", file_name: "losses.pdf", from_value: "workers_comp_loss_runs", to_value: null, actor_id: "prospect-1", actor_email: "p@example.com", created_at: "2026-10-03T00:00:00Z" },
-          { id: 2, session_id: "s1", document_id: "d1", kind: "recategorised", file_name: "census.xlsx", from_value: "employee_census", to_value: "other", actor_id: "prospect-1", actor_email: "p@example.com", created_at: "2026-10-02T00:00:00Z" },
+          { id: 3, session_id: "s1", document_id: "d2", kind: "removed", file_name: "losses.pdf", from_value: "workers_comp_loss_runs", to_value: null, actor_id: "prospect-1", actor_email: "p@example.com", created_at: "2026-10-03T00:00:00Z", storage_path: "p/s/losses.pdf" },
+          { id: 2, session_id: "s1", document_id: "d1", kind: "recategorised", file_name: "census.xlsx", from_value: "employee_census", to_value: "other", actor_id: "prospect-1", actor_email: "p@example.com", created_at: "2026-10-02T00:00:00Z", storage_path: "p/s/census.xlsx" },
         ],
       }),
     );
@@ -201,6 +209,8 @@ describe("AdvisorSubmissionPage", () => {
           { first_name: "Cy", last_name: "Lee", dob: "2015-06-07", relationship: "child" as const },
         ] },
       { id: "e2", first_name: "Dee", last_name: "Ray", dob: "1990-01-01", work_state: "CA", classification: "w2" as const, compensation_type: "salary" as const, employment_type: "full_time" as const, coverage_tier: "WAIVE" as const },
+      { id: "e3", first_name: "Flo", last_name: "Kay", dob: "1985-01-01", work_state: "CA", classification: "1099" as const, compensation_type: "hourly" as const, employment_type: "part_time" as const,
+        dependents: [{ first_name: "Gil", last_name: "Kay", dob: "1986-01-01", relationship: "spouse" as const }] },
     ];
     const data = { ...signedData, census };
     api.loadSubmission.mockResolvedValue(detail({ data, submission: { ...detail().submission!, peo: "Acme PEO" } }));
@@ -213,6 +223,9 @@ describe("AdvisorSubmissionPage", () => {
     expect(rows[0]).toHaveTextContent("from dependents");
     expect(rows[1]).toHaveTextContent("Waived");
     expect(rows[1]).toHaveTextContent("None");
+    // A contractor has no benefits tier, as the Manuscript prints it.
+    expect(rows[2]).toHaveTextContent("Not applicable");
+    expect(rows[2]).not.toHaveTextContent("Employee + Spouse");
   });
 
   it("says when the transcript shown is the certified copy of one that has changed since", async () => {

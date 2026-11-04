@@ -6,6 +6,7 @@ import {
   applyAdvisorReview,
   completenessOf,
   formatStates,
+  isCurrentVersion,
   isStaleRefusal,
   manuscriptStoragePath,
   parseCorrection,
@@ -222,5 +223,48 @@ describe("reconcileDocuments", () => {
 
   it("ignores entries in the certified list it can't use", () => {
     expect(reconcileDocuments([], [null, "x", { id: 1 }, { id: "d9" }, doc("d2")]).map((d) => d.id)).toEqual(["d2"]);
+  });
+});
+
+describe("reconcileDocuments: a certified document is the certified one only with the certified file", () => {
+  const doc = (over: Record<string, string | null> = {}) => ({
+    id: "d1", file_name: "payroll.pdf", file_size: "10 KB", category: "payroll_report", status: "uploaded",
+    storage_path: "u/s/orig.pdf", created_at: "2026-10-01T00:00:00Z", file_sha256: "1".repeat(64), ...over,
+  });
+
+  it("shows a row re-created under the same id with another file as the certified one removed and a new one added", () => {
+    const out = reconcileDocuments([doc({ storage_path: "u/s/swapped.pdf", file_sha256: "2".repeat(64) })], [doc()]);
+    expect(out.map((d) => [d.certification, d.storage_path])).toEqual([["removed", "u/s/orig.pdf"], ["added", "u/s/swapped.pdf"]]);
+  });
+
+  it("does the same when only the bytes differ", () => {
+    const out = reconcileDocuments([doc({ file_sha256: "2".repeat(64) })], [doc()]);
+    expect(out.map((d) => d.certification)).toEqual(["removed", "added"]);
+  });
+
+  it("keeps a document restored under its id with the same file as the certified one", () => {
+    expect(reconcileDocuments([doc()], [doc()]).map((d) => d.certification)).toEqual(["certified"]);
+    // A hash missing on either side doesn't count as a difference.
+    expect(reconcileDocuments([doc({ file_sha256: null })], [doc()]).map((d) => d.certification)).toEqual(["certified"]);
+  });
+});
+
+describe("isCurrentVersion", () => {
+  const submission = { certified_at: "2026-10-01T12:00:05.123456+00:00", signed_at: "2026-10-01T12:00:00Z", data_sha256: "h" };
+  const v = { certified_at: "2026-10-01T12:00:05.123456+00:00", certified_signed_at: "2026-10-01T12:00:00+00:00", certified_data_hash: "h" };
+
+  it("is current when built from this certification, whatever the timestamp format", () => {
+    expect(isCurrentVersion(v, submission)).toBe(true);
+  });
+
+  it("isn't when the prospect certified again", () => {
+    expect(isCurrentVersion(v, { ...submission, certified_at: "2026-10-02T12:00:05+00:00" })).toBe(false);
+    expect(isCurrentVersion(v, { ...submission, data_sha256: "other" })).toBe(false);
+    expect(isCurrentVersion(v, null)).toBe(false);
+  });
+
+  it("matches a version recorded before certified_at existed by its signing time and data", () => {
+    expect(isCurrentVersion({ ...v, certified_at: null }, submission)).toBe(true);
+    expect(isCurrentVersion({ ...v, certified_at: null }, { ...submission, signed_at: "2026-10-02T12:00:00Z" })).toBe(false);
   });
 });
