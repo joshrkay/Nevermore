@@ -34,6 +34,8 @@
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
+-- The gate as it runs: 20261104100000 redefines intake_missing_required on the one presence rule.
+\i supabase/migrations/20261104100000_required_items.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

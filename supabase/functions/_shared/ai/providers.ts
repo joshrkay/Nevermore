@@ -41,7 +41,10 @@ export function createLovableAdapter(opts: AdapterOptions): ProviderAdapter {
 
 const DEFAULT_MAX_TOKENS = 1024;
 
-/** Anthropic's Messages API, forcing the extraction tool. `maxTokens` caps the reply, and a tool whose result is long needs more than the default. */
+/**
+ * Anthropic's Messages API, forcing the extraction tool. `maxTokens` caps the reply, and a tool whose result is long needs
+ * more than the default. A reply cut off at the cap is malformed: its tool input may be partial, so none of it is kept.
+ */
 export function createAnthropicAdapter(opts: AdapterOptions & { maxTokens?: number }): ProviderAdapter {
   return {
     name: "anthropic",
@@ -59,7 +62,9 @@ export function createAnthropicAdapter(opts: AdapterOptions & { maxTokens?: numb
       },
     }),
     parseResponse: (json) => {
-      const blocks = (json as { content?: { type?: string; name?: string; input?: unknown }[] }).content ?? [];
+      const reply = json as { stop_reason?: string; content?: { type?: string; name?: string; input?: unknown }[] };
+      if (reply.stop_reason === "max_tokens") throw new Error("reply cut off at max_tokens");
+      const blocks = reply.content ?? [];
       const toolUse = blocks.find((b) => b.type === "tool_use" && b.name === opts.tool.name);
       if (!toolUse) return null;
       return asObject(toolUse.input);

@@ -14,11 +14,11 @@ import {
   SALARY_MAX,
   TEXT_MAX,
   US_STATE_CODES,
-  mergeChamberData,
   parseChamberData,
   sanitizeChamberPatch,
 } from "./chamberValidation";
 import { validateChamberData } from "../../supabase/functions/_shared/intakeSchema";
+import { applyExtraction } from "./provenance";
 
 describe("sanitizeChamberPatch", () => {
   it("returns an empty patch for non-objects", () => {
@@ -146,16 +146,6 @@ describe("worker classification", () => {
   it("drops workers whose label can't be recognized instead of counting them as W-2", () => {
     expect(classify("K-1 owner")).toEqual([]);
     expect(classify(42)).toEqual([]);
-  });
-});
-
-describe("mergeChamberData", () => {
-  it("merges only validated fields over existing data", () => {
-    const prev = { ...EMPTY_CHAMBER_DATA, company_name: "Old", states: ["NY"] };
-    const next = mergeChamberData(prev, { states: "not-a-list-of-states", industry: "Design" });
-    expect(next.company_name).toBe("Old");
-    expect(next.industry).toBe("Design");
-    expect(next.states).toEqual([]); // "not-a-list-of-states" has no valid codes
   });
 });
 
@@ -439,8 +429,9 @@ describe("sanitiser output the server must accept", () => {
     const data = parseChamberData(raw);
     expect(serverRefusal(data)).toBeNull();
     expect(serverRefusal(sanitizeChamberPatch(raw))).toBeNull();
-    // merging into valid data stays valid too
-    expect(serverRefusal(mergeChamberData(DEMO_CHAMBER_DATA, raw))).toBeNull();
+    // merging into valid data, as an extraction is merged, stays valid too
+    const merged = applyExtraction({ data: DEMO_CHAMBER_DATA, provenance: {} }, raw, { source: { kind: "transcript", message_id: "m1" } });
+    expect(serverRefusal(merged.data)).toBeNull();
     // and the stored form survives a JSON round trip unchanged, so what the server holds is what we sent
     expect(parseChamberData(JSON.parse(JSON.stringify(data)))).toEqual(data);
     // and it is canonical: the intake schema accepts it exactly as it is

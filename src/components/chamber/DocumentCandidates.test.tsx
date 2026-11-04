@@ -65,6 +65,26 @@ describe("DocumentCandidates", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("offers to apply a value over what was said in the conversation, which a document outranks", () => {
+    const onResolve = vi.fn();
+    const chat = { status: "confirmed" as const, source: { kind: "transcript" as const, message_id: "m1" }, updated_at: "x" };
+    render(<DocumentCandidates fileName="sbc.pdf" extraction={extraction} data={data} provenance={{ payroll_vendor: chat }} onResolve={onResolve} />);
+    expect(screen.getByText("Replaces what you told Lenore: Gusto")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resolve Payroll vendor" })).not.toBeInTheDocument();
+    // Replacing an answer is one value at a time, never part of "Apply all new".
+    expect(screen.getByRole("button", { name: "Apply all new (2)" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Apply Payroll vendor" }));
+    expect(onResolve).toHaveBeenCalledWith({ type: "apply", candidates: [extraction.candidates[2]] });
+  });
+
+  it("still asks the prospect to settle a value that differs from their own answer", () => {
+    const own = { status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "x" };
+    render(<DocumentCandidates fileName="sbc.pdf" extraction={extraction} data={data} provenance={{ payroll_vendor: own }} onResolve={() => {}} />);
+    expect(screen.getByText("Your intake has: Gusto")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resolve Payroll vendor" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply Payroll vendor" })).not.toBeInTheDocument();
+  });
+
   it("keeps the prospect's own answer when they choose it, and cancelling changes nothing", () => {
     const onResolve = vi.fn();
     render(<DocumentCandidates fileName="sbc.pdf" extraction={extraction} data={data} onResolve={onResolve} />);
