@@ -143,7 +143,7 @@ const AdvisorDashboardPage = () => {
               Certified submissions first, newest first; intakes not yet certified follow, most recently active first.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-6">
             <div className="relative">
               <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
               <label htmlFor="queue-search" className="sr-only">Search</label>
