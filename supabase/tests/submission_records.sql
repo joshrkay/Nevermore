@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh submission_records
--- Submission records (20261104100000_submission_records.sql): the File ID is assigned by the database from
+-- Submission records (20261104110000_submission_records.sql): the File ID is assigned by the database from
 -- a per-year sequence and kept for good, each certification is a numbered, immutable copy of what was
 -- certified, a repeat of the same certification records nothing, a required answer that is conflicting or
 -- incomplete blocks certifying, and nobody but the owner or an advisor can read a packet by its File ID.
@@ -43,7 +43,11 @@
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
-\i supabase/migrations/20261104100000_submission_records.sql
+\i supabase/migrations/20261104100000_certification_conflicts.sql
+\i supabase/migrations/20261104100100_required_items.sql
+\i supabase/migrations/20261104101000_transcript_validation.sql
+\i supabase/migrations/20261104102000_one_open_draft.sql
+\i supabase/migrations/20261104110000_submission_records.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -322,6 +326,9 @@ BEGIN
 END $$;
 
 -- ---------- a required answer must be settled ----------
+-- The gate is 20261104100000_certification_conflicts.sql's (missing answers EA003, then a required answer
+-- given two ways EA008); this checks it still runs ahead of the submission record, and that nothing is
+-- recorded when it refuses.
 DO $$
 DECLARE
   uid uuid := pg_temp.new_user();
@@ -332,31 +339,21 @@ DECLARE
   inferred jsonb := '{"pay_frequency":{"status":"inferred","source":{"kind":"transcript","message_id":"m1"},"updated_at":"2026-11-04T00:00:00Z"},"industry":{"status":"conflicting","source":{"kind":"transcript","message_id":"m1"},"updated_at":"2026-11-04T00:00:00Z","candidates":[]}}';
   outcome text;
 BEGIN
-  IF public.intake_missing_required('{}'::jsonb, conflicting) <> ARRAY['company_name', 'states', 'pay_frequency'] THEN
-    RAISE EXCEPTION 'FAIL: a missing answer is listed once, whatever its status';
-  END IF;
-  IF public.intake_missing_required(complete, conflicting || incomplete) <> ARRAY['company_name', 'states'] THEN
-    RAISE EXCEPTION 'FAIL: unsettled required answers: %', public.intake_missing_required(complete, conflicting || incomplete);
-  END IF;
-  IF public.intake_missing_required(complete, inferred) <> '{}'::text[] THEN
-    RAISE EXCEPTION 'FAIL: an inferred required answer, or a conflicting recommended one, blocked: %', public.intake_missing_required(complete, inferred);
-  END IF;
-  IF public.intake_missing_required(complete, 'null'::jsonb) <> '{}'::text[] OR public.intake_missing_required(complete, NULL) <> '{}'::text[] THEN
-    RAISE EXCEPTION 'FAIL: no provenance should block nothing';
-  END IF;
-
   PERFORM pg_temp.as_user(uid);
   SET LOCAL ROLE authenticated;
   PERFORM pg_temp.agree();
   INSERT INTO public.chamber_sessions (user_id, chamber_data, field_provenance) VALUES (uid, complete, conflicting) RETURNING id INTO sid;
   outcome := pg_temp.certify(sid, complete);
-  IF outcome <> 'EA003 company_name' THEN RAISE EXCEPTION 'FAIL: certifying with a conflicting company name gave %', outcome; END IF;
-  UPDATE public.chamber_sessions SET field_provenance = incomplete WHERE id = sid;
+  IF outcome <> 'EA008 company_name' THEN RAISE EXCEPTION 'FAIL: certifying with a conflicting company name gave %', outcome; END IF;
+  outcome := pg_temp.certify(sid, '{"states":["NY"],"pay_frequency":"bi-weekly"}');
+  IF outcome <> 'EA003 company_name' THEN RAISE EXCEPTION 'FAIL: a missing answer is refused before a conflicting one: %', outcome; END IF;
+  IF EXISTS (SELECT 1 FROM public.chamber_certifications WHERE session_id = sid)
+     OR (SELECT file_id FROM public.chamber_sessions WHERE id = sid) IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: a refused certification recorded something';
+  END IF;
+  UPDATE public.chamber_sessions SET field_provenance = incomplete || inferred WHERE id = sid;
   outcome := pg_temp.certify(sid, complete);
-  IF outcome <> 'EA003 states' THEN RAISE EXCEPTION 'FAIL: certifying with incomplete states gave %', outcome; END IF;
-  UPDATE public.chamber_sessions SET field_provenance = inferred WHERE id = sid;
-  outcome := pg_temp.certify(sid, complete);
-  IF outcome <> 'ok' THEN RAISE EXCEPTION 'FAIL: an inferred answer blocked certification: %', outcome; END IF;
+  IF outcome <> 'ok' THEN RAISE EXCEPTION 'FAIL: an incomplete or inferred required answer, or a conflicting recommended one, blocked certification: %', outcome; END IF;
   RESET ROLE;
   RAISE NOTICE 'submission_records: readiness cases passed';
 END $$;

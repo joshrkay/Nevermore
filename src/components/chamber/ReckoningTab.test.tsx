@@ -248,8 +248,8 @@ describe("ReckoningTab certification", () => {
     );
     const callout = screen.getByRole("alert", { name: "Answers still needed" });
     expect(callout).toHaveTextContent("Company legal name");
-    expect(callout).toHaveTextContent("Two different answers were given. Choose the right one.");
-    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Choose the right company legal name");
+    expect(callout).toHaveTextContent("You've given two different answers. Choose the right one.");
+    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Choose one answer for company legal name");
   });
 
   it("shows the reason, not the generic message, when the save says why it was refused", async () => {
@@ -347,7 +347,7 @@ describe("ReckoningTab certification", () => {
       sign();
       expect(submitButton()).toBeDisabled();
       expect(screen.getByTestId("certification-blockers")).toHaveTextContent(
-        "Before you can submit: Resolve the conflicting answers for Pay frequency",
+        "Before you can submit: Choose one answer for pay frequency",
       );
     });
 
@@ -499,7 +499,7 @@ describe("ReckoningTab required answers", () => {
       </MemoryRouter>,
     );
     const callout = screen.getByRole("alert", { name: "Answers still needed" });
-    expect(callout).toHaveTextContent("Before The Manuscript can be generated, settle these:");
+    expect(callout).toHaveTextContent("Before The Manuscript can be generated, add:");
     expect(callout).toHaveTextContent("Pay frequency");
     expect(callout).not.toHaveTextContent("Company legal name");
 

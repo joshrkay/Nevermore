@@ -12,7 +12,7 @@ import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup }
 import { INTAKE_SCHEMA_VERSION, validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
-import { describeMissingKeys } from "@/data/readiness";
+import { describeRequiredKeys } from "@/data/readiness";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { fetchVerifiedFields } from "@/lib/verifiedFields";
 import {
@@ -857,7 +857,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           sessionIdRef.current = open.id;
           versionRef.current = typeof open.data_version === "number" ? open.data_version : null;
           setSessionId(open.id);
-          setStartedAt(open.created_at);
+          setFileId(fileIdOf(open));
           markConflict(open);
           return;
         }
@@ -873,9 +873,16 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         versionRef.current = typeof newSession.data_version === "number" ? newSession.data_version : null;
         setSessionId(newSession.id);
         setFileId(typeof newSession.file_id === "string" ? newSession.file_id : null);
-        // Anything captured while the row was being created still needs saving.
-        if (dirtyRef.current) scheduleSave();
-        else setSaveStatus((s) => (s === "idle" ? s : "saved"));
+        // Anything captured while the row was being created still needs saving; what it was created with doesn't.
+        const changedSince = dataRef.current !== sent.data || provenanceRef.current !== sent.provenance
+          || messagesRef.current !== sent.messages || chosenPeoRef.current !== sent.peo;
+        if (dirtyRef.current && changedSince) {
+          scheduleSave();
+        } else {
+          dirtyRef.current = false;
+          stopTimer();
+          setSaveStatus((s) => (s === "idle" ? s : "saved"));
+        }
       }
     };
 
@@ -974,7 +981,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     creatingRef.current = null;
     // Nothing is on screen for the old intake any more, and the new one doesn't exist until the prospect starts.
     setSessionId(null);
-    setStartedAt(null);
+    setFileId(null);
     backupRef.current = null;
     setBackupOffer(null);
     setExpired(null);

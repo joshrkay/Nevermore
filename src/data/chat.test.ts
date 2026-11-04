@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import {
+  chatContext,
   createChatMessage,
   dedupeGreetings,
   formatMessageTime,

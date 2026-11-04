@@ -3,8 +3,8 @@ import type { ChamberData } from "@/data/chamberTypes";
 import { coverageTier, eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
 import { FIELD_LABELS, formatFieldValue, type FieldAction, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
+import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import {
-  blockingItems,
   openItems,
   REVIEW_SECTIONS,
   SECTION_STATUS_LABELS,
@@ -116,17 +116,23 @@ const OpenItemLine = ({ item }: { item: OpenItem }) => (
   </li>
 );
 
-const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] }: ReviewTabProps) => {
+const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAction, onProceed, documents = [], focusRequest = 0 }: ReviewTabProps) => {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (focusRequest > 0) headingRef.current?.focus();
+  }, [focusRequest]);
   const eeCount = headcount(data);
-  const items = openItems(data, provenance);
-  const required = blockingItems(data, provenance);
+  // One list (src/data/readiness.ts): what blocks certification, then everything else still owed.
+  const items = openItems(data, provenance, verified);
+  const required = items.filter((item) => item.blocking);
+  const blocking = required.length;
   const worthALook = items.filter((item) => !item.blocking);
   const checks = eligibilityChecks(data);
   const flaggedEmployees = data.census.filter((e) => employeeFlag(e) !== null);
   const uploaded = documents.filter((d) => d.status !== "uploading");
   const missingDocs = missingRecommended(uploaded);
   const submitted = submittedCategories(uploaded);
-  const statuses = Object.fromEntries(REVIEW_SECTIONS.map((s) => [s.key, sectionStatus(s.key, data, provenance, items)])) as Record<ReviewSection, SectionStatus>;
+  const statuses = Object.fromEntries(REVIEW_SECTIONS.map((s) => [s.key, sectionStatus(s.key, data, provenance, verified, items)])) as Record<ReviewSection, SectionStatus>;
   // Documents are never required; the checklist is complete once every recommended kind is here.
   const documentsStatus: SectionStatus = missingDocs.length === 0 ? "complete" : "incomplete";
   const censusProvenance = provenance.census;

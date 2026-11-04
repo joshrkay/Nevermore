@@ -22,7 +22,7 @@ CREATE TABLE public.chamber_sessions (
   status text NOT NULL DEFAULT 'in_progress', submission jsonb, created_at timestamptz NOT NULL DEFAULT now(),
   -- The intake schema version (20261103091000 and 20261103120100), which the submission record copies.
   schema_version smallint NOT NULL DEFAULT 2);
--- Uploaded documents, as far as the submission record (20261104100000) copies them at certification. The
+-- Uploaded documents, as far as the submission record (20261104110000) copies them at certification. The
 -- document migrations need storage, which this harness does not model.
 CREATE TABLE public.documents (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL, session_id uuid,
@@ -98,7 +98,7 @@ $$;
 
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
-\i supabase/migrations/20261027090001_outbox_operations.sql
+\i supabase/migrations/20261027090100_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 -- Versioned, validated writes (what the browser's save and certify go through), the chosen PEO, the readiness
@@ -108,7 +108,7 @@ $$;
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
-\i supabase/migrations/20261104100000_submission_records.sql
+\i supabase/migrations/20261104110000_submission_records.sql
 
 -- Seed: a verified prospect (with a profile), a guest, and one fixed session per scenario.
 INSERT INTO auth.users VALUES

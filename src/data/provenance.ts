@@ -548,8 +548,15 @@ export function transcriptExtraction(message: { id: string; text: string; spoken
   if (message.spoken) {
     for (const field of Object.keys(statuses) as FieldKey[]) if (statuses[field] === "confirmed") statuses[field] = "inferred";
   }
+  // chamber-extract names the prompt that produced the answer (B-1.4); a reply without a valid one is unversioned.
+  const version = promptVersionSchema.safeParse(m.prompt_version);
   return {
-    source: { kind: "transcript", message_id: message.id, quote: clip(message.text.trim()) },
+    source: {
+      kind: "transcript",
+      message_id: message.id,
+      quote: clip(message.text.trim()),
+      ...(version.success ? { prompt_version: version.data } : {}),
+    },
     statuses,
     evidence: parseEvidence(m.evidence),
     corrections: parseFieldList(m.corrected_fields),

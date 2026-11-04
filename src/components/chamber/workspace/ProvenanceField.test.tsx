@@ -72,7 +72,7 @@ describe("provenance in the workspace", () => {
     render(<Harness initial={conflict} tab="review" />);
     const list = () => screen.getByRole("region", { name: "Needs your review" });
     expect(list()).toHaveTextContent("Employee count");
-    expect(list()).toHaveTextContent("Two different answers were given. Choose the right one.");
+    expect(list()).toHaveTextContent("You've given two different answers. Choose the right one.");
     fireEvent.click(within(list()).getByRole("button", { name: "Go to employee count" }));
     // The jump lands on the answer's first control: the first of the two candidates.
     expect(screen.getByRole("button", { name: "Use 40 for Employee count" })).toHaveFocus();

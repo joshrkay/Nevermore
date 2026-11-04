@@ -8,7 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
-import { buildManuscript, isFileId, maskDob, NOT_PROVIDED, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
+import { buildManuscript, isFileId, maskDob, NOT_PROVIDED, rowProvenance, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
 import { describeSource, parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { fetchVerifiedFields } from "@/lib/verifiedFields";
@@ -75,7 +75,16 @@ type LoadState =
   | { kind: "unsigned"; sessionId: string }
   | { kind: "recertify"; sessionId: string }
   | { kind: "expired" }
-  | { kind: "ready"; sessionId: string; data: ChamberData; provenance: ProvenanceMap; submission: ChamberSubmission; fileId: string };
+  | {
+      kind: "ready";
+      sessionId: string;
+      data: ChamberData;
+      provenance: ProvenanceMap;
+      /** Fields an advisor has verified since: settled, so not open items. */
+      verified: ReadonlySet<string>;
+      submission: ChamberSubmission;
+      fileId: string;
+    };
 
 const NOT_FOUND = "We couldn't find that Manuscript. The link may be out of date, or it belongs to a different account.";
 
@@ -119,7 +128,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
     const query = supabase.from("chamber_sessions").select(ROW_COLUMNS);
     (reference ? query.eq("file_id", reference) : query.eq("id", wanted))
       .maybeSingle()
-      .then(({ data, error }) => {
+      .then(async ({ data, error }) => {
         if (cancelled) return;
         if (error || !data) {
           setState({ kind: "error", message: NOT_FOUND });
@@ -140,6 +149,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           setState({ kind: "unsigned", sessionId: data.id });
           return;
         }
+        // What an advisor has verified since is settled, so it is no open item (never an error if unreadable).
+        const verified = await fetchVerifiedFields(data.id);
+        if (cancelled) return;
         setState({
           kind: "ready",
           sessionId: data.id,
@@ -156,7 +168,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
   }, [wanted, reference, demo, user, authLoading]);
 
   const d = useMemo(() => {
-    if (state.kind === "ready") return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, provenance: state.provenance });
+    if (state.kind === "ready") {
+      return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, provenance: state.provenance, verified: state.verified });
+    }
     if (state.kind === "sample") return buildManuscript(DEMO_CHAMBER_DATA, { fileId: SAMPLE_FILE_ID, date: SAMPLE_DATE, provenance: SAMPLE_PROVENANCE });
     return null;
   }, [state]);

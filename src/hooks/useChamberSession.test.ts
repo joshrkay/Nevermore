@@ -585,7 +585,7 @@ describe("useChamberSession", () => {
 
     it("has none for a new intake, without asking", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(result.current.verifiedFields.size).toBe(0);
       expect(rpcCalls).toEqual([]);
     });
@@ -608,7 +608,9 @@ describe("useChamberSession", () => {
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(result.current.verifiedFields.has("company_name")).toBe(true));
       act(() => result.current.startNew());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await waitFor(() => expect(result.current.sessionId).toBeNull());
+      expect(result.current.verifiedFields.size).toBe(0);
+      await startIntake(result);
       expect(result.current.verifiedFields.size).toBe(0);
     });
   });
@@ -616,7 +618,7 @@ describe("useChamberSession", () => {
   describe("the File ID", () => {
     it("has none for a new intake: the database assigns it at the first certification", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(result.current.fileId).toBeNull();
     });
 
@@ -648,8 +650,8 @@ describe("useChamberSession", () => {
 
     it("learns the File ID from the certification's answer, with the submission as the database stamped it", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
-      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      await startIntake(result);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, industry: "Retail" })));
       let ok: SubmitResult | undefined;
       const pending = result.current.submit(submission).then((r) => { ok = r; });
       await waitFor(() => expect(updates).toHaveLength(1));

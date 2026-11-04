@@ -1,5 +1,3 @@
-import type { RequiredItem } from "./requiredItems";
-
 // The wording a prospect certifies. The version is stored with every certification so we can
 // always tell which text a signer agreed to; bump it whenever any wording below changes.
 //
@@ -24,20 +22,22 @@ export interface SignerDetails {
   title: string;
 }
 
-/** A required answer the intake can't be certified without: not given yet, or given but not settled. */
+/**
+ * A required answer the intake can't be certified without: not given yet, or given two ways (B-2, D26).
+ * blockingItems in readiness.ts lists them; the database refuses the same (EA003, EA008).
+ */
 export interface NeededAnswer {
   label: string;
-  reason: "missing" | "conflicting" | "incomplete";
+  reason: "missing" | "conflicting";
 }
 
-const neededAction = ({ label, reason }: NeededAnswer): string => {
-  const name = label.toLowerCase();
-  if (reason === "conflicting") return `Choose the right ${name}`;
-  if (reason === "incomplete") return `Complete ${name}`;
-  return `Add ${name}`;
-};
+const neededAction = ({ label, reason }: NeededAnswer): string =>
+  reason === "conflicting" ? `Choose one answer for ${label.toLowerCase()}` : `Add ${label.toLowerCase()}`;
 
-/** Why certification can't be completed yet; empty when it can. Drives the submit button and its hint. */
+/**
+ * Why certification can't be completed yet; empty when it can. Drives the submit button and its hint.
+ * What the intake still needs comes first, missing answers before conflicts; then the signer's own steps.
+ */
 export function certificationBlockers(opts: {
   acknowledged: boolean[];
   signer: SignerDetails;

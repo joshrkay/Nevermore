@@ -64,28 +64,24 @@ describe("ReviewTab needs your review", () => {
     industry: { status: "inferred", source: said("m1"), updated_at: at },
     employee_count: { status: "incomplete", source: said("m3"), updated_at: at },
   };
-  // Each listed item reads as its reason, then its label, then its value and source.
-  const expectListed = (expected: [reason: string, label: string][]) => {
-    const section = screen.getByText(/^Needs your review/).parentElement!;
-    const items = [...section.children].slice(1).map((item) => item.textContent ?? "");
-    expect(items).toHaveLength(expected.length);
-    expected.forEach(([reason, label], i) => expect(items[i]).toMatch(new RegExp(`^${reason}${label}`)));
-  };
-  const stillNeeded = () =>
-    [...screen.getByRole("region", { name: "Still needed" }).querySelectorAll("li")].map((li) => li.querySelector("span")?.textContent);
+  // Each listed item names the answer first, then says what to do about it.
+  const named = (region: string) =>
+    [...screen.getByRole("region", { name: region }).querySelectorAll("li")].map((li) => li.querySelector("span")?.textContent);
+  const stillNeeded = () => named("Still needed");
+  const listed = () => named("Needs your review");
 
   it("puts required answers that block certification under still needed, and the unsettled ones first in review, each once", () => {
     render(<ReviewTab data={data} provenance={provenance} onAction={() => {}} onProceed={() => {}} />);
     // Missing and conflicting both hold certification back; the census is only recommended.
     expect(stillNeeded()).toEqual(["States of operation", "Pay frequency"]);
-    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Your answers conflict");
+    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("You've given two different answers");
     expect(screen.queryByText(/Every required answer is here/)).not.toBeInTheDocument();
-    expect(screen.getByText("Needs your review — 3 items")).toBeInTheDocument();
-    expectListed([
-      ["Please confirm", "Company legal name"],
-      ["Incomplete", "Employee count"],
-      ["Please confirm", "Industry"],
-    ]);
+    // The required answer to confirm first, then the other open fields, then the recommended census.
+    expect(screen.getByText("Needs your review — 4 items")).toBeInTheDocument();
+    expect(listed()).toEqual(["Company legal name", "Employee count", "Industry", "Employee census"]);
+    const review = screen.getByRole("region", { name: "Needs your review" });
+    expect(review).toHaveTextContent("Confirm it, or correct it");
+    expect(review).toHaveTextContent("Only part of this answer was given");
     // The conflict is resolved where the answer sits.
     expect(screen.getByRole("button", { name: "Use Bi-weekly for Pay frequency" })).toBeInTheDocument();
   });
@@ -94,14 +90,15 @@ describe("ReviewTab needs your review", () => {
     render(
       <ReviewTab data={data} provenance={provenance} verified={new Set(["company_name", "industry"])} onAction={() => {}} onProceed={() => {}} />,
     );
-    expect(screen.getByText("Needs your review — 1 item")).toBeInTheDocument();
-    expectListed([["Incomplete", "Employee count"]]);
+    expect(screen.getByText("Needs your review — 2 items")).toBeInTheDocument();
+    expect(listed()).toEqual(["Employee count", "Employee census"]);
   });
 
   it("still needs a required answer that was never given, even if an advisor verified its field", () => {
     render(<ReviewTab data={EMPTY_CHAMBER_DATA} verified={new Set(["company_name", "census"])} onProceed={() => {}} />);
     expect(stillNeeded()).toEqual(["Company legal name", "States of operation", "Pay frequency"]);
-    expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
+    // Only the recommended census is left to mention.
+    expect(listed()).toEqual(["Employee census"]);
   });
 
   it("asks for the census to be confirmed while only the census names states", () => {
@@ -115,20 +112,15 @@ describe("ReviewTab needs your review", () => {
       />,
     );
     expect(stillNeeded()).toEqual(["Pay frequency"]);
-    expectListed([
-      ["Please confirm", "Company legal name"],
-      ["Please confirm", "Employee census"],
-      ["Incomplete", "Employee count"],
-      ["Please confirm", "Industry"],
-    ]);
+    expect(listed()).toEqual(["Company legal name", "Employee census", "Employee count", "Industry"]);
   });
 
   it("says the census's conflict holds the states back when the census alone names them", () => {
     const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
     const conflicting = { status: "conflicting" as const, source: said("m4"), updated_at: at, candidates: [] };
     render(<ReviewTab data={{ ...data, census, states: [] }} provenance={{ census: conflicting }} onProceed={() => {}} />);
-    expect(stillNeeded()).toEqual(["States of operation"]);
-    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("The census's answers conflict");
+    expect(stillNeeded()).toEqual(["Employee census"]);
+    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("The census's answers conflict, and it gives your states");
     expect(screen.getByRole("button", { name: "Go to employee census" })).toBeInTheDocument();
     expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
   });
@@ -233,7 +225,7 @@ describe("ReviewTab sections", () => {
     expect(screen.queryByRole("button", { name: "Mark Pay frequency as not applicable" })).not.toBeInTheDocument();
   });
 
-  it("blocks certification on a required answer that is conflicting or incomplete, and says what to do", () => {
+  it("blocks certification on a required answer given two ways, and says what to do", () => {
     const at = "2026-11-04T00:00:00Z";
     render(
       <ReviewTab
@@ -246,7 +238,7 @@ describe("ReviewTab sections", () => {
     const needed = section("Still needed");
     expect(needed).toHaveTextContent("Still needed before The Manuscript can be generated: 1");
     expect(needed).toHaveTextContent("Company legal name");
-    expect(needed).toHaveTextContent("Two different answers were given. Choose the right one.");
+    expect(needed).toHaveTextContent("You've given two different answers. Choose the right one.");
   });
 
   it("marks the required answers wherever they sit, and only those", () => {
@@ -295,7 +287,7 @@ describe("ReviewTab sections", () => {
     expect(screen.queryByText(/Every required answer is here/)).not.toBeInTheDocument();
     expect(screen.getByText(/You can choose a PEO now/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Choose company legal name" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to company legal name" }));
     expect(document.activeElement?.closest("#review-field-company_name")).not.toBeNull();
   });
 

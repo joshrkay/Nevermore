@@ -4,7 +4,7 @@ import { categoryInfo } from "./documentCategories";
 import { documentStatusInfo } from "./documentStatus";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
-import { FIELD_LABELS, type FieldKey, type ProvenanceMap } from "./provenance";
+import { FIELD_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
 import { openItems, type OpenItem, type OpenItemReason } from "./readiness";
 
 /** Signed attestation stored on chamber_sessions.submission. */
@@ -270,6 +270,9 @@ function classCodes(census: CensusEmployee[]): string {
 
 const counted = (n: number, of: number, what: string) => `${n} of ${of} ${what}`;
 
+/** No field verified by an advisor. */
+const NO_VERIFIED: ReadonlySet<string> = new Set();
+
 /**
  * Label, display value, the field whose status and source the row shows, and any other fields the value
  * is built from (a conflict in one of those shows too).
@@ -397,6 +400,7 @@ export function buildManuscript(
   const fmtDateTime = (d: Date) =>
     d.toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
   const provenance = opts.provenance ?? {};
+  const verified = opts.verified ?? NO_VERIFIED;
   // An answer the prospect marked as not applying shows that, whatever the row would have said.
   const finish = (rows: ManuscriptRow[]): ManuscriptRow[] =>
     rows.map(([label, value, field]) => [label, field && provenance[field]?.status === "not_applicable" ? NOT_APPLICABLE : value, field]);
@@ -440,7 +444,7 @@ export function buildManuscript(
   const checks = eligibilityChecks(data, opts.peo ?? (opts.submission?.peo ? findPeo(opts.submission.peo) ?? undefined : undefined));
   // One list of open items (src/data/readiness.ts): the required answers missing or unsettled first, then
   // every answer still owed, then the recommended census.
-  const items = openItems(data, provenance).map(openWording);
+  const items = openItems(data, provenance, verified).map(openWording);
   const flags = data.census.flatMap((e) => {
     const flag = employeeFlag(e);
     return flag ? [`${e.first_name} ${e.last_name}: ${flag}`] : [];
@@ -476,9 +480,9 @@ export function buildManuscript(
     ]),
     workforceRows: finish([
       ["Reported Headcount", orNotProvided(data.employee_count), "employee_count"],
-      ["W-2 Employees on Census", String(statedW2.length)],
-      ["1099 Contractors on Census", data.census.length ? String(contractors.length) : NOT_PROVIDED],
-      ...(unstated("classification") > 0 ? ([["Classification Not Provided", String(unstated("classification"))]] as ManuscriptRow[]) : []),
+      ["W-2 Employees on Census", String(statedW2.length), undefined, ["census"]],
+      ["1099 Contractors on Census", data.census.length ? String(contractors.length) : NOT_PROVIDED, undefined, ["census"]],
+      ...(unstated("classification") > 0 ? ([["Classification Not Provided", String(unstated("classification")), undefined, ["census"]]] as ManuscriptRow[]) : []),
       ["1099 Contractors Reported", yesNo(data.has_1099), "has_1099"],
       ["California Contractors", yesNo(data.ca_contractors), "ca_contractors"],
       ["Nonexempt Employees", yesNo(data.has_nonexempt), "has_nonexempt"],

@@ -16,14 +16,17 @@ import {
 } from "@/data/certification";
 import { useAuth } from "@/hooks/useAuth";
 import { blockingItems } from "@/data/readiness";
+import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import type { ProvenanceMap } from "@/data/provenance";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import VerifyEmailGate from "./VerifyEmailGate";
 
 interface ReckoningTabProps {
   data: ChamberData;
-  /** Status and source of each answer: a required answer that is conflicting or incomplete blocks certifying. */
+  /** Status and source of each answer: a required answer given two ways blocks certifying (B-2, D26). */
   provenance?: ProvenanceMap;
+  /** Fields an advisor verified: settled whatever their status. */
+  verified?: ReadonlySet<string>;
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
   sessionId: string | null;
@@ -45,7 +48,7 @@ const formatSigned = (iso: string) =>
 
 const GENERIC_FAILURE = "We couldn't save your submission. Please try again.";
 
-const ReckoningTab = ({ data, provenance = {}, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
+const ReckoningTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
   const peoName = chosenPeo ?? "your PEO";
   const { isAnonymous } = useAuth();
   // A returning signer doesn't retype their name and role to certify again.
@@ -84,8 +87,10 @@ const ReckoningTab = ({ data, provenance = {}, peoName: chosenPeo, sessionId, fi
   }, [dataKey, signedDataKey]);
 
   const signed = signedAt !== null;
-  // The required answers that are missing, or given but not settled (one list, shared with Review).
-  const needed = blockingItems(data, provenance);
+  // The required answers that are missing, or given two ways (one list, shared with Review).
+  const needed = blockingItems(data, provenance, verified);
+  const missingAnswers = needed.filter((item) => item.reason === "missing");
+  const conflictingAnswers = needed.filter((item) => item.reason !== "missing");
   const blockers = certificationBlockers({
     acknowledged: checks,
     signer: { name: signerName, title: signerTitle },
@@ -183,14 +188,32 @@ const ReckoningTab = ({ data, provenance = {}, peoName: chosenPeo, sessionId, fi
         {/* The Manuscript can't be generated without these; the database refuses the certification too. */}
         {needed.length > 0 && !certifiedAndCurrent && (
           <div role="alert" aria-label="Answers still needed" className="border border-destructive/40 bg-destructive/5 rounded-xl p-4 text-sm space-y-2">
-            <p className="font-medium">Before The Manuscript can be generated, settle these:</p>
-            <ul className="list-disc pl-5 space-y-0.5">
-              {needed.map((item) => (
-                <li key={item.key}>
-                  {item.label} <span className="text-muted-foreground text-xs">{item.action}</span>
-                </li>
-              ))}
-            </ul>
+            {missingAnswers.length > 0 && (
+              <>
+                <p className="font-medium">Before The Manuscript can be generated, add:</p>
+                <ul className="list-disc pl-5 space-y-0.5">
+                  {missingAnswers.map((item) => (
+                    <li key={item.key}>
+                      {item.label} <span className="text-muted-foreground text-xs">{item.action}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {conflictingAnswers.length > 0 && (
+              <>
+                <p className="font-medium">
+                  {missingAnswers.length > 0 ? "And choose one answer for:" : "Before The Manuscript can be generated, choose one answer for:"}
+                </p>
+                <ul className="list-disc pl-5 space-y-0.5">
+                  {conflictingAnswers.map((item) => (
+                    <li key={item.key}>
+                      {item.label} <span className="text-muted-foreground text-xs">{item.action}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
             {onReview && (
               <button type="button" onClick={onReview} className="text-sm font-medium text-primary underline underline-offset-2">
                 Go to Review

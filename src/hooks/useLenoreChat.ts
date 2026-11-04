@@ -37,9 +37,9 @@ interface UseLenoreChatOptions {
   provenance?: ProvenanceMap;
   /** The conversation so far: the last few messages go with each call, so a short answer can be placed (D22). */
   messages?: readonly ChatMessage[];
-  setChamberData: (updater: (prev: ChamberData) => ChamberData) => void;
-  /** May return the stored message so extracted values can point back to it. */
-  addUserMessage: (text: string) => { id: string; text: string } | void;
+  setChamberData?: (updater: (prev: ChamberData) => ChamberData) => void;
+  /** Returns the stored message so extracted values can point back to it. */
+  addUserMessage: (text: string) => { id: string; text: string };
   addLenoreMessage: (text: string) => void;
   onOrbStateChange: (state: OrbState) => void;
   /**

@@ -209,7 +209,9 @@ describe("buildManuscriptPdf", () => {
     expect(text).toMatch(unresolved(DEMO_CHAMBER_DATA.current_carrier!));
     expect(text).not.toMatch(unresolved(DEMO_CHAMBER_DATA.industry!));
     expect(text).toContain(`(${DEMO_CHAMBER_DATA.industry})`);
-    expect(text).toMatch(unresolved("4 / 9"));
+    // The nonexempt count is its own row here, so only it carries the marker.
+    expect(text).toMatch(unresolved("9"));
+    expect(text).not.toMatch(unresolved("4"));
     expect(text).toMatch(unresolved("Not provided"));
     // Only inferred: the bare value.
     expect(text).toContain(`(${DEMO_CHAMBER_DATA.hq_state})`);

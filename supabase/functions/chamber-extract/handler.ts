@@ -18,7 +18,6 @@ import { FIELD_STATUSES as CONTEXT_STATUSES, unsettledFields } from "../_shared/
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactSensitive } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
-import { buildUserPrompt, serializeContext } from "./prompt.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
@@ -222,7 +221,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     ].join("\n\n");
     const result = await callModel(
       chosen.adapter,
-      { system: SYSTEM_PROMPT, user: buildUserPrompt(message, contextJson) },
+      { system: SYSTEM_PROMPT, user: userPrompt },
       { fetch: deps.fetch, sleep: deps.sleep, now: deps.now },
     );
     event.attempts = result.attempts;

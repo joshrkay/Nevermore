@@ -29,6 +29,15 @@ const session = {
   certification: { status: "none" as string },
   addMessage: vi.fn(),
   conversationEpoch: {} as object,
+  verifiedFields: new Set<string>() as ReadonlySet<string>,
+  updateIntake: vi.fn(),
+  ensureIntake: vi.fn(async () => null),
+};
+// What the page hands the workspace and the chat hook, so their props can be checked directly.
+const hooks = {
+  workspace: null as null | { verified?: ReadonlySet<string> },
+  voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
+  chat: null as null | { onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string }) => void },
 };
 const voice = { isConnected: false };
 const auth = {
@@ -43,7 +52,12 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 vi.mock("@/hooks/useChamberSession", () => ({ useChamberSession: () => session }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 vi.mock("@/data/intakeBackup", () => ({ browserStorageWorks: () => storageWorks }));
-vi.mock("@/hooks/useLenoreVoice", () => ({ useLenoreVoice: () => ({ startVoice: vi.fn(), isConnected: voice.isConnected, hasAgentId: false }) }));
+vi.mock("@/hooks/useLenoreVoice", () => ({
+  useLenoreVoice: (options: typeof hooks.voice) => {
+    hooks.voice = options;
+    return { startVoice: vi.fn(), isConnected: voice.isConnected, hasAgentId: false };
+  },
+}));
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
 // The orb only shows what Lenore last said; the workspace panes are not what these tests are about.
 vi.mock("@/components/chamber/VoiceOrb", () => ({ default: ({ lastSpokenText }: { lastSpokenText: string }) => <p data-testid="orb">{lastSpokenText}</p> }));

@@ -3,7 +3,7 @@
 // (_shared/intakeSchema.ts), so chat can answer every top-level field but the census, and nothing the schema
 // doesn't know. Relative imports only, so it runs under Deno and Vitest alike.
 
-import { INTAKE_FIELDS, INTAKE_SCHEMA, type JsonSchema } from "../_shared/intakeSchema.ts";
+import { INTAKE_FIELDS, INTAKE_SCHEMA, LIMITS, type JsonSchema } from "../_shared/intakeSchema.ts";
 
 /** What each field means, for the model. Every field the chat extracts has one (schema.test.ts checks). */
 export const FIELD_GUIDE: Record<string, string> = {
@@ -14,22 +14,22 @@ export const FIELD_GUIDE: Record<string, string> = {
   employee_count: "Total number of employees (a whole number)",
   start_month: "When they want PEO coverage or benefits to start, as they said it",
   multiple_entities: "true if the business runs as more than one legal entity",
-  fein_count: "How many federal employer ID numbers (FEINs) the business has",
+  fein_count: "How many federal employer ID numbers (FEINs) the business has (a whole number); report multiple_entities with it",
   virgin_medical: "true if they have never offered employer medical coverage, false if they have it now",
   current_carrier: "Their current medical insurance carrier",
   renewal_date: "When their current medical plan renews, as they said it",
   rate_history: "What they said about recent medical rate increases",
   benefits_waiting_period: "How long new hires wait before benefits start",
   ancillary_benefits: "Other benefits they offer, such as dental, vision or life",
-  has_401k: "true if they offer a retirement plan such as a 401(k)",
-  retirement_type: "What kind of retirement plan, such as 401(k), SIMPLE IRA or 403(b)",
-  employer_contributes: "true if the employer contributes to the retirement plan",
+  has_401k: "true if they offer any employer retirement plan (a 401(k), 403(b), SIMPLE IRA or similar), false if they offer none",
+  retirement_type: "What kind of retirement plan, such as 401(k), SIMPLE IRA or 403(b); report has_401k with it",
+  employer_contributes: "true if the employer contributes to or matches the retirement plan; report has_401k with it",
   payroll_vendor: "Who runs their payroll now, such as Gusto or ADP",
   pay_frequency: "How often they run payroll: weekly, bi-weekly, semi-monthly or monthly",
   funding_days: "How many days before payday they fund payroll (a whole number)",
   has_nonexempt: "true if any employees are hourly or overtime-eligible (nonexempt)",
-  nonexempt_count: "How many employees are nonexempt (a whole number)",
-  exempt_count: "How many employees are exempt (a whole number)",
+  nonexempt_count: "How many employees are nonexempt (a whole number); report has_nonexempt with it",
+  exempt_count: "How many employees are exempt (a whole number); report has_nonexempt with it",
   pto_types: "Kinds of paid time off they offer, such as vacation or sick",
   accrual_method: "How paid time off accrues, such as per pay period or up front",
   has_handbook: "true if they have an employee handbook",
@@ -83,7 +83,7 @@ const perField = (schema: unknown) => ({
 
 // Recorded on every extraction event. Raise it with any change to SYSTEM_PROMPT or EXTRACT_TOOL: promptVersion.test.ts
 // fails until you do, so an event always says which prompt produced it.
-export const PROMPT_VERSION = 2;
+export const PROMPT_VERSION = 3;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 
@@ -96,6 +96,8 @@ Field definitions:
 ${fieldLines}
 
 Never extract the employee census or details of individual employees: the roster comes only from an uploaded file.
+
+Whole numbers are whole numbers from 0 to ${LIMITS.count.toLocaleString("en-US")} unless a field says otherwise. Text is at most ${LIMITS.text.toLocaleString("en-US")} characters. A list holds at most ${LIMITS.listItems} items, one entry per item, never a comma-separated string.
 
 A short answer ("yes", "no", "about twelve", "weekly") answers the question Lenore asked last in the recent conversation: capture it against the field that question was about.
 

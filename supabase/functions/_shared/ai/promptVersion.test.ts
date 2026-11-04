@@ -10,7 +10,7 @@ import * as documents from "../../document-extract/schema";
 const fingerprint = (prompt: string, tool: unknown) => createHash("sha256").update(`${prompt}\n${JSON.stringify(tool)}`).digest("hex");
 
 const KNOWN = {
-  "chamber-extract": { 1: "89db609d8c6914c5db41973ad37c4869602bb24d1c3facfce87e81cd84ed5231", 2: "df5be12a55b4b2732660a15192245b18ca8d663a4cc58acbac0486bb6073e75d" } as Record<number, string>,
+  "chamber-extract": { 1: "89db609d8c6914c5db41973ad37c4869602bb24d1c3facfce87e81cd84ed5231", 2: "df5be12a55b4b2732660a15192245b18ca8d663a4cc58acbac0486bb6073e75d", 3: "4d952e7da0f45947d9f481422f88ea00a059620ba2b88428982618434a011410" } as Record<number, string>,
   "document-extract": { 1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526" } as Record<number, string>,
 };
 
@@ -20,6 +20,7 @@ const USER_TURNS = [buildUserPrompt("<message>", ""), buildUserPrompt("<message>
 const USER_TURN_KNOWN: Record<number, string> = {
   1: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
   2: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
+  3: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
 };
 
 describe("prompt versions", () => {

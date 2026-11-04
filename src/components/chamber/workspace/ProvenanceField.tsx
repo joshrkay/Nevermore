@@ -95,7 +95,10 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
   };
 
   const status = provenance?.status;
-  const badge = onAction && status ? BADGES[status] : null;
+  // A value the prospect confirmed or typed says so, apart from one Lenore heard stated outright (B-2).
+  const badge = onAction && status
+    ? status === "confirmed" && provenance?.source.kind === "prospect_edit" ? { ...BADGES.confirmed, text: "Confirmed by you" } : BADGES[status]
+    : null;
   // "Doesn't apply" is the prospect's to say, never for an answer a PEO always needs (D31).
   const canClose = Boolean(onAction && editable && canMarkNotApplicable(field));
 

@@ -1,7 +1,7 @@
-// The user turn the extraction model reads: the prospect's message and, when the browser sent it,
-// what the intake already holds. The handler and the extraction eval (scripts/extraction-eval) both
-// build it here, so the eval measures the prompt production sends. No imports, so it runs under
-// Deno and Vitest alike.
+// The user turn the extraction eval (scripts/extraction-eval) sends: the prospect's message and, when a
+// case carries it, what the intake already holds. The handler's own turn (chamber-extract/handler.ts)
+// adds the field statuses, the unsettled fields and the recent conversation (US-2.1b). No imports, so
+// it runs under Deno and Vitest alike.
 
 /** The request body's context as the prompt carries it; "" when there is none. The handler limits its length. */
 export const serializeContext = (context: unknown): string => (context ? JSON.stringify(context) : "");

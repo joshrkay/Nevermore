@@ -3,11 +3,13 @@
 //
 // Three answers are required: without them the Reckoning won't generate The Manuscript, and the database
 // refuses a certification sent from the browser (public.intake_missing_required, migrations
-// 20261103110000_certification_readiness.sql and 20261104100000_submission_records.sql;
-// src/data/schemaSync.test.ts keeps the lists equal). A required answer also has to be settled: one that is
-// conflicting (two answers, none chosen) or incomplete blocks the way a missing one does. The employee
-// census is recommended, not required: today it can only come from an uploaded file, and no document is
-// required, so a missing census is listed as an open item but never blocks.
+// 20261103110000_certification_readiness.sql and 20261104100100_required_items.sql;
+// src/data/schemaSync.test.ts keeps the lists equal). A required answer that holds two competing values
+// (field status `conflicting`) blocks certification too, until the prospect picks one (B-2, decision D26;
+// public.intake_conflicting_required, migration 20261104100000_certification_conflicts.sql). One that is
+// incomplete, not known yet or only inferred is an open item, never a blocker, and so is a conflict on any
+// other field. The employee census is recommended, not required: today it can only come from an uploaded
+// file, and no document is required, so a missing census is listed as an open item but never blocks.
 import type { ChamberData } from "./chamberTypes";
 import { FIELD_LABELS, fieldOpenItems, type FieldKey, type FieldStatus, type ProvenanceMap } from "./provenance";
 
@@ -139,6 +141,8 @@ export const RECOMMENDED_ITEMS: readonly ReadinessItem[] = [
   },
 ];
 
+const CENSUS_ITEM = RECOMMENDED_ITEMS[0];
+
 /** The required answers this intake doesn't have yet, in the order they are shown. */
 export const missingRequired = (data: ChamberData): ReadinessItem[] => REQUIRED_ITEMS.filter((item) => item.missing(data));
 
@@ -152,9 +156,19 @@ export const isRequiredField = (field: FieldKey): boolean => REQUIRED_FIELDS.has
 
 /**
  * Field statuses a required answer can't be certified with: the answer is there, but the prospect still has
- * to settle it. The database refuses the same ones (public.intake_unsettled_required).
+ * to choose one. The database refuses the same (public.intake_conflicting_required, SQLSTATE EA008).
  */
-export const BLOCKING_STATUSES: readonly FieldStatus[] = ["conflicting", "incomplete"];
+export const BLOCKING_STATUSES: readonly FieldStatus[] = ["conflicting"];
+
+/** No field verified by an advisor. */
+const NONE: ReadonlySet<string> = new Set();
+
+/**
+ * The required answers the prospect gave two different values for, in the order they are shown. Each
+ * blocks certification until one value is chosen in Review. A field an advisor verified is settled.
+ */
+export const conflictingRequired = (provenance: ProvenanceMap, verified: ReadonlySet<string> = NONE): ReadinessItem[] =>
+  REQUIRED_ITEMS.filter((item) => item.field !== undefined && provenance[item.field]?.status === "conflicting" && !verified.has(item.field));
 
 // ---------- Open items ----------
 
@@ -175,11 +189,14 @@ export interface OpenItem {
 }
 
 const ACTIONS: Record<Exclude<OpenItemReason, "missing" | "recommended">, string> = {
-  conflicting: "Two different answers were given. Choose the right one.",
+  conflicting: "You've given two different answers. Choose the right one.",
   incomplete: "Only part of this answer was given. Complete it.",
   unknown: "You said you didn't know this yet. Add it when you can, or mark it as not applicable.",
   inferred: "Lenore took this from the conversation. Confirm it, or correct it.",
 };
+
+/** States of operation taken from a census whose answers conflict: the census is what to settle. */
+const CENSUS_CONFLICT_ACTION = "The census's answers conflict, and it gives your states. Choose which is right.";
 
 const STATUS_REASON: Partial<Record<FieldStatus, OpenItemReason>> = {
   conflicting: "conflicting",
@@ -190,11 +207,14 @@ const STATUS_REASON: Partial<Record<FieldStatus, OpenItemReason>> = {
 
 /**
  * Everything the prospect still owes, in one list, for the Review step, the Reckoning and The Manuscript:
- * the required answers that are missing or not settled (blocking), then every other answer that is
- * conflicting, incomplete, not known yet or only inferred, then the recommended census. A field marked
- * not applicable is closed and never listed. A recommended answer with no answer at all isn't owed.
+ * the required answers that are missing or given two ways (blocking), then the required answers given but
+ * not settled, then every other answer that is conflicting, incomplete, not known yet or only inferred, then
+ * the recommended census. A field an advisor verified (`verified`) is settled whatever its status, though
+ * verifying never supplies a missing answer. A field marked not applicable is closed and never listed. A
+ * recommended answer with no answer at all isn't owed. While only the census names the states of operation,
+ * the census is the answer to settle, and the item says so.
  */
-export function openItems(data: ChamberData, provenance: ProvenanceMap = {}): OpenItem[] {
+export function openItems(data: ChamberData, provenance: ProvenanceMap = {}, verified: ReadonlySet<string> = NONE): OpenItem[] {
   const items: OpenItem[] = [];
   const listed = new Set<string>();
   const add = (item: OpenItem) => {
@@ -202,18 +222,38 @@ export function openItems(data: ChamberData, provenance: ProvenanceMap = {}): Op
     listed.add(item.key);
     items.push(item);
   };
+  const statusOf = (field: FieldKey): FieldStatus | undefined => (verified.has(field) ? undefined : provenance[field]?.status);
+  const statesFromCensus = !data.states.some((s) => !blank(s)) && data.census.some((e) => !blank(e.work_state));
+  // The field whose status settles a required item: the census, while it alone names the states.
+  const settledBy = (item: ReadinessItem): FieldKey | undefined => (item.key === "states" && statesFromCensus ? "census" : item.field);
 
   for (const item of missingRequired(data)) {
     add({ key: item.key, field: item.field, section: item.section, label: item.label, reason: "missing", action: item.hint, blocking: true });
   }
   for (const item of REQUIRED_ITEMS) {
-    const status = item.field ? provenance[item.field]?.status : undefined;
-    if (item.field && status && BLOCKING_STATUSES.includes(status) && !listed.has(item.key)) {
-      const reason = STATUS_REASON[status]!;
-      add({ key: item.key, field: item.field, section: item.section, label: item.label, reason, action: ACTIONS[reason as keyof typeof ACTIONS], blocking: true });
-    }
+    const field = settledBy(item);
+    if (!field || statusOf(field) !== "conflicting") continue;
+    const viaCensus = field === "census";
+    add({
+      key: item.key,
+      field,
+      section: viaCensus ? CENSUS_ITEM.section : item.section,
+      label: viaCensus ? CENSUS_ITEM.label : item.label,
+      reason: "conflicting",
+      action: viaCensus ? CENSUS_CONFLICT_ACTION : ACTIONS.conflicting,
+      blocking: true,
+    });
+    if (viaCensus) listed.add("census");
   }
-  for (const open of fieldOpenItems(provenance)) {
+  // The required answers given but not settled come before every other open field.
+  for (const item of REQUIRED_ITEMS) {
+    const field = settledBy(item);
+    const status = field ? statusOf(field) : undefined;
+    const reason = status ? STATUS_REASON[status] : undefined;
+    if (!field || !reason || reason === "conflicting") continue;
+    add({ key: field, field, section: SECTION_OF[field], label: field === "census" ? CENSUS_ITEM.label : item.label, reason, action: ACTIONS[reason], blocking: false });
+  }
+  for (const open of fieldOpenItems(provenance, verified)) {
     const reason = STATUS_REASON[provenance[open.field]!.status]!;
     add({
       key: open.field,
@@ -231,12 +271,13 @@ export function openItems(data: ChamberData, provenance: ProvenanceMap = {}): Op
   return items;
 }
 
-/** The open items that block certification: required answers missing or not settled. */
-export const blockingItems = (data: ChamberData, provenance: ProvenanceMap = {}): OpenItem[] =>
-  openItems(data, provenance).filter((item) => item.blocking);
+/** The open items that block certification: required answers missing or given two ways. */
+export const blockingItems = (data: ChamberData, provenance: ProvenanceMap = {}, verified: ReadonlySet<string> = NONE): OpenItem[] =>
+  openItems(data, provenance, verified).filter((item) => item.blocking);
 
 /** Ready to certify: every required answer is there and settled (GLOSSARY.md). */
-export const readyToCertify = (data: ChamberData, provenance: ProvenanceMap = {}): boolean => blockingItems(data, provenance).length === 0;
+export const readyToCertify = (data: ChamberData, provenance: ProvenanceMap = {}, verified: ReadonlySet<string> = NONE): boolean =>
+  blockingItems(data, provenance, verified).length === 0;
 
 // ---------- Section status ----------
 
@@ -254,7 +295,13 @@ export const SECTION_STATUS_LABELS: Record<SectionStatus, string> = {
  * incomplete while any of its answers is still owed (missing, conflicting, incomplete, not known yet, or
  * the recommended census); needs confirmation while any is only inferred; complete otherwise.
  */
-export function sectionStatus(section: ReviewSection, data: ChamberData, provenance: ProvenanceMap = {}, items = openItems(data, provenance)): SectionStatus {
+export function sectionStatus(
+  section: ReviewSection,
+  data: ChamberData,
+  provenance: ProvenanceMap = {},
+  verified: ReadonlySet<string> = NONE,
+  items = openItems(data, provenance, verified),
+): SectionStatus {
   const fields = sectionFields(section);
   if (fields.length > 0 && fields.every((field) => provenance[field]?.status === "not_applicable")) return "not_applicable";
   const here = items.filter((item) => item.section === section);
@@ -263,8 +310,11 @@ export function sectionStatus(section: ReviewSection, data: ChamberData, provena
   return "complete";
 }
 
-/** The labels for the keys the database names when it refuses an unready certification (SQLSTATE EA003). */
-export function describeMissingKeys(keys: string | null | undefined): string[] {
+/**
+ * The labels for the keys the database names when it refuses an unready certification: the missing answers
+ * (SQLSTATE EA003) or those given two ways (EA008).
+ */
+export function describeRequiredKeys(keys: string | null | undefined): string[] {
   const named = (keys ?? "").split(",").map((k) => k.trim()).filter(Boolean);
   return named.map((key) => REQUIRED_ITEMS.find((item) => item.key === key)?.label ?? key);
 }

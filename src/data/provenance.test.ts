@@ -11,7 +11,9 @@ import {
   parseExtractedStatuses,
   parseProvenance,
   transcriptExtraction,
+  voiceExtraction,
   canMarkNotApplicable,
+  type ExtractionOptions,
   type FieldSource,
   type IntakeState,
 } from "./provenance";

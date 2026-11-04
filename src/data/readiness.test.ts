@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "./chamberTypes";
 import type { CensusEmployee } from "./census";
-import type { ProvenanceMap } from "./provenance";
+import type { FieldProvenance, FieldStatus, ProvenanceMap } from "./provenance";
 import {
   BLOCKING_STATUSES,
   blockingItems,
-  describeMissingKeys,
+  conflictingRequired,
+  describeRequiredKeys,
   isRequiredField,
   missingRecommendedItems,
   missingRequired,
@@ -122,23 +123,54 @@ describe("sections", () => {
 });
 
 describe("openItems", () => {
-  it("lists what blocks certification first: required answers missing, then ones given but not settled", () => {
-    const items = openItems(intake({ company_name: "Acme", states: ["NY"], industry: "Retail" }), {
+  it("lists what blocks certification first: required answers missing, then ones given two ways; then the required ones to settle", () => {
+    const items = openItems(intake({ company_name: "Acme", states: ["NY"], industry: "Retail", employee_count: 40 }), {
       company_name: status("conflicting"),
       states: status("incomplete"),
       industry: status("inferred"),
+      employee_count: status("incomplete"),
     });
     expect(items.map((i) => [i.key, i.reason, i.blocking])).toEqual([
       ["pay_frequency", "missing", true],
       ["company_name", "conflicting", true],
-      ["states", "incomplete", true],
+      ["states", "incomplete", false],
+      ["employee_count", "incomplete", false],
       ["industry", "inferred", false],
       ["census", "recommended", false],
     ]);
-    expect(items[1].action).toMatch(/Choose the right one/);
+    expect(items[1].action).toMatch(/two different answers.*Choose the right one/);
     expect(items[2].action).toMatch(/Complete it/);
-    expect(items[3].action).toMatch(/Confirm it/);
-    expect(BLOCKING_STATUSES).toEqual(["conflicting", "incomplete"]);
+    expect(items[4].action).toMatch(/Confirm it/);
+    // Only a conflict holds a given answer back, as the database's gate does (EA008).
+    expect(BLOCKING_STATUSES).toEqual(["conflicting"]);
+  });
+
+  it("settles whatever an advisor verified, but a verified field with no answer is still missing", () => {
+    const provenance: ProvenanceMap = { company_name: status("conflicting"), industry: status("inferred"), pay_frequency: status("incomplete") };
+    const data = intake({ company_name: "Acme", states: ["NY"], pay_frequency: "weekly", industry: "Retail" });
+    expect(openItems(data, provenance, new Set(["company_name", "industry", "pay_frequency"])).map((i) => i.key)).toEqual(["census"]);
+    expect(openItems(intake(), provenance, new Set(["company_name"])).map((i) => [i.key, i.reason])).toEqual([
+      ["company_name", "missing"],
+      ["states", "missing"],
+      ["pay_frequency", "missing"],
+      ["industry", "inferred"],
+      ["census", "recommended"],
+    ]);
+    expect(conflictingRequired(provenance)).toHaveLength(1);
+    expect(conflictingRequired(provenance, new Set(["company_name"]))).toEqual([]);
+  });
+
+  it("holds the states back while only the census names them and the census is in conflict, naming the census", () => {
+    const data = intake({ company_name: "Acme", pay_frequency: "weekly", census: [employee({ work_state: "OR" })] });
+    const items = openItems(data, { census: status("conflicting") });
+    expect(items.map((i) => [i.key, i.field, i.label, i.reason, i.blocking])).toEqual([
+      ["states", "census", "Employee census", "conflicting", true],
+    ]);
+    expect(items[0].action).toMatch(/census's answers conflict/);
+    // An inferred census is the answer to confirm, listed once.
+    expect(openItems(data, { census: status("inferred") }).map((i) => [i.key, i.reason, i.blocking])).toEqual([["census", "inferred", false]]);
+    // Once the states are listed themselves, the census's status is its own business.
+    expect(openItems({ ...data, states: ["OR"] }, { census: status("conflicting") }).map((i) => [i.key, i.blocking])).toEqual([["census", false]]);
   });
 
   it("lists each answer once, with its section and a plain-words action", () => {
@@ -165,7 +197,8 @@ describe("openItems", () => {
     expect(blockingItems(complete, provenance)).toEqual([]);
     expect(readyToCertify(complete, provenance)).toBe(true);
     expect(readyToCertify(intake({ ...complete, company_name: null }), provenance)).toBe(false);
-    expect(readyToCertify(complete, { ...provenance, pay_frequency: status("incomplete") })).toBe(false);
+    expect(readyToCertify(complete, { ...provenance, pay_frequency: status("conflicting") })).toBe(false);
+    expect(readyToCertify(complete, { ...provenance, pay_frequency: status("incomplete") })).toBe(true);
     expect(openItems({ ...complete, census: [employee({ work_state: "NY" })] }, { ...provenance, states: status("confirmed") })).toEqual([]);
   });
 });
