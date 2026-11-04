@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@/data/chat";
 
@@ -277,6 +277,38 @@ describe("ChamberPage", () => {
       voice.isConnected = false;
       rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
       expect(notes().map((m) => m.text)).toEqual(["Voice call started"]);
+    });
+  });
+
+  describe("the address", () => {
+    const Where = () => {
+      const location = useLocation();
+      return <p data-testid="where">{location.pathname + location.search}</p>;
+    };
+    const at = (url: string) => render(<MemoryRouter initialEntries={[url]}><ChamberPage /><Where /></MemoryRouter>);
+
+    it("stops naming an intake once there is deliberately none on screen, so a reload doesn't try to open it", () => {
+      session.sessionId = null;
+      at("/start?session=archived-one");
+      expect(screen.getByTestId("where")).toHaveTextContent(/^\/start$/);
+    });
+
+    it("keeps a link that is still opening, couldn't be opened, or has expired", () => {
+      session.sessionId = null;
+      session.isLoading = true;
+      const opening = at("/start?session=linked");
+      expect(screen.getByTestId("where")).toHaveTextContent("/start?session=linked");
+      opening.unmount();
+      session.isLoading = false;
+      session.resumeFailed = true;
+      const failed = at("/start?session=linked");
+      expect(screen.getByTestId("where")).toHaveTextContent("/start?session=linked");
+      failed.unmount();
+      session.resumeFailed = false;
+      session.expired = { at: null };
+      at("/start?session=linked");
+      expect(screen.getByTestId("where")).toHaveTextContent("/start?session=linked");
+      session.expired = null;
     });
   });
 });

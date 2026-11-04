@@ -67,6 +67,7 @@
 \i supabase/migrations/20261104093000_security_review_fixes.sql
 \i supabase/migrations/20261104100000_certification_conflicts.sql
 \i supabase/migrations/20261104101000_transcript_validation.sql
+\i supabase/migrations/20261104102000_one_open_draft.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -202,23 +203,41 @@ BEGIN
   END LOOP;
 
   -- Guest A: an open draft with a conversation and a file, and three that will close, each with a file.
+  -- A person has one open draft at a time (20261104102000_one_open_draft.sql), so each intake below is
+  -- started from the browser once the one before it is closed or certified.
+
+  -- Guest A: three drafts that close the three ways a draft closes (two with a file), then an open draft
+  -- with a conversation and a file.
+  PERFORM pg_temp.become('guest_a');
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Expired"}') RETURNING id INTO ga_expired;
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
+  VALUES (ga, ga_expired, 'payroll.pdf', '1 KB', ga || '/' || ga_expired || '/payroll.pdf', 'payroll_report');
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', ga || '/' || ga_expired || '/payroll.pdf');
+  RESET ROLE;
+  UPDATE public.chamber_sessions SET last_activity_at = now() - interval '40 days' WHERE id = ga_expired;
+  PERFORM pg_temp.become('service');
+  IF public.expire_idle_intakes() <> 1 THEN RAISE EXCEPTION 'setup: expected exactly one draft to expire'; END IF;
+
+  PERFORM pg_temp.become('guest_a');
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Archived"}') RETURNING id INTO ga_archived;
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
+  VALUES (ga, ga_archived, 'loss-runs.pdf', '1 KB', ga || '/' || ga_archived || '/loss-runs.pdf', 'workers_comp_loss_runs');
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', ga || '/' || ga_archived || '/loss-runs.pdf');
+  IF public.archive_chamber_session(ga_archived) <> 'archived' THEN RAISE EXCEPTION 'setup: archive failed'; END IF;
+
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Revoked"}') RETURNING id INTO ga_revoked;
+  PERFORM pg_temp.become('admin');
+  IF public.revoke_chamber_session(ga_revoked, 'Shared by mistake') <> 'revoked' THEN RAISE EXCEPTION 'setup: revoke failed'; END IF;
+
   PERFORM pg_temp.become('guest_a');
   INSERT INTO public.chamber_sessions (user_id, chamber_data, transcript, field_provenance)
   VALUES (ga, '{"company_name":"Guest A Co"}',
           '[{"id":"m1","sender":"user","text":"We have 12 staff in Fresno"}]',
           '{"company_name":{"status":"confirmed","source":"transcript"}}')
   RETURNING id INTO ga_open;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Expired"}') RETURNING id INTO ga_expired;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Archived"}') RETURNING id INTO ga_archived;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Revoked"}') RETURNING id INTO ga_revoked;
-  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category) VALUES
-    (ga, ga_open, 'census.csv', '1 KB', ga || '/' || ga_open || '/census.csv', 'employee_census'),
-    (ga, ga_expired, 'payroll.pdf', '1 KB', ga || '/' || ga_expired || '/payroll.pdf', 'payroll_report'),
-    (ga, ga_archived, 'loss-runs.pdf', '1 KB', ga || '/' || ga_archived || '/loss-runs.pdf', 'workers_comp_loss_runs');
-  INSERT INTO storage.objects (bucket_id, name) VALUES
-    ('documents', ga || '/' || ga_open || '/census.csv'),
-    ('documents', ga || '/' || ga_expired || '/payroll.pdf'),
-    ('documents', ga || '/' || ga_archived || '/loss-runs.pdf');
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
+  VALUES (ga, ga_open, 'census.csv', '1 KB', ga || '/' || ga_open || '/census.csv', 'employee_census');
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', ga || '/' || ga_open || '/census.csv');
 
   -- Guest B: one open draft with a file.
   PERFORM pg_temp.become('guest_b');
@@ -229,10 +248,9 @@ BEGIN
   VALUES (gb, gb_open, 'roster.xlsx', '1 KB', gb || '/' || gb_open || '/roster.xlsx');
   INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', gb || '/' || gb_open || '/roster.xlsx');
 
-  -- Prospects A and B each certify one intake from the browser and keep a draft; A's has a file.
+  -- Prospects A and B each certify one intake from the browser, then keep a draft; A's certified one has a file.
   PERFORM pg_temp.become('prospect_a');
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pa, format(ready, 'Prospect A Co')::jsonb) RETURNING id INTO pa_cert;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pa, '{"company_name":"Prospect A Draft"}') RETURNING id INTO pa_open;
   INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path)
   VALUES (pa, pa_cert, 'benefits.pdf', '1 KB', pa || '/' || pa_cert || '/benefits.pdf');
   INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', pa || '/' || pa_cert || '/benefits.pdf');
@@ -241,25 +259,16 @@ BEGIN
       submission = jsonb_build_object('signer_name', 'Pat A', 'signer_title', 'CEO', 'signed_at', '2026-11-01T12:00:00Z',
         'file_id', 'EAA-2026-AAAAAAAA', 'consent_version', 'v1', 'consent_text', 'I certify.', 'chamber_data', chamber_data)
   WHERE id = pa_cert;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pa, '{"company_name":"Prospect A Draft"}') RETURNING id INTO pa_open;
 
   PERFORM pg_temp.become('prospect_b');
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, format(ready, 'Prospect B Co')::jsonb) RETURNING id INTO pb_cert;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, '{"company_name":"Prospect B Draft"}') RETURNING id INTO pb_open;
   UPDATE public.chamber_sessions
   SET status = 'submitted',
       submission = jsonb_build_object('signer_name', 'Bo B', 'signer_title', 'COO', 'signed_at', '2026-11-01T12:00:00Z',
         'file_id', 'EAA-2026-BBBBBBBB', 'consent_version', 'v1', 'consent_text', 'I certify.', 'chamber_data', chamber_data)
   WHERE id = pb_cert;
-
-  -- Close guest A's three drafts the three ways a draft closes.
-  PERFORM pg_temp.become('guest_a');
-  IF public.archive_chamber_session(ga_archived) <> 'archived' THEN RAISE EXCEPTION 'setup: archive failed'; END IF;
-  PERFORM pg_temp.become('admin');
-  IF public.revoke_chamber_session(ga_revoked, 'Shared by mistake') <> 'revoked' THEN RAISE EXCEPTION 'setup: revoke failed'; END IF;
-  RESET ROLE;
-  UPDATE public.chamber_sessions SET last_activity_at = now() - interval '40 days' WHERE id = ga_expired;
-  PERFORM pg_temp.become('service');
-  IF public.expire_idle_intakes() <> 1 THEN RAISE EXCEPTION 'setup: expected exactly one draft to expire'; END IF;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, '{"company_name":"Prospect B Draft"}') RETURNING id INTO pb_open;
 
   -- A file planted in guest B's folder under guest A's intake: neither of them may read it.
   RESET ROLE;

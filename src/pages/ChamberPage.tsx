@@ -69,6 +69,7 @@ const ChamberPage = () => {
     setChamberData,
     updateIntake,
     addMessage,
+    ensureIntake,
     submit,
     certification,
     chosenPeo,
@@ -87,6 +88,15 @@ const ChamberPage = () => {
       setSearchParams({ session: sessionId }, { replace: true });
     }
   }, [sessionId, searchParams, setSearchParams]);
+
+  // No intake exists until the prospect starts one (A-1). Once there is deliberately none on screen (after
+  // Start over, or a new intake asked for), the address mustn't name the old one, or a reload would try to open
+  // it. While a link is being opened, couldn't be, or turned out to have expired, it stays.
+  useEffect(() => {
+    if (!sessionId && !sessionLoading && !resumeFailed && !loadFailed && !expired && searchParams.get("session")) {
+      setSearchParams({}, { replace: true });
+    }
+  }, [sessionId, sessionLoading, resumeFailed, loadFailed, expired, searchParams, setSearchParams]);
 
   // The orb repeats Lenore's latest line, so a restored conversation doesn't open with a second hello.
   const latestLenore = [...messages].reverse().find((m) => m.sender === "lenore");
@@ -130,6 +140,7 @@ const ChamberPage = () => {
   const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
     epoch: conversationEpoch,
     intakeId: sessionId,
+    ensureIntake,
     chamberData,
     setChamberData,
     addUserMessage: (text) => {
@@ -319,6 +330,7 @@ const ChamberPage = () => {
             chosenPeo={chosenPeo}
             onChoosePeo={choosePeo}
             openReview={reviewRequest}
+            ensureIntake={ensureIntake}
           />
         </div>
       </div>

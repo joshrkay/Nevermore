@@ -347,6 +347,12 @@ A required answer whose field status is `conflicting` (Lenore and a document, or
 
 Migration `20261103090000_intake_lifecycle.sql` (A-1.5). `supabase/tests/intake_lifecycle.sql` and `e2e/intake-lifecycle.spec.ts` cover it.
 
+### When an intake is created
+
+No intake exists until the prospect does something with it (A-1): their first message to Lenore, answer, PEO choice, upload, or voice call. Opening the Chamber, or reloading it, creates nothing; a blank intake with Lenore's greeting is on screen and the address names none. The first change creates the row with that change already in it (`useChamberSession`'s `ensureIntake`, which every change calls and which a message to Lenore and an upload wait for, so the AI call carries the intake id and the file is stored under it). After Start over, or "Start a new intake", the same holds: a blank intake, no row, and the address no longer names the old one.
+
+A person has one open draft at a time: an intake in progress that was never certified. A new intake from the browser is refused while they have one (migration `20261104102000_one_open_draft.sql`, SQLSTATE `EA009`, the open draft's id in DETAIL); a transaction-scoped advisory lock per person makes two simultaneous starts take turns, so the second is refused (checked by hand with two connections; `supabase/tests/one_open_draft.sql` covers the rest). A certified intake changed since is a submission, not a draft, so Start over can begin a new intake beside it. When the Chamber is refused (another tab started first), it offers that intake as it offers a save that another tab beat: "Load latest" or "Keep my changes". A bare `/start` opens the latest open draft, so an ordinary reload or navigation never makes a second.
+
 ### Status
 
 `chamber_sessions.status` is one of:
