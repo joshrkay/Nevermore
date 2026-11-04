@@ -106,6 +106,15 @@ export function parseSender(from) {
 
 const RESEND_SMTP_HOST = "smtp.resend.com";
 
+/**
+ * The least the project's hourly cap on auth emails (`rate_limit_email_sent`) should be. Every prospect
+ * shares it, and a sign-up confirmation, a sign-in or certify code and each resend all count, so a cap
+ * left at Supabase's default answers 429 "email rate limit exceeded" to the next person on a busy day.
+ * It is a floor: a higher figure someone chose is kept. It doesn't lift Resend's own plan quota, which
+ * these emails also count against.
+ */
+export const MIN_AUTH_EMAILS_PER_HOUR = 100;
+
 /** The email-change message a guest gets when they add an email: it must carry the 6-digit code `VerifyEmailGate` asks for. */
 export const EMAIL_CODE_SUBJECT = "Your verification code";
 export const EMAIL_CODE_TEMPLATE = [
@@ -203,7 +212,7 @@ export function authConfigPatch(current, env) {
   const sender = parseSender(env.EMAIL_FROM);
   const resendKey = (env.RESEND_API_KEY ?? "").trim();
   if (!resendKey || !sender) {
-    notes.push("Sign-in emails use Supabase's built-in mailer, which only delivers to your team's addresses: set RESEND_API_KEY and EMAIL_FROM so prospects get their codes");
+    notes.push("Sign-in emails use Supabase's built-in mailer, which only delivers to your team's addresses: set RESEND_API_KEY and EMAIL_FROM so prospects get their codes (the hourly email limit is left alone until then)");
   } else if (c.smtp_host && c.smtp_host !== RESEND_SMTP_HOST) {
     notes.push(`Sign-in emails already go through ${c.smtp_host}; left as is`);
   } else {
@@ -216,6 +225,11 @@ export function authConfigPatch(current, env) {
       smtp_sender_name: sender.name || sender.email,
     });
   }
+
+  // Only with custom SMTP, here or already: the built-in mailer's limit is Supabase's to set, and a
+  // patch Supabase refuses stops the whole run (a failed PATCH fails the step).
+  const customSmtp = Boolean(patch.smtp_host || c.smtp_host);
+  if (customSmtp && !(c.rate_limit_email_sent >= MIN_AUTH_EMAILS_PER_HOUR)) patch.rate_limit_email_sent = MIN_AUTH_EMAILS_PER_HOUR;
   return { patch, notes };
 }
 
@@ -400,6 +414,21 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
   const signInOk = !!ac && ac.mailer_otp_length === 6 && sendsOtpCode(ac.mailer_templates_magic_link_content);
   add("Sign-in code message", signInOk, ac ? (signInOk ? "6-digit code in the magic-link template" : "the magic-link template must send a 6-digit {{ .Token }} (returning prospects sign in with it)") : "auth config unreadable");
   add("Sign-in emails reach prospects", !!ac?.smtp_host, ac ? (ac.smtp_host ? `custom SMTP (${ac.smtp_host})` : "built-in mailer: only your team's addresses get emails") : "auth config unreadable");
+  // A to-do, not a failure: a low cap only bites once enough prospects arrive in the same hour.
+  const perHour = ac?.rate_limit_email_sent;
+  const limitOk = !!ac?.smtp_host && perHour >= MIN_AUTH_EMAILS_PER_HOUR;
+  add(
+    "Sign-in email limit",
+    limitOk,
+    !ac
+      ? "auth config unreadable"
+      : limitOk
+        ? `${perHour} auth emails an hour`
+        : !ac.smtp_host
+          ? "built-in mailer: set up custom SMTP first, then the hourly limit can be raised"
+          : `${perHour ?? "unreported"} auth emails an hour: past it, sign-up and sign-in codes are refused with 429 until the hour turns. Run the setup again, or raise it under Authentication → Rate Limits`,
+    false,
+  );
 
   for (const fn of FUNCTIONS) {
     const p = seen.functions?.[fn];

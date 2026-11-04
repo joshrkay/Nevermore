@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { RavenIcon } from "@/components/RavenLogo";
 import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
+import { authErrorMessage } from "@/data/authRateLimit";
 import { parseAuthRedirect, safeNext, takeInitialAuthRedirect, type AuthRedirect } from "@/lib/authRedirect";
 
 const inputClass =
@@ -75,7 +76,7 @@ const ResendForm = ({ next }: { next: string }) => {
     setError(null);
     const { error } = await resendConfirmation(address, next);
     setBusy(false);
-    if (error) setError(error.message || "We couldn't send a new link. Try again in a minute.");
+    if (error) setError(authErrorMessage(error, "We couldn't send a new link. Try again in a minute."));
     else setSentTo(address);
   };
 

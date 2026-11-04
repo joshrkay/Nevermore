@@ -181,8 +181,13 @@ only rejects a localhost or non-https Site URL.
    Authentication → Attack Protection → CAPTCHA enabled, password sign-in and sign-up at `/login`
    would be refused, which locks advisors out. `VITE_TURNSTILE_SITE_KEY` on Vercel is harmless on
    its own.
-4. **Email volume.** Supabase caps how many sign-in emails it sends an hour (Authentication → Rate
-   Limits); raise it if a launch brings many prospects at once.
+4. **Email volume.** Supabase caps how many auth emails the whole project sends an hour
+   (Authentication → Rate Limits): every sign-up confirmation, sign-in or certify code and resend counts,
+   and every prospect shares it. With custom SMTP the script raises it to at least 100 an hour
+   (`MIN_AUTH_EMAILS_PER_HOUR` in `scripts/supabase-setup-lib.mjs`) and never lowers a higher figure you
+   set; `--check` lists "Sign-in email limit" as a to-do while it is lower. Raise it further there if a
+   launch brings many prospects at once. On Supabase's built-in mailer the script leaves it alone, so set
+   up SMTP first. The Resend plan has its own quota, which these emails and the notification emails share.
 5. **The plan.** A Free project pauses after a week without activity and has no downloadable
    backups. Move to Pro before relying on it.
 
@@ -298,3 +303,23 @@ What the person sees after clicking the link tells you which setting is wrong:
   email. Installing the sign-up template above stops scanners using the links up.
 
 `npm run setup:supabase -- --project-ref <ref>` sets all of it; `--check` confirms it.
+
+## If sign-up or a sign-in code answers 429
+
+A `429 Too Many Requests` from `/auth/v1/signup`, `/auth/v1/user` (certify code) or `/auth/v1/otp` (sign-in
+code) is Supabase Auth refusing the request, not Resend. Open the failed request's response (or Logs →
+Auth in the dashboard) and read `error_code`:
+
+- **`over_email_send_rate_limit`, "email rate limit exceeded":** the project's hourly cap on auth emails
+  is used up, for everyone. Raise it (Authentication → Rate Limits), or run the setup again to bring it to
+  the floor above. On Supabase's built-in mailer the cap is tiny and only your team's addresses get
+  emails: set up custom SMTP first (`--check` shows "Sign-in emails reach prospects").
+- **`over_email_send_rate_limit`, "you can only request this after 60 seconds":** that one address was
+  emailed a moment ago. It clears itself; the app tells the person to wait a minute.
+- **`over_request_rate_limit`, "Request rate limit reached":** too many sign-ups or sign-ins from one
+  network (repeated testing, or a whole office behind one address). Wait a few minutes, or raise the
+  per-IP limits on the same page.
+
+The app words each of these differently (`src/data/authRateLimit.ts`), so a person is never told to
+"check the address" for a limit. If email is going out but Resend refuses it, that is a different path:
+the notification outbox shows `rate_limited:429` on the event (docs/NOTIFICATIONS.md).

@@ -46,6 +46,19 @@ describe("RecoverIntake", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("wait a minute");
   });
 
+  it("says it is not their address when the project's hourly email quota is used up", async () => {
+    auth.requestSignInCode.mockResolvedValue({
+      error: Object.assign(new Error("email rate limit exceeded"), { code: "over_email_send_rate_limit", status: 429 }),
+      noAccount: false,
+    });
+    render(<RecoverIntake />);
+    await askForCode();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("lot of emails");
+    expect(alert).not.toHaveTextContent("Check the address");
+    expect(alert).not.toHaveTextContent("a minute");
+  });
+
   it("says when a code didn't work, and lets them start again with another address", async () => {
     auth.verifySignInCode.mockResolvedValue({ error: new Error("Token has expired or is invalid") });
     render(<RecoverIntake />);

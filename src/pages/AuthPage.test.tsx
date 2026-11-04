@@ -144,6 +144,37 @@ describe("AuthPage", () => {
       expect(screen.getByRole("button", { name: "Sign In" })).toBeInTheDocument();
     });
 
+    it("says when the project's hourly email quota is used up, not just Supabase's terse reason", async () => {
+      auth.signUp.mockResolvedValue({
+        error: Object.assign(new Error("email rate limit exceeded"), { code: "over_email_send_rate_limit", status: 429 }),
+        alreadyRegistered: false,
+      });
+      renderLogin();
+      signUpAs("pat@example.com");
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("lot of emails")));
+      expect(screen.getByRole("button", { name: "Create Account" })).toBeInTheDocument();
+    });
+
+    it("says when too many sign-ups come from one network", async () => {
+      auth.signUp.mockResolvedValue({
+        error: Object.assign(new Error("Request rate limit reached"), { code: "over_request_rate_limit", status: 429 }),
+        alreadyRegistered: false,
+      });
+      renderLogin();
+      signUpAs("pat@example.com");
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Too many attempts")));
+    });
+
+    it("tells the person to wait a minute when a new email is asked for too soon", async () => {
+      auth.resendConfirmation.mockResolvedValue({
+        error: Object.assign(new Error("For security purposes, you can only request this after 60 seconds"), { code: "over_email_send_rate_limit", status: 429 }),
+      });
+      renderLogin();
+      signUpAs("pat@example.com");
+      fireEvent.click(await screen.findByRole("button", { name: "Send a new email" }));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("wait a minute")));
+    });
+
     it("shows Supabase's reason when sign-up fails", async () => {
       auth.signUp.mockResolvedValue({ error: new Error("Password should be at least 6 characters."), alreadyRegistered: false });
       renderLogin();
