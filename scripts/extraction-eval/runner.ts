@@ -13,7 +13,7 @@ import { callModel, type ModelRequest, type ModelResult } from "../../supabase/f
 import { selectAdapter } from "../../supabase/functions/_shared/ai/providers.ts";
 import { shapeExtraction } from "../../supabase/functions/chamber-extract/extraction.ts";
 import { buildUserPrompt, serializeContext } from "../../supabase/functions/chamber-extract/prompt.ts";
-import { EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema.ts";
+import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema.ts";
 import { FIXTURES, type Fixture } from "./fixtures";
 import { describeCell, diffBaseline, formatBaseline, formatTable, parseBaseline, scoreFixture, type Baseline, type Cells } from "./scoring";
 
@@ -23,9 +23,9 @@ export type Connection =
   | { ok: true; provider: string; model: string; call: ModelCall }
   | { ok: false; problem: string };
 
-/** The provider chamber-extract would use with this environment (AI_PROVIDER, its key, AI_MODEL). */
+/** The provider chamber-extract would use with this environment (AI_PROVIDER, its key, AI_MODEL), with its reply budget. */
 export function connectProvider(env: (name: string) => string | undefined): Connection {
-  const chosen = selectAdapter(env, EXTRACT_TOOL);
+  const chosen = selectAdapter(env, EXTRACT_TOOL, { maxTokens: CHAT_MAX_TOKENS });
   if (!chosen.ok) return chosen;
   const { adapter } = chosen;
   // The adapter doesn't expose its model; the request it builds names it.

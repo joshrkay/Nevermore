@@ -10,14 +10,21 @@ import * as documents from "../../document-extract/schema";
 const fingerprint = (prompt: string, tool: unknown) => createHash("sha256").update(`${prompt}\n${JSON.stringify(tool)}`).digest("hex");
 
 const KNOWN = {
-  "chamber-extract": { 1: "89db609d8c6914c5db41973ad37c4869602bb24d1c3facfce87e81cd84ed5231" } as Record<number, string>,
+  "chamber-extract": {
+    1: "89db609d8c6914c5db41973ad37c4869602bb24d1c3facfce87e81cd84ed5231",
+    // 2: every intake field but the census (B-1.1), workers' comp included.
+    2: "9353e3ba7b62efffdcbdf7d58d28c910f1d2d545532a50bbece21cefbd2b52e8",
+  } as Record<number, string>,
   "document-extract": { 1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526" } as Record<number, string>,
 };
 
 // chamber-extract's user turn (prompt.ts, shared with the extraction eval) is part of its contract too
 // (B-1.4), so its wording, rendered for fixed inputs with and without context, is fingerprinted per version.
 const USER_TURNS = [buildUserPrompt("<message>", ""), buildUserPrompt("<message>", serializeContext({ company_name: "<value>" }))];
-const USER_TURN_KNOWN: Record<number, string> = { 1: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a" };
+const USER_TURN_KNOWN: Record<number, string> = {
+  1: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
+  2: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
+};
 
 describe("prompt versions", () => {
   it.each([

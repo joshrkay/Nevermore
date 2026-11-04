@@ -16,7 +16,7 @@ import { selectAdapter } from "../_shared/ai/providers.ts";
 import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { shapeExtraction } from "./extraction.ts";
 import { buildUserPrompt, serializeContext } from "./prompt.ts";
-import { EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
+import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -139,7 +139,8 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     }
 
     // 2. The provider must be set up.
-    const chosen = selectAdapter(deps.env, EXTRACT_TOOL);
+    // A full answer for every field needs more than a provider's default reply budget (B-1.1).
+    const chosen = selectAdapter(deps.env, EXTRACT_TOOL, { maxTokens: CHAT_MAX_TOKENS });
     if (!chosen.ok) {
       deps.logError(`AI_CONFIG_MISSING: ${chosen.problem}`);
       return await fail(aiError("unavailable"));

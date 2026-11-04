@@ -63,7 +63,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | Area | What exists today |
 |---|---|
 | Entry and accounts | Guests sign in anonymously (optional Turnstile CAPTCHA). Certifying needs an email-verified account: the guest adds an email, enters a 6-digit code, and is upgraded in place (`VerifyEmailGate`, a database trigger blocks guest certification). Password sign-in and sign-up are at `/login`. |
-| Lenore chat | `chamber-extract` (`handler.ts`, behind a thin `index.ts`) extracts 17 allow-listed fields with a per-field status and evidence quote, and writes a reply. It requires a signed-in user, caps a message at 2,000 characters and context at 20,000, and enforces per-user (15 a minute, 300 a day), per-IP (20 a minute, 400 a day) and global (2,000 a day) call limits that fail closed. Voice (ElevenLabs) is an opt-in beta behind `VITE_ELEVENLABS_AGENT_ID`. |
+| Lenore chat | `chamber-extract` (`handler.ts`, behind a thin `index.ts`) extracts every intake field except the census with a per-field status and evidence quote, and writes a reply. It requires a signed-in user, caps a message at 2,000 characters and context at 20,000, and enforces per-user (15 a minute, 300 a day), per-IP (20 a minute, 400 a day) and global (2,000 a day) call limits that fail closed. Voice (ElevenLabs) is an opt-in beta behind `VITE_ELEVENLABS_AGENT_ID`. |
 | Workspace | Nine tabs: Upload, Company, Payroll, Benefits, Your Team (census), Dependents, Review, PEO Match, The Reckoning. Autosave runs 2 seconds after the last change with a 10-second retry. A session survives refresh through `?session=`. |
 | Provenance | Each captured field is `confirmed`, `inferred`, `incomplete` or `conflicting`, with a source. The prospect can confirm, edit, or choose between conflicting candidates. An AI value never overwrites a prospect edit. |
 | Documents | PDF, Excel, CSV and Word uploads (20 MB, enforced in the browser only) in a private bucket, with seven categories. `document-extract` reads CSV, XLSX/XLS and text PDF into candidate values that the prospect reviews and applies, using the same AI provider setting as chat. Word files are saved but not read. |
@@ -147,7 +147,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 |---|---|---|---|---|---|---|
 | 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
 | A Durable session | 7 | 0 | 4 | 0 | 0 | 11 |
-| B AI extraction | 4 | 4 | 0 | 1 | 0 | 9 |
+| B AI extraction | 5 | 3 | 0 | 1 | 0 | 9 |
 | C Review, certify, submit | 2 | 7 | 0 | 1 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
 | E Documents | 6 | 1 | 3 | 1 | 0 | 11 |
@@ -156,9 +156,9 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **38** | **42** | **12** | **9** | **5** | **106** |
+| **Total** | **39** | **41** | **12** | **9** | **5** | **106** |
 
-25 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 20 of 39 M2; 5 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+26 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 20 of 39 M2; 5 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -283,7 +283,9 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE + FS · **Depends:** D2 · **Milestone:** M1
 - **Built:** `ChamberData` (37 flat fields plus an `employees` array) in `chamberTypes.ts`. Zod rules in `chamberValidation.ts` sanitise in the browser, and the database enforces the same limits (A-2.2). Provenance in a sibling `field_provenance` jsonb column. `docs/intake-schema.md` exists. Zero counts are accepted.
 - **JSON Schema and strict checks:** `supabase/functions/_shared/intakeSchema.ts` is the canonical schema, v1, as a draft 2020-12 JSON Schema, published as `docs/intake-schema.v1.json` (`npm run schema:intake`; a test fails while they differ). Its validator is strict: no coercion, unknown keys refused at every level, paths named like the database's, values never echoed, and any keyword it doesn't implement refused. It runs where data comes in: `chamber-extract` refuses each extracted field that breaks it and returns `rejected`, logging paths only; a local backup is checked before it is offered; a saved row is checked as it loads and mismatches are logged. Everything it accepts the database accepts: `schemaSync.test.ts` holds its codes, caps, value lists and kinds to the migrations, and the sanitiser's output always passes it (golden and seeded random inputs). `chamber_sessions.schema_version` (migration `20261103091000`) records v1 on every row and refuses any other value.
-- **Notes:** Provenance stays a sibling map rather than a `{value, status, source, …}` envelope, as D14 recommends; amend the AC. Statuses lack `not_applicable` and sources lack `advisor_edit` and `system` (advisor changes live in `advisor_field_reviews`). There is no per-field required-for-submission flag: D2 is decided as three required answers and a recommended census, in `readiness.ts` and one presence rule in the database (US-1.2, B-2.2). D2 adds no workers' comp, EIN or contractor sections. Voice `<extract>` data still goes through the lenient sanitiser. `chamber-extract` keeps its own 17-field list, now checked value by value against the schema. Nothing checks the field table in `docs/intake-schema.md` against the code (the JSON file is checked). Zero-versus-absent is untested, and the Review tab shows 0 as a dash.
+- **Notes:**
+  - Provenance stays a sibling map rather than a `{value, status, source, …}` envelope, as D14 recommends; amend the AC. Statuses lack `not_applicable` and sources lack `advisor_edit` and `system` (advisor changes live in `advisor_field_reviews`). There is no per-field required-for-submission flag: D2 is decided as three required answers and a recommended census, in `readiness.ts` and one presence rule in the database (US-1.2, B-2.2). D2 adds no workers' comp, EIN or contractor sections. Voice `<extract>` data still goes through the lenient sanitiser. `chamber-extract` keeps its own field list, every field but the census since B-1.1 (`schemaSync.test.ts` holds it to `ChamberData`), checked value by value against the schema. Nothing checks the field table in `docs/intake-schema.md` against the code (the JSON file is checked). Zero-versus-absent is untested, and the Review tab shows 0 as a dash.
+  - Remaining schema work (found by B-1.1): the epic's categories that have no field at all, so chat can't extract them: workers' comp basics, the legal and business address, a prior PEO arrangement, total payroll estimates, a dependent coverage summary, a contractor count and the list of entities. Each needs a migration, the client's constants and a schema v1 property ("Adding a field" in `docs/intake-schema.md`), and then a line in `chamber-extract`'s field list and prompt. D2 requires none of them, so the status stands.
 
 #### A-2.2 Server-side validation and versioned writes
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1, A-1.2 · **Milestone:** M1
@@ -325,14 +327,30 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic B: Make AI Extraction Auditable and Useful
 
-*As built:* Provenance, conflict handling, confirm-or-edit controls and failure states are built. The extraction function loads and is tested. Prompt versioning and a live extraction eval are built and wait on a first recorded baseline, and the follow-up policy is not started.
+*As built:* Provenance, conflict handling, confirm-or-edit controls and failure states are built. The extraction function loads and is tested, and chat extracts every intake field except the census. Prompt versioning and a live extraction eval are built and wait on a first recorded baseline, and the follow-up policy is not started.
 
 *Re-scoped (2026-11-03):* the remaining work in this epic is planned as US-2.1 to US-2.4 and their nine child stories, under "US-2.1 to US-2.4" at the end of this epic (decisions D17 to D33). Vocabulary follows `GLOSSARY.md`.
 
 #### B-1.1 Extraction response contract and parser
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1 · **Milestone:** M1
-- **Built:** `chamber-extract` keeps only 17 allow-listed fields with a per-field `field_status` and `evidence` (up to 200 characters) and returns `{extracted, field_status, evidence, corrected_fields, reply, rejected}` (plus `prompt_version`, B-1.4); the shaping is in `extraction.ts` and the tool schema now asks the model for all of it. The client's `sanitizeChamberPatch` validates. An empty extraction yields a fallback reply.
-- **Remaining:** `chamber-extract` now refuses each field whose value breaks intake schema v1 and lists it in `rejected`, logging its path (A-2.1). Invalid fields are still refused one by one rather than the whole response being rejected. Unknown field paths are dropped without being logged. The contract version moved to B-1.4 (`PROMPT_VERSION`, one version for the prompt, the tool schema and the response shape).
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1 · **Milestone:** M1
+- **Built:** `chamber-extract` now asks the model for every intake field except the census. `FIELD_TYPES` (`chamber-extract/schema.ts`) holds all 41: the 24 it lacked are the entities and FEIN count, rate history, waiting period, ancillary benefits, retirement plan type and employer contribution, funding lead time, the nonexempt and exempt mix, PTO types and accrual, when the handbook was updated, HR staff, three ways of keeping time, shift differentials, the HRIS, and schema v2's four workers' comp answers (carrier, renewal date, experience mod, annual premium). Each is a string, a whole number, a decimal (the experience mod), a boolean or a list of strings, and `SYSTEM_PROMPT` defines each in one line, worded to the intake schema (whole numbers from 0 to 1,000,000 unless a field says otherwise, the experience mod from 0 to 10, the premium up to 100,000,000 dollars, text up to 1,000 characters, lists of up to 100 items as arrays, never a comma string). `has_401k` is defined as any employer retirement plan, as the workspace labels and shows it, and the answers the workspace shows only beside a flag (the FEIN count, the plan type and match, the nonexempt and exempt counts) ask for that flag with them. `src/data/schemaSync.test.ts` fails when a `ChamberData` field other than the census is missing from `FIELD_TYPES` or typed differently from the kind the workspace edits it as (`FIELD_KINDS`), and `extraction.test.ts` when a field has no definition in the prompt, a caps line drifts from the schema, or a flag goes missing. The response is `{extracted, field_status, evidence, corrected_fields, reply, rejected, prompt_version}`, shaped in `extraction.ts`, with a per-field `field_status` and `evidence` (up to 200 characters). Each value is checked against the intake schema as sent: one that breaks it is refused on its own, listed in `rejected` and its path logged as `EXTRACTION_REFUSED` (A-2.1), and the valid fields and Lenore's reply still apply. The browser's sanitiser also drops field by field, and the database refuses a bad shape on save (A-2.2). A key outside the field list is dropped on the server. Tool arguments that aren't JSON are answered with a 502 `invalid_response` ("Lenore's answer didn't come through. Please try again.", US-2.4a), which the browser shows with Try again and Continue manually (B-3.2). Anthropic is asked for up to 8,192 tokens (`CHAT_MAX_TOKENS`), room for every field with its quote and a reply, where the adapter's default of 1,024 would cut a dense answer off; a reply cut off at the cap is answered with the same 502, since its tool input may be partial. An extraction with nothing in it still gets a reply: the model's, or the browser's own line when it sends none. The contract version is `PROMPT_VERSION` (main's integer, US-2.4a, carrying B-1.4's stamp), now 2. The eval's ten fixtures now also assert two entities with two FEINs, the hourly and salaried mix, a retirement plan that isn't a 401(k) (a SIMPLE IRA) with its match, the funding lead time, ancillary benefits as a list, two timekeeping answers (one a negation) and the HRIS; the nothing-extractable fixture's must-stay-empty list is the field list, so it covers the new fields. The eval asks the provider for the same reply budget. Tested in `extraction.test.ts` (the new kinds kept, wrong shapes refused, every field defined, the caps and flags in the prompt), `handler.test.ts` (unreadable tool arguments, the reply budget, a reply cut off at it), `providers.test.ts`, `schemaSync.test.ts` and the eval's stub-model tests (`runner.test.ts`, `fixtures.test.ts`).
+- **Notes:**
+  - **Revised.** v1.0 rejected the whole response when any of it didn't conform. A bad value now costs only its own field, so the prospect keeps the valid answers and Lenore's reply, and the database still refuses a bad shape whatever the browser sends.
+  - Keys outside the field list are dropped but not logged. Logging their paths is deferred to M2.
+  - The eval's baseline must be recorded with a live provider key for prompt version 2; none is committed yet (B-1.4).
+  - Categories the epic names that have no field yet can't be extracted until the schema has them; they are listed in A-2.1's Notes as remaining schema work.
+  - The Anthropic adapter is shared, so a `document-extract` read cut off at its own cap (4,096 tokens) now fails like an unreadable reply instead of keeping part of the list.
+  - Voice is unchanged: the ElevenLabs agent has its own prompt, and its `<extract>` data still goes through the lenient sanitiser.
+- *Revised scope, AC and tests:*
+  - **Scope:** The model returns field updates, each with a value, status and short evidence quote, plus a `reply`, for any intake field except the census. The server checks each value against the intake schema and keeps or refuses it on its own. Only fields on the list are kept.
+  - **AC:**
+    - A value that doesn't conform is refused, listed in `rejected` and its path logged; the valid fields and the reply still apply, and the database refuses the shape if it is ever sent.
+    - A key outside the field list is dropped on the server.
+    - Output that can't be parsed, or is cut off at the token cap, is a 502, and the browser offers Try again and Continue manually.
+    - A response with no extractable data still returns a conversational reply.
+    - The contract is versioned and stored with each extracted value (B-1.4).
+    - Chat can extract every existing intake field except the census.
+  - **Tests:** An invalid state code, a negative or fractional count and a list sent as text are refused alone. An unknown field is dropped. Unparseable tool arguments and a reply cut off at Anthropic's cap get a 502, and Anthropic is given room for a full answer. An empty extraction is still versioned. The field list matches `ChamberData` and `FIELD_KINDS`, and the prompt defines every field. The eval's fixtures cover the new fields.
 
 #### B-1.2 Merge policy and conflict capture
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** B-1.1, A-2.2 · **Milestone:** M1
@@ -1243,7 +1261,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | A-2.3 | Hydrate the Chamber workspace from saved data | M | Highest | M1 | DONE |
 | A-3.1 | Store transcript messages as ordered rows | S | High | M1 | SUPERSEDED |
 | A-3.2 | Restore the transcript on resume | S | High | M1 | DONE |
-| B-1.1 | Extraction response contract and parser | M | Highest | M1 | PARTIAL |
+| B-1.1 | Extraction response contract and parser | M | Highest | M1 | DONE |
 | B-1.2 | Merge policy and conflict capture | M | Highest | M1 | DONE |
 | B-1.3 | Lenore follow-up policy and completion state | M | Highest | M1 | NOT STARTED |
 | B-1.4 | Prompt versioning and golden-transcript fixtures | S | High | M1 | PARTIAL |

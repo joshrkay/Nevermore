@@ -50,7 +50,7 @@ Postgres jsonb refuses NUL and unpaired surrogate characters before any trigger 
 
 Every field belongs to a section and is either required or recommended, with a rank: see "Sections, required fields and rank" below. The table is generated from the schema's `x-intake` annotations, and `src/data/intakeSchemaDoc.test.ts` fails while it differs from them.
 
-Writers: **C** chat extraction (`chamber-extract`), **D** document candidates (`document-extract`; a census sheet also supplies `census`, `employee_count`, `states`, `has_1099` and `ca_contractors`), **V** voice `<extract>` JSON (accepts any key), **E** hand edit in the workspace.
+Writers: **C** chat extraction (`chamber-extract`, which asks for every field but the census), **D** document candidates (`document-extract`; a census sheet also supplies `census`, `employee_count`, `states`, `has_1099` and `ca_contractors`), **V** voice `<extract>` JSON (accepts any key), **E** hand edit in the workspace.
 
 | Section | Key | Label | Kind | Required | Rank | Writers |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -58,8 +58,8 @@ Writers: **C** chat extraction (`chamber-extract`), **D** document candidates (`
 | Company | `employee_count` | Employee count | count | Recommended | 5 | C D V E |
 | Company | `industry` | Industry | text | Recommended | 6 | C D V E |
 | Company | `start_month` | Target start | text | Recommended | 15 | C D V E |
-| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 16 | V E |
-| Company | `fein_count` | FEIN count | count | Recommended | 17 | V |
+| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 16 | C V E |
+| Company | `fein_count` | FEIN count | count | Recommended | 17 | C V |
 | Locations | `states` | States of operation | state list | Required | 2 | C D V E |
 | Locations | `hq_state` | HQ state | state | Recommended | 7 | C D V E |
 | Census | `census` | Employee census | census (read-only in the workspace) | Required | 4 | D V |
@@ -68,32 +68,32 @@ Writers: **C** chat extraction (`chamber-extract`), **D** document candidates (`
 | Benefits | `current_carrier` | Current carrier | text | Recommended | 8 | C D V E |
 | Benefits | `renewal_date` | Renewal date | text | Recommended | 9 | C D V E |
 | Benefits | `virgin_medical` | First-time medical coverage | boolean | Recommended | 18 | C D V |
-| Benefits | `rate_history` | Rate history | text | Recommended | 19 | D V E |
-| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 20 | D V E |
-| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 21 | D V E |
+| Benefits | `rate_history` | Rate history | text | Recommended | 19 | C D V E |
+| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 20 | C D V E |
+| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 21 | C D V E |
 | Benefits | `has_401k` | Retirement plan | boolean | Recommended | 22 | C D V E |
-| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 23 | D V |
-| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 24 | D V |
+| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 23 | C D V |
+| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 24 | C D V |
 | Payroll | `pay_frequency` | Pay frequency | text (free text, not an enum) | Required | 3 | C D V E |
 | Payroll | `payroll_vendor` | Payroll vendor | text | Recommended | 10 | C D V E |
-| Payroll | `funding_days` | Funding lead time | count | Recommended | 25 | V E |
-| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 26 | V |
-| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 27 | D V |
-| Payroll | `exempt_count` | Exempt count | count | Recommended | 28 | D V |
-| Payroll | `pto_types` | PTO types | text list | Recommended | 29 | V E |
-| Payroll | `accrual_method` | Accrual method | text | Recommended | 30 | V E |
-| Workers' comp | `wc_carrier` | Workers' comp carrier | text | Recommended | 11 | V |
-| Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | V |
-| Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | V |
-| Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | V |
+| Payroll | `funding_days` | Funding lead time | count | Recommended | 25 | C V E |
+| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 26 | C V |
+| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 27 | C D V |
+| Payroll | `exempt_count` | Exempt count | count | Recommended | 28 | C D V |
+| Payroll | `pto_types` | PTO types | text list | Recommended | 29 | C V E |
+| Payroll | `accrual_method` | Accrual method | text | Recommended | 30 | C V E |
+| Workers' comp | `wc_carrier` | Workers' comp carrier | text | Recommended | 11 | C V |
+| Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | C V |
+| Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | C V |
+| Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | C V |
 | Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 31 | C D V |
-| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 32 | V |
-| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 33 | V |
-| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 36 | V |
-| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 37 | V |
-| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 38 | V |
-| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 39 | V |
-| Operations & HR | `hris_system` | HRIS system | text | Recommended | 40 | V |
+| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 32 | C V |
+| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 33 | C V |
+| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 36 | C V |
+| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 37 | C V |
+| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 38 | C V |
+| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 39 | C V |
+| Operations & HR | `hris_system` | HRIS system | text | Recommended | 40 | C V |
 | Operations & HR | `key_challenges` | Key challenges | text | Recommended | 41 | C V |
 | Operations & HR | `business_goals` | Business goals | text | Recommended | 42 | C V |
 
@@ -194,8 +194,9 @@ A new field is a new schema version, because the schema refuses unknown keys. As
 1. A migration adds the key to `public.chamber_data_field_kind` with its kind, and a second one moves `schema_version` on (see "Versions").
 2. In `supabase/functions/_shared/intakeSchema.ts`, add the field to `FIELDS` (rule, section, label), rank it if it belongs before schema order, and raise `INTAKE_SCHEMA_VERSION`. Then add it to `ChamberData`, `EMPTY_CHAMBER_DATA`, `FIELD_SCHEMAS` and `FIELD_KINDS`.
 3. Run `npm run schema:intake` to publish `docs/intake-schema.v<N>.json`, and regenerate the field table above.
+4. Add it to chat extraction: `FIELD_TYPES` and a one-line definition in `SYSTEM_PROMPT` (`supabase/functions/chamber-extract/schema.ts`), with a new `PROMPT_VERSION` and its fingerprints (`supabase/functions/_shared/ai/promptVersion.test.ts`).
 
-`src/data/schemaSync.test.ts` compares the SQL key list, kinds, state codes and caps with the client constants and the schema, reading each `sync:` block from the latest migration that defines its function, so a field added on one side only fails CI. The database refuses an unknown top-level key, so a front end shipped ahead of its migration would fail every save.
+`src/data/schemaSync.test.ts` compares the SQL key list, kinds, state codes and caps with the client constants and the schema, reading each `sync:` block from the latest migration that defines its function, and `FIELD_TYPES` with `ChamberData` and `FIELD_KINDS`, so a field added on one side only fails CI. The database refuses an unknown top-level key, so a front end shipped ahead of its migration would fail every save.
 
 ### Employee census (`chamber_data.census`)
 
@@ -301,6 +302,8 @@ These rules run in the browser, and the database checks only that `field_provena
 ### Extraction contract (`chamber-extract`)
 
 The request is `{ message, context, session_id }`: the prospect's message, the answers captured so far (the census left out), and the intake id, which must be the caller's own intake. The response is `{ extracted, field_status, evidence, corrected_fields, reply, rejected, prompt_version, request_id }`; a failure is `{ error, code, request_id }` (codes, limits and the extraction event each call leaves: `docs/AI_OPERATIONS.md`). An answer without the forced tool call is `invalid_response`, not an empty extraction. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`. A field enters `extracted` only if the intake schema accepts the model's value exactly as sent. A lower-case `"ny"`, a state list with one unknown code, `12.5` people or a string of digits is refused and listed in `rejected` as `{ path, reason }`. The browser ignores `rejected`.
+
+The tool asks for every `ChamberData` field except the census (`FIELD_TYPES` in `chamber-extract/schema.ts`), as a string, a whole number, a decimal (the experience mod), a boolean or a list of strings, and `SYSTEM_PROMPT` defines each one in a line, with this schema's caps (counts 0 to 1,000,000, the experience mod 0 to 10, the workers' comp premium up to 100,000,000 dollars, text up to 1,000 characters, lists up to 100 items). `has_401k` means any employer retirement plan, as the workspace labels it. The workspace shows `fein_count`, `retirement_type`, `employer_contributes`, `nonexempt_count` and `exempt_count` only beside their flag (`multiple_entities`, `has_401k`, `has_nonexempt`), so the prompt asks for the flag with each. `src/data/schemaSync.test.ts` fails when a field is missing from `FIELD_TYPES` or typed differently from the kind the workspace edits it as (`FIELD_KINDS`). A bad value costs only its own field: the rest of the extraction and Lenore's reply still apply. A key outside the field list is dropped without being logged. A reply whose tool arguments aren't JSON, or one Anthropic cut off at its cap (`CHAT_MAX_TOKENS`, 8,192 tokens, room for every field with its quote), is answered with a 502 `invalid_response`, "Lenore's answer didn't come through. Please try again.", and the browser offers Try again and Continue manually; nothing from it is kept.
 
 ### Extraction contract version and eval
 

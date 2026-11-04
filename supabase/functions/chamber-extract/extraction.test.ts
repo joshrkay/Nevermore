@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { emptyExtraction, shapeExtraction } from "./extraction";
+import { LIMITS } from "../_shared/intakeSchema";
 import { EXTRACT_TOOL, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 
 describe("shapeExtraction", () => {
@@ -43,6 +44,38 @@ describe("shapeExtraction", () => {
     expect(shaped.corrected_fields).toEqual([]);
     expect(shaped.rejected.map((issue) => issue.path)).toEqual(["hq_state", "states[1]", "employee_count", "has_401k", "key_challenges"]);
     expect(shaped.rejected.find((issue) => issue.path === "key_challenges")?.reason).toBe("must be at most 1000 characters");
+  });
+
+  it("keeps answers beyond the company profile: entities, benefits, payroll, HR and timekeeping", () => {
+    const answers = {
+      multiple_entities: true,
+      fein_count: 2,
+      rate_history: "up 12% last year",
+      benefits_waiting_period: "30 days",
+      ancillary_benefits: ["Dental", "Vision"],
+      retirement_type: "SIMPLE IRA",
+      employer_contributes: false,
+      funding_days: 2,
+      has_nonexempt: true,
+      nonexempt_count: 8,
+      exempt_count: 0,
+      pto_types: ["Vacation", "Sick"],
+      accrual_method: "per pay period",
+      handbook_last_updated: "2024",
+      hr_staff_count: 1,
+      uses_physical_clocks: false,
+      uses_mobile_app: true,
+      uses_computer_timekeeping: true,
+      shift_differentials: false,
+      hris_system: "Thistledown HR",
+    };
+    expect(shapeExtraction(answers)).toMatchObject({ extracted: answers, rejected: [] });
+  });
+
+  it("refuses a count that isn't a whole number of 0 or more, and a list sent as one string", () => {
+    const shaped = shapeExtraction({ fein_count: -1, ancillary_benefits: "Dental, Vision", funding_days: 2.5, uses_mobile_app: "yes", hris_system: "Thistledown HR" });
+    expect(shaped.extracted).toEqual({ hris_system: "Thistledown HR" });
+    expect(shaped.rejected.map((issue) => issue.path)).toEqual(["fein_count", "ancillary_benefits", "funding_days", "uses_mobile_app"]);
   });
 
   it("never echoes a refused value in its reasons", () => {
@@ -138,6 +171,33 @@ describe("extraction tool schema", () => {
     expect(Object.keys(properties.evidence.properties ?? {})).toEqual(FIELDS);
     expect(properties).toHaveProperty("corrected_fields");
     expect(properties).toHaveProperty("reply");
+  });
+
+  // A field the tool asks for with no definition leaves the model to guess what it means.
+  it("defines every field it asks for in the system prompt", () => {
+    const defined = new Set([...SYSTEM_PROMPT.matchAll(/^- (\w+): \S/gm)].map((m) => m[1]));
+    expect(FIELDS.filter((field) => !defined.has(field))).toEqual([]);
+  });
+
+  const definition = (field: string) => SYSTEM_PROMPT.match(new RegExp(`^- ${field}: (.*)$`, "m"))?.[1] ?? "";
+
+  // The workspace labels has_401k "Retirement plan", and shows the plan type and match only while it is true.
+  it("defines has_401k as any retirement plan, not only a 401(k)", () => {
+    expect(definition("has_401k")).toMatch(/any .*retirement plan/i);
+  });
+
+  // The workspace shows each of these only beside its flag (the FEIN count while multiple_entities is true,
+  // the plan type and match while has_401k is, the counts once has_nonexempt is answered), so one sent alone is hidden.
+  it("asks for the flag with each answer the workspace only shows beside it", () => {
+    const flags = { fein_count: "multiple_entities", retirement_type: "has_401k", employer_contributes: "has_401k", nonexempt_count: "has_nonexempt", exempt_count: "has_nonexempt" };
+    for (const [field, flag] of Object.entries(flags)) expect(definition(field), field).toContain(`report ${flag}`);
+  });
+
+  // Intake schema v1 refuses a value past its caps, so the prompt states them.
+  it("states intake schema v1's caps on counts, text and lists", () => {
+    expect(SYSTEM_PROMPT).toContain(`whole numbers from 0 to ${LIMITS.count.toLocaleString("en-US")}`);
+    expect(SYSTEM_PROMPT).toContain(`at most ${LIMITS.text.toLocaleString("en-US")} characters`);
+    expect(SYSTEM_PROMPT).toContain(`at most ${LIMITS.listItems} items`);
   });
 
   it("tells the model how to report status, evidence and corrections", () => {

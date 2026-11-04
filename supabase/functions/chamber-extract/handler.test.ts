@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleRequest, type HandlerDeps, type SupabaseLike } from "./handler";
-import { EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
+import { EXTRACT_TOOL, FIELD_TYPES, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema";
 
 const USER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -17,8 +17,13 @@ const ENV: Record<string, string | undefined> = {
   LOVABLE_API_KEY: "lovable-key",
 };
 
-const gatewayReply = (args: Record<string, unknown>) =>
-  new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: JSON.stringify(args) } }] } }] }), { status: 200 });
+// The gateway sends the tool's arguments as a JSON string, which the model can garble.
+const gatewayArguments = (args: string) =>
+  new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: args } }] } }] }), { status: 200 });
+const gatewayReply = (args: Record<string, unknown>) => gatewayArguments(JSON.stringify(args));
+const anthropicReply = (input: Record<string, unknown>, stopReason = "tool_use") =>
+  new Response(JSON.stringify({ stop_reason: stopReason, content: [{ type: "tool_use", name: "extract_chamber_data", input }] }), { status: 200 });
+const ANTHROPIC = { AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "anthropic-key", LOVABLE_API_KEY: undefined };
 const providerError = (status: number, body = "provider says no") => new Response(body, { status });
 
 interface Setup {
@@ -285,6 +290,31 @@ describe("chamber-extract handler: what is sent to the model", () => {
     expect(body.extracted).toEqual({ company_name: "Acme" });
     expect(t.event()).toMatchObject({ provider: "anthropic", model: "claude-haiku-5-5" });
   });
+
+  // Each field reported costs a value, a status and a quote of up to MAX_EVIDENCE_CHARS. At 3 characters a
+  // token (JSON keys and punctuation tokenize worse than prose), an answer to every field must still fit.
+  it("gives Anthropic room for an answer that reports every field with its evidence, and a reply", async () => {
+    const sample = (schema: unknown) => {
+      switch ((schema as { type: string }).type) {
+        case "integer": return 1_000_000;
+        case "boolean": return false;
+        case "array": return ["x".repeat(20), "x".repeat(20), "x".repeat(20)];
+        default: return "x".repeat(40);
+      }
+    };
+    const everyField = (value: (field: string) => unknown) => Object.fromEntries(FIELDS.map((field) => [field, value(field)]));
+    const answer = {
+      ...everyField((field) => sample(FIELD_TYPES[field])),
+      field_status: everyField(() => "incomplete"),
+      evidence: everyField(() => "x".repeat(MAX_EVIDENCE_CHARS)),
+      corrected_fields: [],
+      reply: "x".repeat(400),
+    };
+    const t = setup({ env: ANTHROPIC, responses: [anthropicReply({})] });
+    await handleRequest(post({ message: "hi" }), t.deps);
+    const sent = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string);
+    expect(sent.max_tokens).toBeGreaterThanOrEqual(Math.ceil(JSON.stringify(answer).length / 3));
+  });
 });
 
 describe("chamber-extract handler: the answer", () => {
@@ -387,6 +417,24 @@ describe("chamber-extract handler: when the provider fails", () => {
     expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=${INTAKE} provider=lovable kind=provider_error status=500 attempts=2 latency_ms=0`]);
     expect(t.event()).toMatchObject({ error_code: "provider_error", http_status: 502, attempts: 2 });
     expect(JSON.stringify(body) + t.logs.join("\n") + JSON.stringify(t.events)).not.toMatch(new RegExp(`${leak}|12345`));
+  });
+
+  // Nothing is kept from a reply that can't be read: the browser offers Try again and Continue manually.
+  it("answers tool arguments that aren't JSON with a 502 to try again, logging neither them nor the message", async () => {
+    const t = setup({ responses: [gatewayArguments('{"company_name": "Acme')] });
+    const { status, body } = await read(await handleRequest(post({ message: "we're Acme" }), t.deps));
+    expect(status).toBe(502);
+    expect(body).toEqual({ error: "Lenore's answer didn't come through. Please try again.", code: "invalid_response", request_id: REQUEST });
+    expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=- provider=lovable kind=invalid_response status=200 attempts=1 latency_ms=0`]);
+  });
+
+  // A reply cut off at its token cap has lost answers, and the tool input it holds may be partial.
+  it("answers an Anthropic reply cut off at its token cap with a 502 to try again, keeping none of it", async () => {
+    const t = setup({ env: ANTHROPIC, responses: [anthropicReply({ company_name: "Acme" }, "max_tokens")] });
+    const { status, body } = await read(await handleRequest(post({ message: "we're Acme" }), t.deps));
+    expect(status).toBe(502);
+    expect(body).toEqual({ error: "Lenore's answer didn't come through. Please try again.", code: "invalid_response", request_id: REQUEST });
+    expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=- provider=anthropic kind=invalid_response status=200 attempts=1 latency_ms=0`]);
   });
 
   it("reports exhausted provider credits as unavailable, without mentioning billing", async () => {

@@ -5,7 +5,7 @@ import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { chatContext } from "@/data/chat";
 import type { ModelRequest, ModelResult } from "../../supabase/functions/_shared/ai/model";
 import { buildUserPrompt, serializeContext } from "../../supabase/functions/chamber-extract/prompt";
-import { PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema";
+import { CHAT_MAX_TOKENS, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema";
 import { FIXTURES, type Fixture } from "./fixtures";
 import { connectProvider, main, runFixture, runFixtures, type Connection, type MainDeps, type ModelCall } from "./runner";
 import { parseBaseline } from "./scoring";
@@ -20,9 +20,17 @@ const CANNED: Record<string, Record<string, unknown> | null> = {
     field_status: confirmed("company_name", "hq_state", "states", "employee_count"),
     evidence: { company_name: "We're Mossgate Ceramics LLC" },
   },
+  "We run it as two companies, each with its own FEIN, and keep employee records in Thistledown HR.": {
+    multiple_entities: true, fein_count: 2, hris_system: "Thistledown HR",
+    field_status: { multiple_entities: "confirmed", fein_count: "inferred", hris_system: "confirmed" },
+  },
   "I run a dental practice in Austin with 14 people on staff.": {
     industry: "Dental practice", hq_state: "TX", employee_count: 14,
     field_status: { industry: "confirmed", hq_state: "inferred", employee_count: "confirmed" },
+  },
+  "Ten of them are hourly; the other four are salaried.": {
+    has_nonexempt: true, nonexempt_count: 10, exempt_count: 4,
+    field_status: { has_nonexempt: "inferred", nonexempt_count: "confirmed", exempt_count: "confirmed" },
   },
   "We have people in a few states, mainly CA.": { states: ["CA"], field_status: { states: "incomplete" } },
   "Our whole team works in Colorado.": { states: ["CO"], field_status: confirmed("states") },
@@ -37,15 +45,24 @@ const CANNED: Record<string, Record<string, unknown> | null> = {
     key_challenges: "We're Wrenfield Bakery with 12 employees. For your records, my SSN is [redacted].",
     evidence: { key_challenges: "my SSN is [redacted]" },
   },
-  "We run payroll bi-weekly through Quillfeather Payroll, and we offer a 401(k).": {
-    pay_frequency: "Bi-weekly", payroll_vendor: "Quillfeather Payroll", has_401k: true,
-  },
+  "We run payroll bi-weekly through Quillfeather Payroll.": { pay_frequency: "Bi-weekly", payroll_vendor: "Quillfeather Payroll" },
   "Our health plan is with Hollowbrook Mutual, and it renews on 2027-03-01.": {
     current_carrier: "Hollowbrook Mutual", renewal_date: "2027-03-01", virgin_medical: false,
+  },
+  // A list in its own case and order: the eval compares lists as sets, ignoring case.
+  "For retirement we offer a SIMPLE IRA, and we match up to 3%. We also offer dental and vision.": {
+    has_401k: true, retirement_type: "SIMPLE IRA", employer_contributes: true, ancillary_benefits: ["Vision", "Dental"],
+  },
+  "Payroll has to be funded 2 days before payday.": { funding_days: 2, field_status: confirmed("funding_days") },
+  "Workers' comp is with Granite Mutual, renews 2027-07-01, our mod is 0.92 and we pay about $48,000 a year for it.": {
+    wc_carrier: "Granite Mutual", wc_renewal_date: "2027-07-01", wc_experience_mod: 0.92, wc_annual_premium: 48000,
   },
   "We don't have an employee handbook.": { has_handbook: false, field_status: confirmed("has_handbook") },
   "We do use a few 1099 contractors, including two in California.": {
     has_1099: true, ca_contractors: true, field_status: confirmed("has_1099", "ca_contractors"),
+  },
+  "Our hourly staff clock in on a mobile app. We don't use physical time clocks.": {
+    uses_mobile_app: true, uses_physical_clocks: false, field_status: confirmed("uses_mobile_app", "uses_physical_clocks"),
   },
 };
 
@@ -161,6 +178,19 @@ describe("connectProvider", () => {
   it("names the missing key", () => {
     expect(connectProvider(() => undefined)).toEqual({ ok: false, problem: "LOVABLE_API_KEY is not set" });
   });
+
+  it("gives Anthropic the reply budget chamber-extract gives it", async () => {
+    const reply = new Response(JSON.stringify({ stop_reason: "tool_use", content: [] }), { status: 200 });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(reply);
+    try {
+      const anthropic = connectProvider((name) => ({ AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "k" })[name]);
+      if (!anthropic.ok) throw new Error(anthropic.problem);
+      await anthropic.call({ system: "s", user: "u" });
+      expect(JSON.parse(fetchSpy.mock.calls[0][1]?.body as string).max_tokens).toBe(CHAT_MAX_TOKENS);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 });
 
 describe("main", () => {
@@ -246,7 +276,7 @@ describe("main", () => {
   });
 
   it("runs one fixture with --only, without reporting the others as removed", async () => {
-    const t = setup({ args: ["--only", "inferred-hq"], baseline: await recordBaseline() });
+    const t = setup({ args: ["--only", "incomplete-states"], baseline: await recordBaseline() });
     expect(await main(t.deps)).toBe(0);
     expect(t.model.requests).toHaveLength(1);
     expect(t.output()).not.toContain("No longer asserted");

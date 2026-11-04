@@ -27,22 +27,34 @@ export interface Fixture {
 export const FIXTURES: Fixture[] = [
   {
     id: "clean-profile",
-    description: "A company profile stated outright: every value is confirmed.",
-    turns: [{ message: "We're Mossgate Ceramics LLC, headquartered in Oregon. All 23 of our employees work in Oregon." }],
+    description: "A company profile stated outright, every value confirmed; then its entities and HR system.",
+    turns: [
+      { message: "We're Mossgate Ceramics LLC, headquartered in Oregon. All 23 of our employees work in Oregon." },
+      { message: "We run it as two companies, each with its own FEIN, and keep employee records in Thistledown HR." },
+    ],
     expected: {
       company_name: { value: "Mossgate Ceramics LLC", status: "confirmed" },
       hq_state: { value: "OR", status: "confirmed" },
       states: { value: ["OR"], status: "confirmed" },
       employee_count: { value: 23, status: "confirmed" },
+      multiple_entities: { value: true },
+      fein_count: { value: 2 },
+      hris_system: { value: "Thistledown HR" },
     },
   },
   {
     id: "inferred-hq",
-    description: "One message with a stated value and an inferred one: a practice in Austin is headquartered in Texas.",
-    turns: [{ message: "I run a dental practice in Austin with 14 people on staff." }],
+    description: "A stated value and an inferred one (a practice in Austin is headquartered in Texas), then the staff's mix of hourly and salaried.",
+    turns: [
+      { message: "I run a dental practice in Austin with 14 people on staff." },
+      { message: "Ten of them are hourly; the other four are salaried." },
+    ],
     expected: {
       employee_count: { value: 14, status: "confirmed" },
       hq_state: { value: "TX", status: "inferred" },
+      has_nonexempt: { value: true },
+      nonexempt_count: { value: 10 },
+      exempt_count: { value: 4 },
     },
   },
   {
@@ -100,11 +112,14 @@ export const FIXTURES: Fixture[] = [
   },
   {
     id: "payroll-benefits",
-    description: "Payroll and benefits details across two messages.",
+    description: "Payroll, benefits and workers' comp details across five messages: a retirement plan that isn't a 401(k) still counts as one, a list of benefits, and a decimal experience mod.",
     turns: [
-      { message: "We run payroll bi-weekly through Quillfeather Payroll, and we offer a 401(k)." },
+      { message: "We run payroll bi-weekly through Quillfeather Payroll." },
       // The prompt names no date format, so the date is written as the model is likeliest to echo it.
       { message: "Our health plan is with Hollowbrook Mutual, and it renews on 2027-03-01." },
+      { message: "For retirement we offer a SIMPLE IRA, and we match up to 3%. We also offer dental and vision." },
+      { message: "Payroll has to be funded 2 days before payday." },
+      { message: "Workers' comp is with Granite Mutual, renews 2027-07-01, our mod is 0.92 and we pay about $48,000 a year for it." },
     ],
     expected: {
       pay_frequency: { value: "bi-weekly" },
@@ -112,19 +127,30 @@ export const FIXTURES: Fixture[] = [
       has_401k: { value: true },
       current_carrier: { value: "Hollowbrook Mutual" },
       renewal_date: { value: "2027-03-01" },
+      retirement_type: { value: "SIMPLE IRA" },
+      employer_contributes: { value: true },
+      ancillary_benefits: { value: ["dental", "vision"] },
+      funding_days: { value: 2 },
+      wc_carrier: { value: "Granite Mutual" },
+      wc_renewal_date: { value: "2027-07-01" },
+      wc_experience_mod: { value: 0.92 },
+      wc_annual_premium: { value: 48000 },
     },
   },
   {
     id: "booleans-negations",
-    description: "Yes-or-no answers, including a negation: no handbook is false, not blank.",
+    description: "Yes-or-no answers, including negations: no handbook and no time clocks are false, not blank.",
     turns: [
       { message: "We don't have an employee handbook." },
       { message: "We do use a few 1099 contractors, including two in California." },
+      { message: "Our hourly staff clock in on a mobile app. We don't use physical time clocks." },
     ],
     expected: {
       has_handbook: { value: false, status: "confirmed" },
       has_1099: { value: true },
       ca_contractors: { value: true },
+      uses_mobile_app: { value: true },
+      uses_physical_clocks: { value: false },
     },
   },
 ];
