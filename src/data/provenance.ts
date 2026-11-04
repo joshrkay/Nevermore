@@ -446,6 +446,12 @@ export interface FieldOpenItem {
   reason: FieldOpenReason;
 }
 
+/**
+ * The statuses that leave a field open, most pressing first. The advisor queue counts the same ones
+ * (`open_item_statuses` in its migration; src/data/schemaSync.test.ts compares them).
+ */
+export const OPEN_FIELD_STATUSES = ["conflicting", "incomplete", "unknown", "inferred"] as const satisfies readonly FieldStatus[];
+
 /** What the prospect is told about a field in each status that still needs them. */
 export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_applicable">, FieldOpenReason> = {
   conflicting: "Conflicting answers",
@@ -460,8 +466,7 @@ export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_
  * verified it) is settled whatever its status, so it is left out too.
  */
 export function fieldOpenItems(provenance: ProvenanceMap, verified: ReadonlySet<string> = new Set()): FieldOpenItem[] {
-  const order = ["conflicting", "incomplete", "unknown", "inferred"] as const;
-  return order.flatMap((status) =>
+  return OPEN_FIELD_STATUSES.flatMap((status) =>
     FIELD_KEYS.filter((f) => provenance[f]?.status === status && !verified.has(f)).map((field) => ({
       field,
       label: FIELD_LABELS[field],

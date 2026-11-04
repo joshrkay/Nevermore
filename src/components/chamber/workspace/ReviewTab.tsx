@@ -6,7 +6,8 @@ import { FIELD_LABELS, formatFieldValue, type FieldAction, type FieldKey, type P
 import { isSettled } from "@/data/followUp";
 import { openItems } from "@/data/openItems";
 import { REVIEW_FIELDS } from "@/data/reviewFields";
-import { conflictingRequired, missingRecommendedItems, missingRequired, type ReadinessItem, type ReviewSection } from "@/data/readiness";
+import { missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
+import { certificationBlockingItems, NO_VERIFIED_FIELDS, requiredItems, type RequiredItem } from "@/data/requiredItems";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
 import { CheckCircle, AlertTriangle, HelpCircle, FileText } from "lucide-react";
@@ -80,6 +81,9 @@ function sectionProgress(section: ReviewSection, data: ChamberData, provenance: 
 }
 
 const rowId = (field: FieldKey) => `review-field-${field}`;
+// What the open-items list says of a field that is open for its status, as against a required answer still to give.
+const STATUS_REASONS: ReadonlySet<string> = new Set(["Conflicting answers", "Incomplete", "Prospect to provide", "Please confirm"]);
+
 const sectionId = (section: ReviewSection) => `review-section-${section}`;
 
 /** Brings an answer into view and puts the keyboard on its Add or Edit button. */
@@ -88,6 +92,17 @@ function jumpTo(item: Pick<ReadinessItem, "field" | "section">) {
   target?.scrollIntoView?.({ block: "center", behavior: "smooth" });
   target?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
 }
+
+/** Where the census is answered, for States of operation that the census decides. */
+const CENSUS_SPOT = { section: "workforce" as ReviewSection };
+
+/** Why a required answer is still needed: what to give, or that its answers disagree. */
+const stillNeededNote = (item: RequiredItem): string =>
+  item.state === "missing"
+    ? item.readiness.hint
+    : item.viaCensus
+      ? "The census's answers conflict, and it gives your states. Choose which is right."
+      : "You've given two different answers. Choose the right one.";
 
 const Section = ({ section, title, progress, children }: { section: ReviewSection; title: string; progress: { settled: number; total: number }; children: ReactNode }) => (
   <section id={sectionId(section)} aria-labelledby={`${sectionId(section)}-title`} className="bg-card border border-border rounded-xl p-6 space-y-4">
@@ -109,19 +124,29 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
     if (focusRequest > 0) headingRef.current?.focus();
   }, [focusRequest]);
   const eeCount = headcount(data);
-  // One list of open items (src/data/openItems.ts), shared with The Manuscript and the advisor queue. The required
-  // answers still to give are "Still needed", the census is "Recommended", and fields by status "Needs your review".
-  const open = openItems(data, provenance);
-  const STATUS_REASONS = new Set(["Conflicting answers", "Incomplete", "Prospect to provide", "Please confirm"]);
-  const needsReview = open.flatMap((item) => (item.field && STATUS_REASONS.has(item.reason) ? [{ ...item, field: item.field }] : []));
+  // Still needed: the required answers that block certification, missing (US-1.2) or in conflict (B-2 D26),
+  // in their fixed order, as certificationBlockingItems decides for the Reckoning too. A missing one is
+  // listed even if an advisor verified its field (verifying never supplies a value), and so is one in
+  // conflict (the database refuses it whoever verified it).
+  const stillNeeded = certificationBlockingItems(data, provenance, verified);
+  // One list of open items (src/data/openItems.ts), shared with The Manuscript and the advisor queue. The census
+  // is "Recommended", and fields by status are "Needs your review", never one an advisor verified. A field is
+  // listed once: not under "Needs your review" when "Still needed" lists it already. While the census decides
+  // States of operation, the census is the answer to confirm.
+  const open = openItems(data, provenance, verified);
+  const stillListed = new Set<string>(stillNeeded.flatMap((i) => (i.viaCensus ? [i.field, "census"] : [i.field])));
+  // The required answers given but not settled come first, in their fixed order, ahead of every other field that
+  // still needs the prospect (the sort is stable, so the rest keep the list's order).
+  const requiredOrder: string[] = requiredItems(data, provenance, verified).flatMap((i) => (i.required ? [i.viaCensus ? "census" : i.field] : []));
+  const priority = (field: string) => (requiredOrder.includes(field) ? requiredOrder.indexOf(field) : requiredOrder.length);
+  const needsReview = open
+    .flatMap((item) => (item.field && STATUS_REASONS.has(item.reason) && !stillListed.has(item.field) ? [{ ...item, field: item.field }] : []))
+    .sort((a, b) => priority(a.field) - priority(b.field));
   const checks = eligibilityChecks(data);
   const flaggedEmployees = data.census.filter(e => employeeFlag(e) !== null);
   const uploaded = documents.filter((d) => d.status !== "uploading");
   const missing = missingRecommended(uploaded);
   const submitted = submittedCategories(uploaded);
-  const required = missingRequired(data);
-  const conflicting = conflictingRequired(provenance);
-  const blocking = required.length + conflicting.length;
   const recommended = missingRecommendedItems(data).filter((item) => open.some((o) => o.key === item.key));
   const rows = rowsBySection(data);
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);

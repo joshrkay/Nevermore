@@ -132,9 +132,14 @@ const perField = (schema: unknown) => ({
   additionalProperties: false,
 });
 
-// Recorded on every extraction event. Raise it with any change to SYSTEM_PROMPT or EXTRACT_TOOL: promptVersion.test.ts
-// fails until you do, so an event always says which prompt produced it.
-export const PROMPT_VERSION = 3;
+// Versions the whole extraction contract: SYSTEM_PROMPT, EXTRACT_TOOL, the user turn (prompt.ts) and the
+// response shape. Recorded on every extraction event (US-2.4a), returned with every extraction, and stored
+// by the browser on each value's provenance (B-1.4), so a value can be traced to the prompt that produced
+// it. Raise it with any change to them: _shared/ai/promptVersion.test.ts fails until you do. See
+// "Extraction contract version and eval" in docs/intake-schema.md. Version 2 named two contracts built at
+// the same time (US-2.1b and B-1.1); 3 is the two merged; 4 adds how Lenore replies and the user turn's ready and
+// census lines (US-2.3a).
+export const PROMPT_VERSION = 4;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 

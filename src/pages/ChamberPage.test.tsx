@@ -1,10 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import type { ChatMessage } from "@/data/chat";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
-import type { ProvenanceMap } from "@/data/provenance";
+import type { ChatMessage } from "@/data/chat";
+import type { IntakeState, ProvenanceMap } from "@/data/provenance";
 import { READY_MESSAGE } from "@/data/followUp";
 
 const session = {
@@ -32,8 +31,16 @@ const session = {
   updateIntake: vi.fn(),
   addMessage: vi.fn(),
   conversationEpoch: {} as object,
+  verifiedFields: new Set<string>() as ReadonlySet<string>,
   chamberData: { ...EMPTY_CHAMBER_DATA } as ChamberData,
   provenance: {} as ProvenanceMap,
+};
+
+// What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
+const hooks = {
+  workspace: null as null | { verified?: ReadonlySet<string> },
+  voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
+  chat: null as null | { onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string }) => void },
 };
 const voice = { isConnected: false };
 const auth = {

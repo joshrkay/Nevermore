@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
-import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { applyFieldAction, FIELD_LABELS, type FieldKey, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import ReviewTab from "./ReviewTab";
 import { REVIEW_FIELDS } from "@/data/reviewFields";

@@ -4,19 +4,15 @@
 // - A required answer with none: "Not provided" ("Prospect to provide" when the prospect said they don't know).
 // - The employee census when none is uploaded: "Document needed". It is recommended, not required (D2): it never
 //   blocks certification, but underwriters need one, and it can only come from a document.
-// - Any other field whose status is conflicting, incomplete, unknown or inferred, in that order.
+// - Any other field whose status is conflicting, incomplete, unknown or inferred, in that order (fieldOpenItems),
+//   except one an advisor verified, which is settled.
 // A field marked "Doesn't apply" is closed. A recommended field with no answer is not an open item.
 import type { ChamberData } from "./chamberTypes";
-import { FIELD_LABELS, type FieldKey, type FieldStatus, type ProvenanceMap } from "./provenance";
+import { fieldOpenItems, OPEN_FIELD_STATUSES, type FieldKey, type FieldOpenReason, type ProvenanceMap } from "./provenance";
 import { missingRecommendedItems, missingRequired } from "./readiness";
+import { NO_VERIFIED_FIELDS } from "./requiredItems";
 
-export type OpenItemReason =
-  | "Not provided"
-  | "Document needed"
-  | "Conflicting answers"
-  | "Incomplete"
-  | "Prospect to provide"
-  | "Please confirm";
+export type OpenItemReason = FieldOpenReason | "Not provided" | "Document needed";
 
 export interface OpenItem {
   /** The field, or `census`; the key the advisor queue and the database name it by. */
@@ -30,19 +26,14 @@ export interface OpenItem {
  * The statuses that leave a field open, most pressing first. The advisor queue counts the same ones
  * (`open_item_statuses` in its migration; src/data/schemaSync.test.ts compares them).
  */
-export const OPEN_ITEM_STATUSES: readonly FieldStatus[] = ["conflicting", "incomplete", "unknown", "inferred"];
+export const OPEN_ITEM_STATUSES = OPEN_FIELD_STATUSES;
 
-const STATUS_REASONS: Record<string, OpenItemReason> = {
-  conflicting: "Conflicting answers",
-  incomplete: "Incomplete",
-  unknown: "Prospect to provide",
-  inferred: "Please confirm",
-};
-
-const FIELD_KEYS = Object.keys(FIELD_LABELS) as FieldKey[];
-
-/** Every open item on the intake: required answers first, then the census, then fields by status. */
-export function openItems(data: ChamberData, provenance: ProvenanceMap): OpenItem[] {
+/**
+ * Every open item on the intake: required answers first, then the census, then fields by status. `verified` are the
+ * fields an advisor verified: settled whatever their status, so never listed by status. A required answer that is
+ * missing is listed even when verified, because verifying never supplies a value.
+ */
+export function openItems(data: ChamberData, provenance: ProvenanceMap, verified: ReadonlySet<string> = NO_VERIFIED_FIELDS): OpenItem[] {
   const items: OpenItem[] = [];
   const listed = new Set<string>();
   for (const item of missingRequired(data)) {
@@ -54,12 +45,10 @@ export function openItems(data: ChamberData, provenance: ProvenanceMap): OpenIte
     items.push({ key: item.key, label: item.label, reason: "Document needed" });
     listed.add(item.key);
   }
-  for (const status of OPEN_ITEM_STATUSES) {
-    for (const field of FIELD_KEYS) {
-      if (listed.has(field) || provenance[field]?.status !== status) continue;
-      items.push({ key: field, field, label: FIELD_LABELS[field], reason: STATUS_REASONS[status] });
-      listed.add(field);
-    }
+  for (const { field, label, reason } of fieldOpenItems(provenance, verified)) {
+    if (listed.has(field)) continue;
+    items.push({ key: field, field, label, reason });
+    listed.add(field);
   }
   return items;
 }

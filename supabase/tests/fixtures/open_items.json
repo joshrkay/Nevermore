@@ -3,7 +3,7 @@
     "name": "an empty intake",
     "chamber_data": {},
     "field_provenance": {},
-    "missing": ["Company legal name", "States of operation", "Pay frequency", "Employee census"],
+    "missing": ["Company legal name", "States of operation", "Pay frequency"],
     "open_fields": 0
   },
   {
@@ -42,7 +42,7 @@
       "company_name": { "status": "unknown", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-04T00:00:00Z" },
       "industry": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-04T00:00:00Z" }
     },
-    "missing": ["Company legal name", "Employee census"],
+    "missing": ["Company legal name"],
     "open_fields": 1
   },
   {

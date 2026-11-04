@@ -1,5 +1,6 @@
 import { chatContext as requestContext, type ChatContext } from "../../supabase/functions/_shared/chatContext.ts";
 import type { ChamberData } from "./chamberTypes";
+import { censusSummary } from "./followUp";
 import type { ProvenanceMap } from "./provenance";
 import { redactSensitive } from "./sensitive";
 
@@ -120,8 +121,12 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
   });
 }
 
-/** What Lenore says when her answer has no reply in it: the conversation carries it like any other line. */
-export const CHAT_FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?";
+/**
+ * What Lenore says when her answer has no reply in it: the conversation carries it like any other line.
+ * chamber-extract always replies (when the model doesn't, it asks about the next unsettled field), so this covers
+ * a function from before it did.
+ */
+export const CHAT_FALLBACK_REPLY = "Thank you, I've noted that.";
 
 /**
  * The answers as Lenore's chat sends them to chamber-extract. The roster isn't extracted from chat and holds
@@ -134,7 +139,9 @@ export function chatAnswers(data: ChamberData): Omit<ChamberData, "census"> {
 
 /**
  * What a chat call sends chamber-extract besides the intake id (D22): the prospect's message, the answers
- * without the roster (chatAnswers), each answer's field status and the last few messages before this one.
+ * without the roster (chatAnswers), each answer's field status, the last few messages before this one, and what
+ * the census comes to (a count and whether any row names a work state, never the rows: US-2.3a), so the function
+ * can count the census's states as an answer and tell the model a census is in.
  * useLenoreChat sends it, and scripts/extraction-eval replays it.
  */
 export function chatRequestBody(
@@ -142,7 +149,12 @@ export function chatRequestBody(
   data: ChamberData,
   provenance: ProvenanceMap | undefined,
   transcript: readonly ChatMessage[],
-): { message: string } & ChatContext {
+): { message: string; census: { rows: number; work_states: boolean } } & ChatContext {
   const statuses = Object.fromEntries(Object.entries(provenance ?? {}).flatMap(([field, p]) => (p ? [[field, p.status]] : [])));
-  return { message: message.text, ...requestContext(chatAnswers(data), statuses, transcript, message.id) };
+  const census = censusSummary(data);
+  return {
+    message: message.text,
+    ...requestContext(chatAnswers(data), statuses, transcript, message.id),
+    census: { rows: census.rows, work_states: census.workStates },
+  };
 }

@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { parseChamberData } from "./chamberValidation";
 import { describeOpenItem, openItems, type OpenItem } from "./openItems";
 import { parseProvenance } from "./provenance";
-import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
+import { EMPTY_CHAMBER_DATA, type ChamberData } from "./chamberTypes";
+import { missingRequired } from "./readiness";
 
 // The same intakes supabase/tests/open_items.sql gives the advisor queue, with what it must count.
 const FIXTURE = JSON.parse(readFileSync("supabase/tests/fixtures/open_items.json", "utf8")) as {
@@ -14,17 +15,19 @@ const FIXTURE = JSON.parse(readFileSync("supabase/tests/fixtures/open_items.json
   open_fields: number;
 }[];
 
-// What the advisor queue shows of the list: the missing answers (and the census), and how many others are open.
-const QUEUE_MISSING = new Set(["company_name", "states", "pay_frequency", "census"]);
-const asQueue = (items: OpenItem[]) => {
-  const missing = items.filter((i) => QUEUE_MISSING.has(i.key) && (i.reason === "Not provided" || i.reason === "Document needed" || i.reason === "Prospect to provide"));
-  return { missing: missing.map((i) => i.label), open_fields: items.length - missing.length };
+// What the advisor queue shows of the list: the required answers still missing (never the recommended census, which
+// Review and The Manuscript list as a document needed), and how many other fields are open by status.
+const asQueue = (data: ChamberData, items: OpenItem[]) => {
+  const required = new Set(missingRequired(data).map((i) => i.key));
+  const missing = items.filter((i) => required.has(i.key));
+  return { missing: missing.map((i) => i.label), open_fields: items.filter((i) => !required.has(i.key) && i.reason !== "Document needed").length };
 };
 
 describe("openItems", () => {
   it.each(FIXTURE.map((c) => [c.name, c] as const))("%s: lists what the advisor queue counts", (_name, c) => {
-    const items = openItems(parseChamberData(c.chamber_data), parseProvenance(c.field_provenance));
-    expect(asQueue(items)).toEqual({ missing: c.missing, open_fields: c.open_fields });
+    const data = parseChamberData(c.chamber_data);
+    const items = openItems(data, parseProvenance(c.field_provenance));
+    expect(asQueue(data, items)).toEqual({ missing: c.missing, open_fields: c.open_fields });
   });
 
   it("says why each item is open, required answers first, then the census, then fields by status", () => {

@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh open_items
--- One list of open items (US-2.2a, 20261104103000_open_items.sql): the advisor queue's missing_required and
+-- One list of open items (US-2.2a, 20261104118000_open_items.sql): the advisor queue's missing_required and
 -- open_fields for each intake in supabase/tests/fixtures/open_items.json, which src/data/openItems.test.ts expects
 -- of the browser's openItems too. Also: a workers' comp answer can be reviewed.
 \set ON_ERROR_STOP 1
@@ -23,7 +23,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090100_outbox_operations.sql
+\i supabase/migrations/20261027090001_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -33,7 +33,7 @@
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
-\i supabase/migrations/20261103110100_document_storage_path.sql
+\i supabase/migrations/20261103110001_document_storage_path.sql
 \i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
 \i supabase/migrations/20261103120100_intake_schema_v2_version.sql
 \i supabase/migrations/20261103120200_ai_extraction_events.sql
@@ -44,7 +44,17 @@
 \i supabase/migrations/20261104100000_certification_conflicts.sql
 \i supabase/migrations/20261104101000_transcript_validation.sql
 \i supabase/migrations/20261104102000_one_open_draft.sql
-\i supabase/migrations/20261104103000_open_items.sql
+\i supabase/migrations/20261104103000_required_items.sql
+\i supabase/migrations/20261104110000_pin_reviews_and_manuscripts_to_answers.sql
+\i supabase/migrations/20261104111000_pipeline_follows_the_prospect.sql
+\i supabase/migrations/20261104112000_certified_evidence.sql
+\i supabase/migrations/20261104113000_share_reviewed_manuscript.sql
+\i supabase/migrations/20261104114000_paged_advisor_queue.sql
+\i supabase/migrations/20261104115000_advisor_review_followups.sql
+\i supabase/migrations/20261104116000_intake_deletion_removes_document_history.sql
+\i supabase/migrations/20261104117000_certification_snapshots.sql
+\i supabase/migrations/20261104117100_alert_headcount_census.sql
+\i supabase/migrations/20261104118000_open_items.sql
 \set fixture `cat supabase/tests/fixtures/open_items.json`
 SET client_min_messages = notice;
 -- psql substitutes variables outside dollar quotes only, so the fixture goes through a table.

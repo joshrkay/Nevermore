@@ -68,7 +68,17 @@
 \i supabase/migrations/20261104100000_certification_conflicts.sql
 \i supabase/migrations/20261104101000_transcript_validation.sql
 \i supabase/migrations/20261104102000_one_open_draft.sql
-\i supabase/migrations/20261104103000_open_items.sql
+\i supabase/migrations/20261104103000_required_items.sql
+\i supabase/migrations/20261104110000_pin_reviews_and_manuscripts_to_answers.sql
+\i supabase/migrations/20261104111000_pipeline_follows_the_prospect.sql
+\i supabase/migrations/20261104112000_certified_evidence.sql
+\i supabase/migrations/20261104113000_share_reviewed_manuscript.sql
+\i supabase/migrations/20261104114000_paged_advisor_queue.sql
+\i supabase/migrations/20261104115000_advisor_review_followups.sql
+\i supabase/migrations/20261104116000_intake_deletion_removes_document_history.sql
+\i supabase/migrations/20261104117000_certification_snapshots.sql
+\i supabase/migrations/20261104117100_alert_headcount_census.sql
+\i supabase/migrations/20261104118000_open_items.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

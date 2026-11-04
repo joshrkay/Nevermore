@@ -2,7 +2,8 @@ import type { ChamberData } from "./chamberTypes";
 import { classificationLabel, COVERAGE_TIER_LABELS, isAssumed, isW2, type CensusEmployee } from "./census";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
-import type { FieldKey, ProvenanceMap } from "./provenance";
+import { type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
+import { NO_VERIFIED_FIELDS } from "./requiredItems";
 import { describeOpenItem, openItems } from "./openItems";
 
 /** Signed attestation stored on chamber_sessions.submission. */
@@ -385,9 +386,11 @@ export function buildManuscript(
 
   const checks = eligibilityChecks(data);
   // The intake's open items, the one list Review and the advisor queue use too (src/data/openItems.ts): the answers
-  // certification requires (always present on a certified packet), the census, then fields by status.
+  // certification requires (always present on a certified packet), the census, then fields by status, less any an
+  // advisor verified.
   const provenance = opts.provenance ?? {};
-  const intakeItems = openItems(data, provenance).map(describeOpenItem);
+  const verified = opts.verified ?? NO_VERIFIED_FIELDS;
+  const intakeItems = openItems(data, provenance, verified).map(describeOpenItem);
   const flags = data.census.flatMap((e) => {
     const flag = employeeFlag(e);
     return flag ? [`${e.first_name} ${e.last_name}: ${flag}`] : [];
