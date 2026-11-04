@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
 import { INTAKE_FIELDS, INTAKE_SCHEMA } from "./intakeSchema";
+import { isRequiredField } from "./readiness";
 import { redactSensitive } from "./sensitive";
 import { CERTIFICATION_REQUIRED } from "../../supabase/functions/_shared/followUp.ts";
 
@@ -484,11 +485,12 @@ export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_
 /**
  * Fields that still need the prospect: conflicts first, then incomplete, then unknown, then inferred.
  * A field marked not applicable is closed and never listed, and a field in `verified` (an advisor
- * verified it) is settled whatever its status, so it is left out too.
+ * verified it) is settled, so it is left out too, except a required answer in conflict: it still has to be
+ * chosen (`verificationSettles`), and the Manuscript would otherwise mark it unresolved with nothing to point to.
  */
 export function fieldOpenItems(provenance: ProvenanceMap, verified: ReadonlySet<string> = new Set()): FieldOpenItem[] {
   return OPEN_FIELD_STATUSES.flatMap((status) =>
-    FIELD_KEYS.filter((f) => provenance[f]?.status === status && !verified.has(f)).map((field) => ({
+    FIELD_KEYS.filter((f) => provenance[f]?.status === status && !(verified.has(f) && !(status === "conflicting" && isRequiredField(f)))).map((field) => ({
       field,
       label: FIELD_LABELS[field],
       reason: FIELD_OPEN_REASONS[status],

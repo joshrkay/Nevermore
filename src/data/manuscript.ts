@@ -382,7 +382,7 @@ export function buildManuscript(
     submission?: ChamberSubmission | null;
     date?: Date;
     provenance?: ProvenanceMap;
-    /** Fields an advisor verified: settled whatever their status, so never an open item. */
+    /** Fields an advisor verified: settled (`verificationSettles`), so not an open item. */
     verified?: ReadonlySet<string>;
     /** For an advisor-generated packet; `followUps` are added to the open items. */
     advisor?: ManuscriptAdvisorReview & { followUps: string[] };

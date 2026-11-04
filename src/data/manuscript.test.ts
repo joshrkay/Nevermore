@@ -364,7 +364,7 @@ describe("buildManuscript open items for missing core facts", () => {
   it("shows a verified unknown or not applicable field as it is, and a required answer in conflict still as in conflict", () => {
     const at = "2026-05-01T00:00:00Z";
     const source = { kind: "transcript" as const, message_id: "m1" };
-    const { provenance } = buildManuscript(
+    const { provenance, open } = buildManuscript(
       { ...EMPTY_CHAMBER_DATA, company_name: "Acme", industry: "Retail", hq_state: "CA", employee_count: 40 },
       {
         ...opts,
@@ -383,6 +383,9 @@ describe("buildManuscript open items for missing core facts", () => {
     expect(provenance.fein_count?.status).toBe("not_applicable");
     expect(provenance.company_name?.status).toBe("conflicting");
     expect(provenance.company_name?.candidates).toHaveLength(2);
+    // And it is listed as open, so nothing printed as unresolved points at an item that isn't there.
+    expect(open).toContain("Company legal name — conflicting answers");
+    expect(open).not.toContain("HQ state — conflicting answers");
     // An optional conflict and an inferred answer the advisor verified read as settled.
     expect(provenance.hq_state).toMatchObject({ status: "confirmed", candidates: undefined });
     expect(provenance.employee_count?.status).toBe("confirmed");

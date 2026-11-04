@@ -33,6 +33,9 @@ const latestQueries: unknown[][] = [];
 // Calls to archive_chamber_session, and what it answers.
 const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
 let rpcResult: { data: unknown; error: MockError | null } = { data: "archived", error: null };
+// While set, reading the verified fields waits until a test answers it (in the order the reads were made).
+let deferVerifiedRead = false;
+const pendingVerifiedReads: ((value: { data: unknown; error: MockError | null }) => void)[] = [];
 
 // Who is signed in. A test can switch it and rerender, as signing in with an emailed code does.
 let authUserId = "u1";
@@ -40,9 +43,10 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: authUserId }, 
 vi.mock("@/lib/dispatchOutbox", () => ({ dispatchOutbox: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
-    rpc: async (fn: string, args: Record<string, unknown>) => {
+    rpc: (fn: string, args: Record<string, unknown>) => {
       rpcCalls.push({ fn, args });
-      return rpcResult;
+      if (deferVerifiedRead && fn === "session_verified_fields") return new Promise((resolve) => { pendingVerifiedReads.push(resolve as never); });
+      return Promise.resolve(rpcResult);
     },
     from: () => ({
       select: (columns: string) => ({
@@ -168,6 +172,8 @@ describe("useChamberSession", () => {
     lastClosedRow = null;
     latestQueries.length = 0;
     rpcCalls.length = 0;
+    deferVerifiedRead = false;
+    pendingVerifiedReads.length = 0;
     rpcResult = { data: "archived", error: null };
     authUserId = "u1";
     localStorage.clear();
@@ -573,36 +579,142 @@ describe("useChamberSession", () => {
   });
 
   describe("fields an advisor verified", () => {
-    const openRow = { id: "s7", data_version: 2, chamber_data: { company_name: "Acme" }, field_provenance: {}, transcript: [], status: "submitted", submission: null };
+    // Rows as the app writes them: every answer in its canonical form, so what was stored is what is loaded.
+    const rowOf = (answers: Record<string, unknown> = {}, over: Record<string, unknown> = {}) => ({
+      id: "s7", data_version: 2, chamber_data: { ...parseChamberData({ company_name: "Acme Bindery", pay_frequency: "Weekly", ...answers }) },
+      field_provenance: {}, transcript: [], status: "in_progress", submission: null, ...over,
+    });
+    const verified = (result: { current: ReturnType<typeof useChamberSession> }) => [...result.current.verifiedFields].sort();
+    const answerRead = async (index: number, fields: string[]) => {
+      await act(async () => { pendingVerifiedReads[index]({ data: fields, error: null }); });
+    };
+    const open = async (fields: string[], row = rowOf()) => {
+      rpcResult = { data: fields, error: null };
+      resumeRow = row;
+      const hook = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(verified(hook.result)).toEqual([...fields].sort()));
+      return hook.result;
+    };
 
-    it("reads them once, when the intake is opened", async () => {
-      rpcResult = { data: ["census", "company_name"], error: null };
-      resumeRow = openRow;
-      const { result } = renderHook(() => useChamberSession("s7"));
-      await waitFor(() => expect([...result.current.verifiedFields]).toEqual(["census", "company_name"]));
+    it("reads them when the intake is opened", async () => {
+      await open(["company_name"]);
       expect(rpcCalls).toEqual([{ fn: "session_verified_fields", args: { p_session_id: "s7" } }]);
     });
 
     it("forgets one when the answer it covered changes, as the server resets that review", async () => {
-      rpcResult = { data: ["company_name", "pay_frequency"], error: null };
-      resumeRow = openRow;
-      const { result } = renderHook(() => useChamberSession("s7"));
-      await waitFor(() => expect([...result.current.verifiedFields]).toEqual(["company_name", "pay_frequency"]));
+      const result = await open(["company_name", "pay_frequency"]);
       // A document replaces the verified company name; the pay frequency stays as the advisor saw it.
       act(() => result.current.updateIntake((prev) => ({ data: { ...prev.data, company_name: "Beta Holdings LLC" }, provenance: prev.provenance })));
-      expect([...result.current.verifiedFields]).toEqual(["pay_frequency"]);
+      expect(verified(result)).toEqual(["pay_frequency"]);
       // The same answer written again, or an unrelated one, takes nothing away.
       act(() => result.current.updateIntake((prev) => ({ data: { ...prev.data, company_name: "Beta Holdings LLC", industry: "Printing" }, provenance: prev.provenance })));
-      expect([...result.current.verifiedFields]).toEqual(["pay_frequency"]);
+      expect(verified(result)).toEqual(["pay_frequency"]);
     });
 
     it("forgets one when the prospect edits the answer through the plain setter too", async () => {
-      rpcResult = { data: ["company_name"], error: null };
-      resumeRow = openRow;
-      const { result } = renderHook(() => useChamberSession("s7"));
-      await waitFor(() => expect([...result.current.verifiedFields]).toEqual(["company_name"]));
+      const result = await open(["company_name"]);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme Press" })));
+      expect(verified(result)).toEqual([]);
+    });
+
+    it("doesn't bring one back when the answer is changed and then changed back", async () => {
+      // The first save already made the server reset that review; a later save of the old answer doesn't restore it.
+      const result = await open(["company_name"]);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme Press" })));
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme Bindery" })));
-      expect([...result.current.verifiedFields]).toEqual([]);
+      expect(verified(result)).toEqual([]);
+    });
+
+    it("keeps one while its answer is unchanged, however the rest of the intake moves", async () => {
+      const result = await open(["company_name"]);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, pay_frequency: "Bi-weekly", industry: "Printing" })));
+      expect(verified(result)).toEqual(["company_name"]);
+    });
+
+    it("drops one when an edit lands before the read that names it does", async () => {
+      deferVerifiedRead = true;
+      resumeRow = rowOf();
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(pendingVerifiedReads).toHaveLength(1));
+      act(() => result.current.updateIntake((prev) => ({ data: { ...prev.data, company_name: "Beta LLC" }, provenance: prev.provenance })));
+      await answerRead(0, ["company_name", "pay_frequency"]);
+      await waitFor(() => expect(verified(result)).toEqual(["pay_frequency"]));
+    });
+
+    it("reads again when the latest saved row is loaded, so another tab's change drops the badge", async () => {
+      const result = await open(["company_name"]);
+      // Another tab changed the answer, and the server reset that review.
+      resumeRow = rowOf({ company_name: "Totally Different Corp" }, { data_version: 9 });
+      rpcResult = { data: [], error: null };
+      await act(async () => { result.current.discardChanges(); });
+      await waitFor(() => expect(result.current.chamberData.company_name).toBe("Totally Different Corp"));
+      await waitFor(() => expect(rpcCalls.filter((c) => c.fn === "session_verified_fields")).toHaveLength(2));
+      expect(verified(result)).toEqual([]);
+    });
+
+    it("hides one at once when the loaded row's answer differs, before the new read lands", async () => {
+      const result = await open(["company_name"]);
+      resumeRow = rowOf({ company_name: "Totally Different Corp" }, { data_version: 9 });
+      deferVerifiedRead = true;
+      await act(async () => { result.current.discardChanges(); });
+      await waitFor(() => expect(result.current.chamberData.company_name).toBe("Totally Different Corp"));
+      expect(verified(result)).toEqual([]);
+    });
+
+    it("brings one back when a local edit is discarded and the server still holds it", async () => {
+      const result = await open(["company_name"]);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme Press" })));
+      expect(verified(result)).toEqual([]);
+      await act(async () => { result.current.discardChanges(); });
+      await waitFor(() => expect(result.current.chamberData.company_name).toBe("Acme Bindery"));
+      await waitFor(() => expect(verified(result)).toEqual(["company_name"]));
+    });
+
+    it("keeps the set it has when a later read fails, rather than wiping every badge", async () => {
+      const result = await open(["company_name", "pay_frequency"]);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      rpcResult = { data: null, error: networkError };
+      await act(async () => { result.current.discardChanges(); });
+      await waitFor(() => expect(warn).toHaveBeenCalled());
+      expect(verified(result)).toEqual(["company_name", "pay_frequency"]);
+      warn.mockRestore();
+    });
+
+    it("uses the latest read when two overlap, however they answer", async () => {
+      deferVerifiedRead = true;
+      resumeRow = rowOf();
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(pendingVerifiedReads).toHaveLength(1));
+      await act(async () => { result.current.discardChanges(); });
+      await waitFor(() => expect(pendingVerifiedReads).toHaveLength(2));
+      // The newer read answers first (nothing verified), then the older one arrives late and must be ignored.
+      await answerRead(1, []);
+      await answerRead(0, ["company_name"]);
+      expect(verified(result)).toEqual([]);
+    });
+
+    it("doesn't show an answer whose stored form isn't the one loaded: the first save rewrites it and the server resets its review", async () => {
+      // Rows saved by earlier versions: a roster without ids or classifications, a headcount saved as text, and a
+      // state list in two cases. Loading cleans them; saving writes the clean form.
+      const old = rowOf();
+      old.chamber_data = {
+        ...old.chamber_data, employee_count: "40", states: ["ny", "NY"], census: [{ first_name: "A", last_name: "B", state: "NY" }],
+      } as never;
+      rpcResult = { data: ["company_name", "census", "employee_count", "states"], error: null };
+      resumeRow = old;
+      const { result } = renderHook(() => useChamberSession("s7"));
+      // Only the answer stored in the form it is loaded in stays verified.
+      await waitFor(() => expect(verified(result)).toEqual(["company_name"]));
+    });
+
+    it("doesn't show a legacy roster, keyed `employees`, as verified", async () => {
+      const legacy = rowOf();
+      const { census: _census, ...rest } = legacy.chamber_data as Record<string, unknown>;
+      legacy.chamber_data = { ...rest, employees: [{ first_name: "A", last_name: "B", state: "NY" }] } as never;
+      rpcResult = { data: ["census", "company_name"], error: null };
+      resumeRow = legacy;
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(verified(result)).toEqual(["company_name"]));
     });
 
     it("has none for a new intake, without asking", async () => {
@@ -615,7 +727,7 @@ describe("useChamberSession", () => {
     it("treats none as verified when they can't be read, and says nothing to the prospect", async () => {
       rpcResult = { data: null, error: { message: "Failed to fetch" } };
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      resumeRow = openRow;
+      resumeRow = rowOf();
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(warn).toHaveBeenCalled());
       expect(result.current.sessionId).toBe("s7");
@@ -626,7 +738,7 @@ describe("useChamberSession", () => {
 
     it("doesn't carry them over to another intake", async () => {
       rpcResult = { data: ["company_name"], error: null };
-      resumeRow = openRow;
+      resumeRow = rowOf();
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(result.current.verifiedFields.has("company_name")).toBe(true));
       act(() => result.current.startNew());

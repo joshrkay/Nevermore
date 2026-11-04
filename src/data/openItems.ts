@@ -30,7 +30,8 @@ export const OPEN_ITEM_STATUSES = OPEN_FIELD_STATUSES;
 
 /**
  * Every open item on the intake: required answers first, then the census, then fields by status. `verified` are the
- * fields an advisor verified: settled whatever their status, so never listed by status. A required answer that is
+ * fields an advisor verified: settled, so not listed by status, except a required answer in conflict (it still has to be
+ * chosen). A required answer that is
  * missing is listed even when verified, because verifying never supplies a value.
  */
 export function openItems(data: ChamberData, provenance: ProvenanceMap, verified: ReadonlySet<string> = NO_VERIFIED_FIELDS): OpenItem[] {
