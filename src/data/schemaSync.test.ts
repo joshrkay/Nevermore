@@ -18,6 +18,8 @@ import {
 } from "@/data/chamberValidation";
 import { FIELD_KINDS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
+import { RETENTION } from "@/data/dataPolicy";
+import { INTAKE_CONSENT_VERSION } from "@/data/intakeConsent";
 import { AI_ERROR_CODES } from "../../supabase/functions/_shared/ai/errors";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
@@ -243,5 +245,50 @@ describe("server and client intake rules agree", () => {
   it("tells prospects the retention window the database applies", () => {
     const days = /interval\s+'(\d+) days'/.exec(blocks("draft_retention").join("\n"))?.[1];
     expect(Number(days)).toBe(DRAFT_RETENTION_DAYS);
+  });
+
+  // The Privacy page and docs/DATA_HANDLING.md state these (src/data/dataPolicy.ts); the database deletes
+  // and prunes by them (20261104091000_ops_monitoring.sql, 20261104092000_data_retention_and_deletion.sql).
+  it.each([
+    ["closed_draft_retention", "days", RETENTION.closedDraftDays],
+    ["submitted_record_retention", "years", RETENTION.submittedYears],
+    ["ops_event_retention", "days", RETENTION.opsEventDays],
+    ["email_event_retention", "days", RETENTION.emailEventDays],
+    ["ai_event_retention", "days", RETENTION.aiEventDays],
+  ] as const)("states the %s window the database enforces", (block, unit, value) => {
+    const found = new RegExp(`interval\\s+'(\\d+) ${unit}'`).exec(blocks(block).join("\n"))?.[1];
+    expect(Number(found)).toBe(value);
+  });
+
+  // docs/RUNBOOK.md tells whoever is on call when each kind alerts; public.ops_alert_rules() is what alerts.
+  it("documents the alert thresholds the monitor applies", () => {
+    const rules = [...blocks("ops_alert_rules").join("\n").matchAll(/\('(\w+)'(?:::text)?,\s*(\d+),\s*(\d+),\s*(\d+)\)/g)].map((m) => ({
+      kind: m[1],
+      window: Number(m[2]),
+      threshold: Number(m[3]),
+      cooldown: Number(m[4]),
+    }));
+    expect(rules.map((r) => r.kind).sort()).toEqual(["ai_failed", "app_error", "auth_denied", "deletion_failed", "upload_failed"]);
+    const runbook = readFileSync("docs/RUNBOOK.md", "utf8");
+    for (const r of rules) {
+      const row = new RegExp(
+        `\\| \`${r.kind}\` \\| ${r.threshold} events? \\| ${r.window} minutes \\| ${r.cooldown} minutes \\|`,
+      );
+      expect(runbook, `docs/RUNBOOK.md alert row for ${r.kind}`).toMatch(row);
+    }
+  });
+
+  it("documents the caps on browser reports", () => {
+    const caps = blocks("ops_report_caps").join("\n");
+    const cap = (name: string) => Number(new RegExp(`${name} constant integer := (\\d+);`).exec(caps)?.[1]);
+    const runbook = readFileSync("docs/RUNBOOK.md", "utf8");
+    expect(runbook).toContain(`drops reports past ${cap("per_account")} an hour per`);
+    expect(runbook).toContain(`${cap("signed_out")} an hour for all signed-out visitors`);
+    expect(runbook).toContain(`${cap("everyone").toLocaleString("en-US")} an hour overall`);
+  });
+
+  // A prospect agrees to the wording in src/data/intakeConsent.ts; the database refuses any other version.
+  it("asks for agreement to the consent version the database requires", () => {
+    expect(quoted(blocks("intake_consent_version").join("\n"))).toEqual([INTAKE_CONSENT_VERSION]);
   });
 });

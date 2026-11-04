@@ -104,6 +104,16 @@ Advisor tools are at `/advisor`, the Advisor Console: the team's operating workf
 Submitting an intake queues an advisor alert and a prospect confirmation email. Setup, scheduling,
 failure handling and the pre-launch checklist: `docs/NOTIFICATIONS.md`.
 
+## Data handling, privacy and operations
+
+- Classification, retention windows, the deletion process and the advisory team's responsibilities:
+  `docs/DATA_HANDLING.md` (the same policy the Privacy page renders from `src/data/dataPolicy.ts`).
+- The Privacy Policy (`/privacy`), Terms of Use (`/terms`) and intake consent are drafts until counsel
+  approves them: `docs/LEGAL_REVIEW.md`.
+- Authorization and data-isolation testing, and the findings register: `docs/SECURITY_REVIEW.md`.
+- Monitoring, alerts, escalation contacts, incident response, backups and the access review:
+  `docs/RUNBOOK.md`.
+
 ## Plan
 
 Backlog and decisions: `docs/PRODUCTION_READINESS_PLAN.md`.
