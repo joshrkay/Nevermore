@@ -190,6 +190,24 @@ describe("server and client intake rules agree", () => {
     expect([...EXTRACT_STATE_CODES].sort()).toEqual([...US_STATE_CODES].sort());
   });
 
+  // chamber-extract keeps its own field list (it can't import from src/). Chat asks for every answer the
+  // intake holds except the census, which comes from a document, so a field added to ChamberData and not
+  // to the tool would never be extracted from chat.
+  it("has chamber-extract ask for every answer but the census, as the JSON type of the kind the client edits", () => {
+    const { census: _census, ...answers } = EMPTY_CHAMBER_DATA;
+    expect(Object.keys(CHAT_FIELD_TYPES).sort()).toEqual(Object.keys(answers).sort());
+    const kindOf = (schema: unknown) => {
+      const json = JSON.stringify(schema);
+      if (json === '{"type":"string"}') return "text";
+      if (json === '{"type":"integer"}') return "number";
+      if (json === '{"type":"number"}') return "decimal";
+      if (json === '{"type":"boolean"}') return "boolean";
+      if (json === '{"type":"array","items":{"type":"string"}}') return "list";
+      return json;
+    };
+    expect(Object.fromEntries(Object.entries(CHAT_FIELD_TYPES).map(([key, schema]) => [key, kindOf(schema)]))).toEqual(FIELD_KINDS);
+  });
+
   // The intake schema (supabase/functions/_shared/intakeSchema.ts) must never accept what the database
   // refuses, so it holds the same codes, caps and value lists, and checks each key as the same kind.
   describe("intake schema", () => {

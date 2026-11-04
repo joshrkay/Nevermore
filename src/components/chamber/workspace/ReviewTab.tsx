@@ -22,6 +22,8 @@ interface ReviewDocument {
 interface ReviewTabProps {
   data: ChamberData;
   provenance?: ProvenanceMap;
+  /** Fields an advisor verified: settled whatever their status, so never listed. */
+  verified?: ReadonlySet<string>;
   onAction?: (action: FieldAction) => void;
   onProceed: () => void;
   documents?: ReviewDocument[];
@@ -81,7 +83,7 @@ const rowId = (field: FieldKey) => `review-field-${field}`;
 const sectionId = (section: ReviewSection) => `review-section-${section}`;
 
 /** Brings an answer into view and puts the keyboard on its Add or Edit button. */
-function jumpTo(item: ReadinessItem) {
+function jumpTo(item: Pick<ReadinessItem, "field" | "section">) {
   const target = document.getElementById(item.field ? rowId(item.field) : sectionId(item.section));
   target?.scrollIntoView?.({ block: "center", behavior: "smooth" });
   target?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
@@ -165,12 +167,12 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
             Still needed before The Manuscript can be generated: {blocking}
           </p>
           <ul className="space-y-2">
-            {required.map((item) => (
-              <li key={item.key} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+            {stillNeeded.map((item) => (
+              <li key={item.item} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
                 <span className="font-medium">{item.label}</span>
-                <span className="text-muted-foreground text-xs">{item.hint}</span>
-                <button type="button" onClick={() => jumpTo(item)} className="text-xs font-medium text-primary underline underline-offset-2">
-                  Go to {item.label.toLowerCase()}
+                <span className="text-muted-foreground text-xs">{stillNeededNote(item)}</span>
+                <button type="button" onClick={() => jumpTo(item.viaCensus ? CENSUS_SPOT : item.readiness)} className="text-xs font-medium text-primary underline underline-offset-2">
+                  Go to {(item.viaCensus ? "Employee census" : item.label).toLowerCase()}
                 </button>
               </li>
             ))}

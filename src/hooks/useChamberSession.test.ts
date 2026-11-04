@@ -572,6 +572,47 @@ describe("useChamberSession", () => {
     });
   });
 
+  describe("fields an advisor verified", () => {
+    const openRow = { id: "s7", data_version: 2, chamber_data: { company_name: "Acme" }, field_provenance: {}, transcript: [], status: "submitted", submission: null };
+
+    it("reads them once, when the intake is opened", async () => {
+      rpcResult = { data: ["census", "company_name"], error: null };
+      resumeRow = openRow;
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect([...result.current.verifiedFields]).toEqual(["census", "company_name"]));
+      expect(rpcCalls).toEqual([{ fn: "session_verified_fields", args: { p_session_id: "s7" } }]);
+    });
+
+    it("has none for a new intake, without asking", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(result.current.verifiedFields.size).toBe(0);
+      expect(rpcCalls).toEqual([]);
+    });
+
+    it("treats none as verified when they can't be read, and says nothing to the prospect", async () => {
+      rpcResult = { data: null, error: { message: "Failed to fetch" } };
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      resumeRow = openRow;
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(warn).toHaveBeenCalled());
+      expect(result.current.sessionId).toBe("s7");
+      expect(result.current.verifiedFields.size).toBe(0);
+      expect(result.current.saveStatus).toBe("idle");
+      warn.mockRestore();
+    });
+
+    it("doesn't carry them over to another intake", async () => {
+      rpcResult = { data: ["company_name"], error: null };
+      resumeRow = openRow;
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(result.current.verifiedFields.has("company_name")).toBe(true));
+      act(() => result.current.startNew());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      expect(result.current.verifiedFields.size).toBe(0);
+    });
+  });
+
   describe("the File ID", () => {
     // Late on New Year's Eve: the intake starts in one year and is certified in the next.
     const NEW_YEARS_EVE = "2026-12-31T23:59:00Z";

@@ -13,6 +13,7 @@ import {
   LEGACY_CONSENT_TEXT,
   manuscriptFilename,
   maskDob,
+  rowProvenance,
   wcSystem,
 } from "./manuscript";
 
@@ -231,6 +232,60 @@ describe("buildManuscript open items for missing core facts", () => {
       "Industry — please confirm",
     ]));
     expect(open.some((o) => o.startsWith("Company legal name — please"))).toBe(false);
+  });
+
+  it("counts states the census names as States of operation", () => {
+    const { open } = buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [emp({ work_state: "OR" })] }, opts);
+    expect(open).not.toContain("States of operation — not provided");
+    expect(open).not.toContain("Employee census — not provided");
+  });
+
+  it("leaves out fields an advisor verified, but still lists a verified answer that was never given", () => {
+    const at = "2026-05-01T00:00:00Z";
+    const source = { kind: "transcript" as const, message_id: "m1" };
+    const { open } = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, industry: "Retail", employee_count: 40, hq_state: "CA" },
+      {
+        ...opts,
+        provenance: {
+          industry: { status: "inferred", source, updated_at: at },
+          employee_count: { status: "conflicting", source, updated_at: at, candidates: [] },
+          hq_state: { status: "conflicting", source, updated_at: at, candidates: [] },
+        },
+        verified: new Set(["industry", "employee_count", "company_name"]),
+      },
+    );
+    expect(open).not.toContain("Industry — please confirm");
+    expect(open).not.toContain("Employee count — conflicting answers");
+    expect(open).toContain("HQ state — conflicting answers");
+    expect(open).toContain("Company legal name — not provided");
+  });
+});
+
+describe("rowProvenance", () => {
+  const at = "2026-05-01T00:00:00Z";
+  const said = { kind: "transcript" as const, message_id: "m1" };
+  const inferred = { status: "inferred" as const, source: said, updated_at: at };
+  const conflicting = { status: "conflicting" as const, source: { kind: "document" as const, document_id: "d1" }, updated_at: at, candidates: [] };
+  const row = (m: ReturnType<typeof buildManuscript>, label: string) => [...m.companyRows, ...m.workforceRows, ...m.benefitsRows].find((r) => r[0] === label)!;
+
+  it("is the row's own field's, unless another field the value is built from conflicts", () => {
+    const data = { ...EMPTY_CHAMBER_DATA, multiple_entities: true, fein_count: 3, has_401k: true, retirement_type: "401(k)", exempt_count: 4, nonexempt_count: 9 };
+    const quiet = buildManuscript(data, { fileId: "EAA-1", provenance: { multiple_entities: inferred, has_401k: inferred } });
+    expect(rowProvenance(row(quiet, "Entity Structure"), quiet.provenance)).toBe(inferred);
+    expect(rowProvenance(row(quiet, "Exempt / Nonexempt"), quiet.provenance)).toBeUndefined();
+
+    const m = buildManuscript(data, {
+      fileId: "EAA-1",
+      provenance: { multiple_entities: inferred, fein_count: conflicting, has_401k: inferred, employer_contributes: conflicting, nonexempt_count: conflicting, census: conflicting },
+    });
+    expect(rowProvenance(row(m, "Entity Structure"), m.provenance)).toBe(conflicting);
+    expect(rowProvenance(row(m, "Retirement"), m.provenance)).toBe(conflicting);
+    expect(rowProvenance(row(m, "Exempt / Nonexempt"), m.provenance)).toBe(conflicting);
+    expect(rowProvenance(row(m, "W-2 Employees on Census"), m.provenance)).toBe(conflicting);
+    // Only the fields the value shows: one entity has no FEIN count to speak of.
+    const single = buildManuscript({ ...data, multiple_entities: false }, { fileId: "EAA-1", provenance: m.provenance });
+    expect(rowProvenance(row(single, "Entity Structure"), single.provenance)).toBe(inferred);
   });
 });
 

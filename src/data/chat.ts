@@ -1,3 +1,4 @@
+import type { ChamberData } from "./chamberTypes";
 import { redactSensitive } from "./sensitive";
 
 /** Who a transcript message is from: the prospect, Lenore, or the Chamber itself (a note such as a voice call starting). */
@@ -115,4 +116,13 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
       ...(spoken === true ? { spoken: true as const } : {}),
     }];
   });
+}
+
+/**
+ * The intake as Lenore's chat sends it to chamber-extract for context. The roster isn't extracted
+ * from chat and holds personal details, so it is left out. scripts/extraction-eval replays it too.
+ */
+export function chatContext(data: ChamberData): Omit<ChamberData, "census"> {
+  const { census: _census, ...context } = data;
+  return context;
 }

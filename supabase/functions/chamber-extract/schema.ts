@@ -117,6 +117,9 @@ export const FIELD_TYPES: Record<string, JsonSchema> = Object.fromEntries(FIELDS
 /** What the model may say about a field. Only a disagreement makes one conflicting, and only the prospect marks one not applicable (D31). */
 export const FIELD_STATUSES = ["confirmed", "inferred", "incomplete", "unknown"];
 export const MAX_EVIDENCE_CHARS = 200;
+// An answer can carry a value, a status and a quote for every field, plus the reply: well past the
+// Anthropic adapter's default cap, which would cut it off. Not part of the contract hash.
+export const CHAT_MAX_TOKENS = 8192;
 
 const LABELS = new Map(INTAKE_FIELDS.map((f) => [f.key, f.label]));
 

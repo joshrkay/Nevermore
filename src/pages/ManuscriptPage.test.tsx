@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { rowProvenance } from "@/data/manuscript";
 
 let row: Record<string, unknown> | null = null;
 
@@ -9,9 +10,10 @@ let row: Record<string, unknown> | null = null;
 const auth = { user: { id: "u1" }, loading: false };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 let sharedStatus: string | null = null;
+let verifiedFields: string[] = [];
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
-    rpc: async () => ({ data: sharedStatus, error: null }),
+    rpc: async (fn: string) => ({ data: fn === "session_verified_fields" ? verifiedFields : sharedStatus, error: null }),
     from: () => ({
       select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }),
     }),
@@ -183,6 +185,75 @@ describe("ManuscriptPage", () => {
     expect(screen.getByText("Conflicting")).toBeInTheDocument();
     expect(screen.getByText("Industry — please confirm")).toBeInTheDocument();
     expect(screen.getByText("Employee count — conflicting answers")).toBeInTheDocument();
+  });
+
+  it("drops the fields an advisor has verified since from the open items", async () => {
+    const at = "2026-05-01T12:00:00Z";
+    row = {
+      chamber_data: EMPTY_CHAMBER_DATA,
+      submission: {
+        signer_name: "Jo Doe",
+        signer_title: "CEO",
+        signed_at: at,
+        file_id: "EAA-2026-ABC",
+        chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co", industry: "Retail" },
+        field_provenance: {
+          company_name: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: at },
+          industry: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: at },
+        },
+      },
+      status: "submitted",
+      created_at: "2026-05-01T00:00:00Z",
+    };
+    verifiedFields = ["industry"];
+    renderAt("/manuscript?session=s1");
+    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(screen.getByText("Company legal name — please confirm")).toBeInTheDocument();
+    expect(screen.queryByText("Industry — please confirm")).not.toBeInTheDocument();
+    expect(screen.getByText("Pay frequency — not provided")).toBeInTheDocument();
+    verifiedFields = [];
+  });
+
+  it("shows a conflicting field an advisor verified as settled, on screen and in the PDF, and not as an open item", async () => {
+    const at = "2026-05-01T12:00:00Z";
+    const said = (id: string) => ({ kind: "transcript", message_id: id });
+    row = {
+      chamber_data: EMPTY_CHAMBER_DATA,
+      submission: {
+        signer_name: "Jo Doe",
+        signer_title: "CEO",
+        signed_at: at,
+        file_id: "EAA-2026-ABC",
+        chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co", industry: "Retail" },
+        field_provenance: {
+          industry: {
+            status: "conflicting",
+            source: said("m1"),
+            updated_at: at,
+            candidates: [
+              { value: "Retail", source: said("m1") },
+              { value: "Wholesale", source: said("m2") },
+            ],
+          },
+        },
+      },
+      status: "submitted",
+      created_at: "2026-05-01T00:00:00Z",
+    };
+    verifiedFields = ["industry"];
+    vi.mocked(buildManuscriptPdf).mockClear();
+    renderAt("/manuscript?session=s1");
+    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    // Verified is settled: no red chip, as in the advisor's packet.
+    expect(screen.queryByText("Conflicting")).not.toBeInTheDocument();
+    expect(screen.queryByText("Industry — conflicting answers")).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: /Download The Manuscript \(PDF\)/ })[0]);
+    await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
+    const m = vi.mocked(buildManuscriptPdf).mock.calls[0][0];
+    const industry = m.companyRows.find(([label]) => label === "Industry")!;
+    expect(rowProvenance(industry, m.provenance)?.status).toBe("confirmed");
+    expect(m.open).not.toContain("Industry — conflicting answers");
+    verifiedFields = [];
   });
 
   it("never shows sample data on the live route when no session is given", async () => {
