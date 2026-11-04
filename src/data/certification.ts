@@ -26,7 +26,8 @@ export interface SignerDetails {
 
 /**
  * Why certification can't be completed yet; empty when it can. Drives the submit button and its hint.
- * A required item whose answers conflict blocks it; the full completeness rule is C-1.3's.
+ * Missing required answers come first (US-1.2; the database refuses them too, EA003); a required answer
+ * whose answers conflict blocks it as well, in the browser only (B-2.2). The census never blocks.
  */
 export function certificationBlockers(opts: {
   acknowledged: boolean[];
@@ -34,14 +35,20 @@ export function certificationBlockers(opts: {
   signed: boolean;
   hasFileId: boolean;
   isGuest: boolean;
-  requiredItems: readonly RequiredItem[];
+  /** Labels of the required answers the intake doesn't have yet (missingRequired in readiness.ts). */
+  missingAnswers?: string[];
+  /** The intake's items (requiredItems.ts): a required one whose answers conflict holds certification back. */
+  requiredItems?: readonly RequiredItem[];
 }): string[] {
-  const blockers: string[] = [];
+  // What the intake still needs comes first: no signature can make up for it.
+  const blockers: string[] = (opts.missingAnswers ?? []).map((label) => `Add ${label.toLowerCase()}`);
   if (opts.isGuest) blockers.push("Verify your email");
   if (!opts.hasFileId) blockers.push("Wait for your intake to finish saving");
-  // States of operation that only repeats the census's conflict is the census's blocker.
-  for (const item of opts.requiredItems) {
-    if (item.state === "conflicting" && !item.viaCensus) blockers.push(`Resolve the conflicting answers for ${item.label}`);
+  // A required answer whose answers conflict can't be certified as either; the recommended census never
+  // blocks. States of operation taken from a conflicting census is resolved on the census, so it is named.
+  for (const item of opts.requiredItems ?? []) {
+    if (!item.required || item.state !== "conflicting") continue;
+    blockers.push(`Resolve the conflicting answers for ${item.viaCensus ? "Employee census" : item.label}`);
   }
   if (!opts.acknowledged.every(Boolean)) blockers.push("Check every statement");
   if (!opts.signer.name.trim()) blockers.push("Enter your full name");

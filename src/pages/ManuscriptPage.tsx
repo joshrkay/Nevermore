@@ -308,9 +308,17 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           </div>
         </section>
 
+        {/* Section 2 — Payroll & Time */}
+        <section>
+          <SectionHeader>2 — Payroll &amp; Time</SectionHeader>
+          <div className="bg-card border border-border rounded-xl p-6">
+            {renderRows(d.payrollRows, d.provenance)}
+          </div>
+        </section>
+
         {/* Section 2 — Workforce Summary */}
         <section>
-          <SectionHeader>2 — Workforce Summary</SectionHeader>
+          <SectionHeader>3 — Workforce Summary</SectionHeader>
           <div className="grid md:grid-cols-2 gap-6">
             <div className="bg-card border border-border rounded-xl p-6">
               {renderRows(d.workforceRows, d.provenance)}
@@ -339,7 +347,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 3 — Employee Census */}
         <section>
-          <SectionHeader>3 — Employee Census</SectionHeader>
+          <SectionHeader>4 — Employee Census</SectionHeader>
           {d.census.length === 0 ? (
             <div className="bg-card border border-border rounded-xl p-6 text-sm text-muted-foreground">
               No employee census captured yet.
@@ -382,7 +390,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 4 — Dependent Summary */}
         <section>
-          <SectionHeader>4 — Dependent Summary</SectionHeader>
+          <SectionHeader>5 — Dependent Summary</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6">
             <table className="w-full text-sm">
               <thead><tr className="text-muted-foreground text-left border-b border-border"><th className="pb-2">Tier</th><th className="pb-2 text-right">Employees</th><th className="pb-2 text-right">%</th></tr></thead>
@@ -407,7 +415,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 5 — Benefits */}
         <section>
-          <SectionHeader>5 — Current Benefits</SectionHeader>
+          <SectionHeader>6 — Current Benefits</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6">
             {renderRows(d.benefitsRows, d.provenance)}
           </div>
@@ -415,7 +423,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 6 — Status */}
         <section>
-          <SectionHeader>6 — Underwriting Readiness</SectionHeader>
+          <SectionHeader>7 — Underwriting Readiness</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6 space-y-3">
             <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">Confirmed</p>
             {d.resolved.length === 0 && <p className="text-sm text-muted-foreground">Nothing confirmed yet.</p>}

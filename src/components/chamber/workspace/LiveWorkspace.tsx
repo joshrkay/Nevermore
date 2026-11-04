@@ -32,6 +32,8 @@ interface LiveWorkspaceProps {
   data: ChamberData;
   isDemo: boolean;
   sessionId: string | null;
+  /** The intake's File ID, for The Reckoning; null while there is no intake. */
+  fileId?: string | null;
   onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   provenance?: ProvenanceMap;
   /** Fields an advisor verified: settled whatever their status. */
@@ -50,6 +52,7 @@ const LiveWorkspace = ({
   data,
   isDemo,
   sessionId,
+  fileId = null,
   onSubmit,
   provenance = {},
   verified = NO_VERIFIED_FIELDS,
@@ -113,7 +116,19 @@ const LiveWorkspace = ({
         {activeTab === "dependents" && <DependentsTab data={data} />}
         {activeTab === "review" && <ReviewTab data={data} provenance={provenance} verified={verified} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} />}
         {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
-        {activeTab === "reckoning" && <ReckoningTab data={data} provenance={provenance} verified={verified} peoName={chosenPeo} sessionId={sessionId} onSubmit={onSubmit} certification={certification} />}
+        {activeTab === "reckoning" && (
+          <ReckoningTab
+            data={data}
+            provenance={provenance}
+            verified={verified}
+            peoName={chosenPeo}
+            sessionId={sessionId}
+            fileId={fileId}
+            onSubmit={onSubmit}
+            certification={certification}
+            onReview={() => setActiveTab("review")}
+          />
+        )}
       </div>
     </div>
   );

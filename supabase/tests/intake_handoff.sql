@@ -33,6 +33,7 @@
 \i supabase/migrations/20261103090000_intake_lifecycle.sql
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
+\i supabase/migrations/20261103110000_document_storage_path.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -92,7 +93,7 @@ DO $$
 DECLARE
   uid uuid := pg_temp.new_user();
   sid uuid;
-  data jsonb := '{"company_name":"Acme"}';
+  data jsonb := '{"company_name":"Acme","states":["NY"],"pay_frequency":"bi-weekly"}';
   v integer;
   row_ record;
   longest text := repeat('P', 80);

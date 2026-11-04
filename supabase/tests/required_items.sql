@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh required_items
--- Required items and verified fields (B-2.2, 20261103110000_required_items.sql): intake_required_items
+-- Required items and verified fields (B-2.2, 20261103120000_required_items.sql): intake_required_items
 -- against the cases src/data/requiredItems.test.ts runs through the browser's copy of the rule, provenance
 -- read as the browser reads it, the advisor queue's missing_required read from the rule (same arguments
 -- and columns as before), and session_verified_fields:
@@ -35,6 +35,7 @@
 \i supabase/migrations/20261103090000_intake_lifecycle.sql
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
+\i supabase/migrations/20261103110000_certification_readiness.sql
 
 -- The advisor queue as it was, to hold the new definition to the same arguments, columns and grants.
 CREATE TEMP TABLE queue_before AS
@@ -42,7 +43,7 @@ SELECT pg_get_function_identity_arguments(p.oid) AS args, pg_get_function_result
        p.prosecdef, p.provolatile, p.proconfig, p.proacl
 FROM pg_proc p WHERE p.oid = 'public.advisor_list_submissions(text)'::regprocedure;
 
-\i supabase/migrations/20261103110000_required_items.sql
+\i supabase/migrations/20261103120000_required_items.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -109,18 +110,47 @@ BEGIN
   RAISE NOTICE 'required_items: % shared cases passed', seen;
 END $$;
 
+-- ---------- one presence rule: the certification gate agrees with the items ----------
+-- intake_missing_required (20261103110000_certification_readiness.sql, redefined on intake_answers_present)
+-- names exactly the required items intake_required_items reports missing, for every shared case.
+DO $$
+DECLARE
+  c record;
+  gate text[];
+  items text[];
+BEGIN
+  FOR c IN SELECT * FROM shared_cases ORDER BY ord LOOP
+    gate := public.intake_missing_required(c.spec -> 'data');
+    items := ARRAY(
+      SELECT ri.item ->> 'item'
+      FROM jsonb_array_elements(public.intake_required_items(c.spec -> 'data', c.spec -> 'provenance', '{}'::text[])) WITH ORDINALITY ri(item, ord)
+      WHERE ri.item ->> 'state' = 'missing' AND (ri.item ->> 'required')::boolean
+      ORDER BY ri.ord);
+    IF gate IS DISTINCT FROM items THEN
+      RAISE EXCEPTION 'FAIL: "%": the gate refuses for %, the items say % missing', c.spec ->> 'name', gate, items;
+    END IF;
+  END LOOP;
+  -- The gate now trims as the browser does, and reads a state only when it is a code.
+  IF public.intake_missing_required('{"company_name": "\u00a0", "states": ["ZZ"], "employees": [{"state": "NA"}], "pay_frequency": "\t"}')
+       IS DISTINCT FROM ARRAY['company_name', 'states', 'pay_frequency'] THEN
+    RAISE EXCEPTION 'FAIL: the gate read blank or invalid answers as given';
+  END IF;
+  RAISE NOTICE 'required_items: the gate agrees with the items';
+END $$;
+
 -- ---------- the rule's shape ----------
 DO $$
 DECLARE
   items jsonb;
 BEGIN
-  -- Four items, in the fixed order, with today's labels.
+  -- The three required items, then the recommended census, in the fixed order, with the readiness keys
+  -- and labels (src/data/readiness.ts).
   items := public.intake_required_items('{}', '{}', '{}');
   IF items IS DISTINCT FROM '[
-    {"item": "company_legal_name", "label": "Company legal name", "field": "company_name", "state": "missing"},
-    {"item": "states_of_operation", "label": "States of operation", "field": "states", "state": "missing"},
-    {"item": "pay_frequency", "label": "Pay frequency", "field": "pay_frequency", "state": "missing"},
-    {"item": "employee_census", "label": "Employee census", "field": "census", "state": "missing"}
+    {"item": "company_name", "label": "Company legal name", "field": "company_name", "required": true, "state": "missing"},
+    {"item": "states", "label": "States of operation", "field": "states", "required": true, "state": "missing"},
+    {"item": "pay_frequency", "label": "Pay frequency", "field": "pay_frequency", "required": true, "state": "missing"},
+    {"item": "census", "label": "Employee census", "field": "census", "required": false, "state": "missing"}
   ]'::jsonb THEN
     RAISE EXCEPTION 'FAIL: the items were %', items;
   END IF;
@@ -168,6 +198,8 @@ BEGIN
   END IF;
   IF has_function_privilege('anon', 'public.intake_required_items(jsonb, jsonb, text[])', 'EXECUTE')
      OR NOT has_function_privilege('authenticated', 'public.intake_required_items(jsonb, jsonb, text[])', 'EXECUTE')
+     OR has_function_privilege('anon', 'public.intake_answers_present(jsonb)', 'EXECUTE')
+     OR NOT has_function_privilege('authenticated', 'public.intake_answers_present(jsonb)', 'EXECUTE')
      OR has_function_privilege('anon', 'public.provenance_entry_status(jsonb)', 'EXECUTE')
      OR has_function_privilege('anon', 'public.provenance_source_is_valid(jsonb)', 'EXECUTE') THEN
     RAISE EXCEPTION 'FAIL: the required-items functions are not for signed-in callers only';
@@ -346,7 +378,8 @@ BEGIN
     RAISE EXCEPTION 'FAIL: the census-only intake listed % / %', r.missing_required, r.states;
   END IF;
   SELECT * INTO r FROM public.advisor_list_submissions() l WHERE l.session_id = blank;
-  IF r.missing_required IS DISTINCT FROM ARRAY['Company legal name', 'States of operation', 'Pay frequency', 'Employee census'] THEN
+  -- The census is recommended, so it is never listed as missing.
+  IF r.missing_required IS DISTINCT FROM ARRAY['Company legal name', 'States of operation', 'Pay frequency'] THEN
     RAISE EXCEPTION 'FAIL: the blank intake listed %', r.missing_required;
   END IF;
   SELECT * INTO r FROM public.advisor_list_submissions() l WHERE l.session_id = unconfirmed;

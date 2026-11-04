@@ -20,7 +20,7 @@ const { CONSENT_TEXT_VERSION } = await import("@/data/certification");
 const renderReckoning = () =>
   render(
     <MemoryRouter>
-      <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={null} sessionId="s1" onSubmit={async () => true} />
+      <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={async () => true} />
     </MemoryRouter>,
   );
 
@@ -83,7 +83,7 @@ describe("ReckoningTab certification", () => {
   const mount = (data = DEMO_CHAMBER_DATA) => {
     const tree = (d: typeof data) => (
       <MemoryRouter>
-        <ReckoningTab data={d} peoName={null} sessionId="s1" onSubmit={onSubmit} />
+        <ReckoningTab data={d} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
       </MemoryRouter>
     );
     const view = render(tree(data));
@@ -150,6 +150,8 @@ describe("ReckoningTab certification", () => {
     expect(sent).toMatchObject({
       signer_name: "Jo Doe",
       signer_title: "CEO",
+      // The intake's own File ID, as the session gave it: never one made up from today's date.
+      file_id: "EAA-2026-S1",
       // One version, under both names: the app's and the one the database's certification check reads.
       consent_text_version: CONSENT_TEXT_VERSION,
       consent_version: CONSENT_TEXT_VERSION,
@@ -170,7 +172,7 @@ describe("ReckoningTab certification", () => {
     fireEvent.click(submitButton());
     expect(await screen.findByText("Certification recorded")).toBeInTheDocument();
     expect(screen.getByText(/Certified by Jo Doe, CEO/)).toBeInTheDocument();
-    expect(screen.getByText(/File ID: EAA-/)).toBeInTheDocument();
+    expect(screen.getByText("File ID: EAA-2026-S1")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Download The Manuscript/ })).toHaveAttribute("href", "/manuscript?session=s1");
     expect(toast.success).toHaveBeenCalled();
   });
@@ -272,7 +274,7 @@ describe("ReckoningTab certification", () => {
     const mountWith = (verified?: ReadonlySet<string>) =>
       render(
         <MemoryRouter>
-          <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={conflicting} verified={verified} peoName={null} sessionId="s1" onSubmit={onSubmit} />
+          <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={conflicting} verified={verified} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
         </MemoryRouter>,
       );
 
@@ -311,7 +313,7 @@ describe("ReckoningTab on an intake that is already certified", () => {
   const mountWith = (certification: React.ComponentProps<typeof ReckoningTab>["certification"], peoName: string | null = null) =>
     render(
       <MemoryRouter>
-        <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={peoName} sessionId="s1" onSubmit={onSubmit} certification={certification} />
+        <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={peoName} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} certification={certification} />
       </MemoryRouter>,
     );
 
@@ -339,7 +341,7 @@ describe("ReckoningTab on an intake that is already certified", () => {
   it("brings the form back if a signature made this visit is voided, even before the saved state catches up", () => {
     const tree = (d: typeof DEMO_CHAMBER_DATA, certification: React.ComponentProps<typeof ReckoningTab>["certification"]) => (
       <MemoryRouter>
-        <ReckoningTab data={d} peoName={null} sessionId="s1" onSubmit={onSubmit} certification={certification} />
+        <ReckoningTab data={d} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} certification={certification} />
       </MemoryRouter>
     );
     const view = render(tree(DEMO_CHAMBER_DATA, { status: "none" }));
@@ -409,5 +411,72 @@ describe("ReckoningTab on an intake that is already certified", () => {
     mountWith({ status: "none" });
     expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeInTheDocument();
+  });
+});
+
+describe("ReckoningTab required answers", () => {
+  const onSubmit = vi.fn();
+  const submitButton = () => screen.getByRole("button", { name: /Generate The Manuscript/ });
+  const signAndTry = () => {
+    screen.getAllByRole("checkbox").forEach((c) => fireEvent.click(c));
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Jo Doe" } });
+    fireEvent.change(screen.getByLabelText("Role"), { target: { value: "CEO" } });
+    fireEvent.click(screen.getByText("Click to sign digitally"));
+    fireEvent.click(submitButton());
+  };
+
+  beforeEach(() => {
+    auth.isAnonymous = false;
+    onSubmit.mockReset().mockResolvedValue(true);
+  });
+
+  it("won't generate The Manuscript while a required answer is missing, and says which", () => {
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
+    const callout = screen.getByRole("alert", { name: "Answers still needed" });
+    expect(callout).toHaveTextContent("Before The Manuscript can be generated, add:");
+    expect(callout).toHaveTextContent("Pay frequency");
+    expect(callout).not.toHaveTextContent("Company legal name");
+
+    signAndTry();
+    expect(submitButton()).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Add pay frequency");
+  });
+
+  it("sends the prospect back to Review to add them", () => {
+    const onReview = vi.fn();
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, company_name: null, states: [], census: [] }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} onReview={onReview} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("alert", { name: "Answers still needed" })).toHaveTextContent(/Company legal name.*States of operation/);
+    fireEvent.click(screen.getByRole("button", { name: "Go to Review" }));
+    expect(onReview).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells a guest too, before they verify their email", () => {
+    auth.isAnonymous = true;
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, company_name: null }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("alert", { name: "Answers still needed" })).toHaveTextContent("Company legal name");
+  });
+
+  it("says nothing when every required answer is there, census or not", () => {
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, census: [] }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("alert", { name: "Answers still needed" })).not.toBeInTheDocument();
+    signAndTry();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 });

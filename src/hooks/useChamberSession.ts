@@ -12,10 +12,12 @@ import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup }
 import { validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
+import { describeMissingKeys } from "@/data/readiness";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { fetchVerifiedFields } from "@/lib/verifiedFields";
 import {
   certificationFromRow,
+  fileIdForSession,
   NO_CERTIFICATION,
   type CertificationState,
   type ChamberSubmission,
@@ -36,7 +38,8 @@ export interface SubmitFailure {
 
 type ServerRow = Pick<
   Database["public"]["Tables"]["chamber_sessions"]["Row"],
-  "id" | "data_version" | "status" | "chamber_data" | "field_provenance" | "transcript" | "submission" | "expires_at" | "chosen_peo"
+  | "id" | "data_version" | "status" | "chamber_data" | "field_provenance" | "transcript" | "submission" | "expires_at"
+  | "chosen_peo" | "created_at"
 >;
 
 /** Answers kept in this browser that never reached the server, offered back when the intake is opened. */
@@ -49,6 +52,8 @@ export interface BackupOffer {
 
 interface UseChamberSessionReturn {
   sessionId: string | null;
+  /** The intake's File ID, fixed by when the server created it; null while there is no intake. */
+  fileId: string | null;
   /** True when a requested session couldn't be opened; no replacement is created until startNew(). */
   resumeFailed: boolean;
   /** Starts a fresh intake. Never resumes an existing one. */
@@ -128,10 +133,14 @@ const INVALID_DATA_CODE = "EA001";
 // Raised when a write reaches an intake that is closed (DETAIL: expired, archived or revoked). Row security
 // normally turns such a write into one that matches no row, which is read back instead.
 const CLOSED_INTAKE_CODE = "EA002";
+// Raised when a certification arrives without the answers it requires; DETAIL lists their keys. The
+// Reckoning doesn't send one, so this means the answers changed under it. Nothing was written.
+const NOT_READY_CODE = "EA003";
 // Archiving an intake that is already archived, or isn't this person's: either way it is out of the Chamber.
 // (PostgREST answers this SQLSTATE with HTTP 404.)
 const NOT_FOUND_CODE = "PT404";
-const ROW_COLUMNS = "id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo";
+const ROW_COLUMNS =
+  "id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo, created_at";
 
 const CONFLICT_MESSAGE = "This intake changed elsewhere. Reload the latest and certify again.";
 const MISSING_MESSAGE = "This intake can no longer be saved. Start a new intake to keep your answers.";
@@ -230,6 +239,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // Depend on the id, not the object: token refreshes hand out a new User object.
   const userId = user?.id;
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // When the server created the intake: the File ID's year comes from it, never from today.
+  const [startedAt, setStartedAt] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [resumeFailed, setResumeFailed] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -405,6 +416,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     settleOutcome();
     sessionIdRef.current = row.id;
     setSessionId(row.id);
+    setStartedAt(row.created_at);
   }, [settleOutcome]);
 
   const adoptVersion = useCallback((sid: string, version: unknown) => {
@@ -741,6 +753,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       createFailedRef.current = false;
       backupRef.current = null;
       setSessionId(null);
+      setStartedAt(null);
       setBackupOffer(null);
       setExpired(null);
       setRestoredThrough(null);
@@ -787,7 +800,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           transcript: messagesRef.current as unknown as Json,
           chosen_peo: chosenPeoRef.current,
         })
-        .select("id, data_version")
+        .select("id, data_version, created_at")
         .single();
 
       if (error || !newSession) {
@@ -800,6 +813,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         sessionIdRef.current = newSession.id;
         versionRef.current = typeof newSession.data_version === "number" ? newSession.data_version : null;
         setSessionId(newSession.id);
+        setStartedAt(newSession.created_at);
         // Anything captured while the row was being created still needs saving.
         if (dirtyRef.current) scheduleSave();
         else setSaveStatus((s) => (s === "idle" ? s : "saved"));
@@ -1152,6 +1166,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       if (error.details === "expired") markExpired();
       else markMissing();
       return blockedMessage();
+    } else if (error?.code === NOT_READY_CODE) {
+      // A definite refusal: nothing changed, and saving goes on as before.
+      const missing = describeMissingKeys(error.details);
+      return { message: `Add ${missing.length > 0 ? missing.join(", ").toLowerCase() : "the required answers"} on the Review tab, then certify.` };
     } else if (error) {
       // It may have landed anyway; a later write has to be able to tell.
       rememberUnconfirmed(version, { submitted: submission, chamber_data: storedData }, isOwnSubmission);
@@ -1188,8 +1206,21 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     return true;
   }), [adoptVersion, blockedMessage, enqueue, markConflict, markExpired, markInvalid, markMissing, reconcile, rememberUnconfirmed, saveNow]);
 
+  // A File ID already recorded on a certification (even a withdrawn one) stays the intake's, as the
+  // advisor views and the Manuscript read it: intakes certified before the start-year rule may carry
+  // another year. Only an intake with none recorded gets one made from when it started.
+  const recorded = certification.status === "none" ? null : certification.submission.file_id;
+  const fileId = !sessionId
+    ? null
+    : typeof recorded === "string" && recorded.trim()
+      ? recorded
+      : startedAt
+        ? fileIdForSession(sessionId, new Date(startedAt))
+        : null;
+
   return {
     sessionId,
+    fileId,
     resumeFailed,
     startNew,
     loadFailed,

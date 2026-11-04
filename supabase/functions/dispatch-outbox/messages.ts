@@ -9,6 +9,7 @@
 export type OutboxKind = "advisor_notification" | "prospect_confirmation";
 
 export interface AdvisorNotification {
+  /** The intake's File ID. Named `reference` in the queued payload, which rows already queued keep. */
   reference: string;
   companyName: string | null;
   /** The profile's contact name; only the fallback for the signer on alerts queued before `signer_name` existed. */
@@ -30,6 +31,7 @@ export interface AdvisorNotification {
 }
 
 export interface ProspectConfirmation {
+  /** The intake's File ID (see AdvisorNotification.reference). */
   reference: string;
   companyName: string | null;
   recipientName: string | null;
@@ -170,7 +172,7 @@ const NOT_PROVIDED = "Not provided";
 const utcStamp = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
 
 /**
- * The alert for the advisory team: who certified, the headline facts, which reference, where to
+ * The alert for the advisory team: who certified, the headline facts, which File ID, where to
  * look. Every listed detail is always shown, "Not provided" when empty, so a blank is never
  * mistaken for an omission. Never intake contents beyond those named facts.
  */
@@ -187,7 +189,7 @@ export function renderAdvisorNotification(n: AdvisorNotification, ctx: AdvisorCo
     ["Phone", n.contactPhone ?? NOT_PROVIDED],
     ["Employee Count", n.employeeCount === null ? NOT_PROVIDED : String(n.employeeCount)],
     ["HQ State", n.hqState ?? NOT_PROVIDED],
-    ["Reference", n.reference],
+    ["File ID", n.reference],
     ["Certified", n.certifiedAt === null ? NOT_PROVIDED : utcStamp(n.certifiedAt)],
   ];
 
@@ -220,14 +222,14 @@ export interface ProspectContext {
   responseTime: string;
 }
 
-/** The prospect's receipt: what we have, the reference, what happens next. Never intake contents. */
+/** The prospect's receipt: what we have, the File ID, what happens next. Never intake contents. */
 export function renderProspectConfirmation(c: ProspectConfirmation, ctx: ProspectContext): RenderedEmail {
   const company = c.companyName ?? "your company";
   const subject = `We received your intake (${c.reference})`;
   const greeting = c.recipientName ? `Hello ${c.recipientName},` : "Hello,";
   const received = `Thank you. Edgar Allan Advisory received the intake you certified for ${company}.`;
   const next = `An Edgar Allan Advisory advisor will review it and follow up by email if we need anything else. We aim to respond within ${ctx.responseTime}.`;
-  const support = `Questions? Reply to this email or write to ${ctx.supportEmail}, and quote your reference.`;
+  const support = `Questions? Reply to this email or write to ${ctx.supportEmail}, and quote your File ID.`;
   const privacy = "For your security, this email does not include your census, payroll or document details.";
 
   const text = [
@@ -235,7 +237,7 @@ export function renderProspectConfirmation(c: ProspectConfirmation, ctx: Prospec
     "",
     received,
     "",
-    `Submission reference: ${c.reference}`,
+    `File ID: ${c.reference}`,
     "",
     "What happens next",
     next,
@@ -249,10 +251,10 @@ export function renderProspectConfirmation(c: ProspectConfirmation, ctx: Prospec
 
   const html = layout(
     subject,
-    `We received your intake for ${company}. Reference ${c.reference}.`,
+    `We received your intake for ${company}. File ID ${c.reference}.`,
     `<p style="margin:0 0 16px;">${escapeHtml(greeting)}</p>
 <p style="margin:0 0 16px;">${escapeHtml(received)}</p>
-<table style="border-collapse:collapse;margin:0 0 20px;">${row("Submission reference", c.reference)}</table>
+<table style="border-collapse:collapse;margin:0 0 20px;">${row("File ID", c.reference)}</table>
 <p style="margin:0 0 4px;font-weight:bold;">What happens next</p>
 <p style="margin:0 0 16px;">${escapeHtml(next)}</p>
 <p style="margin:0 0 16px;">${escapeHtml(support)}</p>

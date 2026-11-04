@@ -39,6 +39,20 @@ describe("fileIdForSession", () => {
     expect(fileIdForSession(id, date)).toBe("EAA-2026-0F1E2D3C");
     expect(fileIdForSession(id, date)).toBe(fileIdForSession(id, date));
   });
+
+  it("takes the year in UTC, as the database does, whatever the browser's time zone", () => {
+    const id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
+    const zone = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      // 03:00 UTC on 1 January is still New Year's Eve in California.
+      expect(new Date("2027-01-01T03:00:00Z").getFullYear()).toBe(2026);
+      expect(fileIdForSession(id, new Date("2027-01-01T03:00:00Z"))).toBe("EAA-2027-0F1E2D3C");
+    } finally {
+      if (zone === undefined) delete process.env.TZ;
+      else process.env.TZ = zone;
+    }
+  });
 });
 
 describe("eligibilityChecks", () => {
@@ -75,11 +89,15 @@ describe("coverageTier", () => {
   const child = { first_name: "C", last_name: "", dob: "", relationship: "child" as const };
 
   it("derives the tier from dependents", () => {
-    expect(coverageTier(emp())).toBe("Employee Only");
     expect(coverageTier(emp({ dependents: [spouse] }))).toBe("Employee + Spouse");
     expect(coverageTier(emp({ dependents: [child] }))).toBe("Employee + Child(ren)");
     expect(coverageTier(emp({ dependents: [spouse, child] }))).toBe("Employee + Family");
-    expect(coverageTier(emp({ dependents: undefined }))).toBe("Employee Only");
+  });
+
+  it("doesn't make up Employee Only when nobody named a tier or a dependent", () => {
+    expect(coverageTier(emp())).toBeNull();
+    expect(coverageTier(emp({ dependents: undefined }))).toBeNull();
+    expect(coverageTier(emp({ coverage_tier: "EE" }))).toBe("Employee Only");
   });
 
   it("uses the tier the census states over one implied by dependents", () => {
@@ -124,7 +142,7 @@ describe("buildManuscript", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: "EAA-SAMPLE" });
     const total = m.dependentTiers.reduce((sum, t) => sum + t.count, 0);
     expect(total).toBe(DEMO_CHAMBER_DATA.census.filter((e) => e.classification === "w2").length);
-    expect(m.totalDependents).toBe(6);
+    expect(m.totalDependents).toBe("6");
     expect(m.open.some((o) => o.includes("Workers' comp"))).toBe(true);
     expect(m.signer).toBeNull();
   });
@@ -132,7 +150,7 @@ describe("buildManuscript", () => {
 
 describe("buildManuscript with missing data", () => {
   const sectionValues = (m: ReturnType<typeof buildManuscript>) =>
-    [...m.companyRows, ...m.workforceRows, ...m.benefitsRows].map(([, v]) => v);
+    [...m.companyRows, ...m.payrollRows, ...m.workforceRows, ...m.benefitsRows].map(([, v]) => v);
 
   it("says 'Not provided' for every field the prospect never gave", () => {
     const m = buildManuscript(EMPTY_CHAMBER_DATA, { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") });
@@ -334,5 +352,111 @@ describe("maskDob", () => {
   it("keeps only the year", () => {
     expect(maskDob("1990-05-17")).toBe("••/••/1990");
     expect(maskDob("unknown")).toBe("••/••/••••");
+  });
+});
+
+describe("buildManuscript payroll", () => {
+  const opts = { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") };
+  const rows = (data: Parameters<typeof buildManuscript>[0]) => Object.fromEntries(buildManuscript(data, opts).payrollRows.map(([label, value]) => [label, value]));
+
+  it("has its own section with every payroll answer captured", () => {
+    const m = buildManuscript(
+      {
+        ...EMPTY_CHAMBER_DATA,
+        payroll_vendor: "Gusto",
+        pay_frequency: "bi-weekly",
+        funding_days: 2,
+        accrual_method: "Per pay period",
+        pto_types: ["Vacation", "Sick"],
+        uses_mobile_app: true,
+        uses_physical_clocks: false,
+        shift_differentials: false,
+        hris_system: "BambooHR",
+      },
+      opts,
+    );
+    expect(Object.fromEntries(m.payrollRows.map(([label, value]) => [label, value]))).toEqual({
+      "Current Payroll": "Gusto",
+      "Pay Frequency": "bi-weekly",
+      "Funding Lead Time": "2 days",
+      "Accrual Method": "Per pay period",
+      "PTO Types": "Vacation, Sick",
+      Timekeeping: "Mobile app",
+      "Shift Differentials": "No",
+      HRIS: "BambooHR",
+    });
+    // Payroll is no longer folded into the company profile.
+    expect(m.companyRows.map(([label]) => label)).not.toContain("Pay Frequency");
+  });
+
+  it("says Not provided for each payroll answer never given, and for timekeeping it can't tell", () => {
+    expect(Object.values(rows(EMPTY_CHAMBER_DATA)).every((v) => v === "Not provided")).toBe(true);
+    expect(rows({ ...EMPTY_CHAMBER_DATA, uses_computer_timekeeping: false }).Timekeeping).toBe("Not provided");
+    expect(rows({ ...EMPTY_CHAMBER_DATA, uses_computer_timekeeping: false, uses_mobile_app: false, uses_physical_clocks: false }).Timekeeping)
+      .toBe("None of computer, mobile app or time clock");
+    expect(rows({ ...EMPTY_CHAMBER_DATA, funding_days: 1 })["Funding Lead Time"]).toBe("1 day");
+  });
+});
+
+describe("buildManuscript never passes a census default off as an answer", () => {
+  const opts = { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") };
+  const workforce = (m: ReturnType<typeof buildManuscript>) => Object.fromEntries(m.workforceRows.map(([label, value]) => [label, value]));
+
+  it("shows a defaulted classification as Not provided, counts it apart, and lists it as open", () => {
+    const m = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, census: [emp({ id: "a", assumed: ["classification"] }), emp({ id: "b" }), emp({ id: "c", classification: "1099" })] },
+      opts,
+    );
+    expect(m.census.map((r) => r.classification)).toEqual(["Not provided", "W-2", "1099"]);
+    expect(workforce(m)).toMatchObject({ "W-2 Employees on Census": "1", "1099 Contractors on Census": "1", "Classification Not Provided": "1" });
+    expect(m.open).toContain("Worker classification (W-2 or 1099) — not provided for 1 of 3 people on the census");
+  });
+
+  it("has no classification row or open item when every classification was given", () => {
+    const m = buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [emp()] }, opts);
+    expect(workforce(m)).not.toHaveProperty("Classification Not Provided");
+    expect(m.open.some((o) => o.startsWith("Worker classification"))).toBe(false);
+  });
+
+  it("lists a defaulted full-time status as open, and still shows a stated part-time one", () => {
+    const m = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, census: [emp({ id: "a", assumed: ["employment_type"] }), emp({ id: "b", employment_type: "part_time" })] },
+      opts,
+    );
+    expect(m.census.map((r) => r.classification)).toEqual(["W-2", "W-2 PT"]);
+    expect(m.open).toContain("Full- or part-time status — not provided for 1 of 2 people on the census");
+  });
+
+  it("marks a year's pay estimated at full-time hours, and asks for the hours", () => {
+    const m = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, census: [emp({ compensation_type: "hourly", annual_salary: 41600, assumed: ["annual_salary"] })] },
+      opts,
+    );
+    expect(m.census[0].salary).toBe("$41,600 (hourly, est.)");
+    expect(m.open).toContain("Annual pay — estimated at full-time hours for 1 of 1 people on the census; confirm their hours");
+  });
+
+  it("puts people with no tier under Not provided rather than Employee Only, and lists them as open", () => {
+    const spouse = { first_name: "S", last_name: "", dob: "", relationship: "spouse" as const };
+    const m = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, census: [emp({ id: "a" }), emp({ id: "b", dependents: [spouse] }), emp({ id: "c", coverage_tier: "EE" })] },
+      opts,
+    );
+    expect(m.census.map((r) => r.tier)).toEqual(["Not provided", "Employee + Spouse", "Employee Only"]);
+    expect(m.dependentTiers).toContainEqual({ tier: "Not provided", count: 1, pct: "33%" });
+    expect(m.dependentTiers).toContainEqual({ tier: "Employee Only", count: 1, pct: "33%" });
+    expect(m.open).toContain("Coverage tier — not provided for 1 of 3 employees");
+  });
+
+  it("only counts dependents it knows of, and says how many people that leaves out", () => {
+    const spouse = { first_name: "S", last_name: "", dob: "", relationship: "spouse" as const };
+    const total = (census: CensusEmployee[]) => buildManuscript({ ...EMPTY_CHAMBER_DATA, census }, opts).totalDependents;
+    expect(total([])).toBe("Not provided");
+    expect(total([emp({ id: "a" }), emp({ id: "b" })])).toBe("Not provided");
+    expect(total([emp({ id: "a", dependents: [spouse] }), emp({ id: "b", coverage_tier: "EE" })])).toBe("1");
+    expect(total([emp({ id: "a", dependents: [spouse] }), emp({ id: "b" })])).toBe("1 (not known for 1 of 2)");
+    // A family tier from a census names nobody, so the count is unknown, not zero.
+    expect(total([emp({ id: "a", coverage_tier: "FAM" })])).toBe("Not provided");
+    expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [emp({ coverage_tier: "WAIVE" })] }, opts).dependentTiers.map((t) => t.tier)).not.toContain("Not provided");
   });
 });

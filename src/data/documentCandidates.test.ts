@@ -198,6 +198,31 @@ describe("census comparison and merge", () => {
     expect(merged[0].job_title).toBe("Designer");
   });
 
+  it("never lets a default the document filled in for a blank cell replace the intake's answer", () => {
+    // The file has a classification column, but this row's cell was blank: W-2 is only the default.
+    const current = [row("a", "Ann", { classification: "1099" })];
+    const incoming = [row("n", "Ann", { classification: "w2", assumed: ["classification"] })];
+    expect(compareCensus(current, incoming, ["classification"]).matched[0].changes).toEqual([]);
+    expect(mergeCensus(current, incoming, ["classification"])[0].classification).toBe("1099");
+  });
+
+  it("turns a defaulted fact into an answer once a document states it, even when the value is the same", () => {
+    const current = [row("a", "Ann", { classification: "w2", employment_type: "full_time", assumed: ["classification", "employment_type"] })];
+    const incoming = [row("n", "Ann", { classification: "w2", job_title: "Dev" })];
+    const [merged] = mergeCensus(current, incoming, ["classification", "job_title"]);
+    expect(merged).toMatchObject({ classification: "w2", job_title: "Dev", assumed: ["employment_type"] });
+
+    const [allStated] = mergeCensus(current, [row("n", "Ann", { classification: "1099", employment_type: "part_time", job_title: "Dev" })], ["classification", "employment_type", "job_title"]);
+    expect(allStated).toMatchObject({ classification: "1099", employment_type: "part_time" });
+    expect(allStated).not.toHaveProperty("assumed");
+  });
+
+  it("keeps a row's defaults when the document doesn't state those facts", () => {
+    const current = [row("a", "Ann", { assumed: ["classification"] })];
+    const [merged] = mergeCensus(current, [row("n", "Ann", { job_title: "Dev" })], ["job_title"]);
+    expect(merged.assumed).toEqual(["classification"]);
+  });
+
   it("reads a document's stated facts from its extraction, and no others", () => {
     const ex = parseExtraction({
       candidates: [

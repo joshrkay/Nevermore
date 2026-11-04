@@ -95,7 +95,9 @@ checks the result. What it needs and what to do after: `docs/SUPABASE_SETUP.md`.
 
 ## Advisors
 
-Advisor tools are at `/advisor`. Roles, access rules and how to grant access: `docs/ADVISOR_ACCESS.md`.
+Advisor tools are at `/advisor`, the Advisor Console: the team's operating workflow, in place of a CRM
+(field mapping and ownership: `docs/ADVISOR_CONSOLE.md`). Roles, access rules and how to grant access:
+`docs/ADVISOR_ACCESS.md`. Terms such as Intake, Submission and File ID are defined in `GLOSSARY.md`.
 
 ## Notifications
 

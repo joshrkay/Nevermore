@@ -54,6 +54,21 @@ describe("buildManuscriptPdf", () => {
     }
   });
 
+  it("prints payroll in its own section, and a census default as not provided", async () => {
+    const data = {
+      ...DEMO_CHAMBER_DATA,
+      funding_days: 3,
+      hris_system: "BambooHR",
+      census: [{ ...DEMO_CHAMBER_DATA.census[0], assumed: ["classification" as const] }],
+    };
+    const { text } = await render(data);
+    for (const expected of ["Payroll & Time", "Funding Lead Time", "3 days", "BambooHR", "Classification Not Provided"]) {
+      expect(text).toContain(expected);
+    }
+    // jsPDF escapes parentheses inside text, so look for the part of the open item without them.
+    expect(text).toContain("not provided for 1 of 1 people on the census");
+  });
+
   it("puts the file id and page numbers in the header and footer of every page", async () => {
     const { text, pageCount } = await render(bigCensus);
     expect(pageCount).toBeGreaterThan(3);

@@ -183,13 +183,23 @@ The roster is an array of rows (`CensusEmployee`, defined in `supabase/functions
 | `age` | Whole years, 14 to 100. Used when a file gives an age and no date of birth. |
 | `work_state` | Two-letter uppercase, from a code or a name; `""` until known. |
 | `zip_code` | `12345` or `12345-6789`; a ZIP Excel stripped a zero from is padded. |
-| `job_title`, `annual_salary` | Salary is whole dollars a year. An hourly rate becomes a year's pay at the stated weekly hours, or at 2,080 hours for a full-time worker. |
+| `job_title`, `annual_salary` | Salary is whole dollars a year. An hourly rate becomes a year's pay at the stated weekly hours, or at 2,080 hours for a full-time worker (recorded in `assumed` when the hours weren't given). |
 | `compensation_type` | `salary` or `hourly`. |
-| `employment_type` | `full_time` or `part_time`; weekly hours of 30 or more are full time. |
-| `classification` | `w2` or `1099`. A blank label means W-2; a label that is neither (a K-1 owner) drops the row rather than guess. |
-| `coverage_tier` | `EE`, `EE+SP`, `EE+CH`, `FAM` or `WAIVE`. When absent, the Manuscript derives a tier from `dependents`. |
+| `employment_type` | `full_time` or `part_time`; weekly hours of 30 or more are full time. Full time when nothing says, recorded in `assumed`. |
+| `classification` | `w2` or `1099`. A blank label is stored as W-2 and recorded in `assumed`; a label that is neither (a K-1 owner) drops the row rather than guess. |
+| `coverage_tier` | `EE`, `EE+SP`, `EE+CH`, `FAM` or `WAIVE`. When absent, the Manuscript derives a tier from the `dependents` named, and otherwise shows it as not provided. |
 | `class_code` | Four-digit workers' comp code. |
 | `dependents` | Named in conversation, never read from a document. |
+| `assumed` | Which of `classification`, `employment_type` and `annual_salary` hold a default rather than an answer. Absent when none do. |
+
+#### Defaults are recorded, not passed off as answers
+
+A row always has a classification, an employment type and a pay type, so a file that doesn't say gets a default. `assumed` (US-1.4) lists the ones that are only defaults, so nothing downstream presents them as answers:
+
+- **Reading a row** (`normalizeCensusRow`) adds a fact to `assumed` when it filled the value in, and keeps a fact a saved row already lists as long as the value is still the default. A row saved before the list existed has none: its values can't be told apart.
+- **Merging a document's census** (`mergeCensus`) never lets a default replace an answer, even in a column the file has, and drops a fact from a person's `assumed` once a document states it.
+- **The Manuscript** shows a defaulted classification as "Not provided" and counts it apart from W-2 and 1099, marks a year's pay worked out at assumed hours "(hourly, est.)", and lists each kind as an open item with a count. It never prints "Employee Only" or a dependent count nobody gave: a person with no tier and no named dependents is "Not provided", and the total says how many people it leaves out. The workspace's census tables show the same labels.
+- **The database** tolerated unknown keys in a census row already, so no migration was needed. Intake schema v1 now lists `assumed` as an optional key of a census row (`docs/intake-schema.v1.json`), without a new version: it is optional, and nothing that validates against v1 runs outside the app that writes it.
 
 Intakes, provenance entries, advisor reviews and signed snapshots saved before the census contract call the roster `employees` and use `state`, `title`, `salary` and `"W2"`. They are read as `census` and never rewritten, so a signed Manuscript still renders. A census row with no first name, or a `classification` that isn't W-2 or 1099, is dropped when read.
 
@@ -304,6 +314,22 @@ Candidates never change `chamber_data` by themselves. In the Upload tab the pros
 
 When the prospect signs, `submission.field_provenance` snapshots the provenance alongside `submission.chamber_data`. The Manuscript shows the status and source for each row, and adds the open items (see "Required items") to "Underwriting Readiness".
 
+### Required answers
+
+Three answers are required before an intake can be certified, and so before The Manuscript can be generated (decision D2, US-1.2). The one list is `REQUIRED_ITEMS` in `src/data/readiness.ts`:
+
+| Key | Answer | Counts as given when |
+| --- | --- | --- |
+| `company_name` | Company legal name | it isn't blank |
+| `states` | States of operation | `states` holds a state code, or a census row (or a row of the older `employees` roster) has a work state that is one |
+| `pay_frequency` | Pay frequency | it isn't blank |
+
+The employee census is recommended, not required (`RECOMMENDED_ITEMS`): it can only come from an uploaded file today, and no document is required. A missing census is an open item in the Review step and the Manuscript, and never blocks.
+
+- **In the app.** These fields are marked "Required" wherever they appear (`ProvenanceField`), and say they're needed while empty. The Review step lists what is still missing, with a link to each field. The Reckoning lists them with a way back to Review, and keeps Generate disabled (`certificationBlockers`). The Manuscript lists them as "not provided" open items, as the advisor queue does.
+- **In the database.** `public.intake_missing_required(chamber_data)` returns the missing keys in the order above. Since migration `20261103120000` it reads `public.intake_answers_present`, the one presence rule `intake_required_items` reads too (see "Required items"), so it trims as the browser does and counts a state only when it is a code. A certification sent from the browser (`current_user` `anon` or `authenticated`) is refused while any are missing, with SQLSTATE `EA003` and the keys, comma-separated, in DETAIL (`company_name,pay_frequency`). Nothing is written. Other saves, existing certifications and privileged writes are not checked. `src/data/schemaSync.test.ts` compares the function's keys with `REQUIRED_ITEMS`.
+- **On `EA003`.** The client names the missing answers and points to the Review tab. It is a definite refusal: saving carries on as before.
+
 ### The chosen PEO (`chosen_peo`)
 
 `chamber_sessions.chosen_peo` (text, nullable, migration `20261103100000_chosen_peo.sql`) is the PEO the prospect picked on PEO Match, kept so that a reload during the final steps doesn't lose it. It is `NULL` until they pick one, which they never have to: we don't rank PEOs or choose for them. It can be a listed PEO or one the prospect typed in.
@@ -314,16 +340,16 @@ When the prospect signs, `submission.field_provenance` snapshots the provenance 
 
 ## Required items
 
-Decision D2: an intake must hold four items, in this order, with these labels:
+Decision D2 (see "Required answers" above): three required answers, then the recommended employee census. `requiredItems` (`src/data/requiredItems.ts`) takes the items, their order, labels and presence from `readiness.ts`, and says how settled each is:
 
-| Item | Label | Present when |
-| --- | --- | --- |
-| `company_legal_name` | Company legal name | `company_name` has text |
-| `states_of_operation` | States of operation | `states` holds a state code, or a census row names one as its work state |
-| `pay_frequency` | Pay frequency | `pay_frequency` has text |
-| `employee_census` | Employee census | the census has at least one row |
+| Item | Label | Required | Present when |
+| --- | --- | --- | --- |
+| `company_name` | Company legal name | yes | `company_name` has text |
+| `states` | States of operation | yes | `states` holds a state code, or a census row names one as its work state |
+| `pay_frequency` | Pay frequency | yes | `pay_frequency` has text |
+| `census` | Employee census | no (recommended) | the census has at least one row |
 
-Text counts when something other than whitespace is left (trimmed as `String.prototype.trim` trims, on both sides). A state counts when it is a state or territory code, in any case and with whitespace around it ignored, as the browser reads it; a roster saved before 20261027 can hold a `state` such as `NA`, which names no state. The census is `census`, or `employees` on an intake saved before the census contract that has no `census`; a row's work state is `work_state`, or `state` on such a roster. There is no "Not applicable" status and no "Document needed" item: no document is ever required.
+Text counts when something other than whitespace is left (trimmed as `String.prototype.trim` trims, on both sides). A state counts when it is a state or territory code, in any case and with whitespace around it ignored, as the browser reads it; a roster saved before 20261027 can hold a `state` such as `NA`, which names no state. The census is `census`, or `employees` on an intake saved before the census contract that has no `census`; a row's work state is `work_state`, or `state` on such a roster. There is no "Not applicable" status and no "Document needed" item: no document is ever required. The census never blocks certification and never holds an intake back from complete (`isIntakeComplete`: the three required items settled).
 
 Each item is in one state:
 
@@ -335,14 +361,14 @@ Each item is in one state:
 
 A provenance entry counts only when `parseProvenance` would keep it (a known status, a string `updated_at`, a valid source, and a valid source on every candidate); any other entry is read as none. The census's provenance is its `census` entry, or `employees` when there is none (as `parseProvenance` reads it). States of operation is settled by `states`, or by a settled census whose rows name a work state. Otherwise it takes the state of `states` when that holds anything, or else the census's state when only the census names states (the browser's copy marks that item `viaCensus`).
 
-**One definition.** `public.intake_required_items(data, provenance, verified)` (migration `20261103110000_required_items.sql`) returns the items as `[{ item, label, field, state }]`, in order, from its arguments alone. The advisor queue's `missing_required` is the labels it reports `missing`. `src/data/requiredItems.ts` (`requiredItems`) mirrors it in the browser. `src/data/requiredItems.cases.json` holds the cases both are tested against: `supabase/tests/required_items.sql` passes each stored intake straight to the function, and `src/data/requiredItems.test.ts` loads it as the Chamber does first (`parseChamberData`, `parseProvenance`). The database reads stored values as the browser loads them, state codes and provenance included (`public.provenance_entry_status` mirrors `parseProvenance`; nothing on the server checks `field_provenance` itself), so the two agree on stored intakes, older `employees` rosters too. They can still differ on values the app never stores, most of which the database refuses on write: a state's full name (the browser's sanitiser reads "Oregon" as `OR`), a census row the sanitiser drops, or a `states` string rather than a list.
+**One rule.** In the database (migration `20261103120000_required_items.sql`), `public.intake_answers_present(data)` says which answers an intake holds; the certification gate `public.intake_missing_required` and `public.intake_required_items(data, provenance, verified)` both read it. `intake_required_items` returns the items as `[{ item, label, field, required, state }]`, in order, from its arguments alone. The advisor queue's `missing_required` is the labels of the required items it reports `missing` (a missing census is not listed). `src/data/requiredItems.cases.json` holds the cases both sides are tested against: `supabase/tests/required_items.sql` passes each stored intake straight to the function (and checks that the gate refuses for exactly the required items reported missing), and `src/data/requiredItems.test.ts` loads it as the Chamber does first (`parseChamberData`, `parseProvenance`). The database reads stored values as the browser loads them, state codes and provenance included (`public.provenance_entry_status` mirrors `parseProvenance`; nothing on the server checks `field_provenance` itself), so the two agree on stored intakes, older `employees` rosters too. They can still differ on values the app never stores, most of which the database refuses on write: a state's full name (the browser's sanitiser reads "Oregon" as `OR`), a census row the sanitiser drops, or a `states` string rather than a list.
 
 **Where it shows.**
 
-- The Review tab's "Needs your review" lists the required items that aren't settled first, in order, as "Not provided", "Conflicting answers", "Incomplete" or "Please confirm", then every other field `fieldOpenItems` lists. Each field appears once, and the count includes both kinds. A field an advisor verified is never listed, unless it is a required item still not provided. While only the census names states, States of operation is left to the Employee census item, which asks the same thing.
-- The Manuscript's open items start with "<label> — not provided" for each missing item, then the other open fields less the verified ones, then the unmet or unverified eligibility checks, census flags and an advisor's follow-ups.
+- In the Review tab, "Still needed" lists the required answers that block certification, in order: missing ones (with a hint) and ones whose answers conflict. "Needs your review" then starts with the required answers given but not settled, as "Incomplete" or "Please confirm", followed by every other field `fieldOpenItems` lists. Each field appears once, and a field an advisor verified is never listed, unless it is a required answer still not provided. While only the census names states, the census is the answer to confirm or resolve. The recommended census is listed under "Recommended" while missing.
+- The Manuscript's open items start with "<label> — not provided" for each missing required answer and a missing census, then the other open fields less the verified ones, then the unmet or unverified eligibility checks, census flags and an advisor's follow-ups.
 - A row whose field's status is `conflicting` shows a red "Conflicting" chip on the web Manuscript, and the PDF prints it as "<value> (unresolved — see open items)". A row built from several fields (entity structure and FEIN count, exempt and nonexempt counts, retirement, the census counts) takes its chip and marker from any of them that conflicts (`rowProvenance` in `src/data/manuscript.ts`). A field an advisor verified is settled, so the Manuscript shows it confirmed and marks it neither way, as the advisor's packet does.
-- The Reckoning won't submit while a required item's answers conflict ("Resolve the conflicting answers for <label>"; a conflict States of operation only takes from the census is listed once, for the census). That is the browser's check only, and only for conflicts: the full completeness gate, and enforcing it in the database, are C-1.3's.
+- The Reckoning won't submit while a required answer is missing (US-1.2, enforced by the database too) or its answers conflict ("Resolve the conflicting answers for <label>", after the missing ones; a conflict States of operation only takes from the census names the census). The conflict check is the browser's only. The recommended census never blocks.
 
 **Fields an advisor verified.** A field an advisor marked `verified` in `advisor_field_reviews` is settled whatever its status. `public.session_verified_fields(session_id)` returns those field names, sorted, to the intake's owner while they can read the intake (not once it is archived or revoked) and to advisors. Anyone else gets an empty list, and signed-out callers can't call it. It gives the names only: no other review state, note, reviewer or corrected value, and `advisor_field_reviews` itself stays advisor-only. A census review stored under `employees` counts as the census's unless the census has a review of its own. The Chamber asks once, when it opens an intake (`useChamberSession`'s `verifiedFields`), and the prospect's Manuscript page when it loads; the advisor's Manuscript uses the reviews the page already has. If the call fails, no field counts as verified and the prospect isn't told.
 

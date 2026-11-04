@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ProvenanceMap } from "@/data/provenance";
 import ReviewTab from "./ReviewTab";
@@ -70,20 +70,22 @@ describe("ReviewTab needs your review", () => {
     expect(items).toHaveLength(expected.length);
     expected.forEach(([reason, label], i) => expect(items[i]).toMatch(new RegExp(`^${reason}${label}`)));
   };
+  const stillNeeded = () =>
+    [...screen.getByRole("region", { name: "Still needed" }).querySelectorAll("li")].map((li) => li.querySelector("span")?.textContent);
 
-  it("lists the unsettled required items first, in order, then the other open fields, each once", () => {
+  it("puts required answers that block certification under still needed, and the unsettled ones first in review, each once", () => {
     render(<ReviewTab data={data} provenance={provenance} onAction={() => {}} onProceed={() => {}} />);
-    expect(screen.getByText("Needs your review — 6 items")).toBeInTheDocument();
+    // Missing and conflicting both hold certification back; the census is only recommended.
+    expect(stillNeeded()).toEqual(["States of operation", "Pay frequency"]);
+    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Your answers conflict");
+    expect(screen.queryByText(/Every required answer is here/)).not.toBeInTheDocument();
+    expect(screen.getByText("Needs your review — 3 items")).toBeInTheDocument();
     expectListed([
       ["Please confirm", "Company legal name"],
-      ["Not provided", "States of operation"],
-      ["Conflicting answers", "Pay frequency"],
-      ["Not provided", "Employee census"],
       ["Incomplete", "Employee count"],
       ["Please confirm", "Industry"],
     ]);
-    // A missing answer is offered to fill in, not shown as a value.
-    expect(screen.getByRole("button", { name: "Add States of operation" })).toBeInTheDocument();
+    // The conflict is resolved where the answer sits.
     expect(screen.getByRole("button", { name: "Use Bi-weekly for Pay frequency" })).toBeInTheDocument();
   });
 
@@ -91,26 +93,17 @@ describe("ReviewTab needs your review", () => {
     render(
       <ReviewTab data={data} provenance={provenance} verified={new Set(["company_name", "industry"])} onAction={() => {}} onProceed={() => {}} />,
     );
-    expect(screen.getByText("Needs your review — 4 items")).toBeInTheDocument();
-    expectListed([
-      ["Not provided", "States of operation"],
-      ["Conflicting answers", "Pay frequency"],
-      ["Not provided", "Employee census"],
-      ["Incomplete", "Employee count"],
-    ]);
+    expect(screen.getByText("Needs your review — 1 item")).toBeInTheDocument();
+    expectListed([["Incomplete", "Employee count"]]);
   });
 
-  it("still lists a required item that was never given, even if an advisor verified its field", () => {
+  it("still needs a required answer that was never given, even if an advisor verified its field", () => {
     render(<ReviewTab data={EMPTY_CHAMBER_DATA} verified={new Set(["company_name", "census"])} onProceed={() => {}} />);
-    expectListed([
-      ["Not provided", "Company legal name"],
-      ["Not provided", "States of operation"],
-      ["Not provided", "Pay frequency"],
-      ["Not provided", "Employee census"],
-    ]);
+    expect(stillNeeded()).toEqual(["Company legal name", "States of operation", "Pay frequency"]);
+    expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
   });
 
-  it("leaves States of operation to the census's own item while only the census names states", () => {
+  it("asks for the census to be confirmed while only the census names states", () => {
     const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
     render(
       <ReviewTab
@@ -120,17 +113,123 @@ describe("ReviewTab needs your review", () => {
         onProceed={() => {}}
       />,
     );
+    expect(stillNeeded()).toEqual(["Pay frequency"]);
     expectListed([
       ["Please confirm", "Company legal name"],
-      ["Conflicting answers", "Pay frequency"],
       ["Please confirm", "Employee census"],
       ["Incomplete", "Employee count"],
       ["Please confirm", "Industry"],
     ]);
   });
 
-  it("asks nothing when every required item is settled and nothing else is open", () => {
+  it("says the census's conflict holds the states back when the census alone names them", () => {
+    const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+    const conflicting = { status: "conflicting" as const, source: said("m4"), updated_at: at, candidates: [] };
+    render(<ReviewTab data={{ ...data, census, states: [] }} provenance={{ census: conflicting }} onProceed={() => {}} />);
+    expect(stillNeeded()).toEqual(["States of operation"]);
+    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("The census's answers conflict");
+    expect(screen.getByRole("button", { name: "Go to employee census" })).toBeInTheDocument();
+    expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
+  });
+
+  it("asks nothing when every required answer is settled and nothing else is open", () => {
     render(<ReviewTab data={DEMO_CHAMBER_DATA} onProceed={() => {}} />);
     expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Still needed" })).not.toBeInTheDocument();
+  });
+});
+
+describe("ReviewTab sections", () => {
+  const complete = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY", "NJ"], pay_frequency: "bi-weekly" };
+  const section = (name: string) => screen.getByRole("region", { name });
+
+  it("shows company, workforce, locations, payroll and benefits, each with what was captured", () => {
+    render(
+      <ReviewTab
+        data={{
+          ...complete,
+          industry: "Bookbinding",
+          employee_count: 0,
+          hq_state: "NY",
+          payroll_vendor: "Gusto",
+          funding_days: 3,
+          pto_types: ["Vacation", "Sick"],
+          current_carrier: "Aetna",
+          ancillary_benefits: ["Dental"],
+          has_401k: false,
+        }}
+        onProceed={() => {}}
+      />,
+    );
+    for (const name of ["Company", "Workforce", "Locations", "Payroll", "Benefits"]) expect(section(name)).toBeInTheDocument();
+    expect(section("Company")).toHaveTextContent("Bookbinding");
+    expect(section("Workforce")).toHaveTextContent("Employee count0"); // zero is an answer, not a dash
+    expect(section("Locations")).toHaveTextContent("NY, NJ");
+    expect(section("Payroll")).toHaveTextContent("Gusto");
+    expect(section("Payroll")).toHaveTextContent("3 days");
+    expect(section("Payroll")).toHaveTextContent("Vacation, Sick");
+    expect(section("Benefits")).toHaveTextContent("Aetna");
+    expect(section("Benefits")).toHaveTextContent("No retirement plan");
+  });
+
+  it("marks the required answers wherever they sit, and only those", () => {
+    render(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} />);
+    const marked = (name: string) => [...section(name).querySelectorAll("p")].filter((p) => p.textContent?.endsWith("Required")).map((p) => p.textContent);
+    expect(marked("Company")).toEqual(["Company legal nameRequired"]);
+    expect(marked("Locations")).toEqual(["States of operationRequired"]);
+    expect(marked("Payroll")).toEqual(["Pay frequencyRequired"]);
+    expect(marked("Workforce")).toEqual([]);
+    expect(marked("Benefits")).toEqual([]);
+    expect(section("Workforce")).toHaveTextContent("Employee censusRecommended");
+  });
+
+  it("lists what's still needed, says why, and says so once nothing is", () => {
+    const { rerender } = render(<ReviewTab data={{ ...complete, pay_frequency: null }} onProceed={() => {}} />);
+    const needed = section("Still needed");
+    expect(needed).toHaveTextContent("Still needed before The Manuscript can be generated: 1");
+    expect(needed).toHaveTextContent("Pay frequency");
+    expect(needed).toHaveTextContent("How often employees are paid");
+    expect(needed).not.toHaveTextContent("Company legal name");
+    expect(screen.getByText(/You can choose a PEO now/)).toBeInTheDocument();
+
+    rerender(<ReviewTab data={complete} onProceed={() => {}} />);
+    expect(screen.queryByRole("region", { name: "Still needed" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Every required answer is here/)).toBeInTheDocument();
+    expect(screen.queryByText(/You can choose a PEO now/)).not.toBeInTheDocument();
+  });
+
+  it("never lists the census as needed, only as recommended", () => {
+    render(<ReviewTab data={complete} onProceed={() => {}} />);
+    expect(screen.getByText(/Every required answer is here/)).toBeInTheDocument();
+    // In the summary at the top, and beside the census itself.
+    expect(screen.getAllByText("Recommended")).toHaveLength(2);
+    expect(screen.getByText(/Upload a census on the Upload tab/)).toBeInTheDocument();
+  });
+
+  it("takes you to a missing answer, ready to add it", () => {
+    render(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} onAction={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Go to pay frequency" }));
+    expect(screen.getByRole("button", { name: "Add Pay frequency" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Go to states of operation" }));
+    expect(screen.getByRole("button", { name: "Add States of operation" })).toHaveFocus();
+  });
+
+  it("edits an answer in place, with no need to restart the conversation", () => {
+    const onAction = vi.fn();
+    render(<ReviewTab data={{ ...complete, pay_frequency: null }} onProceed={() => {}} onAction={onAction} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add Pay frequency" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Pay frequency" }), { target: { value: "weekly" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onAction).toHaveBeenCalledWith({ type: "edit", field: "pay_frequency", value: "weekly" });
+
+    fireEvent.click(within(section("Benefits")).getByRole("button", { name: "Add Current carrier" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Current carrier" }), { target: { value: "Aetna" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onAction).toHaveBeenLastCalledWith({ type: "edit", field: "current_carrier", value: "Aetna" });
+  });
+
+  it("is read-only without an edit handler", () => {
+    render(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} />);
+    expect(screen.queryByRole("button", { name: /^Add / })).not.toBeInTheDocument();
   });
 });

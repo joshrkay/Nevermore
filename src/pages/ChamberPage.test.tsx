@@ -7,6 +7,7 @@ import type { IntakeState } from "@/data/provenance";
 
 const session = {
   sessionId: null as string | null,
+  fileId: null as string | null,
   resumeFailed: false,
   loadFailed: false,
   expired: null as { at: string | null } | null,

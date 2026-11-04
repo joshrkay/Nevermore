@@ -80,3 +80,29 @@ describe("provenance in the workspace", () => {
     expect(screen.queryByText("Lenore inferred this")).not.toBeInTheDocument();
   });
 });
+
+describe("required answers", () => {
+  it("are marked in the Company tab, and say they're needed while empty", () => {
+    render(<Harness initial={{ data: EMPTY_CHAMBER_DATA, provenance: {} }} tab="company" />);
+    expect(screen.getByText("Business Name").textContent).toBe("Business NameRequired");
+    expect(screen.getByText("Industry").textContent).toBe("Industry");
+    expect(screen.getAllByText("Not provided yet. Needed before you can certify.")).toHaveLength(2); // name, states
+  });
+
+  it("drop off the Review's still-needed list the moment they're answered there", () => {
+    render(<Harness initial={{ data: EMPTY_CHAMBER_DATA, provenance: {} }} tab="review" />);
+    const needed = () => screen.getByRole("region", { name: "Still needed" });
+    expect(needed()).toHaveTextContent("Still needed before The Manuscript can be generated: 3");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Company legal name" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Company legal name" }), { target: { value: "Acme Bindery" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(needed()).toHaveTextContent("Still needed before The Manuscript can be generated: 2");
+    expect(needed()).not.toHaveTextContent("Company legal name");
+    const company = screen.getByRole("region", { name: "Company" });
+    expect(within(company).getByText("Acme Bindery")).toBeInTheDocument();
+    expect(within(company).getByText("You confirmed this")).toBeInTheDocument();
+  });
+});
+

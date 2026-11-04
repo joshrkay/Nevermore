@@ -1,5 +1,5 @@
 {
-  "about": "Required items (B-2.2, decision D2): each case is a stored intake (chamber_data, field_provenance, the fields an advisor verified) and the state of each required item, keyed by its field. public.intake_required_items reads the stored values as they are (supabase/tests/required_items.sql); src/data/requiredItems.ts reads them as the browser loads them (src/data/requiredItems.test.ts). Both must give these states.",
+  "about": "Required items (B-2.2 on US-1.2, decision D2): each case is a stored intake (chamber_data, field_provenance, the fields an advisor verified) and the state of each item, keyed by its field: the three required answers and the recommended census. public.intake_required_items reads the stored values as they are (supabase/tests/required_items.sql, which also checks that the certification gate, intake_missing_required, refuses for exactly the required items reported missing); src/data/requiredItems.ts reads them as the browser loads them (src/data/requiredItems.test.ts). Both must give these states.",
   "cases": [
     {
       "name": "an empty intake is missing every item",

@@ -1,27 +1,34 @@
--- Required items and verified fields (B-2.2). Decision D2: an intake must hold four items, in this order:
--- Company legal name (company_name), States of operation (states, or the census's work states), Pay
--- frequency (pay_frequency) and Employee census (census, at least one row). There is no "Not applicable".
+-- Required items and verified fields (B-2.2), on top of the readiness gate (US-1.2,
+-- 20261103110000_certification_readiness.sql). Decision D2: three answers are required, in this order:
+-- the company legal name (company_name), the states of operation (states, or a work state on the census)
+-- and the pay frequency (pay_frequency). The employee census is recommended: it is listed after them, never
+-- blocks certification and never holds an intake back from being complete. There is no "Not applicable".
 --
--- * public.intake_required_items(data, provenance, verified) says where each item stands: missing,
---   conflicting, incomplete, unconfirmed or settled. It is the one definition: the advisor queue's
---   missing_required reads it (the rule was written out in 20261022090000, 20261024100000 and
---   20261029091000 before), and src/data/requiredItems.ts mirrors it for the browser. Both are tested
---   against the same cases, src/data/requiredItems.cases.json.
+-- * One presence rule. public.intake_answers_present(data) says which answers an intake holds, and both
+--   public.intake_missing_required (the certification gate, redefined here on top of it with the same keys,
+--   order and sync block; its trigger, chamber_sessions_certification_ready and EA003, is untouched) and
+--   public.intake_required_items read it. src/data/readiness.ts holds the browser's copy of the same
+--   presence rule, and src/data/requiredItems.ts builds the item states on it.
 -- * Present means text with something other than whitespace (trimmed as the browser's String.trim trims,
---   so a blank answer is blank on both sides), a state list with a state code in it, or a census with a
---   row. The census is `census`, or its older name `employees` when the intake has no `census`; its
---   provenance entry is read the same way, as the browser's parseProvenance does.
--- * Stored values are read as the browser reads them, so both sides answer alike: a state counts only
---   when it is a state or territory code (in any case, whitespace around it ignored), and a provenance
---   entry counts only when parseProvenance would keep it (provenance_entry_status). Nothing on the
---   server checks field_provenance, and rosters saved before 20261027 can hold a `state` such as 'NA'.
--- * A present item is settled when its field is confirmed (whoever confirmed it: the model, a document
---   the prospect applied, or the prospect), when an advisor verified it, or when it has no provenance at
---   all. Every AI value carries provenance, so a value without any was typed by the prospect or predates
---   provenance. Otherwise the item takes its field's status, with inferred read as unconfirmed.
--- * States of operation is settled by `states`, or by a settled census whose rows name a work state.
---   Otherwise it takes the state of `states` when that holds anything, or else the census's state when
---   only the census names states.
+--   so a blank answer is blank on both sides), a state list with a state code in it, a census row with a
+--   work state that is a code (or `state`, on a roster saved before the census contract), or a census with
+--   a row. Values are read as the browser loads them: a state counts only when it is a state or territory
+--   code (any case, whitespace around it ignored). Since 20261027 the database refuses any other state on
+--   write, so this only tightens how the gate reads rosters saved before then (a `state` such as 'NA').
+--   The census is `census`, or its older name `employees` when the intake has no `census` key.
+-- * public.intake_required_items(data, provenance, verified) says where each item stands: missing,
+--   conflicting, incomplete, unconfirmed or settled, with whether it is required. A present item is settled
+--   when its field is confirmed (whoever confirmed it: the model, a document the prospect applied, or the
+--   prospect), when an advisor verified it, or when it has no provenance at all. Every AI value carries
+--   provenance, so a value without any was typed by the prospect or predates provenance. Otherwise the
+--   item takes its field's status, with inferred read as unconfirmed. A provenance entry counts only when
+--   the browser's parseProvenance would keep it (provenance_entry_status): nothing on the server checks
+--   field_provenance. States of operation is settled by `states`, or by a settled census whose rows name a
+--   work state; otherwise it takes the state of `states` when that holds anything, or else the census's
+--   state when only the census names states. Both sides are tested against src/data/requiredItems.cases.json.
+-- * The advisor queue's missing_required is the labels of the required items intake_required_items reports
+--   missing (the rule was written out in 20261022090000, 20261024100000 and 20261029091000 before). A
+--   missing census is no longer listed there: it is recommended, not required.
 -- * public.session_verified_fields(id) gives the names of the fields an advisor verified on an intake to
 --   its owner, under the owner's read rule on chamber_sessions (never an archived or revoked intake), and
 --   to advisors. Nothing else of the review: no notes, reviewer, other review states or corrected values.
@@ -78,9 +85,11 @@ AS $$
     );
 $$;
 
--- ---------- The rule ----------
+-- ---------- Presence: one rule for the gate and the items ----------
 
-CREATE OR REPLACE FUNCTION public.intake_required_items(p_data jsonb, p_provenance jsonb, p_verified text[])
+-- Which answers an intake holds: {company_name, states, census_states, pay_frequency, census}, each a
+-- boolean. `states` is the state list naming a state; `census_states` a census row naming one.
+CREATE OR REPLACE FUNCTION public.intake_answers_present(p_data jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
 IMMUTABLE
@@ -91,43 +100,76 @@ DECLARE
   -- What String.prototype.trim removes.
   ws constant text := E' \t\n\x0B\f\r\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF';
   d constant jsonb := CASE WHEN jsonb_typeof(p_data) = 'object' THEN p_data ELSE '{}'::jsonb END;
-  prov constant jsonb := CASE WHEN jsonb_typeof(p_provenance) = 'object' THEN p_provenance ELSE '{}'::jsonb END;
-  verified constant text[] := COALESCE(p_verified, '{}'::text[]);
   roster jsonb;
-  census_names_states boolean;
-  f text;
-  present boolean;
-  entry jsonb;
-  status text;
-  field_state jsonb := '{}'::jsonb;
-  states_item text;
 BEGIN
+  -- A `census` key, even one that isn't a list, wins over the older `employees`, as the browser loads it.
   roster := CASE
     WHEN d ? 'census' THEN CASE WHEN jsonb_typeof(d -> 'census') = 'array' THEN d -> 'census' ELSE '[]'::jsonb END
     WHEN jsonb_typeof(d -> 'employees') = 'array' THEN d -> 'employees'
     ELSE '[]'::jsonb
   END;
-  -- A row's work state, or `state` on a roster saved before the census contract, when it is a code. The
-  -- browser's normalizeState also reads a full name ("Oregon"); the app has only ever stored codes.
-  census_names_states := EXISTS (
-    SELECT 1 FROM jsonb_array_elements(roster) e
-    WHERE public.is_us_state_code(upper(btrim(COALESCE(e ->> 'work_state', e ->> 'state'), ws)))
+  RETURN jsonb_build_object(
+    'company_name', COALESCE(jsonb_typeof(d -> 'company_name') = 'string' AND btrim(d ->> 'company_name', ws) <> '', false),
+    'states', EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(CASE WHEN jsonb_typeof(d -> 'states') = 'array' THEN d -> 'states' ELSE '[]'::jsonb END) s
+      WHERE jsonb_typeof(s) = 'string' AND public.is_us_state_code(upper(btrim(s #>> '{}', ws)))
+    ),
+    -- A row's work state, or `state` on a roster saved before the census contract, when it is a code. The
+    -- browser's normalizeState also reads a full name ("Oregon"); the app has only ever stored codes.
+    'census_states', EXISTS (
+      SELECT 1 FROM jsonb_array_elements(roster) e
+      WHERE jsonb_typeof(e) = 'object' AND public.is_us_state_code(upper(btrim(COALESCE(e ->> 'work_state', e ->> 'state'), ws)))
+    ),
+    'pay_frequency', COALESCE(jsonb_typeof(d -> 'pay_frequency') = 'string' AND btrim(d ->> 'pay_frequency', ws) <> '', false),
+    'census', jsonb_array_length(roster) > 0
   );
+END;
+$$;
 
+-- The certification gate (20261103110000_certification_readiness.sql), now on the one presence rule: the
+-- same keys in the same order, which src/data/schemaSync.test.ts compares with REQUIRED_ITEMS.
+CREATE OR REPLACE FUNCTION public.intake_missing_required(d jsonb)
+RETURNS text[]
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = public
+AS $$
+  SELECT array_remove(ARRAY[
+    -- sync:begin required_items
+    CASE WHEN NOT (p ->> 'company_name')::boolean THEN 'company_name' END,
+    CASE WHEN NOT ((p ->> 'states')::boolean OR (p ->> 'census_states')::boolean) THEN 'states' END,
+    CASE WHEN NOT (p ->> 'pay_frequency')::boolean THEN 'pay_frequency' END
+    -- sync:end required_items
+  ], NULL)
+  FROM (SELECT public.intake_answers_present(d) AS p) present
+$$;
+
+-- ---------- The items ----------
+
+CREATE OR REPLACE FUNCTION public.intake_required_items(p_data jsonb, p_provenance jsonb, p_verified text[])
+RETURNS jsonb
+LANGUAGE plpgsql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = public
+AS $$
+DECLARE
+  prov constant jsonb := CASE WHEN jsonb_typeof(p_provenance) = 'object' THEN p_provenance ELSE '{}'::jsonb END;
+  verified constant text[] := COALESCE(p_verified, '{}'::text[]);
+  present constant jsonb := public.intake_answers_present(p_data);
+  f text;
+  entry jsonb;
+  status text;
+  field_state jsonb := '{}'::jsonb;
+  states_item text;
+BEGIN
   FOREACH f IN ARRAY ARRAY['company_name', 'states', 'pay_frequency', 'census'] LOOP
-    present := COALESCE(CASE f
-      WHEN 'states' THEN EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements(CASE WHEN jsonb_typeof(d -> 'states') = 'array' THEN d -> 'states' ELSE '[]'::jsonb END) s
-        WHERE jsonb_typeof(s) = 'string' AND public.is_us_state_code(upper(btrim(s #>> '{}', ws)))
-      )
-      WHEN 'census' THEN jsonb_array_length(roster) > 0
-      ELSE jsonb_typeof(d -> f) = 'string' AND btrim(d ->> f, ws) <> ''
-    END, false);
     entry := prov -> CASE WHEN f = 'census' AND NOT prov ? 'census' THEN 'employees' ELSE f END;
     status := public.provenance_entry_status(entry);
     field_state := field_state || jsonb_build_object(f, CASE
-      WHEN NOT present THEN 'missing'
+      WHEN NOT (present ->> f)::boolean THEN 'missing'
       WHEN status IS NULL OR status = 'confirmed' OR f = ANY (verified) THEN 'settled'
       WHEN status = 'inferred' THEN 'unconfirmed'
       ELSE status
@@ -136,30 +178,35 @@ BEGIN
 
   states_item := CASE
     WHEN field_state ->> 'states' = 'settled' THEN 'settled'
-    WHEN field_state ->> 'census' = 'settled' AND census_names_states THEN 'settled'
+    WHEN field_state ->> 'census' = 'settled' AND (present ->> 'census_states')::boolean THEN 'settled'
     WHEN field_state ->> 'states' <> 'missing' THEN field_state ->> 'states'
-    WHEN census_names_states THEN field_state ->> 'census'
+    WHEN (present ->> 'census_states')::boolean THEN field_state ->> 'census'
     ELSE 'missing'
   END;
 
   RETURN jsonb_build_array(
-    jsonb_build_object('item', 'company_legal_name', 'label', 'Company legal name', 'field', 'company_name', 'state', field_state ->> 'company_name'),
-    jsonb_build_object('item', 'states_of_operation', 'label', 'States of operation', 'field', 'states', 'state', states_item),
-    jsonb_build_object('item', 'pay_frequency', 'label', 'Pay frequency', 'field', 'pay_frequency', 'state', field_state ->> 'pay_frequency'),
-    jsonb_build_object('item', 'employee_census', 'label', 'Employee census', 'field', 'census', 'state', field_state ->> 'census')
+    jsonb_build_object('item', 'company_name', 'label', 'Company legal name', 'field', 'company_name', 'required', true, 'state', field_state ->> 'company_name'),
+    jsonb_build_object('item', 'states', 'label', 'States of operation', 'field', 'states', 'required', true, 'state', states_item),
+    jsonb_build_object('item', 'pay_frequency', 'label', 'Pay frequency', 'field', 'pay_frequency', 'required', true, 'state', field_state ->> 'pay_frequency'),
+    jsonb_build_object('item', 'census', 'label', 'Employee census', 'field', 'census', 'required', false, 'state', field_state ->> 'census')
   );
 END;
 $$;
 
+COMMENT ON FUNCTION public.intake_answers_present(jsonb) IS
+  'Which answers an intake holds, as the browser reads them: the one presence rule behind intake_missing_required and intake_required_items.';
 COMMENT ON FUNCTION public.intake_required_items(jsonb, jsonb, text[]) IS
-  'The four required items (decision D2) in order, each {item, label, field, state}. Mirrored by src/data/requiredItems.ts.';
+  'The three required items (decision D2) then the recommended census, each {item, label, field, required, state}. Mirrored by src/data/requiredItems.ts.';
 
--- Pure, but they call is_us_state_code, which only signed-in callers may.
+-- Pure, but they call is_us_state_code, which only signed-in callers may. intake_missing_required keeps
+-- the privileges 20261103110000 gave it; the gate's trigger runs as the signed-in prospect.
 REVOKE ALL ON FUNCTION public.provenance_source_is_valid(jsonb) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.provenance_entry_status(jsonb) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.intake_answers_present(jsonb) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.intake_required_items(jsonb, jsonb, text[]) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.provenance_source_is_valid(jsonb) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.provenance_entry_status(jsonb) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.intake_answers_present(jsonb) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.intake_required_items(jsonb, jsonb, text[]) TO authenticated, service_role;
 
 -- ---------- Verified fields, for the prospect ----------
@@ -196,7 +243,7 @@ GRANT EXECUTE ON FUNCTION public.session_verified_fields(uuid) TO authenticated;
 -- ---------- Advisor queue ----------
 
 -- Unchanged from 20261029091000_census_advisor_review.sql (same arguments and columns) except that
--- missing_required is the required items intake_required_items reports missing.
+-- missing_required is the required items intake_required_items reports missing (not the census).
 CREATE OR REPLACE FUNCTION public.advisor_list_submissions(p_status text DEFAULT NULL)
 RETURNS TABLE (
   session_id uuid,
@@ -260,13 +307,14 @@ BEGIN
     b.certified_at,
     b.created_at,
     b.updated_at,
-    -- The required items still missing, in order: the ones the Manuscript lists as not provided. An
-    -- advisor's verification never supplies a missing value, so the verified fields aren't read.
+    -- The required items still missing, in order: what the gate refuses a certification for. The
+    -- recommended census isn't one. An advisor's verification never supplies a missing value, so the
+    -- verified fields aren't read.
     ARRAY(
       SELECT ri.item ->> 'label'
       FROM jsonb_array_elements(public.intake_required_items(b.d, b.field_provenance, '{}'::text[]))
         WITH ORDINALITY AS ri(item, ord)
-      WHERE ri.item ->> 'state' = 'missing'
+      WHERE ri.item ->> 'state' = 'missing' AND (ri.item ->> 'required')::boolean
       ORDER BY ri.ord
     ),
     -- Fields still inferred, incomplete or conflicting that no advisor has verified.
