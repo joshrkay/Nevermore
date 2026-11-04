@@ -33,6 +33,24 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      document_events: {
+        Row: {
+          actor_email: string | null
+          actor_id: string | null
+          created_at: string
+          document_id: string
+          file_name: string
+          from_value: string | null
+          id: number
+          kind: string
+          session_id: string | null
+          to_value: string | null
+        }
+        // Written only by the documents trigger.
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       advisor_notes: {
         Row: {
           author_email: string | null
@@ -217,6 +235,7 @@ export type Database = {
       }
       manuscript_versions: {
         Row: {
+          certified_at: string | null
           certified_data_hash: string
           certified_signed_at: string
           corrections_applied: number
@@ -344,7 +363,7 @@ export type Database = {
         }[]
       }
       advisor_list_submissions: {
-        Args: { p_status?: string | null }
+        Args: { p_status?: string | null; p_search?: string | null; p_limit?: number | null; p_offset?: number }
         Returns: {
           company_name: string | null
           contact_name: string | null
@@ -360,6 +379,7 @@ export type Database = {
           signer_name: string | null
           states: string[]
           submitted_at: string | null
+          total_count: number
           updated_at: string
           verified_fields: number
         }[]
@@ -399,6 +419,10 @@ export type Database = {
       prospect_submission_status: {
         Args: { p_session_id: string }
         Returns: string | null
+      }
+      prospect_final_manuscript: {
+        Args: { p_session_id: string }
+        Returns: { version: number; storage_path: string; generated_at: string; corrections_applied: number }[]
       }
       record_manuscript_version: {
         Args: {

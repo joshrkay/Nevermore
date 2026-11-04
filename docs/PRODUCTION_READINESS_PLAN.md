@@ -118,7 +118,6 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | The owner's update policy lets a prospect write `documents.status`, so it cannot carry a scan verdict. | `20261021100000_session_documents.sql` | E-4.3 |
 | Upload limits (20 MB, file types) are enforced only in the browser. The bucket has no size or type limit. | `UploadTab.tsx`, `config.toml` | E-4.1 |
 | Two rapid loads or two tabs can still create two sessions (a bare `/start` resumes the latest open one). Orphan drafts now expire after 30 days idle (A-1.5). | `useChamberSession.ts` | A-1.3 |
-| The advisor queue has no `LIMIT` and the page loads every row. | `20261024100000_advisor_queue.sql` | F-2.1 |
 | The opening message tells the prospect the workspace is 'a demonstration'. | `useChamberSession.ts` | A-2.3 |
 | Public copy contradicts the role disclosure: 'No account required' while certification needs a verified email, 'Get Your Quote', and `SUBMITTED TO <PEO>` on the Manuscript. | `LandingPage.tsx`, `index.html`, `ManuscriptPage.tsx` | H-2.3 |
 | `html2canvas` is a direct dependency that no source file imports. | `package.json` | D-3.1 |
@@ -131,6 +130,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-10-21 | Vercel configuration. Epic E document handling finished. Advisor session states, the access matrix and the searchable queue. CI for lint, tests, build and SQL tests. Advisor and prospect notifications on submission. Re-certification when a different PEO is chosen. A verify skill that drives the app against a local stand-in. |
 | 2026-10-22 | Supabase URL and key read from Vercel's integration variables. Outbox hardening: queueing faults heal and sends are frozen so a sender change cannot duplicate. |
 | 2026-10-29 | Epic E census ingestion (branch `claude/adoring-dijkstra-2fcocb`, not yet merged): the roster is `chamber_data.census` with the spec's `CensusEmployee` row, and older `employees` data is read as it; `document-extract` matches census columns by header, reads `.docx`, never reads or keeps SSN or bank details; upload checks by contents with a SHA-256 and duplicate refusal; category names and per-intake limits in the database; a review step that shows census rows and settles differences in a dialog. Deploy order: the migrations (including `20261029092000`, which teaches the A-2.2 intake validator the `census` key and still accepts `employees`), then `document-extract` (it imports `_shared`), then the front end. See `docs/intake-schema.md`. |
+| 2026-11-04 | The medium findings of the US-4.x review: the pipeline follows the prospect (certifications and withdrawals in the history whatever the status, an answered information request returns to Submitted, the prospect isn't left being asked to act, never-certified intakes can only be archived; `20261104090000`); certification keeps the transcript and document list, document changes are audited and certified files kept (`20261104091000`); the advisor-reviewed version built from the current certification is the prospect's final Manuscript, offered on their Manuscript page, their own copy labelled 'as certified, before advisor review', and older versions marked as built from an earlier certification (`20261104092000`, decision: the reviewed version is final); the queue pages, searches and describes completeness from the certified copy in the database (`20261104093000`); dependents, the printed tier and the certified PEO on the detail page. Deploy the four migrations before the front end, which calls the queue with search and paging; a front end from before them keeps working (it gets the whole list). |
 | 2026-11-03 | Advisor reviews and Manuscript versions belong to the answers they were made from (migration `20261103110000`; deploy it before the front end, and reload open advisor tabs: until then Generate fails, because the old call no longer exists). A prospect's change to a reviewed answer resets that review, visibly and in the audit trail, so an old "Verified" or correction can't reach the packet as advisor-confirmed; a review or version based on a page loaded before the change is refused and the page reloads. Those refusals are now `PT409` (HTTP 409): `record_manuscript_version` raised `40001`, which PostgREST retries, so a refused Generate hung instead of explaining (found running the function over real PostgREST). |
 | 2026-11-03 | US-1.3, the hand-off to The Reckoning: the chosen PEO is saved with the intake (`chamber_sessions.chosen_peo`, migration `20261103100000`, deploy it before the front end), and the Manuscript page says when an intake has expired instead of calling it unsigned. See A-1.3. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
@@ -604,22 +604,22 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### F-2.1 Submission queue
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** FS · **Depends:** F-1.2, C-3.1 · **Milestone:** M2
-- **Built:** `advisor_list_submissions` returns the required columns and no census or payroll. Row-to-detail is tested.
-- **Remaining:** No server-side pagination: the function has no `LIMIT` and the page loads every row (the plan says 25 a page). The sort is certified-first then recently active drafts, not 'newest submitted first'. 'Authorized' means every advisor sees every intake (D16).
+- **Built:** `advisor_list_submissions` returns the required columns and no census or payroll, 25 a page with the total (`p_limit`, `p_offset`), read as its owner after its advisor check (on 20,000 intakes a page takes about 75 ms; the old function took 4.5 s for the whole list, which the page loaded every time). A certified intake's completeness comes from its certified copy, and a verified advisor correction supplies a missing item (migration `20261104093000`). Row-to-detail is tested.
+- **Remaining:** The sort is certified-first then recently active drafts, not 'newest submitted first'. 'Authorized' means every advisor sees every intake (D16). Empty guest drafts are still listed.
 
 #### F-2.2 Filter and search
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** F-2.1 · **Milestone:** M2
-- **Built:** The status filter runs in the database. Search runs in the browser (every word must match). Loading, empty, no-match and error states. Tested.
-- **Remaining:** No 3-character minimum. Search is not server-side, which matters once F-2.1 paginates.
+- **Built:** The status filter and search (company, contact, reference; every word must match) run in the database, and search waits for a pause in typing. Status, search and page are in the URL. Loading, empty, no-match, past-the-end and error states. Tested.
+- **Remaining:** No 3-character minimum.
 
 #### F-3.1 Submission detail: structured sections
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** FS · **Depends:** F-2.1, C-3.2 · **Milestone:** M2
 - **Built:** The detail page uses the certified snapshot when there is one. Each field shows its status, its source and a separate 'Advisor correction' block.
-- **Remaining:** Not grouped by Manuscript section (a flat list of 38 fields plus a census table). No distinct 'advisor-updated' badge. `loadSubmission` is untested.
+- **Remaining:** Not grouped by Manuscript section (a flat list of 38 fields plus a census table, which now shows each employee's dependents and the tier the Manuscript prints, and the header the certified PEO). No distinct 'advisor-updated' badge.
 
 #### F-3.2 Transcript evidence and documents in detail
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** FS · **Depends:** F-3.1, E-1.3, B-2.1 · **Milestone:** M2
-- **Built:** 'View in transcript' scrolls to and highlights the source message. Documents open through 60-second signed links. Tested.
+- **Built:** 'View in transcript' scrolls to and highlights the source message. Documents open through 60-second signed links. A certified intake shows the transcript and document list as certified (stamped into the submission at certification): documents removed, added, renamed or re-categorised since are marked with who and when (`document_events`), and a removed certified document's file is kept while the intake is certified (migration `20261104091000`). Tested.
 - **Notes:** The link exists only for transcript-sourced fields whose message still exists. No test for the document link or its expiry.
 
 #### F-3.3 Advisor edits tracked separately
@@ -629,8 +629,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### F-4.1 Status model and history
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Medium · **Owner:** BE · **Depends:** F-2.1 · **Milestone:** M2
-- **Built:** `submission_workflow` and append-only `submission_status_history` (who, when, from, to, note). Every change writes history. Tested.
-- **Remaining:** Nine statuses against the plan's ten: draft, submitted, under_review, information_requested, sent_to_carrier, quoted, won, lost, archived. 'Ready for market' is absent, 'Sent to PEO' is `sent_to_carrier` and 'Quote received' is `quoted`. No transition allow-list: an advisor can move any status to any non-draft status, including archived to under_review. No matrix test.
+- **Built:** `submission_workflow` and append-only `submission_status_history` (who, when, from, to, note). Every advisor change and every prospect certification or withdrawal writes history, whatever the status. Certifying answers an information request (back to `submitted`). An intake never certified can only be archived. The prospect is never left on 'information requested' after the advisor moves on (migration `20261104090000`). Tested.
+- **Remaining:** Nine statuses against the plan's ten: draft, submitted, under_review, information_requested, sent_to_carrier, quoted, won, lost, archived. 'Ready for market' is absent, 'Sent to PEO' is `sent_to_carrier` and 'Quote received' is `quoted`. No transition allow-list among certified statuses: an advisor can move any certified intake to any non-draft status, including archived to under_review.
 
 #### F-4.2 Internal notes
 - **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** BE · **Depends:** F-3.1 · **Milestone:** M2

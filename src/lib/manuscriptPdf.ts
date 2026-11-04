@@ -220,7 +220,10 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     ["File ID", m.fileId],
     ...(m.advisorReview
       ? ([["Version", `v${m.advisorReview.version} · reviewed by Edgar Allan Advisory`]] as [string, string][])
-      : []),
+      : opts.sample
+        ? []
+        : // The prospect's own copy: it can't be mistaken for the advisor-reviewed final version.
+          ([["Review", "As certified, before advisor review"]] as [string, string][])),
     ["Prospect", m.companyName],
     ["Sensitive Fields", reveal ? "Shown in full" : "Masked (dates of birth show year only)"],
   ]);

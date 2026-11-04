@@ -55,7 +55,19 @@ a sign-out the app asked for is remembered until the event arrives.
   of unchanged answers are kept. Reviews recorded before migration `20261103110000` weren't checked
   against the answer they were made on.
 - Change the pipeline status only through `set_submission_status()`, which appends to
-  `submission_status_history` (who, when, from, to, note).
+  `submission_status_history` (who, when, from, to, note). An intake the prospect has never certified
+  can only be archived. What the prospect does is in the history whatever status an advisor set:
+  every certification and every withdrawn certification is a row (a re-certification sent as one
+  update too). A prospect who certifies while the status is `information_requested` has answered it,
+  so it returns to `submitted`; a first certification enters as `submitted` even from `archived`. Any
+  other advisor-set status stays as it is (migration `20261104090000`).
+- Review the evidence as certified. Certifying stamps a copy of the transcript and of the document
+  list (name, category, size, storage path, SHA-256) into the submission; the detail page shows that
+  transcript (and says if the prospect's conversation changed since) and marks documents removed,
+  added, renamed or re-categorised after certification. Every document change is appended to
+  `document_events` (who, when; advisors only, nobody can change it). While an intake is certified,
+  a certified document's stored file stays when the prospect removes the document, so it can still
+  be opened; the prospect's screen still shows it removed (migration `20261104091000`).
 - Add internal notes (`advisor_notes`); notes can't be edited or deleted and prospects can't read them.
 - Read `intake_lifecycle_events`: every draft that expired, was archived by its prospect ("Start
   over") or was revoked, with who and why. The queue lists those intakes with their intake status
@@ -70,7 +82,11 @@ a sign-out the app asked for is remembered until the event arrives.
   `record_manuscript_version()` requires the certification's `data_sha256` and `certified_at` as the
   page loaded them, and refuses (`PT409`) if the prospect has certified again since, so a version never
   claims a certification its PDF doesn't show. Recorded files can't be overwritten or deleted.
-  Prospects can't list or download stored versions.
+  The latest version, while it was built from the prospect's current certification, is their **final
+  Manuscript**: `prospect_final_manuscript()` offers it to them (their own intake only) and a storage
+  policy lets them read that one file. Correction reasons are printed in it, so they're
+  prospect-visible. The panel marks the shared version and any built from an earlier certification
+  (migration `20261104092000`).
 
 ## The submission queue (`/advisor`)
 
@@ -81,17 +97,29 @@ content; those are on the detail page, behind the same checks.
 
 - **Order**: certified submissions first, newest certification first; intakes not (or no longer)
   certified follow, most recently active first; session id breaks ties so the order never shuffles.
-- **Status filter** runs in the database. **Search** (company, contact, reference; every word must
-  match) narrows the loaded list in the browser. Both live in the URL (`?status=`, `?q=`).
+- **Status filter**, **search** (company, contact, reference; every word must match, any case) and
+  **paging** (25 a page, with the total) all run in the database; the function reads as its owner
+  after its advisor check, so a large table doesn't run the row-security check per row. Search starts
+  once typing pauses. All three live in the URL (`?status=`, `?q=`, `?page=`); changing the filter
+  or the search returns to the first page.
+- **Completeness** describes what the advisor reviews: a certified intake is described from its
+  certified copy, a required item supplied by a verified advisor correction isn't missing, and only
+  fields an advisor can review count as unconfirmed (migration `20261104093000`).
 - A click anywhere on a row opens that submission; the company link works for keyboard and new tabs.
-- Loading, empty (none yet / none with this status / no search match) and error states are all shown.
+- Loading, empty (none yet / none with this status / no search match / past the last page) and error
+  states are all shown.
 
 ## What prospects see
 
 `prospect_submission_status()` returns the latest status we chose to share, for the caller's own
 certified intake only: `submitted`, `under_review`, `information_requested`. Carrier routing,
 quotes, outcomes and archiving stay internal (the product tells prospects they send the packet
-themselves).
+themselves). `information_requested` is shown only while it is the status: once the advisor moves
+on, the prospect is told an advisor is reviewing their submission, never left being asked to act.
+
+Once an advisor has generated a version from the prospect's current certification, the Manuscript
+page offers it as the final Manuscript to send. Their own copy, built in the browser, is labelled
+"As certified, before advisor review" on screen and in its PDF.
 
 ## Tests
 
@@ -103,8 +131,9 @@ is what CI runs (the `sql-tests` check):
 PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh advisor_operations
 ```
 
-It has two parts. The first walks the advisor workflow (roles, status, notes, reviews, versions).
-The second is an **access matrix**: every protected data type read as each kind of caller
+The first part walks the advisor workflow (roles, status, notes, reviews, versions); later blocks
+cover the pipeline following the prospect, the certified evidence, the final Manuscript, and queue
+completeness, search and paging. One part is an **access matrix**: every protected data type read as each kind of caller
 (signed out, guest, prospect A, prospect B, advisor, admin, and an advisor presenting a guest
 token), with the exact row count each should see.
 
@@ -112,7 +141,8 @@ token), with the exact row count each should see.
 |---|---|---|
 | `chamber_sessions`, `chamber_certifications`, `profiles`, `documents`, `documents` bucket | own rows only | all rows, read-only |
 | `user_roles` | own roles | own roles (nobody can grant, change or revoke through the API) |
-| `submission_workflow`, `submission_status_history`, `advisor_notes`, `advisor_field_reviews`, `advisor_review_events`, `manuscript_versions`, `manuscripts` bucket | nothing | all rows; changed only through the advisor functions |
+| `submission_workflow`, `submission_status_history`, `advisor_notes`, `advisor_field_reviews`, `advisor_review_events`, `document_events`, `manuscript_versions` | nothing | all rows; changed only through the advisor functions and triggers |
+| `manuscripts` bucket | their final Manuscript's file only | all files; added only by advisors, never changed |
 
 It also checks that every advisor function refuses non-advisors and is not executable by
 signed-out callers, that direct writes to advisor tables are refused for everyone, that nobody

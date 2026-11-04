@@ -152,4 +152,14 @@ describe("pdfSafe", () => {
     const { text } = await render();
     expect(text).not.toContain("ADVISOR CORRECTIONS");
   });
+
+  it("labels the prospect's own packet as certified, before advisor review, and only that one", async () => {
+    const { text } = await render();
+    expect(text).toContain("As certified, before advisor review");
+    expect((await render(DEMO_CHAMBER_DATA, { sample: true }, null)).text).not.toContain("before advisor review");
+    const advisor = buildManuscript(DEMO_CHAMBER_DATA, { fileId: FILE_ID, submission, advisor: { version: 1, corrections: [], followUps: [] } });
+    const advisorText = await readPdf(buildManuscriptPdf(advisor, { generatedOn: GENERATED, compress: false }).blob);
+    expect(advisorText).not.toContain("before advisor review");
+    expect(advisorText).toContain("reviewed by Edgar Allan Advisory");
+  });
 });

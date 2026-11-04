@@ -6,6 +6,7 @@ import {
   isPipelineStatus,
   PIPELINE_LABELS,
   PROSPECT_STATUS_MESSAGES,
+  prospectStatusAfter,
   type PipelineStatus,
 } from "@/data/advisor";
 import { setStatus, type StatusHistoryRow } from "@/lib/advisorApi";
@@ -16,17 +17,33 @@ interface StatusPanelProps {
   sessionId: string;
   prospectUserId: string;
   status: PipelineStatus;
+  /** The intake is certified now. */
+  certified: boolean;
+  /** The prospect has certified it at least once. Until then it can only be archived. */
+  certifiedOnce: boolean;
   history: StatusHistoryRow[];
   onChanged: () => void;
 }
 
 const label = (s: string | null) => (s && isPipelineStatus(s) ? PIPELINE_LABELS[s] : s ?? "—");
 
-const StatusPanel = ({ sessionId, prospectUserId, status, history, onChanged }: StatusPanelProps) => {
-  const [next, setNext] = useState<PipelineStatus>(status === "draft" ? "under_review" : status);
+const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOnce, history, onChanged }: StatusPanelProps) => {
+  // The database refuses anything but Archived for an intake that was never certified.
+  const options = certifiedOnce ? ADVISOR_SETTABLE_STATUSES : (["archived"] as const);
+  const [next, setNext] = useState<PipelineStatus>(
+    !certifiedOnce ? "archived" : status === "draft" ? "under_review" : status,
+  );
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
-  const shared = PROSPECT_STATUS_MESSAGES[next];
+  const seen = prospectStatusAfter(next, history);
+  const seenMessage = seen ? PROSPECT_STATUS_MESSAGES[seen] : undefined;
+  const hint = !certifiedOnce
+    ? "The prospect hasn't certified this intake, so it can only be archived. They see no status until they certify."
+    : !certified
+      ? `The prospect sees no status while their certification is withdrawn${seenMessage ? `; once they certify again: “${seenMessage}”` : ""}.`
+      : seenMessage
+        ? `The prospect will see: “${seenMessage}”${PROSPECT_STATUS_MESSAGES[next] ? "" : " (the status itself stays internal)"}`
+        : "Internal only. The prospect sees no status.";
 
   const save = async () => {
     if (next === status) return;
@@ -58,13 +75,11 @@ const StatusPanel = ({ sessionId, prospectUserId, status, history, onChanged }: 
           onChange={(e) => setNext(e.target.value as PipelineStatus)}
           className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
         >
-          {ADVISOR_SETTABLE_STATUSES.map((s) => (
+          {options.map((s) => (
             <option key={s} value={s}>{PIPELINE_LABELS[s]}</option>
           ))}
         </select>
-        <p className="text-xs text-muted-foreground">
-          {shared ? `The prospect will see: “${shared}”` : "Internal only. The prospect keeps seeing their last shared status."}
-        </p>
+        <p className="text-xs text-muted-foreground">{hint}</p>
         <label htmlFor="status-note" className="block text-xs text-muted-foreground pt-1">Internal note (optional)</label>
         <textarea
           id="status-note"
@@ -89,7 +104,7 @@ const StatusPanel = ({ sessionId, prospectUserId, status, history, onChanged }: 
           {history.map((h) => (
             <li key={h.id} className="border-l-2 border-border pl-3">
               <p>
-                {h.from_status ? `${label(h.from_status)} → ` : ""}
+                {h.from_status && h.from_status !== h.to_status ? `${label(h.from_status)} → ` : ""}
                 <span className="font-medium">{label(h.to_status)}</span>
               </p>
               <p className="text-xs text-muted-foreground">

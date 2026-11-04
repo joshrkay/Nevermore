@@ -2,9 +2,23 @@ import type { ChatMessage } from "@/data/chat";
 import { messageAnchor } from "./format";
 
 /** The full conversation, with the message a field came from highlighted. */
-const TranscriptEvidence = ({ messages, highlighted }: { messages: ChatMessage[]; highlighted: string | null }) => (
+const TranscriptEvidence = ({
+  messages,
+  highlighted,
+  changedSinceCertified = false,
+}: {
+  messages: ChatMessage[];
+  highlighted: string | null;
+  /** The prospect's conversation changed after they certified; `messages` is the certified copy. */
+  changedSinceCertified?: boolean;
+}) => (
   <section aria-labelledby="transcript-heading" className="border border-border rounded-xl p-5">
     <h2 id="transcript-heading" className="font-display text-lg font-bold mb-3">Transcript</h2>
+    {changedSinceCertified && (
+      <p className="text-xs text-warning mb-2" role="status">
+        Showing the conversation as the prospect certified it. It has changed since.
+      </p>
+    )}
     {messages.length === 0 ? (
       <p className="text-sm text-muted-foreground">No conversation recorded.</p>
     ) : (

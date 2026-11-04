@@ -175,7 +175,7 @@ const FieldRow = ({
               />
             </label>
             <label className="block text-xs text-muted-foreground">
-              Reason
+              Reason (printed in the final Manuscript the prospect receives)
               <input
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}

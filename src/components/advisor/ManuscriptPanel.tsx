@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { applyAdvisorReview, isStaleRefusal } from "@/data/advisor";
+import { applyAdvisorReview, isCurrentVersion, isStaleRefusal } from "@/data/advisor";
 import { buildManuscript, manuscriptFilename } from "@/data/manuscript";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
 import { manuscriptUrl, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
 import { formatDateTime } from "./format";
 
-const versionFilename = (detail: SubmissionDetail, version: number) =>
-  manuscriptFilename(`${detail.fileId}-v${version}`, detail.data.company_name);
+const versionFilename = (detail: SubmissionDetail, fileId: string, version: number) =>
+  manuscriptFilename(`${fileId}-v${version}`, detail.data.company_name);
 
 /**
  * Download or regenerate the advisor-reviewed Manuscript, one stored version per generation. Each
@@ -24,6 +24,8 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
   const latest = detail.versions[0];
   const pending = Object.values(detail.reviews).filter((r) => r?.has_correction && r.review_state !== "verified").length;
   const answersChanged = Object.values(detail.reviews).filter((r) => r?.answer_changed_at).length;
+  // Only a version built from the current certification is offered to the prospect (and is current).
+  const current = (v: ManuscriptVersion) => detail.certified && isCurrentVersion(v, detail.submission);
 
   const generate = async () => {
     setGenerating(true);
@@ -47,7 +49,7 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
         certifiedDataHash: detail.submission?.data_sha256 ?? null,
         certifiedAt: detail.submission?.certified_at ?? null,
       });
-      downloadBlob(pdf.blob, versionFilename(detail, version));
+      downloadBlob(pdf.blob, versionFilename(detail, detail.fileId, version));
       toast.success(`Manuscript v${version} saved.`);
       onChanged();
     } catch (err) {
@@ -67,7 +69,7 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
   const open = async (v: ManuscriptVersion) => {
     setOpening(v.id);
     try {
-      window.location.assign(await manuscriptUrl(v, versionFilename(detail, v.version)));
+      window.location.assign(await manuscriptUrl(v, versionFilename(detail, v.file_id, v.version)));
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -87,6 +89,12 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
         </p>
       ) : (
         <div className="space-y-2">
+          {latest && !current(latest) && (
+            <p className="text-xs text-warning" role="status">
+              The prospect certified again after v{latest.version} was generated, so it shows answers they've since
+              changed and isn't offered to them. Generate a new version from their current answers.
+            </p>
+          )}
           {latest && latest.review_event_id !== latestEventId && (
             <p className="text-xs text-warning" role="status">
               The review has changed since v{latest.version}. Generate a new version to include it.
@@ -104,6 +112,10 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
               {pending} correction{pending === 1 ? " isn't" : "s aren't"} verified yet and won't be included.
             </p>
           )}
+          <p className="text-xs text-muted-foreground">
+            The latest version is the prospect's final Manuscript: they can download it from their Manuscript page and
+            send it on. Correction reasons are printed in it.
+          </p>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={revealSensitive} onChange={(e) => setRevealSensitive(e.target.checked)} />
             Include full dates of birth
@@ -132,6 +144,8 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
                   Certified {formatDateTime(v.certified_signed_at)} · {v.corrections_applied} correction
                   {v.corrections_applied === 1 ? "" : "s"} · {v.sensitive_revealed ? "full DOBs" : "DOBs masked"}
                 </p>
+                {v === latest && current(v) && <p className="text-xs text-success">Shared with the prospect as their final Manuscript</p>}
+                {detail.certified && !current(v) && <p className="text-xs text-warning">Built from an earlier certification</p>}
               </div>
               <button
                 onClick={() => void open(v)}

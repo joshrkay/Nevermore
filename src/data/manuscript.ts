@@ -26,6 +26,10 @@ export interface ChamberSubmission {
   chamber_data?: unknown;
   // Field status and source as signed. Absent on older submissions.
   field_provenance?: unknown;
+  // Stamped by the database at certification: the conversation and the document list as certified,
+  // which advisors review. Absent on submissions certified before they were kept.
+  transcript?: unknown;
+  documents?: unknown;
 }
 
 // ---------- Certification ----------

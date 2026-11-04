@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Inbox, Loader2, RefreshCw, Search, SearchX } from "lucide-react";
+import { ChevronLeft, ChevronRight, Inbox, Loader2, RefreshCw, Search, SearchX } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   completenessOf,
   formatStates,
   isPipelineStatus,
-  matchesSearch,
   PIPELINE_LABELS,
   PIPELINE_STATUSES,
   referenceOf,
@@ -14,7 +13,7 @@ import {
   type PipelineStatus,
 } from "@/data/advisor";
 import { emailProblemHelp, emailProblemLabel, emailProblemsBySession } from "@/data/outbox";
-import { listEmailProblems, listSubmissions, type EmailProblem, type SubmissionSummary } from "@/lib/advisorApi";
+import { listEmailProblems, listSubmissions, QUEUE_PAGE_SIZE, type EmailProblem, type SubmissionPage } from "@/lib/advisorApi";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { PipelineBadge } from "@/components/advisor/PipelineBadge";
@@ -22,7 +21,7 @@ import { PipelineBadge } from "@/components/advisor/PipelineBadge";
 type Load =
   | { kind: "loading" }
   | { kind: "error"; error: Error }
-  | { kind: "ready"; rows: SubmissionSummary[] };
+  | ({ kind: "ready" } & SubmissionPage);
 
 // Drafts the prospect can no longer open (docs/intake-schema.md, "Session lifecycle").
 const CLOSED_INTAKE_LABELS: Record<string, string> = {
@@ -37,6 +36,9 @@ const COMPLETENESS_CLASS: Record<Completeness["state"], string> = {
   missing_required: "bg-destructive/15 text-destructive",
 };
 
+// Searching waits for a pause in typing, so the database isn't asked once per keystroke.
+const SEARCH_DELAY_MS = 300;
+
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 
@@ -46,6 +48,10 @@ const AdvisorDashboardPage = () => {
   const param = searchParams.get("status");
   const status: PipelineStatus | null = isPipelineStatus(param) ? param : null;
   const query = searchParams.get("q") ?? "";
+  const pageParam = Number(searchParams.get("page"));
+  const page = Number.isInteger(pageParam) && pageParam > 1 ? pageParam : 1;
+  // What's typed; the URL (and the search) follow it after a pause.
+  const [typed, setTyped] = useState(query);
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [problems, setProblems] = useState<Map<string, EmailProblem>>(new Map());
@@ -63,26 +69,49 @@ const AdvisorDashboardPage = () => {
   useEffect(() => {
     let cancelled = false;
     setLoad({ kind: "loading" });
-    listSubmissions(status)
-      .then((rows) => !cancelled && setLoad({ kind: "ready", rows }))
+    listSubmissions({ status, search: query, page })
+      .then((result) => !cancelled && setLoad({ kind: "ready", ...result }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => { cancelled = true; };
-  }, [status, attempt]);
+  }, [status, query, page, attempt]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
-  // Filter and search live in the URL, so a refresh or a shared link shows the same queue.
-  const setParam = (key: "status" | "q", value: string) => {
-    const next = new URLSearchParams(searchParams);
-    if (value) next.set(key, value);
-    else next.delete(key);
-    setSearchParams(next, { replace: true });
-  };
+  // Filter, search and page live in the URL, so a refresh or a shared link shows the same queue.
+  // Changing the filter or the search starts again from the first page.
+  const setParams = useCallback(
+    (changes: Partial<Record<"status" | "q" | "page", string>>) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          for (const [key, value] of Object.entries(changes)) {
+            if (value) next.set(key, value);
+            else next.delete(key);
+          }
+          if (!("page" in changes)) next.delete("page");
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+  const setParam = (key: "status" | "q", value: string) => setParams({ [key]: value });
 
-  const rows = useMemo(() => (load.kind === "ready" ? load.rows : []), [load]);
-  // Searching narrows what the status filter already returned; it doesn't go back to the server.
-  const visible = useMemo(() => rows.filter((r) => matchesSearch(r, query)), [rows, query]);
+  // Follow the URL when it changes from outside (Back, a shared link).
+  useEffect(() => setTyped(query), [query]);
+  useEffect(() => {
+    if (typed.trim() === query.trim()) return;
+    const timer = setTimeout(() => setParams({ q: typed.trim() }), SEARCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [typed, query, setParams]);
+
+  const rows = load.kind === "ready" ? load.rows : [];
+  const total = load.kind === "ready" ? load.total : 0;
   const searching = query.trim() !== "";
+  const firstShown = (page - 1) * QUEUE_PAGE_SIZE + 1;
+  const lastShown = firstShown + rows.length - 1;
+  const hasNext = lastShown < total;
 
   // A click anywhere on the row opens it; the company link stays for keyboard and "open in new tab".
   const openRow = (e: MouseEvent, id: string) => {
@@ -108,8 +137,8 @@ const AdvisorDashboardPage = () => {
               <input
                 id="queue-search"
                 type="search"
-                value={query}
-                onChange={(e) => setParam("q", e.target.value)}
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
                 placeholder="Company, contact or reference"
                 className="bg-muted border border-border rounded-md pl-9 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground w-64"
               />
@@ -145,7 +174,16 @@ const AdvisorDashboardPage = () => {
 
         {load.kind === "error" && <AdvisorLoadError error={load.error} what="submissions" onRetry={retry} />}
 
-        {load.kind === "ready" && rows.length === 0 && (
+        {load.kind === "ready" && rows.length === 0 && page > 1 && (
+          <div className="border border-dashed border-border rounded-xl p-12 text-center">
+            <p className="font-medium">There's nothing on page {page}.</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              <button onClick={() => setParams({ page: "" })} className="text-primary underline">Go to the first page</button>
+            </p>
+          </div>
+        )}
+
+        {load.kind === "ready" && rows.length === 0 && page === 1 && !searching && (
           <div className="border border-dashed border-border rounded-xl p-12 text-center">
             <Inbox className="w-8 h-8 text-muted-foreground mx-auto mb-3" aria-hidden="true" />
             <p className="font-medium">
@@ -161,7 +199,7 @@ const AdvisorDashboardPage = () => {
           </div>
         )}
 
-        {load.kind === "ready" && rows.length > 0 && visible.length === 0 && (
+        {load.kind === "ready" && rows.length === 0 && page === 1 && searching && (
           <div className="border border-dashed border-border rounded-xl p-12 text-center">
             <SearchX className="w-8 h-8 text-muted-foreground mx-auto mb-3" aria-hidden="true" />
             <p className="font-medium">
@@ -169,15 +207,17 @@ const AdvisorDashboardPage = () => {
             </p>
             <p className="text-sm text-muted-foreground mt-1">
               Search covers company, contact and reference.{" "}
-              <button onClick={() => setParam("q", "")} className="text-primary underline">Clear search</button>
+              <button onClick={() => { setTyped(""); setParam("q", ""); }} className="text-primary underline">Clear search</button>
             </p>
           </div>
         )}
 
-        {load.kind === "ready" && visible.length > 0 && (
+        {load.kind === "ready" && rows.length > 0 && (
           <>
             <p className="text-xs text-muted-foreground mb-2" aria-live="polite">
-              {searching ? `${visible.length} of ${rows.length} submissions match` : `${rows.length} submissions`}
+              {total <= QUEUE_PAGE_SIZE && page === 1
+                ? `${total} submission${total === 1 ? "" : "s"}${searching ? ` match “${query.trim()}”` : ""}`
+                : `${firstShown}–${lastShown} of ${total} submissions${searching ? ` matching “${query.trim()}”` : ""}`}
             </p>
             <div className="border border-border rounded-xl overflow-hidden">
               <Table>
@@ -193,7 +233,7 @@ const AdvisorDashboardPage = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visible.map((row) => {
+                  {rows.map((row) => {
                     const completeness = completenessOf(row);
                     return (
                       <TableRow
@@ -251,6 +291,27 @@ const AdvisorDashboardPage = () => {
                 </TableBody>
               </Table>
             </div>
+            {(page > 1 || hasNext) && (
+              <nav aria-label="Pages" className="flex items-center justify-end gap-2 mt-3">
+                <button
+                  onClick={() => setParams({ page: page - 1 > 1 ? String(page - 1) : "" })}
+                  disabled={page === 1}
+                  className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-md border border-border disabled:opacity-50"
+                >
+                  <ChevronLeft className="w-4 h-4" aria-hidden="true" /> Previous
+                </button>
+                <span className="text-sm text-muted-foreground">
+                  Page {page} of {Math.max(1, Math.ceil(total / QUEUE_PAGE_SIZE))}
+                </span>
+                <button
+                  onClick={() => setParams({ page: String(page + 1) })}
+                  disabled={!hasNext}
+                  className="inline-flex items-center gap-1 text-sm px-3 py-1.5 rounded-md border border-border disabled:opacity-50"
+                >
+                  Next <ChevronRight className="w-4 h-4" aria-hidden="true" />
+                </button>
+              </nav>
+            )}
           </>
         )}
       </main>

@@ -1,13 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { SubmissionSummary } from "@/lib/advisorApi";
 
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
 const listSubmissions = vi.fn();
 const listEmailProblems = vi.fn();
-vi.mock("@/lib/advisorApi", () => ({ listSubmissions: (s: unknown) => listSubmissions(s), listEmailProblems: () => listEmailProblems() }));
+// A test can resolve a plain list (one page holding everything) or a page with its own total.
+vi.mock("@/lib/advisorApi", () => ({
+  QUEUE_PAGE_SIZE: 25,
+  listSubmissions: async (opts: unknown) => {
+    const result = await listSubmissions(opts);
+    return Array.isArray(result) ? { rows: result, total: result.length } : result;
+  },
+  listEmailProblems: () => listEmailProblems(),
+}));
+const query = (over: Record<string, unknown> = {}) => ({ status: null, search: "", page: 1, ...over });
 
 const { default: AdvisorDashboardPage } = await import("./AdvisorDashboardPage");
 
@@ -28,10 +37,12 @@ const row = (over: Partial<SubmissionSummary> = {}): SubmissionSummary => ({
   verified_fields: 0,
   file_id: "EAA-2026-ACME0001",
   states: ["CA", "NY"],
+  total_count: 1,
   ...over,
 });
 
 const ShowId = () => <p>Detail page for {useParams().id}</p>;
+const LocationProbe = () => <p data-testid="location">{useLocation().search}</p>;
 
 const renderAt = (url = "/advisor") =>
   render(
@@ -193,88 +204,136 @@ describe("AdvisorDashboardPage", () => {
     listSubmissions.mockResolvedValue([row()]);
     renderAt();
     await screen.findByRole("link", { name: "Acme" });
-    expect(listSubmissions).toHaveBeenLastCalledWith(null);
+    expect(listSubmissions).toHaveBeenLastCalledWith(query());
 
     listSubmissions.mockResolvedValue([]);
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "won" } });
     expect(await screen.findByText("No submissions are won.")).toBeInTheDocument();
-    expect(listSubmissions).toHaveBeenLastCalledWith("won");
+    expect(listSubmissions).toHaveBeenLastCalledWith(query({ status: "won" }));
 
     listSubmissions.mockResolvedValue([row()]);
     fireEvent.click(screen.getByRole("button", { name: "Show all statuses" }));
     expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
-    expect(listSubmissions).toHaveBeenLastCalledWith(null);
+    expect(listSubmissions).toHaveBeenLastCalledWith(query());
   });
 
   it("reads the filter from the URL", async () => {
     listSubmissions.mockResolvedValue([]);
     renderAt("/advisor?status=information_requested");
     expect(await screen.findByText("No submissions are information requested.")).toBeInTheDocument();
-    expect(listSubmissions).toHaveBeenCalledWith("information_requested");
+    expect(listSubmissions).toHaveBeenCalledWith(query({ status: "information_requested" }));
   });
 
   describe("search", () => {
-    const rows = [
+    const all = [
       row({ session_id: "s1", company_name: "Acme Holdings", contact_name: "Pat Prospect", file_id: "EAA-2026-AAAA1111" }),
       row({ session_id: "s2", company_name: "Beta Works", contact_name: "Bo Buyer", file_id: "EAA-2026-BBBB2222" }),
       row({ session_id: "s3", company_name: "Gamma", contact_name: "Pat Gamma", file_id: "EAA-2026-CCCC3333" }),
     ];
+    // Stands in for the database's search: every word in the company, contact or reference.
+    const searchDb = ({ search = "" }: { search?: string }) => {
+      const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+      return all.filter((r) => words.every((w) => [r.company_name, r.contact_name, r.file_id].join("\n").toLowerCase().includes(w)));
+    };
 
-    it("narrows the list by company, contact or reference without reloading", async () => {
-      listSubmissions.mockResolvedValue(rows);
-      renderAt();
-      await screen.findByRole("link", { name: "Acme Holdings" });
-      const calls = listSubmissions.mock.calls.length;
-      const box = screen.getByLabelText("Search");
-
-      fireEvent.change(box, { target: { value: "beta" } });
-      expect(companyOrder()).toEqual(["Beta Works"]);
-
-      fireEvent.change(box, { target: { value: "pat" } });
-      expect(companyOrder()).toEqual(["Acme Holdings", "Gamma"]);
-
-      fireEvent.change(box, { target: { value: "pat gamma" } });
-      expect(companyOrder()).toEqual(["Gamma"]);
-
-      fireEvent.change(box, { target: { value: "eaa-2026-bbbb" } });
-      expect(companyOrder()).toEqual(["Beta Works"]);
-
-      expect(listSubmissions.mock.calls.length).toBe(calls);
+    it("searches in the database once typing pauses, from the first page, and keeps the search in the URL", async () => {
+      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+      render(
+        <MemoryRouter initialEntries={["/advisor?page=2"]}>
+          <Routes>
+            <Route path="/advisor" element={<><AdvisorDashboardPage /><LocationProbe /></>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      await screen.findByText(/nothing on page 2|Acme Holdings/);
+      fireEvent.change(screen.getByLabelText("Search"), { target: { value: "pat gamma" } });
+      // Not once per keystroke: nothing is asked until typing pauses.
+      expect(listSubmissions).not.toHaveBeenCalledWith(query({ search: "pat gamma" }));
+      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ search: "pat gamma" })));
+      await waitFor(() => expect(companyOrder()).toEqual(["Gamma"]));
+      expect(screen.getByTestId("location")).toHaveTextContent("?q=pat+gamma");
     });
 
-    it("says how many match", async () => {
-      listSubmissions.mockResolvedValue(rows);
+    it("says how many match, across every page", async () => {
+      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
       renderAt();
       await screen.findByRole("link", { name: "Acme Holdings" });
       expect(screen.getByText("3 submissions")).toBeInTheDocument();
       fireEvent.change(screen.getByLabelText("Search"), { target: { value: "pat" } });
-      expect(screen.getByText("2 of 3 submissions match")).toBeInTheDocument();
+      expect(await screen.findByText("2 submissions match “pat”")).toBeInTheDocument();
     });
 
-    it("keeps the search in the URL and reads it back", async () => {
-      listSubmissions.mockResolvedValue(rows);
+    it("reads the search from the URL", async () => {
+      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
       renderAt("/advisor?q=gamma");
       expect(await screen.findByRole("link", { name: "Gamma" })).toBeInTheDocument();
       expect(screen.getByLabelText("Search")).toHaveValue("gamma");
-      expect(companyOrder()).toEqual(["Gamma"]);
+      expect(listSubmissions).toHaveBeenCalledWith(query({ search: "gamma" }));
     });
 
     it("explains a search that finds nothing, and clears it", async () => {
-      listSubmissions.mockResolvedValue(rows);
-      renderAt();
-      await screen.findByRole("link", { name: "Acme Holdings" });
-      fireEvent.change(screen.getByLabelText("Search"), { target: { value: "zzz" } });
-      expect(screen.getByText("No submissions match “zzz”.")).toBeInTheDocument();
+      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+      renderAt("/advisor?q=zzz");
+      expect(await screen.findByText("No submissions match “zzz”.")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
       expect(screen.getByLabelText("Search")).toHaveValue("");
+      expect(await screen.findByRole("link", { name: "Acme Holdings" })).toBeInTheDocument();
       expect(companyOrder()).toHaveLength(3);
     });
 
     it("combines with the status filter", async () => {
-      listSubmissions.mockResolvedValue(rows);
+      listSubmissions.mockResolvedValue([]);
       renderAt("/advisor?status=won&q=zzz");
       expect(await screen.findByText("No won submissions match “zzz”.")).toBeInTheDocument();
-      expect(listSubmissions).toHaveBeenCalledWith("won");
+      expect(listSubmissions).toHaveBeenCalledWith(query({ status: "won", search: "zzz" }));
+    });
+  });
+
+  describe("pages", () => {
+    const pageOf = (page: number, total: number) => ({
+      rows: Array.from({ length: Math.min(25, total - (page - 1) * 25) }, (_, i) =>
+        row({ session_id: `s${(page - 1) * 25 + i}`, company_name: `Company ${(page - 1) * 25 + i + 1}` })),
+      total,
+    });
+
+    it("shows 25 at a time with the total, and moves between pages", async () => {
+      listSubmissions.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 60));
+      render(
+        <MemoryRouter initialEntries={["/advisor"]}>
+          <Routes>
+            <Route path="/advisor" element={<><AdvisorDashboardPage /><LocationProbe /></>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      expect(await screen.findByText("1–25 of 60 submissions")).toBeInTheDocument();
+      expect(screen.getByText("Page 1 of 3")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      expect(await screen.findByText("26–50 of 60 submissions")).toBeInTheDocument();
+      expect(listSubmissions).toHaveBeenLastCalledWith(query({ page: 2 }));
+      expect(screen.getByTestId("location")).toHaveTextContent("?page=2");
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      expect(await screen.findByText("51–60 of 60 submissions")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+      expect(await screen.findByText("26–50 of 60 submissions")).toBeInTheDocument();
+    });
+
+    it("starts from the first page when the filter changes", async () => {
+      listSubmissions.mockImplementation(async ({ page }: { page: number }) => pageOf(page, 60));
+      renderAt("/advisor?page=3");
+      expect(await screen.findByText("51–60 of 60 submissions")).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Status"), { target: { value: "submitted" } });
+      expect(await screen.findByText("1–25 of 60 submissions")).toBeInTheDocument();
+      expect(listSubmissions).toHaveBeenLastCalledWith(query({ status: "submitted" }));
+    });
+
+    it("says when a page is past the end, and goes back to the first", async () => {
+      listSubmissions.mockImplementation(async ({ page }: { page: number }) => (page === 1 ? pageOf(1, 3) : { rows: [], total: 0 }));
+      renderAt("/advisor?page=9");
+      expect(await screen.findByText("There's nothing on page 9.")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Go to the first page" }));
+      expect(await screen.findByText("3 submissions")).toBeInTheDocument();
     });
   });
 

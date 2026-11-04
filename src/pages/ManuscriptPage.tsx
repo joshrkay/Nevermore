@@ -8,7 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
-import { buildManuscript, fileIdForSession, maskDob, NOT_PROVIDED, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
+import { buildManuscript, fileIdForSession, manuscriptFilename, maskDob, NOT_PROVIDED, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
 import { describeSource, parseProvenance, STATUS_LABELS, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
@@ -63,11 +63,21 @@ type LoadState =
   | { kind: "expired" }
   | { kind: "ready"; data: ChamberData; provenance: ProvenanceMap; submission: ChamberSubmission | null; fileId: string };
 
+/** The advisor-reviewed version of the prospect's certified intake: the final packet, when there is one. */
+interface FinalManuscript {
+  version: number;
+  storage_path: string;
+  generated_at: string;
+  corrections_applied: number;
+}
+
 // `demo` renders the fictional sample; the live route never does.
 const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
   // Sensitive fields stay masked, on screen and in the PDF, until the signed-in owner reveals them.
   const [showMasked, setShowMasked] = useState(true);
   const [downloading, setDownloading] = useState(false);
+  const [finalVersion, setFinalVersion] = useState<FinalManuscript | null>(null);
+  const [openingFinal, setOpeningFinal] = useState(false);
   const [searchParams] = useSearchParams();
   const sessionId = demo ? null : searchParams.get("session");
   const { user, loading: authLoading } = useAuth();
@@ -126,6 +136,20 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
     return () => { cancelled = true; };
   }, [sessionId, demo, user, authLoading]);
 
+  // The database offers the latest advisor version only when it was built from this certification.
+  const ready = state.kind === "ready";
+  useEffect(() => {
+    setFinalVersion(null);
+    if (!ready || !sessionId) return;
+    let cancelled = false;
+    supabase
+      .rpc("prospect_final_manuscript", { p_session_id: sessionId })
+      .then(({ data, error }) => {
+        if (!cancelled && !error) setFinalVersion((data as FinalManuscript[] | null)?.[0] ?? null);
+      });
+    return () => { cancelled = true; };
+  }, [ready, sessionId]);
+
   const d = useMemo(() => {
     if (state.kind === "ready") return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, provenance: state.provenance });
     if (state.kind === "sample") return buildManuscript(DEMO_CHAMBER_DATA, { fileId: SAMPLE_FILE_ID });
@@ -147,6 +171,24 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
       toast.error("We couldn't generate the PDF. Please try again.");
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const openFinal = async () => {
+    if (!d || !finalVersion || openingFinal) return;
+    setOpeningFinal(true);
+    try {
+      // A link that works for a minute, issued only to this intake's owner (storage checks it).
+      const { data, error } = await supabase.storage
+        .from("manuscripts")
+        .createSignedUrl(finalVersion.storage_path, 60, { download: manuscriptFilename(`${d.fileId}-v${finalVersion.version}`, d.companyName) });
+      if (error || !data) throw error ?? new Error("No link");
+      window.location.assign(data.signedUrl);
+    } catch (err) {
+      console.error("Failed to open the final manuscript:", err);
+      toast.error("We couldn't download the final Manuscript. Please try again.");
+    } finally {
+      setOpeningFinal(false);
     }
   };
 
@@ -247,12 +289,28 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               {showMasked ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
               {showMasked ? "Data masked" : "Data visible"}
             </button>
-            <button onClick={handleDownloadPDF} disabled={downloading}
-              className="inline-flex items-center gap-2 text-sm whitespace-nowrap bg-primary text-primary-foreground px-3 sm:px-4 py-1.5 rounded-md hover:bg-primary/90 transition-colors disabled:opacity-60">
-              {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              <span className="sm:hidden">Download PDF</span>
-              <span className="hidden sm:inline">Download The Manuscript (PDF)</span>
-            </button>
+            {finalVersion ? (
+              <>
+                <button onClick={handleDownloadPDF} disabled={downloading}
+                  className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60">
+                  {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  As certified (PDF)
+                </button>
+                <button onClick={() => void openFinal()} disabled={openingFinal}
+                  className="inline-flex items-center gap-2 text-sm whitespace-nowrap bg-primary text-primary-foreground px-3 sm:px-4 py-1.5 rounded-md hover:bg-primary/90 transition-colors disabled:opacity-60">
+                  {openingFinal ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  <span className="sm:hidden">Final PDF</span>
+                  <span className="hidden sm:inline">Download the final Manuscript (PDF)</span>
+                </button>
+              </>
+            ) : (
+              <button onClick={handleDownloadPDF} disabled={downloading}
+                className="inline-flex items-center gap-2 text-sm whitespace-nowrap bg-primary text-primary-foreground px-3 sm:px-4 py-1.5 rounded-md hover:bg-primary/90 transition-colors disabled:opacity-60">
+                {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                <span className="sm:hidden">Download PDF</span>
+                <span className="hidden sm:inline">Download The Manuscript (PDF)</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -264,6 +322,18 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           </div>
         )}
         {state.kind === "ready" && sessionId && <ProspectStatusNote sessionId={sessionId} />}
+        {finalVersion && (
+          <div className="bg-success/10 border border-success/40 rounded-xl p-4 text-sm text-foreground" data-testid="final-manuscript">
+            <p className="font-medium mb-1">Your final Manuscript is ready.</p>
+            <p className="text-muted-foreground">
+              Edgar Allan Advisory reviewed your intake and prepared version {finalVersion.version}
+              {finalVersion.corrections_applied > 0
+                ? `, with ${finalVersion.corrections_applied} correction${finalVersion.corrections_applied === 1 ? "" : "s"} listed in it`
+                : ""}
+              . That's the packet to send to your PEO. The page below shows your intake as you certified it, before review.
+            </p>
+          </div>
+        )}
 
         {/* Header */}
         <div className="bg-card border border-border rounded-xl p-8 md:p-10">
@@ -282,6 +352,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             <div><span className="text-muted-foreground text-xs block mb-0.5">DATE</span>{d.date}</div>
             <div><span className="text-muted-foreground text-xs block mb-0.5">FILE ID</span><span className="text-primary">{d.fileId}</span></div>
             <div><span className="text-muted-foreground text-xs block mb-0.5">PROSPECT</span>{d.companyName}</div>
+            {!isSample && (
+              <div><span className="text-muted-foreground text-xs block mb-0.5">REVIEW</span>As certified, before advisor review</div>
+            )}
           </div>
         </div>
 
@@ -484,10 +557,17 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Bottom Actions */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center py-8">
-          <button onClick={handleDownloadPDF} disabled={downloading}
-            className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-60">
-            {downloading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download The Manuscript (PDF)
-          </button>
+          {finalVersion ? (
+            <button onClick={() => void openFinal()} disabled={openingFinal}
+              className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-60">
+              {openingFinal ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download the final Manuscript (PDF)
+            </button>
+          ) : (
+            <button onClick={handleDownloadPDF} disabled={downloading}
+              className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-60">
+              {downloading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download The Manuscript (PDF)
+            </button>
+          )}
           <Link to={backUrl}
             className="inline-flex items-center justify-center gap-2 border border-border text-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-muted transition-colors">
             <ArrowLeft className="w-5 h-5" /> {isSample ? "Start Yours" : "Back to Review"}

@@ -72,9 +72,11 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   reviews: {},
   reviewEvents: [],
   versions: [],
+  transcriptChangedSinceCertified: false,
   documents: [
     { id: "d1", file_name: "census.xlsx", file_size: "12 KB", category: "employee_census", status: "uploaded", storage_path: "prospect-1/x_census.xlsx", created_at: "2026-10-01T00:00:00Z" },
   ],
+  documentEvents: [],
   ...over,
 });
 
@@ -120,13 +122,103 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "information_requested" } });
     expect(within(panel).getByText(/The prospect will see/)).toBeInTheDocument();
     fireEvent.change(within(panel).getByLabelText("Change status to"), { target: { value: "lost" } });
-    expect(within(panel).getByText(/Internal only/)).toBeInTheDocument();
+    // An internal status leaves the prospect with their last shared one.
+    expect(within(panel).getByText(/The prospect will see: “Received\. .*” \(the status itself stays internal\)/)).toBeInTheDocument();
     fireEvent.change(within(panel).getByLabelText("Internal note (optional)"), { target: { value: "Went with incumbent" } });
     api.setStatus.mockResolvedValue(undefined);
     fireEvent.click(within(panel).getByRole("button", { name: "Update status" }));
     await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "lost", "Went with incumbent"));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
     expect(within(panel).queryByRole("option", { name: "Draft" })).not.toBeInTheDocument();
+  });
+
+  it("offers only Archived for an intake the prospect has never certified", async () => {
+    api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", submission: null, pipelineStatus: "draft" }));
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const select = within(panel).getByLabelText("Change status to");
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Archived"]);
+    expect(within(panel).getByText(/can only be archived\. They see no status until they certify/)).toBeInTheDocument();
+    api.setStatus.mockResolvedValue(undefined);
+    fireEvent.click(within(panel).getByRole("button", { name: "Update status" }));
+    await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "archived", ""));
+  });
+
+  it("says the prospect sees nothing while their certification is withdrawn", async () => {
+    api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", pipelineStatus: "under_review" }));
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    expect(within(panel).getAllByRole("option").length).toBe(8);
+    expect(within(panel).getByText(/sees no status while their certification is withdrawn; once they certify again/)).toBeInTheDocument();
+  });
+
+  it("shows a history row that kept the status as the status and its note, not a change", async () => {
+    api.loadSubmission.mockResolvedValue(
+      detail({
+        pipelineStatus: "quoted",
+        history: [
+          { id: 3, session_id: "s1", from_status: "quoted", to_status: "quoted", note: "Prospect certified the intake again", changed_by: "prospect-1", changed_by_email: null, changed_at: "2026-10-03T12:00:00Z" },
+          { id: 2, session_id: "s1", from_status: "submitted", to_status: "quoted", note: null, changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-10-02T12:00:00Z" },
+        ],
+      }),
+    );
+    renderPage();
+    const history = await screen.findByRole("list", { name: "Status history" });
+    const [kept, changed] = within(history).getAllByRole("listitem");
+    expect(kept).toHaveTextContent(/^Quoted/);
+    expect(kept).not.toHaveTextContent("Quoted → Quoted");
+    expect(kept).toHaveTextContent("Prospect certified the intake again");
+    expect(changed).toHaveTextContent("Submitted → Quoted");
+  });
+
+  it("marks documents removed, added or re-categorised after certification, with who and when", async () => {
+    api.loadSubmission.mockResolvedValue(
+      detail({
+        documents: [
+          { id: "d3", file_name: "late.pdf", file_size: "1 KB", category: "other", status: "uploaded", storage_path: "p/s/late.pdf", created_at: "2026-10-04T00:00:00Z", certification: "added" },
+          { id: "d2", file_name: "losses.pdf", file_size: "40 KB", category: "workers_comp_loss_runs", status: "uploaded", storage_path: "p/s/losses.pdf", created_at: "2026-10-01T00:00:00Z", certification: "removed" },
+          { id: "d1", file_name: "census.xlsx", file_size: "12 KB", category: "other", status: "uploaded", storage_path: "p/s/census.xlsx", created_at: "2026-10-01T00:00:00Z", certification: "certified", certifiedCategory: "employee_census" },
+        ],
+        documentEvents: [
+          { id: 3, session_id: "s1", document_id: "d2", kind: "removed", file_name: "losses.pdf", from_value: "workers_comp_loss_runs", to_value: null, actor_id: "prospect-1", actor_email: "p@example.com", created_at: "2026-10-03T00:00:00Z" },
+          { id: 2, session_id: "s1", document_id: "d1", kind: "recategorised", file_name: "census.xlsx", from_value: "employee_census", to_value: "other", actor_id: "prospect-1", actor_email: "p@example.com", created_at: "2026-10-02T00:00:00Z" },
+        ],
+      }),
+    );
+    renderPage();
+    const removed = await screen.findByTestId("document-d2");
+    expect(removed).toHaveTextContent(/Removed after certification by Prospect · .*The certified file is kept for review/);
+    expect(within(removed).getByRole("button", { name: "Open losses.pdf" })).toBeEnabled();
+    expect(screen.getByTestId("document-d3")).toHaveTextContent("Added after certification. Not part of what was certified.");
+    expect(screen.getByTestId("document-d1")).toHaveTextContent(/Certified as Employee census; re-categorised by Prospect · /);
+  });
+
+  it("shows each employee's dependents, the tier the Manuscript prints, and the PEO the packet is prepared for", async () => {
+    const census = [
+      { id: "e1", first_name: "Ann", last_name: "Lee", dob: "1980-02-03", work_state: "CA", classification: "w2" as const, compensation_type: "salary" as const, employment_type: "full_time" as const,
+        dependents: [
+          { first_name: "Bo", last_name: "Lee", dob: "1981-04-05", relationship: "spouse" as const },
+          { first_name: "Cy", last_name: "Lee", dob: "2015-06-07", relationship: "child" as const },
+        ] },
+      { id: "e2", first_name: "Dee", last_name: "Ray", dob: "1990-01-01", work_state: "CA", classification: "w2" as const, compensation_type: "salary" as const, employment_type: "full_time" as const, coverage_tier: "WAIVE" as const },
+    ];
+    const data = { ...signedData, census };
+    api.loadSubmission.mockResolvedValue(detail({ data, submission: { ...detail().submission!, peo: "Acme PEO" } }));
+    renderPage();
+    expect(await screen.findByText(/Certified by Jo Doe, CEO · .* · Prepared for Acme PEO/)).toBeInTheDocument();
+    const ann = screen.getByRole("list", { name: "Dependents of Ann Lee" });
+    expect(within(ann).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Bo Lee · Spouse · 1981-04-05", "Cy Lee · Child · 2015-06-07"]);
+    const rows = screen.getByRole("heading", { name: "Employee census" }).closest("section")!.querySelectorAll("tbody tr");
+    expect(rows[0]).toHaveTextContent("Employee + Family");
+    expect(rows[0]).toHaveTextContent("from dependents");
+    expect(rows[1]).toHaveTextContent("Waived");
+    expect(rows[1]).toHaveTextContent("None");
+  });
+
+  it("says when the transcript shown is the certified copy of one that has changed since", async () => {
+    api.loadSubmission.mockResolvedValue(detail({ transcriptChangedSinceCertified: true }));
+    renderPage();
+    expect(await screen.findByText(/Showing the conversation as the prospect certified it\. It has changed since\./)).toBeInTheDocument();
   });
 
   it("adds an internal note", async () => {
@@ -148,7 +240,7 @@ describe("AdvisorSubmissionPage", () => {
 
     fireEvent.click(within(row).getByRole("button", { name: "Correct" }));
     fireEvent.change(within(row).getByLabelText("Corrected value"), { target: { value: "lots" } });
-    fireEvent.change(within(row).getByLabelText("Reason"), { target: { value: "Payroll register" } });
+    fireEvent.change(within(row).getByLabelText(/^Reason/), { target: { value: "Payroll register" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save correction" }));
     expect(api.reviewField).toHaveBeenCalledTimes(1); // "lots" isn't a number
 
@@ -269,7 +361,7 @@ describe("AdvisorSubmissionPage", () => {
         versions: [
           {
             id: "v1", session_id: "s1", version: 1, file_id: "EAA-2026-S1", storage_path: "s1/v1-a.pdf", pdf_sha256: "a".repeat(64),
-            certified_data_hash: "h", certified_signed_at: "2026-10-01T12:00:00Z", review_event_id: 0, corrections_applied: 0,
+            certified_data_hash: "c".repeat(64), certified_signed_at: "2026-10-01T12:00:00Z", certified_at: "2026-10-01T12:00:05Z", review_event_id: 0, corrections_applied: 0,
             sensitive_revealed: false, generated_by: "a1", generated_by_email: "adv@example.com", generated_at: "2026-10-01T13:00:00Z",
           },
         ],
@@ -319,10 +411,43 @@ describe("AdvisorSubmissionPage", () => {
     expect(downloadBlob).not.toHaveBeenCalled();
   });
 
+  it("marks the version shared with the prospect, and one built from an earlier certification", async () => {
+    const version = (n: number, over: Record<string, unknown> = {}) => ({
+      id: `v${n}`, session_id: "s1", version: n, file_id: "EAA-2026-S1", storage_path: `s1/v${n}.pdf`, pdf_sha256: "a".repeat(64),
+      certified_data_hash: "c".repeat(64), certified_signed_at: "2026-10-01T12:00:00Z", certified_at: "2026-10-01T12:00:05Z",
+      review_event_id: 0, corrections_applied: 0, sensitive_revealed: false, generated_by: "a1", generated_by_email: "adv@example.com",
+      generated_at: "2026-10-01T13:00:00Z", ...over,
+    });
+    api.loadSubmission.mockResolvedValue(detail({ versions: [version(2), version(1, { certified_at: "2026-09-30T12:00:05Z", certified_data_hash: "d".repeat(64) })] }));
+    renderPage();
+    const list = await screen.findByRole("list", { name: "Manuscript versions" });
+    const [v2, v1] = within(list).getAllByRole("listitem");
+    expect(v2).toHaveTextContent("Shared with the prospect as their final Manuscript");
+    expect(v1).toHaveTextContent("Built from an earlier certification");
+    expect(v1).not.toHaveTextContent("Shared with the prospect");
+    expect(screen.queryByText(/certified again after v2/)).not.toBeInTheDocument();
+  });
+
+  it("says the latest version predates the prospect's current certification and isn't offered to them", async () => {
+    api.loadSubmission.mockResolvedValue(
+      detail({
+        versions: [{
+          id: "v1", session_id: "s1", version: 1, file_id: "EAA-2026-S1", storage_path: "s1/v1.pdf", pdf_sha256: "a".repeat(64),
+          certified_data_hash: "d".repeat(64), certified_signed_at: "2026-09-30T12:00:00Z", certified_at: "2026-09-30T12:00:05Z",
+          review_event_id: 0, corrections_applied: 0, sensitive_revealed: false, generated_by: "a1", generated_by_email: "adv@example.com",
+          generated_at: "2026-09-30T13:00:00Z",
+        }],
+      }),
+    );
+    renderPage();
+    expect(await screen.findByText(/The prospect certified again after v1 was generated/)).toBeInTheDocument();
+    expect(screen.queryByText("Shared with the prospect as their final Manuscript")).not.toBeInTheDocument();
+  });
+
   it("downloads a stored version through a short-lived link", async () => {
     const v = {
       id: "v1", session_id: "s1", version: 1, file_id: "EAA-2026-S1", storage_path: "s1/v1-a.pdf", pdf_sha256: "a".repeat(64),
-      certified_data_hash: "h", certified_signed_at: "2026-10-01T12:00:00Z", review_event_id: 0, corrections_applied: 0,
+      certified_data_hash: "c".repeat(64), certified_signed_at: "2026-10-01T12:00:00Z", certified_at: "2026-10-01T12:00:05Z", review_event_id: 0, corrections_applied: 0,
       sensitive_revealed: false, generated_by: "a1", generated_by_email: "adv@example.com", generated_at: "2026-10-01T13:00:00Z",
     };
     api.loadSubmission.mockResolvedValue(detail({ versions: [v] }));

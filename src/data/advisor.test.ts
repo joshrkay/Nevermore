@@ -8,9 +8,10 @@ import {
   formatStates,
   isStaleRefusal,
   manuscriptStoragePath,
-  matchesSearch,
   parseCorrection,
   PIPELINE_STATUSES,
+  prospectStatusAfter,
+  reconcileDocuments,
   prospectStatusMessage,
   referenceOf,
   reviewMap,
@@ -143,48 +144,6 @@ describe("referenceOf", () => {
   });
 });
 
-describe("matchesSearch", () => {
-  const row = {
-    session_id: "a1b2c3d4-0000-0000-0000-000000000000",
-    company_name: "Acme Holdings LLC",
-    contact_name: "Pat Prospect",
-    file_id: "EAA-2026-A1B2C3D4",
-    created_at: "2026-03-01T12:00:00Z",
-  };
-
-  it("matches everything when there is no search", () => {
-    expect(matchesSearch(row, "")).toBe(true);
-    expect(matchesSearch(row, "   ")).toBe(true);
-  });
-
-  it("finds a row by company, contact or reference, ignoring case", () => {
-    expect(matchesSearch(row, "acme")).toBe(true);
-    expect(matchesSearch(row, "PROSPECT")).toBe(true);
-    expect(matchesSearch(row, "eaa-2026-a1b2")).toBe(true);
-    expect(matchesSearch(row, "a1b2c3d4")).toBe(true);
-  });
-
-  it("needs every word to match, in any of the three fields", () => {
-    expect(matchesSearch(row, "acme pat")).toBe(true);
-    expect(matchesSearch(row, "acme  a1b2")).toBe(true);
-    expect(matchesSearch(row, "acme nobody")).toBe(false);
-  });
-
-  it("matches a draft by the reference the app derives for it", () => {
-    expect(matchesSearch({ ...row, file_id: null }, "EAA-2026-A1B2C3D4")).toBe(true);
-  });
-
-  it("copes with missing company and contact", () => {
-    const blank = { ...row, company_name: null, contact_name: null };
-    expect(matchesSearch(blank, "acme")).toBe(false);
-    expect(matchesSearch(blank, "a1b2")).toBe(true);
-  });
-
-  it("doesn't search anything a row doesn't show, such as the session id's other digits", () => {
-    expect(matchesSearch(row, "0000-0000")).toBe(false);
-  });
-});
-
 describe("formatStates", () => {
   it("is null when no state is known", () => {
     expect(formatStates([])).toBeNull();
@@ -212,5 +171,56 @@ describe("isStaleRefusal", () => {
     for (const err of [{ code: "42501" }, { code: "P0002" }, new Error("Network request failed"), null, undefined, "PT409"]) {
       expect(isStaleRefusal(err)).toBe(false);
     }
+  });
+});
+
+describe("prospectStatusAfter", () => {
+  const h = (...statuses: string[]) => statuses.map((to_status) => ({ to_status }));
+
+  it("shows a shared status as it is", () => {
+    expect(prospectStatusAfter("under_review", h("submitted"))).toBe("under_review");
+    expect(prospectStatusAfter("information_requested", h("under_review"))).toBe("information_requested");
+  });
+
+  it("leaves the last shared status in place for an internal one", () => {
+    expect(prospectStatusAfter("lost", h("lost", "under_review", "submitted", "draft"))).toBe("under_review");
+  });
+
+  it("never leaves the prospect being asked for information once the advisor has moved on", () => {
+    expect(prospectStatusAfter("sent_to_carrier", h("information_requested", "submitted"))).toBe("under_review");
+  });
+
+  it("is nothing when nothing was ever shared", () => {
+    expect(prospectStatusAfter("archived", h("draft"))).toBeNull();
+  });
+});
+
+describe("reconcileDocuments", () => {
+  const doc = (id: string, over: Record<string, string> = {}) => ({
+    id, file_name: `${id}.pdf`, file_size: "1 KB", category: "other", status: "uploaded",
+    storage_path: `u/s/${id}.pdf`, created_at: `2026-10-0${id.slice(-1)}T00:00:00Z`, ...over,
+  });
+
+  it("leaves the live list as it is when there's no certified list", () => {
+    expect(reconcileDocuments([doc("d1")], undefined)).toEqual([doc("d1")]);
+  });
+
+  it("marks certified, removed and added documents, newest first", () => {
+    const out = reconcileDocuments([doc("d1"), doc("d3")], [doc("d1"), doc("d2")]);
+    expect(out.map((d) => [d.id, d.certification])).toEqual([["d3", "added"], ["d2", "removed"], ["d1", "certified"]]);
+    // A removed document keeps what it was certified with, so its kept file can still be opened.
+    expect(out.find((d) => d.id === "d2")).toMatchObject({ storage_path: "u/s/d2.pdf", file_name: "d2.pdf" });
+  });
+
+  it("says what a certified document was certified as, when it has changed since", () => {
+    const [d] = reconcileDocuments([doc("d1", { category: "other", file_name: "new.pdf" })], [doc("d1", { category: "employee_census" })]);
+    expect(d).toMatchObject({ certification: "certified", category: "other", certifiedCategory: "employee_census", certifiedFileName: "d1.pdf" });
+    const [same] = reconcileDocuments([doc("d1")], [doc("d1")]);
+    expect(same).not.toHaveProperty("certifiedCategory");
+    expect(same).not.toHaveProperty("certifiedFileName");
+  });
+
+  it("ignores entries in the certified list it can't use", () => {
+    expect(reconcileDocuments([], [null, "x", { id: 1 }, { id: "d9" }, doc("d2")]).map((d) => d.id)).toEqual(["d2"]);
   });
 });
