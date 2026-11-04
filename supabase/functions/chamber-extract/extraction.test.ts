@@ -205,6 +205,18 @@ describe("extraction tool schema", () => {
     for (const word of ["field_status", "evidence", "corrected_fields"]) expect(SYSTEM_PROMPT).toContain(word);
     expect(SYSTEM_PROMPT).toContain(`at most ${MAX_EVIDENCE_CHARS} characters`);
   });
+
+  // US-2.3d (D21): the roster comes only from a file, so whenever it comes up Lenore points to the template.
+  it("has Lenore point to the census template whenever the roster comes up, and never ask for SSNs or bank numbers", () => {
+    const replyRules = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("How Lenore replies"));
+    const rule = replyRules.split("\n").find((line) => line.startsWith("- Whenever the prospect brings up their employees")) ?? "";
+    expect(rule).toContain("census template on the Upload tab");
+    expect(rule).toMatch(/roster or census, or starts listing employees/);
+    expect(rule).toContain("instead of taking the details in chat");
+    expect(rule).toContain("Never ask for Social Security or bank numbers");
+    // The invitation when no census is in names the template too.
+    expect(replyRules).toMatch(/When no employee census is uploaded[^\n]*census template[^\n]*Upload tab/);
+  });
 });
 
 // US-2.1b: the contract covers every top-level field of the intake schema but the census.

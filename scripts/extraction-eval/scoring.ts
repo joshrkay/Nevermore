@@ -5,14 +5,20 @@ import { z } from "zod";
 import { isEmpty, type FieldKey, type IntakeState } from "@/data/provenance";
 import type { ExpectedField, Fixture } from "./fixtures";
 
-/** One assertion's outcome. `actual` is the field's final value (or, for a digits check, where the digits were found). */
+/**
+ * One assertion's outcome. `actual` is the field's final value (for a digits check, where the digits were found; for a
+ * reply check, Lenore's reply).
+ */
 export interface Cell {
   pass: boolean;
   actual: unknown;
   status: string | null;
 }
 
-/** Keyed "<fixture>/<field>", or "<fixture>/no_digits:<digits>" for a forbidden-digits check. */
+/**
+ * Keyed "<fixture>/<field>", "<fixture>/no_digits:<digits>" for a forbidden-digits check, or "<fixture>/reply<turn>:<name>"
+ * for a reply check (the turn counted from 1).
+ */
 export type Cells = Record<string, Cell>;
 
 export interface Baseline {
@@ -63,20 +69,27 @@ export function fieldsContainingDigits(state: IntakeState, digits: string): stri
 
 // ---------- Scoring ----------
 
+/** The fixture's reply checks, each with its cell name and the turn's index. */
+export function replyChecks(fixture: Fixture): { name: string; turn: number; pattern: RegExp }[] {
+  return fixture.turns.flatMap((t, turn) => Object.entries(t.reply ?? {}).map(([check, pattern]) => ({ name: `reply${turn + 1}:${check}`, turn, pattern })));
+}
+
 /**
- * One cell per asserted field, absent field and forbidden digit sequence. A value cell needs the
- * expected value and, when named, the expected status; with none named, any status but conflicting.
- * A fixture that didn't finish fails every cell.
+ * One cell per asserted field, absent field, forbidden digit sequence and reply check. A value cell needs the
+ * expected value and, when named, the expected status; with none named, any status but conflicting. A reply cell
+ * needs Lenore's own reply to that turn (`replies`, null where the model gave none) to match the pattern. A fixture
+ * that didn't finish fails every cell.
  */
-export function scoreFixture(fixture: Fixture, state: IntakeState, error: string | null = null): Cells {
+export function scoreFixture(fixture: Fixture, state: IntakeState, error: string | null = null, replies: readonly (string | null)[] = []): Cells {
   const key = (name: string) => `${fixture.id}/${name}`;
   const expected = Object.entries(fixture.expected) as [FieldKey, ExpectedField][];
   const absent = fixture.absent ?? [];
   const forbidden = fixture.forbidden_digits ?? [];
+  const checks = replyChecks(fixture);
   const cells: Cells = {};
 
   if (error) {
-    const names = [...expected.map(([field]) => field), ...absent, ...forbidden.map((d) => `no_digits:${d}`)];
+    const names = [...expected.map(([field]) => field), ...absent, ...forbidden.map((d) => `no_digits:${d}`), ...checks.map((c) => c.name)];
     for (const name of names) cells[key(name)] = { pass: false, actual: `(not run: ${error})`, status: null };
     return cells;
   }
@@ -97,6 +110,10 @@ export function scoreFixture(fixture: Fixture, state: IntakeState, error: string
   for (const digits of forbidden) {
     const found = fieldsContainingDigits(state, digits);
     cells[key(`no_digits:${digits}`)] = { pass: found.length === 0, actual: found, status: null };
+  }
+  for (const { name, turn, pattern } of checks) {
+    const reply = replies[turn] ?? null;
+    cells[key(name)] = { pass: reply !== null && pattern.test(reply), actual: reply ?? "(no reply)", status: null };
   }
   return cells;
 }

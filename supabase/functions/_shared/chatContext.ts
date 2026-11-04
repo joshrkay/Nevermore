@@ -2,6 +2,8 @@
 // browser builds the context with chatContext, and chamber-extract refuses one past these limits. No imports,
 // so it runs under Deno and Vitest alike.
 
+/** The prospect's new message, typed or spoken. A longer one is refused; the browser cuts a spoken one to fit. */
+export const MAX_CHAT_MESSAGE_CHARS = 2000;
 /** The answers, their field statuses and the recent conversation together, as JSON. */
 export const MAX_CONTEXT_CHARS = 20000;
 /** How many earlier messages a call carries, and how long each may be. */
@@ -26,7 +28,9 @@ const clip = (s: string) => (s.length > MAX_RECENT_CHARS ? s.slice(0, MAX_RECENT
 
 /**
  * The context for one call. `transcript` is the conversation so far; `exceptId` is the message being sent,
- * which travels as the message itself. The oldest messages are dropped until it all fits MAX_CONTEXT_CHARS.
+ * which travels as the message itself. Only what came before it is carried: a spoken message read after later
+ * lines were said (US-2.3b) must not be placed against a question Lenore asked after it. The oldest messages are
+ * dropped until it all fits MAX_CONTEXT_CHARS.
  */
 export function chatContext(
   answers: Record<string, unknown>,
@@ -34,8 +38,10 @@ export function chatContext(
   transcript: readonly { id?: string; sender: string; text: string }[],
   exceptId?: string,
 ): ChatContext {
-  const recent: RecentMessage[] = transcript
-    .filter((m): m is { id?: string; sender: "user" | "lenore"; text: string } => (m.sender === "user" || m.sender === "lenore") && m.id !== exceptId)
+  const at = exceptId === undefined ? -1 : transcript.findIndex((m) => m.id === exceptId);
+  const before = at >= 0 ? transcript.slice(0, at) : transcript;
+  const recent: RecentMessage[] = before
+    .filter((m): m is { id?: string; sender: "user" | "lenore"; text: string } => m.sender === "user" || m.sender === "lenore")
     .slice(-MAX_RECENT_MESSAGES)
     .map((m) => ({ sender: m.sender, text: clip(m.text) }));
   const fixed = JSON.stringify(answers).length + JSON.stringify(statuses).length;

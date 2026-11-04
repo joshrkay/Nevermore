@@ -240,6 +240,24 @@ Follow-ups:
 4. If anything suggests data was read that shouldn't have been, it is a SEV-1: go to
    [Suspected data exposure](#suspected-data-exposure).
 
+### Voice failures
+
+`OPS_ALERT kind=voice_failed`. Voice is an opt-in beta: text always works, and every failure tells the prospect
+so with a "Continue in text" button, so this is never a SEV-1 on its own.
+
+1. By code: many `voice_connect_timeout` or `voice_connect_failed`: ElevenLabs is down or refusing the agent
+   (status.elevenlabs.io; the agent still exists and `VITE_ELEVENLABS_AGENT_ID` names it; the account has
+   credit). `voice_dropped:1006` from many accounts: connections are being cut (the service, or a network path
+   between it and prospects); from one account, that prospect's network (1006 is a connection cut with no
+   goodbye). Any other close code: the service closed the call itself, and the conversation's history in the
+   ElevenLabs dashboard says why. `voice_dropped` with no code: the service ended the call with an error
+   message rather than a close (the SDK does this when a call reaches its maximum duration). `voice_error`:
+   errors the service reported during calls that carried on.
+2. The detail and the intake id are in `ops_events`. Each cause found, and its fix, goes in
+   `docs/VOICE_ISSUES.md`.
+3. If voice stays broken, unset `VITE_ELEVENLABS_AGENT_ID` and redeploy: the "Speak with Lenore" button goes
+   and the Chamber is text only, with nothing else changed.
+
 ### Deletion failed
 
 `OPS_ALERT kind=deletion_failed` or `DELETION_FAILED`.

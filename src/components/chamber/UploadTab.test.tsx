@@ -1,12 +1,17 @@
 // What the Upload tab says about a read that didn't go through, and when it offers to read the file
-// again: never while reading again can't help (the daily cap, a Lenore that isn't set up), B-3.2.
+// again: never while reading again can't help (the daily cap, a Lenore that isn't set up), B-3.2. And the census
+// template it offers (US-2.3d).
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import UploadTab from "./UploadTab";
+import { CENSUS_TEMPLATE_COLUMNS, CENSUS_TEMPLATE_GUIDE, censusTemplateCsv } from "@/data/census";
 import { DOCUMENT_FAILURE_MESSAGES, type AiFailureKind } from "@/data/aiFailure";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { EMPTY_EXTRACTION } from "@/data/documentCandidates";
 import type { SessionDocument, UseSessionDocumentsReturn } from "@/hooks/useSessionDocuments";
+
+const downloadBlob = vi.fn();
+vi.mock("@/lib/downloadFile", () => ({ downloadBlob: (...args: unknown[]) => downloadBlob(...args) }));
 
 const doc = (status: string, readIssue: AiFailureKind | null): SessionDocument => ({
   id: "d1",

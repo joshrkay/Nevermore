@@ -1,7 +1,7 @@
 // The extraction eval: replays each fixture's messages through the same code a chat message takes
 // in production (the browser's redaction and context, chamber-extract's prompt, the shared provider
 // adapter, the response shaping, then the browser's merge into the intake), scores the result and
-// compares it with the committed baseline. The model call is injected, so runner.test.ts runs the
+// Lenore's replies, and compares them with the committed baseline. The model call is injected, so runner.test.ts runs the
 // whole path against a stub; connectProvider picks the real provider, and run.ts wires in the file
 // system and the process.
 
@@ -45,6 +45,8 @@ export function connectProvider(env: (name: string) => string | undefined): Conn
 
 export interface FixtureRun {
   state: IntakeState;
+  /** Lenore's own reply to each turn that got one, null where the model gave none. */
+  replies: (string | null)[];
   /** Why the run stopped early, when a model call failed. */
   error: string | null;
 }
@@ -54,6 +56,7 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
   let state: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
   // The conversation so far, as the Chamber keeps it, from Lenore's opening line: each call carries its last few messages.
   const transcript: ChatMessage[] = [openingMessage()];
+  const replies: (string | null)[] = [];
   for (const [i, turn] of fixture.turns.entries()) {
     // useLenoreChat.send: the model and the transcript only see the message with sensitive numbers removed.
     const text = redactSensitive(turn.message);
@@ -73,18 +76,22 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
 
     const result = await model({ system: SYSTEM_PROMPT, user });
     if (!result.ok) {
-      return { state, error: `turn ${i + 1}: model call failed (${result.kind}, HTTP ${result.httpStatus ?? "-"})` };
+      return { state, replies, error: `turn ${i + 1}: model call failed (${result.kind}, HTTP ${result.httpStatus ?? "-"})` };
     }
     // The tool call is forced, so the handler answers a reply without one as invalid_response (US-2.4a).
-    if (!result.args) return { state, error: `turn ${i + 1}: the model made no tool call (invalid_response)` };
+    if (!result.args) return { state, replies, error: `turn ${i + 1}: the model made no tool call (invalid_response)` };
     // What the handler returns, as the browser parses it.
     const response = JSON.parse(JSON.stringify(shapeExtraction(result.args)));
     // ChamberPage's onExtracted for a chat message.
     if (response.extracted) state = applyExtraction(state, response.extracted, transcriptExtraction(message, response));
+    // Her own reply is what a reply check scores: the handler's fallback question, asked when there is none, never
+    // follows a rule of the prompt's.
+    const reply = typeof response.reply === "string" && response.reply.trim() ? response.reply : null;
+    replies.push(reply);
     // useLenoreChat: her reply, or the fallback line when the answer has none.
-    transcript.push(createChatMessage("lenore", (typeof response.reply === "string" && response.reply.trim()) || CHAT_FALLBACK_REPLY));
+    transcript.push(createChatMessage("lenore", reply?.trim() || CHAT_FALLBACK_REPLY));
   }
-  return { state, error: null };
+  return { state, replies, error: null };
 }
 
 /** Runs the fixtures in order (one at a time, to stay inside provider rate limits) and scores them. */
@@ -94,7 +101,7 @@ export async function runFixtures(fixtures: Fixture[], model: ModelCall): Promis
   for (const fixture of fixtures) {
     const run = await runFixture(fixture, model);
     if (run.error) errors.push(`${fixture.id}: ${run.error}`);
-    Object.assign(cells, scoreFixture(fixture, run.state, run.error));
+    Object.assign(cells, scoreFixture(fixture, run.state, run.error, run.replies));
   }
   return { cells, errors };
 }

@@ -91,10 +91,32 @@ describe("scoreFixture", () => {
     expect(scoreFixture(f, noted([{ value: ["PTO"], source: source("plan four") }]))["f/no_digits:4417"]).toMatchObject({ pass: true, actual: [] });
   });
 
+  it("passes a reply cell only when Lenore's own reply to that turn matches, and fails one she didn't reply to", () => {
+    const f = fixture({
+      turns: [{ message: "a" }, { message: "b", reply: { template: /template/i, upload_tab: /upload/i } }, { message: "c", reply: { template: /template/i } }],
+    });
+    const cells = scoreFixture(f, state({}), null, ["Noted.", "Download the census template on the Upload tab.", null]);
+    expect(cells).toEqual({
+      "f/reply2:template": { pass: true, actual: "Download the census template on the Upload tab.", status: null },
+      "f/reply2:upload_tab": { pass: true, actual: "Download the census template on the Upload tab.", status: null },
+      "f/reply3:template": { pass: false, actual: "(no reply)", status: null },
+    });
+    expect(scoreFixture(f, state({}), null, ["", "Thanks! How often do you run payroll?", "A template."])).toMatchObject({
+      "f/reply2:template": { pass: false, actual: "Thanks! How often do you run payroll?" },
+      "f/reply2:upload_tab": { pass: false },
+      "f/reply3:template": { pass: true },
+    });
+  });
+
   it("fails every cell of a fixture that didn't finish, saying why", () => {
-    const f = fixture({ expected: { employee_count: { value: 1 } }, absent: ["industry"], forbidden_digits: ["123456789"] });
+    const f = fixture({
+      turns: [{ message: "x", reply: { template: /template/i } }],
+      expected: { employee_count: { value: 1 } },
+      absent: ["industry"],
+      forbidden_digits: ["123456789"],
+    });
     const cells = scoreFixture(f, state({ employee_count: 1 }), "turn 1: model call failed (timeout, HTTP -)");
-    expect(Object.keys(cells)).toEqual(["f/employee_count", "f/industry", "f/no_digits:123456789"]);
+    expect(Object.keys(cells)).toEqual(["f/employee_count", "f/industry", "f/no_digits:123456789", "f/reply1:template"]);
     for (const cell of Object.values(cells)) {
       expect(cell).toEqual({ pass: false, actual: "(not run: turn 1: model call failed (timeout, HTTP -))", status: null });
     }
