@@ -3,14 +3,17 @@
 // (_shared/intakeSchema.ts), so chat can answer every top-level field but the census, and nothing the schema
 // doesn't know. Relative imports only, so it runs under Deno and Vitest alike.
 
-import { INTAKE_FIELDS, INTAKE_SCHEMA, type JsonSchema } from "../_shared/intakeSchema.ts";
+import { INTAKE_FIELDS, INTAKE_SCHEMA, LIMITS, type JsonSchema } from "../_shared/intakeSchema.ts";
 
-/** What each field means, for the model. Every field the chat extracts has one (schema.test.ts checks). */
+/**
+ * What each field means, for the model. Every field the chat extracts has one (extraction.test.ts checks). An
+ * answer the workspace only shows beside its flag says to report the flag with it.
+ */
 export const FIELD_GUIDE: Record<string, string> = {
   company_name: "The company's legal or business name",
   industry: "What the business does, its industry",
   hq_state: "Two-letter US state code of the headquarters, such as CA",
-  states: "Two-letter US state codes of every state where employees work",
+  states: "Two-letter US state codes of every state where employees work, one state per item",
   employee_count: "Total number of employees (a whole number)",
   start_month: "When they want PEO coverage or benefits to start, as they said it",
   multiple_entities: "true if the business runs as more than one legal entity",
@@ -33,18 +36,18 @@ export const FIELD_GUIDE: Record<string, string> = {
   pto_types: "Kinds of paid time off they offer, such as vacation or sick",
   accrual_method: "How paid time off accrues, such as per pay period or up front",
   has_handbook: "true if they have an employee handbook",
-  handbook_last_updated: "When the handbook was last updated, as they said it",
-  hr_staff_count: "How many people work in HR in-house (a whole number)",
+  handbook_last_updated: "When the handbook was last updated, as they said it (such as \"2024\")",
+  hr_staff_count: "How many people handle HR in-house (a whole number)",
   has_1099: "true if they use 1099 contractors",
   ca_contractors: "true if any contractors work in California",
-  uses_physical_clocks: "true if employees clock in on a physical time clock",
-  uses_mobile_app: "true if employees track time in a mobile app",
-  uses_computer_timekeeping: "true if employees track time on a computer",
-  shift_differentials: "true if some shifts pay more",
-  hris_system: "Their HR information system, if any",
+  uses_physical_clocks: "true if employees clock in on a physical time clock, false if not",
+  uses_mobile_app: "true if employees track time in a mobile app, false if not",
+  uses_computer_timekeeping: "true if employees track time on a computer, false if not",
+  shift_differentials: "true if some shifts (nights, weekends) pay a different rate, false if not",
+  hris_system: "The HR information system (HRIS) or tool they keep employee records in, by name",
   key_challenges: "The HR or compliance challenges they describe",
   business_goals: "The business goals they mention",
-  wc_carrier: "Their current workers' compensation carrier",
+  wc_carrier: "Their current workers' compensation carrier, by name",
   wc_renewal_date: "When their workers' comp policy renews, as they said it",
   wc_experience_mod: "Their workers' comp experience modification factor, a decimal such as 0.92 (from 0 to 10)",
   wc_annual_premium: "Their annual workers' comp premium in whole US dollars (from 0 to 100,000,000)",

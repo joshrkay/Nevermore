@@ -44,6 +44,17 @@
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
+\i supabase/migrations/20261104100000_certification_conflicts.sql
+\i supabase/migrations/20261104101000_transcript_validation.sql
+\i supabase/migrations/20261104102000_one_open_draft.sql
+\i supabase/migrations/20261104103000_required_items.sql
+\i supabase/migrations/20261104110000_pin_reviews_and_manuscripts_to_answers.sql
+\i supabase/migrations/20261104111000_pipeline_follows_the_prospect.sql
+\i supabase/migrations/20261104112000_certified_evidence.sql
+\i supabase/migrations/20261104113000_share_reviewed_manuscript.sql
+\i supabase/migrations/20261104114000_paged_advisor_queue.sql
+\i supabase/migrations/20261104115000_advisor_review_followups.sql
+\i supabase/migrations/20261104116000_intake_deletion_removes_document_history.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -118,12 +129,13 @@ EXCEPTION WHEN OTHERS THEN
   RETURN s;
 END $$;
 
--- Every row an intake has, table by table (sessions, documents, certifications, outbox, workflow, history,
--- notes, reviews, review events, Manuscript versions, lifecycle events, AI call records).
+-- Every row an intake has, table by table (sessions, documents and their history, certifications, outbox,
+-- workflow, history, notes, reviews, review events, Manuscript versions, lifecycle events, AI call records).
 CREATE FUNCTION pg_temp.footprint(sid uuid) RETURNS jsonb LANGUAGE sql AS $$
   SELECT jsonb_build_object(
     'chamber_sessions', (SELECT count(*) FROM public.chamber_sessions WHERE id = sid),
     'documents', (SELECT count(*) FROM public.documents WHERE session_id = sid),
+    'document_events', (SELECT count(*) FROM public.document_events WHERE session_id = sid),
     'chamber_certifications', (SELECT count(*) FROM public.chamber_certifications WHERE session_id = sid),
     'outbox_events', (SELECT count(*) FROM public.outbox_events WHERE session_id = sid),
     'submission_workflow', (SELECT count(*) FROM public.submission_workflow WHERE session_id = sid),

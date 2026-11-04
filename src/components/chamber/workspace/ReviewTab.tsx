@@ -194,11 +194,11 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
         </p>
       </div>
 
-      {/* What's still needed: required answers block certification, recommended ones never do */}
-      {blocking > 0 ? (
+      {/* What's still needed: required answers missing or in conflict block certification; recommended ones never do */}
+      {stillNeeded.length > 0 ? (
         <div role="region" aria-label="Still needed" className="bg-card border border-destructive/40 rounded-xl p-6 space-y-3">
           <p className="text-xs font-mono text-destructive uppercase tracking-wider">
-            Still needed before The Manuscript can be generated: {blocking}
+            Still needed before The Manuscript can be generated: {stillNeeded.length}
           </p>
           <ul className="space-y-2">
             {required.map((item) => (
@@ -393,7 +393,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
         </dl>
       </div>
 
-      {blocking > 0 && (
+      {stillNeeded.length > 0 && (
         <p className="text-xs text-muted-foreground">
           You can choose a PEO now. The answers marked Required are needed, each with one answer, before The Manuscript can be generated.
         </p>

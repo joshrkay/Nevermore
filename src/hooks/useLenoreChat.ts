@@ -52,8 +52,6 @@ interface UseLenoreChatOptions {
   epoch?: unknown;
 }
 
-const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?";
-
 /**
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
@@ -110,7 +108,7 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       if (error) throw error;
 
       if (data?.extracted) onExtracted(data.extracted, data, message);
-      const reply = (typeof data?.reply === "string" && data.reply.trim()) || FALLBACK_REPLY;
+      const reply = (typeof data?.reply === "string" && data.reply.trim()) || CHAT_FALLBACK_REPLY;
       onOrbStateChange("speaking");
       addLenoreMessage(reply);
       idleTimer.current = setTimeout(() => onOrbStateChange("idle"), 2000);

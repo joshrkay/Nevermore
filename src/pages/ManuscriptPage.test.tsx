@@ -10,10 +10,16 @@ let row: Record<string, unknown> | null = null;
 const auth = { user: { id: "u1" }, loading: false };
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 let sharedStatus: string | null = null;
+let finalVersions: unknown[] = [];
 let verifiedFields: string[] = [];
+const createSignedUrl = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
-    rpc: async (fn: string) => ({ data: fn === "session_verified_fields" ? verifiedFields : sharedStatus, error: null }),
+    rpc: async (fn: string) => ({
+      data: fn === "prospect_final_manuscript" ? finalVersions : fn === "session_verified_fields" ? verifiedFields : sharedStatus,
+      error: null,
+    }),
+    storage: { from: () => ({ createSignedUrl: (...a: unknown[]) => createSignedUrl(...a) }) },
     from: () => ({
       select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }),
     }),
@@ -104,6 +110,59 @@ describe("ManuscriptPage", () => {
     expect(screen.queryByText(/Edited Later Inc/)).not.toBeInTheDocument();
     // The packet is prepared for the PEO the prospect chose; nothing says it was submitted to them.
     expect(screen.getByText("PREPARED FOR").parentElement).toHaveTextContent("PREPARED FORJustworks");
+  });
+
+  describe("the final, advisor-reviewed Manuscript", () => {
+    const certified = () => ({
+      chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co" },
+      submission: { signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1", chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co" } },
+      status: "submitted",
+      created_at: "2026-05-01T00:00:00Z",
+    });
+
+    it("labels the page as the intake as certified, before advisor review, when there's no reviewed version", async () => {
+      row = certified();
+      finalVersions = [];
+      renderAt("/manuscript?session=s1");
+      expect(await screen.findByText("As certified, before advisor review")).toBeInTheDocument();
+      expect(screen.queryByTestId("final-manuscript")).not.toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /Download The Manuscript \(PDF\)/ }).length).toBeGreaterThan(0);
+      expect(screen.queryByRole("button", { name: /Download the final Manuscript/ })).not.toBeInTheDocument();
+    });
+
+    it("offers the reviewed version as the final packet, through a short-lived link, and keeps the certified copy", async () => {
+      row = certified();
+      finalVersions = [{ version: 2, storage_path: "s1/v2-x.pdf", generated_at: "2026-05-03T00:00:00Z", corrections_applied: 1 }];
+      createSignedUrl.mockReset().mockResolvedValue({ data: { signedUrl: "https://storage.example/final" }, error: null });
+      const assign = vi.fn();
+      Object.defineProperty(window, "location", { value: { ...window.location, assign }, writable: true });
+      renderAt("/manuscript?session=s1");
+      const note = await screen.findByTestId("final-manuscript");
+      expect(note).toHaveTextContent(/prepared version 2, with 1 correction listed in it/);
+      // Both download buttons (top bar and bottom) fetch the final version; neither offers the old label.
+      const finals = screen.getAllByRole("button", { name: /Download the final Manuscript \(PDF\)/ });
+      expect(finals.length).toBe(2);
+      expect(screen.queryByRole("button", { name: /Download The Manuscript \(PDF\)/ })).not.toBeInTheDocument();
+      fireEvent.click(finals[0]);
+      await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/final"));
+      expect(createSignedUrl).toHaveBeenCalledWith("s1/v2-x.pdf", 60, { download: "The_Manuscript_EAA-1-v2_Signed_Co.pdf" });
+      // The prospect's own copy is still there, as the certified copy.
+      expect(screen.getByRole("button", { name: /As certified \(PDF\)/ })).toBeInTheDocument();
+      finalVersions = [];
+    });
+
+    it("says so when the final Manuscript can't be fetched", async () => {
+      row = certified();
+      finalVersions = [{ version: 1, storage_path: "s1/v1.pdf", generated_at: "2026-05-03T00:00:00Z", corrections_applied: 0 }];
+      createSignedUrl.mockReset().mockResolvedValue({ data: null, error: { message: "Object not found" } });
+      const { toast } = await import("sonner");
+      const error = vi.spyOn(toast, "error");
+      renderAt("/manuscript?session=s1");
+      fireEvent.click((await screen.findAllByRole("button", { name: /Download the final Manuscript \(PDF\)/ }))[0]);
+      await waitFor(() => expect(error).toHaveBeenCalledWith("We couldn't download the final Manuscript. Please try again."));
+      error.mockRestore();
+      finalVersions = [];
+    });
   });
 
   it("shows payroll as its own section, from what was signed", async () => {

@@ -279,7 +279,28 @@ describe("ReckoningTab certification", () => {
       );
 
     it("won't submit until the prospect settles it, and says which one", () => {
-      mountWith();
+      mount(conflicting);
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeDisabled();
+      expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for pay frequency");
+    });
+
+    // States of operation that only the census gives: the database lets it through, the browser asks first (B-2.2).
+    it("names the census when its conflict is what gives the states of operation", () => {
+      const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+      mount({ census: { ...conflicting.pay_frequency!, candidates: [] } }, { ...DEMO_CHAMBER_DATA, states: [], census });
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeDisabled();
+      expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for employee census");
+      expect(screen.getByRole("alert", { name: "Answers still needed" })).toHaveTextContent("Its answers conflict, and it gives your states.");
+    });
+
+    it("still holds back a field in conflict that an advisor verified, as the database refuses it", () => {
+      mount(conflicting, DEMO_CHAMBER_DATA, new Set(["pay_frequency"]));
       checkAll();
       fillSigner();
       sign();
