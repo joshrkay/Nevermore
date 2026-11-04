@@ -3,9 +3,10 @@
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh submission_records
 -- Submission records (20261104120000_submission_records.sql): the File ID is assigned by the database from
 -- a per-year sequence and kept for good, each certification is a numbered, immutable copy of what was
--- certified, a repeat of the same certification records nothing, a required answer that is conflicting or
--- incomplete blocks certifying, nobody but the owner or an advisor can read a packet by its File ID, and a
--- certification can only ever carry its own intake's File ID (20261104122000).
+-- certified, a repeat of the same certification records nothing (sent after the first or at the same time,
+-- on two connections through dblink), a required answer that is conflicting or incomplete blocks certifying,
+-- nobody but the owner or an advisor can read a packet by its File ID, and a certification can only ever
+-- carry its own intake's File ID (20261104122000).
 -- Everything a prospect does runs as `authenticated` with their JWT claims, so row security is on.
 \set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
@@ -484,6 +485,136 @@ BEGIN
     RAISE EXCEPTION 'FAIL: a refused certification row was recorded';
   END IF;
   RAISE NOTICE 'submission_records: File ID check cases passed';
+END $$;
+
+-- ---------- the same certification sent twice at once ----------
+-- Two requests in flight together: a second click that got past the button's guard, a retry sent before the
+-- first response came back, the same PATCH from two tabs. The cases above send the repeat after the first
+-- has committed; here two real connections (dblink) race. The first certifies and holds its transaction
+-- open until the second is seen waiting on it, then commits. The second must find the first's certification
+-- and record nothing, whether it carries the browser's version check (it then matches no row) or not (the
+-- database's repeat check keeps the record as it is). Two intakes certified at once take different File IDs.
+CREATE SCHEMA race;
+CREATE EXTENSION dblink SCHEMA race;
+
+-- The UPDATE the Reckoning sends to certify sid over `data` (at_version: the version check the browser adds),
+-- returning '<File ID> v<version>'.
+CREATE FUNCTION pg_temp.certify_stmt(sid uuid, data jsonb, at_version integer DEFAULT NULL) RETURNS text LANGUAGE sql AS $$
+  SELECT format(
+    'UPDATE public.chamber_sessions SET status = %L, chamber_data = %L::jsonb, submission = %L::jsonb WHERE id = %L%s'
+    || ' RETURNING file_id || %L || (submission ->> %L)',
+    'submitted', data, pg_temp.certification(data), sid,
+    CASE WHEN at_version IS NULL THEN '' ELSE format(' AND data_version = %s', at_version) END,
+    ' v', 'version')
+$$;
+
+-- Runs first_stmt as first_uid and second_stmt as second_uid, each on its own connection with the user's JWT
+-- claims, at the same time: the first holds its transaction open until the second is blocked on it, then
+-- commits. Returns the text each statement returned (null for no row).
+CREATE FUNCTION pg_temp.race(first_uid uuid, first_stmt text, second_uid uuid, second_stmt text,
+                             OUT first_result text, OUT second_result text) LANGUAGE plpgsql AS $$
+DECLARE
+  dsn text := format('dbname=%s user=%s', current_database(), session_user);
+  second_pid integer;
+  tries integer := 0;
+BEGIN
+  PERFORM race.dblink_connect('race_first', dsn);
+  PERFORM race.dblink_connect('race_second', dsn);
+  PERFORM race.dblink_exec('race_first', format('SELECT set_config(%L, %L, false); SET ROLE authenticated', 'request.jwt.claims',
+    jsonb_build_object('sub', first_uid, 'is_anonymous', false, 'role', 'authenticated', 'email', first_uid || '@example.test')::text));
+  PERFORM race.dblink_exec('race_second', format('SELECT set_config(%L, %L, false); SET ROLE authenticated; SET lock_timeout = %L', 'request.jwt.claims',
+    jsonb_build_object('sub', second_uid, 'is_anonymous', false, 'role', 'authenticated', 'email', second_uid || '@example.test')::text, '20s'));
+  SELECT pid INTO second_pid FROM race.dblink('race_second', 'SELECT pg_backend_pid()') AS t(pid integer);
+
+  PERFORM race.dblink_exec('race_first', 'BEGIN');
+  SELECT r INTO first_result FROM race.dblink('race_first', first_stmt) AS t(r text);
+  PERFORM race.dblink_send_query('race_second', second_stmt);
+  WHILE cardinality(pg_blocking_pids(second_pid)) = 0 LOOP
+    tries := tries + 1;
+    IF tries > 400 THEN RAISE EXCEPTION 'FAIL: the second request never waited for the first'; END IF;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+  PERFORM race.dblink_exec('race_first', 'COMMIT');
+  SELECT r INTO second_result FROM race.dblink_get_result('race_second') AS t(r text);
+  PERFORM * FROM race.dblink_get_result('race_second') AS t(r text); -- the empty result that ends the query
+  PERFORM race.dblink_disconnect('race_first');
+  PERFORM race.dblink_disconnect('race_second');
+END $$;
+
+-- Each case its own prospect (one open draft each), committed so the other connections can see it.
+CREATE TEMP TABLE race_case (name text PRIMARY KEY, uid uuid NOT NULL, sid uuid NOT NULL, data_version integer NOT NULL);
+DO $$
+DECLARE
+  complete jsonb := '{"company_name":"Acme","states":["NY"],"pay_frequency":"bi-weekly"}';
+  name text;
+  uid uuid;
+  sid uuid;
+BEGIN
+  FOREACH name IN ARRAY ARRAY['versioned', 'unversioned', 'first_intake', 'second_intake'] LOOP
+    uid := pg_temp.new_user();
+    PERFORM pg_temp.as_user(uid);
+    SET LOCAL ROLE authenticated;
+    PERFORM pg_temp.agree();
+    INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, complete) RETURNING id INTO sid;
+    RESET ROLE;
+    INSERT INTO pg_temp.race_case VALUES (name, uid, sid, (SELECT data_version FROM public.chamber_sessions WHERE id = sid));
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE
+  complete jsonb := '{"company_name":"Acme","states":["NY"],"pay_frequency":"bi-weekly"}';
+  this_year text := to_char(now() AT TIME ZONE 'UTC', 'YYYY');
+  c pg_temp.race_case;
+  d pg_temp.race_case;
+  r record;
+  first_n integer;
+  second_n integer;
+BEGIN
+  -- As the browser sends it, at the version it last saw: the second matches no row once the first has moved
+  -- the version on (the client then reads the row back and finds its own certification).
+  SELECT * INTO c FROM pg_temp.race_case WHERE name = 'versioned';
+  r := pg_temp.race(c.uid, pg_temp.certify_stmt(c.sid, complete, c.data_version), c.uid, pg_temp.certify_stmt(c.sid, complete, c.data_version));
+  IF r.first_result IS NULL OR r.first_result !~ ('^EAA-' || this_year || '-[0-9]{4,} v1$') THEN
+    RAISE EXCEPTION 'FAIL: the first of two versioned certifications gave %', r.first_result;
+  END IF;
+  IF r.second_result IS NOT NULL THEN RAISE EXCEPTION 'FAIL: the second versioned certification also landed (%)', r.second_result; END IF;
+  IF (SELECT count(*) FROM public.chamber_certifications WHERE session_id = c.sid) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: two versioned certifications at once recorded % rows', (SELECT count(*) FROM public.chamber_certifications WHERE session_id = c.sid);
+  END IF;
+  IF (SELECT count(*) FROM public.outbox_events WHERE session_id = c.sid) <> 2 THEN
+    RAISE EXCEPTION 'FAIL: two versioned certifications at once queued % notifications', (SELECT count(*) FROM public.outbox_events WHERE session_id = c.sid);
+  END IF;
+
+  -- No version check (a bare REST retry): the second lands on the first's row and the repeat check keeps
+  -- the record as it is, so both get back the same File ID and version.
+  SELECT * INTO c FROM pg_temp.race_case WHERE name = 'unversioned';
+  r := pg_temp.race(c.uid, pg_temp.certify_stmt(c.sid, complete), c.uid, pg_temp.certify_stmt(c.sid, complete));
+  IF r.first_result IS NULL OR r.first_result !~ ('^EAA-' || this_year || '-[0-9]{4,} v1$') THEN
+    RAISE EXCEPTION 'FAIL: the first of two unversioned certifications gave %', r.first_result;
+  END IF;
+  IF r.second_result IS DISTINCT FROM r.first_result THEN
+    RAISE EXCEPTION 'FAIL: the repeat sent at the same time came back as % after %', r.second_result, r.first_result;
+  END IF;
+  IF (SELECT count(*) FROM public.chamber_certifications WHERE session_id = c.sid) <> 1
+     OR NOT EXISTS (SELECT 1 FROM public.chamber_certifications WHERE session_id = c.sid AND version = 1 AND superseded_at IS NULL) THEN
+    RAISE EXCEPTION 'FAIL: two unversioned certifications at once recorded %',
+      (SELECT jsonb_agg(jsonb_build_object('version', version, 'superseded', superseded_reason)) FROM public.chamber_certifications WHERE session_id = c.sid);
+  END IF;
+  IF (SELECT count(*) FROM public.outbox_events WHERE session_id = c.sid) <> 2 THEN
+    RAISE EXCEPTION 'FAIL: two unversioned certifications at once queued % notifications', (SELECT count(*) FROM public.outbox_events WHERE session_id = c.sid);
+  END IF;
+
+  -- Two intakes certified at once: the second waits on the year's counter and takes the next number.
+  SELECT * INTO c FROM pg_temp.race_case WHERE name = 'first_intake';
+  SELECT * INTO d FROM pg_temp.race_case WHERE name = 'second_intake';
+  r := pg_temp.race(c.uid, pg_temp.certify_stmt(c.sid, complete), d.uid, pg_temp.certify_stmt(d.sid, complete));
+  first_n := substring(r.first_result FROM '^EAA-' || this_year || '-([0-9]{4,}) v1$')::integer;
+  second_n := substring(r.second_result FROM '^EAA-' || this_year || '-([0-9]{4,}) v1$')::integer;
+  IF first_n IS NULL OR second_n IS NULL OR second_n <> first_n + 1 THEN
+    RAISE EXCEPTION 'FAIL: two intakes certified at once got % and %', r.first_result, r.second_result;
+  END IF;
+  RAISE NOTICE 'submission_records: concurrent certification cases passed';
 END $$;
 
 DO $$ BEGIN RAISE NOTICE 'submission_records: all cases passed'; END $$;
