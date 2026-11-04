@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { emptyExtraction, shapeExtraction } from "./extraction";
-import { EXTRACT_TOOL, FIELDS, MAX_EVIDENCE_CHARS, SYSTEM_PROMPT } from "./schema";
+import { EXTRACT_TOOL, FIELD_GUIDE, FIELDS, MAX_EVIDENCE_CHARS, SYSTEM_PROMPT } from "./schema";
+import { INTAKE_SCHEMA } from "../_shared/intakeSchema";
 
 describe("shapeExtraction", () => {
   it("keeps the fields the model extracted, with their status, evidence and corrections", () => {
@@ -19,6 +20,7 @@ describe("shapeExtraction", () => {
       corrected_fields: ["employee_count"],
       reply: "Thank you.",
       rejected: [],
+      prompt_version: PROMPT_VERSION,
     });
   });
 
@@ -42,6 +44,38 @@ describe("shapeExtraction", () => {
     expect(shaped.corrected_fields).toEqual([]);
     expect(shaped.rejected.map((issue) => issue.path)).toEqual(["hq_state", "states[1]", "employee_count", "has_401k", "key_challenges"]);
     expect(shaped.rejected.find((issue) => issue.path === "key_challenges")?.reason).toBe("must be at most 1000 characters");
+  });
+
+  it("keeps answers beyond the company profile: entities, benefits, payroll, HR and timekeeping", () => {
+    const answers = {
+      multiple_entities: true,
+      fein_count: 2,
+      rate_history: "up 12% last year",
+      benefits_waiting_period: "30 days",
+      ancillary_benefits: ["Dental", "Vision"],
+      retirement_type: "SIMPLE IRA",
+      employer_contributes: false,
+      funding_days: 2,
+      has_nonexempt: true,
+      nonexempt_count: 8,
+      exempt_count: 0,
+      pto_types: ["Vacation", "Sick"],
+      accrual_method: "per pay period",
+      handbook_last_updated: "2024",
+      hr_staff_count: 1,
+      uses_physical_clocks: false,
+      uses_mobile_app: true,
+      uses_computer_timekeeping: true,
+      shift_differentials: false,
+      hris_system: "Thistledown HR",
+    };
+    expect(shapeExtraction(answers)).toMatchObject({ extracted: answers, rejected: [] });
+  });
+
+  it("refuses a count that isn't a whole number of 0 or more, and a list sent as one string", () => {
+    const shaped = shapeExtraction({ fein_count: -1, ancillary_benefits: "Dental, Vision", funding_days: 2.5, uses_mobile_app: "yes", hris_system: "Thistledown HR" });
+    expect(shaped.extracted).toEqual({ hris_system: "Thistledown HR" });
+    expect(shaped.rejected.map((issue) => issue.path)).toEqual(["fein_count", "ancillary_benefits", "funding_days", "uses_mobile_app"]);
   });
 
   it("never echoes a refused value in its reasons", () => {
@@ -94,6 +128,11 @@ describe("shapeExtraction", () => {
     expect(shaped).toMatchObject({ field_status: {}, evidence: {}, corrected_fields: [] });
   });
 
+  it("stamps the contract version, whatever the model sent for it", () => {
+    expect(shapeExtraction({ company_name: "Acme" }).prompt_version).toBe(PROMPT_VERSION);
+    expect(shapeExtraction({ company_name: "Acme", prompt_version: "1999-01-01.1" }).prompt_version).toBe(PROMPT_VERSION);
+  });
+
   it("returns no reply when the model sent none or a blank or non-text one", () => {
     expect(shapeExtraction({ company_name: "Acme" }).reply).toBeNull();
     expect(shapeExtraction({ reply: "   " }).reply).toBeNull();
@@ -102,8 +141,16 @@ describe("shapeExtraction", () => {
 });
 
 describe("emptyExtraction", () => {
-  it("is nothing extracted and no reply, so the browser falls back to its own line", () => {
-    expect(emptyExtraction()).toEqual({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null, rejected: [] });
+  it("is nothing extracted and no reply, so the browser falls back to its own line, under the current contract version", () => {
+    expect(emptyExtraction()).toEqual({
+      extracted: {},
+      field_status: {},
+      evidence: {},
+      corrected_fields: [],
+      reply: null,
+      rejected: [],
+      prompt_version: PROMPT_VERSION,
+    });
   });
 
   it("hands out a fresh object each time", () => {
@@ -126,8 +173,109 @@ describe("extraction tool schema", () => {
     expect(properties).toHaveProperty("reply");
   });
 
+  // A field the tool asks for with no definition leaves the model to guess what it means.
+  it("defines every field it asks for in the system prompt", () => {
+    const defined = new Set([...SYSTEM_PROMPT.matchAll(/^- (\w+): \S/gm)].map((m) => m[1]));
+    expect(FIELDS.filter((field) => !defined.has(field))).toEqual([]);
+  });
+
+  const definition = (field: string) => SYSTEM_PROMPT.match(new RegExp(`^- ${field}: (.*)$`, "m"))?.[1] ?? "";
+
+  // The workspace labels has_401k "Retirement plan", and shows the plan type and match only while it is true.
+  it("defines has_401k as any retirement plan, not only a 401(k)", () => {
+    expect(definition("has_401k")).toMatch(/any .*retirement plan/i);
+  });
+
+  // The workspace shows each of these only beside its flag (the FEIN count while multiple_entities is true,
+  // the plan type and match while has_401k is, the counts once has_nonexempt is answered), so one sent alone is hidden.
+  it("asks for the flag with each answer the workspace only shows beside it", () => {
+    const flags = { fein_count: "multiple_entities", retirement_type: "has_401k", employer_contributes: "has_401k", nonexempt_count: "has_nonexempt", exempt_count: "has_nonexempt" };
+    for (const [field, flag] of Object.entries(flags)) expect(definition(field), field).toContain(`report ${flag}`);
+  });
+
+  // Intake schema v1 refuses a value past its caps, so the prompt states them.
+  it("states intake schema v1's caps on counts, text and lists", () => {
+    expect(SYSTEM_PROMPT).toContain(`whole numbers from 0 to ${LIMITS.count.toLocaleString("en-US")}`);
+    expect(SYSTEM_PROMPT).toContain(`at most ${LIMITS.text.toLocaleString("en-US")} characters`);
+    expect(SYSTEM_PROMPT).toContain(`at most ${LIMITS.listItems} items`);
+  });
+
   it("tells the model how to report status, evidence and corrections", () => {
     for (const word of ["field_status", "evidence", "corrected_fields"]) expect(SYSTEM_PROMPT).toContain(word);
     expect(SYSTEM_PROMPT).toContain(`at most ${MAX_EVIDENCE_CHARS} characters`);
+  });
+});
+
+// US-2.1b: the contract covers every top-level field of the intake schema but the census.
+describe("the extraction contract", () => {
+  const PROPERTIES = INTAKE_SCHEMA.properties as Record<string, { type: unknown; enum?: unknown[] }>;
+  // A value the schema accepts for each kind of field, as the model would send it.
+  const sample = (key: string): unknown => {
+    if (key === "hq_state") return "NY";
+    if (key === "states") return ["NY", "NJ"];
+    const types = Array.isArray(PROPERTIES[key].type) ? (PROPERTIES[key].type as string[]) : [PROPERTIES[key].type as string];
+    if (types.includes("array")) return ["Dental"];
+    if (types.includes("boolean")) return false;
+    if (types.includes("integer")) return 0;
+    if (types.includes("number")) return 0.92;
+    return "Acme";
+  };
+
+  it("asks for every field of the intake schema but the census, each with a guide for the model and a type", () => {
+    expect([...FIELDS].sort()).toEqual(Object.keys(PROPERTIES).filter((k) => k !== "census").sort());
+    for (const key of FIELDS) {
+      expect(FIELD_GUIDE[key], key).toBeTruthy();
+      expect(SYSTEM_PROMPT).toContain(`- ${key} (`);
+      expect((EXTRACT_TOOL.parameters.properties as Record<string, unknown>)[key], key).toBeTruthy();
+    }
+    expect(Object.keys(FIELD_GUIDE).sort()).toEqual([...FIELDS].sort());
+    expect(EXTRACT_TOOL.parameters.properties).not.toHaveProperty("census");
+  });
+
+  it.each(Object.keys(PROPERTIES).filter((k) => k !== "census"))("takes an answer for %s, with its status and evidence", (key) => {
+    const value = sample(key);
+    const shaped = shapeExtraction({ [key]: value, field_status: { [key]: "confirmed" }, evidence: { [key]: "as they said" } });
+    expect(shaped.extracted).toEqual({ [key]: value });
+    expect(shaped.field_status).toEqual({ [key]: "confirmed" });
+    expect(shaped.evidence).toEqual({ [key]: "as they said" });
+    expect(shaped.rejected).toEqual([]);
+  });
+
+  it("never takes the census from chat", () => {
+    const shaped = shapeExtraction({ census: [{ id: "1", first_name: "Ada" }], field_status: { census: "unknown" } });
+    expect(shaped.extracted).toEqual({});
+    expect(shaped.field_status).toEqual({});
+  });
+
+  it("records a field the prospect doesn't know as unknown, with its evidence and no answer", () => {
+    const shaped = shapeExtraction({
+      field_status: { wc_experience_mod: "unknown", renewal_date: "unknown" },
+      evidence: { wc_experience_mod: "no idea what our mod is", renewal_date: "not sure when it renews" },
+      reply: "No matter.",
+    });
+    expect(shaped.extracted).toEqual({});
+    expect(shaped.field_status).toEqual({ wc_experience_mod: "unknown", renewal_date: "unknown" });
+    expect(shaped.evidence).toEqual({ wc_experience_mod: "no idea what our mod is", renewal_date: "not sure when it renews" });
+  });
+
+  it("doesn't call an answer unknown, or a refused answer unknown", () => {
+    const shaped = shapeExtraction({
+      employee_count: 12,
+      hq_state: "new york",
+      field_status: { employee_count: "unknown", hq_state: "unknown", made_up_field: "unknown" },
+    });
+    // An answer marked unknown keeps the answer, without the contradictory status.
+    expect(shaped.extracted).toEqual({ employee_count: 12 });
+    expect(shaped.field_status).toEqual({});
+    expect(shaped.rejected.map((r) => r.path)).toEqual(["hq_state"]);
+  });
+
+  it("never takes conflicting or not applicable from the model: only a disagreement or the prospect sets those", () => {
+    const shaped = shapeExtraction({
+      industry: "Print",
+      field_status: { industry: "conflicting", hq_state: "not_applicable" },
+    });
+    expect(shaped.extracted).toEqual({ industry: "Print" });
+    expect(shaped.field_status).toEqual({});
   });
 });

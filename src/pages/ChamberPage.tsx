@@ -20,8 +20,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { createChatMessage } from "@/data/chat";
 import { browserStorageWorks } from "@/data/intakeBackup";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
-import { mergeChamberData } from "@/data/chamberValidation";
-import { applyExtraction, applyFieldAction, transcriptExtraction, type FieldAction } from "@/data/provenance";
+import { applyExtraction, applyFieldAction, transcriptExtraction, voiceExtraction, type FieldAction } from "@/data/provenance";
 
 const spokenLine = (text: string) => (text.length > 120 ? text.slice(0, 120) + "..." : text);
 const primaryButton = "bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors";
@@ -64,11 +63,12 @@ const ChamberPage = () => {
     conversationEpoch,
     chamberData,
     provenance,
+    verifiedFields,
     messages,
     isLoading: sessionLoading,
-    setChamberData,
     updateIntake,
     addMessage,
+    ensureIntake,
     submit,
     certification,
     chosenPeo,
@@ -88,6 +88,15 @@ const ChamberPage = () => {
     }
   }, [sessionId, searchParams, setSearchParams]);
 
+  // No intake exists until the prospect starts one (A-1). Once there is deliberately none on screen (after
+  // Start over, or a new intake asked for), the address mustn't name the old one, or a reload would try to open
+  // it. While a link is being opened, couldn't be, or turned out to have expired, it stays.
+  useEffect(() => {
+    if (!sessionId && !sessionLoading && !resumeFailed && !loadFailed && !expired && searchParams.get("session")) {
+      setSearchParams({}, { replace: true });
+    }
+  }, [sessionId, sessionLoading, resumeFailed, loadFailed, expired, searchParams, setSearchParams]);
+
   // The orb repeats Lenore's latest line, so a restored conversation doesn't open with a second hello.
   const latestLenore = [...messages].reverse().find((m) => m.sender === "lenore");
   useEffect(() => {
@@ -106,17 +115,34 @@ const ChamberPage = () => {
     onOrbStateChange: setOrbState,
     onNewMessage: addMessage,
     onLastSpokenText: setLastSpokenText,
-    // Voice extractions with no prospect message to point to keep the old, untracked merge.
-    onExtract: (data, message) =>
-      message
-        ? updateIntake((prev) => applyExtraction(prev, data, transcriptExtraction(message, data)))
-        : setChamberData((prev) => mergeChamberData(prev, data)),
+    // Every AI value is merged with its provenance, so an extraction with no prospect message to
+    // cite (Lenore speaking before the prospect has said anything) is dropped.
+    onExtract: (data, message) => {
+      if (message) updateIntake((prev) => applyExtraction(prev, data, voiceExtraction(message, data)));
+    },
   });
+
+  // The transcript notes when a voice call starts and ends, so whoever reads it can tell which part was
+  // spoken. A call still connected when the conversation was replaced (Start over) belongs to the old one.
+  const callRef = useRef<{ epoch: unknown } | null>(null);
+  useEffect(() => {
+    if (isConnected && !callRef.current) {
+      callRef.current = { epoch: conversationEpoch };
+      addMessage(createChatMessage("system", "Voice call started"));
+    } else if (!isConnected && callRef.current) {
+      const sameConversation = Object.is(callRef.current.epoch, conversationEpoch);
+      callRef.current = null;
+      if (sameConversation) addMessage(createChatMessage("system", "Voice call ended"));
+    }
+  }, [isConnected, conversationEpoch, addMessage]);
 
   const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
     epoch: conversationEpoch,
     intakeId: sessionId,
+    ensureIntake,
     chamberData,
+    provenance,
+    messages,
     setChamberData,
     addUserMessage: (text) => {
       const message = createChatMessage("user", text);
@@ -129,8 +155,15 @@ const ChamberPage = () => {
       updateIntake((prev) => applyExtraction(prev, extracted, transcriptExtraction(message, response))),
   });
 
+  // "Continue manually": the prospect fills the intake in themselves, in Review, where every answer can be added.
+  const [reviewRequest, setReviewRequest] = useState(0);
+  const continueManually = useCallback(() => {
+    dismissFailure();
+    setReviewRequest((n) => n + 1);
+  }, [dismissFailure]);
+
   const failureNotice = failure && (
-    <ChatFailureNotice failure={failure} pending={pending} onRetry={retry} onDismiss={dismissFailure} />
+    <ChatFailureNotice failure={failure} pending={pending} onRetry={retry} onDismiss={continueManually} />
   );
 
   const handleFieldAction = useCallback(
@@ -292,11 +325,14 @@ const ChamberPage = () => {
             fileId={fileId}
             onSubmit={submit}
             provenance={provenance}
+            verified={verifiedFields}
             onFieldAction={handleFieldAction}
             certification={certification}
             updateIntake={updateIntake}
             chosenPeo={chosenPeo}
             onChoosePeo={choosePeo}
+            openReview={reviewRequest}
+            ensureIntake={ensureIntake}
           />
         </div>
       </div>

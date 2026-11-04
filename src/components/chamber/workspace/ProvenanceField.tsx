@@ -16,7 +16,7 @@ import { isRequiredField } from "@/data/readiness";
 
 const BADGES: Record<FieldProvenance["status"], { text: string; color: string }> = {
   confirmed: { text: "Confirmed", color: "bg-success/15 text-success" },
-  inferred: { text: "Lenore inferred this", color: "border border-warning/50 text-warning" },
+  inferred: { text: "Lenore captured this — please confirm", color: "border border-warning/50 text-warning" },
   incomplete: { text: "Incomplete", color: "bg-warning/15 text-warning" },
   conflicting: { text: "Conflicting answers", color: "bg-destructive/15 text-destructive" },
   unknown: { text: "Not known yet", color: "border border-warning/50 text-warning" },

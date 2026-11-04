@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { certificationBlockers, consentStatements } from "./certification";
+import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
+import { requiredItems, type RequiredItem, type RequiredItemState } from "./requiredItems";
+
+// The four items (three required, then the recommended census), in the given states.
+const itemsIn = (...states: RequiredItemState[]): RequiredItem[] =>
+  requiredItems(EMPTY_CHAMBER_DATA, {}, new Set()).map((i, n) => ({ ...i, state: states[n] }));
 
 const ready = {
   acknowledged: [true, true, true],
@@ -7,6 +13,7 @@ const ready = {
   signed: true,
   hasIntake: true,
   isGuest: false,
+  requiredItems: itemsIn("settled", "settled", "settled", "settled"),
 };
 
 describe("certificationBlockers", () => {
@@ -28,10 +35,37 @@ describe("certificationBlockers", () => {
     expect(certificationBlockers({ ...ready, ...override })).toEqual([expected]);
   });
 
+  it("blocks on each required item whose answers conflict, naming it", () => {
+    expect(certificationBlockers({ ...ready, requiredItems: itemsIn("conflicting", "settled", "conflicting", "settled") })).toEqual([
+      "Resolve the conflicting answers for Company legal name",
+      "Resolve the conflicting answers for Pay frequency",
+    ]);
+  });
+
+  it("never blocks on the recommended census, but names it when its conflict gives the states of operation", () => {
+    expect(certificationBlockers({ ...ready, requiredItems: itemsIn("settled", "settled", "settled", "conflicting") })).toEqual([]);
+    const items = itemsIn("settled", "conflicting", "settled", "conflicting").map((i) =>
+      i.field === "states" ? { ...i, viaCensus: true as const } : i,
+    );
+    expect(certificationBlockers({ ...ready, requiredItems: items })).toEqual(["Resolve the conflicting answers for Employee census"]);
+  });
+
+  it("doesn't block on items that are only incomplete or unconfirmed, nor on missing ones it isn't told about", () => {
+    expect(certificationBlockers({ ...ready, requiredItems: itemsIn("missing", "incomplete", "unconfirmed", "missing") })).toEqual([]);
+  });
+
   it("puts what the intake still needs before what the signer has to do", () => {
     expect(certificationBlockers({ ...ready, signed: false, needed: [{ label: "Company legal name", reason: "missing" }, { label: "States of operation", reason: "missing" }] })).toEqual([
       "Add company legal name",
       "Add states of operation",
+      "Sign",
+    ]);
+  });
+
+  it("names missing answers, then conflicts, then the signer's steps", () => {
+    expect(certificationBlockers({ ...ready, signed: false, missingAnswers: ["Pay frequency"], conflictingAnswers: ["Company legal name"] })).toEqual([
+      "Add pay frequency",
+      "Choose one answer for company legal name",
       "Sign",
     ]);
   });

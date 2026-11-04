@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { coverageTier, eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
@@ -29,9 +29,13 @@ interface ReviewDocument {
 interface ReviewTabProps {
   data: ChamberData;
   provenance?: ProvenanceMap;
+  /** Fields an advisor verified: settled whatever their status, so never listed. */
+  verified?: ReadonlySet<string>;
   onAction?: (action: FieldAction) => void;
   onProceed: () => void;
   documents?: ReviewDocument[];
+  /** Raise it to put the keyboard on the heading, as when the prospect chose to fill the intake in themselves. */
+  focusRequest?: number;
 }
 
 interface Row {
@@ -159,7 +163,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h2 className="font-display text-2xl font-bold mb-2">Review</h2>
+        <h2 ref={headingRef} tabIndex={-1} className="font-display text-2xl font-bold mb-2 focus:outline-none">Review</h2>
         <p className="text-muted-foreground text-sm">
           Everything that goes into The Manuscript, in the same sections. Correct anything here and it's saved right away:
           no need to start the conversation over. Answers marked <span className="text-primary font-medium">Required</span>{" "}
@@ -169,10 +173,10 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
       </div>
 
       {/* What's still needed: required answers block certification, recommended ones never do */}
-      {required.length > 0 ? (
+      {blocking > 0 ? (
         <div role="region" aria-label="Still needed" className="bg-card border border-destructive/40 rounded-xl p-6 space-y-3">
           <p className="text-xs font-mono text-destructive uppercase tracking-wider">
-            Still needed before The Manuscript can be generated: {required.length}
+            Still needed before The Manuscript can be generated: {blocking}
           </p>
           <ul className="space-y-2">
             {required.map((item) => <OpenItemLine key={item.key} item={item} />)}
@@ -353,9 +357,9 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
         </dl>
       </Section>
 
-      {required.length > 0 && (
+      {blocking > 0 && (
         <p className="text-xs text-muted-foreground">
-          You can choose a PEO now. The answers marked Required are needed before The Manuscript can be generated.
+          You can choose a PEO now. The answers marked Required are needed, each with one answer, before The Manuscript can be generated.
         </p>
       )}
       <button

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handleRequest, type HandlerDeps, type SupabaseLike } from "./handler";
+import { handleRequest, NEXT_FIELDS, type HandlerDeps, type SupabaseLike } from "./handler";
 import { EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema";
 
@@ -17,8 +17,13 @@ const ENV: Record<string, string | undefined> = {
   LOVABLE_API_KEY: "lovable-key",
 };
 
-const gatewayReply = (args: Record<string, unknown>) =>
-  new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: JSON.stringify(args) } }] } }] }), { status: 200 });
+// The gateway sends the tool's arguments as a JSON string, which the model can garble.
+const gatewayArguments = (args: string) =>
+  new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: args } }] } }] }), { status: 200 });
+const gatewayReply = (args: Record<string, unknown>) => gatewayArguments(JSON.stringify(args));
+const anthropicReply = (input: Record<string, unknown>, stopReason = "tool_use") =>
+  new Response(JSON.stringify({ stop_reason: stopReason, content: [{ type: "tool_use", name: "extract_chamber_data", input }] }), { status: 200 });
+const ANTHROPIC = { AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "anthropic-key", LOVABLE_API_KEY: undefined };
 const providerError = (status: number, body = "provider says no") => new Response(body, { status });
 
 interface Setup {
@@ -139,6 +144,19 @@ describe("chamber-extract handler: the request is checked before anything is spe
     ["a context that isn't an object", { message: "hi", context: "company_name=Acme", session_id: INTAKE }, 400],
     ["a context over 20,000 characters", { message: "hi", context: { key_challenges: "x".repeat(20001) }, session_id: INTAKE }, 413],
     ["an intake id that isn't one", { message: "hi", session_id: "not-an-id" }, 400],
+    ["statuses that aren't an object", { message: "hi", statuses: ["confirmed"], session_id: INTAKE }, 400],
+    ["a status for a field the intake doesn't have", { message: "hi", statuses: { favourite_colour: "confirmed" }, session_id: INTAKE }, 400],
+    ["a status that isn't one", { message: "hi", statuses: { company_name: "certain" }, session_id: INTAKE }, 400],
+    ["recent messages that aren't a list", { message: "hi", recent: { sender: "user", text: "hi" }, session_id: INTAKE }, 400],
+    ["more than ten recent messages", { message: "hi", recent: Array.from({ length: 11 }, () => ({ sender: "user", text: "hi" })), session_id: INTAKE }, 400],
+    ["a recent message from someone else", { message: "hi", recent: [{ sender: "system", text: "Voice call started" }], session_id: INTAKE }, 400],
+    ["a recent message over 2,000 characters", { message: "hi", recent: [{ sender: "user", text: "x".repeat(2001) }], session_id: INTAKE }, 400],
+    ["answers, statuses and messages over 20,000 characters together", {
+      message: "hi",
+      context: { key_challenges: "x".repeat(9000), business_goals: "y".repeat(9000) },
+      recent: [{ sender: "user", text: "z".repeat(2000) }],
+      session_id: INTAKE,
+    }, 413],
     ["a body that isn't JSON", "{message: hi", 400],
     ["a body that isn't an object", ["hi"], 400],
   ] as const)("%s: refused as bad_request, with no quota spent and no lookup made", async (_label, body, status) => {
@@ -258,17 +276,49 @@ describe("chamber-extract handler: what is sent to the model", () => {
     expect(sent.messages[0]).toEqual({ role: "system", content: SYSTEM_PROMPT });
     expect(sent.tools).toEqual([{ type: "function", function: EXTRACT_TOOL }]);
     expect(sent.tool_choice).toEqual({ type: "function", function: { name: "extract_chamber_data" } });
-    expect(sent.messages[1].content).toBe(
-      `Previous context (already captured data): {"company_name":"Acme"}\n\nNew user message: ${JSON.stringify('We have 40 "full time" people')}`,
-    );
+    const user = sent.messages[1].content as string;
+    expect(user).toContain(`Captured so far (answers): {"company_name":"Acme"}`);
+    expect(user.endsWith(`New user message: ${JSON.stringify('We have 40 "full time" people')}`)).toBe(true);
     expect(JSON.stringify(sent)).not.toContain(INTAKE);
   });
 
-  it("sends just the quoted message when there is no context", async () => {
+  it("sends empty context, every unsettled field it can ask about, and the quoted message when nothing is captured", async () => {
     const t = setup();
     await handleRequest(post({ message: "hello" }), t.deps);
-    const sent = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string);
-    expect(sent.messages[1].content).toBe('User message: "hello"');
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    expect(user).toContain("Captured so far (answers): {}");
+    expect(user).toContain("Field statuses: {}");
+    expect(user).toContain("Recent conversation, oldest first: []");
+    expect(user.endsWith('New user message: "hello"')).toBe(true);
+    // Most important first, never the census (it comes only from an upload).
+    const next = /Not yet settled, most important first: (.*)/.exec(user)![1];
+    expect(next.startsWith("company_name (Company legal name), states (States of operation), pay_frequency (Pay frequency), employee_count")).toBe(true);
+    expect(next).not.toContain("census");
+    expect(next.split(", ")).toHaveLength(NEXT_FIELDS);
+  });
+
+  it("tells the model what is settled and what isn't, from the answers and their field statuses", async () => {
+    const t = setup();
+    await handleRequest(post({
+      message: "We're in New York",
+      context: { company_name: "Acme", states: [], pay_frequency: "weekly", employee_count: 0, industry: "Print" },
+      statuses: { company_name: "conflicting", pay_frequency: "confirmed", employee_count: "inferred", industry: "incomplete", hq_state: "unknown", current_carrier: "not_applicable" },
+      recent: [{ sender: "lenore", text: "Which states do your people work in?" }],
+    }), t.deps);
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    const next = /Not yet settled, most important first: (.*)/.exec(user)![1].split(", ").map((f) => f.split(" ")[0]);
+    // In conflict, or incomplete: unsettled. An answer, 0 included, or "unknown" or "doesn't apply": settled.
+    expect(next.slice(0, 3)).toEqual(["company_name", "states", "industry"]);
+    for (const settled of ["pay_frequency", "employee_count", "hq_state", "current_carrier"]) expect(next).not.toContain(settled);
+    expect(user).toContain('Recent conversation, oldest first: [{"sender":"lenore","text":"Which states do your people work in?"}]');
+  });
+
+  it("removes Social Security and account numbers from the recent conversation it passes on", async () => {
+    const t = setup();
+    await handleRequest(post({ message: "ok", recent: [{ sender: "user", text: "my SSN is 123-45-6789" }] }), t.deps);
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    expect(user).not.toContain("123-45-6789");
+    expect(user).toContain("[redacted]");
   });
 
   it("goes to Anthropic when AI_PROVIDER says so", async () => {
@@ -285,10 +335,35 @@ describe("chamber-extract handler: what is sent to the model", () => {
     expect(body.extracted).toEqual({ company_name: "Acme" });
     expect(t.event()).toMatchObject({ provider: "anthropic", model: "claude-haiku-5-5" });
   });
+
+  // Each field reported costs a value, a status and a quote of up to MAX_EVIDENCE_CHARS. At 3 characters a
+  // token (JSON keys and punctuation tokenize worse than prose), an answer to every field must still fit.
+  it("gives Anthropic room for an answer that reports every field with its evidence, and a reply", async () => {
+    const sample = (schema: unknown) => {
+      switch ((schema as { type: string }).type) {
+        case "integer": return 1_000_000;
+        case "boolean": return false;
+        case "array": return ["x".repeat(20), "x".repeat(20), "x".repeat(20)];
+        default: return "x".repeat(40);
+      }
+    };
+    const everyField = (value: (field: string) => unknown) => Object.fromEntries(FIELDS.map((field) => [field, value(field)]));
+    const answer = {
+      ...everyField((field) => sample(FIELD_TYPES[field])),
+      field_status: everyField(() => "incomplete"),
+      evidence: everyField(() => "x".repeat(MAX_EVIDENCE_CHARS)),
+      corrected_fields: [],
+      reply: "x".repeat(400),
+    };
+    const t = setup({ env: ANTHROPIC, responses: [anthropicReply({})] });
+    await handleRequest(post({ message: "hi" }), t.deps);
+    const sent = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string);
+    expect(sent.max_tokens).toBeGreaterThanOrEqual(Math.ceil(JSON.stringify(answer).length / 3));
+  });
 });
 
 describe("chamber-extract handler: the answer", () => {
-  it("returns what the model extracted with its status, evidence, corrections, reply and the request id", async () => {
+  it("returns what the model extracted with its status, evidence, corrections, reply, the contract version and the request id", async () => {
     const t = setup({
       responses: [gatewayReply({
         employee_count: 45,
@@ -308,6 +383,7 @@ describe("chamber-extract handler: the answer", () => {
       corrected_fields: ["employee_count"],
       reply: "Thank you. And which states?",
       rejected: [],
+      prompt_version: PROMPT_VERSION,
       request_id: REQUEST,
     });
     expect(t.event()).toEqual({
@@ -386,6 +462,24 @@ describe("chamber-extract handler: when the provider fails", () => {
     expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=${INTAKE} provider=lovable kind=provider_error status=500 attempts=2 latency_ms=0`]);
     expect(t.event()).toMatchObject({ error_code: "provider_error", http_status: 502, attempts: 2 });
     expect(JSON.stringify(body) + t.logs.join("\n") + JSON.stringify(t.events)).not.toMatch(new RegExp(`${leak}|12345`));
+  });
+
+  // Nothing is kept from a reply that can't be read: the browser offers Try again and Continue manually.
+  it("answers tool arguments that aren't JSON with a 502 to try again, logging neither them nor the message", async () => {
+    const t = setup({ responses: [gatewayArguments('{"company_name": "Acme')] });
+    const { status, body } = await read(await handleRequest(post({ message: "we're Acme" }), t.deps));
+    expect(status).toBe(502);
+    expect(body).toEqual({ error: "Lenore's answer didn't come through. Please try again.", code: "invalid_response", request_id: REQUEST });
+    expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=- provider=lovable kind=invalid_response status=200 attempts=1 latency_ms=0`]);
+  });
+
+  // A reply cut off at its token cap has lost answers, and the tool input it holds may be partial.
+  it("answers an Anthropic reply cut off at its token cap with a 502 to try again, keeping none of it", async () => {
+    const t = setup({ env: ANTHROPIC, responses: [anthropicReply({ company_name: "Acme" }, "max_tokens")] });
+    const { status, body } = await read(await handleRequest(post({ message: "we're Acme" }), t.deps));
+    expect(status).toBe(502);
+    expect(body).toEqual({ error: "Lenore's answer didn't come through. Please try again.", code: "invalid_response", request_id: REQUEST });
+    expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=- provider=anthropic kind=invalid_response status=200 attempts=1 latency_ms=0`]);
   });
 
   it("reports exhausted provider credits as unavailable, without mentioning billing", async () => {

@@ -26,7 +26,8 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
     : 0;
 
   const stats = [
-    { icon: <Users className="w-5 h-5" />, label: "Total EEs", value: String((data.employee_count ?? data.census.length) || "—") },
+    // 0 is an answer; only no count and no census is "—".
+    { icon: <Users className="w-5 h-5" />, label: "Total EEs", value: data.employee_count !== null ? String(data.employee_count) : data.census.length > 0 ? String(data.census.length) : "—" },
     { icon: <UserPlus className="w-5 h-5" />, label: "Dependents", value: totalDependents > 0 ? String(totalDependents) : "—" },
     { icon: <DollarSign className="w-5 h-5" />, label: "Avg Salary", value: avgSalary > 0 ? `$${avgSalary.toLocaleString()}` : "—" },
     { icon: <MapPin className="w-5 h-5" />, label: "States", value: data.states.length > 0 ? data.states.join(", ") : "—" },

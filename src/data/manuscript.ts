@@ -270,8 +270,36 @@ function classCodes(census: CensusEmployee[]): string {
 
 const counted = (n: number, of: number, what: string) => `${n} of ${of} ${what}`;
 
-/** Label, display value, and the field whose status and source the row shows. */
-export type ManuscriptRow = [label: string, value: string, field?: FieldKey];
+/**
+ * Label, display value, the field whose status and source the row shows, and any other fields the value
+ * is built from (a conflict in one of those shows too).
+ */
+export type ManuscriptRow = [label: string, value: string, field?: FieldKey, alsoFrom?: readonly FieldKey[]];
+
+/**
+ * The provenance the Manuscript shows: a field an advisor verified is settled, so it reads as confirmed
+ * with no rival answers (as the advisor's packet shows it, applyAdvisorReview) rather than keeping a
+ * "Conflicting" chip or an "unresolved" marker that points to an open item the list no longer has.
+ */
+function settleVerified(provenance: ProvenanceMap, verified: ReadonlySet<string>): ProvenanceMap {
+  if (verified.size === 0) return provenance;
+  const shown: ProvenanceMap = { ...provenance };
+  for (const field of Object.keys(shown) as (keyof ProvenanceMap)[]) {
+    const entry = shown[field];
+    if (entry && verified.has(field) && entry.status !== "confirmed") shown[field] = { ...entry, status: "confirmed", candidates: undefined };
+  }
+  return shown;
+}
+
+/**
+ * The status and source a row shows: those of the first of its fields whose answers conflict, so no
+ * conflict in any part of the value is hidden, or else its own field's. The web Manuscript's chip and
+ * the PDF's "unresolved" marker both read it.
+ */
+export function rowProvenance([, , field, alsoFrom = []]: ManuscriptRow, provenance: ProvenanceMap): FieldProvenance | undefined {
+  const fields = field ? [field, ...alsoFrom] : alsoFrom;
+  return fields.map((f) => provenance[f]).find((p) => p?.status === "conflicting") ?? (field ? provenance[field] : undefined);
+}
 
 export interface ManuscriptDocument {
   name: string;
@@ -355,6 +383,8 @@ export function buildManuscript(
     submission?: ChamberSubmission | null;
     date?: Date;
     provenance?: ProvenanceMap;
+    /** Fields an advisor verified: settled whatever their status, so never an open item. */
+    verified?: ReadonlySet<string>;
     /** For an advisor-generated packet; `followUps` are added to the open items. */
     advisor?: ManuscriptAdvisorReview & { followUps: string[] };
     /** The PEO the checks are run against (the chosen one, when it is in the catalog). */
@@ -530,7 +560,7 @@ export function buildManuscript(
       ...flags,
       ...(opts.advisor?.followUps ?? []),
     ],
-    provenance,
+    provenance: settleVerified(provenance, verified),
     signer: opts.submission
       ? {
           name: opts.submission.signer_name,

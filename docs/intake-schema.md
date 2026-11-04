@@ -50,7 +50,7 @@ Postgres jsonb refuses NUL and unpaired surrogate characters before any trigger 
 
 Every field belongs to a section and is either required or recommended, with a rank: see "Sections, required fields and rank" below. The table is generated from the schema's `x-intake` annotations, and `src/data/intakeSchemaDoc.test.ts` fails while it differs from them.
 
-Writers: **C** chat extraction (`chamber-extract`), **D** document candidates (`document-extract`; a census sheet also supplies `census`, `employee_count`, `states`, `has_1099` and `ca_contractors`), **V** voice `<extract>` JSON (accepts any key), **E** hand edit in the workspace.
+Writers: **C** chat extraction (`chamber-extract`, which asks for every field but the census), **D** document candidates (`document-extract`; a census sheet also supplies `census`, `employee_count`, `states`, `has_1099` and `ca_contractors`), **V** voice `<extract>` JSON (accepts any key), **E** hand edit in the workspace.
 
 | Section | Key | Label | Kind | Required | Rank | Writers |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -58,8 +58,8 @@ Writers: **C** chat extraction (`chamber-extract`), **D** document candidates (`
 | Company | `employee_count` | Employee count | count | Recommended | 5 | C D V E |
 | Company | `industry` | Industry | text | Recommended | 6 | C D V E |
 | Company | `start_month` | Target start | text | Recommended | 15 | C D V E |
-| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 16 | V E |
-| Company | `fein_count` | FEIN count | count | Recommended | 17 | V |
+| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 16 | C V E |
+| Company | `fein_count` | FEIN count | count | Recommended | 17 | C V |
 | Locations | `states` | States of operation | state list | Required | 2 | C D V E |
 | Locations | `hq_state` | HQ state | state | Recommended | 7 | C D V E |
 | Census | `census` | Employee census | census (read-only in the workspace) | Required | 4 | D V |
@@ -68,36 +68,36 @@ Writers: **C** chat extraction (`chamber-extract`), **D** document candidates (`
 | Benefits | `current_carrier` | Current carrier | text | Recommended | 8 | C D V E |
 | Benefits | `renewal_date` | Renewal date | text | Recommended | 9 | C D V E |
 | Benefits | `virgin_medical` | First-time medical coverage | boolean | Recommended | 18 | C D V |
-| Benefits | `rate_history` | Rate history | text | Recommended | 19 | D V E |
-| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 20 | D V E |
-| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 21 | D V E |
+| Benefits | `rate_history` | Rate history | text | Recommended | 19 | C D V E |
+| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 20 | C D V E |
+| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 21 | C D V E |
 | Benefits | `has_401k` | Retirement plan | boolean | Recommended | 22 | C D V E |
-| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 23 | D V |
-| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 24 | D V |
+| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 23 | C D V |
+| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 24 | C D V |
 | Payroll | `pay_frequency` | Pay frequency | text (free text, not an enum) | Required | 3 | C D V E |
 | Payroll | `payroll_vendor` | Payroll vendor | text | Recommended | 10 | C D V E |
-| Payroll | `funding_days` | Funding lead time | count | Recommended | 25 | V E |
-| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 26 | V |
-| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 27 | D V |
-| Payroll | `exempt_count` | Exempt count | count | Recommended | 28 | D V |
-| Payroll | `pto_types` | PTO types | text list | Recommended | 29 | V E |
-| Payroll | `accrual_method` | Accrual method | text | Recommended | 30 | V E |
-| Workers' comp | `wc_carrier` | Workers' comp carrier | text | Recommended | 11 | V |
-| Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | V |
-| Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | V |
-| Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | V |
+| Payroll | `funding_days` | Funding lead time | count | Recommended | 25 | C V E |
+| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 26 | C V |
+| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 27 | C D V |
+| Payroll | `exempt_count` | Exempt count | count | Recommended | 28 | C D V |
+| Payroll | `pto_types` | PTO types | text list | Recommended | 29 | C V E |
+| Payroll | `accrual_method` | Accrual method | text | Recommended | 30 | C V E |
+| Workers' comp | `wc_carrier` | Workers' comp carrier | text | Recommended | 11 | C V |
+| Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | C V |
+| Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | C V |
+| Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | C V |
 | Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 31 | C D V |
-| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 32 | V |
-| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 33 | V |
-| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 36 | V |
-| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 37 | V |
-| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 38 | V |
-| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 39 | V |
-| Operations & HR | `hris_system` | HRIS system | text | Recommended | 40 | V |
+| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 32 | C V |
+| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 33 | C V |
+| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 36 | C V |
+| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 37 | C V |
+| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 38 | C V |
+| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 39 | C V |
+| Operations & HR | `hris_system` | HRIS system | text | Recommended | 40 | C V |
 | Operations & HR | `key_challenges` | Key challenges | text | Recommended | 41 | C V |
 | Operations & HR | `business_goals` | Business goals | text | Recommended | 42 | C V |
 
-Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`, `dob`) are free text. `transcript`, `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks.
+Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`, `dob`) are free text. `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks. `transcript` is checked message by message (see "The transcript" below).
 
 ### Sections, required fields and rank
 
@@ -194,8 +194,9 @@ A new field is a new schema version, because the schema refuses unknown keys. As
 1. A migration adds the key to `public.chamber_data_field_kind` with its kind, and a second one moves `schema_version` on (see "Versions").
 2. In `supabase/functions/_shared/intakeSchema.ts`, add the field to `FIELDS` (rule, section, label), rank it if it belongs before schema order, and raise `INTAKE_SCHEMA_VERSION`. Then add it to `ChamberData`, `EMPTY_CHAMBER_DATA`, `FIELD_SCHEMAS` and `FIELD_KINDS`.
 3. Run `npm run schema:intake` to publish `docs/intake-schema.v<N>.json`, and regenerate the field table above.
+4. Add it to chat extraction: `FIELD_TYPES` and a one-line definition in `SYSTEM_PROMPT` (`supabase/functions/chamber-extract/schema.ts`), with a new `PROMPT_VERSION` and its fingerprints (`supabase/functions/_shared/ai/promptVersion.test.ts`).
 
-`src/data/schemaSync.test.ts` compares the SQL key list, kinds, state codes and caps with the client constants and the schema, reading each `sync:` block from the latest migration that defines its function, so a field added on one side only fails CI. The database refuses an unknown top-level key, so a front end shipped ahead of its migration would fail every save.
+`src/data/schemaSync.test.ts` compares the SQL key list, kinds, state codes and caps with the client constants and the schema, reading each `sync:` block from the latest migration that defines its function, and `FIELD_TYPES` with `ChamberData` and `FIELD_KINDS`, so a field added on one side only fails CI. The database refuses an unknown top-level key, so a front end shipped ahead of its migration would fail every save.
 
 ### Employee census (`chamber_data.census`)
 
@@ -237,20 +238,21 @@ Social Security numbers and bank account details are not stored anywhere. `redac
 
 Each field in `chamber_sessions.chamber_data` (see `src/data/chamberTypes.ts`) has a status and a source. These are stored beside the data in `chamber_sessions.field_provenance` (jsonb, keyed by field name, default `{}`). Fields with no entry have not been captured yet, or were captured before provenance existed.
 
-The model, merge rules and open items are in `src/data/provenance.ts`.
+The model, merge rules and open items are in `src/data/provenance.ts`. Which items an intake must hold, and how settled each is, is under "Required items" below.
 
 ### Entry shape
 
 ```json
 {
   "status": "inferred",
-  "source": { "kind": "transcript", "message_id": "<chat message id>", "quote": "about 40 of us" },
+  "source": { "kind": "transcript", "message_id": "<chat message id>", "quote": "about 40 of us", "prompt_version": 1 },
   "updated_at": "2026-10-21T09:00:00.000Z",
-  "candidates": [{ "value": 40, "source": { "...": "..." } }]
+  "candidates": [{ "value": 40, "source": { "...": "..." } }],
+  "also_heard": [{ "value": 45, "source": { "kind": "document", "document_id": "<document id>" } }]
 }
 ```
 
-`candidates` is present only while the field is `conflicting`.
+`candidates` is present only while the field is `conflicting`. `also_heard` is present only when a source gave a value the field doesn't hold (see "Also heard" below).
 
 #### Status
 
@@ -259,7 +261,7 @@ The model, merge rules and open items are in `src/data/provenance.ts`.
 | `confirmed` | The prospect stated it explicitly, or confirmed or entered it in the workspace. | — |
 | `inferred` | Lenore derived or assumed it from what was said. | "Please confirm" |
 | `incomplete` | Only part of the answer was given. | "Incomplete" |
-| `conflicting` | Two sources disagree. The first value is kept until the prospect picks one. | "Conflicting answers" |
+| `conflicting` | Two sources of the same rank disagree. The first value is kept until the prospect picks one. | "Conflicting answers" |
 | `unknown` | The prospect said they don't know yet. Holds no answer; Lenore stops asking. | "Prospect to provide" |
 | `not_applicable` | The prospect said the field doesn't apply to them. Holds no answer. Only the prospect sets it (decision D31). | — (it closes the field) |
 
@@ -269,24 +271,61 @@ Open items are listed conflicting first, then incomplete, unknown and inferred. 
 
 | `kind` | Fields | Produced by |
 | --- | --- | --- |
-| `transcript` | `message_id` (the `ChatMessage.id` in `transcript`), optional `quote` (≤ 200 chars) | Chat extraction (`chamber-extract`) and voice `<extract>` tags |
+| `transcript` | `message_id` (the `ChatMessage.id` in `transcript`), optional `quote` (≤ 200 chars), optional `prompt_version` (a positive integer; see "Extraction contract version and eval" below) | Chat extraction (`chamber-extract`) and voice `<extract>` tags |
 | `document` | `document_id`, optional `document_name`, `location` (e.g. sheet/row or page) | A value the prospect applied from an uploaded document (see "Document candidates" below) |
 | `prospect_edit` | — | Confirm, Edit, Add, or "Use this" in the workspace |
 
 ### Merge rules (`applyExtraction`)
 
+Every AI value reaches the intake through `applyExtraction`: a chat reply (`useLenoreChat` hands each one to the Chamber with the prospect's message it answers), a voice `<extract>` (one with no prospect message to cite is dropped, never merged untracked), and a document candidate the prospect applies.
+
 1. Values are validated per field (`sanitizeChamberPatch`). Invalid and empty values are dropped.
-2. A field whose source is `prospect_edit` is never changed by AI extraction, and neither is a field marked `not_applicable`, whatever source it records. An answer replaces `unknown`.
-3. A new field takes the value, with the model's status (default `inferred`).
-4. If AI sources (transcript or document) give a different value, the old value is kept and the field becomes `conflicting`, with both candidates. Two exceptions:
-   - The model lists the field in `corrected_fields`, meaning the prospect explicitly corrected it. The new value replaces the old one.
-   - The new value only adds entries to a list, or the field is the `census`. The new value replaces the old one.
-5. When the same value is heard again, the source is refreshed. The status can go up from `inferred` to `confirmed`, but never down.
-6. Prospect actions (`applyFieldAction`) set the status to `confirmed` and the source to `prospect_edit`, and clear any candidates. Confirming a conflicting field requires choosing a candidate first, and a field with no answer (unknown or not applicable) has nothing to confirm; entering an answer is how the prospect takes it back.
+2. Sources rank `prospect_edit` (3) above `document` (2) above `transcript` (1, chat and voice). A field whose source is `prospect_edit` is never changed by an extraction, and nothing is noted on it; neither is a field marked `not_applicable`, whatever source it records (only the prospect sets it and takes it back). An answer replaces `unknown`.
+3. A field with no value takes the new one, with the model's status (default `inferred`; a document's value is `confirmed`).
+4. The same value heard again can raise the status from `inferred` to `confirmed`, never lower it. The source becomes the new one unless it ranks lower, in which case the higher-ranked source stays. A list with the same entries in another order is the same value, and the stored order is kept.
+5. A different value:
+   - **From a higher-ranked source** replaces the value, with its own status and source, and the replaced value is noted in `also_heard`. A `conflicting` field is settled by it: every candidate is noted.
+   - **From a lower-ranked source** is noted in `also_heard`; the value and status stay. A `conflicting` field stays conflicting.
+   - **From a source of the same rank** (chat against chat, document against document) makes the field `conflicting`, with both values as candidates.
+6. Two exceptions to rule 5:
+   - **Corrections.** The model lists the field in `corrected_fields`, meaning the prospect explicitly corrected it in chat. The new value replaces anything but a `prospect_edit`, a document's value included, and settles a conflict. A replaced value from another kind of source is noted in `also_heard`; a replaced chat value is what they corrected and is not.
+   - **Lists that only add entries** ("also Texas": every old entry and at least one new one) replace the old list, which is not noted. From a lower-ranked source (chat adding to a document's list), the field takes chat's source, with its quote, and the status `inferred`, so the prospect confirms the whole list; from the same or a higher rank it takes the new source and status. The field is then chat-sourced, so a later different value from a document outranks it. A competing value the new list doesn't include is noted.
+7. The `census` is not ranked: an extracted roster replaces the old one (it is rebuilt as it grows), and a document's census is merged in the Upload tab (see "Document candidates" below).
+8. Prospect actions (`applyFieldAction`) set the status to `confirmed` and the source to `prospect_edit`, and clear any candidates and `also_heard`. Confirming a conflicting field requires choosing a candidate first, and a field with no answer (unknown or not applicable) has nothing to confirm; entering an answer is how the prospect takes it back. The prospect choosing a document's value in the Upload tab's conflict dialog is the exception: it keeps `also_heard` and notes the value it replaced (see "Document candidates" below). An advisor verifying a field leaves `also_heard` as it is.
+
+These rules run in the browser, and the database checks only that `field_provenance` is an object. That is by design: every AI value reaches the database through the prospect's own browser, which can already save any value as the prospect's own edit, so a database check of precedence would stop nothing.
+
+#### Also heard
+
+`also_heard` is a list of `{ value, source }`, the same shape as a candidate. It is a note, not a choice: it never changes the status or adds an open item. It holds at most 5 entries, newest last, one per value (a value heard again moves to the end, keeping the higher-ranked of the sources that gave it, or the latest if they rank the same), and never the field's current value. It is only stored for now; the workspace and the advisor view don't show it yet. Entries saved before it existed have none, and a malformed note is dropped without losing the rest of the entry.
 
 ### Extraction contract (`chamber-extract`)
 
-The request is `{ message, context, session_id }`: the prospect's message, the answers captured so far (the census left out), and the intake id, which must be the caller's own intake. The response is `{ extracted, field_status, evidence, corrected_fields, reply, rejected, request_id }`; a failure is `{ error, code, request_id }` (codes, limits and the extraction event each call leaves: `docs/AI_OPERATIONS.md`). An answer without the forced tool call is `invalid_response`, not an empty extraction. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`. A field enters `extracted` only if the intake schema accepts the model's value exactly as sent. A lower-case `"ny"`, a state list with one unknown code, `12.5` people or a string of digits is refused and listed in `rejected` as `{ path, reason }`. The browser ignores `rejected`.
+The request is `{ message, context, session_id }`: the prospect's message, the answers captured so far (the census left out), and the intake id, which must be the caller's own intake. The response is `{ extracted, field_status, evidence, corrected_fields, reply, rejected, prompt_version, request_id }`; a failure is `{ error, code, request_id }` (codes, limits and the extraction event each call leaves: `docs/AI_OPERATIONS.md`). An answer without the forced tool call is `invalid_response`, not an empty extraction. `field_status` and `evidence` are keyed by field name and only cover fields in `extracted`. `field_status` is one of `confirmed`, `inferred` or `incomplete`; only a disagreement makes a field `conflicting`. A field enters `extracted` only if the intake schema accepts the model's value exactly as sent. A lower-case `"ny"`, a state list with one unknown code, `12.5` people or a string of digits is refused and listed in `rejected` as `{ path, reason }`. The browser ignores `rejected`.
+
+The tool asks for every `ChamberData` field except the census (`FIELD_TYPES` in `chamber-extract/schema.ts`), as a string, a whole number, a decimal (the experience mod), a boolean or a list of strings, and `SYSTEM_PROMPT` defines each one in a line, with this schema's caps (counts 0 to 1,000,000, the experience mod 0 to 10, the workers' comp premium up to 100,000,000 dollars, text up to 1,000 characters, lists up to 100 items). `has_401k` means any employer retirement plan, as the workspace labels it. The workspace shows `fein_count`, `retirement_type`, `employer_contributes`, `nonexempt_count` and `exempt_count` only beside their flag (`multiple_entities`, `has_401k`, `has_nonexempt`), so the prompt asks for the flag with each. `src/data/schemaSync.test.ts` fails when a field is missing from `FIELD_TYPES` or typed differently from the kind the workspace edits it as (`FIELD_KINDS`). A bad value costs only its own field: the rest of the extraction and Lenore's reply still apply. A key outside the field list is dropped without being logged. A reply whose tool arguments aren't JSON, or one Anthropic cut off at its cap (`CHAT_MAX_TOKENS`, 8,192 tokens, room for every field with its quote), is answered with a 502 `invalid_response`, "Lenore's answer didn't come through. Please try again.", and the browser offers Try again and Continue manually; nothing from it is kept.
+
+### Extraction contract version and eval
+
+`PROMPT_VERSION` in `supabase/functions/chamber-extract/schema.ts` (a positive integer) versions the whole extraction contract: `SYSTEM_PROMPT`, `EXTRACT_TOOL`, the user turn and the response shape. Every extraction event records it (`ai_extraction_events.prompt_version`, US-2.4a), every successful response carries it as `prompt_version`, and the browser stores it on the transcript source of each value a chat message produced. Voice extractions (the ElevenLabs agent has its own prompt; `voiceExtraction` drops any version its `<extract>` names) and entries saved before versioning have none. A malformed stored version is dropped and the entry kept.
+
+`supabase/functions/_shared/ai/promptVersion.test.ts` fingerprints each function's prompt and tool per `PROMPT_VERSION`, and for chat also the user turn (`buildUserPrompt` in `prompt.ts`, rendered for fixed inputs). Editing any of them without raising the version fails CI; then record the new version's fingerprints there, keeping the old ones. The response shape is not fingerprinted: raise the version by hand when it changes.
+
+The extraction eval (`scripts/extraction-eval`) sends 10 synthetic transcripts through the path a chat message takes in production: the browser's redaction and context, the handler's prompt, the shared provider adapter, `shapeExtraction`, then `applyExtraction` as the Chamber merges a reply. It scores each asserted field's final value (strings ignoring case and surrounding space, lists as sets) and, where the fixture names one, its status (where it names none, a field left `conflicting` fails); fields that must stay empty; and digits (an SSN) that must never be stored. It calls a real model, so it runs on demand and never in CI:
+
+```sh
+LOVABLE_API_KEY=… npm run eval:extraction                            # the default provider
+AI_PROVIDER=anthropic ANTHROPIC_API_KEY=… npm run eval:extraction
+npm run eval:extraction -- --only contradiction                      # one fixture
+npm run eval:extraction -- --update-baseline                         # record baseline.json
+```
+
+`AI_MODEL` overrides the provider's default model, as it does for the function. The variables can also go in `.env.local`, which the runner (vite-node) reads. The run prints a fixture-by-field table and the overall accuracy, then compares it with `scripts/extraction-eval/baseline.json`: a cell that passed there and fails now is a regression, and a regression, a failed model call or a missing key exits 1. New cells, and baseline cells no longer asserted (a deleted or renamed fixture), are reported. With no baseline the run reports any failed model calls, says how to record one and exits 0.
+
+Before merging any change to the prompt, the tool schema or the response shape: raise `PROMPT_VERSION` and record its fingerprints, run the eval, review the regressions, then record a new baseline with `--update-baseline` and commit it with the change. No baseline is committed yet: the first needs a live provider key.
+Version 2 of the prompt (`PROMPT_VERSION`, recorded on every extraction event; US-2.1b). The request is `{ message, context, statuses, recent, session_id }`: the prospect's message; the answers captured so far (the census left out); each field's status; the last 10 messages, the prospect's and Lenore's only, oldest first, each at most 2,000 characters, with Social Security and account numbers removed again by the function; and the intake id, which must be the caller's own intake. `context`, `statuses` and `recent` together are at most 20,000 characters (`_shared/chatContext.ts`, which the browser uses to cut the oldest messages until they fit). A status for a field the intake doesn't have, a status that isn't one, or a message from anyone else is `bad_request`, before any quota is spent. From the answers and statuses the function works out the fields not yet settled, by rank (`_shared/followUp.ts`, D26), and names the first eight in the prompt; the recent conversation lets a one-word answer ("Yes") be placed against the question Lenore asked last.
+
+The tool covers every top-level field of intake schema v2 but the census (`FIELDS` and `FIELD_GUIDE` in `chamber-extract/schema.ts`; the field list and types come from the schema, and a test fails when a field has no guide). The response is `{ extracted, field_status, evidence, corrected_fields, reply, rejected, request_id }`; a failure is `{ error, code, request_id }` (codes, limits and the extraction event each call leaves: `docs/AI_OPERATIONS.md`). An answer without the forced tool call is `invalid_response`, not an empty extraction. `field_status` and `evidence` are keyed by field name. For a field in `extracted`, `field_status` is `confirmed`, `inferred` or `incomplete`. A field the prospect said they don't know has `field_status` `unknown`, its evidence, and no value; the browser marks it `unknown` ("Prospect to provide") while it has no answer, and never over the prospect's own edit or "Doesn't apply". The model never sets `conflicting` (only a disagreement does) or `not_applicable` (only the prospect does, D31). A field enters `extracted` only if the intake schema accepts the model's value exactly as sent. A lower-case `"ny"`, a state list with one unknown code, `12.5` people or a string of digits is refused and listed in `rejected` as `{ path, reason }`. The browser ignores `rejected`.
 
 ### Document candidates (`document-extract`)
 
@@ -304,12 +343,12 @@ CSV, XLSX and XLS sheets, and tables in a `.docx`, are searched for a census. Co
 
 Candidates never change `chamber_data` by themselves. In the Upload tab the prospect sees each candidate next to what the intake holds (a census as rows, with a count of people missing an age, work state, title or salary) and can:
 
-- **Apply** a value the intake doesn't have yet (`applyDocumentCandidates` in `src/data/documentCandidates.ts`). It goes through `applyExtraction` with status `confirmed` and a `document` source, so a prospect's own value is never changed.
-- **Resolve** a value that differs from the intake's, in the conflict dialog. Nothing is pre-selected for a single value: they pick the intake's or the document's, and the one they keep is recorded as `confirmed`. For a census the dialog lists who is in both, whose details differ, who is only in the file and who is only in the intake, and offers **Merge** (the default: people in both take the facts the file stated, new people are added, the rest stay, and everyone keeps their id and dependents), **Replace** with the file's census, or **Keep my census**. A choice is applied by `resolveCandidate`; a kept answer shows as "Kept yours".
+- **Apply** a value the intake doesn't have yet, or holds only from the conversation, which a document outranks (shown as "Replaces what you told Lenore: …"; `planCandidateMerge` calls it `replace`). It goes through `applyDocumentCandidates` in `src/data/documentCandidates.ts` and so `applyExtraction`, with status `confirmed` and a `document` source: a chat value gives way to the document's and is noted in `also_heard`. The merge rules also hold if a value has arrived meanwhile: a prospect's own value is never changed, and a different document's value makes the field `conflicting`. "Apply all new" applies only values the intake doesn't have; replacing an answer is one click per value.
+- **Resolve** a value that differs from the prospect's own answer or another document's (or one with no provenance), in the conflict dialog. Nothing is pre-selected for a single value: they pick the intake's or the document's, and the one they keep is recorded as `confirmed`. Keeping the intake's value records it as their own (`prospect_edit`) and clears `also_heard`, as any confirm does. Choosing the document's value (`applyChosenValue` in `provenance.ts`) replaces the intake's, their own answer included, with the document as the source; as with a correction, a replaced value from another kind of source (their own answer, or chat) is noted in `also_heard` beside what was already noted, and one from another document is not. For a census the dialog lists who is in both, whose details differ, who is only in the file and who is only in the intake, and offers **Merge** (the default: people in both take the facts the file stated, new people are added, the rest stay, and everyone keeps their id and dependents), **Replace** with the file's census, or **Keep my census**. A choice is applied by `resolveCandidate`; a kept answer shows as "Kept yours".
 
 ### Submission
 
-When the prospect signs, `submission.field_provenance` snapshots the provenance alongside `submission.chamber_data`. The Manuscript shows the status and source for each row, and adds the status-based open items to "Underwriting Readiness".
+When the prospect signs, `submission.field_provenance` snapshots the provenance alongside `submission.chamber_data`. The Manuscript shows the status and source for each row, and adds the open items (see "Required items") to "Underwriting Readiness".
 
 ### Required answers
 
@@ -318,14 +357,22 @@ Three answers are required before an intake can be certified, and so before The 
 | Key | Answer | Counts as given when |
 | --- | --- | --- |
 | `company_name` | Company legal name | it isn't blank |
-| `states` | States of operation | `states` holds a code, or a census row (or a row of the older `employees` roster) has a work state |
+| `states` | States of operation | `states` holds a state code, or a census row (or a row of the older `employees` roster) has a work state that is one |
 | `pay_frequency` | Pay frequency | it isn't blank |
 
 The employee census is recommended, not required (`RECOMMENDED_ITEMS`): it can only come from an uploaded file today, and no document is required. A missing census is an open item in the Review step and the Manuscript, and never blocks.
 
 - **In the app.** These fields are marked "Required" wherever they appear (`ProvenanceField`), and say they're needed while empty. The Review step lists what is still missing, with a link to each field. The Reckoning lists them with a way back to Review, and keeps Generate disabled (`certificationBlockers`). The Manuscript lists them as "not provided" open items, as the advisor queue does.
-- **In the database.** `public.intake_missing_required(chamber_data)` returns the missing keys in the order above. A certification sent from the browser (`current_user` `anon` or `authenticated`) is refused while any are missing, with SQLSTATE `EA003` and the keys, comma-separated, in DETAIL (`company_name,pay_frequency`). Nothing is written. Other saves, existing certifications and privileged writes are not checked. `src/data/schemaSync.test.ts` compares the function's keys with `REQUIRED_ITEMS`.
+- **In the database.** `public.intake_missing_required(chamber_data)` returns the missing keys in the order above. Since migration `20261104100000` it reads `public.intake_answers_present`, the one presence rule `intake_required_items` reads too (see "Required items"), so it trims as the browser does and counts a state only when it is a code. A certification sent from the browser (`current_user` `anon` or `authenticated`) is refused while any are missing, with SQLSTATE `EA003` and the keys, comma-separated, in DETAIL (`company_name,pay_frequency`). Nothing is written. Other saves, existing certifications and privileged writes are not checked. `src/data/schemaSync.test.ts` compares the function's keys with `REQUIRED_ITEMS`.
 - **On `EA003`.** The client names the missing answers and points to the Review tab. It is a definite refusal: saving carries on as before.
+
+#### A required answer in conflict
+
+A required answer whose field status is `conflicting` (Lenore and a document, or two things the prospect said, disagree) blocks certification too, until the prospect picks one with "Use this" in Review, which confirms it (B-2, decision D26). A conflict on any other field is an open item and never blocks. A states conflict blocks even when census rows carry work states.
+
+- **In the app.** `conflictingRequired(provenance)` in `src/data/readiness.ts`. Review lists each under "Still needed" with a link to the field and its candidates; The Reckoning lists them ("choose one answer for") and `certificationBlockers` keeps Generate disabled.
+- **In the database.** `public.intake_conflicting_required(field_provenance)` returns the keys in the order above (migration `20261104100000_certification_conflicts.sql`). A certification from the browser is refused while any are in conflict, after the missing-answer check, with SQLSTATE `EA008` and the keys, comma-separated, in DETAIL. It reads the row's `field_provenance`, which the browser saves before it certifies. Nothing is written; other saves, existing certifications and privileged writes are not checked, and a conflict that appears after a certification doesn't withdraw it (the certified answers haven't changed). `src/data/schemaSync.test.ts` compares the keys with `REQUIRED_ITEMS`. Field provenance is written by the browser and not validated, so this holds an honest client to its own state.
+- **On `EA008`.** The client names the answers and points to the Review tab. It is a definite refusal, like `EA003`.
 
 ### The chosen PEO (`chosen_peo`)
 
@@ -335,9 +382,49 @@ The employee census is recommended, not required (`RECOMMENDED_ITEMS`): it can o
 - It is not an answer. It is outside `chamber_data`, so changing it doesn't move the certification hash or withdraw a certification. The certified PEO is `submission.peo`. When the two differ, The Reckoning asks the prospect to certify again (in the browser only; the database doesn't enforce it).
 - A CHECK constraint keeps it trimmed and 1 to 80 characters (`PEO_NAME_MAX` in `src/data/peoCatalog.ts`, compared by `src/data/schemaSync.test.ts`). `cleanPeoName` trims and cuts by character before saving, so the app never sends a value the constraint refuses. A closed intake refuses a change to it like any other (see Session lifecycle).
 
+## Required items
+
+Decision D2 (see "Required answers" above): three required answers, then the recommended employee census. `requiredItems` (`src/data/requiredItems.ts`) takes the items, their order, labels and presence from `readiness.ts`, and says how settled each is:
+
+| Item | Label | Required | Present when |
+| --- | --- | --- | --- |
+| `company_name` | Company legal name | yes | `company_name` has text |
+| `states` | States of operation | yes | `states` holds a state code, or a census row names one as its work state |
+| `pay_frequency` | Pay frequency | yes | `pay_frequency` has text |
+| `census` | Employee census | no (recommended) | the census has at least one row |
+
+Text counts when something other than whitespace is left (trimmed as `String.prototype.trim` trims, on both sides). A state counts when it is a state or territory code, in any case and with whitespace around it ignored, as the browser reads it; a roster saved before 20261027 can hold a `state` such as `NA`, which names no state. The census is `census`, or `employees` on an intake saved before the census contract that has no `census`; a row's work state is `work_state`, or `state` on such a roster. There is no "Not applicable" status and no "Document needed" item: no document is ever required. The census never blocks certification and never holds an intake back from complete (`isIntakeComplete`: the three required items settled).
+
+Each item is in one state:
+
+| State | When |
+| --- | --- |
+| `missing` | Not present. An advisor verifying the field doesn't change that. |
+| `settled` | Present, and its field is `confirmed` (whoever confirmed it: the model, a document the prospect applied, or the prospect), or an advisor verified it, or it has no provenance entry. Every AI value carries provenance, so a value without any was typed by the prospect or predates provenance. |
+| `conflicting`, `incomplete`, `unconfirmed` | Present and none of the above: the field's status, with `inferred` read as `unconfirmed`. |
+
+A provenance entry counts only when `parseProvenance` would keep it (a known status, a string `updated_at`, a valid source, and a valid source on every candidate); any other entry is read as none. The census's provenance is its `census` entry, or `employees` when there is none (as `parseProvenance` reads it). States of operation is settled by `states`, or by a settled census whose rows name a work state. Otherwise it takes the state of `states` when that holds anything, or else the census's state when only the census names states (the browser's copy marks that item `viaCensus`).
+
+**One rule.** In the database (migration `20261104100000_required_items.sql`), `public.intake_answers_present(data)` says which answers an intake holds; the certification gate `public.intake_missing_required` and `public.intake_required_items(data, provenance, verified)` both read it. `intake_required_items` returns the items as `[{ item, label, field, required, state }]`, in order, from its arguments alone. The advisor queue's `missing_required` is the labels of the required items it reports `missing` (a missing census is not listed). `src/data/requiredItems.cases.json` holds the cases both sides are tested against: `supabase/tests/required_items.sql` passes each stored intake straight to the function (and checks that the gate refuses for exactly the required items reported missing), and `src/data/requiredItems.test.ts` loads it as the Chamber does first (`parseChamberData`, `parseProvenance`). The database reads stored values as the browser loads them, state codes and provenance included (`public.provenance_entry_status` mirrors `parseProvenance`; nothing on the server checks `field_provenance` itself), so the two agree on stored intakes, older `employees` rosters too. They can still differ on values the app never stores, most of which the database refuses on write: a state's full name (the browser's sanitiser reads "Oregon" as `OR`), a census row the sanitiser drops, or a `states` string rather than a list.
+
+**Where it shows.**
+
+- In the Review tab, "Still needed" lists the required answers that block certification, in order: missing ones (with a hint) and ones whose answers conflict. "Needs your review" then starts with the required answers given but not settled, as "Incomplete" or "Please confirm", followed by every other field `fieldOpenItems` lists. Each field appears once, and a field an advisor verified is never listed, unless it is a required answer still not provided. While only the census names states, the census is the answer to confirm or resolve. The recommended census is listed under "Recommended" while missing.
+- The Manuscript's open items start with "<label> — not provided" for each missing required answer and a missing census, then the other open fields less the verified ones, then the unmet or unverified eligibility checks, census flags and an advisor's follow-ups.
+- A row whose field's status is `conflicting` shows a red "Conflicting" chip on the web Manuscript, and the PDF prints it as "<value> (unresolved — see open items)". A row built from several fields (entity structure and FEIN count, exempt and nonexempt counts, retirement, the census counts) takes its chip and marker from any of them that conflicts (`rowProvenance` in `src/data/manuscript.ts`). A field an advisor verified is settled, so the Manuscript shows it confirmed and marks it neither way, as the advisor's packet does.
+- The Reckoning won't submit while a required answer is missing (US-1.2, enforced by the database too) or its answers conflict ("Resolve the conflicting answers for <label>", after the missing ones; a conflict States of operation only takes from the census names the census). The conflict check is the browser's only. The recommended census never blocks.
+
+**Fields an advisor verified.** A field an advisor marked `verified` in `advisor_field_reviews` is settled whatever its status. `public.session_verified_fields(session_id)` returns those field names, sorted, to the intake's owner while they can read the intake (not once it is archived or revoked) and to advisors. Anyone else gets an empty list, and signed-out callers can't call it. It gives the names only: no other review state, note, reviewer or corrected value, and `advisor_field_reviews` itself stays advisor-only. A census review stored under `employees` counts as the census's unless the census has a review of its own. The Chamber asks once, when it opens an intake (`useChamberSession`'s `verifiedFields`), and the prospect's Manuscript page when it loads; the advisor's Manuscript uses the reviews the page already has. If the call fails, no field counts as verified and the prospect isn't told.
+
 ## Session lifecycle
 
 Migration `20261103090000_intake_lifecycle.sql` (A-1.5). `supabase/tests/intake_lifecycle.sql` and `e2e/intake-lifecycle.spec.ts` cover it.
+
+### When an intake is created
+
+No intake exists until the prospect does something with it (A-1): their first message to Lenore, answer, PEO choice, upload, or voice call. Opening the Chamber, or reloading it, creates nothing; a blank intake with Lenore's greeting is on screen and the address names none. The first change creates the row with that change already in it (`useChamberSession`'s `ensureIntake`, which every change calls and which a message to Lenore and an upload wait for, so the AI call carries the intake id and the file is stored under it). After Start over, or "Start a new intake", the same holds: a blank intake, no row, and the address no longer names the old one.
+
+A person has one open draft at a time: an intake in progress that was never certified. A new intake from the browser is refused while they have one (migration `20261104102000_one_open_draft.sql`, SQLSTATE `EA009`, the open draft's id in DETAIL); a transaction-scoped advisory lock per person makes two simultaneous starts take turns, so the second is refused (checked by hand with two connections; `supabase/tests/one_open_draft.sql` covers the rest). A certified intake changed since is a submission, not a draft, so Start over can begin a new intake beside it. When the Chamber is refused (another tab started first), it offers that intake as it offers a save that another tab beat: "Load latest" or "Keep my changes". A bare `/start` opens the latest open draft, so an ordinary reload or navigation never makes a second.
 
 ### Status
 
@@ -399,6 +486,21 @@ While a change hasn't been confirmed by the server, the Chamber keeps a copy in 
 ### Getting back from another browser
 
 The intake belongs to the Supabase user that created it. A guest is anonymous until they verify an email (at certification). When a link can't be opened, usually because this browser no longer holds the sign-in (another device, a private window, cleared data), the Chamber explains why and offers to email a sign-in code to the address they verified (`signInWithOtp` with `shouldCreateUser: false`, then `verifyOtp` type `email`). It says the same thing whether or not the address has an account. A guest on a fresh intake gets the same offer ("Continue an earlier intake"). Once signed in, the Chamber drops the blank guest intake and opens the linked intake, or their latest one. An intake that never had an email verified can't be recovered from another browser. The code arrives in Supabase's "Magic Link" email template, which must contain `{{ .Token }}` (`npm run setup:supabase` sets it).
+
+### The transcript
+
+`chamber_sessions.transcript` is the conversation in the order it happened: a list of messages, appended by the browser and saved by the same versioned write as the answers, so a stale tab can't overwrite it (A-2.2). It is the source evidence for the answers Lenore captured: a field taken from chat points at its message by `message_id` (see Provenance above), and advisors read it beside the answers. A message is:
+
+| Key | Kind | Rule |
+| --- | --- | --- |
+| `id` | text, required | 1 to 100 characters; the `message_id` a field's provenance points to |
+| `sender` | text, required | `user` (the prospect), `lenore`, or `system` (a note from the Chamber itself: today "Voice call started" and "Voice call ended") |
+| `text` | text, required | at most 20,000 characters; Social Security and bank account numbers are removed before it is kept |
+| `timestamp` | text, optional | when it was written, an ISO 8601 instant (`2026-11-04T14:34:05.123Z`). Messages saved before 2026-11-04 hold the browser's local time of day (`02:34 PM`) with no date, and are shown as they are. At most 64 characters |
+| `kind` | `"greeting"`, optional | Lenore's hello; only the first is kept |
+| `spoken` | boolean, optional | said aloud in a voice call (D33). An answer captured from a spoken message is at most `inferred` until the prospect confirms it |
+
+Nothing else may be in a message. The database refuses a transcript that breaks these rules (`public.chamber_transcript_error`, migration `20261104101000_transcript_validation.sql`) on insert and whenever the transcript changes, with `EA001` and the path (`transcript[3].sender`) in DETAIL, never the text. Existing rows are not re-validated. The browser holds the same limits (`src/data/chat.ts`; `src/data/schemaSync.test.ts` compares them), and what it writes, and what `parseTranscript` reads back from an older row, always fits. A failed extraction never removes the prospect's message: it is added before Lenore is asked.
 
 ### Transcript on resume
 

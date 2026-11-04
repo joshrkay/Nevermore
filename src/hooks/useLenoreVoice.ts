@@ -61,7 +61,7 @@ export function useLenoreVoice({
 
       if (role === "user") {
         awaitingGreetingRef.current = false;
-        const msg = createChatMessage("user", message);
+        const msg = createChatMessage("user", message, { spoken: true });
         lastUserMessageRef.current = msg;
         callbacksRef.current.onNewMessage(msg);
         return;
@@ -81,7 +81,7 @@ export function useLenoreVoice({
       if (!spoken) return;
       const greeting = awaitingGreetingRef.current;
       awaitingGreetingRef.current = false;
-      callbacksRef.current.onNewMessage(createChatMessage("lenore", spoken, greeting ? "greeting" : undefined));
+      callbacksRef.current.onNewMessage(createChatMessage("lenore", spoken, { kind: greeting ? "greeting" : undefined, spoken: true }));
       callbacksRef.current.onLastSpokenText(
         spoken.length > 120 ? spoken.slice(0, 120) + "..." : spoken
       );

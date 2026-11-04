@@ -144,6 +144,11 @@ export function reviewMap(rows: FieldReview[]): ReviewMap {
   return map;
 }
 
+/** The fields an advisor verified: the same names session_verified_fields gives the prospect. */
+export function verifiedFieldsOf(reviews: ReviewMap): ReadonlySet<FieldKey> {
+  return new Set(Object.values(reviews).flatMap((r) => (r?.review_state === "verified" ? [r.field] : [])));
+}
+
 export interface AppliedCorrection {
   field: FieldKey;
   label: string;

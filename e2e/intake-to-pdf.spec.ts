@@ -94,13 +94,35 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
   // The gateway's log spans every test run since it started, so this test reads only what follows this point.
   const firstOwnRequest = (await readRequestLog(request)).length;
 
-  const sessionId = await test.step("Open the Chamber as a guest", async () => {
+  await test.step("Open the Chamber as a guest", async () => {
     await page.goto("/start");
     // Nothing about the company can be entered until the guest agrees to how it is used (US-6.2).
     await agreeToIntakeConsent(page);
+    // And nothing is created until they start (A-1): the address names no intake yet.
+    await expect(page.getByPlaceholder("Type a message...")).toBeVisible();
+    await expect(page).toHaveURL(/\/start$/);
+  });
+
+  await test.step("Tell Lenore about the company", async () => {
+    const chat = page.getByPlaceholder("Type a message...");
+    await chat.fill(INTAKE_MESSAGE);
+    await chat.press("Enter");
+    await expect(chat).toHaveValue("");
+    // Extracted values are applied before the reply is shown, so the reply is the point to continue
+    // from. It appears twice (the transcript and the voice orb's caption).
+    await expect(page.getByText(INTAKE_EXTRACTION.reply).first()).toBeVisible();
+  });
+
+  const sessionId = await test.step("The first message started exactly one intake, named in the address", async () => {
     // The page redirects to ?session=<id> once the guest's session row exists.
     await expect(page).toHaveURL(SESSION_URL);
-    return SESSION_URL.exec(page.url())![1];
+    const id = SESSION_URL.exec(page.url())![1];
+    const [{ intakes }] = await queryDatabase<{ intakes: number }>(
+      "SELECT count(*)::int AS intakes FROM chamber_sessions WHERE user_id = (SELECT user_id FROM chamber_sessions WHERE id = $1)",
+      [id],
+    );
+    expect(intakes).toBe(1);
+    return id;
   });
 
   await test.step("The agreement is recorded with its wording, and the intake points to it", async () => {
@@ -114,16 +136,6 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     expect(rows).toEqual([{ version: INTAKE_CONSENT_VERSION, text: intakeConsentText(), linked: true, recent: true }]);
   });
 
-  await test.step("Tell Lenore about the company", async () => {
-    const chat = page.getByPlaceholder("Type a message...");
-    await chat.fill(INTAKE_MESSAGE);
-    await chat.press("Enter");
-    await expect(chat).toHaveValue("");
-    // Extracted values are applied before the reply is shown, so the reply is the point to continue
-    // from. It appears twice (the transcript and the voice orb's caption).
-    await expect(page.getByText(INTAKE_EXTRACTION.reply).first()).toBeVisible();
-  });
-
   await test.step("Check the Company tab, confirm the inferred industry and add a target start", async () => {
     await page.getByRole("button", { name: "② Company", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Company Profile" })).toBeVisible();
@@ -135,9 +147,9 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(page.getByText("5 of 7 fields captured")).toBeVisible();
 
     // Industry is the one value Lenore inferred rather than read from the message.
-    await expect(page.getByText("Lenore inferred this")).toHaveCount(1);
+    await expect(page.getByText("Lenore captured this — please confirm")).toHaveCount(1);
     await page.getByRole("button", { name: "Confirm Industry", exact: true }).click();
-    await expect(page.getByText("Lenore inferred this")).toHaveCount(0);
+    await expect(page.getByText("Lenore captured this — please confirm")).toHaveCount(0);
     await expect(page.getByText("You confirmed this")).toHaveCount(1);
 
     await page.getByRole("button", { name: "Add Target Start", exact: true }).click();

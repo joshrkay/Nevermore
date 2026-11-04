@@ -11,6 +11,7 @@ import { parseChamberData } from "@/data/chamberValidation";
 import { buildManuscript, isFileId, maskDob, NOT_PROVIDED, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
 import { describeSource, parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
+import { fetchVerifiedFields } from "@/lib/verifiedFields";
 import { downloadBlob } from "@/lib/downloadFile";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
 import LegalLinks from "@/components/LegalLinks";
@@ -35,9 +36,11 @@ const STATUS_MARKER_CLASS: Record<FieldProvenance["status"], string> = {
   not_applicable: "bg-muted text-muted-foreground",
 };
 
-// Unknown and not applicable hold no answer, but say more than "Not provided" does.
+// A status shows beside an answer. Beside "Not provided" it shows only when it says more: unknown and
+// not applicable hold no answer on purpose, and a conflict always shows, as the PDF marks it.
 const showsStatus = (value: string, provenance?: FieldProvenance): provenance is FieldProvenance =>
-  Boolean(provenance) && (value !== NOT_PROVIDED || provenance!.status === "unknown" || provenance!.status === "not_applicable");
+  Boolean(provenance) &&
+  (value !== NOT_PROVIDED || provenance!.status === "conflicting" || provenance!.status === "unknown" || provenance!.status === "not_applicable");
 
 // Shows whether a value was confirmed or only inferred, and where it came from.
 const DataRow = ({ label, value, provenance }: { label: string; value: string; provenance?: FieldProvenance }) => (
@@ -60,9 +63,7 @@ const DataRow = ({ label, value, provenance }: { label: string; value: string; p
 );
 
 const renderRows = (rows: ManuscriptRow[], provenance: ProvenanceMap) =>
-  rows.map(([label, value, field]) => (
-    <DataRow key={label} label={label} value={value} provenance={field ? provenance[field] : undefined} />
-  ));
+  rows.map((row) => <DataRow key={row[0]} label={row[0]} value={row[1]} provenance={rowProvenance(row, provenance)} />);
 
 const Card = ({ children }: { children: React.ReactNode }) => <div className="bg-card border border-border rounded-xl p-6">{children}</div>;
 
@@ -146,6 +147,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           data: parseChamberData(submission.chamber_data ?? data.chamber_data),
           // Pair provenance with whichever copy of the data is shown, so it never describes other values.
           provenance: parseProvenance(submission.chamber_data ? submission.field_provenance : data.field_provenance),
+          verified,
           submission,
           fileId: data.file_id || submission.file_id || "Not assigned",
         });

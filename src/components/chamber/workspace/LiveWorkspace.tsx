@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { CertificationState, ChamberSubmission } from "@/data/manuscript";
 import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance";
 import { resolutionFields, resolveCandidate, type CandidateResolution } from "@/data/documentCandidates";
 import { useSessionDocuments, type SessionDocument } from "@/hooks/useSessionDocuments";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
+import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import UploadTab from "../UploadTab";
 import CompanyTab from "./CompanyTab";
 import PayrollTab from "./PayrollTab";
@@ -35,6 +36,8 @@ interface LiveWorkspaceProps {
   fileId?: string | null;
   onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   provenance?: ProvenanceMap;
+  /** Fields an advisor verified: settled whatever their status. */
+  verified?: ReadonlySet<string>;
   /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
   onFieldAction?: (action: FieldAction) => void;
   certification?: CertificationState;
@@ -43,6 +46,10 @@ interface LiveWorkspaceProps {
   /** The PEO chosen on PEO Match, kept with the intake. With onChoosePeo; without them the choice lasts only for this page. */
   chosenPeo?: string | null;
   onChoosePeo?: (name: string) => void;
+  /** Raise it to open Review with the keyboard on its heading (e.g. "Continue manually" when Lenore can't answer). */
+  openReview?: number;
+  /** Creates the intake when the prospect starts with an upload (useChamberSession's ensureIntake). */
+  ensureIntake?: () => Promise<string | null>;
 }
 
 const LiveWorkspace = ({
@@ -52,16 +59,22 @@ const LiveWorkspace = ({
   fileId = null,
   onSubmit,
   provenance = {},
+  verified = NO_VERIFIED_FIELDS,
   onFieldAction,
   certification,
   updateIntake,
   chosenPeo: savedPeo,
   onChoosePeo,
+  openReview = 0,
+  ensureIntake,
 }: LiveWorkspaceProps) => {
   const onAction = isDemo ? undefined : onFieldAction;
   const [activeTab, setActiveTab] = useState("upload");
+  useEffect(() => {
+    if (openReview > 0) setActiveTab("review");
+  }, [openReview]);
   const documentSessionId = isDemo ? null : sessionId;
-  const documents = useSessionDocuments(documentSessionId);
+  const documents = useSessionDocuments(documentSessionId, isDemo ? undefined : ensureIntake);
   const handleResolve =
     !isDemo && updateIntake
       ? (doc: SessionDocument, resolution: CandidateResolution) => {
@@ -104,13 +117,13 @@ const LiveWorkspace = ({
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto">
-        {activeTab === "upload" && <UploadTab documents={documents} sessionId={documentSessionId} data={data} provenance={provenance} onResolveCandidates={handleResolve} />}
+        {activeTab === "upload" && <UploadTab documents={documents} sessionId={documentSessionId} canStart={!isDemo && Boolean(ensureIntake)} data={data} provenance={provenance} onResolveCandidates={handleResolve} />}
         {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
         {activeTab === "payroll" && <PayrollTab data={data} provenance={provenance} onAction={onAction} />}
         {activeTab === "benefits" && <BenefitsTab data={data} provenance={provenance} onAction={onAction} />}
         {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} />}
         {activeTab === "dependents" && <DependentsTab data={data} />}
-        {activeTab === "review" && <ReviewTab data={data} provenance={provenance} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} />}
+        {activeTab === "review" && <ReviewTab data={data} provenance={provenance} verified={verified} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} />}
         {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
         {activeTab === "reckoning" && <ReckoningTab data={data} provenance={provenance} peoName={chosenPeo} sessionId={sessionId} fileId={fileId} onSubmit={onSubmit} certification={certification} onReview={() => setActiveTab("review")} />}
       </div>

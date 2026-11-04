@@ -21,8 +21,9 @@ async function sql<T = Record<string, unknown>>(text: string, values: unknown[] 
 test("missing required answers block The Manuscript, are marked in Review, and are added there", async ({ page }) => {
   await page.goto("/start");
   await agreeToIntakeConsent(page);
-  await expect(page).toHaveURL(SESSION_URL);
-  const sessionId = SESSION_URL.exec(page.url())![1];
+  // Nothing is created until the prospect adds something (A-1).
+  await expect(page.getByRole("button", { name: "⑨ The Reckoning", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/start$/);
 
   await test.step("The Reckoning says what's missing and sends the prospect to Review", async () => {
     await page.getByRole("button", { name: "⑨ The Reckoning", exact: true }).click();
@@ -57,6 +58,10 @@ test("missing required answers block The Manuscript, are marked in Review, and a
     await expect(page.getByRole("region", { name: "Still needed" })).toHaveCount(0);
     await expect(page.getByText("Every required answer is here. You can certify once you've checked the rest.")).toBeVisible();
   });
+
+  // The first answer started the intake.
+  await expect(page).toHaveURL(SESSION_URL);
+  const sessionId = SESSION_URL.exec(page.url())![1];
 
   await test.step("the answers are saved and show everywhere at once", async () => {
     await expect

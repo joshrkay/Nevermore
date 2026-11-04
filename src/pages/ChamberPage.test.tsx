@@ -1,7 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
+import type { IntakeState } from "@/data/provenance";
 
 const session = {
   sessionId: null as string | null,
@@ -25,7 +27,10 @@ const session = {
   restoredThrough: null as string | null,
   messages: [] as ChatMessage[],
   certification: { status: "none" as string },
+  addMessage: vi.fn(),
+  conversationEpoch: {} as object,
 };
+const voice = { isConnected: false };
 const auth = {
   isAnonymous: true,
   requestSignInCode: vi.fn(async () => ({ error: null, noAccount: false })),
@@ -38,13 +43,23 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 vi.mock("@/hooks/useChamberSession", () => ({ useChamberSession: () => session }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 vi.mock("@/data/intakeBackup", () => ({ browserStorageWorks: () => storageWorks }));
-vi.mock("@/hooks/useLenoreVoice", () => ({ useLenoreVoice: () => ({ startVoice: vi.fn(), isConnected: false, hasAgentId: false }) }));
+vi.mock("@/hooks/useLenoreVoice", () => ({ useLenoreVoice: () => ({ startVoice: vi.fn(), isConnected: voice.isConnected, hasAgentId: false }) }));
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
 // The orb only shows what Lenore last said; the workspace panes are not what these tests are about.
 vi.mock("@/components/chamber/VoiceOrb", () => ({ default: ({ lastSpokenText }: { lastSpokenText: string }) => <p data-testid="orb">{lastSpokenText}</p> }));
 vi.mock("@/components/chamber/TranscriptPanel", () => ({ default: () => null }));
-vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({ default: () => null }));
-vi.mock("@/hooks/useLenoreChat", () => ({ useLenoreChat: () => ({ send: vi.fn(), retry: vi.fn(), dismissFailure: vi.fn(), failure: null, pending: false }) }));
+vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
+  default: (props: typeof hooks.workspace) => {
+    hooks.workspace = props;
+    return null;
+  },
+}));
+vi.mock("@/hooks/useLenoreChat", () => ({
+  useLenoreChat: (options: typeof hooks.chat) => {
+    hooks.chat = options;
+    return { send: vi.fn(), retry: vi.fn(), dismissFailure: vi.fn(), failure: null, pending: false };
+  },
+}));
 
 const { default: ChamberPage } = await import("./ChamberPage");
 
@@ -63,10 +78,11 @@ describe("ChamberPage", () => {
     session.backupOffer = null;
     session.messages = [];
     session.certification = { status: "none" };
+    session.verifiedFields = new Set();
     session.startOver.mockReset().mockResolvedValue(true);
     auth.isAnonymous = true;
     storageWorks = true;
-    for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges, session.restoreBackup, session.discardBackup]) {
+    for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges, session.restoreBackup, session.discardBackup, session.updateIntake]) {
       fn.mockClear();
     }
   });
@@ -196,11 +212,52 @@ describe("ChamberPage", () => {
     expect(screen.getByText(/isn't keeping site data/)).toBeInTheDocument();
   });
 
+  it("hands the workspace the fields an advisor verified on the intake", () => {
+    session.sessionId = "s1";
+    session.verifiedFields = new Set(["company_name"]);
+    renderPage();
+    expect(hooks.workspace?.verified).toBe(session.verifiedFields);
+  });
+
   it("shows Lenore's latest line under the orb, not a second hello", () => {
     session.sessionId = "s1";
     session.messages = [lenore("m1", "Good evening."), prospect("m2", "We're Acme"), lenore("m3", "Acme it is. How many people?")];
     renderPage();
     expect(screen.getByTestId("orb")).toHaveTextContent("Acme it is. How many people?");
+  });
+
+  describe("merging what Lenore extracted", () => {
+    const EMPTY: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
+    const applied = () => (session.updateIntake.mock.calls[0][0] as (prev: IntakeState) => IntakeState)(EMPTY);
+    const spoken: ChatMessage = { id: "v1", sender: "user", text: "We're about 40 people", timestamp: "" };
+
+    it("merges a voice extraction with its provenance, citing the prospect's message", () => {
+      renderPage();
+      hooks.voice!.onExtract({ employee_count: 40, field_status: { employee_count: "confirmed" } }, spoken);
+      expect(session.updateIntake).toHaveBeenCalledTimes(1);
+      const next = applied();
+      expect(next.data.employee_count).toBe(40);
+      expect(next.provenance.employee_count).toMatchObject({
+        status: "confirmed",
+        source: { kind: "transcript", message_id: "v1", quote: "We're about 40 people" },
+      });
+    });
+
+    it("drops a voice extraction with no prospect message to cite, rather than merging it untracked", () => {
+      renderPage();
+      hooks.voice!.onExtract({ employee_count: 40 }, null);
+      expect(session.updateIntake).not.toHaveBeenCalled();
+    });
+
+    it("merges a chat extraction with its provenance", () => {
+      renderPage();
+      hooks.chat!.onExtracted({ employee_count: 12 }, { evidence: { employee_count: "12 staff" } }, { id: "m1", text: "We have 12 staff" });
+      expect(session.updateIntake).toHaveBeenCalledTimes(1);
+      expect(applied().provenance.employee_count).toMatchObject({
+        status: "inferred",
+        source: { kind: "transcript", message_id: "m1", quote: "12 staff" },
+      });
+    });
   });
 
   describe("when saving has stopped", () => {
@@ -243,6 +300,69 @@ describe("ChamberPage", () => {
       renderPage();
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
       expect(session.retrySave).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("voice calls in the transcript", () => {
+    beforeEach(() => {
+      voice.isConnected = false;
+      session.addMessage.mockClear();
+      session.sessionId = "s1";
+    });
+    const notes = () => session.addMessage.mock.calls.map(([m]) => m as ChatMessage);
+
+    it("notes when a call starts and ends, as the Chamber's own messages", () => {
+      const { rerender } = renderPage();
+      expect(notes()).toEqual([]);
+      voice.isConnected = true;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      voice.isConnected = false;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      expect(notes().map((m) => [m.sender, m.text])).toEqual([["system", "Voice call started"], ["system", "Voice call ended"]]);
+      expect(notes()[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it("doesn't note the end of a call in a conversation that replaced the one it was in", () => {
+      const { rerender } = renderPage();
+      voice.isConnected = true;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      session.conversationEpoch = {};
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      voice.isConnected = false;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      expect(notes().map((m) => m.text)).toEqual(["Voice call started"]);
+    });
+  });
+
+  describe("the address", () => {
+    const Where = () => {
+      const location = useLocation();
+      return <p data-testid="where">{location.pathname + location.search}</p>;
+    };
+    const at = (url: string) => render(<MemoryRouter initialEntries={[url]}><ChamberPage /><Where /></MemoryRouter>);
+
+    it("stops naming an intake once there is deliberately none on screen, so a reload doesn't try to open it", () => {
+      session.sessionId = null;
+      at("/start?session=archived-one");
+      expect(screen.getByTestId("where")).toHaveTextContent(/^\/start$/);
+    });
+
+    it("keeps a link that is still opening, couldn't be opened, or has expired", () => {
+      session.sessionId = null;
+      session.isLoading = true;
+      const opening = at("/start?session=linked");
+      expect(screen.getByTestId("where")).toHaveTextContent("/start?session=linked");
+      opening.unmount();
+      session.isLoading = false;
+      session.resumeFailed = true;
+      const failed = at("/start?session=linked");
+      expect(screen.getByTestId("where")).toHaveTextContent("/start?session=linked");
+      failed.unmount();
+      session.resumeFailed = false;
+      session.expired = { at: null };
+      at("/start?session=linked");
+      expect(screen.getByTestId("where")).toHaveTextContent("/start?session=linked");
+      session.expired = null;
     });
   });
 });

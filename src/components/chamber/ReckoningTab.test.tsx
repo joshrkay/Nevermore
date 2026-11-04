@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { toast } from "sonner";
 import { MemoryRouter } from "react-router-dom";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
+import type { ProvenanceMap } from "@/data/provenance";
 
 const auth = {
   isAnonymous: true,
@@ -317,6 +318,48 @@ describe("ReckoningTab certification", () => {
     await waitFor(() => expect(screen.queryByText("Certification recorded")).not.toBeInTheDocument());
     expect(screen.getByRole("alert")).toHaveTextContent(/certify again/);
   });
+
+  describe("with a required item whose answers conflict", () => {
+    const conflicting: ProvenanceMap = {
+      pay_frequency: {
+        status: "conflicting",
+        source: { kind: "transcript", message_id: "m1" },
+        updated_at: "2026-11-03T12:00:00Z",
+        candidates: [
+          { value: "Bi-weekly", source: { kind: "transcript", message_id: "m1" } },
+          { value: "Weekly", source: { kind: "transcript", message_id: "m2" } },
+        ],
+      },
+      // Only conflicts hold certification back for now; an unconfirmed item doesn't.
+      company_name: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-03T12:00:00Z" },
+    };
+    const mountWith = (verified?: ReadonlySet<string>) =>
+      render(
+        <MemoryRouter>
+          <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={conflicting} verified={verified} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+        </MemoryRouter>,
+      );
+
+    it("won't submit until the prospect settles it, and says which one", () => {
+      mountWith();
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeDisabled();
+      expect(screen.getByTestId("certification-blockers")).toHaveTextContent(
+        "Before you can submit: Resolve the conflicting answers for Pay frequency",
+      );
+    });
+
+    it("lets it through once an advisor has verified the field", () => {
+      mountWith(new Set(["pay_frequency"]));
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeEnabled();
+      expect(screen.queryByTestId("certification-blockers")).not.toBeInTheDocument();
+    });
+  });
 });
 
 describe("ReckoningTab on an intake that is already certified", () => {
@@ -486,6 +529,55 @@ describe("ReckoningTab required answers", () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole("alert", { name: "Answers still needed" })).toHaveTextContent("Company legal name");
+  });
+
+  const conflict = {
+    status: "conflicting" as const,
+    source: { kind: "transcript" as const, message_id: "m1" },
+    updated_at: "2026-11-01T12:00:00Z",
+    candidates: [
+      { value: "Acme", source: { kind: "transcript" as const, message_id: "m1" } },
+      { value: "Acme LLC", source: { kind: "document" as const, document_id: "d1" } },
+    ],
+  };
+
+  it("won't generate The Manuscript while a required answer has two different values, and says which", () => {
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={{ company_name: conflict, industry: conflict }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
+    const callout = screen.getByRole("alert", { name: "Answers still needed" });
+    expect(callout).toHaveTextContent("Before The Manuscript can be generated, choose one answer for:");
+    expect(callout).toHaveTextContent("Company legal name");
+    // A recommended field in conflict is for Review, not a blocker.
+    expect(callout).not.toHaveTextContent("Industry");
+
+    signAndTry();
+    expect(submitButton()).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for company legal name");
+  });
+
+  it("names missing answers and conflicts together", () => {
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} provenance={{ states: conflict }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
+    const callout = screen.getByRole("alert", { name: "Answers still needed" });
+    expect(callout).toHaveTextContent(/add:.*Pay frequency.*And choose one answer for:.*States of operation/);
+  });
+
+  it("lets a settled conflict be certified", () => {
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={{ company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-11-01T12:00:00Z" }, industry: conflict }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("alert", { name: "Answers still needed" })).not.toBeInTheDocument();
+    signAndTry();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
   it("says nothing when every required answer is there, census or not", () => {

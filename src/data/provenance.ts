@@ -20,7 +20,10 @@ export type FieldStatus = (typeof FIELD_STATUSES)[number];
 export type ExtractedStatus = "confirmed" | "inferred" | "incomplete";
 
 export type FieldSource =
-  | { kind: "transcript"; message_id: string; quote?: string }
+  // prompt_version is chamber-extract's PROMPT_VERSION (a positive integer, as ai_extraction_events records
+  // it) for a chat extraction. Voice extractions, whose
+  // prompt lives in the ElevenLabs agent, and entries saved before versioning have none.
+  | { kind: "transcript"; message_id: string; quote?: string; prompt_version?: number }
   // A value the prospect applied from an uploaded document (document-extract's candidates).
   | { kind: "document"; document_id: string; document_name?: string; location?: string }
   | { kind: "prospect_edit" };
@@ -36,6 +39,12 @@ export interface FieldProvenance {
   updated_at: string; // ISO timestamp
   /** The competing values, present only while the field is conflicting. */
   candidates?: FieldCandidate[];
+  /**
+   * Values a source gave that the field doesn't hold: one it outranked, or one that replaced it.
+   * Newest last, one per value, never the field's own value, at most MAX_ALSO_HEARD. A note only:
+   * it never changes the status, and the prospect confirming, editing or resolving the field clears it.
+   */
+  also_heard?: FieldCandidate[];
 }
 
 export type ProvenanceMap = Partial<Record<FieldKey, FieldProvenance>>;
@@ -111,10 +120,43 @@ const MAX_QUOTE_CHARS = 200;
 const clip = (s: string) =>
   s.length > MAX_QUOTE_CHARS ? `${s.slice(0, MAX_QUOTE_CHARS - 1).replace(/[\uD800-\uDBFF]$/, "")}…` : s;
 
+const MAX_ALSO_HEARD = 5;
+
+// chamber-extract's PROMPT_VERSION: a positive integer, the smallint ai_extraction_events stores.
+const promptVersionSchema = z.number().int().positive().max(32767);
+
+// ---------- Comparing values ----------
+
+export const isEmpty = (v: unknown) => v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
+
+const contains = (list: unknown[], items: unknown[]) => items.every((i) => list.some((l) => same(l, i)));
+
+// The intake's lists are sets (states, benefits, PTO types), so the same entries in another order
+// are the same value.
+function same(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) return contains(a, b) && contains(b, a);
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// A list that adds entries and drops none ("also Texas") extends the old one rather than contradicting it.
+function extendsList(prev: unknown, next: unknown): boolean {
+  return Array.isArray(prev) && Array.isArray(next) && contains(next, prev) && !contains(prev, next);
+}
+
 // ---------- Parsing stored provenance ----------
 
+// public.provenance_entry_status (migration 20261103110000) keeps and drops the same entries, so the
+// database's required items read provenance as the browser does; change both together
+// (src/data/requiredItems.cases.json tests them against each other).
+
 const sourceSchema: z.ZodType<FieldSource, z.ZodTypeDef, unknown> = z.union([
-  z.object({ kind: z.literal("transcript"), message_id: z.string().min(1), quote: z.string().max(MAX_QUOTE_CHARS).optional() }),
+  z.object({
+    kind: z.literal("transcript"),
+    message_id: z.string().min(1),
+    quote: z.string().max(MAX_QUOTE_CHARS).optional(),
+    // Only a label for tracing, so a malformed one is dropped rather than losing the whole entry.
+    prompt_version: promptVersionSchema.optional().catch(undefined),
+  }),
   z.object({
     kind: z.literal("document"),
     document_id: z.string().min(1),
@@ -124,11 +166,26 @@ const sourceSchema: z.ZodType<FieldSource, z.ZodTypeDef, unknown> = z.union([
   z.object({ kind: z.literal("prospect_edit") }),
 ]) as unknown as z.ZodType<FieldSource, z.ZodTypeDef, unknown>;
 
+const candidateSchema = z.object({ value: z.unknown(), source: sourceSchema });
+const heardSchema = candidateSchema.refine((c) => !isEmpty(c.value));
+
 const provenanceSchema = z.object({
   status: z.enum(FIELD_STATUSES),
   source: sourceSchema,
   updated_at: z.string(),
-  candidates: z.array(z.object({ value: z.unknown(), source: sourceSchema })).optional(),
+  candidates: z.array(candidateSchema).optional(),
+  // Only notes, so a malformed one is dropped rather than losing the whole entry.
+  also_heard: z
+    .array(z.unknown())
+    .transform((entries) => {
+      const kept = entries.flatMap((e) => {
+        const parsed = heardSchema.safeParse(e);
+        return parsed.success ? [parsed.data as FieldCandidate] : [];
+      });
+      return kept.length > 0 ? kept.slice(-MAX_ALSO_HEARD) : undefined;
+    })
+    .optional()
+    .catch(undefined),
 }) as unknown as z.ZodType<FieldProvenance, z.ZodTypeDef, unknown>;
 
 /**
@@ -149,12 +206,38 @@ export function parseProvenance(raw: unknown): ProvenanceMap {
 
 // ---------- Merging extractions ----------
 
-const isEmpty = (v: unknown) => v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+// Which source stands when two disagree: the prospect's own answer, then a document they applied,
+// then the conversation. The value that loses is kept on the field as also_heard.
+const RANK: Record<FieldSource["kind"], number> = { prospect_edit: 3, document: 2, transcript: 1 };
 
-// A list that only adds entries ("also Texas") extends the old one rather than contradicting it.
-const extendsList = (prev: unknown, next: unknown) =>
-  Array.isArray(prev) && Array.isArray(next) && prev.every((p) => next.some((n) => same(p, n)));
+// The rank a field holds: its source's, or while it is conflicting, its highest candidate's.
+const fieldRank = (entry: FieldProvenance) =>
+  Math.max(RANK[entry.source.kind], ...(entry.status === "conflicting" ? (entry.candidates ?? []) : []).map((c) => RANK[c.source.kind]));
+
+/** Whether a different value from this kind of source replaces the field's, rather than conflicting or only being noted. */
+export const outranks = (kind: FieldSource["kind"], entry: FieldProvenance) => RANK[kind] > fieldRank(entry);
+
+/** A field's also_heard with `heard` added: newest last, one entry per value, never `current`. */
+function noteHeard(notes: FieldCandidate[] | undefined, heard: FieldCandidate[], current: unknown): FieldCandidate[] | undefined {
+  let next = notes ?? [];
+  for (const h of heard) {
+    // A value heard again moves to the end, keeping the higher-ranked of the sources that gave it.
+    const earlier = next.find((n) => same(n.value, h.value));
+    const kept = earlier && RANK[earlier.source.kind] > RANK[h.source.kind] ? earlier : h;
+    next = [...next.filter((n) => !same(n.value, h.value)), kept];
+  }
+  next = next.filter((n) => !same(n.value, current)).slice(-MAX_ALSO_HEARD);
+  return next.length > 0 ? next : undefined;
+}
+
+const withNotes = (entry: FieldProvenance, notes: FieldCandidate[] | undefined): FieldProvenance => {
+  const { also_heard: _replaced, ...rest } = entry;
+  return notes ? { ...rest, also_heard: notes } : rest;
+};
+
+// What a field holds: the competing values while it is conflicting, otherwise its value.
+const heldValues = (entry: FieldProvenance, value: unknown): FieldCandidate[] =>
+  entry.status === "conflicting" && entry.candidates?.length ? entry.candidates : [{ value, source: entry.source }];
 
 export interface ExtractionOptions {
   source: FieldSource;
@@ -164,12 +247,20 @@ export interface ExtractionOptions {
   evidence?: Partial<Record<FieldKey, string>>;
   /** Fields the prospect explicitly corrected, which replace rather than conflict. */
   corrections?: FieldKey[];
+  /**
+   * Fields the prospect said they don't know (the model's "unknown", D23, D31). They hold no answer: one is
+   * marked unknown only while it has none, and never over the prospect's own edit or "Doesn't apply".
+   */
+  unknown?: FieldKey[];
   now?: Date;
 }
 
 /**
- * Applies an untrusted AI patch. A prospect's own edit is never overwritten, and a
- * value that contradicts an earlier AI value is kept as a conflict, not swapped in.
+ * Applies an untrusted AI patch (chat, voice, or a document the prospect applied). A prospect's own
+ * edit is never overwritten. Otherwise, when values disagree, the higher-ranked source (RANK) stands
+ * and the other is noted in also_heard; two values from sources of the same rank are kept as a
+ * conflict for the prospect to settle. An explicit correction and a list that only adds entries
+ * replace the value instead.
  */
 export function applyExtraction(state: IntakeState, raw: unknown, opts: ExtractionOptions): IntakeState {
   const patch = sanitizeChamberPatch(raw);
@@ -191,34 +282,78 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
     // Only the prospect marks a field not applicable, and only they can take it back.
     if (prev?.status === "not_applicable") continue;
 
-    const replaces =
+    // The field takes the incoming value; `displaced` are the values it held that are noted.
+    const take = (takenStatus: FieldStatus, displaced: FieldCandidate[] = []) => {
+      (data as Record<FieldKey, unknown>)[field] = value;
+      provenance[field] = withNotes({ status: takenStatus, source, updated_at }, noteHeard(prev?.also_heard, displaced, value));
+    };
+
+    if (
       !prev || // nothing recorded yet (or a session saved before provenance existed)
       isEmpty(prevValue) ||
-      opts.corrections?.includes(field) ||
-      field === "census" || // the roster is rebuilt as it grows
-      extendsList(prevValue, value);
-
-    if (replaces) {
-      (data as Record<FieldKey, unknown>)[field] = value;
-      provenance[field] = { status, source, updated_at };
+      field === "census" // the roster is rebuilt as it grows; documents merge it in documentCandidates.ts
+    ) {
+      take(status);
       continue;
     }
 
-    if (same(prevValue, value)) {
-      if (prev.status === "conflicting") continue;
-      // Hearing the same value again can raise confidence, never lower it.
+    const rank = RANK[source.kind];
+    const heldRank = fieldRank(prev);
+    const conflicting = prev.status === "conflicting";
+    const held = heldValues(prev, prevValue);
+
+    if (!conflicting && same(prevValue, value)) {
+      // Hearing the same value again (a list in any order) can raise confidence, never lower it,
+      // and never trades the source for a lower-ranked one. The stored value is kept as it is.
       const keep = prev.status === "confirmed" && status !== "confirmed";
-      provenance[field] = { status: keep ? prev.status : status, source, updated_at };
+      provenance[field] = withNotes(
+        { status: keep ? prev.status : status, source: rank < heldRank ? prev.source : source, updated_at },
+        noteHeard(prev.also_heard, [], value),
+      );
       continue;
     }
 
-    const candidates = prev.candidates ?? [{ value: prevValue, source: prev.source }];
-    provenance[field] = {
-      status: "conflicting",
-      source: prev.source,
-      updated_at,
-      candidates: candidates.some((c) => same(c.value, value)) ? candidates : [...candidates, { value, source }],
-    };
+    if (opts.corrections?.includes(field)) {
+      // The prospect corrected it in chat. A value from another kind of source is noted; one from
+      // the same kind is what they corrected.
+      take(status, held.filter((c) => c.source.kind !== source.kind));
+      continue;
+    }
+
+    if (extendsList(prevValue, value)) {
+      // Extended by a lower-ranked source, the prospect confirms the whole list again.
+      take(rank < heldRank ? "inferred" : status, held.filter((c) => !extendsList(c.value, value)));
+      continue;
+    }
+
+    if (rank > heldRank) {
+      take(status, held);
+      continue;
+    }
+
+    if (held.some((c) => same(c.value, value))) continue; // already one of the competing values
+
+    if (rank < heldRank) {
+      provenance[field] = withNotes({ ...prev, updated_at }, noteHeard(prev.also_heard, [{ value, source }], prevValue));
+      continue;
+    }
+
+    provenance[field] = withNotes(
+      { status: "conflicting", source: prev.source, updated_at, candidates: [...held, { value, source }] },
+      noteHeard(prev.also_heard, [], prevValue),
+    );
+  }
+
+  for (const field of opts.unknown ?? []) {
+    if (field in patch) continue; // an answer in the same message wins
+    const prev = provenance[field];
+    if (prev?.source.kind === "prospect_edit" || prev?.status === "not_applicable") continue;
+    // An answer already given stands: "I don't know" about it is for the prospect to settle in Review.
+    if (!isEmpty(data[field])) continue;
+    const quote = opts.evidence?.[field];
+    const source: FieldSource =
+      quote && opts.source.kind === "transcript" ? { ...opts.source, quote: clip(quote) } : opts.source;
+    provenance[field] = { status: "unknown", source, updated_at };
   }
 
   return { data, provenance };
@@ -279,6 +414,30 @@ export function applyFieldAction(state: IntakeState, action: FieldAction, now = 
   };
 }
 
+/**
+ * The prospect choosing a sourced value over the field's (a document's, in the Upload tab's
+ * conflict dialog), recorded as confirmed with that source. Like a correction, it replaces
+ * whatever the field held, their own answer included, and a replaced value from another kind of
+ * source is noted in also_heard. Invalid values change nothing.
+ */
+export function applyChosenValue(state: IntakeState, field: FieldKey, raw: unknown, source: FieldSource, now = new Date()): IntakeState {
+  const patch = sanitizeChamberPatch({ [field]: raw });
+  if (!(field in patch)) return state;
+  const value = patch[field];
+  const prev = state.provenance[field];
+  const prevValue = state.data[field];
+  // The census isn't ranked, so a replaced roster isn't noted (as in applyExtraction).
+  const displaced =
+    prev && field !== "census" && !isEmpty(prevValue) ? heldValues(prev, prevValue).filter((c) => c.source.kind !== source.kind) : [];
+  return {
+    data: { ...state.data, [field]: value },
+    provenance: {
+      ...state.provenance,
+      [field]: withNotes({ status: "confirmed", source, updated_at: now.toISOString() }, noteHeard(prev?.also_heard, displaced, value)),
+    },
+  };
+}
+
 // ---------- Open items ----------
 
 export type FieldOpenReason = "Conflicting answers" | "Incomplete" | "Prospect to provide" | "Please confirm";
@@ -289,7 +448,8 @@ export interface FieldOpenItem {
   reason: FieldOpenReason;
 }
 
-const REASONS: Partial<Record<FieldStatus, FieldOpenReason>> = {
+/** What the prospect is told about a field in each status that still needs them. */
+export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_applicable">, FieldOpenReason> = {
   conflicting: "Conflicting answers",
   incomplete: "Incomplete",
   unknown: "Prospect to provide",
@@ -298,15 +458,16 @@ const REASONS: Partial<Record<FieldStatus, FieldOpenReason>> = {
 
 /**
  * Fields that still need the prospect: conflicts first, then incomplete, then unknown, then inferred.
- * A field marked not applicable is closed and never listed.
+ * A field marked not applicable is closed and never listed, and a field in `verified` (an advisor
+ * verified it) is settled whatever its status, so it is left out too.
  */
-export function fieldOpenItems(provenance: ProvenanceMap): FieldOpenItem[] {
-  const order: FieldStatus[] = ["conflicting", "incomplete", "unknown", "inferred"];
+export function fieldOpenItems(provenance: ProvenanceMap, verified: ReadonlySet<string> = new Set()): FieldOpenItem[] {
+  const order = ["conflicting", "incomplete", "unknown", "inferred"] as const;
   return order.flatMap((status) =>
-    FIELD_KEYS.filter((f) => provenance[f]?.status === status).map((field) => ({
+    FIELD_KEYS.filter((f) => provenance[f]?.status === status && !verified.has(f)).map((field) => ({
       field,
       label: FIELD_LABELS[field],
-      reason: REASONS[status]!,
+      reason: FIELD_OPEN_REASONS[status],
     })),
   );
 }
@@ -353,6 +514,12 @@ export function parseExtractedStatuses(raw: unknown): Partial<Record<FieldKey, E
   return out;
 }
 
+/** The fields the model marked "unknown": the prospect said they don't know them. The census is never one. */
+export function parseUnknownFields(raw: unknown): FieldKey[] {
+  if (typeof raw !== "object" || raw === null) return [];
+  return Object.entries(raw).flatMap(([k, v]) => (isFieldKey(k) && k !== "census" && v === "unknown" ? [k] : []));
+}
+
 /** Parses the model's per-field evidence quotes. */
 export function parseEvidence(raw: unknown): Partial<Record<FieldKey, string>> {
   const out: Partial<Record<FieldKey, string>> = {};
@@ -369,15 +536,32 @@ export function parseFieldList(raw: unknown): FieldKey[] {
 
 /**
  * Extraction options for a reply to a transcript message. `meta` carries the model's
- * optional field_status, evidence and corrected_fields; the message text is the
- * fallback quote for fields with no evidence of their own.
+ * optional field_status, evidence and corrected_fields, and chamber-extract's prompt_version;
+ * the message text is the fallback quote for fields with no evidence of their own.
  */
-export function transcriptExtraction(message: { id: string; text: string }, meta: unknown): ExtractionOptions {
+export function transcriptExtraction(message: { id: string; text: string; spoken?: boolean }, meta: unknown): ExtractionOptions {
   const m = (typeof meta === "object" && meta !== null ? meta : {}) as Record<string, unknown>;
+  const statuses = parseExtractedStatuses(m.field_status);
+  const unknown = parseUnknownFields(m.field_status);
+  // Speech-to-text mishears ("fifteen" as 50), so a spoken answer is at most inferred until the prospect
+  // confirms it in Review or types it (D33).
+  if (message.spoken) {
+    for (const field of Object.keys(statuses) as FieldKey[]) if (statuses[field] === "confirmed") statuses[field] = "inferred";
+  }
   return {
     source: { kind: "transcript", message_id: message.id, quote: clip(message.text.trim()) },
-    statuses: parseExtractedStatuses(m.field_status),
+    statuses,
     evidence: parseEvidence(m.evidence),
     corrections: parseFieldList(m.corrected_fields),
+    unknown,
   };
+}
+
+/**
+ * Extraction options for a voice <extract>. The agent's prompt lives in ElevenLabs, outside
+ * PROMPT_VERSION, so a prompt_version in what it wrote is never stored as chamber-extract's.
+ */
+export function voiceExtraction(message: { id: string; text: string }, data: unknown): ExtractionOptions {
+  const { prompt_version: _unversioned, ...meta } = (typeof data === "object" && data !== null ? data : {}) as Record<string, unknown>;
+  return transcriptExtraction(message, meta);
 }

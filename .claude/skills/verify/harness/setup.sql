@@ -98,7 +98,7 @@ $$;
 
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
-\i supabase/migrations/20261027090100_outbox_operations.sql
+\i supabase/migrations/20261027090001_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 -- Versioned, validated writes (what the browser's save and certify go through), the chosen PEO, the readiness

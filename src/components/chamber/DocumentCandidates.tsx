@@ -27,11 +27,12 @@ interface DocumentCandidatesProps {
 const PREVIEW_ROWS = 5;
 
 // What Lenore found in one document, side by side with what the intake already holds. Nothing is
-// added until the prospect applies it, and a value that differs from the intake's is only settled
-// in the conflict dialog, where the prospect picks which one is right.
+// added until the prospect applies it. A document outranks what was said in the conversation, so
+// applying it replaces that value; one that differs from the prospect's own answer or another
+// document's is only settled in the conflict dialog, where the prospect picks which one is right.
 const DocumentCandidates = ({ fileName, extraction, data, provenance, onResolve }: DocumentCandidatesProps) => {
   const [conflict, setConflict] = useState<DocumentCandidate | null>(null);
-  const planned = planCandidateMerge(data, extraction.candidates);
+  const planned = planCandidateMerge(data, extraction.candidates, provenance);
   const { notes } = extraction;
   if (planned.length === 0 && notes.length === 0) return null;
   const settled = (c: DocumentCandidate) => Boolean(extraction.applied[c.field] || extraction.kept[c.field]);
@@ -75,6 +76,9 @@ const DocumentCandidates = ({ fileName, extraction, data, provenance, onResolve 
                   <p className="font-mono text-foreground break-words">{formatValue(candidate.field, candidate.value)}</p>
                   {kind === "conflict" && !done && (
                     <p className="text-warning">Your intake has: {formatValue(candidate.field, current)}</p>
+                  )}
+                  {kind === "replace" && !done && (
+                    <p className="text-muted-foreground">Replaces what you told Lenore: {formatValue(candidate.field, current)}</p>
                   )}
                 </div>
                 {done ? (

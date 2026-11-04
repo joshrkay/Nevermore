@@ -61,6 +61,18 @@ describe("TranscriptPanel", () => {
     expect(divider.nextElementSibling).toHaveTextContent("new today");
   });
 
+  it("shows the Chamber's notes apart from the conversation, and each message's time", () => {
+    const at = new Date("2026-11-04T14:34:05Z");
+    const note = createChatMessage("system", "Voice call started", { now: at });
+    const said = createChatMessage("user", "We have twelve people", { now: at, spoken: true });
+    render(panel([note, said, { id: "old", sender: "lenore", text: "Saved before times had dates", timestamp: "02:34 PM" }]));
+    const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    expect(screen.getByText("Voice call started").closest("p")).toHaveTextContent(`Voice call started · ${time}`);
+    expect(screen.getByText("We have twelve people").parentElement).toHaveTextContent(time);
+    expect(screen.getByText("02:34 PM")).toBeInTheDocument();
+    expect(screen.queryByText(at.toISOString())).not.toBeInTheDocument();
+  });
+
   it("shows no marker for a conversation that wasn't restored", () => {
     render(panel(conversation(3)));
     expect(screen.queryByRole("separator")).not.toBeInTheDocument();
