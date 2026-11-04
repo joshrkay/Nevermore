@@ -85,6 +85,7 @@
 \i supabase/migrations/20261104130000_document_scanning.sql
 \i supabase/migrations/20261104131000_certification_file_id_check.sql
 \i supabase/migrations/20261104132000_needs_advisor_action.sql
+\i supabase/migrations/20261104133000_queue_hides_empty_guest_drafts.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

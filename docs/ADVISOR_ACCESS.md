@@ -135,6 +135,11 @@ states plus census work states), employee count, File ID, certification date, pi
 status and completeness. The list carries no census, payroll, DOB, EIN, phone, email or transcript
 content; those are on the detail page, behind the same checks.
 
+Empty guest drafts are left out (migration `20261104133000`): a guest's intake, never certified, with
+nothing the prospect did in it (no answer, provenance, PEO choice, document, or transcript message but
+Lenore's). Since A-1 no new intake is created that way, so these are rows from before then. They are
+still stored and open by their link; a verified prospect's empty draft is still listed.
+
 - **Order**: certified submissions first, newest certification first; intakes not (or no longer)
   certified follow, most recently active first; session id breaks ties so the order never shuffles.
 - **Status filter**, **Needs advisor action only**, **search** (company, contact, File ID; every word
