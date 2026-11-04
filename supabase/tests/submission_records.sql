@@ -124,6 +124,7 @@ DECLARE
   other uuid := pg_temp.new_user();
   sid uuid;
   sid2 uuid;
+  sid3 uuid;
   this_year text := to_char(now() AT TIME ZONE 'UTC', 'YYYY');
   complete jsonb := '{"company_name":"Acme","states":["NY"],"pay_frequency":"bi-weekly"}';
   row_ public.chamber_sessions;
@@ -173,6 +174,17 @@ BEGIN
   IF outcome <> 'ok' THEN RAISE EXCEPTION 'FAIL: could not certify the second intake: %', outcome; END IF;
   IF (SELECT file_id FROM public.chamber_sessions WHERE id = sid2) <> 'EAA-' || this_year || '-0002' THEN
     RAISE EXCEPTION 'FAIL: second File ID is %', (SELECT file_id FROM public.chamber_sessions WHERE id = sid2);
+  END IF;
+
+  -- Past 9999 in a year the number keeps every digit: nothing is cut down to a File ID already taken.
+  RESET ROLE;
+  UPDATE public.submission_reference_counters SET last = 9999 WHERE year = this_year::integer;
+  SET LOCAL ROLE authenticated;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, complete) RETURNING id INTO sid3;
+  outcome := pg_temp.certify(sid3, complete);
+  IF outcome <> 'ok' THEN RAISE EXCEPTION 'FAIL: could not certify the ten-thousandth intake: %', outcome; END IF;
+  IF (SELECT file_id FROM public.chamber_sessions WHERE id = sid3) <> 'EAA-' || this_year || '-10000' THEN
+    RAISE EXCEPTION 'FAIL: the ten-thousandth File ID is %', (SELECT file_id FROM public.chamber_sessions WHERE id = sid3);
   END IF;
 
   -- The same certification sent again (a second click, a retry): nothing new is recorded.
@@ -225,9 +237,11 @@ BEGIN
      <> ARRAY['Acme', 'Acme', 'Acme Inc'] THEN
     RAISE EXCEPTION 'FAIL: not every submitted version is recoverable';
   END IF;
-  IF (SELECT chosen_peo FROM public.chamber_certifications WHERE session_id = sid AND version = 3) IS DISTINCT FROM NULL
-     AND (SELECT chosen_peo FROM public.chamber_certifications WHERE session_id = sid AND version = 3) <> (SELECT chosen_peo FROM public.chamber_sessions WHERE id = sid) THEN
-    RAISE EXCEPTION 'FAIL: chosen_peo on the record differs from the intake''s';
+  -- The record holds the PEO the signer certified, even when the intake's saved choice is empty (an older
+  -- front end sends the PEO with the certification alone).
+  IF (SELECT chosen_peo FROM public.chamber_sessions WHERE id = sid) IS NOT NULL
+     OR (SELECT chosen_peo FROM public.chamber_certifications WHERE session_id = sid AND version = 3) IS DISTINCT FROM 'Acme PEO' THEN
+    RAISE EXCEPTION 'FAIL: the record does not hold the PEO the signer certified';
   END IF;
   RESET ROLE;
 

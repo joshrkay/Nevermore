@@ -171,7 +171,7 @@ describe("server and client intake rules agree", () => {
   // The File ID the database assigns (D15) is one the Manuscript route accepts.
   it("assigns File IDs in the form the Manuscript route accepts", () => {
     const sql = blocks("reference_format").join("\n");
-    expect(sql).toMatch(/format\('EAA-%s-%s', p_year, lpad\(n::text, 4, '0'\)\)/);
+    expect(sql).toMatch(/format\('EAA-%s-%s', p_year, lpad\(n::text, greatest\(4, length\(n::text\)\), '0'\)\)/);
     expect(isFileId("EAA-2026-0001")).toBe(true);
     expect(isFileId("EAA-2026-12345")).toBe(true);
   });

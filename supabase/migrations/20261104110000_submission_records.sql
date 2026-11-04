@@ -3,7 +3,7 @@
 --
 -- * The reference (the File ID) is assigned by the database the first time an intake is certified:
 --   EAA-<year certified, UTC>-<NNNN> from a per-year sequence (submission_reference_counters), zero-padded
---   to four digits and unique across intakes. It is stored on the intake (chamber_sessions.file_id), on every
+--   to at least four digits (past 9999 in a year every digit is kept) and unique across intakes. It is stored on the intake (chamber_sessions.file_id), on every
 --   certification row, and stamped into submission.file_id, which the queue, the emails and the Manuscript
 --   already read. An intake keeps one File ID for good: certifying again, after changed answers or a new
 --   PEO, reuses it. One the browser sends is ignored, and nothing the browser sends can change the column.
@@ -53,7 +53,7 @@ BEGIN
   ON CONFLICT (year) DO UPDATE SET last = c.last + 1
   RETURNING c.last INTO n;
   -- sync:begin reference_format
-  RETURN format('EAA-%s-%s', p_year, lpad(n::text, 4, '0'));
+  RETURN format('EAA-%s-%s', p_year, lpad(n::text, greatest(4, length(n::text)), '0'));
   -- sync:end reference_format
 END;
 $$;
@@ -326,7 +326,9 @@ BEGIN
       NEW.schema_version,
       NEW.chamber_data,
       NEW.field_provenance,
-      NEW.chosen_peo,
+      -- The PEO the signer certified (submission.peo, as the Reckoning sends it); the intake's saved choice
+      -- only when the submission names none, as for a front end from before the choice was saved.
+      COALESCE(NULLIF(btrim(NEW.submission ->> 'peo'), ''), NEW.chosen_peo),
       COALESCE(NEW.submission -> 'documents', '[]'::jsonb)
     );
   ELSIF TG_OP = 'UPDATE' AND OLD.status = 'submitted' AND NEW.status IS DISTINCT FROM 'submitted' THEN
