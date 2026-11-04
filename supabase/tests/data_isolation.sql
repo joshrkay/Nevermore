@@ -82,6 +82,7 @@
 \i supabase/migrations/20261104120000_submission_records.sql
 \i supabase/migrations/20261104121000_voice_failed_ops_kind.sql
 \i supabase/migrations/20261104122000_pipeline_transitions.sql
+\i supabase/migrations/20261104130000_document_scanning.sql
 \i supabase/migrations/20261104131000_needs_advisor_action.sql
 SET client_min_messages = notice;
 
