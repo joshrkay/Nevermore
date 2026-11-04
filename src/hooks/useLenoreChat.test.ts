@@ -415,6 +415,37 @@ describe("useLenoreChat: spoken messages", () => {
     expect(onExtracted.mock.calls.map(([, , m]) => m.id)).toEqual(["v1", "v2"]);
   });
 
+  it("reads a waiting spoken message against what was said before it, never a question Lenore asked after it", async () => {
+    const intake = { data: { ...EMPTY_CHAMBER_DATA }, provenance: {}, messages: [] as ChatMessage[] };
+    const say = (m: ChatMessage) => { intake.messages = [...intake.messages, m]; };
+    const line = (id: string, sender: "user" | "lenore", text: string): ChatMessage => ({ id, sender, text, timestamp: "", spoken: true });
+    const answer: Record<string, (v: unknown) => void> = {};
+    invoke.mockImplementation((_name: string, opts: { body: { message: string } }) => new Promise((r) => { answer[opts.body.message] = r; }));
+    const { result } = mount({ readIntake: () => intake });
+
+    const acme = line("v1", "user", "We're Acme.");
+    say(acme);
+    let first!: Promise<boolean>, second!: Promise<boolean>;
+    act(() => { first = result.current.extractSpoken(acme); });
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    // While "We're Acme." is being read, Lenore asks her next question aloud, and the prospect answers it.
+    say(line("l1", "lenore", "Do you work with any 1099 contractors?"));
+    const yes = line("v2", "user", "Yes.");
+    say(yes);
+    act(() => { second = result.current.extractSpoken(yes); });
+    // Lenore answers "Yes." aloud with her next question before its turn comes.
+    say(line("l2", "lenore", "Do any of them work in California?"));
+    await act(async () => { answer["We're Acme."]({ data: { extracted: {} }, error: null }); await first; });
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+
+    expect(invoke.mock.calls[1][1].body.message).toBe("Yes.");
+    expect(invoke.mock.calls[1][1].body.recent).toEqual([
+      { sender: "user", text: "We're Acme." },
+      { sender: "lenore", text: "Do you work with any 1099 contractors?" },
+    ]);
+    await act(async () => { answer["Yes."]({ data: { extracted: {} }, error: null }); await second; });
+  });
+
   it("says its answers weren't noted when the call fails, and Try again reads it again without a reply", async () => {
     invoke
       .mockResolvedValueOnce({ data: null, error: httpError(429, { code: "rate_limited", request_id: "req-1" }) })
