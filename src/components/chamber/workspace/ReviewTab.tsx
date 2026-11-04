@@ -5,7 +5,7 @@ import { censusPay, classificationLabel, isAssumed } from "@/data/census";
 import { FIELD_LABELS, formatFieldValue, isEmpty, verificationSettles, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import { isSettled } from "@/data/followUp";
 import { openItems } from "@/data/openItems";
-import { REVIEW_FIELDS } from "@/data/reviewFields";
+import { REVIEW_FIELDS, REVIEW_SECTIONS } from "@/data/reviewFields";
 import { SECTION_STATUS_LABELS, sectionStatus, type SectionStatus } from "@/data/sectionStatus";
 import { isRequiredField, missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
 import { certificationBlockingItems, NO_VERIFIED_FIELDS, requiredItems, type RequiredItem } from "@/data/requiredItems";
@@ -46,16 +46,6 @@ interface Row {
 const shown = (value: unknown): string | null =>
   value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0) ? null : formatFieldValue(value);
 
-const SECTIONS: { key: ReviewSection; title: string }[] = [
-  { key: "company", title: "Company" },
-  { key: "workforce", title: "Workforce" },
-  { key: "locations", title: "Locations" },
-  { key: "payroll", title: "Payroll" },
-  { key: "benefits", title: "Benefits" },
-  { key: "workers_comp", title: "Workers' comp" },
-  { key: "operations", title: "Operations & HR" },
-];
-
 const displayOf = (field: FieldKey, value: unknown): string | null => {
   const text = shown(value);
   if (text === null) return null;
@@ -67,7 +57,7 @@ const displayOf = (field: FieldKey, value: unknown): string | null => {
 // Every answer the Manuscript draws on, by section, each editable in place.
 function rowsBySection(data: ChamberData): Record<ReviewSection, Row[]> {
   return Object.fromEntries(
-    SECTIONS.map(({ key }) => [key, REVIEW_FIELDS[key].map((field) => ({ label: FIELD_LABELS[field], field, display: displayOf(field, data[field]) }))]),
+    REVIEW_SECTIONS.map(({ key }) => [key, REVIEW_FIELDS[key].map((field) => ({ label: FIELD_LABELS[field], field, display: displayOf(field, data[field]) }))]),
   ) as Record<ReviewSection, Row[]>;
 }
 
@@ -170,7 +160,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
   const submitted = submittedCategories(uploaded);
   const recommended = missingRecommendedItems(data).filter((item) => open.some((o) => o.key === item.key));
   const rows = rowsBySection(data);
-  const statuses = Object.fromEntries(SECTIONS.map(({ key }) => [key, sectionStatus(key, data, provenance, verified, open)])) as Record<ReviewSection, SectionStatus>;
+  const statuses = Object.fromEntries(REVIEW_SECTIONS.map(({ key }) => [key, sectionStatus(key, data, provenance, verified, open)])) as Record<ReviewSection, SectionStatus>;
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
   const censusStates = [...data.census.reduce((counts, e) => {
     if (e.work_state) counts.set(e.work_state, (counts.get(e.work_state) ?? 0) + 1);
@@ -269,7 +259,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
       {/* Where each section stands, and a way to the one that needs work (C-1) */}
       <nav aria-label="Sections" className="bg-card border border-border rounded-xl p-4">
         <ul className="flex flex-wrap gap-2">
-          {SECTIONS.map(({ key, title }) => (
+          {REVIEW_SECTIONS.map(({ key, title }) => (
             <li key={key}>
               <button
                 type="button"
@@ -307,7 +297,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
         )}
       </div>
 
-      {SECTIONS.map(({ key, title }) => (
+      {REVIEW_SECTIONS.map(({ key, title }) => (
         <Section key={key} section={key} title={title} progress={sectionProgress(key, data, provenance, verified)} status={statuses[key]}>
           {renderRows(rows[key])}
 

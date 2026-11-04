@@ -2,8 +2,8 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  ADVISOR_SETTABLE_STATUSES,
   isPipelineStatus,
+  nextPipelineStatuses,
   PIPELINE_LABELS,
   PROSPECT_STATUS_MESSAGES,
   prospectStatusAfter,
@@ -27,12 +27,15 @@ interface StatusPanelProps {
 
 const label = (s: string | null) => (s && isPipelineStatus(s) ? PIPELINE_LABELS[s] : s ?? "—");
 
+/** How an option reads in the list: reopening an archived file is named as such. */
+const optionLabel = (current: PipelineStatus, s: PipelineStatus) =>
+  current === "archived" && s === "submitted" ? `${PIPELINE_LABELS[s]} (reopen)` : PIPELINE_LABELS[s];
+
 const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOnce, history, onChanged }: StatusPanelProps) => {
-  // The database refuses anything but Archived for an intake that was never certified.
-  const options = certifiedOnce ? ADVISOR_SETTABLE_STATUSES : (["archived"] as const);
-  const [next, setNext] = useState<PipelineStatus>(
-    !certifiedOnce ? "archived" : status === "draft" ? "under_review" : status,
-  );
+  // Only the next steps from where the intake is now, as the database allows (one step at a time; a
+  // never-certified intake can only be archived).
+  const options = nextPipelineStatuses(status, certifiedOnce);
+  const [next, setNext] = useState<PipelineStatus>(status);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const seen = prospectStatusAfter(next, history);
@@ -42,8 +45,12 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
   const afterCertifying = next === "information_requested" ? "submitted" : seen;
   const afterCertifyingMessage = afterCertifying ? PROSPECT_STATUS_MESSAGES[afterCertifying] : undefined;
   const hint = !certifiedOnce
-    ? "The prospect hasn't certified this intake, so it can only be archived. They see no status until they certify."
-    : !certified
+    ? options.length === 0
+      ? "Archived before the prospect certified. It returns as Submitted if they certify."
+      : "The prospect hasn't certified this intake, so it can only be archived. They see no status until they certify."
+    : status === "draft" && next === status
+      ? "The prospect withdrew their certification by changing an answer, so it can only be archived until they certify again."
+      : !certified
       ? `The prospect sees no status while their certification is withdrawn${afterCertifyingMessage ? `; once they certify again: “${afterCertifyingMessage}”` : ""}.`
       : seenMessage
         ? `The prospect will see: “${seenMessage}”${PROSPECT_STATUS_MESSAGES[next] ? "" : " (the status itself stays internal)"}`
@@ -77,12 +84,20 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
           id="next-status"
           value={next}
           onChange={(e) => setNext(e.target.value as PipelineStatus)}
-          className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
+          disabled={options.length === 0}
+          aria-describedby="next-status-steps"
+          className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm disabled:opacity-50"
         >
+          <option value={status}>{PIPELINE_LABELS[status]} (current)</option>
           {options.map((s) => (
-            <option key={s} value={s}>{PIPELINE_LABELS[s]}</option>
+            <option key={s} value={s}>{optionLabel(status, s)}</option>
           ))}
         </select>
+        <p id="next-status-steps" className="text-xs text-muted-foreground">
+          {options.length === 0
+            ? "No status change is available."
+            : `From ${PIPELINE_LABELS[status]} it can move to ${options.map((s) => optionLabel(status, s)).join(", ")}.`}
+        </p>
         <p className="text-xs text-muted-foreground">{hint}</p>
         <label htmlFor="status-note" className="block text-xs text-muted-foreground pt-1">Internal note (optional)</label>
         <textarea

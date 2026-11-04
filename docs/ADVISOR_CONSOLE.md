@@ -29,7 +29,8 @@ US-5.3 asks for. Who may open what is in `docs/ADVISOR_ACCESS.md`, and the terms
   the Submission (each version keeps its own copy of what was certified), keeps its File ID, and sends
   an "Updated Intake" Advisor Alert.
 - **Advisors own the pipeline status.** They change it only through `set_submission_status()`, which
-  records who, when, from, to and why. The system makes two moves itself. Certifying moves a draft
+  records who, when, from, to and why, and moves it one step at a time: only to a stage the allow-list
+  names for the current one (`docs/ADVISOR_ACCESS.md`). The system makes two moves itself. Certifying moves a draft
   to `submitted`. A withdrawn certification moves `submitted` back to `draft`, but only while no
   advisor has moved it on.
 - **Advisors own notes.** Notes are internal, can't be edited or deleted, and prospects never see

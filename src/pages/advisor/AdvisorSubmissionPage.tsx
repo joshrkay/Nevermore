@@ -146,8 +146,8 @@ const Detail = ({
             messageIds={messageIds}
             onShowMessage={onShowMessage}
             onChanged={reload}
+            census={<CensusTable detail={detail} />}
           />
-          <CensusTable detail={detail} />
           <TranscriptEvidence
             messages={detail.transcript}
             highlighted={highlighted}
@@ -217,9 +217,10 @@ const ChangedSinceSigning = ({ detail, signed }: { detail: SubmissionDetail; sig
   );
 };
 
+/** The census as the Manuscript prints it, under the census's row in the Workforce section. */
 const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
-  <section aria-labelledby="census-heading" className="border border-border rounded-xl p-5">
-    <h2 id="census-heading" className="font-display text-lg font-bold mb-3">Employee census</h2>
+  <section aria-labelledby="census-heading" className="border border-border rounded-lg p-4">
+    <h4 id="census-heading" className="text-sm font-medium mb-3">Employee census</h4>
     {detail.data.census.length === 0 ? (
       <p className="text-sm text-muted-foreground">No census captured.</p>
     ) : (

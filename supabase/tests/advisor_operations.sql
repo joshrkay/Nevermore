@@ -115,6 +115,7 @@ $$;
 \i supabase/migrations/20261104113000_share_reviewed_manuscript.sql
 \i supabase/migrations/20261104114000_paged_advisor_queue.sql
 \i supabase/migrations/20261104115000_advisor_review_followups.sql
+\i supabase/migrations/20261104122000_pipeline_transitions.sql
 
 -- Runs `stmt` as `who` and fails the run unless it's refused (permission, row security or a
 -- deliberate check).
@@ -920,7 +921,11 @@ BEGIN
   SET LOCAL ROLE authenticated;
   PERFORM pg_temp.as_user(adv, 'adv@example.com');
   PERFORM public.set_submission_status(sid, 'information_requested');
-  PERFORM public.set_submission_status(sid, 'sent_to_carrier', 'Got it by email');
+  -- Information that arrives by email is reviewed again before the file goes out.
+  PERFORM pg_temp.must_refuse(format('SELECT public.set_submission_status(%L, ''sent_to_carrier'')', sid), 'skipping review after a request for information');
+  PERFORM public.set_submission_status(sid, 'under_review', 'Got it by email');
+  PERFORM public.set_submission_status(sid, 'ready_for_market');
+  PERFORM public.set_submission_status(sid, 'sent_to_carrier');
   PERFORM pg_temp.as_user(owner, 'o@example.com');
   IF public.prospect_submission_status(sid) IS DISTINCT FROM 'under_review' THEN
     RAISE EXCEPTION 'FAIL: after the advisor moved on, the prospect was told %', public.prospect_submission_status(sid);
@@ -951,6 +956,153 @@ BEGIN
   END IF;
 
   RAISE NOTICE 'pipeline follows the prospect: all cases passed';
+END $$;
+
+-- ====================================================================================
+-- The pipeline moves one step at a time (F-4.1, 20261104122000): an advisor can only move an intake to a
+-- stage the allow-list names for its current stage. `ready_for_market` is a stage, and internal.
+-- ====================================================================================
+
+DO $$
+DECLARE
+  adv uuid := gen_random_uuid();
+  owner uuid := gen_random_uuid();
+  sid uuid;
+  draft_sid uuid;
+  data jsonb := '{"company_name":"Acme","states":["CA"],"pay_frequency":"Bi-weekly"}';
+  edited jsonb := '{"company_name":"Acme Inc","states":["CA"],"pay_frequency":"Bi-weekly"}';
+  cert jsonb := '{"signer_name":"Jo Doe","signer_title":"CEO","signed_at":"2026-05-01T12:00:00Z","file_id":"EAA-2026-STEP","consent_version":"v1","consent_text":"I certify."}';
+  stages text[] := ARRAY['draft', 'submitted', 'under_review', 'information_requested', 'ready_for_market', 'sent_to_carrier', 'quoted', 'won', 'lost', 'archived'];
+  stage text;
+  target text;
+  r record;
+  n int;
+  msg text;
+BEGIN
+  INSERT INTO auth.users (id) VALUES (adv), (owner);
+  INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor');
+
+  -- ---------- The allow-list itself ----------
+  -- Every stage has a way on, every target is a stage an advisor can set, and none points at itself.
+  FOREACH stage IN ARRAY stages LOOP
+    IF cardinality(public.pipeline_next_statuses(stage)) = 0 THEN
+      RAISE EXCEPTION 'FAIL: % has no way on', stage;
+    END IF;
+    FOREACH target IN ARRAY public.pipeline_next_statuses(stage) LOOP
+      IF NOT target = ANY (stages) OR target IN ('draft', stage) THEN
+        RAISE EXCEPTION 'FAIL: % lists % as a next stage', stage, target;
+      END IF;
+    END LOOP;
+    -- Every open stage can be archived; archived itself only reopens.
+    IF stage <> 'archived' AND NOT 'archived' = ANY (public.pipeline_next_statuses(stage)) THEN
+      RAISE EXCEPTION 'FAIL: % can''t be archived', stage;
+    END IF;
+  END LOOP;
+  IF public.pipeline_next_statuses('archived') IS DISTINCT FROM ARRAY['submitted'] THEN
+    RAISE EXCEPTION 'FAIL: archived reopens to %', public.pipeline_next_statuses('archived');
+  END IF;
+  IF cardinality(public.pipeline_next_statuses('pending')) <> 0 THEN RAISE EXCEPTION 'FAIL: an unknown stage has next stages'; END IF;
+  -- The table holds the new stage.
+  PERFORM 1 FROM pg_constraint WHERE conname = 'submission_workflow_status_check'
+    AND pg_get_constraintdef(oid) LIKE '%ready_for_market%';
+  IF NOT FOUND THEN RAISE EXCEPTION 'FAIL: submission_workflow doesn''t accept ready_for_market'; END IF;
+  -- Only the advisor function reads it.
+  IF has_function_privilege('authenticated', 'public.pipeline_next_statuses(text)', 'EXECUTE')
+     OR has_function_privilege('anon', 'public.pipeline_next_statuses(text)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'FAIL: pipeline_next_statuses is callable from the API';
+  END IF;
+
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.as_user(owner, 'o@example.com');
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (owner, data) RETURNING id INTO sid;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (owner, data) RETURNING id INTO draft_sid;
+  UPDATE public.chamber_sessions SET status = 'submitted', submission = cert || jsonb_build_object('chamber_data', data) WHERE id = sid;
+
+  -- ---------- No skipping ahead ----------
+  PERFORM pg_temp.as_user(adv, 'adv@example.com');
+  FOREACH target IN ARRAY ARRAY['ready_for_market', 'sent_to_carrier', 'quoted', 'won'] LOOP
+    PERFORM pg_temp.must_refuse(format('SELECT public.set_submission_status(%L, %L)', sid, target), 'submitted straight to ' || target);
+  END LOOP;
+  -- A refused move changes nothing and writes no history.
+  SELECT count(*) INTO n FROM public.submission_status_history WHERE session_id = sid;
+  BEGIN
+    PERFORM public.set_submission_status(sid, 'won');
+    RAISE EXCEPTION 'FAIL: submitted straight to won was allowed';
+  EXCEPTION WHEN invalid_parameter_value THEN
+    GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+  END;
+  IF msg IS DISTINCT FROM 'A submission can''t move from submitted to won. From submitted it can move to: under review, information requested, lost, archived' THEN
+    RAISE EXCEPTION 'FAIL: the refusal said %', msg;
+  END IF;
+  IF (SELECT status FROM public.submission_workflow WHERE session_id = sid) IS DISTINCT FROM 'submitted'
+     OR (SELECT count(*) FROM public.submission_status_history WHERE session_id = sid) <> n THEN
+    RAISE EXCEPTION 'FAIL: a refused move changed the pipeline';
+  END IF;
+
+  -- ---------- The way through, one step at a time ----------
+  PERFORM public.set_submission_status(sid, 'under_review');
+  PERFORM pg_temp.must_refuse(format('SELECT public.set_submission_status(%L, ''quoted'')', sid), 'under review straight to quoted');
+  PERFORM public.set_submission_status(sid, 'ready_for_market', 'Packet checked');
+  SELECT * INTO r FROM public.submission_status_history WHERE session_id = sid ORDER BY id DESC LIMIT 1;
+  IF r.from_status IS DISTINCT FROM 'under_review' OR r.to_status IS DISTINCT FROM 'ready_for_market'
+     OR r.changed_by IS DISTINCT FROM adv OR r.note IS DISTINCT FROM 'Packet checked' THEN
+    RAISE EXCEPTION 'FAIL: ready for market was recorded as %', r;
+  END IF;
+  SELECT count(*) INTO n FROM public.advisor_list_submissions('ready_for_market') WHERE session_id = sid;
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: the queue filter didn''t find ready for market'; END IF;
+  -- Ready for market is internal: the prospect still hears the last status we share.
+  PERFORM pg_temp.as_user(owner, 'o@example.com');
+  IF public.prospect_submission_status(sid) IS DISTINCT FROM 'under_review' THEN
+    RAISE EXCEPTION 'FAIL: ready for market reached the prospect as %', public.prospect_submission_status(sid);
+  END IF;
+  PERFORM pg_temp.as_user(adv, 'adv@example.com');
+  PERFORM public.set_submission_status(sid, 'sent_to_carrier');
+  PERFORM public.set_submission_status(sid, 'quoted');
+  PERFORM public.set_submission_status(sid, 'won');
+
+  -- ---------- A closed file is archived, and an archived one reopens as submitted ----------
+  PERFORM pg_temp.must_refuse(format('SELECT public.set_submission_status(%L, ''under_review'')', sid), 'won straight back to under review');
+  PERFORM pg_temp.must_refuse(format('SELECT public.set_submission_status(%L, ''lost'')', sid), 'won straight to lost');
+  PERFORM public.set_submission_status(sid, 'archived', 'Closed');
+  PERFORM pg_temp.must_refuse(format('SELECT public.set_submission_status(%L, ''under_review'')', sid), 'archived straight to under review');
+  PERFORM pg_temp.must_refuse(format('SELECT public.set_submission_status(%L, ''won'')', sid), 'archived straight to won');
+  PERFORM public.set_submission_status(sid, 'submitted', 'Prospect came back');
+  SELECT * INTO r FROM public.submission_status_history WHERE session_id = sid ORDER BY id DESC LIMIT 1;
+  IF r.from_status IS DISTINCT FROM 'archived' OR r.to_status IS DISTINCT FROM 'submitted' OR r.note IS DISTINCT FROM 'Prospect came back' THEN
+    RAISE EXCEPTION 'FAIL: reopening was recorded as %', r;
+  END IF;
+  PERFORM public.set_submission_status(sid, 'under_review');
+
+  -- ---------- Draft is the system's stage ----------
+  -- A certification withdrawn at submitted returns the intake to draft; until the prospect certifies
+  -- again it can only be archived.
+  PERFORM public.set_submission_status(sid, 'archived');
+  PERFORM public.set_submission_status(sid, 'submitted');
+  PERFORM pg_temp.as_user(owner, 'o@example.com');
+  UPDATE public.chamber_sessions SET chamber_data = edited WHERE id = sid;
+  IF (SELECT status FROM public.chamber_sessions WHERE id = sid) IS DISTINCT FROM 'in_progress' THEN
+    RAISE EXCEPTION 'FAIL: changing an answer didn''t withdraw the certification';
+  END IF;
+  PERFORM pg_temp.as_user(adv, 'adv@example.com');
+  IF (SELECT status FROM public.submission_workflow WHERE session_id = sid) IS DISTINCT FROM 'draft' THEN
+    RAISE EXCEPTION 'FAIL: a withdrawal at submitted left the pipeline at %', (SELECT status FROM public.submission_workflow WHERE session_id = sid);
+  END IF;
+  PERFORM pg_temp.must_refuse(format('SELECT public.set_submission_status(%L, ''under_review'')', sid), 'reviewing a withdrawn certification');
+  -- The prospect's own certification moves it on, whatever the allow-list says about draft.
+  PERFORM pg_temp.as_user(owner, 'o@example.com');
+  UPDATE public.chamber_sessions SET status = 'submitted', submission = cert || jsonb_build_object('chamber_data', edited, 'signed_at', '2026-05-02T12:00:00Z') WHERE id = sid;
+  PERFORM pg_temp.as_user(adv, 'adv@example.com');
+  IF (SELECT status FROM public.submission_workflow WHERE session_id = sid) IS DISTINCT FROM 'submitted' THEN
+    RAISE EXCEPTION 'FAIL: certifying again didn''t return the intake to submitted';
+  END IF;
+
+  -- An archived draft the prospect never certified can't be reopened by an advisor: it comes back when
+  -- the prospect certifies.
+  PERFORM public.set_submission_status(draft_sid, 'archived');
+  PERFORM pg_temp.must_refuse(format('SELECT public.set_submission_status(%L, ''submitted'')', draft_sid), 'reopening a draft the prospect never certified');
+  RESET ROLE;
+
+  RAISE NOTICE 'pipeline transitions: all cases passed';
 END $$;
 
 -- ====================================================================================
@@ -1284,8 +1436,8 @@ BEGIN
 
   SET LOCAL ROLE authenticated;
   PERFORM pg_temp.as_user(adv, 'adv@example.com');
-  PERFORM public.set_submission_status(legacy, 'quoted', 'Older intake, still workable');
-  IF (SELECT status FROM public.submission_workflow WHERE session_id = legacy) IS DISTINCT FROM 'quoted' THEN
+  PERFORM public.set_submission_status(legacy, 'under_review', 'Older intake, still workable');
+  IF (SELECT status FROM public.submission_workflow WHERE session_id = legacy) IS DISTINCT FROM 'under_review' THEN
     RAISE EXCEPTION 'FAIL: an intake certified before certification rows was archive-only';
   END IF;
   -- Its next certification isn't its first: the advisor's status stays.
@@ -1293,7 +1445,7 @@ BEGIN
   UPDATE public.chamber_sessions SET submission = cert || jsonb_build_object('chamber_data', data, 'signed_at', '2026-05-01T12:00:00Z') WHERE id = legacy;
   RESET ROLE;
   SELECT * INTO r FROM public.submission_status_history WHERE session_id = legacy ORDER BY id DESC LIMIT 1;
-  IF (SELECT status FROM public.submission_workflow WHERE session_id = legacy) IS DISTINCT FROM 'quoted'
+  IF (SELECT status FROM public.submission_workflow WHERE session_id = legacy) IS DISTINCT FROM 'under_review'
      OR r.note IS DISTINCT FROM 'Prospect certified the intake again' THEN
     RAISE EXCEPTION 'FAIL: re-certifying an older intake was treated as its first: %', r;
   END IF;

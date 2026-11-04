@@ -116,6 +116,61 @@ describe("AdvisorSubmissionPage", () => {
     expect(screen.getByText("We're about a dozen people.").closest("li")).toHaveAttribute("aria-current", "true");
   });
 
+  it("groups the fields into The Manuscript's seven sections, the census table in Workforce", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    const fields = screen.getByRole("region", { name: "Captured fields" });
+    const sections = within(fields).getAllByRole("region").filter((r) => r.dataset.testid?.startsWith("section-"));
+    expect(sections.map((r) => within(r).getAllByRole("heading")[0].textContent)).toEqual([
+      "Company", "Workforce", "Locations", "Payroll", "Benefits", "Workers' comp", "Operations & HR",
+    ]);
+    expect(within(screen.getByTestId("section-company")).getByTestId("field-company_name")).toBeInTheDocument();
+    expect(within(screen.getByTestId("section-payroll")).getByTestId("field-pay_frequency")).toBeInTheDocument();
+    const workforce = screen.getByTestId("section-workforce");
+    expect(within(workforce).getByTestId("field-employee_count")).toBeInTheDocument();
+    expect(within(workforce).getByTestId("field-census")).toBeInTheDocument();
+    expect(within(workforce).getByRole("heading", { name: "Employee census" })).toBeInTheDocument();
+    // Every field is in exactly one section.
+    const rows = within(fields).getAllByTestId(/^field-/);
+    expect(new Set(rows.map((r) => r.dataset.testid)).size).toBe(rows.length);
+    expect(within(fields).getByRole("navigation", { name: "Field sections" })).toHaveTextContent("CompanyWorkforceLocations");
+  });
+
+  it("badges the prospect's confirmed answers and the advisor's overrides, with totals at the top", async () => {
+    api.loadSubmission.mockResolvedValue(
+      detail({
+        provenance: {
+          company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-01T00:00:00Z" },
+          pay_frequency: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-01T00:00:00Z" },
+          employee_count: { status: "inferred", source: { kind: "transcript", message_id: "m2" }, updated_at: "2026-10-01T00:00:00Z" },
+        },
+        reviews: {
+          pay_frequency: {
+            field: "pay_frequency", review_state: "verified", has_correction: true, corrected_value: "Weekly",
+            reason: "Payroll register", updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z",
+          },
+          employee_count: {
+            field: "employee_count", review_state: "follow_up", has_correction: true, corrected_value: 14,
+            reason: "Payroll", updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z",
+          },
+        },
+      }),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    expect(screen.getByTestId("audit-summary-prospect_confirmed")).toHaveTextContent("Prospect confirmed· 1");
+    expect(screen.getByTestId("audit-summary-advisor_overridden")).toHaveTextContent("Advisor overridden· 1");
+    expect(within(screen.getByTestId("field-company_name")).getByTestId("audit-prospect_confirmed")).toBeInTheDocument();
+    // The override replaces the prospect's confirmed answer, so it shows as overridden, not confirmed.
+    const pay = screen.getByTestId("field-pay_frequency");
+    expect(within(pay).getByTestId("audit-advisor_overridden")).toHaveTextContent("Advisor overridden");
+    expect(within(pay).queryByTestId("audit-prospect_confirmed")).not.toBeInTheDocument();
+    // A correction not yet verified overrides nothing, and an inferred answer isn't the prospect's confirmation.
+    expect(within(screen.getByTestId("field-employee_count")).queryByTestId(/^audit-/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("section-summary-payroll")).toHaveTextContent("1 of 5 verified · 1 advisor overridden");
+    expect(screen.getByTestId("section-summary-company")).toHaveTextContent("0 of 5 verified · 1 prospect confirmed");
+  });
+
   it("changes the status with a note and shows who changed it before", async () => {
     renderPage();
     const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
@@ -138,19 +193,65 @@ describe("AdvisorSubmissionPage", () => {
     renderPage();
     const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
     const select = within(panel).getByLabelText("Change status to");
-    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Archived"]);
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Draft (current)", "Archived"]);
     expect(within(panel).getByText(/can only be archived\. They see no status until they certify/)).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Update status" })).toBeDisabled();
+    fireEvent.change(select, { target: { value: "archived" } });
     api.setStatus.mockResolvedValue(undefined);
     fireEvent.click(within(panel).getByRole("button", { name: "Update status" }));
     await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "archived", ""));
+  });
+
+  it("offers nothing for an archived intake the prospect never certified", async () => {
+    api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", submission: null, pipelineStatus: "archived" }));
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    expect(within(panel).getByLabelText("Change status to")).toBeDisabled();
+    expect(within(panel).getByText("No status change is available.")).toBeInTheDocument();
+    expect(within(panel).getByText(/returns as Submitted if they certify/)).toBeInTheDocument();
   });
 
   it("says the prospect sees nothing while their certification is withdrawn", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", pipelineStatus: "under_review" }));
     renderPage();
     const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
-    expect(within(panel).getAllByRole("option").length).toBe(8);
+    expect(within(panel).getAllByRole("option").length).toBe(5);
     expect(within(panel).getByText(/sees no status while their certification is withdrawn; once they certify again/)).toBeInTheDocument();
+  });
+
+  it("offers only the next steps from the current status, one at a time (F-4.1)", async () => {
+    const reviewing = { id: 3, session_id: "s1", from_status: "submitted", to_status: "under_review", note: null, changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-10-02T12:00:00Z" };
+    api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "under_review", history: [reviewing, ...detail().history] }));
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const select = within(panel).getByLabelText("Change status to");
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Under review (current)", "Information requested", "Ready for market", "Lost", "Archived",
+    ]);
+    expect(within(panel).getByText("From Under review it can move to Information requested, Ready for market, Lost, Archived.")).toBeInTheDocument();
+    // Ready for market is internal: the prospect keeps their last shared status.
+    fireEvent.change(select, { target: { value: "ready_for_market" } });
+    expect(within(panel).getByText(/The prospect will see: “An advisor is reviewing your submission\.” \(the status itself stays internal\)/)).toBeInTheDocument();
+    api.setStatus.mockResolvedValue(undefined);
+    fireEvent.click(within(panel).getByRole("button", { name: "Update status" }));
+    await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "ready_for_market", ""));
+  });
+
+  it("reopens an archived file as submitted, never straight to under review", async () => {
+    api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "archived" }));
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    const select = within(panel).getByLabelText("Change status to");
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Archived (current)", "Submitted (reopen)"]);
+    expect(within(select).queryByRole("option", { name: "Under review" })).not.toBeInTheDocument();
+  });
+
+  it("only archives a certification the prospect withdrew at Submitted, until they certify again", async () => {
+    api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", pipelineStatus: "draft" }));
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
+    expect(within(within(panel).getByLabelText("Change status to")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Draft (current)", "Archived"]);
+    expect(within(panel).getByText(/withdrew their certification by changing an answer, so it can only be archived/)).toBeInTheDocument();
   });
 
   it("says certifying again answers an open request for information", async () => {

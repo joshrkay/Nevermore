@@ -12,6 +12,7 @@ export const PIPELINE_STATUSES = [
   "submitted",
   "under_review",
   "information_requested",
+  "ready_for_market",
   "sent_to_carrier",
   "quoted",
   "won",
@@ -25,6 +26,7 @@ export const PIPELINE_LABELS: Record<PipelineStatus, string> = {
   submitted: "Submitted",
   under_review: "Under review",
   information_requested: "Information requested",
+  ready_for_market: "Ready for market",
   sent_to_carrier: "Sent to carrier/PEO",
   quoted: "Quoted",
   won: "Won",
@@ -32,8 +34,35 @@ export const PIPELINE_LABELS: Record<PipelineStatus, string> = {
   archived: "Archived",
 };
 
-/** Draft is set only by the system, for intakes the prospect hasn't certified. */
-export const ADVISOR_SETTABLE_STATUSES = PIPELINE_STATUSES.filter((s) => s !== "draft");
+/**
+ * Where an advisor can move an intake from each stage: one step at a time, so nothing skips review.
+ * Every open stage can be lost or archived; a closed one (won, lost) can only be archived; an archived
+ * file is reopened as submitted and reviewed again. Draft is the system's stage and can only be archived
+ * until the prospect certifies. What the prospect does moves the pipeline outside this list (certifying
+ * enters it as submitted, and answers a request for information). The database holds the same list
+ * (public.pipeline_next_statuses, migration 20261104122000; src/data/schemaSync.test.ts keeps them equal).
+ */
+export const PIPELINE_TRANSITIONS: Record<PipelineStatus, readonly PipelineStatus[]> = {
+  draft: ["archived"],
+  submitted: ["under_review", "information_requested", "lost", "archived"],
+  under_review: ["information_requested", "ready_for_market", "lost", "archived"],
+  information_requested: ["under_review", "lost", "archived"],
+  ready_for_market: ["under_review", "information_requested", "sent_to_carrier", "lost", "archived"],
+  sent_to_carrier: ["information_requested", "quoted", "lost", "archived"],
+  quoted: ["sent_to_carrier", "won", "lost", "archived"],
+  won: ["archived"],
+  lost: ["archived"],
+  archived: ["submitted"],
+};
+
+/**
+ * The stages an advisor can move an intake to from `current`. An intake the prospect has never certified
+ * can only be archived, and an archived one waits for the prospect to certify.
+ */
+export function nextPipelineStatuses(current: PipelineStatus, certifiedOnce: boolean): readonly PipelineStatus[] {
+  const allowed = PIPELINE_TRANSITIONS[current];
+  return certifiedOnce ? allowed : allowed.filter((s) => s === "archived");
+}
 
 export const isPipelineStatus = (s: unknown): s is PipelineStatus =>
   typeof s === "string" && (PIPELINE_STATUSES as readonly string[]).includes(s);
@@ -221,6 +250,46 @@ export function applyAdvisorReview(data: ChamberData, provenance: ProvenanceMap,
   }
 
   return { data: next, provenance: nextProvenance, corrections, followUps };
+}
+
+// ---------- Audit badges ----------
+
+/**
+ * Whose value an answer in the advisor's review is: the prospect confirmed it themselves, or an advisor's
+ * verified correction replaces it in the advisor Manuscript. An answer that is neither (inferred, still
+ * open, or carrying a correction not yet verified) has no badge.
+ */
+export type AuditBadge = "prospect_confirmed" | "advisor_overridden";
+
+export const AUDIT_BADGES: readonly AuditBadge[] = ["prospect_confirmed", "advisor_overridden"];
+
+export const AUDIT_BADGE_LABELS: Record<AuditBadge, string> = {
+  prospect_confirmed: "Prospect confirmed",
+  advisor_overridden: "Advisor overridden",
+};
+
+/**
+ * Each answer's audit badge. "Advisor overridden" is exactly the corrections applyAdvisorReview applies,
+ * so the badge never disagrees with the Manuscript; it wins over the prospect's own confirmation.
+ */
+export function auditBadges(data: ChamberData, provenance: ProvenanceMap, reviews: ReviewMap): Partial<Record<FieldKey, AuditBadge>> {
+  const overridden = new Set(applyAdvisorReview(data, provenance, reviews).corrections.map((c) => c.field));
+  const badges: Partial<Record<FieldKey, AuditBadge>> = {};
+  for (const field of Object.keys(FIELD_LABELS) as FieldKey[]) {
+    if (overridden.has(field)) badges[field] = "advisor_overridden";
+    else if (provenance[field]?.status === "confirmed") badges[field] = "prospect_confirmed";
+  }
+  return badges;
+}
+
+/** How many of `fields` carry each badge. */
+export function countAuditBadges(badges: Partial<Record<FieldKey, AuditBadge>>, fields: readonly FieldKey[]): Record<AuditBadge, number> {
+  const counts: Record<AuditBadge, number> = { prospect_confirmed: 0, advisor_overridden: 0 };
+  for (const field of fields) {
+    const badge = badges[field];
+    if (badge) counts[badge] += 1;
+  }
+  return counts;
 }
 
 export interface ChangeSinceSigning {
