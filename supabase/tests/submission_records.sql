@@ -373,4 +373,48 @@ BEGIN
   RAISE NOTICE 'submission_records: readiness cases passed';
 END $$;
 
+-- ---------- a File ID another intake carries is never taken back from history ----------
+-- The backfill leaves two intakes whose certifications recorded the same File ID with the older one
+-- carrying it and the other carrying none; the other's next certification takes a fresh one.
+DO $$
+DECLARE
+  uid uuid := pg_temp.new_user();
+  a uuid;
+  b uuid;
+  complete jsonb := '{"company_name":"Acme","states":["NY"],"pay_frequency":"bi-weekly"}';
+  this_year text := to_char(now() AT TIME ZONE 'UTC', 'YYYY');
+  shared text;
+  fresh text;
+  outcome text;
+BEGIN
+  PERFORM pg_temp.as_user(uid);
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.agree();
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, complete) RETURNING id INTO a;
+  IF pg_temp.certify(a, complete) <> 'ok' THEN RAISE EXCEPTION 'FAIL: setup could not certify the first intake'; END IF;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, complete) RETURNING id INTO b;
+  IF pg_temp.certify(b, complete) <> 'ok' THEN RAISE EXCEPTION 'FAIL: setup could not certify the second intake'; END IF;
+  RESET ROLE;
+
+  shared := (SELECT file_id FROM public.chamber_sessions WHERE id = b);
+  ALTER TABLE public.chamber_sessions DISABLE TRIGGER USER;
+  UPDATE public.chamber_sessions SET file_id = NULL WHERE id = b;
+  UPDATE public.chamber_sessions SET file_id = shared WHERE id = a;
+  ALTER TABLE public.chamber_sessions ENABLE TRIGGER USER;
+
+  PERFORM pg_temp.as_user(uid);
+  SET LOCAL ROLE authenticated;
+  UPDATE public.chamber_sessions SET chamber_data = complete || '{"industry":"Print"}' WHERE id = b;
+  outcome := pg_temp.certify(b, complete || '{"industry":"Print"}', '2026-11-06T09:00:00Z');
+  IF outcome <> 'ok' THEN RAISE EXCEPTION 'FAIL: re-certifying the intake whose recorded File ID another intake carries gave %', outcome; END IF;
+  fresh := (SELECT file_id FROM public.chamber_sessions WHERE id = b);
+  IF fresh IS NULL OR fresh = shared OR fresh !~ ('^EAA-' || this_year || '-[0-9]{4,}$') THEN
+    RAISE EXCEPTION 'FAIL: the intake got % instead of a fresh File ID', fresh;
+  END IF;
+  IF (SELECT file_id FROM public.chamber_sessions WHERE id = a) <> shared THEN RAISE EXCEPTION 'FAIL: the older intake lost its File ID'; END IF;
+  IF (SELECT submission ->> 'file_id' FROM public.chamber_sessions WHERE id = b) <> fresh THEN RAISE EXCEPTION 'FAIL: the submission names another File ID'; END IF;
+  RESET ROLE;
+  RAISE NOTICE 'submission_records: shared File ID cases passed';
+END $$;
+
 DO $$ BEGIN RAISE NOTICE 'submission_records: all cases passed'; END $$;

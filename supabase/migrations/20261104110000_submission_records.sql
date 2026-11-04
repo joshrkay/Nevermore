@@ -241,12 +241,14 @@ BEGIN
     END IF;
 
     hash := encode(sha256(convert_to(NEW.chamber_data::text, 'UTF8')), 'hex');
-    -- The intake's own File ID, or the one any earlier certification of it recorded (withdrawn or not),
+    -- The intake's own File ID, or the one any earlier certification of it recorded (withdrawn or not)
+    -- unless another intake carries it (two intakes once shared one; the backfill left it with the older),
     -- or the next one in this year's sequence.
     reference := COALESCE(
       NULLIF(btrim(NEW.file_id), ''),
       (SELECT NULLIF(btrim(c.file_id), '') FROM public.chamber_certifications c
         WHERE c.session_id = NEW.id AND NULLIF(btrim(c.file_id), '') IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM public.chamber_sessions o WHERE o.file_id = btrim(c.file_id) AND o.id <> NEW.id)
         ORDER BY c.recorded_at DESC, c.id DESC LIMIT 1),
       public.next_submission_reference(EXTRACT(YEAR FROM (now() AT TIME ZONE 'UTC'))::integer)
     );
