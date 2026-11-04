@@ -170,14 +170,14 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | C Review, certify, submit | 10 | 0 | 0 | 0 | 0 | 10 |
 | D Manuscript | 9 | 0 | 0 | 0 | 1 | 10 |
 | E Documents | 8 | 0 | 3 | 0 | 0 | 11 |
-| F Advisor | 7 | 3 | 1 | 0 | 0 | 11 |
+| F Advisor | 8 | 2 | 1 | 0 | 0 | 11 |
 | G Communications | 6 | 0 | 2 | 0 | 0 | 8 |
 | H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
 | I Quality and accessibility | 3 | 9 | 0 | 1 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **64** | **22** | **11** | **4** | **5** | **106** |
+| **Total** | **65** | **21** | **11** | **4** | **5** | **106** |
 
-45 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 24 of 39 M2; 6 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+45 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 25 of 39 M2; 6 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -947,7 +947,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 
 ### Epic F: Build the Advisor Workflow
 
-*As built:* The advisor workflow is largely built on RLS and database functions, with a strong access matrix test. The submission-level Needs advisor action marker and its queue filter (F-4.3) are built. The gap left is pagination.
+*As built:* The advisor workflow is largely built on RLS and database functions, with a strong access matrix test. The submission-level Needs advisor action marker and its queue filter (F-4.3) are built. Left: the MFA decision for advisor accounts (F-1.3) and the queue's sort order against 'newest submitted first' (F-2.1).
 
 #### F-1.1 Role model
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** F-0.3, D5 · **Milestone:** M2
@@ -967,12 +967,13 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 #### F-2.1 Submission queue
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** FS · **Depends:** F-1.2, C-3.1 · **Milestone:** M2
 - **Built:** `advisor_list_submissions` returns the required columns and no census or payroll, 25 a page with the total (`p_limit`, `p_offset`), read as its owner after its advisor check (on 20,000 intakes a page takes about 75 ms; the old function took 4.5 s for the whole list, which the page loaded every time). A certified intake's completeness comes from its certified copy, and a verified advisor correction supplies a missing item (migration `20261104114000`). Row-to-detail is tested.
-- **Remaining:** The sort is certified-first then recently active drafts, not 'newest submitted first'. 'Authorized' means every advisor sees every intake (D16). Empty guest drafts are still listed.
+- **Built (2.10):** Empty guest drafts are left out: a guest's intake, never certified, holding nothing the prospect did (no answer, provenance, PEO choice, document, or transcript message but Lenore's), which since A-1 are only rows from before then (`intake_holds_nothing`, migration `20261104133000`, `supabase/tests/queue_empty_guest_drafts.sql`). A verified prospect's empty draft is still listed.
+- **Remaining:** The sort is certified-first then recently active drafts, not 'newest submitted first'. 'Authorized' means every advisor sees every intake (D16).
 
 #### F-2.2 Filter and search
-- **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** F-2.1 · **Milestone:** M2
-- **Built:** The status filter and search (company, contact, reference; every word must match) run in the database, and search waits for a pause in typing. Status, search and page are in the URL. Loading, empty, no-match, past-the-end and error states. Tested.
-- **Remaining:** No 3-character minimum.
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** F-2.1 · **Milestone:** M2
+- **Built:** The status filter and search (company, contact, reference; every word must match) run in the database, and search waits for a pause in typing and for at least 3 characters other than spaces; below that the box says so and the queue lists every submission (`queueSearchTerm`). Status, search and page are in the URL; a link with a shorter search counts as none. Loading, empty, no-match, past-the-end and error states. Tested.
+- **Notes:** The minimum is the browser's: the database still answers a shorter search sent to it directly.
 
 #### F-3.1 Submission detail: structured sections
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** FS · **Depends:** F-2.1, C-3.2 · **Milestone:** M2
@@ -1393,7 +1394,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | F-1.2 | Advisor routes and backend enforcement | M | High | M2 | DONE |
 | F-1.3 | Sign-in, sign-out, and unauthorized states | S | High | M2 | PARTIAL |
 | F-2.1 | Submission queue | M | High | M2 | PARTIAL |
-| F-2.2 | Filter and search | S | High | M2 | PARTIAL |
+| F-2.2 | Filter and search | S | High | M2 | DONE |
 | F-3.1 | Submission detail: structured sections | M | High | M2 | DONE |
 | F-3.2 | Transcript evidence and documents in detail | M | High | M2 | DONE |
 | F-3.3 | Advisor edits tracked separately | M | High | M2 | SUPERSEDED |
