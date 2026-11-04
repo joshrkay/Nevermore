@@ -38,6 +38,7 @@ answers, file names, messages, addresses or links.
 | `ai_failed` | Counted from `ai_extraction_events`, the record `chamber-extract` and `document-extract` keep of every call (US-2.4a, `docs/AI_OPERATIONS.md`), when the call failed on our side or the provider's (`<function>:<code>`: `chamber-extract:timeout`, `document-extract:provider_error`, `…:unavailable` for a provider that isn't set up or is out of credit, `…:invalid_response`, `…:internal`). Refusals (bad request, signed out, rate limit, daily cap) are not failures. Plus the browser when `chamber-extract` never answered (`chat_timeout`, `chat_unreachable`, `chat:<5xx>`) | |
 | `auth_denied` | The browser: a signed-in non-advisor on an advisor page (`advisor_route`), the database refusing an advisor read (`advisor_forbidden`) | |
 | `deletion_failed` | `fail_intake_deletion` when a deletion has used every attempt, and `claim_intake_deletions` when a worker died on the last one | `storage_remove:<status>`, `files_remain:<n>`, `rpc_files:<code>`, `rpc_complete:<code>`, `unexpected`, `worker_lost` |
+| `voice_failed` | The browser, when a voice call with Lenore (ElevenLabs) fails on our side or the service's (`src/hooks/useLenoreVoice.ts`, `docs/VOICE_ISSUES.md`). A microphone the prospect blocked or doesn't have is shown to them and not reported | `voice_connect_timeout` (no connection 15 seconds after the microphone was ready), `voice_connect_failed` (the connection was refused), `voice_dropped:<close code>` (a call under way closed with an error), `voice_error` (the service reported an error during a call that carried on) |
 
 The browser's reports go through `public.report_client_event`, which drops reports past 30 an hour per
 account, 200 an hour for all signed-out visitors together and 2,000 an hour overall, so a broken page or
@@ -58,6 +59,7 @@ to it. `ops-monitor` runs every five minutes, raises each kind at most once per 
 | `ai_failed` | 5 events | 15 minutes | 60 minutes | [AI failures](#ai-failures) |
 | `auth_denied` | 20 events | 15 minutes | 60 minutes | [Authorization failures](#authorization-failures) |
 | `deletion_failed` | 1 event | 60 minutes | 60 minutes | [Deletion failed](#deletion-failed) |
+| `voice_failed` | 5 events | 15 minutes | 60 minutes | [Voice failures](#voice-failures) |
 
 Alerts that come from elsewhere:
 
@@ -223,6 +225,24 @@ Follow-ups:
    if it persists.
 4. If anything suggests data was read that shouldn't have been, it is a SEV-1: go to
    [Suspected data exposure](#suspected-data-exposure).
+
+### Voice failures
+
+`OPS_ALERT kind=voice_failed`. Voice is an opt-in beta: text always works, and every failure tells the prospect
+so with a "Continue in text" button, so this is never a SEV-1 on its own.
+
+1. By code: many `voice_connect_timeout` or `voice_connect_failed`: ElevenLabs is down or refusing the agent
+   (status.elevenlabs.io; the agent still exists and `VITE_ELEVENLABS_AGENT_ID` names it; the account has
+   credit). `voice_dropped:1006` from many accounts: connections are being cut (the service, or a network path
+   between it and prospects); from one account, that prospect's network (1006 is a connection cut with no
+   goodbye). Any other close code: the service closed the call itself, and the conversation's history in the
+   ElevenLabs dashboard says why. `voice_dropped` with no code: the service ended the call with an error
+   message rather than a close (the SDK does this when a call reaches its maximum duration). `voice_error`:
+   errors the service reported during calls that carried on.
+2. The detail and the intake id are in `ops_events`. Each cause found, and its fix, goes in
+   `docs/VOICE_ISSUES.md`.
+3. If voice stays broken, unset `VITE_ELEVENLABS_AGENT_ID` and redeploy: the "Speak with Lenore" button goes
+   and the Chamber is text only, with nothing else changed.
 
 ### Deletion failed
 

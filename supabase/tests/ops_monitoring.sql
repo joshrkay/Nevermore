@@ -41,6 +41,7 @@
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
+\i supabase/migrations/20261104121000_voice_failed_ops_kind.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -376,6 +377,45 @@ BEGIN
   PERFORM pg_temp.check(n = 1, 'the summary includes AI call failures');
   PERFORM pg_temp.signed_out();
   RAISE NOTICE 'ops_monitoring: AI call record cases passed';
+END $$;
+
+-- ---------- voice failures (I-5.1, US-2.3c) ----------
+DO $$
+DECLARE
+  prospect uuid := (SELECT id FROM fx WHERE name = 'prospect');
+  mine uuid := (SELECT id FROM fx WHERE name = 'mine');
+  r record;
+  n integer;
+BEGIN
+  DELETE FROM public.ops_events;
+  DELETE FROM public.ops_alerts;
+
+  -- The browser reports a call that dropped, against the intake it was in.
+  PERFORM pg_temp.as_user(prospect);
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.check(public.report_client_event('voice_failed', 'voice_dropped:1006', 'Connection lost', '/start', mine), 'a voice failure is kept');
+  RESET ROLE;
+  PERFORM pg_temp.check((SELECT code = 'voice_dropped:1006' AND session_id = mine AND source = 'browser' FROM public.ops_events WHERE kind = 'voice_failed'),
+    'with its code and intake');
+
+  -- It alerts at five in fifteen minutes, not four.
+  PERFORM pg_temp.seed('voice_failed', 3, interval '5 minutes', 'browser', 'voice_connect_timeout');
+  SET LOCAL ROLE service_role;
+  SELECT count(*) INTO n FROM public.claim_ops_alerts() a WHERE a.kind = 'voice_failed';
+  RESET ROLE;
+  PERFORM pg_temp.check(n = 0, 'four voice failures raise nothing');
+  PERFORM pg_temp.seed('voice_failed', 1, interval '1 minute', 'browser', 'voice_connect_timeout');
+  SET LOCAL ROLE service_role;
+  SELECT * INTO r FROM public.claim_ops_alerts() a WHERE a.kind = 'voice_failed';
+  RESET ROLE;
+  PERFORM pg_temp.check(r.event_count = 5 AND r.threshold = 5 AND r.window_minutes = 15, format('five raise it (%s)', r.event_count));
+  PERFORM pg_temp.check(r.top_codes = 'voice_connect_timeout x4, voice_dropped:1006 x1', format('codes: %s', r.top_codes));
+
+  -- Only the browser's kinds and this one: a made-up kind is still refused by the table.
+  PERFORM pg_temp.check(pg_temp.state_of($q$INSERT INTO public.ops_events (kind, source) VALUES ('voice_made_up', 'browser')$q$) = '23514',
+    'the table refuses an unknown kind');
+  PERFORM pg_temp.signed_out();
+  RAISE NOTICE 'ops_monitoring: voice failure cases passed';
 END $$;
 
 DO $$ BEGIN RAISE NOTICE 'ops_monitoring: all cases passed'; END $$;

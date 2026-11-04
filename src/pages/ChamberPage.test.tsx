@@ -5,6 +5,8 @@ import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
 import type { IntakeState, ProvenanceMap } from "@/data/provenance";
 import { READY_MESSAGE } from "@/data/followUp";
+import type { OrbState } from "@/components/chamber/VoiceOrb";
+import type { VoiceState } from "@/data/voiceSession";
 
 const session = {
   sessionId: null as string | null,
@@ -40,14 +42,19 @@ const session = {
 // What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
 const hooks = {
   workspace: null as null | { verified?: ReadonlySet<string> },
-  voice: null as null | { onSpokenMessage: (message: ChatMessage) => unknown; context: string },
+  voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
   chat: null as null | {
-    onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string; spoken?: boolean }) => void;
-    readIntake?: unknown;
+    onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string }) => void;
+    onOrbStateChange: (state: OrbState) => void;
   },
+  orb: null as null | { orbState: OrbState; voice: VoiceState; onTypeInstead: () => void },
 };
-const extractSpoken = vi.fn();
-const voice = { isConnected: false };
+const voice = {
+  isConnected: false,
+  state: { status: "idle", attempt: 0 } as VoiceState,
+  dismissFailure: vi.fn(),
+};
+let mobile = false;
 const auth = {
   isAnonymous: true,
   requestSignInCode: vi.fn(async () => ({ error: null, noAccount: false })),
@@ -63,12 +70,24 @@ vi.mock("@/data/intakeBackup", () => ({ browserStorageWorks: () => storageWorks 
 vi.mock("@/hooks/useLenoreVoice", () => ({
   useLenoreVoice: (options: typeof hooks.voice) => {
     hooks.voice = options;
-    return { startVoice: vi.fn(), isConnected: voice.isConnected, hasAgentId: false };
+    return {
+      voice: voice.state,
+      startVoice: vi.fn(),
+      endVoice: vi.fn(),
+      dismissFailure: voice.dismissFailure,
+      isConnected: voice.isConnected,
+      hasAgentId: false,
+    };
   },
 }));
-vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
-// The orb only shows what Lenore last said; the workspace panes are not what these tests are about.
-vi.mock("@/components/chamber/VoiceOrb", () => ({ default: ({ lastSpokenText }: { lastSpokenText: string }) => <p data-testid="orb">{lastSpokenText}</p> }));
+vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => mobile }));
+// The orb shows what Lenore last said, and is handed the orb state; the workspace panes are not what these tests are about.
+vi.mock("@/components/chamber/VoiceOrb", () => ({
+  default: (props: { lastSpokenText: string; orbState: OrbState; voice: VoiceState; onTypeInstead: () => void }) => {
+    hooks.orb = props;
+    return <p data-testid="orb">{props.lastSpokenText}</p>;
+  },
+}));
 vi.mock("@/components/chamber/TranscriptPanel", () => ({ default: () => null }));
 vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
   default: (props: typeof hooks.workspace) => {
@@ -105,6 +124,9 @@ describe("ChamberPage", () => {
     session.startOver.mockReset().mockResolvedValue(true);
     auth.isAnonymous = true;
     storageWorks = true;
+    mobile = false;
+    voice.state = { status: "idle", attempt: 0 };
+    voice.dismissFailure.mockClear();
     for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges, session.restoreBackup, session.discardBackup, session.updateIntake]) {
       fn.mockClear();
     }
@@ -367,6 +389,40 @@ describe("ChamberPage", () => {
       voice.isConnected = false;
       rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
       expect(notes().map((m) => m.text)).toEqual(["Voice call started"]);
+    });
+  });
+
+  describe("the orb", () => {
+    it("follows the text chat when no call is under way, and the call while one is", () => {
+      renderPage();
+      expect(hooks.orb?.orbState).toBe("idle");
+      act(() => hooks.chat!.onOrbStateChange("thinking"));
+      expect(hooks.orb?.orbState).toBe("thinking");
+
+      voice.state = { status: "active", attempt: 1, speaking: true };
+      act(() => hooks.chat!.onOrbStateChange("idle"));
+      expect(hooks.orb?.orbState).toBe("speaking");
+      expect(hooks.orb?.voice).toEqual(voice.state);
+    });
+  });
+
+  describe("on a phone", () => {
+    beforeEach(() => {
+      mobile = true;
+    });
+
+    it("opens the whole conversation from the chat bar", () => {
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "Read the conversation" }));
+      expect(screen.getByRole("dialog", { name: "Conversation with Lenore" })).toBeInTheDocument();
+    });
+
+    it("continues in text after a voice failure: the notice goes and the cursor is in the input", () => {
+      voice.state = { status: "failed", attempt: 1, failure: "dropped" };
+      renderPage();
+      act(() => hooks.orb!.onTypeInstead());
+      expect(voice.dismissFailure).toHaveBeenCalledTimes(1);
+      expect(screen.getByPlaceholderText("Message Lenore...")).toHaveFocus();
     });
   });
 
