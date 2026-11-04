@@ -24,7 +24,7 @@ export const DOCUMENT_CATEGORIES: DocumentCategoryInfo[] = [
     key: "employee_census",
     label: "Employee census",
     guidance: "One row per employee: name, date of birth, work state, title, pay, and W-2 or 1099.",
-    example: "An employee export from your payroll system.",
+    example: "An employee export from your payroll system, or the census template on this tab.",
     recommended: true,
   },
   {
