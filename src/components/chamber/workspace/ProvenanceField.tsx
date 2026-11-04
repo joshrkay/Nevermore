@@ -208,7 +208,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
       )}
 
       {!editing && onAction && (
-        <div className="flex gap-2 mt-1">
+        <div className="flex flex-wrap gap-2 mt-1">
           {display && !settledByAdvisor && (status === "inferred" || status === "incomplete") && (
             <button
               type="button"

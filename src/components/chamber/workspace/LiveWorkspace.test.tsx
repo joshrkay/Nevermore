@@ -36,6 +36,22 @@ describe("LiveWorkspace", () => {
     }
   });
 
+  it("gives the Your Team tab the census's status and a Confirm button, as every other answer has", () => {
+    const provenance: ProvenanceMap = {
+      census: { status: "inferred", source: { kind: "document", document_id: "d1", document_name: "Roster.xlsx" }, updated_at: "2026-11-03T12:00:00Z" },
+    };
+    const onFieldAction = vi.fn();
+    render(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} provenance={provenance} onFieldAction={onFieldAction} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "⑤ Your Team" }));
+    expect(screen.getByText("From Roster.xlsx")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Census" }));
+    expect(onFieldAction).toHaveBeenCalledWith({ type: "confirm", field: "census" });
+  });
+
   it("moves from Review to PEO Match to The Reckoning", () => {
     render(
       <MemoryRouter>
