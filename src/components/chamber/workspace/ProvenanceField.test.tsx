@@ -6,7 +6,7 @@ import { applyExtraction, applyFieldAction, type FieldProvenance, type IntakeSta
 import CompanyTab from "./CompanyTab";
 import ProvenanceField from "./ProvenanceField";
 import ReviewTab from "./ReviewTab";
-import { VerifiedFieldsContext } from "./verifiedFields";
+import { VerifiedFieldsContext } from "./VerifiedFieldsContext";
 
 const inferred = applyExtraction(
   { data: EMPTY_CHAMBER_DATA, provenance: {} },
@@ -149,10 +149,13 @@ describe("advisor verification and what else was heard", () => {
   const entry = (over: Partial<FieldProvenance> = {}): FieldProvenance => ({ status: "inferred", source: said, updated_at: at, ...over });
 
   // `onAction: null` renders the row read-only, as the demo does.
-  const field = (provenance: FieldProvenance, { verified = [] as string[], onAction = vi.fn() as ((a: never) => void) | null } = {}) =>
+  const field = (
+    provenance: FieldProvenance | undefined,
+    { verified = [] as string[], onAction = vi.fn() as ((a: never) => void) | null, display = "40" as string | null } = {},
+  ) =>
     render(
       <VerifiedFieldsContext.Provider value={new Set(verified)}>
-        <ProvenanceField label="Employee Count" field="employee_count" display="40" raw={40} provenance={provenance} onAction={onAction ?? undefined} />
+        <ProvenanceField label="Employee Count" field="employee_count" display={display} raw={display === null ? null : 40} provenance={provenance} onAction={onAction ?? undefined} />
       </VerifiedFieldsContext.Provider>,
     );
 
@@ -163,6 +166,24 @@ describe("advisor verification and what else was heard", () => {
     expect(screen.queryByRole("button", { name: "Confirm Employee Count" })).not.toBeInTheDocument();
     // The prospect can still change it.
     expect(screen.getByRole("button", { name: "Edit Employee Count" })).toBeInTheDocument();
+  });
+
+  it("keeps the rival answers of a REQUIRED conflict, which still blocks certification whoever verified it", () => {
+    render(
+      <VerifiedFieldsContext.Provider value={new Set(["company_name"])}>
+        <ProvenanceField
+          label="Company legal name"
+          field="company_name"
+          display="Acme Bindery"
+          raw="Acme Bindery"
+          provenance={entry({ status: "conflicting", candidates: [{ value: "Acme Bindery", source: said }, { value: "Acme Press", source: register }] })}
+          onAction={vi.fn()}
+        />
+      </VerifiedFieldsContext.Provider>,
+    );
+    expect(screen.getByText("Conflicting answers")).toBeInTheDocument();
+    expect(screen.queryByText("Verified by your advisor")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use Acme Press for Company legal name" })).toBeInTheDocument();
   });
 
   it("settles an incomplete answer the same way", () => {
@@ -204,6 +225,37 @@ describe("advisor verification and what else was heard", () => {
     unmount();
     field(entry({ also_heard: [{ value: 45, source: register }] }), { onAction: null });
     expect(screen.queryByText(/Also heard/)).not.toBeInTheDocument();
+  });
+
+  it("shows no note for a field with no answer yet, or while the answer is being edited", () => {
+    const heard = entry({ also_heard: [{ value: 45, source: register }] });
+    const { unmount } = field(heard, { display: null });
+    expect(screen.queryByText(/Also heard/)).not.toBeInTheDocument();
+    unmount();
+    field(heard);
+    expect(screen.getByText(/Also heard: 45/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit Employee Count" }));
+    expect(screen.queryByText(/Also heard/)).not.toBeInTheDocument();
+  });
+
+  it("doesn't repeat as also heard an answer the conflict already offers", () => {
+    field(entry({
+      status: "conflicting",
+      candidates: [{ value: 40, source: said }, { value: 45, source: register }],
+      also_heard: [{ value: 40, source: said }, { value: 38, source: { ...said, quote: "closer to 38" } }],
+    }));
+    expect(screen.getByRole("list", { name: "Answers for Employee Count" })).toBeInTheDocument();
+    expect(screen.queryByText(/^Also heard: 40 /)).not.toBeInTheDocument();
+    expect(screen.getByText("Also heard: 38 — From your message: “closer to 38”")).toBeInTheDocument();
+  });
+
+  it("badges a verified value that has no provenance, such as one typed before provenance existed", () => {
+    const { unmount } = field(undefined, { verified: ["employee_count"] });
+    expect(screen.getByText("Verified by your advisor")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit Employee Count" })).toBeInTheDocument();
+    unmount();
+    field(undefined);
+    expect(screen.queryByText("Verified by your advisor")).not.toBeInTheDocument();
   });
 
   it("drops the also-heard note once the prospect confirms the answer", () => {

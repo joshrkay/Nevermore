@@ -13,7 +13,7 @@ import BenefitsTab from "./BenefitsTab";
 import CensusWorkspaceTab from "./CensusWorkspaceTab";
 import DependentsTab from "./DependentsTab";
 import ReviewTab from "./ReviewTab";
-import { VerifiedFieldsContext } from "./verifiedFields";
+import { VerifiedFieldsContext } from "./VerifiedFieldsContext";
 import PEOMatchTab from "../PEOMatchTab";
 import ReckoningTab from "../ReckoningTab";
 

@@ -12,9 +12,11 @@ import {
   type FieldKey,
   type FieldProvenance,
   type FieldSource,
+  verificationSettles,
+  visibleAlsoHeard,
 } from "@/data/provenance";
 import { isRequiredField } from "@/data/readiness";
-import { useVerifiedFields } from "./verifiedFields";
+import { useVerifiedFields } from "./VerifiedFieldsContext";
 
 const BADGES: Record<FieldProvenance["status"], { text: string; color: string }> = {
   confirmed: { text: "Confirmed", color: "bg-success/15 text-success" },
@@ -104,13 +106,16 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
 
   const status = provenance?.status;
   const verifiedByAdvisor = useVerifiedFields().has(field);
-  const settledByAdvisor = verifiedByAdvisor && (status === "inferred" || status === "incomplete" || status === "conflicting");
+  // A required answer in conflict still blocks certification whoever verified it (the database's gate reads the
+  // field's status, not the advisor's review), so it keeps its rival answers to choose between.
+  const settledByAdvisor = verifiedByAdvisor && verificationSettles(status) && !(status === "conflicting" && required);
   // A value the prospect confirmed or typed says so, apart from one Lenore heard stated outright (B-2).
   const badge = onAction && status
     ? settledByAdvisor
       ? VERIFIED_BADGE
       : status === "confirmed" && provenance?.source.kind === "prospect_edit" ? { ...BADGES.confirmed, text: "Confirmed by you" } : BADGES[status]
-    : null;
+    // A value with no provenance (typed before provenance existed) the advisor verified is badged too.
+    : onAction && verifiedByAdvisor ? VERIFIED_BADGE : null;
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
@@ -182,7 +187,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
         <p className="text-[10px] text-muted-foreground mt-0.5 break-words">{sourceLine(provenance.source)}</p>
       )}
 
-      {!editing && onAction && display && provenance?.also_heard?.map((heard, i) => (
+      {!editing && onAction && display && provenance && visibleAlsoHeard(provenance).map((heard, i) => (
         <p key={i} className="text-[10px] text-muted-foreground mt-0.5 break-words">
           {`Also heard: ${formatFieldValue(heard.value)} — ${sourceLine(heard.source)}`}
         </p>

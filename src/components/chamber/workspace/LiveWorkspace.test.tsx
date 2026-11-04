@@ -175,7 +175,7 @@ describe("LiveWorkspace", () => {
     expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
   });
 
-  it("badges a field the advisor verified as such, wherever it is shown", () => {
+  it("badges a field the advisor verified as such in the Review tab's Company section", () => {
     const provenance: ProvenanceMap = {
       company_name: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-03T12:00:00Z" },
     };

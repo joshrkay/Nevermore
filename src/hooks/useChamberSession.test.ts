@@ -583,6 +583,28 @@ describe("useChamberSession", () => {
       expect(rpcCalls).toEqual([{ fn: "session_verified_fields", args: { p_session_id: "s7" } }]);
     });
 
+    it("forgets one when the answer it covered changes, as the server resets that review", async () => {
+      rpcResult = { data: ["company_name", "pay_frequency"], error: null };
+      resumeRow = openRow;
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect([...result.current.verifiedFields]).toEqual(["company_name", "pay_frequency"]));
+      // A document replaces the verified company name; the pay frequency stays as the advisor saw it.
+      act(() => result.current.updateIntake((prev) => ({ data: { ...prev.data, company_name: "Beta Holdings LLC" }, provenance: prev.provenance })));
+      expect([...result.current.verifiedFields]).toEqual(["pay_frequency"]);
+      // The same answer written again, or an unrelated one, takes nothing away.
+      act(() => result.current.updateIntake((prev) => ({ data: { ...prev.data, company_name: "Beta Holdings LLC", industry: "Printing" }, provenance: prev.provenance })));
+      expect([...result.current.verifiedFields]).toEqual(["pay_frequency"]);
+    });
+
+    it("forgets one when the prospect edits the answer through the plain setter too", async () => {
+      rpcResult = { data: ["company_name"], error: null };
+      resumeRow = openRow;
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect([...result.current.verifiedFields]).toEqual(["company_name"]));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme Bindery" })));
+      expect([...result.current.verifiedFields]).toEqual([]);
+    });
+
     it("has none for a new intake, without asking", async () => {
       const { result } = renderHook(() => useChamberSession());
       await startIntake(result);

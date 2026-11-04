@@ -19,6 +19,7 @@ import {
   STATUS_LABELS,
   type FieldKey,
   type ProvenanceMap,
+  visibleAlsoHeard,
 } from "@/data/provenance";
 import type { Json } from "@/integrations/supabase/types";
 import { reviewField, type CorrectionChange } from "@/lib/advisorApi";
@@ -140,7 +141,7 @@ const FieldRow = ({
             Conflicting answers: {prov.candidates.map((c) => formatFieldValue(c.value)).join(" vs ")}
           </p>
         )}
-        {prov?.also_heard?.map((heard, i) => (
+        {prov && visibleAlsoHeard(prov).map((heard, i) => (
           <p key={i} className="text-xs text-muted-foreground mt-1">
             {`Also heard: ${formatFieldValue(heard.value)} — ${describeSource(heard.source)}`}
           </p>
