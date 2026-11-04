@@ -23,11 +23,11 @@ describe("sniffUpload", () => {
   });
 
   it("refuses a file renamed to look like another kind", () => {
-    expect(sniffUpload(bytes(PNG), "scan.pdf")).toEqual({ ok: false });
-    expect(sniffUpload(bytes("%PDF-1.4"), "census.xlsx")).toEqual({ ok: false });
-    expect(sniffUpload(bytes(PNG), "roster.csv")).toEqual({ ok: false });
-    expect(sniffUpload(bytes("MZ", [0x90, 0]), "invoice.doc")).toEqual({ ok: false });
-    expect(sniffUpload(bytes("%PDF-1.4"), "setup.exe")).toEqual({ ok: false });
+    expect(sniffUpload(bytes(PNG), "scan.pdf")).toEqual({ ok: false, reason: "mismatch" });
+    expect(sniffUpload(bytes("%PDF-1.4"), "census.xlsx")).toEqual({ ok: false, reason: "mismatch" });
+    expect(sniffUpload(bytes(PNG), "roster.csv")).toEqual({ ok: false, reason: "mismatch" });
+    expect(sniffUpload(bytes("MZ", [0x90, 0]), "invoice.doc")).toEqual({ ok: false, reason: "executable" });
+    expect(sniffUpload(bytes("%PDF-1.4"), "setup.exe")).toEqual({ ok: false, reason: "unsupported" });
   });
 });
 

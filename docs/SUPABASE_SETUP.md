@@ -19,7 +19,7 @@ front end that uses it is deployed.
 | Auth: guest sign-in on, email confirmation on, Site URL and Redirect URLs (below), the sign-up, email-change and sign-in (magic-link) messages (below), sign-in emails through Resend's SMTP. First, so a later failure can't leave sign-up links broken | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
 | Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push` | SQL editor, file by file |
 | Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set` from a private temporary file | Edge Functions → Secrets |
-| Deploy `chamber-extract`, `document-extract`, `dispatch-outbox`, `resend-webhook`, `purge-intakes`, `ops-monitor` | `supabase functions deploy` | (CLI only) |
+| Deploy `chamber-extract`, `document-upload`, `document-extract`, `document-scan`, `dispatch-outbox`, `resend-webhook`, `purge-intakes`, `ops-monitor` | `supabase functions deploy` | (CLI only) |
 | Schedules: `pg_cron`, `pg_net`, the service-role key in Vault, and the five jobs in "Schedules" below | Management API SQL endpoint | SQL editor: the statements in "Schedules" below |
 | Check all of the above, and that each function boots | SQL counts, the public auth settings, the auth config (Site URL, Redirect URLs, templates), a signed-out call to each function (a deployed one answers its own 401) | |
 
@@ -35,7 +35,8 @@ its own 401.
 |---|---|---|---|
 | `dispatch-outbox` | every minute | Sends and retries the submission emails (`docs/NOTIFICATIONS.md`) | Emails go out only when a browser nudges right after a submission; no retries |
 | `purge-intakes` | hourly, at :23 | Carries out intake deletions: removes the stored files through the Storage API, then the rows (`docs/DATA_HANDLING.md`) | Requested deletions and expired drafts are never deleted |
-| `ops-monitor` | every five minutes | Alerts when errors, failed uploads, AI failures, refused access or failed deletions cross their thresholds (`docs/RUNBOOK.md`) | Failures are recorded, nobody is told |
+| `ops-monitor` | every five minutes | Alerts when errors, failed uploads, AI failures, refused access, failed deletions, malware detections or failed scans cross their thresholds (`docs/RUNBOOK.md`) | Failures are recorded, nobody is told |
+| `document-scan` | every five minutes | Scans uploads that weren't settled when they arrived (the scanner was down or not set up, and every file uploaded before scanning existed), moves clean ones out of quarantine and removes quarantined files whose document is gone (`docs/RUNBOOK.md`, "Scan failed") | Those uploads stay unreadable |
 | `expire-idle-intakes` | hourly, at :17 | Expires uncertified drafts idle for 30 days | Idle drafts never expire |
 | `run-retention` | daily, 03:41 UTC | Queues closed drafts for deletion 30 days after they closed; prunes monitoring events (90 days), email delivery events (365 days) and AI rate-limit records (1 day) | Nothing is queued for deletion or pruned |
 
@@ -51,24 +52,26 @@ select cron.schedule('purge-intakes', '23 * * * *', $job$
     body := '{}'::jsonb
   );
 $job$);
--- The same for ops-monitor ('*/5 * * * *') and dispatch-outbox ('* * * * *').
+-- The same for ops-monitor and document-scan ('*/5 * * * *') and dispatch-outbox ('* * * * *').
 select cron.schedule('expire-idle-intakes', '17 * * * *', 'select public.expire_idle_intakes();');
 select cron.schedule('run-retention', '41 3 * * *', 'select public.run_retention();');
 ```
 
-Check them with `select jobname, schedule, active from cron.job order by 1;` (five rows) and recent runs
+Check them with `select jobname, schedule, active from cron.job order by 1;` (six rows) and recent runs
 with `select j.jobname, d.status, d.start_time from cron.job_run_details d join cron.job j using (jobid)
 order by d.start_time desc limit 20;`. A function job's run only says the request was sent: the
-function's own answer is in Edge Functions → Logs (`DELETION_*`, `OPS_ALERT`, `OUTBOX_*` lines) and in
+function's own answer is in Edge Functions → Logs (`DELETION_*`, `OPS_ALERT`, `OUTBOX_*`, `SCAN_*` lines) and in
 `select status_code, created from net._http_response order by created desc limit 20;`.
 
 ### Engineering alerts
 
 `ENGINEERING_ALERT_WEBHOOK_URL` (a Slack or Teams incoming webhook, or anything that takes a JSON POST
-with a `text` field) is optional but should be set before launch. Three functions use it:
+with a `text` field) is optional but should be set before launch. These functions use it:
 
 - `dispatch-outbox`: a notification email that gave up (`OUTBOX_DEAD`).
 - `purge-intakes`: a deletion that ran out of attempts (`DELETION_FAILED`).
+- `document-upload`, `document-scan`: an upload that matched a malware signature (`MALWARE_DETECTED`), and
+  one that couldn't be scanned after every attempt (`SCAN_FAILED`).
 - `ops-monitor`: a failure kind over its threshold (`OPS_ALERT`), with the runbook playbook to follow.
 
 Alerts carry ids, kinds, counts and failure codes, never names, addresses, file names or intake
@@ -76,6 +79,29 @@ content, so a shared channel is fine. Unset, each alert is only logged, and `--c
 "Engineering alerts" as a to-do. Set it in the secrets file with the others, or with
 `supabase secrets set ENGINEERING_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/... --project-ref <ref>`.
 It must be https (http only for localhost).
+
+### Malware scanning
+
+Every upload goes through `document-upload`, which checks the file's bytes, scans it, and stores it: in the
+`documents` bucket once the scan passed, in the private `quarantine` bucket otherwise. Nobody signed in can
+read a quarantined file, and Lenore and advisors can open a file only once its scan passed. The scanner is
+chosen by the `MALWARE_SCANNER` secret (decision D13 is still open):
+
+| `MALWARE_SCANNER` | Also set | Use |
+|---|---|---|
+| `clamav` | `CLAMAV_HOST`, and `CLAMAV_PORT` if not 3310 | A clamd daemon reachable from Supabase's edge functions over TLS (clamd itself speaks plain TCP, so put stunnel or a TLS proxy in front). Raise clamd's `StreamMaxLength` to at least 21 MB |
+| `http` | `MALWARE_SCANNER_URL` (https), `MALWARE_SCANNER_TOKEN` | Any scanning service, or a thin wrapper around one, that takes the file as `POST` `application/octet-stream` with `Authorization: Bearer <token>` and answers `{"verdict":"clean"}` or `{"verdict":"infected","signature":"<name>"}` |
+| `none` | | No scanning: every file is recorded `skipped` and is readable. The internal demo (M1) only |
+| unset | | Every upload is held in quarantine, unreadable, and `document-scan` raises a `scan_failed` alert every hour until a scanner is set |
+
+Whichever scanner is chosen sees every uploaded file, census and payroll included: it needs the same
+data-processing terms as the AI provider (`docs/LEGAL_REVIEW.md`). After setting it, run the EICAR check in
+`docs/RUNBOOK.md` ("Malware detected").
+
+The `documents` and `quarantine` buckets take only `application/octet-stream` up to 20 MB: every document is
+stored with that type, so a browser always downloads it rather than showing it (the type its bytes showed is in
+`documents.mime_type`). Confirm on the project that a 20 MB upload goes through `document-upload` (Supabase's
+gateway limits a function's request body; the function refuses anything larger itself).
 
 ### Auth URLs and emails
 

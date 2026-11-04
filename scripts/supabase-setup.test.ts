@@ -50,7 +50,8 @@ const cliCalls = () =>
 function countFor(query: string): number {
   if (!fake.setUp) return 0;
   if (query.includes("schema_migrations")) return MIGRATIONS;
-  if (query.includes("storage.buckets") || query.includes("pg_extension")) return 2;
+  if (query.includes("storage.buckets")) return 3;
+  if (query.includes("pg_extension")) return 2;
   if (query.includes("user_roles")) return 0;
   return 1;
 }
@@ -165,7 +166,9 @@ describe("supabase-setup", () => {
       "db push",
       `secrets set --env-file`,
       `functions deploy chamber-extract`,
+      `functions deploy document-upload`,
       `functions deploy document-extract`,
+      `functions deploy document-scan`,
       `functions deploy dispatch-outbox`,
       `functions deploy resend-webhook`,
       `functions deploy purge-intakes`,
@@ -189,7 +192,7 @@ describe("supabase-setup", () => {
       smtp_pass: SECRETS.RESEND_API_KEY,
     });
     expect(fake.queries.some((q) => q.includes("vault.create_secret") && q.includes(SERVICE_KEY))).toBe(true);
-    for (const fn of ["dispatch-outbox", "purge-intakes", "ops-monitor"]) {
+    for (const fn of ["dispatch-outbox", "purge-intakes", "ops-monitor", "document-scan"]) {
       expect(fake.queries.some((q) => q.includes(`https://${REF}.supabase.co/functions/v1/${fn}`))).toBe(true);
     }
     expect(fake.queries.some((q) => q.includes("cron.schedule('run-retention'"))).toBe(true);

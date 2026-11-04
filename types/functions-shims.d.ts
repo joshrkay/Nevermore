@@ -3,7 +3,17 @@
 // remote module is declared here. This file must stay a plain script (no top-level import or
 // export), or the `declare module` blocks below become augmentations and stop working.
 
-declare const Deno: { env: { get(name: string): string | undefined } };
+// Only the parts of Deno the functions use. A connection is what the malware scanner talks to clamd over.
+interface DenoConn {
+  write(p: Uint8Array): Promise<number>;
+  read(p: Uint8Array): Promise<number | null>;
+  close(): void;
+}
+declare const Deno: {
+  env: { get(name: string): string | undefined };
+  connect(options: { hostname: string; port: number }): Promise<DenoConn>;
+  connectTls(options: { hostname: string; port: number }): Promise<DenoConn>;
+};
 
 declare module "https://deno.land/std@0.168.0/http/server.ts" {
   export function serve(handler: (req: Request) => Response | Promise<Response>): void;

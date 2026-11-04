@@ -24,6 +24,7 @@ const doc = (status: string, readIssue: AiFailureKind | null): SessionDocument =
   status,
   created_at: "2026-11-03T10:00:00Z",
   storage_path: "u/s/benefits.pdf",
+  scan_verdict: "clean",
   extraction: EMPTY_EXTRACTION,
   readIssue,
 });
@@ -81,42 +82,33 @@ describe("UploadTab: a read that didn't go through", () => {
   });
 });
 
-describe("UploadTab: the census template", () => {
-  const noDocuments: UseSessionDocumentsReturn = {
-    docs: [],
-    isLoading: false,
-    uploading: false,
-    upload: vi.fn(),
-    remove: vi.fn(),
-    setCategory: vi.fn(),
-    markApplied: vi.fn(),
-    extract: vi.fn(),
-  };
-
-  it("downloads the CSV, even before there is an intake to upload to", async () => {
-    downloadBlob.mockClear();
-    render(<UploadTab documents={noDocuments} sessionId={null} data={EMPTY_CHAMBER_DATA} />);
-    fireEvent.click(screen.getByRole("button", { name: "Download census template (CSV)" }));
-    expect(downloadBlob).toHaveBeenCalledTimes(1);
-    const [blob, name] = downloadBlob.mock.calls[0] as [Blob, string];
-    expect(name).toBe("employee-census-template.csv");
-    expect(blob.type).toBe("text/csv;charset=utf-8");
-    // jsdom's Blob has no text().
-    const text = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.readAsText(blob);
-    });
-    expect(text).toBe(censusTemplateCsv());
+describe("UploadTab: the virus check", () => {
+  // Every upload is scanned before anyone can open it (20261104130000_document_scanning.sql).
+  it("says a file is being checked, and offers no read until the check passes", () => {
+    renderTab({ ...doc("uploaded", null), scan_verdict: "pending" });
+    expect(screen.getByText("Checking for viruses.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Read it|Try again/ })).not.toBeInTheDocument();
   });
 
-  it("says to leave out Social Security and bank numbers, and what goes in each column", () => {
-    render(<UploadTab documents={noDocuments} sessionId="s1" data={EMPTY_CHAMBER_DATA} />);
-    const section = screen.getByRole("region", { name: "Employee census template" });
-    expect(section).toHaveTextContent(/Leave out Social Security and bank numbers/);
-    for (const column of CENSUS_TEMPLATE_COLUMNS) {
-      expect(within(section).getByText(column)).toBeInTheDocument();
-      expect(within(section).getByText(CENSUS_TEMPLATE_GUIDE[column])).toBeInTheDocument();
-    }
+  it("says a flagged file is blocked, lets the prospect remove it, and doesn't count it as provided", () => {
+    renderTab({ ...doc("uploaded", "rate_limited"), scan_verdict: "infected" });
+    expect(screen.getByText("Blocked.")).toBeInTheDocument();
+    expect(screen.getByText(/flagged this file/)).toBeInTheDocument();
+    // Not the read's reason: the virus check is all there is to say about it.
+    expect(screen.queryByText(DOCUMENT_FAILURE_MESSAGES.rate_limited, { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Read it|Try again/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove benefits.pdf" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Uploaded")).not.toBeInTheDocument();
+  });
+
+  it("says a file that couldn't be checked can't be opened yet", () => {
+    renderTab({ ...doc("uploaded", null), scan_verdict: "failed" });
+    expect(screen.getByText("Couldn't be checked.")).toBeInTheDocument();
+  });
+
+  it.each(["clean", "skipped"])("reads a %s file as before", (verdict) => {
+    renderTab({ ...doc("uploaded", null), scan_verdict: verdict });
+    expect(screen.getByRole("button", { name: "Read it" })).toBeInTheDocument();
+    expect(screen.queryByText(/viruses/)).not.toBeInTheDocument();
   });
 });

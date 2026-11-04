@@ -66,8 +66,9 @@ service-only function. The advisor's account presenting a guest token is treated
 
 ### Private file links can't be reused indefinitely or shared as permanent public URLs
 
-- Both buckets (`documents`, `manuscripts`) are private, no migration creates or flips one to public, and no API
-  caller can change or add a bucket.
+- All three buckets (`documents`, `manuscripts`, `quarantine`) are private, no migration creates or flips one to
+  public, and no API caller can change or add a bucket. `quarantine` has no policies at all: no signed-in caller
+  can read, list, sign a link to, store or delete anything in it.
 - Nothing in the app or the edge functions asks for a public URL.
 - Links are signed in exactly one place (`signedUrl` in `src/lib/advisorApi.ts`) with `SIGNED_URL_SECONDS` = 60.
   Storage signs a link only for a caller whose row security lets them read the file, which the matrix above
@@ -75,6 +76,14 @@ service-only function. The advisor's account presenting a guest token is treated
 - The two places that open a link (`DocumentsPanel`, `ManuscriptPanel`) hand it straight to the browser to
   download. It is never stored (local or session storage, IndexedDB), put in the app's own URL or router state,
   or logged.
+- Every link asks for `Content-Disposition: attachment` under a cleaned name (`downloadName`), so the browser
+  saves the file instead of showing it. Storage doesn't sign that request, so it could be stripped from a link;
+  every document is therefore also stored as `application/octet-stream`, which a browser downloads whatever the
+  link says. `fileLinks.test.ts` holds both.
+- A document's file is readable only once its malware scan passed (`scan_verdict` clean or skipped, written by the
+  service role only): until then it is in `quarantine`, or, for an upload from before scanning, withheld by the
+  `documents` read policies (`is_withheld_document_file`). `document_scanning.sql` covers both, and that a prospect
+  can't store a file directly or record a verdict.
 
 ### The checks can't quietly fall behind
 
@@ -105,7 +114,8 @@ expiry.
 | Data | Guest / prospect | Advisor | Admin | Service role |
 |---|---|---|---|---|
 | Intakes (`chamber_sessions`), not archived or revoked | own | all | all | all |
-| Certifications, documents, `documents` bucket | own | all | all | all |
+| Certifications, documents, `documents` bucket (a file only once its scan passed) | own | all | all | all |
+| `quarantine` bucket | | | | all |
 | Profiles | own | all | all | all |
 | Roles (`user_roles`) | own | own | own | all |
 | Intake consents | own | all | all | all |
@@ -148,12 +158,17 @@ and date here.
 1. **Signed link expiry (SR-10).** Sign in as an advisor, open a submission and click **Open** on a document.
    Copy the download address from the browser's download list, wait 70 seconds and request it again
    (`curl -i '<link>'`). Expect an error (Storage answers 400 with an expired-token message), not the file.
-2. **Buckets.** Storage → Buckets: `documents` and `manuscripts` both show as private.
+2. **Buckets.** Storage → Buckets: `documents`, `manuscripts` and `quarantine` all show as private, and
+   `documents` and `quarantine` allow only `application/octet-stream`, up to 20 MB.
 3. **Cross-account read over the real API.** With two real guest sessions, guest B's
    `GET /rest/v1/chamber_sessions?id=eq.<guest A's intake id>` answers `[]`, and with only the anon key it
    answers `[]`.
 4. **Supabase's security advisor.** Database → Advisors → Security shows no table without row security and no
    function with a mutable search path.
+5. **Uploads go through the check.** With a guest's token, `POST /storage/v1/object/documents/<their user
+   id>/<their intake id>/x.pdf` with any file is refused (403); `document-upload` refuses a program renamed
+   `.pdf` (415, `executable`) and quarantines the EICAR test file (`docs/RUNBOOK.md`, "Malware detected").
+   Strip `&download=...` from a document link an advisor opens: the browser still downloads the file.
 
 | Check | Date | By | Result |
 |---|---|---|---|
@@ -161,6 +176,7 @@ and date here.
 | 2. Buckets private | | | |
 | 3. Cross-account read | | | |
 | 4. Security advisor | | | |
+| 5. Upload checks | | | |
 
 ## Re-running
 
