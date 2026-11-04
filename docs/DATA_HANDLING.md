@@ -91,7 +91,7 @@ What it guarantees:
   stored, so no row is deleted while its file remains.
 - **Only that intake's files.** It removes everything under `{owner}/{session}/` in `documents` and
   `{session}/` in `manuscripts`, nothing else. A document row that points outside its own folder (possible
-  only for rows from before `20261103110100_document_storage_path`) is not followed, because that file may be
+  only for rows from before `20261103110001_document_storage_path`) is not followed, because that file may be
   someone else's.
 - **Every row.** The intake, its documents, certifications, queued emails, pipeline status and history,
   notes, field reviews and review events, Manuscript versions, lifecycle events and AI call records, in one

@@ -1,11 +1,11 @@
 import type { ChamberData } from "./chamberTypes";
 import { FIELD_OPEN_REASONS, type FieldKey, type FieldOpenReason, type FieldStatus, type ProvenanceMap } from "./provenance";
-import { RECOMMENDED_ITEMS, REQUIRED_ITEMS, type ReadinessItem } from "./readiness";
+import { conflictingRequired, RECOMMENDED_ITEMS, REQUIRED_ITEMS, type ReadinessItem } from "./readiness";
 
 // How far along each item an intake needs is (decision D2): the three required answers, then the
 // recommended census, as src/data/readiness.ts lists them and decides whether each is there. This adds
 // whether a present answer is settled, from its provenance and the advisor's verifications. The
-// database's public.intake_required_items (migration 20261104100000) is the same rule; the advisor queue's
+// database's public.intake_required_items (migration 20261104103000) is the same rule; the advisor queue's
 // "missing required" reads it. requiredItems.cases.json holds the cases both sides are tested against.
 
 /** "unconfirmed" is an inferred field. A settled item needs nothing more from the prospect. */
@@ -101,3 +101,23 @@ export function requiredItems(data: ChamberData, provenance: ProvenanceMap, veri
 /** Whether every required item is settled. The recommended census never holds an intake back. */
 export const isIntakeComplete = (items: readonly RequiredItem[]): boolean =>
   items.every((item) => !item.required || item.state === "settled");
+
+/**
+ * What holds certification back, in order: each required item that is missing (US-1.2; the database refuses
+ * it too, EA003) or in conflict. A required field whose answers conflict blocks whoever verified it and
+ * whatever the census says, as the database's gate does (B-2 D26, EA008: it reads the field statuses, not
+ * the advisor's reviews). States of operation that only a census in conflict gives blocks too, in the browser
+ * only (B-2.2), and is named as the census. The recommended census never blocks by itself.
+ */
+export function certificationBlockingItems(data: ChamberData, provenance: ProvenanceMap): RequiredItem[] {
+  const refused = new Set(conflictingRequired(provenance).map((item) => item.key));
+  return requiredItems(data, provenance, NO_VERIFIED_FIELDS).flatMap((item): RequiredItem[] => {
+    if (!item.required) return [];
+    if (item.state === "missing") return [item];
+    if (refused.has(item.item)) {
+      const { viaCensus: _census, ...answer } = item;
+      return [{ ...answer, state: "conflicting" }];
+    }
+    return item.state === "conflicting" && item.viaCensus ? [item] : [];
+  });
+}

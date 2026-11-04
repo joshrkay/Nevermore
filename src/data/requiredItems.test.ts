@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
+import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import { parseChamberData } from "./chamberValidation";
 import { parseProvenance } from "./provenance";
 import { RECOMMENDED_ITEMS, REQUIRED_ITEMS } from "./readiness";
-import { isIntakeComplete, requiredItems } from "./requiredItems";
+import { certificationBlockingItems, isIntakeComplete, requiredItems } from "./requiredItems";
 
 // The same cases supabase/tests/required_items.sql runs through public.intake_required_items. Each stored
 // intake is read the way the Chamber loads one, so this checks the browser against the database.
@@ -76,5 +76,34 @@ describe("requiredItems", () => {
     expect(states({ census, states: ["CA"] }, { states: inferred, census: inferred }).viaCensus).toBeUndefined();
     expect(states({ states: ["CA"] }).viaCensus).toBeUndefined();
     expect(states({}).viaCensus).toBeUndefined();
+  });
+});
+
+describe("certificationBlockingItems", () => {
+  const at = "2026-11-04T12:00:00Z";
+  const conflicting = { status: "conflicting" as const, source: { kind: "transcript" as const, message_id: "m1" }, updated_at: at, candidates: [] };
+  const blocking = (...args: Parameters<typeof certificationBlockingItems>) =>
+    certificationBlockingItems(...args).map((i) => `${i.state} ${i.viaCensus ? "census" : i.item}`);
+
+  it("is the required items missing, in order, and never the census", () => {
+    expect(blocking(EMPTY_CHAMBER_DATA, {})).toEqual(["missing company_name", "missing states", "missing pay_frequency"]);
+    expect(blocking(DEMO_CHAMBER_DATA, {})).toEqual([]);
+    expect(blocking({ ...DEMO_CHAMBER_DATA, census: [] }, { census: conflicting })).toEqual([]);
+  });
+
+  // The database's gate (EA008) reads the field statuses, not the advisor's reviews: the browser asks the same.
+  it("blocks on a required field in conflict, whoever verified it", () => {
+    expect(blocking(DEMO_CHAMBER_DATA, { pay_frequency: conflicting, industry: conflicting })).toEqual(["conflicting pay_frequency"]);
+    expect(requiredItems(DEMO_CHAMBER_DATA, { pay_frequency: conflicting }, new Set(["pay_frequency"])).find((i) => i.item === "pay_frequency")?.state).toBe("settled");
+  });
+
+  it("blocks on states in conflict even when the census names states, as the database does", () => {
+    const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+    expect(blocking({ ...DEMO_CHAMBER_DATA, census }, { states: conflicting })).toEqual(["conflicting states"]);
+  });
+
+  it("blocks, in the browser only, when a census in conflict is all that gives the states", () => {
+    const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+    expect(blocking({ ...DEMO_CHAMBER_DATA, states: [], census }, { census: conflicting })).toEqual(["conflicting census"]);
   });
 });

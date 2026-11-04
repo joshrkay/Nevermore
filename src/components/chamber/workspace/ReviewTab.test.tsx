@@ -77,7 +77,7 @@ describe("ReviewTab needs your review", () => {
     render(<ReviewTab data={data} provenance={provenance} onAction={() => {}} onProceed={() => {}} />);
     // Missing and conflicting both hold certification back; the census is only recommended.
     expect(stillNeeded()).toEqual(["States of operation", "Pay frequency"]);
-    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Your answers conflict");
+    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("You've given two different answers");
     expect(screen.queryByText(/Every required answer is here/)).not.toBeInTheDocument();
     expect(screen.getByText("Needs your review — 3 items")).toBeInTheDocument();
     expectListed([
