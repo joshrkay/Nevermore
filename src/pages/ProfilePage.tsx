@@ -10,6 +10,7 @@ import { RavenLogo } from "@/components/RavenLogo";
 import { ArrowLeft, Save, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
+import LegalLinks from "@/components/LegalLinks";
 
 const ProfilePage = () => {
   const { user } = useAuth();
@@ -177,6 +178,9 @@ const ProfilePage = () => {
           </Card>
         </motion.div>
       </div>
+      <footer className="pb-10">
+        <LegalLinks className="text-center" />
+      </footer>
     </div>
   );
 };

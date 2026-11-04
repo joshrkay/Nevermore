@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import pg from "pg";
 import { ANON_KEY, DATABASE, GATEWAY_URL, PG } from "./stack/config.mjs";
+import { agreeToIntakeConsent, agreeToIntakeConsentOverRest } from "./support/consent";
 
 // US-1.2: the answers certification requires are marked, block The Manuscript until they're given, and are
 // added in the Review step without starting over. The database refuses an unready certification as well.
@@ -19,6 +20,7 @@ async function sql<T = Record<string, unknown>>(text: string, values: unknown[] 
 
 test("missing required answers block The Manuscript, are marked in Review, and are added there", async ({ page }) => {
   await page.goto("/start");
+  await agreeToIntakeConsent(page);
   await expect(page).toHaveURL(SESSION_URL);
   const sessionId = SESSION_URL.exec(page.url())![1];
 
@@ -84,6 +86,7 @@ async function verifiedProspect(request: APIRequestContext) {
   expect(verify).toBeOK();
   const { access_token: token } = (await verify.json()) as { access_token: string };
   const headers = { apikey: ANON_KEY, Authorization: `Bearer ${token}`, "Content-Type": "application/json", Prefer: "return=representation" };
+  await agreeToIntakeConsentOverRest(request, headers);
   const created = await request.post(`${GATEWAY_URL}/rest/v1/chamber_sessions?select=id`, { headers, data: { user_id: user.id, chamber_data: {} } });
   expect(created).toBeOK();
   const [{ id }] = (await created.json()) as { id: string }[];

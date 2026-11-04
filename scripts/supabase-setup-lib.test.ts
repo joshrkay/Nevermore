@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, FUNCTIONS, interpretChecks,
+  advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, FUNCTIONS, functionScheduleSql, interpretChecks,
+  RETENTION_SCHEDULE_SQL, SCHEDULED_FUNCTIONS,
   isProjectRef, parseEnvFile, parseSender, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete,
   sqlLiteral, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
@@ -244,6 +245,29 @@ describe("SQL", () => {
     expect(EXPIRY_SCHEDULE_SQL).toBe(`select cron.schedule(${scheduled![1]}, ${scheduled![2]}, ${scheduled![3]});`);
   });
 
+  it("schedules each scheduled function on the project's own URL, as often as its migration does", () => {
+    const migrations = readdirSync("supabase/migrations").map((f) => readFileSync(`supabase/migrations/${f}`, "utf8")).join("\n");
+    expect(SCHEDULED_FUNCTIONS.map((j) => j.fn)).toEqual(["dispatch-outbox", "purge-intakes", "ops-monitor"]);
+    for (const job of SCHEDULED_FUNCTIONS) {
+      expect(FUNCTIONS).toContain(job.fn);
+      const sql = functionScheduleSql(REF, job.fn, job.schedule);
+      expect(sql).toContain(`'https://${REF}.supabase.co/functions/v1/${job.fn}'`);
+      expect(sql).toContain(`cron.schedule('${job.fn}', '${job.schedule}'`);
+      expect(sql).toContain("vault.decrypted_secrets where name = 'service_role_key'");
+      expect(migrations).toContain(`cron.schedule('${job.fn}', '${job.schedule}'`);
+    }
+    expect(cronScheduleSql(REF)).toBe(functionScheduleSql(REF, "dispatch-outbox", "* * * * *"));
+    expect(() => functionScheduleSql(REF, "x'; drop", "* * * * *")).toThrow();
+    expect(() => functionScheduleSql(REF, "ops-monitor", "'; drop")).toThrow();
+  });
+
+  it("schedules the retention job exactly as the migration does", () => {
+    const migration = readFileSync("supabase/migrations/20261104092000_data_retention_and_deletion.sql", "utf8");
+    const scheduled = /PERFORM cron\.schedule\(('run-retention'), ('[^']+'), ('[^']+')\)/.exec(migration);
+    expect(scheduled).not.toBeNull();
+    expect(RETENTION_SCHEDULE_SQL).toBe(`select cron.schedule(${scheduled![1]}, ${scheduled![2]}, ${scheduled![3]});`);
+  });
+
   it("grants the advisor role by email, escaped", () => {
     const sql = advisorSql("o'brien@example.com");
     expect(sql).toContain("lower('o''brien@example.com')");
@@ -260,7 +284,10 @@ describe("SQL", () => {
 
 describe("interpretChecks", () => {
   const allSet = {
-    status: { migrations: 16, intake_table: 1, table_grants: 1, buckets: 2, extensions: 2, vault_secret: 1, schedule: 1, expiry_schedule: 1, role_grants: 0 },
+    status: {
+      migrations: 16, intake_table: 1, table_grants: 1, buckets: 2, extensions: 2, vault_secret: 1, schedule: 1, expiry_schedule: 1,
+      purge_schedule: 1, monitor_schedule: 1, retention_schedule: 1, role_grants: 0,
+    },
     auth: { external: { anonymous_users: true }, mailer_autoconfirm: false },
     authConfig: {
       mailer_otp_length: 6, mailer_templates_email_change_content: "{{ .Token }}", mailer_templates_magic_link_content: "{{ .Token }}", smtp_host: "smtp.resend.com",
@@ -274,7 +301,7 @@ describe("interpretChecks", () => {
   it("passes a finished project, leaving emails and advisors as to-dos", () => {
     const checks = interpretChecks(allSet, { localMigrations: 16 });
     expect(setupComplete(checks)).toBe(true);
-    expect(checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["Email secrets", "Advisor accounts"]);
+    expect(checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["Email secrets", "Engineering alerts", "Advisor accounts"]);
     expect(checks.find((c) => c.name === "Advisor accounts")?.detail).toContain("--grant-advisor");
   });
 
@@ -308,6 +335,27 @@ describe("interpretChecks", () => {
     const checks = interpretChecks(unscheduled, { localMigrations: 16 });
     expect(setupComplete(checks)).toBe(false);
     expect(checks.find((c) => c.name === "Draft expiry schedule")?.detail).toMatch(/never expire/);
+  });
+
+  it("fails while deletions, retention or alerts would never run", () => {
+    for (const [status, name, says] of [
+      ["purge_schedule", "Deletion schedule", /deletions never run/],
+      ["retention_schedule", "Retention schedule", /never deleted/],
+      ["monitor_schedule", "Alert schedule", /nobody is alerted/],
+    ] as const) {
+      const unscheduled = { ...allSet, status: { ...allSet.status, [status]: 0 } };
+      const checks = interpretChecks(unscheduled, { localMigrations: 16 });
+      expect(setupComplete(checks), status).toBe(false);
+      expect(checks.find((c) => c.name === name)?.detail).toMatch(says);
+    }
+  });
+
+  it("leaves the alert webhook as a to-do, and says what it covers", () => {
+    const withAlerts = { ...allSet, secretNames: [...allSet.secretNames, "ENGINEERING_ALERT_WEBHOOK_URL"] };
+    expect(interpretChecks(withAlerts, { localMigrations: 16 }).find((c) => c.name === "Engineering alerts")?.ok).toBe(true);
+    const without = interpretChecks(allSet, { localMigrations: 16 }).find((c) => c.name === "Engineering alerts");
+    expect(without).toMatchObject({ ok: false, required: false });
+    expect(without?.detail).toMatch(/only logged/);
   });
 
   it("fails while the sign-up email is Supabase's default link", () => {

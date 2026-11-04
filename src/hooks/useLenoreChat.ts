@@ -4,6 +4,7 @@ import { describeInvokeError, type AiFailureKind } from "@/data/aiFailure";
 import { mergeChamberData } from "@/data/chamberValidation";
 import type { ChamberData } from "@/data/chamberTypes";
 import { redactSensitive } from "@/data/sensitive";
+import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 
 export interface ChatFailure {
@@ -109,6 +110,9 @@ export function useLenoreChat({ intakeId, chamberData, setChamberData, addUserMe
       if (replaced()) return false;
       const info = timedOut ? { kind: "timeout" as const } : await describeInvokeError(err);
       if (replaced()) return false;
+      // chamber-extract records every call it answers (ai_extraction_events); this covers it never answering.
+      const unrecorded = timedOut ? "chat_timeout" : unrecordedFunctionFailure("chat", err, info.requestId);
+      if (unrecorded) reportOpsEvent("ai_failed", { code: unrecorded, detail: errorDetail(err) });
       failedMessageRef.current = message;
       setFailure({ text, ...info });
       return false;
