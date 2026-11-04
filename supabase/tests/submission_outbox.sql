@@ -1349,6 +1349,7 @@ BEGIN
 END $$;
 
 \i supabase/migrations/20261027090100_outbox_operations.sql
+\i supabase/migrations/20261104104000_notification_headcount_census.sql
 
 DO $$
 DECLARE
@@ -1524,7 +1525,18 @@ BEGIN
   END IF;
   IF p::text ~* 'SECRET PERSON|987654|1980-01-02|GOLD-PLAN' THEN RAISE EXCEPTION 'FAIL: census, payroll or plan content reached the payload: %', p; END IF;
 
-  -- Headcount: the stated count wins, else the W-2 rows of the roster, else nothing.
+  -- Headcount: the stated count wins, else the W-2 rows of the census, else those of the legacy roster, else nothing.
+  p := pg_temp.certify_with('census@acme.example', '{"company_name":"Census Co","census":[{"first_name":"Ann","classification":"w2"},{"classification":"1099"},{"classification":"w2"},{"classification":"w2"}]}');
+  IF (p ->> 'employee_count')::int IS DISTINCT FROM 3 THEN RAISE EXCEPTION 'FAIL: census W-2 count is %', p -> 'employee_count'; END IF;
+  IF p::text ~* 'Ann' THEN RAISE EXCEPTION 'FAIL: census content reached the payload: %', p; END IF;
+  p := pg_temp.certify_with('stated@acme.example', '{"company_name":"Stated Co","employee_count":9,"census":[{"classification":"w2"}]}');
+  IF (p ->> 'employee_count')::int IS DISTINCT FROM 9 THEN RAISE EXCEPTION 'FAIL: the stated count lost to the census: %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('both@acme.example', '{"company_name":"Both Co","census":[{"classification":"w2"}],"employees":[{"classification":"W2"},{"classification":"W2"}]}');
+  IF (p ->> 'employee_count')::int IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FAIL: the legacy roster won over the census: %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('c1099only@acme.example', '{"company_name":"Contractors Co","census":[{"classification":"1099"}],"employees":[{"classification":"W2"}]}');
+  IF (p ->> 'employee_count')::int IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FAIL: a census with no W-2 rows did not fall back: %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('badcensus@acme.example', '{"company_name":"Odd Co","census":"none"}');
+  IF p -> 'employee_count' <> 'null'::jsonb THEN RAISE EXCEPTION 'FAIL: a census that is not a list gave %', p -> 'employee_count'; END IF;
   p := pg_temp.certify_with('w2@acme.example', '{"company_name":"W2 Co","employees":[{"classification":"W2"},{"classification":"1099"},{"classification":"W2"}]}');
   IF (p ->> 'employee_count')::int <> 2 THEN RAISE EXCEPTION 'FAIL: W-2 roster count is %', p -> 'employee_count'; END IF;
   p := pg_temp.certify_with('c1099@acme.example', '{"company_name":"1099 Co","employees":[{"classification":"1099"}]}');
