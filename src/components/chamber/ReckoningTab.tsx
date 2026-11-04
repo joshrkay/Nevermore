@@ -6,7 +6,6 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { ProvenanceMap } from "@/data/provenance";
-import { NO_VERIFIED_FIELDS, requiredItems } from "@/data/requiredItems";
 import { NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
 import {
   CONSENT_IS_DRAFT,
@@ -17,16 +16,13 @@ import {
 } from "@/data/certification";
 import { useAuth } from "@/hooks/useAuth";
 import { conflictingRequired, missingRequired } from "@/data/readiness";
-import type { ProvenanceMap } from "@/data/provenance";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import VerifyEmailGate from "./VerifyEmailGate";
 
 interface ReckoningTabProps {
   data: ChamberData;
-  /** Status of each field, so a required item whose answers conflict can hold certification back. */
+  /** Each answer's field status: a required answer in conflict blocks certification until one is chosen. */
   provenance?: ProvenanceMap;
-  /** Fields an advisor verified: settled whatever their status. */
-  verified?: ReadonlySet<string>;
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
   sessionId: string | null;

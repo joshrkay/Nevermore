@@ -514,6 +514,7 @@ export function parseFieldList(raw: unknown): FieldKey[] {
  */
 export function transcriptExtraction(message: { id: string; text: string; spoken?: boolean }, meta: unknown): ExtractionOptions {
   const m = (typeof meta === "object" && meta !== null ? meta : {}) as Record<string, unknown>;
+  const version = promptVersionSchema.safeParse(m.prompt_version);
   const statuses = parseExtractedStatuses(m.field_status);
   const unknown = parseUnknownFields(m.field_status);
   // Speech-to-text mishears ("fifteen" as 50), so a spoken answer is at most inferred until the prospect
@@ -522,7 +523,12 @@ export function transcriptExtraction(message: { id: string; text: string; spoken
     for (const field of Object.keys(statuses) as FieldKey[]) if (statuses[field] === "confirmed") statuses[field] = "inferred";
   }
   return {
-    source: { kind: "transcript", message_id: message.id, quote: clip(message.text.trim()) },
+    source: {
+      kind: "transcript",
+      message_id: message.id,
+      quote: clip(message.text.trim()),
+      ...(version.success ? { prompt_version: version.data } : {}),
+    },
     statuses,
     evidence: parseEvidence(m.evidence),
     corrections: parseFieldList(m.corrected_fields),
@@ -534,7 +540,7 @@ export function transcriptExtraction(message: { id: string; text: string; spoken
  * Extraction options for a voice <extract>. The agent's prompt lives in ElevenLabs, outside
  * PROMPT_VERSION, so a prompt_version in what it wrote is never stored as chamber-extract's.
  */
-export function voiceExtraction(message: { id: string; text: string }, data: unknown): ExtractionOptions {
+export function voiceExtraction(message: { id: string; text: string; spoken?: boolean }, data: unknown): ExtractionOptions {
   const { prompt_version: _unversioned, ...meta } = (typeof data === "object" && data !== null ? data : {}) as Record<string, unknown>;
   return transcriptExtraction(message, meta);
 }

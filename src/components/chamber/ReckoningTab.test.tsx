@@ -271,10 +271,10 @@ describe("ReckoningTab certification", () => {
       // Only conflicts hold certification back for now; an unconfirmed item doesn't.
       company_name: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-03T12:00:00Z" },
     };
-    const mountWith = (verified?: ReadonlySet<string>) =>
+    const mountWith = () =>
       render(
         <MemoryRouter>
-          <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={conflicting} verified={verified} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+          <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={conflicting} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
         </MemoryRouter>,
       );
 
@@ -284,18 +284,7 @@ describe("ReckoningTab certification", () => {
       fillSigner();
       sign();
       expect(submitButton()).toBeDisabled();
-      expect(screen.getByTestId("certification-blockers")).toHaveTextContent(
-        "Before you can submit: Resolve the conflicting answers for Pay frequency",
-      );
-    });
-
-    it("lets it through once an advisor has verified the field", () => {
-      mountWith(new Set(["pay_frequency"]));
-      checkAll();
-      fillSigner();
-      sign();
-      expect(submitButton()).toBeEnabled();
-      expect(screen.queryByTestId("certification-blockers")).not.toBeInTheDocument();
+      expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for pay frequency");
     });
   });
 });

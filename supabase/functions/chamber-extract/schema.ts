@@ -14,22 +14,22 @@ export const FIELD_GUIDE: Record<string, string> = {
   employee_count: "Total number of employees (a whole number)",
   start_month: "When they want PEO coverage or benefits to start, as they said it",
   multiple_entities: "true if the business runs as more than one legal entity",
-  fein_count: "How many federal employer ID numbers (FEINs) the business has",
+  fein_count: "How many federal employer ID numbers (FEINs) the business has (a whole number); report multiple_entities with it",
   virgin_medical: "true if they have never offered employer medical coverage, false if they have it now",
   current_carrier: "Their current medical insurance carrier",
   renewal_date: "When their current medical plan renews, as they said it",
   rate_history: "What they said about recent medical rate increases",
   benefits_waiting_period: "How long new hires wait before benefits start",
   ancillary_benefits: "Other benefits they offer, such as dental, vision or life",
-  has_401k: "true if they offer a retirement plan such as a 401(k)",
-  retirement_type: "What kind of retirement plan, such as 401(k), SIMPLE IRA or 403(b)",
-  employer_contributes: "true if the employer contributes to the retirement plan",
+  has_401k: "true if they offer any employer retirement plan (a 401(k), 403(b), SIMPLE IRA or similar), false if they offer none",
+  retirement_type: "What kind of retirement plan, such as 401(k), SIMPLE IRA or 403(b); report has_401k with it",
+  employer_contributes: "true if the employer contributes to or matches the retirement plan; report has_401k with it",
   payroll_vendor: "Who runs their payroll now, such as Gusto or ADP",
   pay_frequency: "How often they run payroll: weekly, bi-weekly, semi-monthly or monthly",
   funding_days: "How many days before payday they fund payroll (a whole number)",
   has_nonexempt: "true if any employees are hourly or overtime-eligible (nonexempt)",
-  nonexempt_count: "How many employees are nonexempt (a whole number)",
-  exempt_count: "How many employees are exempt (a whole number)",
+  nonexempt_count: "How many employees are nonexempt (a whole number); report has_nonexempt with it",
+  exempt_count: "How many employees are exempt (a whole number); report has_nonexempt with it",
   pto_types: "Kinds of paid time off they offer, such as vacation or sick",
   accrual_method: "How paid time off accrues, such as per pay period or up front",
   has_handbook: "true if they have an employee handbook",
@@ -46,8 +46,8 @@ export const FIELD_GUIDE: Record<string, string> = {
   business_goals: "The business goals they mention",
   wc_carrier: "Their current workers' compensation carrier",
   wc_renewal_date: "When their workers' comp policy renews, as they said it",
-  wc_experience_mod: "Their workers' comp experience modification factor, a decimal such as 0.92",
-  wc_annual_premium: "Their annual workers' comp premium in whole dollars",
+  wc_experience_mod: "Their workers' comp experience modification factor, a decimal such as 0.92 (from 0 to 10)",
+  wc_annual_premium: "Their annual workers' comp premium in whole US dollars (from 0 to 100,000,000)",
 };
 
 // The census (the employee roster) comes only from an uploaded file (D21).
@@ -70,7 +70,7 @@ export const FIELD_TYPES: Record<string, JsonSchema> = Object.fromEntries(FIELDS
 export const FIELD_STATUSES = ["confirmed", "inferred", "incomplete", "unknown"];
 export const MAX_EVIDENCE_CHARS = 200;
 // An answer can carry a value, a status and a quote for every field, plus the reply: well past the
-// Anthropic adapter's default cap, which would cut it off. Not part of the contract hash.
+// Anthropic adapter's default cap, which would cut it off. Not part of the contract fingerprint.
 export const CHAT_MAX_TOKENS = 8192;
 
 const LABELS = new Map(INTAKE_FIELDS.map((f) => [f.key, f.label]));
@@ -81,9 +81,12 @@ const perField = (schema: unknown) => ({
   additionalProperties: false,
 });
 
-// Recorded on every extraction event. Raise it with any change to SYSTEM_PROMPT or EXTRACT_TOOL: promptVersion.test.ts
-// fails until you do, so an event always says which prompt produced it.
-export const PROMPT_VERSION = 2;
+// Versions the whole extraction contract: SYSTEM_PROMPT, EXTRACT_TOOL, the user turn (prompt.ts) and the
+// response shape. Recorded on every extraction event (US-2.4a), returned with every extraction, and stored
+// by the browser on each value's provenance (B-1.4), so a value can be traced to the prompt that produced
+// it. Raise it with any change to them: _shared/ai/promptVersion.test.ts fails until you do. See
+// "Extraction contract version and eval" in docs/intake-schema.md.
+export const PROMPT_VERSION = 3;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 
@@ -94,6 +97,8 @@ You MUST use the extract_chamber_data tool to return the extracted fields. Only 
 
 Field definitions:
 ${fieldLines}
+
+Integers are whole numbers from 0 to 1,000,000 unless a field says otherwise. Text is at most 1,000 characters. An array holds at most 100 items, one entry per item, never a comma-separated string.
 
 Never extract the employee census or details of individual employees: the roster comes only from an uploaded file.
 
