@@ -158,7 +158,7 @@ const ChamberPage = () => {
 
   // Lenore says once, when the intake first becomes ready to certify, that it is (US-2.3a, D29), after her own
   // answer to the message that made it so. An intake that was ready when it opened is left alone.
-  const ready = isReadyToCertify(chamberData, provenance);
+  const ready = isReadyToCertify(chamberData, provenance, verifiedFields);
   const readyBeforeRef = useRef<{ epoch: number; ready: boolean } | null>(null);
   useEffect(() => {
     if (sessionLoading) return;
