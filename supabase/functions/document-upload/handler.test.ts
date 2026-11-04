@@ -34,6 +34,8 @@ interface Setup {
   recordError?: { code?: string };
   /** What intake_accepts_files answers once the file is stored (false: the intake is being deleted). */
   accepts?: boolean;
+  /** intake_accepts_files fails instead of answering. */
+  acceptsError?: { code?: string };
   /** What the scanning service answers; by default it flags EICAR and passes everything else. */
   scan?: (body: Uint8Array) => Response | Promise<Response>;
 }
@@ -49,7 +51,7 @@ const setup = (opts: Setup = {}) => {
   const createClient = vi.fn((_url: string, key: string, options?: { global?: { headers: Record<string, string> } }): UploadClient => ({
     auth: { getUser: async () => ({ data: { user: opts.user === undefined ? { id: USER } : opts.user } }) },
     rpc: async (fn, args) => {
-      if (fn === "intake_accepts_files") return { data: opts.accepts ?? true, error: null };
+      if (fn === "intake_accepts_files") return opts.acceptsError ? { data: null, error: opts.acceptsError } : { data: opts.accepts ?? true, error: null };
       rpcs.push({ fn, args, key });
       return { data: args.p_verdict ?? null, error: opts.recordError ?? null };
     },
@@ -332,6 +334,18 @@ describe("document-upload: storing and scanning (E-4.3)", () => {
     expect(t.removed).toEqual([{ bucket: "documents", paths: [`${USER}/${INTAKE}/${KEY_ID}_a.csv`] }]);
     expect(t.deleted).toEqual([{ id: DOC, key: "service-key" }]);
     expect(t.rpcs).toEqual([]);
+  });
+
+  it("keeps the file when the intake can't be checked: a deletion that raced it sees the file and retries", async () => {
+    // Refusing here would lose a good upload to a passing database error; a deletion already under way finds
+    // the stored file (complete_intake_deletion refuses with EA006) and removes it on its next attempt.
+    const t = setup({ acceptsError: { code: "57014" } });
+    const { status, body } = await read(await handleUploadRequest(upload(CSV, "a.csv"), t.deps));
+    expect(status).toBe(200);
+    expect(body.document.scan_verdict).toBe("clean");
+    expect(t.removed).toEqual([]);
+    expect(t.deleted).toEqual([]);
+    expect(t.logs).toEqual([`UPLOAD_INTAKE_UNCHECKED request=${REQUEST} document=${DOC} intake=${INTAKE} code=57014`]);
   });
 
   it.each([

@@ -298,6 +298,9 @@ BEGIN
   n := 0;
   FOR c IN SELECT * FROM public.claim_document_scans(10, 60) LOOP
     n := n + 1;
+    -- The intake comes from the row, never from the path (for an upload from before intakes, the path's second
+    -- part is the file name).
+    IF c.session_id IS DISTINCT FROM sid THEN RAISE EXCEPTION 'FAIL: claimed with intake %', c.session_id; END IF;
     IF c.document_id = held AND (c.bucket IS DISTINCT FROM 'quarantine' OR c.attempt <> 1) THEN
       RAISE EXCEPTION 'FAIL: held claimed as % attempt %', c.bucket, c.attempt;
     END IF;
@@ -308,9 +311,9 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.claim_document_scans(10, 60)) THEN RAISE EXCEPTION 'FAIL: a claimed document was claimed again'; END IF;
 
   -- A scan that didn't settle is retried later, with its reason kept.
-  outcome := public.fail_document_scan(missing, 'file_missing', 300);
+  outcome := public.fail_document_scan(missing, 'timeout', 300);
   SELECT * INTO r FROM public.documents WHERE id = missing;
-  IF outcome <> 'retrying' OR r.scan_verdict <> 'pending' OR r.scan_error <> 'file_missing' OR r.scan_locked_until IS NOT NULL
+  IF outcome <> 'retrying' OR r.scan_verdict <> 'pending' OR r.scan_error <> 'timeout' OR r.scan_locked_until IS NOT NULL
      OR r.scan_next_at < now() + interval '4 minutes' THEN
     RAISE EXCEPTION 'FAIL: a failed attempt left % % % %', outcome, r.scan_verdict, r.scan_error, r.scan_next_at;
   END IF;
@@ -414,6 +417,123 @@ BEGIN
   END IF;
   RESET ROLE;
   RAISE NOTICE 'document_scanning: orphan and deletion cases passed';
+END $$;
+
+-- ---------- 5. a document with no stored file, and removing one whose scan hasn't passed ----------
+
+DO $$
+DECLARE
+  g constant uuid := pg_temp.id('guest');
+  sid constant uuid := pg_temp.id('intake');
+  ghost uuid;
+  older uuid;
+  flagged uuid;
+  path_older constant text := g || '/' || sid || '/f_older.csv';
+  path_flagged constant text := g || '/' || sid || '/h_flagged.csv';
+  who text;
+  w record;
+  n integer;
+  p2 uuid := pg_temp.new_user('p2@example.test', false);
+  sid2 uuid := gen_random_uuid();
+  path_cert constant text := p2 || '/' || sid2 || '/k_certified.pdf';
+BEGIN
+  -- A row with no file (written straight through the API) fails at once, without waiting out six attempts.
+  PERFORM pg_temp.become('guest');
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path)
+  VALUES (g, sid, 'ghost.csv', '1 KB', g || '/' || sid || '/g_ghost.csv') RETURNING id INTO ghost;
+  RESET ROLE;
+  UPDATE public.documents SET scan_next_at = now() - interval '1 second' WHERE id = ghost;
+  PERFORM pg_temp.become('service');
+  SELECT count(*) INTO n FROM public.claim_document_scans(10, 60) c WHERE c.document_id = ghost AND c.bucket IS NULL AND c.attempt = 1;
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: the row with no file wasn''t claimed'; END IF;
+  IF public.fail_document_scan(ghost, 'file_missing', 300) <> 'failed' THEN RAISE EXCEPTION 'FAIL: a missing file was retried'; END IF;
+
+  -- An upload from before scanning (pending, its file still in documents), removed by its prospect: the file
+  -- stays withheld from them and from advisors, and is recorded for document-scan to delete.
+  PERFORM pg_temp.become('guest');
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path)
+  VALUES (g, sid, 'older.csv', '1 KB', path_older) RETURNING id INTO older;
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path)
+  VALUES (g, sid, 'flagged.csv', '1 KB', path_flagged) RETURNING id INTO flagged;
+  RESET ROLE;
+  PERFORM pg_temp.store('documents', path_older);
+  PERFORM pg_temp.store('documents', path_flagged);
+  UPDATE public.documents SET scan_verdict = 'infected', scan_signature = 'Eicar-Signature' WHERE id = flagged;
+  PERFORM pg_temp.become('guest');
+  PERFORM pg_temp.expect(format('DELETE FROM storage.objects WHERE name = %L', path_older), 'rows:0', 'the prospect deleting a withheld file');
+  DELETE FROM public.documents WHERE id IN (older, flagged);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 2 THEN RAISE EXCEPTION 'FAIL: the prospect removed % of their 2 documents', n; END IF;
+  FOREACH who IN ARRAY ARRAY['guest', 'advisor'] LOOP
+    PERFORM pg_temp.become(who);
+    IF pg_temp.visible(format('storage.objects WHERE name IN (%L, %L)', path_older, path_flagged)) <> 0 THEN
+      RAISE EXCEPTION 'FAIL: % can read a file whose document was removed before its scan passed', who;
+    END IF;
+    IF pg_temp.visible('public.withheld_document_files') <> 0 THEN RAISE EXCEPTION 'FAIL: % can read the withheld files', who; END IF;
+    PERFORM pg_temp.expect('SELECT count(*) FROM public.withheld_files_due(10)', '42501', who || ' listing withheld files');
+    PERFORM pg_temp.expect(format('SELECT public.settle_withheld_file(%L, %L)', path_older, 'removed'), '42501', who || ' settling a withheld file');
+  END LOOP;
+  RESET ROLE;
+  IF (SELECT array_agg(verdict ORDER BY storage_path) FROM public.withheld_document_files WHERE session_id = sid)
+     IS DISTINCT FROM ARRAY['pending', 'infected'] THEN
+    RAISE EXCEPTION 'FAIL: the removed files were recorded as %', (SELECT array_agg(verdict) FROM public.withheld_document_files);
+  END IF;
+
+  -- document-scan deletes both (neither is a certified file), then ends their records.
+  PERFORM pg_temp.become('service');
+  n := 0;
+  FOR w IN SELECT * FROM public.withheld_files_due(10) WHERE storage_path IN (path_older, path_flagged) LOOP
+    n := n + 1;
+    IF w.evidence OR w.bucket IS DISTINCT FROM 'documents' OR w.session_id IS DISTINCT FROM sid THEN
+      RAISE EXCEPTION 'FAIL: withheld file listed as evidence=% bucket=% intake=%', w.evidence, w.bucket, w.session_id;
+    END IF;
+    PERFORM public.settle_withheld_file(w.storage_path, 'removed');
+  END LOOP;
+  IF n <> 2 OR EXISTS (SELECT 1 FROM public.withheld_document_files WHERE session_id = sid) THEN
+    RAISE EXCEPTION 'FAIL: % withheld files were listed and settled', n;
+  END IF;
+  PERFORM pg_temp.expect(format('SELECT public.settle_withheld_file(%L, %L)', path_older, 'infected'), '22023', 'an infected outcome with no signature');
+  RESET ROLE;
+  DELETE FROM storage.objects WHERE name IN (path_older, path_flagged);
+
+  -- A submission's certified file, removed before its scan passed: listed as evidence (scanned, never deleted),
+  -- left alone by the orphan sweep, and once found infected kept withheld and not listed again.
+  SET LOCAL session_replication_role = replica;
+  INSERT INTO public.chamber_sessions (id, user_id, status, submission)
+  VALUES (sid2, p2, 'submitted', jsonb_build_object('documents', jsonb_build_array(jsonb_build_object('id', gen_random_uuid(), 'storage_path', path_cert))));
+  SET LOCAL session_replication_role = origin;
+  INSERT INTO public.withheld_document_files (storage_path, user_id, session_id) VALUES (path_cert, p2, sid2);
+  PERFORM pg_temp.store('quarantine', path_cert);
+  PERFORM pg_temp.become('service');
+  SELECT * INTO w FROM public.withheld_files_due(10) WHERE storage_path = path_cert;
+  IF NOT FOUND OR NOT w.evidence OR w.bucket IS DISTINCT FROM 'quarantine' THEN RAISE EXCEPTION 'FAIL: a certified file wasn''t listed as evidence'; END IF;
+  IF EXISTS (SELECT 1 FROM public.document_scan_orphans(100) o WHERE o.name = path_cert) THEN
+    RAISE EXCEPTION 'FAIL: the orphan sweep would delete a certified file waiting for its scan';
+  END IF;
+  PERFORM public.settle_withheld_file(path_cert, 'infected', 'Eicar-Signature');
+  IF EXISTS (SELECT 1 FROM public.withheld_files_due(10) WHERE storage_path = path_cert) THEN
+    RAISE EXCEPTION 'FAIL: an infected certified file was listed again';
+  END IF;
+  RESET ROLE;
+  IF NOT EXISTS (SELECT 1 FROM public.ops_events WHERE kind = 'malware_detected' AND session_id = sid2 AND user_id = p2) THEN
+    RAISE EXCEPTION 'FAIL: the certified file''s detection wasn''t recorded';
+  END IF;
+
+  -- An intake's deletion removes its files itself: removing its rows records nothing, and the records it has
+  -- go with the intake.
+  PERFORM set_config('eaa.deleting_intake', sid::text, true);
+  DELETE FROM public.documents WHERE session_id = sid AND scan_verdict <> 'clean';
+  PERFORM set_config('eaa.deleting_intake', '', true);
+  IF EXISTS (SELECT 1 FROM public.withheld_document_files WHERE session_id = sid) THEN
+    RAISE EXCEPTION 'FAIL: an intake''s deletion recorded withheld files';
+  END IF;
+  PERFORM set_config('eaa.deleting_intake', sid2::text, true);
+  DELETE FROM public.chamber_sessions WHERE id = sid2;
+  PERFORM set_config('eaa.deleting_intake', '', true);
+  IF EXISTS (SELECT 1 FROM public.withheld_document_files WHERE session_id = sid2) THEN
+    RAISE EXCEPTION 'FAIL: a deleted intake''s withheld files were kept';
+  END IF;
+  RAISE NOTICE 'document_scanning: missing file and withheld file cases passed';
 END $$;
 
 \echo 'document_scanning: all cases passed'

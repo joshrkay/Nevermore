@@ -39,6 +39,12 @@ const uploads = () =>
 const reads = () => calls.filter((c) => c.op === "invoke" && c.args[0] === "document-extract").map((c) => (c.args[1] as { body: { document_id: string } }).body.document_id);
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
+// What the hook reports to monitoring (ops_events), recorded instead of sent.
+const reported: { kind: string; code?: string }[] = [];
+vi.mock("@/lib/monitoring", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/monitoring")>()),
+  reportOpsEvent: (kind: string, report: { code?: string } = {}) => { reported.push({ kind, code: report.code }); },
+}));
 vi.mock("@/integrations/supabase/client", () => {
   const log = (op: string, ...args: unknown[]) => calls.push({ op, args });
   return {
@@ -88,6 +94,7 @@ const { useSessionDocuments } = await import("./useSessionDocuments");
 describe("useSessionDocuments", () => {
   beforeEach(() => {
     calls.length = 0;
+    reported.length = 0;
     listRows = [];
     insertResult = { data: null, error: null };
     deleteResult = { error: null };
@@ -211,7 +218,31 @@ describe("useSessionDocuments", () => {
     expect(outcome).toEqual({ saved: 0, failed: ["a.csv"], rejected: [] });
     expect(result.current.docs).toEqual([]);
     expect(reads()).toEqual([]);
+    // A failure on our side is reported to monitoring, by its code, never the file's name.
+    expect(reported).toEqual([{ kind: "upload_failed", code: "document_upload:storage" }]);
   });
+
+  it.each([
+    ["the function never answering", { data: null, error: new Error("network down") }, "document_upload:unreachable"],
+    ["a function crash with no code", { data: null, error: new FunctionsHttpError(new Response("boom", { status: 500 })) }, "document_upload:500"],
+  ] as const)("reports %s to monitoring", async (_label, result, code) => {
+    uploadResult = result;
+    const { result: hook } = renderHook(() => useSessionDocuments("s1"));
+    await waitFor(() => expect(hook.current.isLoading).toBe(false));
+    await act(async () => { await hook.current.upload([new File(["x"], "a.csv")]); });
+    expect(reported).toEqual([{ kind: "upload_failed", code }]);
+  });
+
+  it.each(["closed", "consent", "not_found", "unauthorized", "duplicate", "mismatch", "too_large", "limit"])(
+    "doesn't report the intake's or the file's own %s refusal as a failure",
+    async (code) => {
+      uploadResult = refusedWith(code, 409);
+      const { result } = renderHook(() => useSessionDocuments("s1"));
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await act(async () => { await result.current.upload([new File(["x"], "a.csv")]); });
+      expect(reported).toEqual([]);
+    },
+  );
 
   it.each([
     ["executable", 415, "mismatch"],
@@ -252,12 +283,24 @@ describe("useSessionDocuments", () => {
     }
   });
 
-  it("removes a held file's record only: its quarantined file is out of the prospect's reach", async () => {
+  it("removes a held file's record once storage says the file is out of reach: the database keeps it withheld", async () => {
+    // Storage deletes nothing it withholds from the prospect, and reports it gone; removing the record then
+    // records the file for document-scan to delete (withheld_document_files).
     listRows = [row({ scan_verdict: "infected" })];
+    storageRemoveResult = { data: [], error: null };
+    existsResult = false;
     const { result, ok } = await removeFirst();
     expect(ok).toBe(true);
-    expect(ops()).toEqual(["delete"]);
+    expect(ops()).toEqual(["storage.remove", "storage.exists", "delete"]);
     expect(result.current.docs).toEqual([]);
+  });
+
+  it("deletes the file of a document whose scan passed since this tab last looked", async () => {
+    // The tab still shows it as being checked; storage deletes the file, which is now readable.
+    listRows = [row({ scan_verdict: "pending" })];
+    const { ok } = await removeFirst();
+    expect(ok).toBe(true);
+    expect(ops()).toEqual(["storage.remove", "delete"]);
   });
 
   it("refuses a file whose contents don't match its name, without storing anything", async () => {

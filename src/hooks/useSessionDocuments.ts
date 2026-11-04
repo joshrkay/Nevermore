@@ -379,9 +379,11 @@ export function useSessionDocuments(sessionId: string | null, ensureSession?: ()
     // The file goes first, then the record. If the record can't be deleted, it stays listed and the
     // next try finds its file already gone and finishes. The other order could leave a stored file
     // with no record, which nobody can see or delete: putting the record back can fail too (an
-    // expired intake refuses new rows). A file whose scan hasn't passed is out of the prospect's reach
-    // (in quarantine); once its record is gone, document-scan removes it.
-    if (isScanReleased(doc.scan_verdict) && !(await removeStoredFile(doc.storage_path))) {
+    // expired intake refuses new rows). The file is asked for whatever its scan said here, since the scan may
+    // have passed since this tab last looked. A file whose scan hasn't passed is out of the prospect's reach
+    // (withheld, or in quarantine), so storage deletes nothing and reports it gone; removing the record keeps
+    // it withheld (withheld_document_files) until document-scan deletes it.
+    if (!(await removeStoredFile(doc.storage_path))) {
       reportOpsEvent("upload_failed", { code: "storage_remove", sessionId: sessionRef.current });
       return false;
     }

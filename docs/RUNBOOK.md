@@ -72,7 +72,7 @@ Alerts that come from elsewhere:
 | `OUTBOX_DEAD` (webhook and log) | `dispatch-outbox`, when a notification email gives up | `docs/NOTIFICATIONS.md`, "Operating" |
 | `DELETION_FAILED` (webhook and log) | `purge-intakes`, when a deletion gives up. The same failure also raises `OPS_ALERT kind=deletion_failed` within five minutes, so expect both | [Deletion failed](#deletion-failed) |
 | `MALWARE_DETECTED` (webhook and log) | `document-upload` or `document-scan`, at once, for every detection. The first in an hour also raises `OPS_ALERT kind=malware_detected`, so expect both | [Malware detected](#malware-detected) |
-| `SCAN_FAILED` (webhook and log) | `document-scan`, when an upload gives up after six attempts. Also raises `OPS_ALERT kind=scan_failed` | [Scan failed](#scan-failed) |
+| `SCAN_FAILED` (webhook and log) | `document-scan`, once for a run that gave up on any upload (after six attempts, or at once for one with no stored file), with the count and the reasons. Each one is also a `scan_failed` event, so `OPS_ALERT kind=scan_failed` follows | [Scan failed](#scan-failed) |
 
 Log lines to know (fixed fields only, never names, paths, messages or provider text):
 
@@ -91,6 +91,8 @@ Log lines to know (fixed fields only, never names, paths, messages or provider t
 | `UPLOAD_RECORD_FAILED …`, `UPLOAD_STORE_FAILED …`, `UPLOAD_ERROR …`, `UPLOAD_CONFIG_MISSING: …` | `document-upload` | The row or the file couldn't be saved (`code=<sqlstate or status>`); a stored file's row is removed again (`undo=` if that failed too) |
 | `SCAN_DEFERRED document=… engine=… reason=…` | `document-upload` | The scanner gave no verdict at upload; the file waits in quarantine and `document-scan` retries it |
 | `SCAN_RETRY document=… attempt=… reason=… retry_in=…s` | `document-scan` | A scan didn't settle; tried again after 5 minutes, 15 minutes, 1 hour, 4 hours, then 12 hours |
+| `SCAN_WITHHELD_RETRY intake=… reason=…`, `SCAN_WITHHELD_ERROR …` | `document-scan` | A file whose document was removed before its scan passed (`withheld_document_files`) didn't settle this run: the scanner gave no verdict on a submission's certified file, or a storage or database step failed. It stays withheld and is tried again next run |
+| `UPLOAD_INTAKE_CLOSED …`, `UPLOAD_INTAKE_UNCHECKED …` | `document-upload` | The intake started being deleted while a file was on its way, so the file and its row were taken back (the prospect is told the intake is closed); or that couldn't be checked, and the file was kept for the deletion to find |
 | `SCAN_CONFIG_MISSING: …` | `document-upload`, `document-scan` | `MALWARE_SCANNER` (or its settings) is unset or unusable: every upload is held in quarantine |
 | `SCAN_NOT_RECORDED …`, `SCAN_ERROR …`, `SCAN_QUARANTINE_NOT_REMOVED …`, `SCAN_QUARANTINE_MOVE_FAILED …`, `SCAN_ORPHANS_ERROR …`, `SCAN_RUN_ERROR: …` | `document-upload`, `document-scan` | A step after the scan failed; the file stays unreadable and the next run settles it |
 
@@ -313,7 +315,10 @@ uploads are stuck.
    file (`clamd_size_limit`: raise clamd's `StreamMaxLength` above 20 MB). `file_missing`: the document has no
    stored file (its upload failed half way); the prospect should remove it and upload again.
    `storage_*`, `rpc_*`: Supabase Storage or the database (function logs). `worker_lost`: the function was
-   stopped mid-scan on its last attempt.
+   stopped mid-scan on its last attempt. A document with no stored file (`file_missing`) is given up on at once:
+   its upload failed half way, or its row was written straight through the API; the prospect is told it
+   couldn't be checked and can remove it. Many from one account in a short time means someone is writing rows
+   by hand: look at `UPLOAD_REFUSED` lines for the same user.
 2. What is waiting: `select scan_verdict, scan_error, count(*) from public.documents where scan_verdict in
    ('pending', 'failed') group by 1, 2;`
 3. Fix the cause. Pending documents are retried on their own; failed ones are requeued with

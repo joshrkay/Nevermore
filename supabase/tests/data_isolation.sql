@@ -344,6 +344,8 @@ BEGIN
   -- scan hasn't is withheld, which document_scanning.sql checks. One more upload waits in quarantine.
   UPDATE public.documents SET scan_verdict = 'clean', scanned_at = now();
   INSERT INTO storage.objects (bucket_id, name) VALUES ('quarantine', ga || '/' || ga_open || '/held.pdf');
+  -- A file whose document guest A removed before its scan passed, waiting for document-scan to delete it.
+  INSERT INTO public.withheld_document_files (storage_path, user_id, session_id) VALUES (ga || '/' || ga_open || '/held.pdf', ga, ga_open);
   PERFORM set_config('request.jwt.claims', '', false);
   INSERT INTO fx VALUES
     ('ga_open', ga_open), ('ga_expired', ga_expired), ('ga_archived', ga_archived), ('ga_revoked', ga_revoked),
@@ -373,6 +375,7 @@ INSERT INTO matrix VALUES
   ('storage.objects WHERE bucket_id = ''manuscripts''', '{"prospect_a":1,"advisor":"all","admin":"all"}'),
   -- Uploads whose malware scan hasn't passed (20261104130000): the service role's alone.
   ('storage.objects WHERE bucket_id = ''quarantine''',  '{}'),
+  ('public.withheld_document_files',                    '{}'),
   ('storage.buckets',                                   '{}'),
   -- Everyone sees their own profile; the advisor's account behind a guest token is still that account.
   ('public.profiles',                                   '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all","advisor_as_guest":1}'),

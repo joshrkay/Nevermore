@@ -26,6 +26,15 @@ interface Claim {
   storage_path: string;
   attempt: number;
   bucket: "quarantine" | "documents" | null;
+  session_id: string | null;
+}
+
+interface WithheldRow {
+  storage_path: string;
+  session_id: string | null;
+  verdict: "pending" | "infected";
+  evidence: boolean;
+  bucket: "quarantine" | "documents" | null;
 }
 
 interface Setup {
@@ -39,6 +48,8 @@ interface Setup {
   scan?: (body: Uint8Array) => Response;
   /** What intake_accepts_files answers after a copy (false: the intake is being deleted). */
   accepts?: boolean;
+  /** Files whose document was removed before its scan passed (withheld_files_due). */
+  withheld?: WithheldRow[];
 }
 
 const setup = (opts: Setup = {}) => {
@@ -57,6 +68,7 @@ const setup = (opts: Setup = {}) => {
       if (fn === "fail_document_scan") return { data: opts.failOutcome ?? "retrying", error: null };
       if (fn === "document_scan_orphans") return { data: (opts.orphans ?? []).map((name) => ({ name })), error: null };
       if (fn === "intake_accepts_files") return { data: opts.accepts ?? true, error: null };
+      if (fn === "withheld_files_due") return { data: opts.withheld ?? [], error: null };
       return { data: null, error: null };
     },
     storage: {
@@ -110,7 +122,7 @@ const run = async (t: ReturnType<typeof setup>, request = scheduled()) => {
   const response = await handleScanRequest(request, t.deps);
   return { status: response.status, body: await response.json() };
 };
-const claim = (over: Partial<Claim> = {}): Claim => ({ document_id: DOC, storage_path: PATH, attempt: 1, bucket: "quarantine", ...over });
+const claim = (over: Partial<Claim> = {}): Claim => ({ document_id: DOC, storage_path: PATH, attempt: 1, bucket: "quarantine", session_id: INTAKE, ...over });
 
 describe("document-scan: who may run it", () => {
   it("is the schedule's alone: anyone else, signed in or not, is refused before anything moves", async () => {
@@ -136,7 +148,7 @@ describe("document-scan: settling pending uploads", () => {
     expect(body).toMatchObject({ claimed: 1, clean: 1, infected: 0, retrying: 0 });
     expect(t.steps).toEqual([
       "claim_document_scans", "download:quarantine", "scan", "upload:documents", "intake_accepts_files", "record_document_scan", "remove:quarantine",
-      "claim_document_scans", "document_scan_orphans",
+      "claim_document_scans", "withheld_files_due", "document_scan_orphans",
     ]);
     expect(t.rpcs.find((r) => r.fn === "intake_accepts_files")?.args).toEqual({ p_session: INTAKE });
     expect(t.uploads).toEqual([{ bucket: "documents", path: PATH, options: { contentType: STORED_CONTENT_TYPE, upsert: true } }]);
@@ -168,14 +180,31 @@ describe("document-scan: settling pending uploads", () => {
     expect(t.logs).toEqual([`SCAN_RETRY document=${DOC} attempt=2 reason=http:503 retry_in=900s`]);
   });
 
-  it("alerts when an upload gives up after its last attempt", async () => {
-    const t = setup({ claims: [claim({ attempt: 6, bucket: null })], failOutcome: "failed" });
+  it("gives up on a document with no stored file, and alerts once for the run however many there are", async () => {
+    // Forged rows (written straight through the API) or uploads that failed half way: each one fails, and the
+    // channel gets one SCAN_FAILED with the count, not one per document.
+    const claims = Array.from({ length: 25 }, (_, i) => claim({ document_id: `d${i}`, bucket: null }));
+    const t = setup({ claims: [...claims, claim({ document_id: "d-timeout", attempt: 6 })], files: { quarantine: { [PATH]: CLEAN } }, failOutcome: "failed", scan: () => new Response("", { status: 504 }) });
     const { body } = await run(t);
-    expect(body).toMatchObject({ failed: 1 });
-    expect(t.steps).not.toContain("download:quarantine");
-    expect(t.rpcs.find((r) => r.fn === "fail_document_scan")?.args).toMatchObject({ p_error: "file_missing" });
-    expect(t.alerts).toEqual([expect.objectContaining({ alert: "SCAN_FAILED", document: DOC, attempts: 6, reason: "file_missing" })]);
-    expect(t.logs).toEqual([`SCAN_FAILED document=${DOC} attempts=6 reason=file_missing`]);
+    expect(body).toMatchObject({ failed: 26 });
+    expect(t.rpcs.filter((r) => r.fn === "fail_document_scan").map((r) => r.args.p_error)).toEqual([...Array(25).fill("file_missing"), "http:504"]);
+    expect(t.steps.filter((s) => s === "download:quarantine")).toHaveLength(1);
+    expect(t.alerts).toEqual([
+      expect.objectContaining({ alert: "SCAN_FAILED", source: "document-scan", count: 26, reasons: "file_missing x25, http:504 x1" }),
+    ]);
+    expect(t.logs).toContain("SCAN_FAILED document=d0 attempts=1 reason=file_missing");
+  });
+
+  it("names the intake from the row, so an upload from before intakes never puts its file name in an alert", async () => {
+    // Stored as {user}/{uuid}_{name}, with no intake folder: the path's second part is the file name.
+    const legacy = `${USER}/11111111-1111-1111-1111-111111111111_Secret_Payroll.csv`;
+    const t = setup({ claims: [claim({ storage_path: legacy, bucket: "documents", session_id: null })], files: { documents: { [legacy]: encode(EICAR) } } });
+    await run(t);
+    expect(t.alerts).toEqual([expect.objectContaining({ alert: "MALWARE_DETECTED", intake: null })]);
+    // No intake, so no intake deletion to race: the move into quarantine stands.
+    expect(t.steps).not.toContain("intake_accepts_files");
+    expect(t.steps.filter((s) => s.startsWith("upload") || s.startsWith("remove"))).toEqual(["upload:quarantine", "remove:documents"]);
+    for (const line of [...t.logs, JSON.stringify(t.alerts)]) expect(line).not.toMatch(/Secret|Payroll/);
   });
 
   it("takes back the copy it made when the document was removed while it was scanned", async () => {
@@ -197,7 +226,7 @@ describe("document-scan: settling pending uploads", () => {
     const t = setup({ env: { MALWARE_SCANNER: undefined }, claims: [claim()] });
     const { body } = await run(t);
     expect(body).toMatchObject({ claimed: 0 });
-    expect(t.rpcs.map((r) => r.fn)).toEqual(["record_ops_event", "document_scan_orphans"]);
+    expect(t.rpcs.map((r) => r.fn)).toEqual(["record_ops_event", "withheld_files_due", "document_scan_orphans"]);
     expect(t.rpcs[0].args).toEqual({ p_kind: "scan_failed", p_source: "document-scan", p_code: "config_missing" });
     expect(t.scanFetch).not.toHaveBeenCalled();
   });
@@ -206,7 +235,52 @@ describe("document-scan: settling pending uploads", () => {
     const t = setup({ orphans: [PATH, `${USER}/${INTAKE}/22222222_x.pdf`] });
     const { body } = await run(t);
     expect(body).toMatchObject({ orphans_removed: 2 });
-    expect(t.steps).toEqual(["claim_document_scans", "document_scan_orphans", "remove:quarantine"]);
+    expect(t.steps).toEqual(["claim_document_scans", "withheld_files_due", "document_scan_orphans", "remove:quarantine"]);
+  });
+
+  describe("files whose document was removed before its scan passed", () => {
+    const withheld = (over: Partial<WithheldRow> = {}): WithheldRow => ({ storage_path: PATH, session_id: INTAKE, verdict: "pending", evidence: false, bucket: "documents", ...over });
+    const settles = (t: ReturnType<typeof setup>) => t.rpcs.filter((r) => r.fn === "settle_withheld_file").map((r) => r.args);
+
+    it("deletes one that isn't a certified file from both buckets, unscanned, then ends its record", async () => {
+      const t = setup({ withheld: [withheld()] });
+      const { body } = await run(t);
+      expect(body).toMatchObject({ withheld_removed: 1 });
+      expect(t.steps).toEqual(["claim_document_scans", "withheld_files_due", "remove:documents", "remove:quarantine", "settle_withheld_file", "document_scan_orphans"]);
+      expect(settles(t)).toEqual([{ p_storage_path: PATH, p_outcome: "removed", p_signature: null }]);
+      expect(t.scanFetch).not.toHaveBeenCalled();
+    });
+
+    it("ends the record of one whose file is already gone", async () => {
+      const t = setup({ withheld: [withheld({ bucket: null })] });
+      await run(t);
+      expect(settles(t)).toEqual([{ p_storage_path: PATH, p_outcome: "removed", p_signature: null }]);
+      expect(t.steps.filter((s) => s.startsWith("remove"))).toEqual([]);
+    });
+
+    it("scans a certified file kept for the advisor, and releases it from quarantine once clean", async () => {
+      const t = setup({ withheld: [withheld({ evidence: true, bucket: "quarantine" })], files: { quarantine: { [PATH]: CLEAN } } });
+      const { body } = await run(t);
+      expect(body).toMatchObject({ withheld_released: 1 });
+      expect(t.steps.slice(1, 8)).toEqual(["withheld_files_due", "download:quarantine", "scan", "upload:documents", "intake_accepts_files", "settle_withheld_file", "remove:quarantine"]);
+      expect(settles(t)).toEqual([{ p_storage_path: PATH, p_outcome: "released", p_signature: null }]);
+    });
+
+    it("quarantines a certified file found infected, keeps it withheld, and alerts", async () => {
+      const t = setup({ withheld: [withheld({ evidence: true })], files: { documents: { [PATH]: encode(EICAR) } } });
+      const { body } = await run(t);
+      expect(body).toMatchObject({ infected: 1 });
+      expect(settles(t)).toEqual([{ p_storage_path: PATH, p_outcome: "infected", p_signature: "Eicar-Signature" }]);
+      expect(t.steps.slice(1, 8)).toEqual(["withheld_files_due", "download:documents", "scan", "settle_withheld_file", "upload:quarantine", "intake_accepts_files", "remove:documents"]);
+      expect(t.alerts).toEqual([expect.objectContaining({ alert: "MALWARE_DETECTED", intake: INTAKE, signature: "Eicar-Signature" })]);
+    });
+
+    it("leaves a certified file withheld, for the next run, when no scanner can check it, while still deleting the rest", async () => {
+      const t = setup({ env: { MALWARE_SCANNER: undefined }, withheld: [withheld({ evidence: true, storage_path: "a" }), withheld({ storage_path: "b" })] });
+      await run(t);
+      expect(settles(t)).toEqual([{ p_storage_path: "b", p_outcome: "removed", p_signature: null }]);
+      expect(t.steps).not.toContain("download:documents");
+    });
   });
 
   it("never logs or alerts a file name", async () => {

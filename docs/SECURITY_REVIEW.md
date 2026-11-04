@@ -82,7 +82,8 @@ service-only function. The advisor's account presenting a guest token is treated
   link says. `fileLinks.test.ts` holds both.
 - A document's file is readable only once its malware scan passed (`scan_verdict` clean or skipped, written by the
   service role only): until then it is in `quarantine`, or, for an upload from before scanning, withheld by the
-  `documents` read policies (`is_withheld_document_file`). `document_scanning.sql` covers both, and that a prospect
+  `documents` read policies (`is_withheld_document_file`). Removing the document doesn't release it: the path is
+  kept in `withheld_document_files` (service only) until `document-scan` deletes the file. `document_scanning.sql` covers both, and that a prospect
   can't store a file directly or record a verdict.
 
 ### The checks can't quietly fall behind

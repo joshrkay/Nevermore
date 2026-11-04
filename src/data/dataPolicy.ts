@@ -224,11 +224,11 @@ export const DATA_CLASSES: DataClass[] = [
     sensitivity: "restricted",
     examples: "Every file uploaded to an intake, whatever its category, and the values read out of it for review.",
     stored: {
-      tables: ["documents"],
+      tables: ["documents", "withheld_document_files"],
       buckets: ["documents", "quarantine"],
       elsewhere: ["The AI provider, for the moment a file is read (D11)", "The malware scanner, for the moment a file is checked (D13)"],
     },
-    retention: `${WITH_INTAKE} The prospect can remove a document while the intake is open; while it is certified, the file it was certified with stays for the advisor until the intake is deleted. A file waiting for, or failing, its malware scan is kept in quarantine, where only the service can reach it; once its document is removed, the quarantined file is deleted within five minutes.`,
+    retention: `${WITH_INTAKE} The prospect can remove a document while the intake is open; while it is certified, the file it was certified with stays for the advisor until the intake is deleted. A file waiting for, or failing, its malware scan is kept where only the service can reach it; once its document is removed, the file is deleted within five minutes (a certified file is scanned instead, and kept for the advisor once clean).`,
     deletion: `${DELETED_WITH_INTAKE} The stored file is removed before its row.`,
   },
   {

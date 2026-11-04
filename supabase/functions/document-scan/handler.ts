@@ -6,11 +6,19 @@
 //   claim_document_scans ─► download from the bucket the file is in ─► scan
 //     clean / skipped ─► copy into documents (from quarantine) ─► record_document_scan ─► drop the quarantined copy
 //     infected        ─► record_document_scan (malware_detected) ─► move into quarantine (if it was in documents) ─► alert
-//     no verdict      ─► fail_document_scan: retried with backoff; after six attempts `failed` (scan_failed) ─► alert
+//     no verdict      ─► fail_document_scan: retried with backoff; after six attempts `failed` (scan_failed);
+//                        a document with no stored file fails at once
 //
-// and then removes quarantined copies nothing holds any more (document_scan_orphans). Until a document's
-// verdict passes, nobody but the service role can read its file: quarantine has no policies, and the
-// documents bucket's read policies refuse a file whose row is not clean (is_withheld_document_file).
+// then settles files whose document was removed before its scan passed (withheld_files_due): deletes them,
+// or, for a submission's certified file kept for the advisor, scans it and releases it once clean; and then
+// removes quarantined copies nothing holds any more (document_scan_orphans). Until a document's verdict
+// passes, nobody but the service role can read its file: quarantine has no policies, and the documents
+// bucket's read policies refuse a file whose row is not clean, or whose row was removed before it was
+// (is_withheld_document_file).
+//
+// Alerts: MALWARE_DETECTED at once for every detection, and one SCAN_FAILED per run that gave up on any
+// document, with the count and reasons. Each failure is also a scan_failed event, which ops-monitor alerts on
+// at most hourly, so a flood of failures (forged rows with no file, a long scanner outage) is one alert a run.
 //
 // Only the schedule may call it: the caller must present the service-role key. It answers with counts. Its
 // log lines carry document and intake ids, signatures and failure kinds, never file names. index.ts wires in
@@ -35,6 +43,7 @@ export const CLAIM_LOCK_SECONDS = 300;
 export const TIME_BUDGET_MS = 45_000;
 export const MAX_PER_RUN = 50;
 export const ORPHAN_BATCH = 100;
+export const WITHHELD_BATCH = 50;
 
 /** How long to wait before attempt n + 1, after attempt n couldn't scan. The database gives up after its sixth. */
 export function retryDelaySeconds(attempt: number): number {
@@ -65,12 +74,26 @@ export interface ScanDeps {
   log: (line: string) => void;
 }
 
+type Bucket = "quarantine" | "documents";
+
 interface Claimed {
   document_id: string;
   storage_path: string;
   attempt: number;
   /** Where the file is now: quarantine, documents, or neither. */
-  bucket: "quarantine" | "documents" | null;
+  bucket: Bucket | null;
+  /** The document's intake; null for an upload from before intakes. Never read it from the path. */
+  session_id: string | null;
+}
+
+/** A file whose document was removed before its scan passed (public.withheld_files_due). */
+interface Withheld {
+  storage_path: string;
+  session_id: string | null;
+  verdict: "pending" | "infected";
+  /** A submission's certified file, kept for the advisor: scanned and released, never deleted. */
+  evidence: boolean;
+  bucket: Bucket | null;
 }
 
 export interface ScanSummary {
@@ -81,6 +104,8 @@ export interface ScanSummary {
   retrying: number;
   failed: number;
   gone: number;
+  withheld_removed: number;
+  withheld_released: number;
   orphans_removed: number;
 }
 
@@ -90,24 +115,41 @@ const errorCode = (error: unknown): string => {
   return typeof code === "string" || typeof code === "number" ? String(code) : "error";
 };
 
-/** The line a person reads in the channel when a document could not be scanned after every attempt. */
-export function scanFailedAlertText(document: string, attempts: number, reason: string): string {
-  return `SCAN_FAILED: an uploaded document could not be scanned for malware after ${attempts} attempt(s), so nobody can open it. document=${document} reason=${reason}. Follow the "Scan failed" playbook in docs/RUNBOOK.md; requeue it with public.requeue_document_scan once the scanner works.`;
+/** The reasons documents were given up on this run, as "file_missing x3, timeout x1". */
+const reasonCounts = (reasons: string[]) =>
+  [...reasons.reduce((m, r) => m.set(r, (m.get(r) ?? 0) + 1), new Map<string, number>())]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([r, n]) => `${r} x${n}`)
+    .join(", ");
+
+/** The line a person reads in the channel when a run gave up on scanning documents. */
+export function scanFailedAlertText(count: number, reasons: string): string {
+  return `SCAN_FAILED: ${count} uploaded document(s) could not be scanned for malware and were given up on, so nobody can open them. Reasons: ${reasons}. Follow the "Scan failed" playbook in docs/RUNBOOK.md; requeue them with public.requeue_document_scan once the cause is fixed.`;
 }
 
-/** Scans one claimed document and records what happened. */
-async function settle(client: ScanClient, c: Claimed, scanner: { scan(bytes: Uint8Array): Promise<ScanResult> }, deps: ScanDeps, summary: ScanSummary) {
+/**
+ * After copying a file into a bucket: a deletion of its intake may have checked the intake's files while the
+ * copy was on its way (SR-15). Asking waits for such a deletion to finish; if the intake is gone or being
+ * deleted, the copy is taken back, or it would be left behind. True when the copy may stay. A file with no
+ * intake (an upload from before intakes) has no intake deletion to race.
+ */
+async function keepCopy(client: ScanClient, intake: string | null, bucket: Bucket, path: string): Promise<boolean> {
+  if (!intake) return true;
+  const { data: accepts, error } = await client.rpc("intake_accepts_files", { p_session: intake });
+  if (error || accepts !== false) return true;
+  await client.storage.from(bucket).remove([path]);
+  return false;
+}
+
+type Scanner = { scan(bytes: Uint8Array): Promise<ScanResult> };
+
+/** Scans one claimed document and records what happened. Reasons it gave up go into `failures`. */
+async function settle(client: ScanClient, c: Claimed, scanner: Scanner, deps: ScanDeps, summary: ScanSummary, failures: string[]) {
   const id = c.document_id;
   const path = c.storage_path;
-  const intake = path.split("/")[1] ?? null;
-
-  // After copying a file into a bucket: a deletion of its intake may have checked the intake's files while
-  // the copy was on its way (SR-15). Asking waits for such a deletion to finish; if the intake is gone or
-  // being deleted, the copy is taken back, or it would be left behind. True when the copy may stay.
-  const keepCopy = async (bucket: "documents" | "quarantine"): Promise<boolean> => {
-    const { data: accepts, error } = await client.rpc("intake_accepts_files", { p_session: intake });
-    if (error || accepts !== false) return true;
-    await client.storage.from(bucket).remove([path]);
+  const intake = c.session_id ?? null;
+  const keep = async (bucket: Bucket) => {
+    if (await keepCopy(client, intake, bucket, path)) return true;
     summary.gone++;
     return false;
   };
@@ -124,15 +166,8 @@ async function settle(client: ScanClient, c: Claimed, scanner: { scan(bytes: Uin
       summary.retrying++;
     } else if (outcome === "failed") {
       summary.failed++;
+      failures.push(reason);
       deps.log(`SCAN_FAILED document=${id} attempts=${c.attempt} reason=${reason}`);
-      await postScanAlert(deps, {
-        text: scanFailedAlertText(id, c.attempt, reason),
-        source: "document-scan",
-        alert: "SCAN_FAILED",
-        document: id,
-        attempts: c.attempt,
-        reason,
-      });
     } else if (outcome === "gone") {
       summary.gone++;
     } else {
@@ -166,7 +201,7 @@ async function settle(client: ScanClient, c: Claimed, scanner: { scan(bytes: Uin
     if (c.bucket === "quarantine") {
       const { error } = await client.storage.from("documents").upload(path, bytes, { contentType: STORED_CONTENT_TYPE, upsert: true });
       if (error) return await fail(`storage_release:${errorCode(error)}`);
-      if (!(await keepCopy("documents"))) return;
+      if (!(await keep("documents"))) return;
     }
     const recorded = await record(scan);
     if (recorded === "error") return;
@@ -200,9 +235,92 @@ async function settle(client: ScanClient, c: Claimed, scanner: { scan(bytes: Uin
     const { error: copyError } = await client.storage.from("quarantine").upload(path, bytes, { contentType: STORED_CONTENT_TYPE, upsert: true });
     const { error: removeError } = copyError ? { error: null } : await client.storage.from("documents").remove([path]);
     if (copyError || removeError) deps.log(`SCAN_QUARANTINE_MOVE_FAILED document=${id} code=${errorCode(copyError ?? removeError)}`);
-    if (!copyError) await keepCopy("quarantine");
+    if (!copyError) await keep("quarantine");
   }
   await postScanAlert(deps, malwareAlert({ document: id, intake, signature: scan.signature, engine: scan.engine, source: "document-scan" }));
+}
+
+/**
+ * Settles one file whose document was removed before its scan passed. Any other file is deleted from both
+ * buckets; a submission's certified file is scanned, and released once clean or quarantined for good once
+ * infected. Anything that doesn't settle (a storage error, no scanner, no verdict) is tried next run.
+ */
+async function settleWithheld(client: ScanClient, w: Withheld, scanner: Scanner | null, deps: ScanDeps, summary: ScanSummary) {
+  const path = w.storage_path;
+  const settled = async (outcome: "removed" | "released" | "infected", signature: string | null = null) => {
+    const { error } = await client.rpc("settle_withheld_file", { p_storage_path: path, p_outcome: outcome, p_signature: signature });
+    if (error) deps.log(`SCAN_WITHHELD_ERROR intake=${w.session_id ?? "-"} record=rpc_settle:${errorCode(error)}`);
+    return !error;
+  };
+
+  if (!w.bucket) {
+    await settled("removed");
+    return;
+  }
+  if (!w.evidence) {
+    for (const bucket of ["documents", "quarantine"] as const) {
+      const { error } = await client.storage.from(bucket).remove([path]);
+      if (error) {
+        deps.log(`SCAN_WITHHELD_ERROR intake=${w.session_id ?? "-"} code=storage_remove:${errorCode(error)}`);
+        return;
+      }
+    }
+    if (await settled("removed")) summary.withheld_removed++;
+    return;
+  }
+
+  // A certified file, kept for the advisor: it is read only once its scan passes.
+  if (!scanner) return;
+  const { data: blob, error: downloadError } = await client.storage.from(w.bucket).download(path);
+  if (downloadError || !blob) {
+    deps.log(`SCAN_WITHHELD_ERROR intake=${w.session_id ?? "-"} code=storage_download:${errorCode(downloadError)}`);
+    return;
+  }
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const scan = await scanner.scan(bytes);
+  if (scan.verdict === "unavailable") {
+    deps.log(`SCAN_WITHHELD_RETRY intake=${w.session_id ?? "-"} reason=${scan.reason}`);
+    return;
+  }
+  if (scan.verdict === "clean" || scan.verdict === "skipped") {
+    if (w.bucket === "quarantine") {
+      const { error } = await client.storage.from("documents").upload(path, bytes, { contentType: STORED_CONTENT_TYPE, upsert: true });
+      if (error) {
+        deps.log(`SCAN_WITHHELD_ERROR intake=${w.session_id ?? "-"} code=storage_release:${errorCode(error)}`);
+        return;
+      }
+      if (!(await keepCopy(client, w.session_id, "documents", path))) return;
+    }
+    if (!(await settled("released"))) return;
+    summary.withheld_released++;
+    if (w.bucket === "quarantine") await client.storage.from("quarantine").remove([path]);
+    return;
+  }
+  // Infected: recorded first (it stays withheld whatever happens next), then moved into quarantine.
+  if (!(await settled("infected", scan.signature))) return;
+  summary.infected++;
+  deps.log(`MALWARE_DETECTED source=document-scan document=- intake=${w.session_id ?? "-"} engine=${scan.engine} signature=${scan.signature}`);
+  if (w.bucket === "documents") {
+    const { error: copyError } = await client.storage.from("quarantine").upload(path, bytes, { contentType: STORED_CONTENT_TYPE, upsert: true });
+    if (!copyError && (await keepCopy(client, w.session_id, "quarantine", path))) await client.storage.from("documents").remove([path]);
+  }
+  await postScanAlert(deps, malwareAlert({ document: "-", intake: w.session_id, signature: scan.signature, engine: scan.engine, source: "document-scan" }));
+}
+
+/** Works through the files whose document was removed before its scan passed. */
+async function settleAllWithheld(client: ScanClient, scanner: Scanner | null, deps: ScanDeps, summary: ScanSummary) {
+  const { data, error } = await client.rpc("withheld_files_due", { p_limit: WITHHELD_BATCH });
+  if (error) {
+    deps.log(`SCAN_WITHHELD_ERROR record=rpc_due:${errorCode(error)}`);
+    return;
+  }
+  for (const w of (Array.isArray(data) ? data : []) as Withheld[]) {
+    try {
+      await settleWithheld(client, w, scanner, deps, summary);
+    } catch {
+      deps.log(`SCAN_WITHHELD_ERROR intake=${w.session_id ?? "-"} code=unexpected`);
+    }
+  }
 }
 
 /** Removes quarantined copies that no document holds there any more. */
@@ -225,7 +343,10 @@ async function removeOrphans(client: ScanClient, deps: ScanDeps): Promise<number
 /** Works the queue until it is empty or the time budget is spent, then sweeps orphans. */
 export async function runScans(client: ScanClient, deps: ScanDeps): Promise<ScanSummary> {
   const started = deps.now();
-  const summary: ScanSummary = { claimed: 0, clean: 0, skipped: 0, infected: 0, retrying: 0, failed: 0, gone: 0, orphans_removed: 0 };
+  const summary: ScanSummary = {
+    claimed: 0, clean: 0, skipped: 0, infected: 0, retrying: 0, failed: 0, gone: 0, withheld_removed: 0, withheld_released: 0, orphans_removed: 0,
+  };
+  const failures: string[] = [];
 
   const choice = selectScanner(deps.env, deps.scanner);
   if (!choice.ok) {
@@ -242,7 +363,7 @@ export async function runScans(client: ScanClient, deps: ScanDeps): Promise<Scan
       for (const c of claimed) {
         summary.claimed++;
         try {
-          await settle(client, c, choice.scanner, deps, summary);
+          await settle(client, c, choice.scanner, deps, summary, failures);
         } catch {
           // Its claim lapses and a later run takes it again (the attempt is spent).
           deps.log(`SCAN_ERROR document=${c.document_id} attempt=${c.attempt} reason=unexpected`);
@@ -252,6 +373,19 @@ export async function runScans(client: ScanClient, deps: ScanDeps): Promise<Scan
     }
   }
 
+  // One alert for everything this run gave up on: a flood of failures is one line in the channel, not one each.
+  if (failures.length > 0) {
+    const reasons = reasonCounts(failures);
+    await postScanAlert(deps, {
+      text: scanFailedAlertText(failures.length, reasons),
+      source: "document-scan",
+      alert: "SCAN_FAILED",
+      count: failures.length,
+      reasons,
+    });
+  }
+
+  await settleAllWithheld(client, choice.ok ? choice.scanner : null, deps, summary);
   summary.orphans_removed = await removeOrphans(client, deps);
   return summary;
 }

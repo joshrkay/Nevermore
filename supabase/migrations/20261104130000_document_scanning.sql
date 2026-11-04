@@ -16,8 +16,11 @@
 --   migration until they are scanned.
 -- * document-scan, every five minutes, scans what is still pending (public.claim_document_scans), moves a
 --   clean file out of quarantine and an infected legacy file into it, retries with backoff, and gives up
---   after six attempts (verdict `failed`, still unreadable). It also removes quarantined copies nothing
---   holds any more (public.document_scan_orphans).
+--   after six attempts (verdict `failed`, still unreadable; a document with no stored file at once). It also
+--   removes quarantined copies nothing holds any more (public.document_scan_orphans).
+-- * Removing a document whose scan hasn't passed doesn't release its file: the path is kept in
+--   withheld_document_files, so the file stays withheld until document-scan deletes it (or scans and releases
+--   it, when it is a submission's certified file).
 -- * A detection records a `malware_detected` event and a scan that gave up a `scan_failed` event, and
 --   ops-monitor alerts on the first of either (public.ops_alert_rules). The functions also post their
 --   own MALWARE_DETECTED / SCAN_FAILED webhook at once (docs/RUNBOOK.md).
@@ -111,8 +114,54 @@ END $$;
 -- Only document-upload and document-scan (the service role) store documents now.
 DROP POLICY IF EXISTS "Users can upload documents into their own sessions" ON storage.objects;
 
--- Whether a stored document's row says its file may not be read yet (or ever): its scan hasn't passed. A
--- file with no row (one from before intakes, or a certified file its prospect removed) is not withheld.
+-- Files whose document was removed before its scan passed. Without this, removing the row would release the
+-- file (the row is what withholds it) and nothing would ever scan or delete it: an upload from before scanning
+-- is still in the documents bucket, unscanned, and the prospect can't delete a file they can't read. The row's
+-- delete records the path here instead (documents_withhold_unscanned_file), the file stays withheld, and
+-- document-scan deletes it, or, when it is the certified file of a submission (kept for the advisor), scans it
+-- and releases it once clean. Service role only. Deleted with its intake.
+CREATE TABLE IF NOT EXISTS public.withheld_document_files (
+  storage_path text PRIMARY KEY,
+  user_id uuid,
+  session_id uuid REFERENCES public.chamber_sessions(id) ON DELETE CASCADE,
+  -- infected: kept, unreadable for good (a certified file the scanner flagged); pending: waiting for document-scan.
+  verdict text NOT NULL DEFAULT 'pending' CHECK (verdict IN ('pending', 'infected')),
+  scan_signature text CHECK (scan_signature IS NULL OR length(scan_signature) <= 200),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.withheld_document_files ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.withheld_document_files FROM anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.documents_withhold_unscanned_file()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  -- An intake's deletion removes its files itself (purge-intakes); nothing to keep track of.
+  IF OLD.scan_verdict NOT IN ('clean', 'skipped')
+     AND NULLIF(current_setting('eaa.deleting_intake', true), '') IS DISTINCT FROM OLD.session_id::text THEN
+    INSERT INTO public.withheld_document_files (storage_path, user_id, session_id, verdict, scan_signature)
+    VALUES (OLD.storage_path, OLD.user_id, OLD.session_id,
+            CASE WHEN OLD.scan_verdict = 'infected' THEN 'infected' ELSE 'pending' END, OLD.scan_signature)
+    ON CONFLICT (storage_path) DO NOTHING;
+  END IF;
+  RETURN OLD;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.documents_withhold_unscanned_file() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS documents_withhold_unscanned_file ON public.documents;
+CREATE TRIGGER documents_withhold_unscanned_file
+  BEFORE DELETE ON public.documents
+  FOR EACH ROW EXECUTE FUNCTION public.documents_withhold_unscanned_file();
+
+-- Whether a stored document file may not be read yet (or ever): its row's scan hasn't passed, or its row was
+-- removed before the scan passed. A file with no row and no record here (one from before intakes, or a
+-- certified file its prospect removed after its scan passed) is not withheld.
 CREATE OR REPLACE FUNCTION public.is_withheld_document_file(p_name text)
 RETURNS boolean
 LANGUAGE sql
@@ -123,6 +172,8 @@ AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.documents d
     WHERE d.storage_path = p_name AND d.scan_verdict NOT IN ('clean', 'skipped')
+  ) OR EXISTS (
+    SELECT 1 FROM public.withheld_document_files w WHERE w.storage_path = p_name
   );
 $$;
 
@@ -219,10 +270,12 @@ REVOKE ALL ON FUNCTION public.document_scan_max_attempts() FROM PUBLIC, anon, au
 GRANT EXECUTE ON FUNCTION public.document_scan_max_attempts() TO service_role;
 
 -- Takes up to p_batch pending documents that are due, each locked for p_lock_seconds and counted as an
--- attempt, with the bucket its file is in now (quarantine first; NULL when neither holds it). A document
--- whose last claim lapsed with every attempt used (its worker died) is marked failed first, and recorded.
+-- attempt, with the bucket its file is in now (quarantine first; NULL when neither holds it) and its intake
+-- (NULL for an upload from before intakes; never read it from the path, whose second part is then the file
+-- name). A document whose last claim lapsed with every attempt used (its worker died) is marked failed first,
+-- and recorded.
 CREATE OR REPLACE FUNCTION public.claim_document_scans(p_batch integer DEFAULT 10, p_lock_seconds integer DEFAULT 300)
-RETURNS TABLE (document_id uuid, storage_path text, attempt integer, bucket text)
+RETURNS TABLE (document_id uuid, storage_path text, attempt integer, bucket text, session_id uuid)
 LANGUAGE sql
 VOLATILE
 SECURITY DEFINER
@@ -255,13 +308,14 @@ AS $$
         scan_locked_until = now() + make_interval(secs => LEAST(GREATEST(COALESCE(p_lock_seconds, 300), 30), 3600))
     FROM due
     WHERE d.id = due.id
-    RETURNING d.id, d.storage_path, d.scan_attempts, d.scan_next_at
+    RETURNING d.id, d.storage_path, d.scan_attempts, d.scan_next_at, d.session_id
   )
   SELECT c.id, c.storage_path, c.scan_attempts,
     CASE
       WHEN EXISTS (SELECT 1 FROM storage.objects o WHERE o.bucket_id = 'quarantine' AND o.name = c.storage_path) THEN 'quarantine'
       WHEN EXISTS (SELECT 1 FROM storage.objects o WHERE o.bucket_id = 'documents' AND o.name = c.storage_path) THEN 'documents'
-    END
+    END,
+    c.session_id
   FROM claimed c
   ORDER BY c.scan_next_at, c.id;
 $$;
@@ -319,7 +373,10 @@ GRANT EXECUTE ON FUNCTION public.record_document_scan(uuid, text, text, text) TO
 
 -- A scan that didn't settle (the scanner was unreachable, the file couldn't be read). Tried again in
 -- p_retry_in_seconds, or, once every attempt is used, marked failed and recorded as a scan_failed event.
--- Answers 'retrying', 'failed', or 'gone' when the document was removed or already has a verdict.
+-- 'file_missing' is final at once: a document is claimed only after its upload's ten minutes, so no file is on
+-- its way (its upload failed half way, or the row was written straight through the API), and retrying only
+-- delays the prospect being told. Answers 'retrying', 'failed', or 'gone' when the document was removed or
+-- already has a verdict.
 CREATE OR REPLACE FUNCTION public.fail_document_scan(p_document_id uuid, p_error text, p_retry_in_seconds integer)
 RETURNS text
 LANGUAGE plpgsql
@@ -335,7 +392,7 @@ BEGIN
     RETURN 'gone';
   END IF;
 
-  IF d.scan_attempts >= public.document_scan_max_attempts() THEN
+  IF d.scan_attempts >= public.document_scan_max_attempts() OR code = 'file_missing' THEN
     UPDATE public.documents
     SET scan_verdict = 'failed', scan_error = code, scan_locked_until = NULL
     WHERE id = p_document_id;
@@ -357,7 +414,8 @@ GRANT EXECUTE ON FUNCTION public.fail_document_scan(uuid, text, integer) TO serv
 
 -- Quarantined files nothing holds there any more: their document was removed, or has passed its scan (and
 -- so has its copy in the documents bucket). document-scan removes them. A new upload's row is written
--- before its file is stored, so a file on its way in is never listed.
+-- before its file is stored, so a file on its way in is never listed. A file recorded in
+-- withheld_document_files is left to that sweep (it may be a certified file waiting for its scan).
 CREATE OR REPLACE FUNCTION public.document_scan_orphans(p_limit integer DEFAULT 100)
 RETURNS TABLE (name text)
 LANGUAGE sql
@@ -372,12 +430,81 @@ AS $$
       SELECT 1 FROM public.documents d
       WHERE d.storage_path = o.name AND d.scan_verdict IN ('pending', 'infected', 'failed')
     )
+    AND NOT EXISTS (SELECT 1 FROM public.withheld_document_files w WHERE w.storage_path = o.name)
   ORDER BY o.name
   LIMIT LEAST(GREATEST(COALESCE(p_limit, 100), 1), 1000);
 $$;
 
 REVOKE ALL ON FUNCTION public.document_scan_orphans(integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.document_scan_orphans(integer) TO service_role;
+
+-- Files whose document was removed before its scan passed (withheld_document_files) that document-scan still
+-- has to settle, with the bucket each is in now (quarantine first; NULL when neither holds it), and whether it
+-- is the certified file of a submission, which is kept for the advisor (the rule of is_certified_evidence,
+-- for any owner). A certified file is scanned and released once clean; any other is deleted. A certified file
+-- found infected stays recorded, withheld for good, and is not listed again.
+CREATE OR REPLACE FUNCTION public.withheld_files_due(p_limit integer DEFAULT 50)
+RETURNS TABLE (storage_path text, session_id uuid, verdict text, evidence boolean, bucket text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT w.storage_path, w.session_id, w.verdict, ev.evidence,
+    CASE
+      WHEN EXISTS (SELECT 1 FROM storage.objects o WHERE o.bucket_id = 'quarantine' AND o.name = w.storage_path) THEN 'quarantine'
+      WHEN EXISTS (SELECT 1 FROM storage.objects o WHERE o.bucket_id = 'documents' AND o.name = w.storage_path) THEN 'documents'
+    END
+  FROM public.withheld_document_files w
+  CROSS JOIN LATERAL (
+    SELECT EXISTS (
+      SELECT 1
+      FROM public.chamber_sessions s
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(s.submission -> 'documents') = 'array' THEN s.submission -> 'documents' ELSE '[]'::jsonb END
+      ) AS d(doc)
+      WHERE s.id = w.session_id AND s.status = 'submitted' AND d.doc ->> 'storage_path' = w.storage_path
+    ) AS evidence
+  ) ev
+  WHERE w.verdict = 'pending' OR NOT ev.evidence
+  ORDER BY w.created_at, w.storage_path
+  LIMIT LEAST(GREATEST(COALESCE(p_limit, 50), 1), 500);
+$$;
+
+REVOKE ALL ON FUNCTION public.withheld_files_due(integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.withheld_files_due(integer) TO service_role;
+
+-- What document-scan did with a withheld file: 'removed' (deleted, or already gone) and 'released' (a certified
+-- file whose scan passed, now readable) end the record; 'infected' keeps it, withheld for good, and records a
+-- malware_detected event.
+CREATE OR REPLACE FUNCTION public.settle_withheld_file(p_storage_path text, p_outcome text, p_signature text DEFAULT NULL)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  w public.withheld_document_files;
+  sig text := left(NULLIF(btrim(p_signature), ''), 200);
+BEGIN
+  IF p_outcome IN ('removed', 'released') THEN
+    DELETE FROM public.withheld_document_files WHERE storage_path = p_storage_path;
+  ELSIF p_outcome = 'infected' AND sig IS NOT NULL THEN
+    UPDATE public.withheld_document_files SET verdict = 'infected', scan_signature = sig
+    WHERE storage_path = p_storage_path
+    RETURNING * INTO w;
+    IF FOUND THEN
+      PERFORM public.record_ops_event('malware_detected', 'document-scan',
+        'malware:' || COALESCE(public.ops_clean_code(sig), 'unnamed'), NULL, w.user_id, w.session_id);
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'An outcome is removed, released, or infected with its signature' USING ERRCODE = '22023';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.settle_withheld_file(text, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.settle_withheld_file(text, text, text) TO service_role;
 
 -- An operator puts a failed (or infected, after a false positive is confirmed) document back in the queue.
 -- Its file stays unreadable until the next scan passes. Service role only (the SQL editor).
