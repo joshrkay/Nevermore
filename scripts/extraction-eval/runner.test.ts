@@ -92,8 +92,22 @@ describe("runFixture", () => {
     const prompt = (message: string, data: typeof EMPTY_CHAMBER_DATA) => buildUserPrompt(message, serializeContext(chatContext(data)));
     expect(model.requests[0]).toEqual({ system: SYSTEM_PROMPT, user: prompt("We have 40 employees.", EMPTY_CHAMBER_DATA) });
     const afterFirst = { ...EMPTY_CHAMBER_DATA, employee_count: 40 };
-    expect(model.requests[1].user).toBe(prompt("Payroll is getting harder to manage with 55 employees.", afterFirst));
-    expect(model.requests[1].user).not.toContain("census");
+    expect(model.requests[1].user).toBe(
+      buildUserPrompt({
+        message: "Payroll is getting harder to manage with 55 employees.",
+        context: chatAnswers(afterFirst),
+        statuses: { employee_count: "confirmed" },
+        // The conversation so far, from Lenore's opening line to her answer to the first message.
+        recent: [
+          { sender: "lenore", text: OPENING_MESSAGE },
+          { sender: "user", text: "We have 40 employees." },
+          { sender: "lenore", text: "Noted." },
+        ],
+      }),
+    );
+    // The roster never leaves the browser: the answers carry no census, and the prompt says only that none is uploaded.
+    expect(model.requests[1].user).not.toContain('"census"');
+    expect(model.requests[1].user).toContain("Employee census: not uploaded");
     expect(run.error).toBeNull();
   });
 

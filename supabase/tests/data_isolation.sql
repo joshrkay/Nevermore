@@ -76,6 +76,10 @@
 \i supabase/migrations/20261104114000_paged_advisor_queue.sql
 \i supabase/migrations/20261104115000_advisor_review_followups.sql
 \i supabase/migrations/20261104116000_intake_deletion_removes_document_history.sql
+\i supabase/migrations/20261104117000_certification_snapshots.sql
+\i supabase/migrations/20261104117100_alert_headcount_census.sql
+\i supabase/migrations/20261104118000_open_items.sql
+\i supabase/migrations/20261104120000_submission_records.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -368,6 +372,8 @@ INSERT INTO matrix VALUES
   ('public.ai_extraction_events',                       '{"advisor":"all","admin":"all"}'),
   -- Reached only through SECURITY DEFINER functions, by nobody directly.
   ('public.outbox_events',                              '{}'),
+  -- The File ID sequence (20261104110000): taken by the certification trigger, read by nobody.
+  ('public.submission_reference_counters',              '{}'),
   ('public.email_delivery_events',                      '{}'),
   ('public.email_suppressions',                         '{}'),
   ('public.ai_request_log',                             '{}'),

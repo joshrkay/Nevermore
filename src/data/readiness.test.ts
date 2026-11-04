@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "./chamberTypes";
 import type { CensusEmployee } from "./census";
 import type { FieldProvenance, FieldStatus, ProvenanceMap } from "./provenance";
+import { CERTIFICATION_REQUIRED } from "./followUp";
 import { conflictingRequired, describeRequiredKeys, isRequiredField, missingRecommendedItems, missingRequired, REQUIRED_ITEMS } from "./readiness";
 
 const intake = (over: Partial<ChamberData> = {}): ChamberData => ({ ...EMPTY_CHAMBER_DATA, ...over });
@@ -54,10 +55,18 @@ describe("isRequiredField", () => {
     expect(isRequiredField("pay_frequency")).toBe(true);
     expect(isRequiredField("industry")).toBe(false);
     expect(isRequiredField("employee_count")).toBe(false);
+    // The census is recommended (D2, D25), so the workspace never marks it Required.
+    expect(isRequiredField("census")).toBe(false);
   });
 });
 
 const prov = (status: FieldStatus): FieldProvenance => ({ status, source: { kind: "prospect_edit" }, updated_at: "2026-11-01T12:00:00Z" });
+
+describe("the answers certification needs", () => {
+  it("are the ones Lenore's readiness counts (supabase/functions/_shared/followUp.ts)", () => {
+    expect(REQUIRED_ITEMS.map((item) => item.key)).toEqual([...CERTIFICATION_REQUIRED]);
+  });
+});
 
 describe("conflictingRequired", () => {
   it("lists the required answers in conflict, in the order they are shown", () => {

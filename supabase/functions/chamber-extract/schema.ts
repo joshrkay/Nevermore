@@ -50,6 +50,54 @@ export const FIELD_GUIDE: Record<string, string> = {
   wc_annual_premium: "Their annual workers' comp premium in whole dollars",
 };
 
+/**
+ * How Lenore asks for each field when the model gave no reply of its own (US-2.3a): always the next unsettled
+ * field, never a canned question. Every field the chat extracts has one (extraction.test.ts checks).
+ */
+export const FIELD_QUESTION: Record<string, string> = {
+  company_name: "What is the company's legal name?",
+  industry: "What does the business do?",
+  hq_state: "Which state is the company headquartered in?",
+  states: "Which states do your employees work in?",
+  employee_count: "How many employees do you have?",
+  start_month: "When would you like coverage to start?",
+  multiple_entities: "Does the business run as more than one legal entity?",
+  fein_count: "How many federal employer ID numbers does the business have?",
+  virgin_medical: "Do you offer employer medical coverage today?",
+  current_carrier: "Who is your current medical carrier?",
+  renewal_date: "When does your current medical plan renew?",
+  rate_history: "How have your medical rates changed at recent renewals?",
+  benefits_waiting_period: "How long do new hires wait before their benefits start?",
+  ancillary_benefits: "Which other benefits do you offer, such as dental or vision?",
+  has_401k: "Do you offer a retirement plan, such as a 401(k)?",
+  retirement_type: "What kind of retirement plan do you offer?",
+  employer_contributes: "Does the company contribute to the retirement plan?",
+  payroll_vendor: "Who runs your payroll today?",
+  pay_frequency: "How often do you run payroll?",
+  funding_days: "How many days before payday do you fund payroll?",
+  has_nonexempt: "Are any of your employees hourly or eligible for overtime?",
+  nonexempt_count: "How many of your employees are nonexempt?",
+  exempt_count: "How many of your employees are exempt?",
+  pto_types: "What kinds of paid time off do you offer?",
+  accrual_method: "How does paid time off accrue?",
+  has_handbook: "Do you have an employee handbook?",
+  handbook_last_updated: "When was the handbook last updated?",
+  hr_staff_count: "How many people work in HR in-house?",
+  has_1099: "Do you work with any 1099 contractors?",
+  ca_contractors: "Do any of your contractors work in California?",
+  uses_physical_clocks: "Do employees clock in on a physical time clock?",
+  uses_mobile_app: "Do employees track their time in a mobile app?",
+  uses_computer_timekeeping: "Do employees track their time on a computer?",
+  shift_differentials: "Do any shifts pay more than others?",
+  hris_system: "Which HR information system do you use, if any?",
+  key_challenges: "What are your biggest HR or compliance challenges right now?",
+  business_goals: "What are the business's goals for the year ahead?",
+  wc_carrier: "Who is your workers' compensation carrier?",
+  wc_renewal_date: "When does your workers' comp policy renew?",
+  wc_experience_mod: "Do you know your workers' comp experience mod?",
+  wc_annual_premium: "What is your annual workers' comp premium?",
+};
+
 // The census (the employee roster) comes only from an uploaded file (D21).
 const NOT_FROM_CHAT = new Set(["census"]);
 
@@ -81,9 +129,14 @@ const perField = (schema: unknown) => ({
   additionalProperties: false,
 });
 
-// Recorded on every extraction event. Raise it with any change to SYSTEM_PROMPT or EXTRACT_TOOL: promptVersion.test.ts
-// fails until you do, so an event always says which prompt produced it.
-export const PROMPT_VERSION = 2;
+// Versions the whole extraction contract: SYSTEM_PROMPT, EXTRACT_TOOL, the user turn (prompt.ts) and the
+// response shape. Recorded on every extraction event (US-2.4a), returned with every extraction, and stored
+// by the browser on each value's provenance (B-1.4), so a value can be traced to the prompt that produced
+// it. Raise it with any change to them: _shared/ai/promptVersion.test.ts fails until you do. See
+// "Extraction contract version and eval" in docs/intake-schema.md. Version 2 named two contracts built at
+// the same time (US-2.1b and B-1.1); 3 is the two merged; 4 adds how Lenore replies and the user turn's ready and
+// census lines (US-2.3a).
+export const PROMPT_VERSION = 4;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 
@@ -104,7 +157,15 @@ For every field you return, also report:
 - evidence: the short phrase from the prospect's message that supports it (at most ${MAX_EVIDENCE_CHARS} characters, quoted verbatim).
 - corrected_fields: list a field only when the prospect explicitly corrects a value already captured ("actually it's 45 people, not 40").
 
-When the prospect says they don't know a field's answer, or can't say yet, give that field no value: set its field_status to "unknown" and its evidence to the phrase where they said so. Never mark a field "unknown" because the message simply doesn't mention it.`;
+When the prospect says they don't know a field's answer, or can't say yet, give that field no value: set its field_status to "unknown" and its evidence to the phrase where they said so. Never mark a field "unknown" because the message simply doesn't mention it.
+
+How Lenore replies (the reply field):
+- Ask about exactly one thing: the first field in "Not yet settled" that the new message didn't just answer. Never ask about a field that isn't in that list, and never ask about two at once.
+- When the prospect doesn't know an answer, accept it kindly and move on to the next field.
+- When "Not yet settled" is "none", ask nothing more: thank them, tell them the intake is complete, and that they can review it on the Review tab.
+- When no employee census is uploaded and the next fields aren't required ones, you may invite them to upload a census on the Upload tab.
+- Don't tell them the intake is ready to certify: the Chamber says so itself when it is.
+- Keep it short: one or two sentences.`;
 
 export const EXTRACT_TOOL = {
   name: "extract_chamber_data",
@@ -116,7 +177,7 @@ export const EXTRACT_TOOL = {
       field_status: perField({ type: "string", enum: FIELD_STATUSES }),
       evidence: perField({ type: "string" }),
       corrected_fields: { type: "array", items: { type: "string", enum: FIELDS } },
-      reply: { type: "string", description: "A natural conversational reply from Lenore, the gothic HR advisor. Keep her tone intelligent, warm, and slightly literary. Ask a follow-up question to continue the discovery." },
+      reply: { type: "string", description: "Lenore's reply, the gothic HR advisor: intelligent, warm and slightly literary. It acknowledges the answer and asks about the first field in \"Not yet settled\" the message didn't answer, or, when none is left, wraps up." },
     },
     additionalProperties: false,
   } as Record<string, unknown>,

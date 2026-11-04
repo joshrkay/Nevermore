@@ -2,7 +2,9 @@ import { z } from "zod";
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
 import { INTAKE_FIELDS, INTAKE_SCHEMA } from "./intakeSchema";
+import { isRequiredField } from "./readiness";
 import { redactSensitive } from "./sensitive";
+import { CERTIFICATION_REQUIRED } from "../../supabase/functions/_shared/followUp.ts";
 
 // Every captured field records how sure we are of it and where it came from, so the
 // prospect and advisor can tell what Lenore inferred from what someone confirmed.
@@ -204,6 +206,27 @@ export function parseProvenance(raw: unknown): ProvenanceMap {
   return map;
 }
 
+/**
+ * Whether an advisor's verification settles an answer in this status for what the prospect and the Manuscript
+ * show: one that still needs the prospect (inferred, incomplete, in conflict). A confirmed answer is already
+ * settled, and unknown or not applicable hold no answer, so they keep their status. A REQUIRED answer in conflict
+ * is never settled this way: certification (D26, EA008) reads the field's status, not the advisor's review, so
+ * it still blocks and the prospect still has to choose one answer. The open-items list, the required-items rule
+ * and the advisor's own packet (`applyAdvisorReview`) settle every status instead.
+ */
+export const verificationSettles = (status: FieldStatus | undefined, required = false): boolean =>
+  status === "inferred" || status === "incomplete" || (status === "conflicting" && !required);
+
+/**
+ * The also-heard notes worth showing: those that aren't already one of a conflict's rival answers, when those
+ * are listed beside them. `candidatesShown` is false where the rival answers are hidden (a conflict an advisor
+ * verified), so a note repeating one still has somewhere to be seen.
+ */
+export function visibleAlsoHeard(entry: FieldProvenance, candidatesShown = true): FieldCandidate[] {
+  const notes = entry.also_heard ?? [];
+  return candidatesShown ? notes.filter((heard) => !entry.candidates?.some((c) => same(c.value, heard.value))) : notes;
+}
+
 // ---------- Merging extractions ----------
 
 // Which source stands when two disagree: the prospect's own answer, then a document they applied,
@@ -364,7 +387,17 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
 export type FieldAction =
   | { type: "confirm"; field: FieldKey }
   | { type: "edit"; field: FieldKey; value: unknown }
-  | { type: "resolve"; field: FieldKey; candidate: number };
+  | { type: "resolve"; field: FieldKey; candidate: number }
+  // "Doesn't apply" (D31): only the prospect closes a field this way, and can take it back with "reopen".
+  | { type: "not_applicable"; field: FieldKey }
+  | { type: "reopen"; field: FieldKey };
+
+/**
+ * Whether the prospect may mark a field "Doesn't apply": a field they haven't answered that certification doesn't
+ * need. A required answer is needed whatever the business, and the census is a document.
+ */
+export const canMarkNotApplicable = (field: FieldKey, data: ChamberData): boolean =>
+  field !== "census" && !(CERTIFICATION_REQUIRED as readonly string[]).includes(field) && isEmpty(data[field]);
 
 /** Applies a prospect's confirm, edit, or conflict resolution. Invalid edits change nothing. */
 export function applyFieldAction(state: IntakeState, action: FieldAction, now = new Date()): IntakeState {
@@ -375,6 +408,20 @@ export function applyFieldAction(state: IntakeState, action: FieldAction, now = 
     if (state.provenance[field]?.status === "conflicting") return state; // must pick a value first
     if (isEmpty(state.data[field])) return state; // nothing to confirm (an unknown or not applicable field holds no answer)
     return { data: state.data, provenance: { ...state.provenance, [field]: confirmed() } };
+  }
+
+  if (action.type === "not_applicable") {
+    if (!canMarkNotApplicable(field, state.data)) return state;
+    return {
+      data: state.data,
+      provenance: { ...state.provenance, [field]: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: now.toISOString() } },
+    };
+  }
+
+  if (action.type === "reopen") {
+    if (state.provenance[field]?.status !== "not_applicable") return state;
+    const { [field]: _closed, ...rest } = state.provenance;
+    return { data: state.data, provenance: rest };
   }
 
   const value = action.type === "edit" ? action.value : state.provenance[field]?.candidates?.[action.candidate]?.value;
@@ -421,6 +468,12 @@ export interface FieldOpenItem {
   reason: FieldOpenReason;
 }
 
+/**
+ * The statuses that leave a field open, most pressing first. The advisor queue counts the same ones
+ * (`open_item_statuses` in its migration; src/data/schemaSync.test.ts compares them).
+ */
+export const OPEN_FIELD_STATUSES = ["conflicting", "incomplete", "unknown", "inferred"] as const satisfies readonly FieldStatus[];
+
 /** What the prospect is told about a field in each status that still needs them. */
 export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_applicable">, FieldOpenReason> = {
   conflicting: "Conflicting answers",
@@ -432,12 +485,12 @@ export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_
 /**
  * Fields that still need the prospect: conflicts first, then incomplete, then unknown, then inferred.
  * A field marked not applicable is closed and never listed, and a field in `verified` (an advisor
- * verified it) is settled whatever its status, so it is left out too.
+ * verified it) is settled, so it is left out too, except a required answer in conflict: it still has to be
+ * chosen (`verificationSettles`), and the Manuscript would otherwise mark it unresolved with nothing to point to.
  */
 export function fieldOpenItems(provenance: ProvenanceMap, verified: ReadonlySet<string> = new Set()): FieldOpenItem[] {
-  const order = ["conflicting", "incomplete", "unknown", "inferred"] as const;
-  return order.flatMap((status) =>
-    FIELD_KEYS.filter((f) => provenance[f]?.status === status && !verified.has(f)).map((field) => ({
+  return OPEN_FIELD_STATUSES.flatMap((status) =>
+    FIELD_KEYS.filter((f) => provenance[f]?.status === status && !(verified.has(f) && !(status === "conflicting" && isRequiredField(f)))).map((field) => ({
       field,
       label: FIELD_LABELS[field],
       reason: FIELD_OPEN_REASONS[status],

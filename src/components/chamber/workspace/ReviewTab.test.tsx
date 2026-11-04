@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import type { ProvenanceMap } from "@/data/provenance";
+import { applyFieldAction, FIELD_LABELS, type FieldKey, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import ReviewTab from "./ReviewTab";
+import { REVIEW_FIELDS } from "@/data/reviewFields";
 
 describe("ReviewTab documents", () => {
   it("lists uploaded files with their status and the helpful ones still missing", () => {
@@ -169,7 +171,87 @@ describe("ReviewTab sections", () => {
     expect(section("Payroll")).toHaveTextContent("3 days");
     expect(section("Payroll")).toHaveTextContent("Vacation, Sick");
     expect(section("Benefits")).toHaveTextContent("Aetna");
-    expect(section("Benefits")).toHaveTextContent("No retirement plan");
+    expect(section("Benefits")).toHaveTextContent("Retirement planNo");
+  });
+
+  it("counts an answer an advisor verified as settled in its section's progress", () => {
+    const incomplete: ProvenanceMap = {
+      pay_frequency: { status: "incomplete", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-04T00:00:00Z" },
+    };
+    const settledInPayroll = (verified: string[]) => {
+      const { unmount } = render(<ReviewTab data={complete} provenance={incomplete} verified={new Set(verified)} onAction={() => {}} onProceed={() => {}} />);
+      const settled = Number(/^(\d+) of/.exec(screen.getByTestId("progress-payroll").textContent ?? "")?.[1]);
+      unmount();
+      return settled;
+    };
+    expect(settledInPayroll(["pay_frequency"])).toBe(settledInPayroll([]) + 1);
+  });
+
+  it("doesn't count as settled a verified answer that is still unresolved: one in required conflict, or none at all", () => {
+    const at = "2026-11-04T00:00:00Z";
+    const said = { kind: "transcript" as const, message_id: "m1" };
+    const progress = (id: string, data: typeof complete, provenance: ProvenanceMap, verified: string[]) => {
+      const { unmount } = render(<ReviewTab data={data} provenance={provenance} verified={new Set(verified)} onAction={() => {}} onProceed={() => {}} />);
+      const settled = Number(/^(\d+) of/.exec(screen.getByTestId(id).textContent ?? "")?.[1]);
+      unmount();
+      return settled;
+    };
+    // Company legal name in conflict: certification (and the row) still need it chosen, verified or not.
+    const conflict: ProvenanceMap = {
+      company_name: { status: "conflicting", source: said, updated_at: at, candidates: [{ value: "Acme", source: said }, { value: "Acme Press", source: said }] },
+    };
+    expect(progress("progress-company", complete, conflict, ["company_name"])).toBe(progress("progress-company", complete, conflict, []));
+    // Pay frequency with no answer: verifying never supplies one.
+    const blank = { ...complete, pay_frequency: "" };
+    expect(progress("progress-payroll", blank, {}, ["pay_frequency"])).toBe(progress("progress-payroll", blank, {}, []));
+  });
+
+  it("lists every answer in the intake schema, each with its badge, and says how much of each section is settled (D28)", () => {
+    const fields = Object.keys(FIELD_LABELS).filter((f) => f !== "census") as FieldKey[];
+    expect(Object.values(REVIEW_FIELDS).flat().sort()).toEqual([...fields].sort());
+    const inferred: ProvenanceMap = Object.fromEntries(
+      fields.map((f) => [f, { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-04T00:00:00Z" }]),
+    );
+    const data = { ...complete, industry: "Print", employee_count: 3, wc_carrier: "Hartford", has_handbook: true } as typeof complete;
+    render(<ReviewTab data={data} provenance={inferred} onAction={() => {}} onProceed={() => {}} />);
+    for (const name of ["Workers' comp", "Operations & HR"]) expect(section(name)).toBeInTheDocument();
+    for (const f of ["company_name", "industry", "employee_count", "wc_carrier", "has_handbook"] as FieldKey[]) {
+      const row = document.getElementById(`review-field-${f}`)!;
+      expect(row, f).not.toBeNull();
+      expect(within(row).getByText("Lenore captured this — please confirm"), f).toBeInTheDocument();
+    }
+    expect(screen.getByTestId("progress-company")).toHaveTextContent("2 of 5 settled");
+    expect(screen.getByTestId("progress-locations")).toHaveTextContent("1 of 2 settled");
+    expect(screen.getByTestId("progress-workforce")).toHaveTextContent("1 of 7 settled");
+  });
+
+  it("lets the prospect say an unanswered field doesn't apply, which closes it, and take that back", () => {
+    function Harness() {
+      const [state, setState] = useState<IntakeState>({ data: complete, provenance: {} });
+      return (
+        <ReviewTab
+          data={state.data}
+          provenance={state.provenance}
+          onAction={(a) => setState((s) => applyFieldAction(s, a))}
+          onProceed={() => {}}
+        />
+      );
+    }
+    render(<Harness />);
+    // Not offered for an answer certification needs, nor for one already given.
+    expect(screen.queryByRole("button", { name: "Pay frequency doesn't apply" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Company legal name doesn't apply" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("0 of 4 settled");
+
+    fireEvent.click(screen.getByRole("button", { name: "Workers' comp carrier doesn't apply" }));
+    const row = document.getElementById("review-field-wc_carrier")!;
+    expect(within(row).getByText("Doesn't apply")).toBeInTheDocument();
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("1 of 4 settled");
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo: Workers' comp carrier doesn't apply" }));
+    expect(screen.queryByRole("button", { name: "Undo: Workers' comp carrier doesn't apply" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Workers' comp carrier doesn't apply" })).toBeInTheDocument();
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("0 of 4 settled");
   });
 
   it("marks the required answers wherever they sit, and only those", () => {
@@ -255,5 +337,37 @@ describe("ReviewTab sections", () => {
   it("is read-only without an edit handler", () => {
     render(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} />);
     expect(screen.queryByRole("button", { name: /^Add / })).not.toBeInTheDocument();
+  });
+});
+
+describe("ReviewTab section status and nav (C-1)", () => {
+  const complete = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY"], pay_frequency: "bi-weekly" };
+  const at = "2026-11-04T00:00:00Z";
+  const inferred = { status: "inferred" as const, source: { kind: "transcript" as const, message_id: "m1" }, updated_at: at };
+
+  it("says where each section stands, in words, beside how much of it is settled", () => {
+    render(<ReviewTab data={{ ...complete, industry: "Retail", census: DEMO_CHAMBER_DATA.census }} provenance={{ industry: inferred }} onProceed={() => {}} />);
+    expect(screen.getByTestId("status-company")).toHaveTextContent("Needs confirmation");
+    expect(screen.getByTestId("status-workforce")).toHaveTextContent("Complete");
+    expect(screen.getByTestId("status-benefits")).toHaveTextContent("Complete");
+    render(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} />);
+    expect(screen.getAllByTestId("status-company").some((chip) => chip.textContent === "Incomplete")).toBe(true);
+  });
+
+  it("lets the prospect jump to a section from the list of sections", () => {
+    render(<ReviewTab data={EMPTY_CHAMBER_DATA} provenance={{}} onAction={() => {}} onProceed={() => {}} />);
+    const nav = screen.getByRole("navigation", { name: "Sections" });
+    fireEvent.click(within(nav).getByRole("button", { name: /Payroll/ }));
+    expect(document.activeElement?.closest("#review-section-payroll")).not.toBeNull();
+    // Pay frequency is a required answer, so Payroll is incomplete; an empty recommended section owes nothing.
+    expect(within(nav).getByRole("button", { name: /Payroll/ })).toHaveTextContent("Incomplete");
+    expect(within(nav).getByRole("button", { name: /Workers' comp/ })).toHaveTextContent("Complete");
+  });
+
+  it("calls a section not applicable once every answer in it is marked so", () => {
+    const na = { status: "not_applicable" as const, source: { kind: "prospect_edit" as const }, updated_at: at };
+    const provenance = { wc_carrier: na, wc_renewal_date: na, wc_experience_mod: na, wc_annual_premium: na };
+    render(<ReviewTab data={complete} provenance={provenance} onProceed={() => {}} />);
+    expect(screen.getByTestId("status-workers_comp")).toHaveTextContent("Not applicable");
   });
 });

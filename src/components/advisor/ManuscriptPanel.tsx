@@ -8,8 +8,15 @@ import { downloadBlob } from "@/lib/downloadFile";
 import { manuscriptUrl, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
 import { formatDateTime } from "./format";
 
-const versionFilename = (detail: SubmissionDetail, fileId: string, version: number) =>
-  manuscriptFilename(`${fileId}-v${version}`, detail.data.company_name);
+/**
+ * A stored version's file name, from what that version recorded: its File ID, its own certification's date
+ * and its advisor version. Never from the certification on record now, so a later certification doesn't
+ * rename a PDF that was stored for an earlier one, and opening it later gives the name it was saved under.
+ * (A stored version doesn't record which certification number it was built from, so the name carries the
+ * certified date and `advisor-v<n>`, not `v<certification>`. The company is the intake's current legal name.)
+ */
+const versionFilename = (companyName: string | null, v: Pick<ManuscriptVersion, "file_id" | "version" | "certified_at" | "certified_signed_at">) =>
+  manuscriptFilename(v.file_id, companyName, { date: v.certified_at ?? v.certified_signed_at, suffix: `advisor-v${v.version}` });
 
 /**
  * Download or regenerate the advisor-reviewed Manuscript, one stored version per generation. Each
@@ -33,7 +40,7 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
       const version = (latest?.version ?? 0) + 1;
       const packet = applyAdvisorReview(detail.data, detail.provenance, detail.reviews);
       const manuscript = buildManuscript(packet.data, {
-        fileId: detail.fileId,
+        fileId: detail.fileId ?? "EAA-UNCERTIFIED",
         submission: detail.submission,
         provenance: packet.provenance,
         verified: verifiedFieldsOf(detail.reviews),
@@ -50,7 +57,16 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
         certifiedDataHash: detail.submission?.data_sha256 ?? null,
         certifiedAt: detail.submission?.certified_at ?? null,
       });
-      downloadBlob(pdf.blob, versionFilename(detail, detail.fileId, version));
+      // Named from the certification it was built from, which is what the stored version records too.
+      downloadBlob(
+        pdf.blob,
+        versionFilename(detail.data.company_name, {
+          file_id: detail.fileId ?? "EAA-UNCERTIFIED",
+          version,
+          certified_at: detail.submission?.certified_at ?? null,
+          certified_signed_at: detail.submission?.signed_at ?? "",
+        }),
+      );
       toast.success(`Manuscript v${version} saved.`);
       onChanged();
     } catch (err) {
@@ -70,7 +86,7 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
   const open = async (v: ManuscriptVersion) => {
     setOpening(v.id);
     try {
-      window.location.assign(await manuscriptUrl(v, versionFilename(detail, v.file_id, v.version)));
+      window.location.assign(await manuscriptUrl(v, versionFilename(detail.data.company_name, v)));
     } catch (err) {
       toast.error((err as Error).message);
     } finally {

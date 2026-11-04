@@ -36,6 +36,61 @@ describe("LiveWorkspace", () => {
     }
   });
 
+  it("gives the Your Team tab the census's status and a Confirm button, as every other answer has", () => {
+    const provenance: ProvenanceMap = {
+      census: { status: "inferred", source: { kind: "document", document_id: "d1", document_name: "Roster.xlsx" }, updated_at: "2026-11-03T12:00:00Z" },
+    };
+    const onFieldAction = vi.fn();
+    render(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} provenance={provenance} onFieldAction={onFieldAction} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "⑤ Your Team" }));
+    expect(screen.getByText("From Roster.xlsx")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Census" }));
+    expect(onFieldAction).toHaveBeenCalledWith({ type: "confirm", field: "census" });
+  });
+
+  it("in Review, keeps a verified required conflict choosable, settles a verified optional answer and shows what else was heard", () => {
+    const at = "2026-11-03T12:00:00Z";
+    const said = (id: string) => ({ kind: "transcript" as const, message_id: id });
+    const provenance: ProvenanceMap = {
+      company_name: {
+        status: "conflicting",
+        source: said("m1"),
+        updated_at: at,
+        candidates: [{ value: "Acme Bindery", source: said("m1") }, { value: "Acme Press", source: said("m2") }],
+      },
+      employee_count: {
+        status: "inferred",
+        source: said("m3"),
+        updated_at: at,
+        also_heard: [{ value: 45, source: { kind: "document", document_id: "d1", document_name: "Payroll.xlsx" } }],
+      },
+    };
+    render(
+      <MemoryRouter>
+        <LiveWorkspace
+          data={{ ...DEMO_CHAMBER_DATA, company_name: "Acme Bindery", employee_count: 40 }}
+          isDemo={false}
+          sessionId="s1"
+          onSubmit={async () => true}
+          provenance={provenance}
+          verified={new Set(["company_name", "employee_count"])}
+          onFieldAction={() => {}}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    // The required conflict blocks certification whoever verified it, so its rival answers stay choosable.
+    expect(screen.getAllByRole("button", { name: /^Use Acme Press for / }).length).toBeGreaterThan(0);
+    // The optional answer is settled by the advisor: badged, not offered for confirmation, and its note is shown.
+    expect(screen.getAllByText("Verified by your advisor")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /^Confirm Employee/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Also heard: 45 — From Payroll.xlsx")).toBeInTheDocument();
+  });
+
   it("moves from Review to PEO Match to The Reckoning", () => {
     render(
       <MemoryRouter>
@@ -157,5 +212,25 @@ describe("LiveWorkspace", () => {
     expect(screen.getByText("Needs your review — 1 item")).toBeInTheDocument();
     rerender(mount(new Set(["company_name"])));
     expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
+  });
+
+  it("badges a field the advisor verified as such in the Review tab's Company section", () => {
+    const provenance: ProvenanceMap = {
+      company_name: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-03T12:00:00Z" },
+    };
+    const mount = (verified?: ReadonlySet<string>) => (
+      <MemoryRouter>
+        <LiveWorkspace data={{ ...DEMO_CHAMBER_DATA, company_name: "Acme Bindery" }} isDemo={false} sessionId="s1" onSubmit={async () => true} provenance={provenance} verified={verified} onFieldAction={() => {}} />
+      </MemoryRouter>
+    );
+    const { rerender } = render(mount());
+    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    expect(screen.queryByText("Verified by your advisor")).not.toBeInTheDocument();
+    // Listed under Needs your review and in the Company section.
+    expect(screen.getAllByRole("button", { name: /^Confirm / })).toHaveLength(2);
+    rerender(mount(new Set(["company_name"])));
+    // Settled, so it is no longer listed for review, and the Company section's row carries the badge.
+    expect(screen.getAllByText("Verified by your advisor")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /^Confirm / })).not.toBeInTheDocument();
   });
 });

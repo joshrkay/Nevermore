@@ -1,15 +1,20 @@
 import type { ChamberData } from "./chamberTypes";
 import { classificationLabel, COVERAGE_TIER_LABELS, isAssumed, isW2, type CensusEmployee } from "./census";
+import { categoryInfo } from "./documentCategories";
+import { documentStatusInfo } from "./documentStatus";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
-import { fieldOpenItems, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
-import { NO_VERIFIED_FIELDS, requiredItems } from "./requiredItems";
+import { FIELD_LABELS, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
+import { isRequiredField } from "./readiness";
+import { NO_VERIFIED_FIELDS } from "./requiredItems";
+import { describeOpenItem, openItems } from "./openItems";
 
 /** Signed attestation stored on chamber_sessions.submission. */
 export interface ChamberSubmission {
   signer_name: string;
   signer_title: string;
   signed_at: string; // ISO timestamp, as captured in the signer's browser
+  /** The File ID. The database assigns it at the first certification and overwrites whatever the browser sent. */
   file_id: string;
   peo?: string; // PEO the client chose on PEO Match; absent on older submissions
   // The consent wording the signer agreed to, one statement per entry; absent on older submissions.
@@ -22,15 +27,32 @@ export interface ChamberSubmission {
   certified_at?: string;
   data_hash?: string;
   data_sha256?: string;
+  /** Which certification of the intake this is (1, 2, ...). Stamped by the database; absent on older submissions. */
+  version?: number;
+  /** The intake's data_version the certification landed at. Stamped by the database; absent on older submissions. */
+  data_version?: number;
+  schema_version?: number;
   // Copy of the data as signed, so later edits to the session can't change
   // what the certified manuscript shows. Absent on older submissions.
   chamber_data?: unknown;
   // Field status and source as signed. Absent on older submissions.
   field_provenance?: unknown;
-  // Stamped by the database at certification: the conversation and the document list as certified,
-  // which advisors review. Absent on submissions certified before they were kept.
+  // Stamped by the database at certification (snapshot_certified_evidence): the conversation and the document
+  // list as certified, which advisors review. Absent on submissions certified before they were kept.
   transcript?: unknown;
-  documents?: unknown;
+  documents?: SubmittedDocument[];
+}
+
+/** A document as it stood at certification (snapshot_certified_evidence stamps these into the submission). */
+export interface SubmittedDocument {
+  id: string;
+  file_name: string;
+  category: string;
+  status: string;
+  file_size?: string;
+  storage_path?: string;
+  file_sha256?: string | null;
+  created_at?: string;
 }
 
 // ---------- Certification ----------
@@ -53,39 +75,9 @@ export function certificationFromRow(status: string | null, submission: unknown)
   return status === "submitted" ? { status: "certified", submission: sub } : { status: "stale", submission: sub };
 }
 
-export const CERTIFICATION_CONSENT_VERSION = "2026-10-v1";
-
 /** Shown for submissions certified before the consent wording was stored. */
 export const LEGACY_CONSENT_TEXT =
   "I confirm the information in this submission is accurate and complete to the best of my knowledge.";
-
-export interface CertificationConsent {
-  version: string;
-  /** One checkbox each; every one must be ticked before signing. */
-  statements: string[];
-  /** The sentence the signature itself affirms. */
-  signing: string;
-  /** Everything above as one string, stored verbatim with the submission. */
-  text: string;
-}
-
-export function certificationConsent(opts: { companyName: string | null; peo: string | null }): CertificationConsent {
-  const statements = [
-    "The information I've provided is accurate and complete to the best of my knowledge.",
-    "All employees listed are W-2. Any K-1 owners or 1099 contractors have been identified separately.",
-    `I understand this packet is prepared for me to send to ${opts.peo ?? "the PEO I choose"} myself. Edgar Allan Advisory does not submit it or request a quote for me.`,
-  ];
-  const signing =
-    `By signing, I certify as an authorized representative of ${opts.companyName?.trim() || "my company"} ` +
-    "that the information in this submission is accurate and complete, and I consent to Edgar Allan Advisory " +
-    "preparing it as The Manuscript. I understand that changing my answers after signing requires me to certify again.";
-  return {
-    version: CERTIFICATION_CONSENT_VERSION,
-    statements,
-    signing,
-    text: [...statements, signing].join("\n"),
-  };
-}
 
 // ---------- Masking & filenames ----------
 
@@ -105,25 +97,48 @@ export function foldLatin(text: string): string {
   return text.replace(/[øØæÆßłŁđĐðÐþÞ]/g, (ch) => LATIN_FOLDS[ch]);
 }
 
-/** `The_Manuscript_<file id>_<company>.pdf`, safe on every OS and browser. */
-export function manuscriptFilename(fileId: string, companyName: string | null): string {
+/**
+ * The File ID (reference) the database assigns at certification: EAA-<year>-<number> (decision D15). Older
+ * intakes carry EAA-<year>-<8 hex>, which this accepts too.
+ */
+export const isFileId = (value: unknown): value is string => typeof value === "string" && /^EAA-\d{4}-[0-9A-Z]{4,12}$/.test(value);
+
+/** Where a Manuscript is opened: by its File ID once the intake has one, otherwise by the intake. */
+export const manuscriptPath = (fileId: string | null, sessionId: string | null): string =>
+  fileId ? `/manuscript/${encodeURIComponent(fileId)}` : sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";
+
+/** A date as YYYYMMDD in UTC, for a file name. */
+const compactDate = (date: Date | string): string | null => {
+  const d = new Date(date);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10).replace(/-/g, "");
+};
+
+/**
+ * The Manuscript's file name, the same for the same submission wherever it is generated:
+ * `The_Manuscript_<File ID>_v<version>_<company>_<certified YYYYMMDD>.pdf`, safe on every OS and browser.
+ * A packet that isn't certified has no version or date. `suffix` tells an advisor's version apart.
+ */
+export function manuscriptFilename(
+  fileId: string,
+  companyName: string | null,
+  opts: { version?: number | null; date?: Date | string | null; suffix?: string } = {},
+): string {
   const slug = foldLatin(companyName ?? "")
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .replace(/[^A-Za-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 40)
     .replace(/_+$/, "");
-  return `The_Manuscript_${fileId}_${slug || "Company"}.pdf`;
-}
-
-/**
- * The intake's File ID, from its id and when it started. The year is the start's, in UTC, exactly as
- * the database builds it when a certification carries none, so one intake has one File ID for good:
- * never today's year, and never the browser's time zone.
- */
-export function fileIdForSession(sessionId: string, startedAt: Date): string {
-  return `EAA-${startedAt.getUTCFullYear()}-${sessionId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+  const parts = [
+    "The_Manuscript",
+    fileId,
+    ...(opts.version ? [`v${opts.version}`] : []),
+    slug || "Company",
+    ...(opts.date ? [compactDate(opts.date)].filter(Boolean) : []),
+    ...(opts.suffix ? [opts.suffix.replace(/[^A-Za-z0-9-]+/g, "_")] : []),
+  ];
+  return `${parts.join("_")}.pdf`;
 }
 
 // ---------- Eligibility ----------
@@ -219,11 +234,17 @@ const TIERS = ["Employee Only", "Employee + Spouse", "Employee + Child(ren)", "E
 const WAIVED = COVERAGE_TIER_LABELS.WAIVE;
 
 export const NOT_PROVIDED = "Not provided";
+/** Shown for an answer the prospect marked as not applying to them. */
+export const NOT_APPLICABLE = "Not applicable";
+/** The date line of a packet that was never certified. */
+export const NOT_CERTIFIED = "Not certified";
 
 const orNotProvided = (v: string | number | null | undefined) =>
   v === null || v === undefined || v === "" ? NOT_PROVIDED : String(v);
 
 const yesNo = (v: boolean | null) => (v === null ? NOT_PROVIDED : v ? "Yes" : "No");
+
+const dollars = (v: number | null) => (v === null ? NOT_PROVIDED : `$${v.toLocaleString("en-US")}`);
 
 export interface ManuscriptCensusRow {
   name: string;
@@ -235,6 +256,7 @@ export interface ManuscriptCensusRow {
   /** "W-2" or "1099", with "PT" for part time; "Not provided" when the census didn't say. */
   classification: string;
   tier: string;
+  classCode: string;
   flag: string | null;
 }
 
@@ -243,19 +265,15 @@ const typeLabel = (e: CensusEmployee) => `${classificationLabel(e)}${e.employmen
 
 const salaryLabel = (e: CensusEmployee) =>
   e.annual_salary
-    ? `$${e.annual_salary.toLocaleString()}${e.compensation_type === "hourly" ? (isAssumed(e, "annual_salary") ? " (hourly, est.)" : " (hourly)") : ""}`
+    ? `$${e.annual_salary.toLocaleString("en-US")}${e.compensation_type === "hourly" ? (isAssumed(e, "annual_salary") ? " (hourly, est.)" : " (hourly)") : ""}`
     : NOT_PROVIDED;
 
-/** Which timekeeping methods were named: the ones in use, "None" when all three were ruled out. */
-function timekeeping(data: ChamberData): string {
-  const methods: [string, boolean | null][] = [
-    ["Computer", data.uses_computer_timekeeping],
-    ["Mobile app", data.uses_mobile_app],
-    ["Physical time clock", data.uses_physical_clocks],
-  ];
-  const used = methods.filter(([, v]) => v === true).map(([name]) => name);
-  if (used.length > 0) return used.join(", ");
-  return methods.every(([, v]) => v === false) ? "None of computer, mobile app or time clock" : NOT_PROVIDED;
+/** The workers' comp class codes the census carries, with how many people hold each. */
+function classCodes(census: CensusEmployee[]): string {
+  const counts = new Map<string, number>();
+  for (const e of census) if (e.class_code) counts.set(e.class_code, (counts.get(e.class_code) ?? 0) + 1);
+  if (counts.size === 0) return NOT_PROVIDED;
+  return [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([code, n]) => `${code} (${n})`).join(", ");
 }
 
 const counted = (n: number, of: number, what: string) => `${n} of ${of} ${what}`;
@@ -267,16 +285,18 @@ const counted = (n: number, of: number, what: string) => `${n} of ${of} ${what}`
 export type ManuscriptRow = [label: string, value: string, field?: FieldKey, alsoFrom?: readonly FieldKey[]];
 
 /**
- * The provenance the Manuscript shows: a field an advisor verified is settled, so it reads as confirmed
- * with no rival answers (as the advisor's packet shows it, applyAdvisorReview) rather than keeping a
- * "Conflicting" chip or an "unresolved" marker that points to an open item the list no longer has.
+ * The provenance the Manuscript shows: an answer an advisor verified that still needed the prospect reads as
+ * confirmed with no rival answers, rather than keeping a "Conflicting" chip or an "unresolved" marker that
+ * points to an open item the list no longer has (`verificationSettles` says which). A required answer in
+ * conflict stays one, as in Review, and unknown or not applicable fields keep their status; the advisor's own
+ * packet (`applyAdvisorReview`) settles every status.
  */
 function settleVerified(provenance: ProvenanceMap, verified: ReadonlySet<string>): ProvenanceMap {
   if (verified.size === 0) return provenance;
   const shown: ProvenanceMap = { ...provenance };
   for (const field of Object.keys(shown) as (keyof ProvenanceMap)[]) {
     const entry = shown[field];
-    if (entry && verified.has(field) && entry.status !== "confirmed") shown[field] = { ...entry, status: "confirmed", candidates: undefined };
+    if (entry && verified.has(field) && verificationSettles(entry.status, isRequiredField(field))) shown[field] = { ...entry, status: "confirmed", candidates: undefined };
   }
   return shown;
 }
@@ -291,21 +311,42 @@ export function rowProvenance([, , field, alsoFrom = []]: ManuscriptRow, provena
   return fields.map((f) => provenance[f]).find((p) => p?.status === "conflicting") ?? (field ? provenance[field] : undefined);
 }
 
+export interface ManuscriptDocument {
+  name: string;
+  category: string;
+  status: string;
+}
+
 export interface Manuscript {
   fileId: string;
+  /** Which certification of the intake this packet is (1, 2, ...); null for a packet that isn't certified. */
+  version: number | null;
+  /** The intake's data version the certification covered; null when the submission predates it. */
+  dataVersion: number | null;
+  /** When it was certified (ISO), null when it isn't. */
+  certifiedAt: string | null;
+  /** The certification date for the page, or "Not certified". */
   date: string;
   companyName: string;
   submittedTo: string | null;
   companyRows: ManuscriptRow[];
-  payrollRows: ManuscriptRow[];
   workforceRows: ManuscriptRow[];
+  locationRows: ManuscriptRow[];
   states: { state: string; count: string; system: string }[];
   census: ManuscriptCensusRow[];
   dependentTiers: { tier: string; count: number; pct: string }[];
   /** The dependents known of, with how many people that leaves out; "Not provided" when nothing is known. */
   totalDependents: string;
+  payrollRows: ManuscriptRow[];
   benefitsRows: ManuscriptRow[];
+  workersCompRows: ManuscriptRow[];
+  operationsRows: ManuscriptRow[];
+  /** The documents uploaded, as they stood at certification; null when the submission predates the record. */
+  documents: ManuscriptDocument[] | null;
+  /** Facts the prospect confirmed (the only "resolved" items), in business language. */
   resolved: string[];
+  /** The eligibility checks, each passing, failing or not yet verifiable. */
+  checks: EligibilityCheck[];
   open: string[];
   /** Status and source of each field, as shown beside its row. */
   provenance: ProvenanceMap;
@@ -329,6 +370,11 @@ export interface ManuscriptSigner {
   consent: string;
 }
 
+/**
+ * Builds The Manuscript from an intake's answers. Pure: the same answers, submission and options give the
+ * same packet, whenever it is built. The date is the certification's (`certified_at`, else `signed_at`),
+ * or `opts.date` for a packet that isn't certified (the sample); nothing is read from the clock.
+ */
 export function buildManuscript(
   data: ChamberData,
   opts: {
@@ -336,16 +382,28 @@ export function buildManuscript(
     submission?: ChamberSubmission | null;
     date?: Date;
     provenance?: ProvenanceMap;
-    /** Fields an advisor verified: settled whatever their status, so never an open item. */
+    /** Fields an advisor verified: settled (`verificationSettles`), so not an open item. */
     verified?: ReadonlySet<string>;
     /** For an advisor-generated packet; `followUps` are added to the open items. */
     advisor?: ManuscriptAdvisorReview & { followUps: string[] };
+    /** The PEO the checks are run against (the chosen one, when it is in the catalog). */
+    peo?: PeoRecord;
   },
 ): Manuscript {
-  const date = opts.date ?? (opts.submission ? new Date(opts.submission.signed_at) : new Date());
+  const certifiedAt = opts.submission ? (opts.submission.certified_at ?? opts.submission.signed_at) : null;
+  const date = opts.date ?? (certifiedAt ? new Date(certifiedAt) : null);
   const fmtDate = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   const fmtDateTime = (d: Date) =>
     d.toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+  const provenance = opts.provenance ?? {};
+  const verified = opts.verified ?? NO_VERIFIED_FIELDS;
+  // An answer the prospect marked as not applying shows that, whatever the row would have said.
+  // The fields a value is also built from stay with it, so a conflict in one of them still marks the row.
+  const finish = (rows: ManuscriptRow[]): ManuscriptRow[] =>
+    rows.map(([label, value, field, alsoFrom]) => {
+      const shown = field && provenance[field]?.status === "not_applicable" ? NOT_APPLICABLE : value;
+      return alsoFrom ? [label, shown, field, alsoFrom] : [label, shown, field];
+    });
 
   // Everyone but a stated 1099 contractor is counted for coverage; whose classification is only the
   // default is reported as not provided rather than as W-2.
@@ -383,50 +441,58 @@ export function buildManuscript(
   if (estimatedPay > 0) unstatedItems.push(`Annual pay — estimated at full-time hours for ${counted(estimatedPay, census, "people on the census")}; confirm their hours`);
   if (unknownTier > 0) unstatedItems.push(`Coverage tier — not provided for ${counted(unknownTier, w2.length, "employees")}`);
 
-  const checks = eligibilityChecks(data);
-  const provenance = opts.provenance ?? {};
-  const verified = opts.verified ?? NO_VERIFIED_FIELDS;
-  // The answers certification requires (always present on a certified packet), then the recommended
-  // census: readiness's items, as requiredItems reads them.
-  const missingCore = requiredItems(data, provenance, verified).flatMap((i) => (i.state === "missing" ? [`${i.label} — not provided`] : []));
-  const fieldItems = fieldOpenItems(provenance, verified).map((i) => `${i.label} — ${i.reason.toLowerCase()}`);
+  const checks = eligibilityChecks(data, opts.peo ?? (opts.submission?.peo ? findPeo(opts.submission.peo) ?? undefined : undefined));
+  // The intake's open items, the one list Review and the advisor queue use too (src/data/openItems.ts): the answers
+  // certification requires (always present on a certified packet), the census, then fields by status, less any an
+  // advisor verified.
+  const intakeItems = openItems(data, provenance, verified).map(describeOpenItem);
   const flags = data.census.flatMap((e) => {
     const flag = employeeFlag(e);
     return flag ? [`${e.first_name} ${e.last_name}: ${flag}`] : [];
   });
 
+  // Only what the prospect confirmed, or applied from a document, counts as resolved: never a check that
+  // merely passed on an unconfirmed answer.
+  const resolved = (Object.keys(FIELD_LABELS) as FieldKey[])
+    .filter((field) => provenance[field]?.status === "confirmed")
+    .map((field) => {
+      const source = provenance[field]!.source;
+      const from = source.kind === "document" ? ` from ${source.document_name ?? "an uploaded document"}` : " by the prospect";
+      return `${FIELD_LABELS[field]} — confirmed${from}`;
+    });
+
+  const submittedDocuments = opts.submission?.documents;
+
   return {
     fileId: opts.fileId,
-    date: fmtDate(date),
+    version: opts.submission?.version ?? null,
+    dataVersion: opts.submission?.data_version ?? null,
+    certifiedAt,
+    date: date ? fmtDate(date) : NOT_CERTIFIED,
     companyName: data.company_name ?? "[Company name not provided]",
     submittedTo: opts.submission?.peo ?? null,
-    companyRows: [
+    companyRows: finish([
       ["Legal Name", orNotProvided(data.company_name), "company_name"],
-      ["HQ State", orNotProvided(data.hq_state), "hq_state"],
       ["Industry", orNotProvided(data.industry), "industry"],
-      ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? `Multiple (${orNotProvided(data.fein_count)} FEINs)` : "Single entity", "multiple_entities", data.multiple_entities ? ["fein_count"] : []],
+      ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? "Multiple entities" : "Single entity", "multiple_entities"],
+      ["FEINs", orNotProvided(data.fein_count), "fein_count"],
       ["Target Start", orNotProvided(data.start_month), "start_month"],
-      ["Coverage Status", data.virgin_medical === null ? NOT_PROVIDED : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage", "virgin_medical"],
-    ],
-    payrollRows: [
-      ["Current Payroll", orNotProvided(data.payroll_vendor), "payroll_vendor"],
-      ["Pay Frequency", orNotProvided(data.pay_frequency), "pay_frequency"],
-      ["Funding Lead Time", data.funding_days === null ? NOT_PROVIDED : `${data.funding_days} day${data.funding_days === 1 ? "" : "s"}`, "funding_days"],
-      ["Accrual Method", orNotProvided(data.accrual_method), "accrual_method"],
-      ["PTO Types", data.pto_types.length ? data.pto_types.join(", ") : NOT_PROVIDED, "pto_types"],
-      ["Timekeeping", timekeeping(data)],
-      ["Shift Differentials", yesNo(data.shift_differentials), "shift_differentials"],
-      ["HRIS", orNotProvided(data.hris_system), "hris_system"],
-    ],
-    workforceRows: [
+    ]),
+    workforceRows: finish([
       ["Reported Headcount", orNotProvided(data.employee_count), "employee_count"],
       ["W-2 Employees on Census", String(statedW2.length), undefined, ["census"]],
-      ["1099 Contractors on Census", data.census.length ? String(contractors.length) : yesNo(data.has_1099), undefined, [data.census.length ? "census" : "has_1099"]],
+      ["1099 Contractors on Census", data.census.length ? String(contractors.length) : NOT_PROVIDED, undefined, ["census"]],
       ...(unstated("classification") > 0 ? ([["Classification Not Provided", String(unstated("classification")), undefined, ["census"]]] as ManuscriptRow[]) : []),
-      ["Exempt / Nonexempt", data.exempt_count === null && data.nonexempt_count === null ? NOT_PROVIDED : `${orNotProvided(data.exempt_count)} / ${orNotProvided(data.nonexempt_count)}`, undefined, ["exempt_count", "nonexempt_count"]],
-      ["In-house HR Staff", orNotProvided(data.hr_staff_count), "hr_staff_count"],
-      ["Employee Handbook", yesNo(data.has_handbook), "has_handbook"],
-    ],
+      ["1099 Contractors Reported", yesNo(data.has_1099), "has_1099"],
+      ["California Contractors", yesNo(data.ca_contractors), "ca_contractors"],
+      ["Nonexempt Employees", yesNo(data.has_nonexempt), "has_nonexempt"],
+      ["Nonexempt Count", orNotProvided(data.nonexempt_count), "nonexempt_count"],
+      ["Exempt Count", orNotProvided(data.exempt_count), "exempt_count"],
+    ]),
+    locationRows: finish([
+      ["HQ State", orNotProvided(data.hq_state), "hq_state"],
+      ["States of Operation", data.states.length ? data.states.join(", ") : NOT_PROVIDED, "states"],
+    ]),
     states: allStates.map((s) => ({ state: s, count: stateCounts.has(s) ? String(stateCounts.get(s)) : NOT_PROVIDED, system: wcSystem(s) })),
     census: data.census.map((e) => ({
       name: `${e.first_name} ${e.last_name}`.trim(),
@@ -435,7 +501,8 @@ export function buildManuscript(
       title: e.job_title || NOT_PROVIDED,
       salary: salaryLabel(e),
       classification: typeLabel(e),
-      tier: isW2(e) ? coverageTier(e) ?? NOT_PROVIDED : "Not applicable",
+      tier: isW2(e) ? coverageTier(e) ?? NOT_PROVIDED : NOT_APPLICABLE,
+      classCode: e.class_code || NOT_PROVIDED,
       flag: employeeFlag(e),
     })),
     dependentTiers: tiers.map((tier) => {
@@ -448,19 +515,51 @@ export function buildManuscript(
         : dependentsUnknown > 0
           ? `${listedDependents} (not known for ${dependentsUnknown} of ${w2.length})`
           : String(listedDependents),
-    benefitsRows: [
+    payrollRows: finish([
+      ["Current Payroll", orNotProvided(data.payroll_vendor), "payroll_vendor"],
+      ["Pay Frequency", orNotProvided(data.pay_frequency), "pay_frequency"],
+      ["Funding Lead Time", data.funding_days === null ? NOT_PROVIDED : `${data.funding_days} day${data.funding_days === 1 ? "" : "s"}`, "funding_days"],
+      ["Accrual Method", orNotProvided(data.accrual_method), "accrual_method"],
+      ["PTO Types", data.pto_types.length ? data.pto_types.join(", ") : NOT_PROVIDED, "pto_types"],
+    ]),
+    benefitsRows: finish([
+      ["Coverage Status", data.virgin_medical === null ? NOT_PROVIDED : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage", "virgin_medical"],
       ["Current Carrier", orNotProvided(data.current_carrier), "current_carrier"],
       ["Renewal Date", orNotProvided(data.renewal_date), "renewal_date"],
       ["Rate History", orNotProvided(data.rate_history), "rate_history"],
       ["Waiting Period", orNotProvided(data.benefits_waiting_period), "benefits_waiting_period"],
       ["Ancillary Benefits", data.ancillary_benefits.length ? data.ancillary_benefits.join(", ") : NOT_PROVIDED, "ancillary_benefits"],
-      ["Retirement", data.has_401k === null ? NOT_PROVIDED : data.has_401k ? `${data.retirement_type || "401(k)"}${data.employer_contributes ? " · employer contributes" : ""}` : "None", "has_401k", data.has_401k ? ["retirement_type", "employer_contributes"] : []],
-    ],
-    resolved: checks.filter((c) => c.status === "pass").map((c) => c.label),
+      ["Retirement Plan", yesNo(data.has_401k), "has_401k"],
+      ["Retirement Plan Type", orNotProvided(data.retirement_type), "retirement_type"],
+      ["Employer Retirement Contribution", yesNo(data.employer_contributes), "employer_contributes"],
+    ]),
+    workersCompRows: finish([
+      ["Current Carrier", orNotProvided(data.wc_carrier), "wc_carrier"],
+      ["Renewal Date", orNotProvided(data.wc_renewal_date), "wc_renewal_date"],
+      ["Experience Mod", data.wc_experience_mod === null ? NOT_PROVIDED : data.wc_experience_mod.toFixed(2), "wc_experience_mod"],
+      ["Annual Premium", dollars(data.wc_annual_premium), "wc_annual_premium"],
+      ["Class Codes on Census", classCodes(data.census)],
+    ]),
+    operationsRows: finish([
+      ["Employee Handbook", yesNo(data.has_handbook), "has_handbook"],
+      ["Handbook Last Updated", orNotProvided(data.handbook_last_updated), "handbook_last_updated"],
+      ["In-house HR Staff", orNotProvided(data.hr_staff_count), "hr_staff_count"],
+      ["Physical Time Clocks", yesNo(data.uses_physical_clocks), "uses_physical_clocks"],
+      ["Mobile Timekeeping", yesNo(data.uses_mobile_app), "uses_mobile_app"],
+      ["Computer Timekeeping", yesNo(data.uses_computer_timekeeping), "uses_computer_timekeeping"],
+      ["Shift Differentials", yesNo(data.shift_differentials), "shift_differentials"],
+      ["HRIS", orNotProvided(data.hris_system), "hris_system"],
+      ["Key Challenges", orNotProvided(data.key_challenges), "key_challenges"],
+      ["Business Goals", orNotProvided(data.business_goals), "business_goals"],
+    ]),
+    documents: submittedDocuments
+      ? submittedDocuments.map((d) => ({ name: d.file_name, category: categoryInfo(d.category).label, status: documentStatusInfo(d.status).label }))
+      : null,
+    resolved,
+    checks,
     open: [
-      ...missingCore,
+      ...intakeItems,
       ...unstatedItems,
-      ...fieldItems,
       ...checks.filter((c) => c.status === "fail").map((c) => `${c.label} — not met`),
       ...checks.filter((c) => c.status === "unknown").map((c) => `${c.label} — not yet verified`),
       ...flags,

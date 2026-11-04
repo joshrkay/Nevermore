@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import TranscriptPanel from "./TranscriptPanel";
+import ChatFailureNotice from "./ChatFailureNotice";
+import { CHAT_FAILURE_MESSAGES, type AiFailureKind } from "@/data/aiFailure";
 import { createChatMessage, type ChatMessage } from "@/data/chat";
 
 // jsdom lays nothing out: give the conversation a height, a viewport and a scroll position to work with.
@@ -114,5 +116,18 @@ describe("TranscriptPanel", () => {
     scroller().scrollTop = SCROLL_HEIGHT - CLIENT_HEIGHT;
     fireEvent.scroll(scroller());
     expect(screen.queryByRole("button", { name: /new message/i })).not.toBeInTheDocument();
+  });
+
+  // Whether or not trying again is offered, the prospect keeps their words and can carry on typing.
+  it.each(Object.keys(CHAT_FAILURE_MESSAGES) as AiFailureKind[])("%s: keeps the prospect's message on screen and the input usable", (kind) => {
+    const onSendMessage = vi.fn();
+    const notice = <ChatFailureNotice failure={{ text: "We have 12 staff", kind }} pending={false} onRetry={vi.fn()} onDismiss={vi.fn()} />;
+    render(<TranscriptPanel messages={[createChatMessage("user", "We have 12 staff")]} onSendMessage={onSendMessage} notice={notice} />);
+    expect(screen.getByText("We have 12 staff")).toBeInTheDocument();
+    const input = screen.getByPlaceholderText("Type a message...");
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: "And they're all in Texas" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSendMessage).toHaveBeenCalledWith("And they're all in Texas");
   });
 });

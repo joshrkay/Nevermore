@@ -44,19 +44,19 @@ _Avoid_: census row, worker, member
 A spouse, domestic partner, child or other person covered through an employee in the census.
 
 **Required field**:
-A field an intake needs before it is ready to certify: company legal name, states of operation, pay frequency and the census.
+A field an intake needs before it can be certified: company legal name, states of operation and pay frequency (D2). The census is recommended: it can only come from an upload, so it never blocks, though Lenore points to the Upload tab for it. (The intake schema's `x-intake.required` still marks the census, for Lenore's ask order.)
 _Avoid_: core item, required for submission, mandatory field
 
 **Recommended field**:
-A field that is not required but strengthens the Manuscript. Each has a rank, and Lenore asks about them in rank order after the required fields.
+A field that is not required but strengthens the Manuscript. Each has a rank, and Lenore asks about them in rank order after the required fields, the census first.
 _Avoid_: optional field, nice-to-have, priority field
 
 **Ready to certify**:
-An intake is ready to certify when every required field is settled. Lenore says so once and keeps going with recommended fields; the prospect can certify before or after.
+An intake is ready to certify when every required field holds an answer that isn't in conflict or incomplete (an inferred answer counts; states also count from the census's work states). "Not known yet" or "Doesn't apply" can't stand in for a required answer, because certification needs the answer itself. Lenore says so once and keeps going with recommended fields; the prospect can certify before or after. One rule, `readyToCertify` in `supabase/functions/_shared/followUp.ts`, used by the Chamber and by `chamber-extract`.
 _Avoid_: ready for review, complete, done, discovery complete
 
 **Open item**:
-Something the prospect still owes on a field: a required field with no answer, or any field that is inferred, incomplete, conflicting or unknown. A recommended field with no answer is not an open item.
+Something the prospect still owes on a field: a required field with no answer, or any field that is inferred, incomplete, conflicting or unknown. A recommended field with no answer is not an open item, except the census: a missing census is listed as an open item, under Recommended, and never blocks.
 _Avoid_: gap, missing item, to-do, issue
 
 **Eligibility check**:
@@ -70,24 +70,40 @@ _Avoid_: open item, flag
 ### Certifying and what it produces
 
 **Certification**:
-The prospect's signed statement that the intake's answers are true, made in The Reckoning. Changing an answer afterwards withdraws it.
-_Avoid_: submit, sign-off, attestation
+The prospect's signed statement that the intake's answers are true, made in The Reckoning. Changing an answer afterwards withdraws it, and the intake is certified again.
+_Avoid_: submit, signing, sign-off, attestation
 
 **Submission**:
-The answers and their field statuses exactly as they stood at certification, frozen.
-_Avoid_: snapshot, packet, application
+An intake that has been certified at least once. Certifying changed answers updates the same submission rather than creating another. Every submission is one the advisory team works; there is no separate qualifying step.
+_Avoid_: lead, submission record, qualified submission, packet, application
 
 **The Manuscript**:
 The underwriting document rendered from a submission, for the prospect to send to PEOs. Advisors can render further versions of it.
 _Avoid_: packet, report, PDF, proposal
 
-**Reference**:
-The identifier a submission carries, such as EAA-2026-0042.
-_Avoid_: File ID, file number, case number
+**File ID**:
+The identifier of one intake, such as EAA-2026-1A2B3C4D, shown in the app, on the signed Manuscript and in every email about it. It is set when the intake starts and never changes.
+_Avoid_: reference, submission reference, submission ID, file number, case number
 
 **The Reckoning**:
 The last step in The Chamber, where the prospect certifies.
 _Avoid_: checkout, submit page
+
+### Communications
+
+**Advisor Alert**:
+The email telling the advisory team that a submission arrived or was updated.
+_Avoid_: internal notification, new-submission notification
+
+**Confirmation**:
+The transactional email a prospect receives after each certification, saying what was received and what happens next. It is a receipt, not marketing, so it needs no opt-in.
+_Avoid_: receipt, acknowledgement
+
+### Advisors
+
+**Advisor Console**:
+The advisory team's operating workflow: every submission with its pipeline stage, notes and history. The team works submissions here, not in a separate CRM.
+_Avoid_: CRM, admin queue
 
 ### Where an answer came from
 
@@ -134,7 +150,7 @@ The prospect said the field doesn't apply to them. Only the prospect can mark it
 _Avoid_: N/A as a value, none, skipped
 
 **Settled**:
-A field is settled when it holds an answer that is not conflicting or incomplete, or is marked unknown or not applicable. Lenore asks again only about fields that are not settled.
+A field is settled when it holds an answer that is not conflicting or incomplete, or is marked unknown or not applicable. An advisor's verification settles an unconfirmed answer in Review, the open items and the Manuscript, except a required answer in conflict, which still has to be chosen. Lenore's follow-up does not read verification: she asks about the fields her own rule leaves unsettled.
 
 ### Other kinds of status
 
@@ -148,8 +164,12 @@ _Avoid_: status, state, session status
 Where an intake stands in the advisors' work, from draft through submitted, under review, information requested, sent to carrier and quoted, to won, lost or archived.
 _Avoid_: status, intake status, workflow status
 
+**Also heard**:
+An answer Lenore heard for a field from another source than the one kept (a chat answer beside a document's, say, or the value a spoken correction replaced). It is shown under the answer to the prospect and to the advisor, never in The Manuscript, and goes when the prospect confirms or edits the field.
+_Avoid_: alternative, rejected value
+
 **Review state**:
-An advisor's verdict on one field: verified, incomplete or needs follow-up. Separate from the field status the prospect sees.
+An advisor's verdict on one field: verified, incomplete or needs follow-up. Separate from the field status the prospect sees, though a verified field reads as settled to the prospect too ("Verified by your advisor"), except a required answer in conflict.
 _Avoid_: field status, status, advisor status
 
 **Document status**:
@@ -163,5 +183,7 @@ _Avoid_: status, extraction status
 - An **Extraction** comes from one prospect message and proposes answers for several **Fields**
 - A **Document candidate** comes from one uploaded document and changes nothing until the **Prospect** applies it
 - A **Prospect**'s own action always beats an **Extraction** or a **Document candidate** for the same field
-- A **Certification** produces one **Submission**, which carries one **Reference**; **The Manuscript** is rendered from a **Submission**
-- An **Intake** can be certified more than once; each **Certification** produces a new **Submission**
+- An **Intake** has one **File ID** and any number of **Certifications**; its first **Certification** makes it a **Submission**
+- **The Manuscript** is rendered from a **Submission**'s certified answers
+- Each **Certification** of new answers produces one **Advisor Alert** and one **Confirmation**; certifying the same answers again produces neither
+- Every **Submission** appears in the **Advisor Console**

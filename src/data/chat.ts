@@ -1,4 +1,6 @@
 import type { ChamberData } from "./chamberTypes";
+import { censusSummary } from "./followUp";
+import type { ProvenanceMap } from "./provenance";
 import { redactSensitive } from "./sensitive";
 
 /** Who a transcript message is from: the prospect, Lenore, or the Chamber itself (a note such as a voice call starting). */
@@ -119,10 +121,39 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
 }
 
 /**
+ * What Lenore says when her answer has no reply in it: the conversation carries it like any other line.
+ * chamber-extract always replies (when the model doesn't, it asks about the next unsettled field), so this covers
+ * a function from before it did.
+ */
+export const CHAT_FALLBACK_REPLY = "Thank you, I've noted that.";
+
+/**
  * The intake as Lenore's chat sends it to chamber-extract for context. The roster isn't extracted
  * from chat and holds personal details, so it is left out. scripts/extraction-eval replays it too.
  */
 export function chatContext(data: ChamberData): Omit<ChamberData, "census"> {
   const { census: _census, ...context } = data;
   return context;
+}
+
+/**
+ * What a chat call sends chamber-extract besides the intake id (D22): the prospect's message, the answers
+ * without the roster (chatAnswers), each answer's field status, the last few messages before this one, and what
+ * the census comes to (a count and whether any row names a work state, never the rows: US-2.3a), so the function
+ * can count the census's states as an answer and tell the model a census is in.
+ * useLenoreChat sends it, and scripts/extraction-eval replays it.
+ */
+export function chatRequestBody(
+  message: { id?: string; text: string },
+  data: ChamberData,
+  provenance: ProvenanceMap | undefined,
+  transcript: readonly ChatMessage[],
+): { message: string; census: { rows: number; work_states: boolean } } & ChatContext {
+  const statuses = Object.fromEntries(Object.entries(provenance ?? {}).flatMap(([field, p]) => (p ? [[field, p.status]] : [])));
+  const census = censusSummary(data);
+  return {
+    message: message.text,
+    ...requestContext(chatAnswers(data), statuses, transcript, message.id),
+    census: { rows: census.rows, work_states: census.workStates },
+  };
 }

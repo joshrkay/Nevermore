@@ -1,6 +1,5 @@
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
-import { fileIdForSession } from "./manuscript";
 import { FIELD_KINDS, FIELD_LABELS, formatFieldValue, type FieldKey, type ProvenanceMap } from "./provenance";
 
 // Advisor-side view of an intake: where it is in the pipeline, how complete it is, and the
@@ -82,7 +81,7 @@ export function completenessOf(row: { missing_required: string[]; open_fields: n
   const open = row.open_fields + row.flagged_fields;
   if (open > 0) {
     const parts = [
-      row.open_fields > 0 && `${row.open_fields} unconfirmed`,
+      row.open_fields > 0 && `${row.open_fields} open item${row.open_fields === 1 ? "" : "s"}`,
       row.flagged_fields > 0 && `${row.flagged_fields} flagged by an advisor`,
     ].filter(Boolean);
     return { state: "needs_review", label: "Needs review", detail: parts.join(", ") };
@@ -97,14 +96,14 @@ export interface QueueRow {
   session_id: string;
   company_name: string | null;
   contact_name: string | null;
-  /** The certified file id; null until the prospect certifies. */
+  /** The File ID, assigned by the database when the prospect first certifies; null until then. */
   file_id: string | null;
   created_at: string;
 }
 
-/** The reference an advisor quotes for an intake: the certified file id, or the one the detail page derives. */
-export function referenceOf(row: Pick<QueueRow, "session_id" | "file_id" | "created_at">): string {
-  return row.file_id ?? fileIdForSession(row.session_id, new Date(row.created_at));
+/** The reference an advisor quotes for an intake: its File ID, assigned by the database at the first certification; null before. */
+export function referenceOf(row: Pick<QueueRow, "file_id">): string | null {
+  return row.file_id?.trim() || null;
 }
 
 /** The state footprint for a list cell: "CA, NY, TX", or the first few and a count. Null when unknown. */
@@ -222,6 +221,32 @@ export function applyAdvisorReview(data: ChamberData, provenance: ProvenanceMap,
   }
 
   return { data: next, provenance: nextProvenance, corrections, followUps };
+}
+
+export interface ChangeSinceSigning {
+  field: FieldKey;
+  label: string;
+  signed: string;
+  current: string;
+}
+
+const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
+
+/**
+ * The answers that differ between what the prospect signed and what the intake holds now, in the field
+ * review's order. The census is one entry: its head count, and whether anyone's details changed.
+ */
+export function changesSinceSigning(signed: ChamberData, current: ChamberData): ChangeSinceSigning[] {
+  return (Object.keys(FIELD_LABELS) as FieldKey[]).flatMap((field): ChangeSinceSigning[] => {
+    const before = signed[field];
+    const after = current[field];
+    if (JSON.stringify(before) === JSON.stringify(after)) return [];
+    if (field === "census") {
+      const [a, b] = [signed.census.length, current.census.length];
+      return [{ field, label: FIELD_LABELS[field], signed: people(a), current: a === b ? `${people(b)}, details changed` : people(b) }];
+    }
+    return [{ field, label: FIELD_LABELS[field], signed: formatFieldValue(before), current: formatFieldValue(after) }];
+  });
 }
 
 /** Parses an advisor's typed correction for a field. Null when it isn't a valid value. */

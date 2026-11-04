@@ -13,6 +13,7 @@ import BenefitsTab from "./BenefitsTab";
 import CensusWorkspaceTab from "./CensusWorkspaceTab";
 import DependentsTab from "./DependentsTab";
 import ReviewTab from "./ReviewTab";
+import { VerifiedFieldsContext } from "./VerifiedFieldsContext";
 import PEOMatchTab from "../PEOMatchTab";
 import ReckoningTab from "../ReckoningTab";
 
@@ -36,7 +37,7 @@ interface LiveWorkspaceProps {
   fileId?: string | null;
   onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   provenance?: ProvenanceMap;
-  /** Fields an advisor verified: settled whatever their status. */
+  /** Fields an advisor verified, still on the answer they saw: settled (`verificationSettles`). */
   verified?: ReadonlySet<string>;
   /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
   onFieldAction?: (action: FieldAction) => void;
@@ -116,29 +117,41 @@ const LiveWorkspace = ({
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-y-auto">
-        {activeTab === "upload" && <UploadTab documents={documents} sessionId={documentSessionId} canStart={!isDemo && Boolean(ensureIntake)} data={data} provenance={provenance} onResolveCandidates={handleResolve} />}
-        {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
-        {activeTab === "payroll" && <PayrollTab data={data} provenance={provenance} onAction={onAction} />}
-        {activeTab === "benefits" && <BenefitsTab data={data} provenance={provenance} onAction={onAction} />}
-        {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} />}
-        {activeTab === "dependents" && <DependentsTab data={data} />}
-        {activeTab === "review" && <ReviewTab data={data} provenance={provenance} verified={verified} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} />}
-        {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
-        {activeTab === "reckoning" && (
-          <ReckoningTab
-            data={data}
-            provenance={provenance}
-            verified={verified}
-            peoName={chosenPeo}
-            sessionId={sessionId}
-            fileId={fileId}
-            onSubmit={onSubmit}
-            certification={certification}
-            onReview={() => setActiveTab("review")}
-          />
-        )}
-      </div>
+      <VerifiedFieldsContext.Provider value={verified}>
+        <div className="flex-1 overflow-y-auto">
+          {activeTab === "upload" && <UploadTab documents={documents} sessionId={documentSessionId} canStart={!isDemo && Boolean(ensureIntake)} data={data} provenance={provenance} onResolveCandidates={handleResolve} />}
+          {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
+          {activeTab === "payroll" && <PayrollTab data={data} provenance={provenance} onAction={onAction} />}
+          {activeTab === "benefits" && <BenefitsTab data={data} provenance={provenance} onAction={onAction} />}
+          {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
+          {activeTab === "dependents" && <DependentsTab data={data} />}
+          {activeTab === "review" && (
+            <ReviewTab
+              data={data}
+              provenance={provenance}
+              verified={verified}
+              onAction={onAction}
+              documents={documents.docs}
+              onProceed={() => setActiveTab("match")}
+              focusRequest={openReview}
+            />
+          )}
+          {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
+          {activeTab === "reckoning" && (
+            <ReckoningTab
+              data={data}
+              provenance={provenance}
+              verified={verified}
+              peoName={chosenPeo}
+              sessionId={sessionId}
+              fileId={fileId}
+              onSubmit={onSubmit}
+              certification={certification}
+              onReview={() => setActiveTab("review")}
+            />
+          )}
+        </div>
+      </VerifiedFieldsContext.Provider>
     </div>
   );
 };

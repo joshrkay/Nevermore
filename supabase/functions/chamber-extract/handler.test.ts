@@ -151,6 +151,8 @@ describe("chamber-extract handler: the request is checked before anything is spe
     ["more than ten recent messages", { message: "hi", recent: Array.from({ length: 11 }, () => ({ sender: "user", text: "hi" })), session_id: INTAKE }, 400],
     ["a recent message from someone else", { message: "hi", recent: [{ sender: "system", text: "Voice call started" }], session_id: INTAKE }, 400],
     ["a recent message over 2,000 characters", { message: "hi", recent: [{ sender: "user", text: "x".repeat(2001) }], session_id: INTAKE }, 400],
+    ["a census summary that isn't one", { message: "hi", census: { rows: -1, work_states: true }, session_id: INTAKE }, 400],
+    ["a census summary with its rows in it", { message: "hi", census: [{ first_name: "Ada" }], session_id: INTAKE }, 400],
     ["answers, statuses and messages over 20,000 characters together", {
       message: "hi",
       context: { key_challenges: "x".repeat(9000), business_goals: "y".repeat(9000) },
@@ -311,6 +313,33 @@ describe("chamber-extract handler: what is sent to the model", () => {
     expect(next.slice(0, 3)).toEqual(["company_name", "states", "industry"]);
     for (const settled of ["pay_frequency", "employee_count", "hq_state", "current_carrier"]) expect(next).not.toContain(settled);
     expect(user).toContain('Recent conversation, oldest first: [{"sender":"lenore","text":"Which states do your people work in?"}]');
+  });
+
+  it("says whether the intake is ready to certify and whether a census is in, counting its work states for states", async () => {
+    const t = setup();
+    await handleRequest(post({ message: "hi", context: { company_name: "Acme", pay_frequency: "weekly", states: [] }, census: { rows: 4, work_states: true } }), t.deps);
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    expect(user).toContain("Ready to certify: yes");
+    expect(user).toContain("Employee census: uploaded, 4 rows");
+    expect(/Not yet settled, most important first: (.*)/.exec(user)![1]).not.toContain("states");
+    const bare = setup();
+    await handleRequest(post({ message: "hi" }), bare.deps);
+    const empty = JSON.parse(bare.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    expect(empty).toContain("Ready to certify: no");
+    expect(empty).toContain("Employee census: not uploaded");
+  });
+
+  it("asks about the next field the message didn't settle when the model gives no reply, and wraps up when none is left", async () => {
+    const t = setup({ responses: [gatewayReply({ company_name: "Acme", field_status: { company_name: "confirmed" } })] });
+    const { body } = await read(await handleRequest(post({ message: "We're Acme" }), t.deps));
+    expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
+    expect(body.reply).not.toContain("team");
+  });
+
+  it("asks again about an answer the model marked incomplete, rather than moving on or wrapping up", async () => {
+    const t = setup({ responses: [gatewayReply({ states: ["CA", "OR"], field_status: { states: "incomplete" } })] });
+    const { body } = await read(await handleRequest(post({ message: "CA, OR and some others", context: { company_name: "Acme" } }), t.deps));
+    expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
   });
 
   it("removes Social Security and account numbers from the recent conversation it passes on", async () => {

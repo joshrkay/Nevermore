@@ -33,6 +33,9 @@ const latestQueries: unknown[][] = [];
 // Calls to archive_chamber_session, and what it answers.
 const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
 let rpcResult: { data: unknown; error: MockError | null } = { data: "archived", error: null };
+// While set, reading the verified fields waits until a test answers it (in the order the reads were made).
+let deferVerifiedRead = false;
+const pendingVerifiedReads: ((value: { data: unknown; error: MockError | null }) => void)[] = [];
 
 // Who is signed in. A test can switch it and rerender, as signing in with an emailed code does.
 let authUserId = "u1";
@@ -40,9 +43,10 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: authUserId }, 
 vi.mock("@/lib/dispatchOutbox", () => ({ dispatchOutbox: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
-    rpc: async (fn: string, args: Record<string, unknown>) => {
+    rpc: (fn: string, args: Record<string, unknown>) => {
       rpcCalls.push({ fn, args });
-      return rpcResult;
+      if (deferVerifiedRead && fn === "session_verified_fields") return new Promise((resolve) => { pendingVerifiedReads.push(resolve as never); });
+      return Promise.resolve(rpcResult);
     },
     from: () => ({
       select: (columns: string) => ({
@@ -79,7 +83,7 @@ vi.mock("@/integrations/supabase/client", () => ({
               single: async () =>
                 insertError
                   ? { data: null, error: insertError }
-                  : { data: { id: "s1", data_version: 1, created_at: insertedCreatedAt }, error: null },
+                  : { data: { id: "s1", data_version: 1, file_id: null, created_at: insertedCreatedAt }, error: null },
             };
           },
         };
@@ -168,6 +172,8 @@ describe("useChamberSession", () => {
     lastClosedRow = null;
     latestQueries.length = 0;
     rpcCalls.length = 0;
+    deferVerifiedRead = false;
+    pendingVerifiedReads.length = 0;
     rpcResult = { data: "archived", error: null };
     authUserId = "u1";
     localStorage.clear();
@@ -573,14 +579,142 @@ describe("useChamberSession", () => {
   });
 
   describe("fields an advisor verified", () => {
-    const openRow = { id: "s7", data_version: 2, chamber_data: { company_name: "Acme" }, field_provenance: {}, transcript: [], status: "submitted", submission: null };
+    // Rows as the app writes them: every answer in its canonical form, so what was stored is what is loaded.
+    const rowOf = (answers: Record<string, unknown> = {}, over: Record<string, unknown> = {}) => ({
+      id: "s7", data_version: 2, chamber_data: { ...parseChamberData({ company_name: "Acme Bindery", pay_frequency: "Weekly", ...answers }) },
+      field_provenance: {}, transcript: [], status: "in_progress", submission: null, ...over,
+    });
+    const verified = (result: { current: ReturnType<typeof useChamberSession> }) => [...result.current.verifiedFields].sort();
+    const answerRead = async (index: number, fields: string[]) => {
+      await act(async () => { pendingVerifiedReads[index]({ data: fields, error: null }); });
+    };
+    const open = async (fields: string[], row = rowOf()) => {
+      rpcResult = { data: fields, error: null };
+      resumeRow = row;
+      const hook = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(verified(hook.result)).toEqual([...fields].sort()));
+      return hook.result;
+    };
 
-    it("reads them once, when the intake is opened", async () => {
-      rpcResult = { data: ["census", "company_name"], error: null };
-      resumeRow = openRow;
-      const { result } = renderHook(() => useChamberSession("s7"));
-      await waitFor(() => expect([...result.current.verifiedFields]).toEqual(["census", "company_name"]));
+    it("reads them when the intake is opened", async () => {
+      await open(["company_name"]);
       expect(rpcCalls).toEqual([{ fn: "session_verified_fields", args: { p_session_id: "s7" } }]);
+    });
+
+    it("forgets one when the answer it covered changes, as the server resets that review", async () => {
+      const result = await open(["company_name", "pay_frequency"]);
+      // A document replaces the verified company name; the pay frequency stays as the advisor saw it.
+      act(() => result.current.updateIntake((prev) => ({ data: { ...prev.data, company_name: "Beta Holdings LLC" }, provenance: prev.provenance })));
+      expect(verified(result)).toEqual(["pay_frequency"]);
+      // The same answer written again, or an unrelated one, takes nothing away.
+      act(() => result.current.updateIntake((prev) => ({ data: { ...prev.data, company_name: "Beta Holdings LLC", industry: "Printing" }, provenance: prev.provenance })));
+      expect(verified(result)).toEqual(["pay_frequency"]);
+    });
+
+    it("forgets one when the prospect edits the answer through the plain setter too", async () => {
+      const result = await open(["company_name"]);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme Press" })));
+      expect(verified(result)).toEqual([]);
+    });
+
+    it("doesn't bring one back when the answer is changed and then changed back", async () => {
+      // The first save already made the server reset that review; a later save of the old answer doesn't restore it.
+      const result = await open(["company_name"]);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme Press" })));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme Bindery" })));
+      expect(verified(result)).toEqual([]);
+    });
+
+    it("keeps one while its answer is unchanged, however the rest of the intake moves", async () => {
+      const result = await open(["company_name"]);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, pay_frequency: "Bi-weekly", industry: "Printing" })));
+      expect(verified(result)).toEqual(["company_name"]);
+    });
+
+    it("drops one when an edit lands before the read that names it does", async () => {
+      deferVerifiedRead = true;
+      resumeRow = rowOf();
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(pendingVerifiedReads).toHaveLength(1));
+      act(() => result.current.updateIntake((prev) => ({ data: { ...prev.data, company_name: "Beta LLC" }, provenance: prev.provenance })));
+      await answerRead(0, ["company_name", "pay_frequency"]);
+      await waitFor(() => expect(verified(result)).toEqual(["pay_frequency"]));
+    });
+
+    it("reads again when the latest saved row is loaded, so another tab's change drops the badge", async () => {
+      const result = await open(["company_name"]);
+      // Another tab changed the answer, and the server reset that review.
+      resumeRow = rowOf({ company_name: "Totally Different Corp" }, { data_version: 9 });
+      rpcResult = { data: [], error: null };
+      await act(async () => { result.current.discardChanges(); });
+      await waitFor(() => expect(result.current.chamberData.company_name).toBe("Totally Different Corp"));
+      await waitFor(() => expect(rpcCalls.filter((c) => c.fn === "session_verified_fields")).toHaveLength(2));
+      expect(verified(result)).toEqual([]);
+    });
+
+    it("hides one at once when the loaded row's answer differs, before the new read lands", async () => {
+      const result = await open(["company_name"]);
+      resumeRow = rowOf({ company_name: "Totally Different Corp" }, { data_version: 9 });
+      deferVerifiedRead = true;
+      await act(async () => { result.current.discardChanges(); });
+      await waitFor(() => expect(result.current.chamberData.company_name).toBe("Totally Different Corp"));
+      expect(verified(result)).toEqual([]);
+    });
+
+    it("brings one back when a local edit is discarded and the server still holds it", async () => {
+      const result = await open(["company_name"]);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme Press" })));
+      expect(verified(result)).toEqual([]);
+      await act(async () => { result.current.discardChanges(); });
+      await waitFor(() => expect(result.current.chamberData.company_name).toBe("Acme Bindery"));
+      await waitFor(() => expect(verified(result)).toEqual(["company_name"]));
+    });
+
+    it("keeps the set it has when a later read fails, rather than wiping every badge", async () => {
+      const result = await open(["company_name", "pay_frequency"]);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      rpcResult = { data: null, error: networkError };
+      await act(async () => { result.current.discardChanges(); });
+      await waitFor(() => expect(warn).toHaveBeenCalled());
+      expect(verified(result)).toEqual(["company_name", "pay_frequency"]);
+      warn.mockRestore();
+    });
+
+    it("uses the latest read when two overlap, however they answer", async () => {
+      deferVerifiedRead = true;
+      resumeRow = rowOf();
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(pendingVerifiedReads).toHaveLength(1));
+      await act(async () => { result.current.discardChanges(); });
+      await waitFor(() => expect(pendingVerifiedReads).toHaveLength(2));
+      // The newer read answers first (nothing verified), then the older one arrives late and must be ignored.
+      await answerRead(1, []);
+      await answerRead(0, ["company_name"]);
+      expect(verified(result)).toEqual([]);
+    });
+
+    it("doesn't show an answer whose stored form isn't the one loaded: the first save rewrites it and the server resets its review", async () => {
+      // Rows saved by earlier versions: a roster without ids or classifications, a headcount saved as text, and a
+      // state list in two cases. Loading cleans them; saving writes the clean form.
+      const old = rowOf();
+      old.chamber_data = {
+        ...old.chamber_data, employee_count: "40", states: ["ny", "NY"], census: [{ first_name: "A", last_name: "B", state: "NY" }],
+      } as never;
+      rpcResult = { data: ["company_name", "census", "employee_count", "states"], error: null };
+      resumeRow = old;
+      const { result } = renderHook(() => useChamberSession("s7"));
+      // Only the answer stored in the form it is loaded in stays verified.
+      await waitFor(() => expect(verified(result)).toEqual(["company_name"]));
+    });
+
+    it("doesn't show a legacy roster, keyed `employees`, as verified", async () => {
+      const legacy = rowOf();
+      const { census: _census, ...rest } = legacy.chamber_data as Record<string, unknown>;
+      legacy.chamber_data = { ...rest, employees: [{ first_name: "A", last_name: "B", state: "NY" }] } as never;
+      rpcResult = { data: ["census", "company_name"], error: null };
+      resumeRow = legacy;
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(verified(result)).toEqual(["company_name"]));
     });
 
     it("has none for a new intake, without asking", async () => {
@@ -593,7 +727,7 @@ describe("useChamberSession", () => {
     it("treats none as verified when they can't be read, and says nothing to the prospect", async () => {
       rpcResult = { data: null, error: { message: "Failed to fetch" } };
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      resumeRow = openRow;
+      resumeRow = rowOf();
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(warn).toHaveBeenCalled());
       expect(result.current.sessionId).toBe("s7");
@@ -604,7 +738,7 @@ describe("useChamberSession", () => {
 
     it("doesn't carry them over to another intake", async () => {
       rpcResult = { data: ["company_name"], error: null };
-      resumeRow = openRow;
+      resumeRow = rowOf();
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(result.current.verifiedFields.has("company_name")).toBe(true));
       act(() => result.current.startNew());
@@ -614,50 +748,55 @@ describe("useChamberSession", () => {
   });
 
   describe("the File ID", () => {
-    // Late on New Year's Eve: the intake starts in one year and is certified in the next.
-    const NEW_YEARS_EVE = "2026-12-31T23:59:00Z";
-    const NEXT_YEAR = new Date("2027-01-02T10:00:00Z");
-
-    it("takes a new intake's year from when the server created it, not from today", async () => {
-      insertedCreatedAt = NEW_YEARS_EVE;
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(NEXT_YEAR);
+    it("has none for a new intake: the database assigns it at the first certification", async () => {
       const { result } = renderHook(() => useChamberSession());
       await startIntake(result);
-      expect(result.current.fileId).toBe("EAA-2026-S1");
+      expect(result.current.fileId).toBeNull();
     });
 
-    it("keeps a resumed intake's File ID from the year it started, so certifying again later can't change it", async () => {
-      resumeRow = serverRow({ id: "s7", created_at: NEW_YEARS_EVE });
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(NEXT_YEAR);
+    it("shows the one the database assigned to a resumed intake", async () => {
+      resumeRow = serverRow({ id: "s7", file_id: "EAA-2026-0042" });
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(result.current.sessionId).toBe("s7"));
-      expect(result.current.fileId).toBe("EAA-2026-S7");
-    });
-
-    it("keeps the File ID a certification already recorded, even one made from another year", async () => {
-      // Certified before File IDs took the start year: its recorded File ID stays the intake's.
-      resumeRow = serverRow({ id: "s7", status: "submitted", created_at: NEW_YEARS_EVE, submission: { ...submission, file_id: "EAA-2027-S7" } });
-      const { result } = renderHook(() => useChamberSession("s7"));
-      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
-      expect(result.current.certification.status).not.toBe("none");
-      expect(result.current.fileId).toBe("EAA-2027-S7");
+      expect(result.current.fileId).toBe("EAA-2026-0042");
     });
 
     it("keeps it when the certification was withdrawn, so certifying again reuses it", async () => {
-      resumeRow = serverRow({ id: "s7", status: "in_progress", created_at: NEW_YEARS_EVE, submission: { ...submission, file_id: "EAA-2027-S7" } });
+      resumeRow = serverRow({ id: "s7", status: "in_progress", file_id: "EAA-2026-0042", submission: { ...submission, file_id: "EAA-2026-0042" } });
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(result.current.sessionId).toBe("s7"));
       expect(result.current.certification.status).toBe("stale");
-      expect(result.current.fileId).toBe("EAA-2027-S7");
+      expect(result.current.fileId).toBe("EAA-2026-0042");
     });
 
-    it("makes one from the start year when the recorded File ID is blank", async () => {
-      resumeRow = serverRow({ id: "s7", status: "submitted", created_at: NEW_YEARS_EVE, submission: { ...submission, file_id: "  " } });
+    it("falls back to the File ID a certification recorded before the intake carried one", async () => {
+      resumeRow = serverRow({ id: "s7", status: "submitted", file_id: null, submission: { ...submission, file_id: "EAA-2027-S7" } });
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(result.current.sessionId).toBe("s7"));
-      expect(result.current.fileId).toBe("EAA-2026-S7");
+      expect(result.current.fileId).toBe("EAA-2027-S7");
+      resumeRow = serverRow({ id: "s8", status: "submitted", file_id: "  ", submission: { ...submission, file_id: "  " } });
+      const again = renderHook(() => useChamberSession("s8"));
+      await waitFor(() => expect(again.result.current.sessionId).toBe("s8"));
+      expect(again.result.current.fileId).toBeNull();
+    });
+
+    it("learns the File ID from the certification's answer, with the submission as the database stamped it", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await startIntake(result);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, industry: "Retail" })));
+      let ok: SubmitResult | undefined;
+      const pending = result.current.submit(submission).then((r) => { ok = r; });
+      await waitFor(() => expect(updates).toHaveLength(1));
+      updates[0].resolve({ error: null });
+      await waitFor(() => expect(updates).toHaveLength(2));
+      expect(updates[1].columns).toBe("id, data_version, status, submission, file_id");
+      const sent = updates[1].payload.submission as Record<string, unknown>;
+      const stamped = { ...sent, file_id: "EAA-2026-0042", version: 1, data_version: 3, certified_at: "2026-10-27T00:00:00Z", data_sha256: "abc", documents: [] };
+      updates[1].resolve({ error: null, data: [{ id: "s1", data_version: 3, status: "submitted", submission: stamped, file_id: "EAA-2026-0042" }] });
+      await act(async () => { await pending; });
+      expect(ok).toBe(true);
+      expect(result.current.fileId).toBe("EAA-2026-0042");
+      expect(result.current.certification).toMatchObject({ status: "certified", submission: { file_id: "EAA-2026-0042", version: 1, data_version: 3 } });
     });
 
     it("has none while there is no intake", async () => {
@@ -777,7 +916,7 @@ describe("useChamberSession", () => {
 
     it("writes against the version the server gave a new intake, naming only the row and the version", async () => {
       const { result } = await open();
-      expect(insertedColumns).toEqual(["id, data_version, created_at"]);
+      expect(insertedColumns).toEqual(["id, data_version, file_id"]);
       edit(result);
       await autosave();
       expect(updates[0].filters).toEqual({ id: "s1", data_version: 1 });
@@ -1386,7 +1525,7 @@ describe("useChamberSession", () => {
         expect(updates[1].payload).toMatchObject({ status: "submitted" });
         expect(updates[1].payload).not.toHaveProperty("data_version");
         expect(updates[1].filters).toEqual({ id: "s1", data_version: 2 });
-        expect(updates[1].columns).toBe("id, data_version, status");
+        expect(updates[1].columns).toBe("id, data_version, status, submission, file_id");
         await act(async () => { updates[1].resolve({ error: null }); await pending; });
 
         edit(result, "Acme 2");

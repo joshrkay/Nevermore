@@ -56,9 +56,18 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
     // useLenoreChat.send: the model and the transcript only see the message with sensitive numbers removed.
     const text = redactSensitive(turn.message);
     const message = createChatMessage("user", text);
-    // The request body crosses the network as JSON, and the handler reads it back with req.json().
-    const body = JSON.parse(JSON.stringify({ message: text, context: chatContext(state.data) }));
-    const user = buildUserPrompt(body.message, serializeContext(body.context));
+    transcript.push(message);
+    // The request body crosses the network as JSON, and the handler reads it back with req.json(). The handler
+    // removes sensitive numbers from the recent conversation again (readRecent), Lenore's lines included.
+    const body = JSON.parse(JSON.stringify(chatRequestBody(message, state.data, state.provenance, transcript)));
+    const recent = body.recent.map((m: { sender: "user" | "lenore"; text: string }) => ({ ...m, text: redactSensitive(m.text) }));
+    const user = buildUserPrompt({
+      message: body.message,
+      context: body.context,
+      statuses: body.statuses,
+      recent,
+      census: { rows: body.census.rows, workStates: body.census.work_states },
+    });
 
     const result = await model({ system: SYSTEM_PROMPT, user });
     if (!result.ok) {

@@ -1,20 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import type { CensusEmployee } from "./chamberTypes";
+import type { ProvenanceMap } from "./provenance";
+import { REVIEW_FIELDS } from "./reviewFields";
 import {
   buildManuscript,
-  CERTIFICATION_CONSENT_VERSION,
-  certificationConsent,
   certificationFromRow,
   coverageTier,
   eligibilityChecks,
   employeeFlag,
-  fileIdForSession,
+  isFileId,
   LEGACY_CONSENT_TEXT,
   manuscriptFilename,
   maskDob,
-  rowProvenance,
+  NOT_APPLICABLE,
   wcSystem,
+  type ChamberSubmission,
+  rowProvenance,
 } from "./manuscript";
 
 const emp = (overrides: Partial<CensusEmployee> = {}): CensusEmployee => ({
@@ -32,25 +34,35 @@ const emp = (overrides: Partial<CensusEmployee> = {}): CensusEmployee => ({
   ...overrides,
 });
 
-describe("fileIdForSession", () => {
-  it("is stable for a session", () => {
-    const id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
-    const date = new Date("2026-05-01T00:00:00Z");
-    expect(fileIdForSession(id, date)).toBe("EAA-2026-0F1E2D3C");
-    expect(fileIdForSession(id, date)).toBe(fileIdForSession(id, date));
+const AT = "2026-05-01T00:00:00Z";
+const opts = { fileId: "EAA-1", date: new Date(AT) };
+const source = { kind: "transcript" as const, message_id: "m1" };
+const confirmed = { status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: AT };
+
+const certified: ChamberSubmission = {
+  signer_name: "Jo Doe",
+  signer_title: "CEO",
+  signed_at: "2026-05-01T12:00:00Z",
+  certified_at: "2026-05-01T12:00:03Z",
+  file_id: "EAA-2026-0042",
+  version: 2,
+  data_version: 17,
+  schema_version: 2,
+  documents: [{ id: "d1", file_name: "census.csv", category: "employee_census", status: "extracted" }],
+  consent_version: "v1",
+  consent_text: ["I certify."],
+};
+
+describe("isFileId", () => {
+  it("accepts the File IDs the database assigns, and the ones older intakes carry", () => {
+    expect(isFileId("EAA-2026-0001")).toBe(true);
+    expect(isFileId("EAA-2026-12345")).toBe(true);
+    expect(isFileId("EAA-2026-0F1E2D3C")).toBe(true);
   });
 
-  it("takes the year in UTC, as the database does, whatever the browser's time zone", () => {
-    const id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
-    const zone = process.env.TZ;
-    process.env.TZ = "America/Los_Angeles";
-    try {
-      // 03:00 UTC on 1 January is still New Year's Eve in California.
-      expect(new Date("2027-01-01T03:00:00Z").getFullYear()).toBe(2026);
-      expect(fileIdForSession(id, new Date("2027-01-01T03:00:00Z"))).toBe("EAA-2027-0F1E2D3C");
-    } finally {
-      if (zone === undefined) delete process.env.TZ;
-      else process.env.TZ = zone;
+  it("refuses anything else, so a guessed path can't become a query", () => {
+    for (const bad of ["EAA-2026", "eaa-2026-0001", "EAA-2026-0001; drop", "", null, 42, "EAA-26-0001", "EAA-2026-" + "A".repeat(13)]) {
+      expect(isFileId(bad)).toBe(false);
     }
   });
 });
@@ -139,24 +151,140 @@ describe("buildManuscript", () => {
   });
 
   it("counts dependent tiers and lists open items for the demo data", () => {
-    const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: "EAA-SAMPLE" });
+    const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: "EAA-SAMPLE", date: new Date(AT) });
     const total = m.dependentTiers.reduce((sum, t) => sum + t.count, 0);
     expect(total).toBe(DEMO_CHAMBER_DATA.census.filter((e) => e.classification === "w2").length);
     expect(m.totalDependents).toBe("6");
     expect(m.open.some((o) => o.includes("Workers' comp"))).toBe(true);
     expect(m.signer).toBeNull();
   });
+
+  it("carries the certification's version, data version, date and documents", () => {
+    const m = buildManuscript({ ...EMPTY_CHAMBER_DATA, company_name: "Acme" }, { fileId: certified.file_id, submission: certified });
+    expect(m).toMatchObject({ fileId: "EAA-2026-0042", version: 2, dataVersion: 17, certifiedAt: "2026-05-01T12:00:03Z" });
+    expect(m.date).toBe("May 1, 2026");
+    expect(m.documents).toEqual([{ name: "census.csv", category: "Employee census", status: "Read" }]);
+  });
+
+  it("has no version, date or document record for a packet that isn't certified, and no documents for an older one", () => {
+    const m = buildManuscript(EMPTY_CHAMBER_DATA, { fileId: "EAA-1" });
+    expect(m).toMatchObject({ version: null, dataVersion: null, certifiedAt: null, date: "Not certified", documents: null });
+    const older = buildManuscript(EMPTY_CHAMBER_DATA, {
+      fileId: "EAA-1",
+      submission: { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1" },
+    });
+    expect(older.documents).toBeNull();
+    expect(older.date).toBe("May 1, 2026"); // the signing time, when the server never stamped a certification time
+  });
+});
+
+describe("buildManuscript covers the whole intake", () => {
+  const rowsOf = (m: ReturnType<typeof buildManuscript>) => ({
+    company: m.companyRows,
+    workforce: m.workforceRows,
+    locations: m.locationRows,
+    payroll: m.payrollRows,
+    benefits: m.benefitsRows,
+    workers_comp: m.workersCompRows,
+    operations: m.operationsRows,
+  });
+
+  it("puts every intake field in a section, as the Review step does, or renders it another way", () => {
+    // Review's sections (src/data/reviewFields.ts) hold every answer but the census, which is a table of its own.
+    const reviewSectionOf: Record<string, string> = Object.fromEntries(Object.entries(REVIEW_FIELDS).flatMap(([section, fields]) => fields.map((f) => [f, section])));
+    expect(Object.keys(reviewSectionOf).sort()).toEqual(Object.keys(EMPTY_CHAMBER_DATA).filter((f) => f !== "census").sort());
+    const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
+    const rows = rowsOf(m);
+    // The census is a table of its own, in the Workforce section.
+    const renderedElsewhere: Record<string, string> = { census: "the census table and the state breakdown" };
+    const keyed = new Map<string, string>(Object.entries(rows).flatMap(([section, list]) => list.flatMap(([, , field]) => (field ? [[field, section] as [string, string]] : []))));
+    for (const field of Object.keys(EMPTY_CHAMBER_DATA)) {
+      if (field in renderedElsewhere) continue;
+      expect(keyed.has(field), `${field} has no row in The Manuscript`).toBe(true);
+      expect(keyed.get(field), `${field} is in the wrong section`).toBe(reviewSectionOf[field]);
+    }
+    expect(m.census.length).toBe(DEMO_CHAMBER_DATA.census.length);
+  });
+
+  it("shows the workers' comp block and the census class codes", () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
+    expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toEqual({
+      "Current Carrier": "Pinnacle Mutual",
+      "Renewal Date": "July 2026",
+      "Experience Mod": "0.92",
+      "Annual Premium": "$18,400",
+      "Class Codes on Census": "8810 (5)",
+    });
+    expect(m.census[0].classCode).toBe("8810");
+  });
+
+  it("shows operations and HR answers in their own section", () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
+    expect(m.operationsRows.map(([label, , field]) => [label, field])).toEqual([
+      ["Employee Handbook", "has_handbook"],
+      ["Handbook Last Updated", "handbook_last_updated"],
+      ["In-house HR Staff", "hr_staff_count"],
+      ["Physical Time Clocks", "uses_physical_clocks"],
+      ["Mobile Timekeeping", "uses_mobile_app"],
+      ["Computer Timekeeping", "uses_computer_timekeeping"],
+      ["Shift Differentials", "shift_differentials"],
+      ["HRIS", "hris_system"],
+      ["Key Challenges", "key_challenges"],
+      ["Business Goals", "business_goals"],
+    ]);
+    expect(m.operationsRows.find(([, , field]) => field === "key_challenges")?.[1]).toBe(DEMO_CHAMBER_DATA.key_challenges);
+  });
 });
 
 describe("buildManuscript with missing data", () => {
   const sectionValues = (m: ReturnType<typeof buildManuscript>) =>
-    [...m.companyRows, ...m.payrollRows, ...m.workforceRows, ...m.benefitsRows].map(([, v]) => v);
+    [...m.companyRows, ...m.locationRows, ...m.payrollRows, ...m.workforceRows, ...m.benefitsRows, ...m.workersCompRows, ...m.operationsRows].map(([, v]) => v);
 
-  it("says 'Not provided' for every field the prospect never gave", () => {
-    const m = buildManuscript(EMPTY_CHAMBER_DATA, { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") });
+  it("says 'Not provided' for every field the prospect never gave, and makes nothing up", () => {
+    const m = buildManuscript(EMPTY_CHAMBER_DATA, opts);
     const values = sectionValues(m);
-    expect(values).toContain("Not provided");
+    expect(values.filter((v) => v === "Not provided").length).toBeGreaterThan(30);
     expect(values).not.toContain("—");
+    expect(values.filter((v) => v !== "Not provided" && v !== "0")).toEqual([]);
+    expect(m.resolved).toEqual([]);
+    expect(m.census).toEqual([]);
+  });
+
+  it("maps a partial intake without inventing the rest", () => {
+    const m = buildManuscript({ ...EMPTY_CHAMBER_DATA, company_name: "Half Co", pay_frequency: "weekly", wc_carrier: "Acme Mutual" }, opts);
+    const values = sectionValues(m);
+    expect(values).toContain("Half Co");
+    expect(values).toContain("weekly");
+    expect(values).toContain("Acme Mutual");
+    expect(values.filter((v) => !["Not provided", "0", "Half Co", "weekly", "Acme Mutual"].includes(v))).toEqual([]);
+    expect(m.open).toContain("States of operation — not provided");
+    expect(m.open).not.toContain("Company legal name — not provided");
+  });
+
+  it("shows an answer the prospect marked as not applying as such, not as missing", () => {
+    const provenance: ProvenanceMap = {
+      wc_carrier: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: AT },
+      has_401k: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: AT },
+    };
+    const m = buildManuscript(EMPTY_CHAMBER_DATA, { ...opts, provenance });
+    expect(m.workersCompRows.find(([label]) => label === "Current Carrier")?.[1]).toBe(NOT_APPLICABLE);
+    expect(m.benefitsRows.find(([label]) => label === "Retirement Plan")?.[1]).toBe(NOT_APPLICABLE);
+    expect(m.open.some((o) => o.startsWith("Workers' comp carrier"))).toBe(false);
+  });
+});
+
+describe("buildManuscript is deterministic", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("gives the same packet for the same input, whenever it is built", () => {
+    const data = { ...DEMO_CHAMBER_DATA };
+    const provenance: ProvenanceMap = { company_name: confirmed, industry: { status: "inferred", source, updated_at: AT } };
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-01T00:00:00Z"));
+    const first = JSON.stringify(buildManuscript(data, { fileId: certified.file_id, submission: certified, provenance }));
+    vi.setSystemTime(new Date("2031-12-31T23:59:59Z"));
+    const second = JSON.stringify(buildManuscript(data, { fileId: certified.file_id, submission: certified, provenance }));
+    expect(second).toBe(first);
   });
 });
 
@@ -164,30 +292,29 @@ describe("buildManuscript census and state mix with gaps", () => {
   it("says 'Not provided' for blank census cells and unknown state counts", () => {
     const m = buildManuscript(
       { ...EMPTY_CHAMBER_DATA, states: ["TX"], census: [emp({ dob: undefined, work_state: "", job_title: undefined, annual_salary: undefined })] },
-      { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") },
+      opts,
     );
-    expect(m.census[0]).toMatchObject({ dob: "Not provided", state: "Not provided", title: "Not provided", salary: "Not provided" });
+    expect(m.census[0]).toMatchObject({ dob: "Not provided", state: "Not provided", title: "Not provided", salary: "Not provided", classCode: "Not provided" });
     expect(m.states).toEqual([{ state: "TX", count: "Not provided", system: "NCCI" }]);
   });
 
   it("shows an age when the census gave no date of birth, and marks hourly and part-time workers", () => {
     const m = buildManuscript(
       { ...EMPTY_CHAMBER_DATA, census: [emp({ dob: undefined, age: 41, compensation_type: "hourly", employment_type: "part_time", annual_salary: 20800 })] },
-      { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") },
+      opts,
     );
     expect(m.census[0]).toMatchObject({ dob: "Age 41", salary: "$20,800 (hourly)", classification: "W-2 PT" });
     expect(maskDob(m.census[0].dob)).toBe("Age 41");
   });
 
   it("lists waived coverage only when the census records it", () => {
-    const opts = { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") };
     expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [emp()] }, opts).dependentTiers.map((t) => t.tier)).not.toContain("Waived");
     const waived = buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [emp(), emp({ id: "e2", coverage_tier: "WAIVE" })] }, opts);
     expect(waived.dependentTiers.find((t) => t.tier === "Waived")).toEqual({ tier: "Waived", count: 1, pct: "50%" });
   });
 
   it("shows no dependent percentages when there are no W-2 employees to divide by", () => {
-    const m = buildManuscript(EMPTY_CHAMBER_DATA, { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") });
+    const m = buildManuscript(EMPTY_CHAMBER_DATA, opts);
     expect(m.dependentTiers.every((t) => t.pct === "Not provided")).toBe(true);
   });
 });
@@ -195,11 +322,12 @@ describe("buildManuscript census and state mix with gaps", () => {
 describe("buildManuscript open items for missing core facts", () => {
   const opts = { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") };
 
-  it("lists each missing core fact as an open item", () => {
+  it("lists each missing core fact as an open item, with the census as a document needed", () => {
     const { open } = buildManuscript(EMPTY_CHAMBER_DATA, opts);
-    for (const fact of ["Company legal name", "States of operation", "Pay frequency", "Employee census"]) {
+    for (const fact of ["Company legal name", "States of operation", "Pay frequency"]) {
       expect(open).toContain(`${fact} — not provided`);
     }
+    expect(open).toContain("Employee census — document needed");
   });
 
   it("lists nothing for facts that were provided", () => {
@@ -210,101 +338,99 @@ describe("buildManuscript open items for missing core facts", () => {
     expect(open.filter((o) => /not provided$/.test(o))).toEqual([]);
   });
 
-  it("lists inferred, incomplete and conflicting fields as open items until resolved", () => {
-    const at = "2026-05-01T00:00:00Z";
-    const source = { kind: "transcript" as const, message_id: "m1" };
+  it("lists inferred, incomplete, conflicting and unknown fields as open items until resolved", () => {
     const { open } = buildManuscript(
       { ...EMPTY_CHAMBER_DATA, industry: "Retail", states: ["CA"], employee_count: 40 },
       {
         fileId: "EAA-1",
         provenance: {
-          industry: { status: "inferred", source, updated_at: at },
-          states: { status: "incomplete", source, updated_at: at },
-          employee_count: { status: "conflicting", source, updated_at: at, candidates: [] },
-          company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: at },
+          industry: { status: "inferred", source, updated_at: AT },
+          states: { status: "incomplete", source, updated_at: AT },
+          employee_count: { status: "conflicting", source, updated_at: AT, candidates: [] },
+          wc_experience_mod: { status: "unknown", source, updated_at: AT },
+          company_name: confirmed,
         },
       },
     );
     expect(open).toEqual(expect.arrayContaining([
       "Employee count — conflicting answers",
       "States of operation — incomplete",
+      "Experience mod — prospect to provide",
       "Industry — please confirm",
     ]));
     expect(open.some((o) => o.startsWith("Company legal name — please"))).toBe(false);
   });
 
-  it("counts states the census names as States of operation", () => {
-    const { open } = buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [emp({ work_state: "OR" })] }, opts);
-    expect(open).not.toContain("States of operation — not provided");
-    expect(open).not.toContain("Employee census — not provided");
-  });
-
-  it("leaves out fields an advisor verified, but still lists a verified answer that was never given", () => {
+  it("shows a verified unknown or not applicable field as it is, and a required answer in conflict still as in conflict", () => {
     const at = "2026-05-01T00:00:00Z";
     const source = { kind: "transcript" as const, message_id: "m1" };
-    const { open } = buildManuscript(
-      { ...EMPTY_CHAMBER_DATA, industry: "Retail", employee_count: 40, hq_state: "CA" },
+    const { provenance, open } = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, company_name: "Acme", industry: "Retail", hq_state: "CA", employee_count: 40 },
       {
         ...opts,
         provenance: {
-          industry: { status: "inferred", source, updated_at: at },
-          employee_count: { status: "conflicting", source, updated_at: at, candidates: [] },
-          hq_state: { status: "conflicting", source, updated_at: at, candidates: [] },
+          start_month: { status: "unknown", source, updated_at: at },
+          fein_count: { status: "not_applicable", source, updated_at: at },
+          // Certification still blocks a required answer in conflict whoever verified it, so it stays one.
+          company_name: { status: "conflicting", source, updated_at: at, candidates: [{ value: "Acme", source }, { value: "Acme Press", source }] },
+          hq_state: { status: "conflicting", source, updated_at: at, candidates: [{ value: "CA", source }, { value: "NY", source }] },
+          employee_count: { status: "inferred", source, updated_at: at },
         },
-        verified: new Set(["industry", "employee_count", "company_name"]),
+        verified: new Set(["start_month", "fein_count", "company_name", "hq_state", "employee_count"]),
       },
     );
-    expect(open).not.toContain("Industry — please confirm");
-    expect(open).not.toContain("Employee count — conflicting answers");
-    expect(open).toContain("HQ state — conflicting answers");
-    expect(open).toContain("Company legal name — not provided");
+    expect(provenance.start_month?.status).toBe("unknown");
+    expect(provenance.fein_count?.status).toBe("not_applicable");
+    expect(provenance.company_name?.status).toBe("conflicting");
+    expect(provenance.company_name?.candidates).toHaveLength(2);
+    // And it is listed as open, so nothing printed as unresolved points at an item that isn't there.
+    expect(open).toContain("Company legal name — conflicting answers");
+    expect(open).not.toContain("HQ state — conflicting answers");
+    // An optional conflict and an inferred answer the advisor verified read as settled.
+    expect(provenance.hq_state).toMatchObject({ status: "confirmed", candidates: undefined });
+    expect(provenance.employee_count?.status).toBe("confirmed");
   });
-});
 
-describe("rowProvenance", () => {
-  const at = "2026-05-01T00:00:00Z";
-  const said = { kind: "transcript" as const, message_id: "m1" };
-  const inferred = { status: "inferred" as const, source: said, updated_at: at };
-  const conflicting = { status: "conflicting" as const, source: { kind: "document" as const, document_id: "d1" }, updated_at: at, candidates: [] };
-  const row = (m: ReturnType<typeof buildManuscript>, label: string) => [...m.companyRows, ...m.workforceRows, ...m.benefitsRows].find((r) => r[0] === label)!;
+  it("lists the missing required answers first, then the census, then fields by status", () => {
+    const { open } = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, company_name: "Acme", industry: "Retail", states: ["CA"] },
+      { fileId: "EAA-1", provenance: { industry: { status: "inferred", source, updated_at: AT }, states: { status: "incomplete", source, updated_at: AT } } },
+    );
+    expect(open.slice(0, 4)).toEqual([
+      "Pay frequency — not provided",
+      "Employee census — document needed",
+      "States of operation — incomplete",
+      "Industry — please confirm",
+    ]);
+  });
 
-  it("is the row's own field's, unless another field the value is built from conflicts", () => {
-    const data = { ...EMPTY_CHAMBER_DATA, multiple_entities: true, fein_count: 3, has_401k: true, retirement_type: "401(k)", exempt_count: 4, nonexempt_count: 9 };
-    const quiet = buildManuscript(data, { fileId: "EAA-1", provenance: { multiple_entities: inferred, has_401k: inferred } });
-    expect(rowProvenance(row(quiet, "Entity Structure"), quiet.provenance)).toBe(inferred);
-    expect(rowProvenance(row(quiet, "Exempt / Nonexempt"), quiet.provenance)).toBeUndefined();
+  it("resolves only what the prospect confirmed or applied from a document, never a check that merely passed", () => {
+    const m = buildManuscript(
+      { ...EMPTY_CHAMBER_DATA, company_name: "Acme", hq_state: "NY", industry: "Retail", census: [emp()] },
+      {
+        fileId: "EAA-1",
+        provenance: {
+          company_name: confirmed,
+          industry: { status: "inferred", source, updated_at: AT },
+          census: { status: "confirmed", source: { kind: "document", document_id: "d1", document_name: "census.csv" }, updated_at: AT },
+        },
+      },
+    );
+    expect(m.resolved).toEqual(["Company legal name — confirmed by the prospect", "Employee census — confirmed from census.csv"]);
+    // The checks that pass on unconfirmed answers are reported as checks, apart from the resolved facts.
+    expect(m.checks.filter((c) => c.status === "pass").map((c) => c.label)).toEqual(["US headquarters", "Employee census captured (1 employees)"]);
+    expect(m.resolved.some((r) => r.includes("headquarters"))).toBe(false);
+  });
 
-    const m = buildManuscript(data, {
-      fileId: "EAA-1",
-      provenance: { multiple_entities: inferred, fein_count: conflicting, has_401k: inferred, employer_contributes: conflicting, nonexempt_count: conflicting, census: conflicting },
-    });
-    expect(rowProvenance(row(m, "Entity Structure"), m.provenance)).toBe(conflicting);
-    expect(rowProvenance(row(m, "Retirement"), m.provenance)).toBe(conflicting);
-    expect(rowProvenance(row(m, "Exempt / Nonexempt"), m.provenance)).toBe(conflicting);
-    expect(rowProvenance(row(m, "W-2 Employees on Census"), m.provenance)).toBe(conflicting);
-    // Only the fields the value shows: one entity has no FEIN count to speak of.
-    const single = buildManuscript({ ...data, multiple_entities: false }, { fileId: "EAA-1", provenance: m.provenance });
-    expect(rowProvenance(row(single, "Entity Structure"), single.provenance)).toBe(inferred);
+  it("shows a user-approved correction in its section, confirmed", () => {
+    const m = buildManuscript({ ...EMPTY_CHAMBER_DATA, pay_frequency: "Weekly" }, { fileId: "EAA-1", provenance: { pay_frequency: confirmed } });
+    expect(m.payrollRows.find(([label]) => label === "Pay Frequency")).toEqual(["Pay Frequency", "Weekly", "pay_frequency"]);
+    expect(m.resolved).toContain("Pay frequency — confirmed by the prospect");
+    expect(m.open.some((o) => o.startsWith("Pay frequency"))).toBe(false);
   });
 });
 
 describe("certification helpers", () => {
-  it("states the consent wording, including the re-certification rule", () => {
-    const c = certificationConsent({ companyName: "Acme", peo: "Some PEO" });
-    expect(c.statements).toHaveLength(3);
-    expect(c.statements[2]).toContain("Some PEO");
-    expect(c.signing).toContain("authorized representative of Acme");
-    expect(c.signing).toContain("requires me to certify again");
-    expect(c.text).toBe([...c.statements, c.signing].join("\n"));
-    expect(c.version).toBe(CERTIFICATION_CONSENT_VERSION);
-  });
-
-  it("falls back to neutral wording when the company or PEO isn't known yet", () => {
-    const c = certificationConsent({ companyName: " ", peo: null });
-    expect(c.statements[2]).toContain("the PEO I choose");
-    expect(c.signing).toContain("representative of my company");
-  });
-
   it("reads a stored row into a certification state", () => {
     const sub = { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1" };
     expect(certificationFromRow("in_progress", null)).toEqual({ status: "none" });
@@ -333,8 +459,20 @@ describe("certification helpers", () => {
 });
 
 describe("manuscriptFilename", () => {
-  it("includes the submission id and the company name", () => {
+  it("names the file after the File ID, the certification version, the company and the certified date", () => {
+    expect(manuscriptFilename("EAA-2026-0042", "Meridian Creative Group", { version: 2, date: "2026-11-04T23:30:00Z" }))
+      .toBe("The_Manuscript_EAA-2026-0042_v2_Meridian_Creative_Group_20261104.pdf");
+  });
+
+  it("is the same wherever it is generated, from the same submission", () => {
+    const a = manuscriptFilename("EAA-2026-0042", "Acme", { version: 1, date: new Date("2026-11-04T23:30:00Z") });
+    const b = manuscriptFilename("EAA-2026-0042", "Acme", { version: 1, date: "2026-11-04T23:30:00.000Z" });
+    expect(a).toBe(b);
+  });
+
+  it("leaves the version and date out of a packet that isn't certified, and marks an advisor's version", () => {
     expect(manuscriptFilename("EAA-2026-AB12", "Meridian Creative Group")).toBe("The_Manuscript_EAA-2026-AB12_Meridian_Creative_Group.pdf");
+    expect(manuscriptFilename("EAA-1", "Acme", { version: 1, date: AT, suffix: "advisor-v3" })).toBe("The_Manuscript_EAA-1_v1_Acme_20260501_advisor-v3.pdf");
   });
 
   it("strips characters that are unsafe in filenames and folds accents", () => {
@@ -356,7 +494,6 @@ describe("maskDob", () => {
 });
 
 describe("buildManuscript payroll", () => {
-  const opts = { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") };
   const rows = (data: Parameters<typeof buildManuscript>[0]) => Object.fromEntries(buildManuscript(data, opts).payrollRows.map(([label, value]) => [label, value]));
 
   it("has its own section with every payroll answer captured", () => {
@@ -381,25 +518,26 @@ describe("buildManuscript payroll", () => {
       "Funding Lead Time": "2 days",
       "Accrual Method": "Per pay period",
       "PTO Types": "Vacation, Sick",
-      Timekeeping: "Mobile app",
+    });
+    // Payroll is no longer folded into the company profile; timekeeping and the HRIS sit under Operations & HR,
+    // where Review lists them.
+    expect(m.companyRows.map(([label]) => label)).not.toContain("Pay Frequency");
+    expect(Object.fromEntries(m.operationsRows.map(([label, value]) => [label, value]))).toMatchObject({
+      "Computer Timekeeping": "Not provided",
+      "Mobile Timekeeping": "Yes",
+      "Physical Time Clocks": "No",
       "Shift Differentials": "No",
       HRIS: "BambooHR",
     });
-    // Payroll is no longer folded into the company profile.
-    expect(m.companyRows.map(([label]) => label)).not.toContain("Pay Frequency");
   });
 
-  it("says Not provided for each payroll answer never given, and for timekeeping it can't tell", () => {
+  it("says Not provided for each payroll answer never given", () => {
     expect(Object.values(rows(EMPTY_CHAMBER_DATA)).every((v) => v === "Not provided")).toBe(true);
-    expect(rows({ ...EMPTY_CHAMBER_DATA, uses_computer_timekeeping: false }).Timekeeping).toBe("Not provided");
-    expect(rows({ ...EMPTY_CHAMBER_DATA, uses_computer_timekeeping: false, uses_mobile_app: false, uses_physical_clocks: false }).Timekeeping)
-      .toBe("None of computer, mobile app or time clock");
     expect(rows({ ...EMPTY_CHAMBER_DATA, funding_days: 1 })["Funding Lead Time"]).toBe("1 day");
   });
 });
 
 describe("buildManuscript never passes a census default off as an answer", () => {
-  const opts = { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") };
   const workforce = (m: ReturnType<typeof buildManuscript>) => Object.fromEntries(m.workforceRows.map(([label, value]) => [label, value]));
 
   it("shows a defaulted classification as Not provided, counts it apart, and lists it as open", () => {
@@ -416,6 +554,10 @@ describe("buildManuscript never passes a census default off as an answer", () =>
     const m = buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [emp()] }, opts);
     expect(workforce(m)).not.toHaveProperty("Classification Not Provided");
     expect(m.open.some((o) => o.startsWith("Worker classification"))).toBe(false);
+  });
+
+  it("reports contractors from the census, and separately what the prospect said", () => {
+    expect(workforce(buildManuscript({ ...EMPTY_CHAMBER_DATA, has_1099: true }, opts))).toMatchObject({ "1099 Contractors on Census": "Not provided", "1099 Contractors Reported": "Yes" });
   });
 
   it("lists a defaulted full-time status as open, and still shows a stated part-time one", () => {
@@ -458,5 +600,25 @@ describe("buildManuscript never passes a census default off as an answer", () =>
     // A family tier from a census names nobody, so the count is unknown, not zero.
     expect(total([emp({ id: "a", coverage_tier: "FAM" })])).toBe("Not provided");
     expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [emp({ coverage_tier: "WAIVE" })] }, opts).dependentTiers.map((t) => t.tier)).not.toContain("Not provided");
+  });
+});
+
+describe("rowProvenance on the census-derived rows", () => {
+  const at = "2026-05-01T00:00:00Z";
+  const said = { kind: "transcript" as const, message_id: "m1" };
+  const conflicting = { status: "conflicting" as const, source: { kind: "document" as const, document_id: "d1" }, updated_at: at, candidates: [] };
+  const row = (m: ReturnType<typeof buildManuscript>, label: string) => m.workforceRows.find((r) => r[0] === label)!;
+
+  it("marks the counts taken from a census whose answers conflict, and nothing else, through finish()", () => {
+    const data = { ...EMPTY_CHAMBER_DATA, employee_count: 40, census: [emp({ classification: "w2" }), emp({ id: "c", classification: "1099" })] };
+    const m = buildManuscript(data, { fileId: "EAA-1", provenance: { census: conflicting, employee_count: { status: "inferred", source: said, updated_at: at } } });
+    for (const label of ["W-2 Employees on Census", "1099 Contractors on Census"]) {
+      expect(row(m, label)[3]).toEqual(["census"]);
+      expect(rowProvenance(row(m, label), m.provenance)).toBe(m.provenance.census);
+    }
+    expect(rowProvenance(row(m, "Reported Headcount"), m.provenance)?.status).toBe("inferred");
+    // Settled once an advisor verified the census: the row has no field of its own, and no conflict left to show.
+    const settled = buildManuscript(data, { fileId: "EAA-1", provenance: { census: conflicting }, verified: new Set(["census"]) });
+    expect(rowProvenance(row(settled, "W-2 Employees on Census"), settled.provenance)).toBeUndefined();
   });
 });

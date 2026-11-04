@@ -110,7 +110,7 @@ async function verifiedProspect(request: APIRequestContext) {
   // An ordinary save, as the Chamber's autosave sends one.
   const save = (fields: Record<string, unknown>) =>
     request.patch(`${GATEWAY_URL}/rest/v1/chamber_sessions?id=eq.${id}&select=id,status`, { headers, data: fields });
-  return { id, certify, save };
+  return { id, headers, certify, save };
 }
 
 test("the database refuses a certification without the required answers, and names them", async ({ request }) => {
@@ -140,7 +140,7 @@ test("the database refuses a certification while a required answer has two value
   const refused = await certify(answers);
   expect(refused.status()).toBe(400);
   expect(await refused.json()).toMatchObject({ code: "EA008", details: "company_name" });
-  expect(await sql("SELECT status FROM chamber_sessions WHERE id = $1", [id])).toEqual([{ status: "in_progress" }]);
+  expect(await sql("SELECT status, file_id FROM chamber_sessions WHERE id = $1", [id])).toEqual([{ status: "in_progress", file_id: null }]);
   expect(await sql("SELECT count(*)::int AS n FROM chamber_certifications WHERE session_id = $1", [id])).toEqual([{ n: 0 }]);
 
   // The prospect picks one, which confirms it, and certifying goes through.
@@ -149,4 +149,41 @@ test("the database refuses a certification while a required answer has two value
   const accepted = await certify(answers);
   expect(accepted.status()).toBe(200);
   expect(await accepted.json()).toEqual([{ id, status: "submitted" }]);
+});
+
+test("a submission gets one File ID from the database, a repeat records nothing new, and nobody else can open it by that File ID", async ({ request }) => {
+  const prospect = await verifiedProspect(request);
+  const data = { company_name: "Twice Co", states: ["NY"], pay_frequency: "weekly" };
+  const submission = {
+    signer_name: "Jo Doe", signer_title: "CEO", signed_at: new Date().toISOString(), file_id: "EAA-TEST",
+    consent_version: "2026-10-draft-1", consent_text: ["I certify."], chamber_data: data,
+  };
+  const certify = () =>
+    request.patch(`${GATEWAY_URL}/rest/v1/chamber_sessions?id=eq.${prospect.id}&select=id,status,file_id,submission`, {
+      headers: prospect.headers,
+      data: { status: "submitted", chamber_data: data, submission },
+    });
+
+  const first = await certify();
+  expect(first.status()).toBe(200);
+  const [recorded] = (await first.json()) as { file_id: string; submission: { file_id: string; version: number } }[];
+  // Not the one the browser sent: the database's, in its own form.
+  expect(recorded.file_id).toMatch(/^EAA-\d{4}-\d{4,}$/);
+  expect(recorded.submission).toMatchObject({ file_id: recorded.file_id, version: 1 });
+
+  // The very same certification again (a second click, a retry): the record stands as it is.
+  const again = await certify();
+  expect(again.status()).toBe(200);
+  const [repeat] = (await again.json()) as { file_id: string; submission: { version: number } }[];
+  expect(repeat.file_id).toBe(recorded.file_id);
+  expect(repeat.submission.version).toBe(1);
+  expect(await sql("SELECT count(*)::int AS n FROM chamber_certifications WHERE session_id = $1", [prospect.id])).toEqual([{ n: 1 }]);
+
+  // The owner opens it by File ID; another prospect, with a guessed File ID, gets nothing at all.
+  const own = await request.get(`${GATEWAY_URL}/rest/v1/chamber_sessions?file_id=eq.${recorded.file_id}&select=id`, { headers: prospect.headers });
+  expect(await own.json()).toEqual([{ id: prospect.id }]);
+  const other = await verifiedProspect(request);
+  const guessed = await request.get(`${GATEWAY_URL}/rest/v1/chamber_sessions?file_id=eq.${recorded.file_id}&select=id,chamber_data`, { headers: other.headers });
+  expect(guessed.status()).toBe(200);
+  expect(await guessed.json()).toEqual([]);
 });
