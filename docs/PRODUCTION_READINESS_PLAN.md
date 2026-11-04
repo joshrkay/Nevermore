@@ -169,15 +169,15 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | B AI extraction | 7 | 1 | 1 | 0 | 0 | 9 |
 | C Review, certify, submit | 10 | 0 | 0 | 0 | 0 | 10 |
 | D Manuscript | 9 | 0 | 0 | 0 | 1 | 10 |
-| E Documents | 6 | 1 | 3 | 1 | 0 | 11 |
+| E Documents | 8 | 0 | 3 | 0 | 0 | 11 |
 | F Advisor | 7 | 3 | 1 | 0 | 0 | 11 |
 | G Communications | 6 | 0 | 2 | 0 | 0 | 8 |
 | H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
 | I Quality and accessibility | 3 | 9 | 0 | 1 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **44** | **36** | **13** | **8** | **5** | **106** |
+| **Total** | **64** | **22** | **11** | **4** | **5** | **106** |
 
-29 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 23 of 39 M2; 5 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+45 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 24 of 39 M2; 6 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -1001,7 +1001,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 
 #### F-4.3 Follow-up flag and status filter
 - **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** FE · **Depends:** F-4.1, F-2.2 · **Milestone:** M2
-- **Built:** Status changes update the filter results (tested). A field-level `follow_up` review state and a `flagged_fields` count exist. A submission-level **Needs advisor action** marker with an optional note (500 characters) is raised and cleared through `set_submission_needs_action()`, recorded in the status history at the current stage, kept through stage changes and never shown to the prospect (migration `20261104131000`). The queue shows its badge and note on the row, and `advisor_list_submissions(p_needs_action => true)` lists only those, alone or with the status filter; the filter is in the URL (`?action=1`). The submission page has a panel to raise and clear it and a badge beside the company name. Tested in `supabase/tests/needs_advisor_action.sql`, the access matrix (`data_isolation.sql`) and the page tests.
+- **Built:** Status changes update the filter results (tested). A field-level `follow_up` review state and a `flagged_fields` count exist. A submission-level **Needs advisor action** marker with an optional note (500 characters) is raised and cleared through `set_submission_needs_action()`, recorded in the status history at the current stage, kept through stage changes and never shown to the prospect (migration `20261104132000`). The queue shows its badge and note on the row, and `advisor_list_submissions(p_needs_action => true)` lists only those, alone or with the status filter; the filter is in the URL (`?action=1`). The submission page has a panel to raise and clear it and a badge beside the company name. Tested in `supabase/tests/needs_advisor_action.sql`, the access matrix (`data_isolation.sql`) and the page tests.
 - **Notes:** It is raised by hand: an advisor follow-up on a field doesn't raise it.
 
 ---

@@ -98,7 +98,7 @@ a sign-out the app asked for is remembered until the event arrives.
   intake's first) means a certification row or a history row that reached `submitted`, so intakes
   certified before certification rows existed count (migration `20261104115000`).
 - Mark a submission as **Needs advisor action**, with an optional note (500 characters), and clear it
-  again, only through `set_submission_needs_action()` (migration `20261104131000`). Each change is a
+  again, only through `set_submission_needs_action()` (migration `20261104132000`). Each change is a
   row in `submission_status_history` at the current stage, with who and the note. It stays through
   stage changes, and the prospect never sees it.
 - Add internal notes (`advisor_notes`); notes can't be edited or deleted and prospects can't read them.

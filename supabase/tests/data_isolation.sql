@@ -83,7 +83,8 @@
 \i supabase/migrations/20261104121000_voice_failed_ops_kind.sql
 \i supabase/migrations/20261104122000_pipeline_transitions.sql
 \i supabase/migrations/20261104130000_document_scanning.sql
-\i supabase/migrations/20261104131000_needs_advisor_action.sql
+\i supabase/migrations/20261104131000_certification_file_id_check.sql
+\i supabase/migrations/20261104132000_needs_advisor_action.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

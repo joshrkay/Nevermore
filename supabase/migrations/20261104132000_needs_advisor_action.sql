@@ -12,7 +12,7 @@
 --   the function's signature, so the old one is dropped first. Everything else is as in
 --   20261104118000_open_items.sql.
 --
--- Numbered after 20261104130000_document_scanning.sql, the latest migration on main when it was written.
+-- Numbered after 20261104131000_certification_file_id_check.sql, the latest migration on main when it was written.
 
 ALTER TABLE public.submission_workflow
   ADD COLUMN needs_action boolean NOT NULL DEFAULT false,

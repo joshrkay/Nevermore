@@ -101,7 +101,7 @@ export function prospectStatusAfter(next: PipelineStatus, history: readonly { to
 /** What the queue and the submission page call a submission an advisor marked for the team to act on. */
 export const NEEDS_ACTION_LABEL = "Needs advisor action";
 
-/** The longest note it can carry; the database holds the same cap (20261104131000_needs_advisor_action.sql). */
+/** The longest note it can carry; the database holds the same cap (20261104132000_needs_advisor_action.sql). */
 export const NEEDS_ACTION_NOTE_MAX = 500;
 
 // ---------- Completeness ----------

@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh needs_advisor_action
--- Needs advisor action (F-4.3, 20261104131000_needs_advisor_action.sql): an advisor raises and clears it on a
+-- Needs advisor action (F-4.3, 20261104132000_needs_advisor_action.sql): an advisor raises and clears it on a
 -- submission with an optional note, each change is in the status history at the current stage, the queue shows
 -- it and filters on it (alone or with the status filter), it survives stage changes, the prospect never sees it,
 -- and nobody else can set it. Advisors and prospects run as `authenticated` with their JWT claims.
@@ -60,7 +60,8 @@
 \i supabase/migrations/20261104121000_voice_failed_ops_kind.sql
 \i supabase/migrations/20261104122000_pipeline_transitions.sql
 \i supabase/migrations/20261104130000_document_scanning.sql
-\i supabase/migrations/20261104131000_needs_advisor_action.sql
+\i supabase/migrations/20261104131000_certification_file_id_check.sql
+\i supabase/migrations/20261104132000_needs_advisor_action.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
