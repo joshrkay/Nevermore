@@ -345,11 +345,17 @@ export function parseFieldList(raw: unknown): FieldKey[] {
  * optional field_status, evidence and corrected_fields; the message text is the
  * fallback quote for fields with no evidence of their own.
  */
-export function transcriptExtraction(message: { id: string; text: string }, meta: unknown): ExtractionOptions {
+export function transcriptExtraction(message: { id: string; text: string; spoken?: boolean }, meta: unknown): ExtractionOptions {
   const m = (typeof meta === "object" && meta !== null ? meta : {}) as Record<string, unknown>;
+  const statuses = parseExtractedStatuses(m.field_status);
+  // Speech-to-text mishears ("fifteen" as 50), so a spoken answer is at most inferred until the prospect
+  // confirms it in Review or types it (D33).
+  if (message.spoken) {
+    for (const field of Object.keys(statuses) as FieldKey[]) if (statuses[field] === "confirmed") statuses[field] = "inferred";
+  }
   return {
     source: { kind: "transcript", message_id: message.id, quote: clip(message.text.trim()) },
-    statuses: parseExtractedStatuses(m.field_status),
+    statuses,
     evidence: parseEvidence(m.evidence),
     corrections: parseFieldList(m.corrected_fields),
   };

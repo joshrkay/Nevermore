@@ -2085,7 +2085,7 @@ describe("useChamberSession", () => {
     it("keeps one greeting: a voice session's own hello is not added again", async () => {
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.sessionId).toBe("s1"));
-      act(() => result.current.addMessage(createChatMessage("lenore", "Hi — I'm Lenore.", "greeting")));
+      act(() => result.current.addMessage(createChatMessage("lenore", "Hi — I'm Lenore.", { kind: "greeting" })));
       expect(result.current.messages).toHaveLength(1);
       act(() => result.current.addMessage(createChatMessage("lenore", "Noted.")));
       expect(result.current.messages).toHaveLength(2);

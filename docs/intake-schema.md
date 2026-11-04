@@ -97,7 +97,7 @@ Writers: **C** chat extraction (`chamber-extract`), **D** document candidates (`
 | Operations & HR | `key_challenges` | Key challenges | text | Recommended | 41 | C V |
 | Operations & HR | `business_goals` | Business goals | text | Recommended | 42 | C V |
 
-Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`, `dob`) are free text. `transcript`, `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks.
+Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`, `dob`) are free text. `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks. `transcript` is checked message by message (see "The transcript" below).
 
 ### Sections, required fields and rank
 
@@ -407,6 +407,21 @@ While a change hasn't been confirmed by the server, the Chamber keeps a copy in 
 ### Getting back from another browser
 
 The intake belongs to the Supabase user that created it. A guest is anonymous until they verify an email (at certification). When a link can't be opened, usually because this browser no longer holds the sign-in (another device, a private window, cleared data), the Chamber explains why and offers to email a sign-in code to the address they verified (`signInWithOtp` with `shouldCreateUser: false`, then `verifyOtp` type `email`). It says the same thing whether or not the address has an account. A guest on a fresh intake gets the same offer ("Continue an earlier intake"). Once signed in, the Chamber drops the blank guest intake and opens the linked intake, or their latest one. An intake that never had an email verified can't be recovered from another browser. The code arrives in Supabase's "Magic Link" email template, which must contain `{{ .Token }}` (`npm run setup:supabase` sets it).
+
+### The transcript
+
+`chamber_sessions.transcript` is the conversation in the order it happened: a list of messages, appended by the browser and saved by the same versioned write as the answers, so a stale tab can't overwrite it (A-2.2). It is the source evidence for the answers Lenore captured: a field taken from chat points at its message by `message_id` (see Provenance above), and advisors read it beside the answers. A message is:
+
+| Key | Kind | Rule |
+| --- | --- | --- |
+| `id` | text, required | 1 to 100 characters; the `message_id` a field's provenance points to |
+| `sender` | text, required | `user` (the prospect), `lenore`, or `system` (a note from the Chamber itself: today "Voice call started" and "Voice call ended") |
+| `text` | text, required | at most 20,000 characters; Social Security and bank account numbers are removed before it is kept |
+| `timestamp` | text, optional | when it was written, an ISO 8601 instant (`2026-11-04T14:34:05.123Z`). Messages saved before 2026-11-04 hold the browser's local time of day (`02:34 PM`) with no date, and are shown as they are. At most 64 characters |
+| `kind` | `"greeting"`, optional | Lenore's hello; only the first is kept |
+| `spoken` | boolean, optional | said aloud in a voice call (D33). An answer captured from a spoken message is at most `inferred` until the prospect confirms it |
+
+Nothing else may be in a message. The database refuses a transcript that breaks these rules (`public.chamber_transcript_error`, migration `20261104101000_transcript_validation.sql`) on insert and whenever the transcript changes, with `EA001` and the path (`transcript[3].sender`) in DETAIL, never the text. Existing rows are not re-validated. The browser holds the same limits (`src/data/chat.ts`; `src/data/schemaSync.test.ts` compares them), and what it writes, and what `parseTranscript` reads back from an older row, always fits. A failed extraction never removes the prospect's message: it is added before Lenore is asked.
 
 ### Transcript on resume
 

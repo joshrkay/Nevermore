@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown, Send } from "lucide-react";
 import type { ReactNode } from "react";
-import type { ChatMessage } from "@/data/chat";
+import { formatMessageTime, type ChatMessage } from "@/data/chat";
 
 interface TranscriptPanelProps {
   messages: ChatMessage[];
@@ -80,18 +80,26 @@ const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice, restoredTh
         >
           {messages.map((msg) => (
             <Fragment key={msg.id}>
-              <div className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[90%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
-                    msg.sender === "user"
-                      ? "bg-primary/15 text-foreground rounded-br-sm"
-                      : "bg-muted text-foreground rounded-bl-sm"
-                  }`}
-                >
+              {msg.sender === "system" ? (
+                // A note from the Chamber itself, such as a voice call starting: not part of the conversation.
+                <p className="text-center text-[10px] text-muted-foreground">
                   {msg.text}
-                  <p className="text-[9px] text-muted-foreground mt-1 font-mono">{msg.timestamp}</p>
+                  {msg.timestamp && <span className="font-mono"> · {formatMessageTime(msg.timestamp)}</span>}
+                </p>
+              ) : (
+                <div className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
+                  <div
+                    className={`max-w-[90%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
+                      msg.sender === "user"
+                        ? "bg-primary/15 text-foreground rounded-br-sm"
+                        : "bg-muted text-foreground rounded-bl-sm"
+                    }`}
+                  >
+                    {msg.text}
+                    <p className="text-[9px] text-muted-foreground mt-1 font-mono">{formatMessageTime(msg.timestamp)}</p>
+                  </div>
                 </div>
-              </div>
+              )}
               {msg.id === restoredThrough && (
                 <div role="separator" className="flex items-center gap-2 py-1 text-[10px] uppercase tracking-widest text-muted-foreground">
                   <span className="h-px flex-1 bg-border" aria-hidden="true" />

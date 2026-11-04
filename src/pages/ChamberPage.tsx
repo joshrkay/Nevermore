@@ -113,6 +113,20 @@ const ChamberPage = () => {
         : setChamberData((prev) => mergeChamberData(prev, data)),
   });
 
+  // The transcript notes when a voice call starts and ends, so whoever reads it can tell which part was
+  // spoken. A call still connected when the conversation was replaced (Start over) belongs to the old one.
+  const callRef = useRef<{ epoch: unknown } | null>(null);
+  useEffect(() => {
+    if (isConnected && !callRef.current) {
+      callRef.current = { epoch: conversationEpoch };
+      addMessage(createChatMessage("system", "Voice call started"));
+    } else if (!isConnected && callRef.current) {
+      const sameConversation = Object.is(callRef.current.epoch, conversationEpoch);
+      callRef.current = null;
+      if (sameConversation) addMessage(createChatMessage("system", "Voice call ended"));
+    }
+  }, [isConnected, conversationEpoch, addMessage]);
+
   const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
     epoch: conversationEpoch,
     intakeId: sessionId,

@@ -159,6 +159,7 @@ const withoutCensus = (data: unknown): unknown => {
 export function describeInvalidPath(path: string | null | undefined): string {
   const match = /^([a-z_0-9]+)(?:\[(\d+)\])?(.*)$/.exec(path ?? "");
   const root = match?.[1];
+  if (root === "transcript") return "Your conversation with Lenore";
   if (root === "employees") {
     if (match?.[2] === undefined) return "Your employee census";
     const employee = Number(match[2]) + 1;

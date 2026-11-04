@@ -25,7 +25,10 @@ const session = {
   restoredThrough: null as string | null,
   messages: [] as ChatMessage[],
   certification: { status: "none" as string },
+  addMessage: vi.fn(),
+  conversationEpoch: {} as object,
 };
+const voice = { isConnected: false };
 const auth = {
   isAnonymous: true,
   requestSignInCode: vi.fn(async () => ({ error: null, noAccount: false })),
@@ -38,7 +41,7 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 vi.mock("@/hooks/useChamberSession", () => ({ useChamberSession: () => session }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 vi.mock("@/data/intakeBackup", () => ({ browserStorageWorks: () => storageWorks }));
-vi.mock("@/hooks/useLenoreVoice", () => ({ useLenoreVoice: () => ({ startVoice: vi.fn(), isConnected: false, hasAgentId: false }) }));
+vi.mock("@/hooks/useLenoreVoice", () => ({ useLenoreVoice: () => ({ startVoice: vi.fn(), isConnected: voice.isConnected, hasAgentId: false }) }));
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
 // The orb only shows what Lenore last said; the workspace panes are not what these tests are about.
 vi.mock("@/components/chamber/VoiceOrb", () => ({ default: ({ lastSpokenText }: { lastSpokenText: string }) => <p data-testid="orb">{lastSpokenText}</p> }));
@@ -243,6 +246,37 @@ describe("ChamberPage", () => {
       renderPage();
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
       expect(session.retrySave).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("voice calls in the transcript", () => {
+    beforeEach(() => {
+      voice.isConnected = false;
+      session.addMessage.mockClear();
+      session.sessionId = "s1";
+    });
+    const notes = () => session.addMessage.mock.calls.map(([m]) => m as ChatMessage);
+
+    it("notes when a call starts and ends, as the Chamber's own messages", () => {
+      const { rerender } = renderPage();
+      expect(notes()).toEqual([]);
+      voice.isConnected = true;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      voice.isConnected = false;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      expect(notes().map((m) => [m.sender, m.text])).toEqual([["system", "Voice call started"], ["system", "Voice call ended"]]);
+      expect(notes()[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it("doesn't note the end of a call in a conversation that replaced the one it was in", () => {
+      const { rerender } = renderPage();
+      voice.isConnected = true;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      session.conversationEpoch = {};
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      voice.isConnected = false;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      expect(notes().map((m) => m.text)).toEqual(["Voice call started"]);
     });
   });
 });

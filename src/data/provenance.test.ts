@@ -264,4 +264,13 @@ describe("transcriptExtraction", () => {
     expect(quote).toBe(`${"a".repeat(198)}…`);
     expect(JSON.stringify(quote)).not.toMatch(/\\ud[89ab]/i);
   });
+
+  it("never records a spoken answer as confirmed: it stays for the prospect to confirm (D33)", () => {
+    const meta = { field_status: { employee_count: "confirmed", company_name: "inferred", states: "incomplete" } };
+    expect(transcriptExtraction({ id: "m1", text: "fifteen people", spoken: true }, meta).statuses).toEqual({
+      employee_count: "inferred", company_name: "inferred", states: "incomplete",
+    });
+    // Typed, the model's status stands.
+    expect(transcriptExtraction({ id: "m1", text: "15 people" }, meta).statuses?.employee_count).toBe("confirmed");
+  });
 });
