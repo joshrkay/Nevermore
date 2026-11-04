@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { CertificationRequest, CertificationState } from "@/data/manuscript";
 import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance";
@@ -28,6 +28,9 @@ const WORKSPACE_TABS = [
   { key: "match", label: "⑧ PEO Match" },
   { key: "reckoning", label: "⑨ The Reckoning" },
 ];
+
+const tabId = (key: string) => `workspace-tab-${key}`;
+const PANEL_ID = "workspace-panel";
 
 interface LiveWorkspaceProps {
   data: ChamberData;
@@ -71,6 +74,23 @@ const LiveWorkspace = ({
 }: LiveWorkspaceProps) => {
   const onAction = isDemo ? undefined : onFieldAction;
   const [activeTab, setActiveTab] = useState("upload");
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  // The tab bar is one stop for the keyboard: arrows, Home and End move between steps and open them.
+  const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const current = WORKSPACE_TABS.findIndex((t) => t.key === activeTab);
+    const last = WORKSPACE_TABS.length - 1;
+    const next =
+      e.key === "ArrowRight" ? (current === last ? 0 : current + 1)
+      : e.key === "ArrowLeft" ? (current === 0 ? last : current - 1)
+      : e.key === "Home" ? 0
+      : e.key === "End" ? last
+      : null;
+    if (next === null) return;
+    e.preventDefault();
+    const key = WORKSPACE_TABS[next].key;
+    setActiveTab(key);
+    tabRefs.current.get(key)?.focus();
+  };
   useEffect(() => {
     if (openReview > 0) setActiveTab("review");
   }, [openReview]);
@@ -100,12 +120,23 @@ const LiveWorkspace = ({
       </div>
 
       {/* Tab bar */}
-      <div className="border-b border-border flex overflow-x-auto flex-shrink-0">
+      <div role="tablist" aria-label="Intake steps" className="border-b border-border flex overflow-x-auto flex-shrink-0">
         {WORKSPACE_TABS.map(tab => (
           <button
             key={tab.key}
+            ref={(el) => {
+              if (el) tabRefs.current.set(tab.key, el);
+              else tabRefs.current.delete(tab.key);
+            }}
+            type="button"
+            role="tab"
+            id={tabId(tab.key)}
+            aria-selected={activeTab === tab.key}
+            aria-controls={PANEL_ID}
+            tabIndex={activeTab === tab.key ? 0 : -1}
             onClick={() => setActiveTab(tab.key)}
-            className={`px-3 py-2.5 text-xs font-medium whitespace-nowrap transition-colors border-b-2 ${
+            onKeyDown={onTabKeyDown}
+            className={`px-3 py-2.5 text-xs font-medium whitespace-nowrap transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
               activeTab === tab.key
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
@@ -118,7 +149,14 @@ const LiveWorkspace = ({
 
       {/* Tab content */}
       <VerifiedFieldsContext.Provider value={verified}>
-        <div className="flex-1 overflow-y-auto">
+        <div
+          role="tabpanel"
+          id={PANEL_ID}
+          aria-labelledby={tabId(activeTab)}
+          // Scrolls on its own, so the keyboard must be able to reach it even when a step has nothing to focus.
+          tabIndex={0}
+          className="flex-1 overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
           {activeTab === "upload" && <UploadTab documents={documents} sessionId={documentSessionId} canStart={!isDemo && Boolean(ensureIntake)} data={data} provenance={provenance} onResolveCandidates={handleResolve} />}
           {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
           {activeTab === "payroll" && <PayrollTab data={data} provenance={provenance} onAction={onAction} />}

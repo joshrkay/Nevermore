@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ProvenanceMap } from "@/data/provenance";
 import LiveWorkspace from "./LiveWorkspace";
+import { expectEveryControlNamed } from "@/test/a11y";
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: null }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
@@ -31,9 +32,60 @@ describe("LiveWorkspace", () => {
       </MemoryRouter>,
     );
     for (const [tab, heading] of TABS) {
-      fireEvent.click(screen.getByRole("button", { name: tab }));
+      fireEvent.click(screen.getByRole("tab", { name: tab }));
+      expect(screen.getByRole("tab", { name: tab })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tabpanel", { name: tab })).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
     }
+  });
+
+  it.each([
+    ["demo data", DEMO_CHAMBER_DATA],
+    ["empty data", EMPTY_CHAMBER_DATA],
+  ])("names every control on every step with %s", (_label, data) => {
+    render(
+      <MemoryRouter>
+        <LiveWorkspace data={data} isDemo={false} sessionId="s1" onSubmit={async () => true} onFieldAction={() => {}} />
+      </MemoryRouter>,
+    );
+    for (const [tab] of TABS) {
+      fireEvent.click(screen.getByRole("tab", { name: tab }));
+      expectEveryControlNamed();
+    }
+  });
+
+  it("is a tab list the keyboard reaches once and moves through with the arrows, Home and End", () => {
+    render(
+      <MemoryRouter>
+        <LiveWorkspace data={EMPTY_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
+      </MemoryRouter>,
+    );
+    const list = screen.getByRole("tablist", { name: "Intake steps" });
+    const tabs = within(list).getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(TABS.map(([tab]) => tab));
+    // One stop in the tab order: the selected step.
+    expect(tabs.filter((t) => t.tabIndex === 0)).toEqual([screen.getByRole("tab", { name: "① Upload" })]);
+
+    const upload = screen.getByRole("tab", { name: "① Upload" });
+    upload.focus();
+    fireEvent.keyDown(upload, { key: "ArrowRight" });
+    const company = screen.getByRole("tab", { name: "② Company" });
+    expect(company).toHaveFocus();
+    expect(company).toHaveAttribute("aria-selected", "true");
+    expect(company).toHaveAttribute("tabindex", "0");
+    expect(upload).toHaveAttribute("aria-selected", "false");
+    expect(upload).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByRole("heading", { name: "Company Profile" })).toBeInTheDocument();
+
+    fireEvent.keyDown(company, { key: "End" });
+    expect(screen.getByRole("tab", { name: "⑨ The Reckoning" })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("tab", { name: "⑨ The Reckoning" }), { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "① Upload" })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("tab", { name: "① Upload" }), { key: "ArrowLeft" });
+    expect(screen.getByRole("tab", { name: "⑨ The Reckoning" })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("tab", { name: "⑨ The Reckoning" }), { key: "Home" });
+    expect(screen.getByRole("tab", { name: "① Upload" })).toHaveFocus();
+    expect(screen.getByRole("tabpanel", { name: "① Upload" })).toBeInTheDocument();
   });
 
   it("gives the Your Team tab the census's status and a Confirm button, as every other answer has", () => {
@@ -46,7 +98,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} provenance={provenance} onFieldAction={onFieldAction} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑤ Your Team" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑤ Your Team" }));
     expect(screen.getByText("From Roster.xlsx")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm Census" }));
     expect(onFieldAction).toHaveBeenCalledWith({ type: "confirm", field: "census" });
@@ -82,7 +134,7 @@ describe("LiveWorkspace", () => {
         />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑦ Review" }));
     // The required conflict blocks certification whoever verified it, so its rival answers stay choosable.
     expect(screen.getAllByRole("button", { name: /^Use Acme Press for / }).length).toBeGreaterThan(0);
     // The optional answer is settled by the advisor: badged, not offered for confirmation, and its note is shown.
@@ -97,7 +149,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑦ Review" }));
     fireEvent.click(screen.getByRole("button", { name: "See Your PEO Matches →" }));
     expect(screen.getByRole("heading", { name: "PEO Match" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Continue without choosing a PEO →" }));
@@ -110,7 +162,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑧ PEO Match" }));
     fireEvent.click(screen.getByRole("button", { name: "Choose Rippling" }));
     expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("Rippling");
     fireEvent.click(screen.getByRole("button", { name: "Proceed with Rippling →" }));
@@ -125,7 +177,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑧ PEO Match" }));
     fireEvent.change(screen.getByLabelText("Another PEO"), { target: { value: "Acme PEO" } });
     fireEvent.click(screen.getByRole("button", { name: "Use this PEO" }));
     fireEvent.click(screen.getByRole("button", { name: "Proceed with Acme PEO →" }));
@@ -141,11 +193,11 @@ describe("LiveWorkspace", () => {
       </MemoryRouter>,
     );
     // Opened straight on The Reckoning, as after a reload: the saved choice is already there.
-    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑨ The Reckoning" }));
     expect(screen.getByText(/prepared for Insperity/)).toBeInTheDocument();
     expect(screen.getByText(/send to Insperity myself/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑧ PEO Match" }));
     fireEvent.click(screen.getByRole("button", { name: "Choose TriNet" }));
     expect(onChoosePeo).toHaveBeenCalledWith("TriNet");
     // What is shown is what the intake holds, not a copy kept here.
@@ -164,7 +216,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑨ The Reckoning" }));
     fireEvent.click(screen.getByRole("button", { name: "Go to Review" }));
     expect(screen.getByRole("heading", { name: "Review" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Pay frequency");
@@ -181,7 +233,7 @@ describe("LiveWorkspace", () => {
     rerender(view(1));
     expect(screen.getByRole("heading", { name: "Review" })).toHaveFocus();
     // Asking again after moving elsewhere brings it back.
-    fireEvent.click(screen.getByRole("button", { name: "② Company" }));
+    fireEvent.click(screen.getByRole("tab", { name: "② Company" }));
     rerender(view(2));
     expect(screen.getByRole("heading", { name: "Review" })).toHaveFocus();
   });
@@ -192,7 +244,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑨ The Reckoning" }));
     expect(screen.getByText(/prepared for your PEO/)).toBeInTheDocument();
     expect(screen.getByText(/send to the PEO I choose myself/)).toBeInTheDocument();
     expect(screen.queryByText(/null|undefined|TriNet|Justworks|Rippling/)).not.toBeInTheDocument();
@@ -208,7 +260,7 @@ describe("LiveWorkspace", () => {
       </MemoryRouter>
     );
     const { rerender } = render(mount());
-    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑦ Review" }));
     expect(screen.getByText("Needs your review — 1 item")).toBeInTheDocument();
     rerender(mount(new Set(["company_name"])));
     expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
@@ -224,7 +276,7 @@ describe("LiveWorkspace", () => {
       </MemoryRouter>
     );
     const { rerender } = render(mount());
-    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑦ Review" }));
     expect(screen.queryByText("Verified by your advisor")).not.toBeInTheDocument();
     // Listed under Needs your review and in the Company section.
     expect(screen.getAllByRole("button", { name: /^Confirm / })).toHaveLength(2);

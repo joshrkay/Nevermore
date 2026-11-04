@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { authRateLimit, authRateLimitMessage } from "@/data/authRateLimit";
 
 const inputClass =
-  "w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors";
+  "w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background transition-colors";
 const buttonClass =
   "text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 flex items-center gap-2 shrink-0";
 

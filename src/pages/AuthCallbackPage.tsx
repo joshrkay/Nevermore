@@ -9,7 +9,7 @@ import { authErrorMessage } from "@/data/authRateLimit";
 import { parseAuthRedirect, safeNext, takeInitialAuthRedirect, type AuthRedirect } from "@/lib/authRedirect";
 
 const inputClass =
-  "w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors";
+  "w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background transition-colors";
 const primaryButton =
   "w-full bg-primary text-primary-foreground font-medium py-3 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2";
 

@@ -40,7 +40,9 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
   const inCall = voice.status === "active";
   const statusLine = voiceStatusLine(voice);
 
-  // The orb itself starts and ends a call, like the button; while one is starting it does nothing.
+  // The orb itself starts and ends a call, like the button; while one is starting it does nothing. It is a
+  // larger target for a pointer only: the labelled button below does the same and is the way in for the
+  // keyboard and screen readers, so the orb is hidden from them rather than made a second, duplicate control.
   const orbClick = !hasAgentId || connecting ? undefined : inCall ? onEndVoice : onStartVoice;
 
   return (
@@ -57,6 +59,7 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
         )}
         <div
           data-testid="voice-orb"
+          aria-hidden="true"
           className={`w-36 h-36 md:w-44 md:h-44 rounded-full bg-gradient-to-br from-primary/80 to-primary/40 flex items-center justify-center transition-all duration-500 ${orbClick ? "cursor-pointer" : ""} ${orbClasses[orbState]}`}
           onClick={orbClick}
         >
@@ -104,7 +107,7 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
               onClick={onEndVoice}
               className="flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm transition-colors bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              <MicOff className="w-4 h-4" />
+              <MicOff className="w-4 h-4" aria-hidden="true" />
               End voice call
             </button>
           ) : connecting ? (
@@ -132,7 +135,7 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
               onClick={onStartVoice}
               className="flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm transition-colors bg-primary text-primary-foreground hover:bg-primary/90"
             >
-              <Mic className="w-4 h-4" />
+              <Mic className="w-4 h-4" aria-hidden="true" />
               Speak with Lenore
             </button>
           )
@@ -142,7 +145,7 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
           onClick={onTypeInstead}
           className="flex items-center gap-2 border border-border text-foreground px-5 py-2.5 rounded-full font-medium text-sm hover:border-primary/40 transition-colors"
         >
-          <MessageSquare className="w-4 h-4" />
+          <MessageSquare className="w-4 h-4" aria-hidden="true" />
           Type instead
         </button>
       </div>

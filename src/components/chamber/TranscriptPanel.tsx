@@ -125,7 +125,8 @@ const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice, restoredTh
 
       {/* Input */}
       <div className="p-2 border-t border-border">
-        <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
+        {/* The field has no border of its own, so the box around it shows where the keyboard is. */}
+        <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-2 focus-within:ring-2 focus-within:ring-ring">
           <input
             ref={inputRef}
             type="text"
@@ -133,11 +134,12 @@ const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice, restoredTh
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
             placeholder="Type a message..."
+            aria-label="Message Lenore"
             maxLength={2000}
             className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
           />
-          <button onClick={handleSend} aria-label="Send" className="text-primary hover:text-primary/80 transition-colors">
-            <Send className="w-3.5 h-3.5" />
+          <button onClick={handleSend} aria-label="Send" className="text-primary hover:text-primary/80 transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Send className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
         </div>
       </div>

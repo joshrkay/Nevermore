@@ -4,6 +4,7 @@ import TranscriptPanel from "./TranscriptPanel";
 import ChatFailureNotice from "./ChatFailureNotice";
 import { CHAT_FAILURE_MESSAGES, type AiFailureKind } from "@/data/aiFailure";
 import { createChatMessage, type ChatMessage } from "@/data/chat";
+import { expectEveryControlNamed } from "@/test/a11y";
 
 // jsdom lays nothing out: give the conversation a height, a viewport and a scroll position to work with.
 const SCROLL_HEIGHT = 1000;
@@ -129,5 +130,11 @@ describe("TranscriptPanel", () => {
     fireEvent.change(input, { target: { value: "And they're all in Texas" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(onSendMessage).toHaveBeenCalledWith("And they're all in Texas");
+  });
+
+  it("names the message field and every control", () => {
+    render(<TranscriptPanel messages={[createChatMessage("lenore", "Hello")]} onSendMessage={vi.fn()} />);
+    expect(screen.getByRole("textbox", { name: "Message Lenore" })).toHaveAttribute("placeholder", "Type a message...");
+    expectEveryControlNamed();
   });
 });

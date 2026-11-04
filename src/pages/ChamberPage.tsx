@@ -385,11 +385,12 @@ const ChamberPage = () => {
               notice={failureNotice}
               restoredThrough={restoredThrough}
             />
-            <div className="flex-1 flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
+            <div className="flex-1 flex items-center gap-2 bg-muted rounded-lg px-3 py-2 focus-within:ring-2 focus-within:ring-ring">
               <input
                 ref={chatInputRef}
                 type="text"
                 placeholder="Message Lenore..."
+                aria-label="Message Lenore"
                 maxLength={2000}
                 className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
                 onKeyDown={(e) => {

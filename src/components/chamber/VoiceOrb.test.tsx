@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import VoiceOrb from "./VoiceOrb";
+import { expectEveryControlNamed } from "@/test/a11y";
 import { VOICE_FAILURE_MESSAGES, type VoiceFailure, type VoiceState } from "@/data/voiceSession";
 
 const renderOrb = (voice: VoiceState, hasAgentId = true) => {
@@ -18,6 +19,14 @@ describe("VoiceOrb", () => {
     expect(screen.queryByText(/VITE_ELEVENLABS_AGENT_ID|elevenlabs|Lovable|being trained/i)).not.toBeInTheDocument();
     // Text is still offered.
     expect(screen.getByRole("button", { name: "Type instead" })).toBeInTheDocument();
+  });
+
+  it("leaves the orb to the pointer: keyboard and screen-reader users have the labelled button", () => {
+    renderOrb({ status: "idle", attempt: 0 });
+    expect(screen.getByTestId("voice-orb")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByTestId("voice-orb")).not.toHaveAttribute("tabindex");
+    expect(screen.getAllByRole("button", { name: "Speak with Lenore" })).toHaveLength(1);
+    expectEveryControlNamed();
   });
 
   it("starts a call from the button or the orb", () => {

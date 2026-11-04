@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { expectEveryControlNamed } from "@/test/a11y";
 
 const auth = {
   user: null as { id: string } | null,
@@ -199,5 +200,23 @@ describe("AuthPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(auth.verifySignupCode).toHaveBeenCalledWith("pat@example.com", "654321"));
     expect(await screen.findByText("The Chamber")).toBeInTheDocument();
+  });
+});
+
+describe("AuthPage labels", () => {
+  it("ties each field to its label, says what it is for, and names every control", () => {
+    renderLogin();
+    expect(screen.getByLabelText("Email")).toHaveAttribute("autocomplete", "email");
+    expect(screen.getByLabelText("Password")).toHaveAttribute("autocomplete", "current-password");
+    expect(screen.queryByLabelText("Company Name")).not.toBeInTheDocument();
+    expectEveryControlNamed();
+  });
+
+  it("does the same when creating an account", () => {
+    renderLogin({ reason: "account_needed" });
+    expect(screen.getByLabelText("Company Name")).toHaveAttribute("autocomplete", "organization");
+    expect(screen.getByLabelText("Email")).toBeRequired();
+    expect(screen.getByLabelText("Password")).toHaveAttribute("autocomplete", "new-password");
+    expectEveryControlNamed();
   });
 });
