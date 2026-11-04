@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleRequest, NEXT_FIELDS, type HandlerDeps, type SupabaseLike } from "./handler";
-import { EXTRACT_TOOL, FIELD_TYPES, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
+import { EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema";
 
 const USER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

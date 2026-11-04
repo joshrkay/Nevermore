@@ -1,4 +1,3 @@
-import { chatContext as requestContext, type ChatContext } from "../../supabase/functions/_shared/chatContext.ts";
 import type { ChamberData } from "./chamberTypes";
 import { censusSummary } from "./followUp";
 import type { ProvenanceMap } from "./provenance";
@@ -129,10 +128,10 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
 export const CHAT_FALLBACK_REPLY = "Thank you, I've noted that.";
 
 /**
- * The answers as Lenore's chat sends them to chamber-extract. The roster isn't extracted from chat and holds
- * personal details, so it is left out.
+ * The intake as Lenore's chat sends it to chamber-extract for context. The roster isn't extracted
+ * from chat and holds personal details, so it is left out. scripts/extraction-eval replays it too.
  */
-export function chatAnswers(data: ChamberData): Omit<ChamberData, "census"> {
+export function chatContext(data: ChamberData): Omit<ChamberData, "census"> {
   const { census: _census, ...context } = data;
   return context;
 }

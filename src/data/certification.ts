@@ -1,3 +1,5 @@
+import type { RequiredItem } from "./requiredItems";
+
 // The wording a prospect certifies. The version is stored with every certification so we can
 // always tell which text a signer agreed to; bump it whenever any wording below changes.
 //
@@ -24,8 +26,8 @@ export interface SignerDetails {
 
 /**
  * Why certification can't be completed yet; empty when it can. Drives the submit button and its hint.
- * What the intake still needs comes first: the required answers missing (US-1.2; the database refuses them
- * too, EA003), then those in conflict (B-2 D26, EA008). The recommended census never blocks.
+ * Missing required answers come first (US-1.2; the database refuses them too, EA003); a required answer
+ * whose answers conflict blocks it as well, in the browser only (B-2.2). The census never blocks.
  */
 export function certificationBlockers(opts: {
   acknowledged: boolean[];
@@ -36,10 +38,7 @@ export function certificationBlockers(opts: {
   isGuest: boolean;
   /** Labels of the required answers the intake doesn't have yet (missingRequired in readiness.ts). */
   missingAnswers?: string[];
-  /**
-   * Labels of the required answers in conflict (certificationBlockingItems in requiredItems.ts): those the
-   * database refuses (EA008), and States of operation decided by a census in conflict.
-   */
+  /** Labels of the required answers with two competing values (conflictingRequired in readiness.ts). */
   conflictingAnswers?: string[];
 }): string[] {
   // What the intake still needs comes first: no signature can make up for it.

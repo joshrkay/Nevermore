@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import {
-  chatAnswers,
-  chatRequestBody,
   createChatMessage,
   dedupeGreetings,
   formatMessageTime,
@@ -95,38 +92,12 @@ describe("sensitive numbers in the transcript", () => {
   });
 });
 
-describe("chatAnswers", () => {
+describe("chatContext", () => {
   it("is the intake without the roster, which chat never extracts and which holds personal details", () => {
-    const context = chatAnswers({ ...EMPTY_CHAMBER_DATA, company_name: "Acme" });
+    const context = chatContext({ ...EMPTY_CHAMBER_DATA, company_name: "Acme" });
     expect(context).not.toHaveProperty("census");
     expect(Object.keys(context)).toEqual(Object.keys(EMPTY_CHAMBER_DATA).filter((k) => k !== "census"));
     expect(context.company_name).toBe("Acme");
-  });
-});
-
-describe("chatRequestBody", () => {
-  const at = "2026-11-04T12:00:00Z";
-  it("sends the message, the answers without the roster, each field's status and the conversation before the message", () => {
-    const opening = createChatMessage("lenore", "Tell me about your business.");
-    const system = createChatMessage("system", "Voice call started");
-    const message = createChatMessage("user", "We are Acme");
-    const body = chatRequestBody(
-      message,
-      { ...EMPTY_CHAMBER_DATA, company_name: "Acme" },
-      { company_name: { status: "inferred", source: { kind: "transcript", message_id: "m0" }, updated_at: at }, industry: undefined },
-      [opening, system, message],
-    );
-    expect(body.message).toBe("We are Acme");
-    expect(body.context).not.toHaveProperty("census");
-    expect(body.context.company_name).toBe("Acme");
-    // A field with no provenance has no status to send.
-    expect(body.statuses).toEqual({ company_name: "inferred" });
-    // The Chamber's own lines and the message itself stay out of the conversation.
-    expect(body.recent).toEqual([{ sender: "lenore", text: "Tell me about your business." }]);
-  });
-
-  it("sends no statuses when there is no provenance", () => {
-    expect(chatRequestBody({ text: "Hi" }, EMPTY_CHAMBER_DATA, undefined, []).statuses).toEqual({});
   });
 });
 

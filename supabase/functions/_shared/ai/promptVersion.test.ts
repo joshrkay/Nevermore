@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildUserPrompt } from "../../chamber-extract/prompt";
+import { buildUserPrompt, serializeContext } from "../../chamber-extract/prompt";
 import * as chat from "../../chamber-extract/schema";
 import * as documents from "../../document-extract/schema";
 
@@ -38,7 +38,6 @@ const USER_TURNS = [
   buildUserPrompt({ message: "<message>", census: { rows: 2, workStates: true } }),
 ];
 const USER_TURN_KNOWN: Record<number, string> = {
-  // 1 and B-1.1's 2: the captured answers and the message, rendered by the earlier buildUserPrompt(message, context).
   1: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
   2: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
   // 3: the answers, their statuses, what isn't settled and the recent conversation (US-2.1b), shared with the eval.

@@ -32,9 +32,12 @@ const corsHeaders = {
 // everything the browser sends besides the message: the answers, their field statuses and the recent
 // conversation (D22).
 export const MAX_MESSAGE_CHARS = 2000;
-export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES, NEXT_FIELDS };
+export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES };
+/** How many unsettled fields the prompt names, most important first. */
+export const NEXT_FIELDS = 8;
 
 const SCHEMA_KEYS = new Set(Object.keys(INTAKE_SCHEMA.properties as object));
+const CHAT_EXCLUDES: ReadonlySet<string> = new Set(["census"]);
 
 /** The recent conversation as sent, or why it isn't acceptable. Only the prospect's and Lenore's lines. */
 function readRecent(raw: unknown): { ok: true; messages: { sender: "user" | "lenore"; text: string }[] } | { ok: false; message: string } {
@@ -222,7 +225,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     const unsettled = unsettledForTurn(turn);
     const result = await callModel(
       chosen.adapter,
-      { system: SYSTEM_PROMPT, user: buildUserPrompt({ message, ...turn }) },
+      { system: SYSTEM_PROMPT, user: buildUserPrompt(message, contextJson) },
       { fetch: deps.fetch, sleep: deps.sleep, now: deps.now },
     );
     event.attempts = result.attempts;
