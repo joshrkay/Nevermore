@@ -128,8 +128,8 @@ const ChamberPage = () => {
     },
   });
 
-  // The transcript notes when a voice call starts and ends, so whoever reads it can tell which part was
-  // spoken. A call still connected when the conversation was replaced (Start over) belongs to the old one.
+  // The transcript notes when a voice call starts and when it ends or drops, so whoever reads it can tell which
+  // part was spoken. A call still connected when the conversation was replaced (Start over) belongs to the old one.
   const callRef = useRef<{ epoch: unknown } | null>(null);
   useEffect(() => {
     if (isConnected && !callRef.current) {
@@ -138,9 +138,11 @@ const ChamberPage = () => {
     } else if (!isConnected && callRef.current) {
       const sameConversation = Object.is(callRef.current.epoch, conversationEpoch);
       callRef.current = null;
-      if (sameConversation) addMessage(createChatMessage("system", "Voice call ended"));
+      // A dropped call says so: an advisor reading an answer cut off mid-sentence knows the line was cut.
+      const dropped = voice.status === "failed" && voice.failure === "dropped";
+      if (sameConversation) addMessage(createChatMessage("system", dropped ? "Voice call dropped" : "Voice call ended"));
     }
-  }, [isConnected, conversationEpoch, addMessage]);
+  }, [isConnected, conversationEpoch, addMessage, voice]);
 
   const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
     epoch: conversationEpoch,
@@ -379,13 +381,14 @@ const ChamberPage = () => {
               notice={failureNotice}
               restoredThrough={restoredThrough}
             />
-            <div className="flex-1 flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
+            {/* min-w-0: an input won't shrink below its default width otherwise, which pushes a narrow phone sideways */}
+            <div className="flex-1 min-w-0 flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
               <input
                 ref={chatInputRef}
                 type="text"
                 placeholder="Message Lenore..."
                 maxLength={2000}
-                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+                className="flex-1 min-w-0 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
                     handleSendMessage((e.target as HTMLInputElement).value.trim());

@@ -222,12 +222,12 @@ describe("useLenoreVoice failures", () => {
     expect(voiceReports()).toEqual([{ code: "voice_dropped:1006", detail: "Connection lost", sessionId: "intake-1" }]);
   });
 
-  it("keeps a call going through an error the service reports, and reports it", async () => {
+  it("keeps a call going through an error the service reports, and reports nothing: no prospect saw a failure", async () => {
     const m = mount();
     await connect(m);
     act(() => session().onError("Server error: overloaded"));
     expect(m.voice()).toMatchObject({ status: "active" });
-    expect(voiceReports()).toEqual([{ code: "voice_error", detail: "Server error: overloaded", sessionId: "intake-1" }]);
+    expect(voiceReports()).toEqual([]);
   });
 
   it("tries again as a new attempt, and the old attempt's late events change nothing", async () => {

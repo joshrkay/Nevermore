@@ -155,11 +155,11 @@ export function useLenoreVoice({ onNewMessage, onLastSpokenText, onExtract, epoc
         onModeChange: ({ mode }) => dispatch({ type: "mode", attempt, speaking: mode === "speaking" }),
         onMessage: ({ message, role }) => handleMessage(attempt, message, role),
         // An error the service reports during a call doesn't end it (a close does, through onDisconnect), so
-        // the call carries on; it is reported, because a run of them is how a degrading service shows.
+        // the call carries on and nothing changes on screen. It isn't reported: voice_failed counts only
+        // failures a prospect saw.
         onError: (message: string) => {
           if (stateRef.current.status !== "active" || stateRef.current.attempt !== attempt) return;
           console.warn("Lenore voice error:", message);
-          reportOpsEvent("voice_failed", { code: "voice_error", detail: message, sessionId: callbacksRef.current.intakeId });
         },
       });
     } catch (error) {

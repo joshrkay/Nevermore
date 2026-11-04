@@ -25,7 +25,7 @@ const MobileTranscript = ({ messages, onSendMessage, notice, restoredThrough }: 
         className="shrink-0 flex items-center gap-1 rounded-lg border border-border px-2.5 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
         <MessagesSquare className="w-4 h-4" aria-hidden="true" />
-        Chat
+        Conversation
       </button>
     </SheetTrigger>
     {/* Opening it to read shouldn't raise the keyboard: nothing is focused until the prospect taps the input. */}

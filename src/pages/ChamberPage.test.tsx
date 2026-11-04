@@ -365,6 +365,17 @@ describe("ChamberPage", () => {
       expect(notes()[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
 
+    it("notes a call that dropped as dropped, not ended", () => {
+      const { rerender } = renderPage();
+      voice.isConnected = true;
+      voice.state = { status: "active", attempt: 1, speaking: false };
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      voice.isConnected = false;
+      voice.state = { status: "failed", attempt: 1, failure: "dropped" };
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      expect(notes().map((m) => m.text)).toEqual(["Voice call started", "Voice call dropped"]);
+    });
+
     it("doesn't note the end of a call in a conversation that replaced the one it was in", () => {
       const { rerender } = renderPage();
       voice.isConnected = true;

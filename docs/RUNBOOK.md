@@ -38,7 +38,7 @@ answers, file names, messages, addresses or links.
 | `ai_failed` | Counted from `ai_extraction_events`, the record `chamber-extract` and `document-extract` keep of every call (US-2.4a, `docs/AI_OPERATIONS.md`), when the call failed on our side or the provider's (`<function>:<code>`: `chamber-extract:timeout`, `document-extract:provider_error`, `…:unavailable` for a provider that isn't set up or is out of credit, `…:invalid_response`, `…:internal`). Refusals (bad request, signed out, rate limit, daily cap) are not failures. Plus the browser when `chamber-extract` never answered (`chat_timeout`, `chat_unreachable`, `chat:<5xx>`) | |
 | `auth_denied` | The browser: a signed-in non-advisor on an advisor page (`advisor_route`), the database refusing an advisor read (`advisor_forbidden`) | |
 | `deletion_failed` | `fail_intake_deletion` when a deletion has used every attempt, and `claim_intake_deletions` when a worker died on the last one | `storage_remove:<status>`, `files_remain:<n>`, `rpc_files:<code>`, `rpc_complete:<code>`, `unexpected`, `worker_lost` |
-| `voice_failed` | The browser, when a voice call with Lenore (ElevenLabs) fails on our side or the service's (`src/hooks/useLenoreVoice.ts`, `docs/VOICE_ISSUES.md`). A microphone the prospect blocked or doesn't have is shown to them and not reported | `voice_connect_timeout` (no connection 15 seconds after the microphone was ready), `voice_connect_failed` (the connection was refused), `voice_dropped:<close code>` (a call under way closed with an error), `voice_error` (the service reported an error during a call that carried on) |
+| `voice_failed` | The browser, when a voice call with Lenore (ElevenLabs) fails on our side or the service's (`src/hooks/useLenoreVoice.ts`, `docs/VOICE_ISSUES.md`). A microphone the prospect blocked or doesn't have is shown to them and not reported | `voice_connect_timeout` (no connection 15 seconds after the microphone was ready), `voice_connect_failed` (the connection was refused), `voice_dropped:<close code>` (a call under way closed with an error). An error the service reports during a call that carries on isn't a failure a prospect saw and isn't reported |
 
 The browser's reports go through `public.report_client_event`, which drops reports past 30 an hour per
 account, 200 an hour for all signed-out visitors together and 2,000 an hour overall, so a broken page or
@@ -237,8 +237,7 @@ so with a "Continue in text" button, so this is never a SEV-1 on its own.
    between it and prospects); from one account, that prospect's network (1006 is a connection cut with no
    goodbye). Any other close code: the service closed the call itself, and the conversation's history in the
    ElevenLabs dashboard says why. `voice_dropped` with no code: the service ended the call with an error
-   message rather than a close (the SDK does this when a call reaches its maximum duration). `voice_error`:
-   errors the service reported during calls that carried on.
+   message rather than a close (the SDK does this when a call reaches its maximum duration).
 2. The detail and the intake id are in `ops_events`. Each cause found, and its fix, goes in
    `docs/VOICE_ISSUES.md`.
 3. If voice stays broken, unset `VITE_ELEVENLABS_AGENT_ID` and redeploy: the "Speak with Lenore" button goes

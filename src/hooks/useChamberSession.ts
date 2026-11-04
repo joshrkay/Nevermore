@@ -1242,6 +1242,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     const next = [...messagesRef.current, msg];
     messagesRef.current = next;
     setMessages(next);
+    // Only the prospect starts an intake (A-1, GLOSSARY.md): a note from The Chamber ("Voice call started") or a
+    // line of Lenore's before there is one stays on screen and goes into the row the prospect's first message
+    // creates. A voice call the prospect says nothing in creates nothing.
+    if (msg.sender !== "user" && !sessionIdRef.current && !creatingRef.current) return;
     scheduleSave();
   }, [scheduleSave]);
 

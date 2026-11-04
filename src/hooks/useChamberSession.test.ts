@@ -2077,6 +2077,34 @@ describe("useChamberSession", () => {
       expect(updates[0].filters).toMatchObject({ id: "s1", data_version: 1 });
     });
 
+    it("creates nothing for a voice call the prospect says nothing in, and saves its notes with their first message", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      vi.useFakeTimers();
+      // A call connects, Lenore asks, nobody answers, the call ends: The Chamber's notes and Lenore's line only.
+      const held = [
+        createChatMessage("system", "Voice call started"),
+        createChatMessage("lenore", "Are you still there?", { spoken: true }),
+        createChatMessage("system", "Voice call ended"),
+      ];
+      for (const message of held) act(() => result.current.addMessage(message));
+      await act(async () => { vi.advanceTimersByTime(5000); });
+      await drain();
+      expect(inserts).toBe(0);
+      expect(result.current.sessionId).toBeNull();
+      // They are still on screen.
+      expect(result.current.messages.map((m) => m.id)).toEqual(expect.arrayContaining(held.map((m) => m.id)));
+
+      // The prospect's first message starts the intake, and the row holds everything before it, in order.
+      const first = createChatMessage("user", "We are Acme");
+      act(() => result.current.addMessage(first));
+      await drain();
+      expect(inserts).toBe(1);
+      const saved = (insertedRows[0].transcript as { id: string }[]).map((m) => m.id);
+      expect(saved.slice(-4)).toEqual([...held.map((m) => m.id), first.id]);
+      expect(result.current.sessionId).toBe("s1");
+    });
+
     it("saves a change made while the intake was being created", async () => {
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.isLoading).toBe(false));

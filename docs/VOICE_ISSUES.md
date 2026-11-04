@@ -25,13 +25,16 @@ the text input.
 | `connect_failed` | "Lenore's voice couldn't connect" | `voice_connect_failed` |
 | `dropped` | "The voice call dropped"; what was said is kept | `voice_dropped:<close code>` |
 
-An error the service reports during a call that carries on is reported as `voice_error` and changes nothing
-on screen.
+Only failures a prospect saw are reported. An error the service reports during a call that carries on changes
+nothing on screen and is only a console warning.
+
+A dropped call is noted in the transcript as "Voice call dropped", not "Voice call ended". The Chamber's call notes
+never start an intake: a voice call the prospect says nothing in creates nothing.
 
 ## Causes found
 
 1 to 9 were found on 2026-11-04 by reading `useLenoreVoice.ts` against the SDK's source (`@elevenlabs/react`
-0.14.3, `@elevenlabs/client` 0.15.2), and 10 by driving the built app in a browser. None has been seen in the
+0.14.3, `@elevenlabs/client` 0.15.2), 10 by driving the built app in a browser, and 11 in review. None has been seen in the
 hosted environment yet (see "Still open"). Each is fixed and tested with a fake SDK in
 `src/hooks/useLenoreVoice.test.ts` unless it says otherwise.
 
@@ -72,8 +75,9 @@ hosted environment yet (see "Still open"). Each is fixed and tested with a fake 
 - **Saw:** the orb went back to idle mid-sentence, as if the prospect had ended the call.
 - **Why:** `onDisconnect` ignored why the connection closed. The SDK says (`reason: "error"` with the close code,
   `"agent"` when Lenore ends the call, `"user"` when we do).
-- **Fix:** a close with an error during a call is `dropped`, reported with its close code. Lenore ending the call
-  is a normal end, with no notice. What was said before the drop stays in the transcript.
+- **Fix:** a close with an error during a call is `dropped`, reported with its close code, and the transcript notes
+  "Voice call dropped" so an advisor reading an answer cut off mid-sentence knows why. Lenore ending the call is a
+  normal end, with no notice. What was said before the drop stays in the transcript.
 
 ### 6. A service error made the screen say the call had ended while it carried on
 
@@ -81,9 +85,9 @@ hosted environment yet (see "Still open"). Each is fixed and tested with a fake 
   Lenore could still answer. Pressing the button then ended the call it said wasn't there.
 - **Why:** the hook treated `onError` as a disconnect, but the SDK calls it for error events the service sends
   during a call (and for client-tool errors) without closing anything. Only a close ends a call.
-- **Fix:** an error during a call is reported (`voice_error`) and the call's state is left alone; `onDisconnect`
-  is what ends it.
-- **Test:** "keeps a call going through an error the service reports, and reports it".
+- **Fix:** an error during a call leaves the call's state alone; `onDisconnect` is what ends it. It isn't
+  reported either: `voice_failed` counts only failures a prospect saw.
+- **Test:** "keeps a call going through an error the service reports, and reports nothing".
 
 ### 7. A second click while connecting started again
 
@@ -120,6 +124,19 @@ hosted environment yet (see "Still open"). Each is fixed and tested with a fake 
   `mic_unavailable`. Only the server phase has `connect_failed`.
 - **Test:** `voiceSession.test.ts`, "never calls a failure in the microphone phase a refused connection", and the
   hook's microphone cases.
+
+### 11. A voice call nobody spoke in created an intake
+
+- **Found:** on 2026-11-04, reviewing the voice work against the rule that the prospect's first answer creates the
+  intake (A-1).
+- **Saw:** nothing on screen. A prospect who tapped "Speak with Lenore", connected and left without a word got an
+  intake holding only Lenore's lines and the call notes.
+- **Why:** The Chamber notes "Voice call started" the moment a call connects, and any message saved the
+  transcript, which creates the intake when there is none.
+- **Fix:** only the prospect's own message starts an intake (`addMessage` in `useChamberSession.ts`). A note from
+  The Chamber, or a line of Lenore's, before there is one stays on screen and is saved in the row the prospect's
+  first message creates.
+- **Test:** `useChamberSession.test.ts`, "creates nothing for a voice call the prospect says nothing in".
 
 ## Still open
 

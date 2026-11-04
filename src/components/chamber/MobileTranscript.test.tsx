@@ -17,6 +17,8 @@ describe("MobileTranscript", () => {
     expect(LONG_REPLY.length).toBeGreaterThan(120); // longer than the orb's caption
     render(<MobileTranscript messages={messages} onSendMessage={vi.fn()} />);
     expect(screen.queryByText(LONG_REPLY)).not.toBeInTheDocument();
+    // Prospect-facing copy calls the transcript the conversation (GLOSSARY.md), never "chat".
+    expect(screen.getByRole("button", { name: "Read the conversation" })).toHaveTextContent("Conversation");
 
     fireEvent.click(screen.getByRole("button", { name: "Read the conversation" }));
     const sheet = screen.getByRole("dialog", { name: "Conversation with Lenore" });
