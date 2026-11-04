@@ -26,7 +26,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090100_outbox_operations.sql
+\i supabase/migrations/20261027090001_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -36,7 +36,7 @@
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
-\i supabase/migrations/20261103110100_document_storage_path.sql
+\i supabase/migrations/20261103110001_document_storage_path.sql
 \i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
 \i supabase/migrations/20261103120100_intake_schema_v2_version.sql
 \i supabase/migrations/20261103120200_ai_extraction_events.sql
@@ -44,6 +44,17 @@
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
+\i supabase/migrations/20261104100000_certification_conflicts.sql
+\i supabase/migrations/20261104101000_transcript_validation.sql
+\i supabase/migrations/20261104102000_one_open_draft.sql
+\i supabase/migrations/20261104103000_required_items.sql
+\i supabase/migrations/20261104110000_pin_reviews_and_manuscripts_to_answers.sql
+\i supabase/migrations/20261104111000_pipeline_follows_the_prospect.sql
+\i supabase/migrations/20261104112000_certified_evidence.sql
+\i supabase/migrations/20261104113000_share_reviewed_manuscript.sql
+\i supabase/migrations/20261104114000_paged_advisor_queue.sql
+\i supabase/migrations/20261104115000_advisor_review_followups.sql
+\i supabase/migrations/20261104116000_intake_deletion_removes_document_history.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -118,12 +129,13 @@ EXCEPTION WHEN OTHERS THEN
   RETURN s;
 END $$;
 
--- Every row an intake has, table by table (sessions, documents, certifications, outbox, workflow, history,
--- notes, reviews, review events, Manuscript versions, lifecycle events, AI call records).
+-- Every row an intake has, table by table (sessions, documents and their history, certifications, outbox,
+-- workflow, history, notes, reviews, review events, Manuscript versions, lifecycle events, AI call records).
 CREATE FUNCTION pg_temp.footprint(sid uuid) RETURNS jsonb LANGUAGE sql AS $$
   SELECT jsonb_build_object(
     'chamber_sessions', (SELECT count(*) FROM public.chamber_sessions WHERE id = sid),
     'documents', (SELECT count(*) FROM public.documents WHERE session_id = sid),
+    'document_events', (SELECT count(*) FROM public.document_events WHERE session_id = sid),
     'chamber_certifications', (SELECT count(*) FROM public.chamber_certifications WHERE session_id = sid),
     'outbox_events', (SELECT count(*) FROM public.outbox_events WHERE session_id = sid),
     'submission_workflow', (SELECT count(*) FROM public.submission_workflow WHERE session_id = sid),

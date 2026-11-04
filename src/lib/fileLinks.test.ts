@@ -49,14 +49,18 @@ describe("private file links", () => {
   });
 
   it("uses a link at once and never keeps, logs or routes it", () => {
-    const linkMakers = /\b(documentUrl|manuscriptUrl)\(/;
+    const linkMakers = /\b(documentUrl|manuscriptUrl|finalManuscriptUrl)\(/;
     const users = APP.filter((file) => !file.endsWith(join("lib", "advisorApi.ts")) && linkMakers.test(read(file)));
-    expect(users.sort()).toEqual([join("src", "components", "advisor", "DocumentsPanel.tsx"), join("src", "components", "advisor", "ManuscriptPanel.tsx")]);
+    expect(users.sort()).toEqual([
+      join("src", "components", "advisor", "DocumentsPanel.tsx"),
+      join("src", "components", "advisor", "ManuscriptPanel.tsx"),
+      join("src", "pages", "ManuscriptPage.tsx"),
+    ]);
     for (const file of users) {
       const text = read(file);
       // Each link goes straight to the browser, which downloads it; nothing holds on to it.
       for (const line of text.split("\n").filter((l) => linkMakers.test(l))) {
-        expect(line.trim(), file).toMatch(/^window\.location\.assign\(await (documentUrl|manuscriptUrl)\(/);
+        expect(line.trim(), file).toMatch(/^window\.location\.assign\(await (documentUrl|manuscriptUrl|finalManuscriptUrl)\(/);
       }
       expect(text, file).not.toMatch(/localStorage|sessionStorage|indexedDB|navigate\(|setSearchParams|history\.(push|replace)State/);
       expect(text, file).not.toMatch(/console\.\w+\([^)]*(url|Url|link)/);

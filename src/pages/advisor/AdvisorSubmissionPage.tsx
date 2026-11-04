@@ -11,7 +11,8 @@ import NotesPanel from "@/components/advisor/NotesPanel";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
-import { censusPay } from "@/data/census";
+import { censusPay, isW2 } from "@/data/census";
+import { coverageTier, NOT_PROVIDED } from "@/data/manuscript";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
 import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
 
@@ -123,7 +124,7 @@ const Detail = ({
         <p className="text-sm text-muted-foreground font-mono">{detail.fileId}</p>
         <p className="text-sm text-muted-foreground mt-1">
           {detail.certified && sub
-            ? `Certified by ${sub.signer_name}${sub.signer_title ? `, ${sub.signer_title}` : ""} · ${formatDateTime(sub.certified_at ?? sub.signed_at)}`
+            ? `Certified by ${sub.signer_name}${sub.signer_title ? `, ${sub.signer_title}` : ""} · ${formatDateTime(sub.certified_at ?? sub.signed_at)}${sub.peo ? ` · Prepared for ${sub.peo}` : ""}`
             : sub?.signer_name
               ? "Certification withdrawn: the prospect changed their answers after signing. Showing their current answers."
               : "Not certified yet. Showing the prospect's answers so far."}
@@ -137,6 +138,7 @@ const Detail = ({
           <FieldReviewPanel
             sessionId={detail.id}
             data={detail.data}
+            storedAnswers={detail.storedAnswers}
             provenance={detail.provenance}
             reviews={detail.reviews}
             messageIds={messageIds}
@@ -144,7 +146,11 @@ const Detail = ({
             onChanged={reload}
           />
           <CensusTable detail={detail} />
-          <TranscriptEvidence messages={detail.transcript} highlighted={highlighted} />
+          <TranscriptEvidence
+            messages={detail.transcript}
+            highlighted={highlighted}
+            changedSinceCertified={detail.transcriptChangedSinceCertified}
+          />
         </div>
         <div className="space-y-6">
           <StatusPanel
@@ -152,17 +158,26 @@ const Detail = ({
             sessionId={detail.id}
             prospectUserId={detail.userId}
             status={detail.pipelineStatus}
+            certified={detail.certified}
+            certifiedOnce={!!detail.submission?.signer_name}
             history={detail.history}
             onChanged={reload}
           />
-          <ManuscriptPanel detail={detail} onGenerated={reload} />
-          <DocumentsPanel documents={detail.documents} />
+          <ManuscriptPanel detail={detail} onChanged={reload} />
+          <DocumentsPanel documents={detail.documents} events={detail.documentEvents} prospectUserId={detail.userId} />
           <NotesPanel sessionId={detail.id} notes={detail.notes} onAdded={reload} />
-          <AuditTrail events={detail.reviewEvents} />
+          <AuditTrail events={detail.reviewEvents} prospectUserId={detail.userId} />
         </div>
       </div>
     </>
   );
+};
+
+const RELATIONSHIP_LABELS: Record<string, string> = {
+  spouse: "Spouse",
+  domestic_partner: "Domestic partner",
+  child: "Child",
+  other: "Other",
 };
 
 const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
@@ -182,7 +197,7 @@ const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
               <th className="py-1 pr-3">Title</th>
               <th className="py-1 pr-3 text-right">Salary</th>
               <th className="py-1 pr-3">Type</th>
-              <th className="py-1 pr-3">Tier</th>
+              <th className="py-1 pr-3">Tier (as the Manuscript prints it)</th>
               <th className="py-1 pr-3">WC code</th>
               <th className="py-1">Dependents</th>
             </tr>
@@ -200,9 +215,27 @@ const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
                   {e.classification === "1099" ? "1099" : "W-2"}
                   {e.employment_type === "part_time" && " PT"}
                 </td>
-                <td className="py-1 pr-3">{e.coverage_tier ?? "—"}</td>
+                <td className="py-1 pr-3">
+                  {isW2(e) ? coverageTier(e) ?? NOT_PROVIDED : "Not applicable"}
+                  {isW2(e) && !e.coverage_tier && coverageTier(e) && (
+                    <span className="block text-xs text-muted-foreground">from dependents</span>
+                  )}
+                </td>
                 <td className="py-1 pr-3 font-mono">{e.class_code ?? "—"}</td>
-                <td className="py-1">{e.dependents?.length ?? 0}</td>
+                <td className="py-1">
+                  {(e.dependents?.length ?? 0) === 0 ? (
+                    "None"
+                  ) : (
+                    <ul aria-label={`Dependents of ${`${e.first_name} ${e.last_name}`.trim()}`} className="space-y-0.5">
+                      {e.dependents!.map((dep, i) => (
+                        <li key={i}>
+                          {`${dep.first_name} ${dep.last_name}`.trim()} · {RELATIONSHIP_LABELS[dep.relationship] ?? dep.relationship}
+                          {dep.dob && <span className="font-mono"> · {dep.dob}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
