@@ -6,7 +6,6 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { ProvenanceMap } from "@/data/provenance";
-import { NO_VERIFIED_FIELDS, requiredItems } from "@/data/requiredItems";
 import { NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
 import {
   CONSENT_IS_DRAFT,
@@ -17,16 +16,13 @@ import {
 } from "@/data/certification";
 import { useAuth } from "@/hooks/useAuth";
 import { conflictingRequired, missingRequired } from "@/data/readiness";
-import type { ProvenanceMap } from "@/data/provenance";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import VerifyEmailGate from "./VerifyEmailGate";
 
 interface ReckoningTabProps {
   data: ChamberData;
-  /** Status of each field, so a required item whose answers conflict can hold certification back. */
+  /** Each answer's field status: a required answer in conflict blocks certification until one is chosen. */
   provenance?: ProvenanceMap;
-  /** Fields an advisor verified: settled whatever their status. */
-  verified?: ReadonlySet<string>;
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
   sessionId: string | null;
@@ -48,7 +44,7 @@ const formatSigned = (iso: string) =>
 
 const NO_PROVENANCE: ProvenanceMap = {};
 
-const ReckoningTab = ({ data, provenance = NO_PROVENANCE, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
+const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED_FIELDS, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
   const peoName = chosenPeo ?? "your PEO";
   const { isAnonymous } = useAuth();
   // A returning signer doesn't retype their name and role to certify again.
@@ -82,8 +78,18 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, peoName: chosenPeo, se
   }, [dataKey, signedDataKey]);
 
   const signed = signedAt !== null;
-  const missingAnswers = missingRequired(data);
-  const conflictingAnswers = conflictingRequired(provenance);
+  // What the intake still needs, as Review lists it (certificationBlockingItems): the missing answers, then
+  // those in conflict, which the database refuses (EA008), and States of operation that only a census in
+  // conflict gives, which only the browser checks.
+  const blocking = certificationBlockingItems(data, provenance, verified);
+  const missingAnswers = blocking.filter((item) => item.state === "missing").map((item) => item.readiness);
+  const conflictingAnswers = blocking
+    .filter((item) => item.state === "conflicting")
+    .map((item) =>
+      item.viaCensus
+        ? { key: "census", label: "Employee census", note: "Its answers conflict, and it gives your states." }
+        : { key: item.item, label: item.label, note: "You've given two different answers." },
+    );
   const blockers = certificationBlockers({
     acknowledged: checks,
     signer: { name: signerName, title: signerTitle },
@@ -163,7 +169,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, peoName: chosenPeo, se
           </p>
         </div>
 
-        {/* The Manuscript can't be generated without these; the database refuses the certification too. */}
+        {/* The Manuscript can't be generated without these; the database refuses the certification too, but for the census's states. */}
         {(missingAnswers.length > 0 || conflictingAnswers.length > 0) && !certifiedAndCurrent && (
           <div role="alert" aria-label="Answers still needed" className="border border-destructive/40 bg-destructive/5 rounded-xl p-4 text-sm space-y-2">
             {missingAnswers.length > 0 && (
@@ -186,7 +192,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, peoName: chosenPeo, se
                 <ul className="list-disc pl-5 space-y-0.5">
                   {conflictingAnswers.map((item) => (
                     <li key={item.key}>
-                      {item.label} <span className="text-muted-foreground text-xs">You've given two different answers.</span>
+                      {item.label} <span className="text-muted-foreground text-xs">{item.note}</span>
                     </li>
                   ))}
                 </ul>

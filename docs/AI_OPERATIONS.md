@@ -18,14 +18,14 @@ The codes are `AI_ERROR_CODES` in `supabase/functions/_shared/ai/errors.ts`. The
 | `unauthorized` | 401 | No signed-in user (the publishable key alone isn't one) | — |
 | `not_found` | 404 | The intake or document isn't the caller's, or doesn't exist. An advisor can read every intake but can't run Lenore on someone else's | "Lenore couldn't respond" |
 | `rate_limited` | 429 | The caller's, their address's or the provider's rate limit | "You're writing faster than Lenore can keep up…" |
-| `daily_cap` | 503 | The daily ceiling shared by everyone | "Lenore is resting for the day…" |
-| `unavailable` | 503 | AI isn't set up, the budget can't be checked, or the provider account can't pay | "Lenore can't be reached right now…" |
-| `provider_error` | 502 | The provider answered with an error, or couldn't be reached | "Lenore can't be reached right now…" |
+| `daily_cap` | 503 | The daily ceiling shared by everyone | "Lenore is resting for the day…", with no Try again |
+| `unavailable` | 503 | AI isn't set up, the budget can't be checked, or the provider account can't pay | "Lenore isn't available right now…", with no Try again |
+| `provider_error` | 502 | The provider answered with an error, or couldn't be reached | "Lenore can't be reached right now…" (as when the function itself can't be reached) |
 | `timeout` | 504 | The provider took too long | "Lenore took too long to answer…" |
 | `invalid_response` | 502 | The provider answered without the forced tool call, or with arguments that aren't an object | "Lenore couldn't respond" |
 | `internal` | 500 | Anything else | "Lenore couldn't respond" |
 
-In the chat the prospect's message is always kept, and "Try again" and "Continue manually" are always offered. A document read that is put off (`rate_limited`, `daily_cap`, `unavailable`) leaves the document `uploaded`, ready to read again. One that fails once the model was asked leaves it `failed`, answering HTTP 200 with `{ status: "failed", code }`. Either way the Upload tab says why next to "Read it" or "Try again", until the page is reloaded.
+In the chat the prospect's message is always kept, the input is never disabled, and "Continue manually" is always offered. "Try again" is offered for every failure except `daily_cap` and `unavailable`: retrying can't clear those, so their words say the prospect can keep filling in the workspace instead (`retryCanClear` in `src/data/aiFailure.ts`, B-3.2). A document read that is put off (`rate_limited`, `daily_cap`, `unavailable`) leaves the document `uploaded`, ready to read again. One that fails once the model was asked leaves it `failed`, answering HTTP 200 with `{ status: "failed", code }`. Either way the Upload tab says why, until the page is reloaded, next to "Read it" or "Try again", which it leaves out after `daily_cap` or `unavailable` by the same rule.
 
 ## Order of checks
 
@@ -52,6 +52,8 @@ Both functions check, in order:
 | Provider timeout | 20 s a chat attempt, 30 s a document attempt | `_shared/ai/model.ts`, `document-extract/ask.ts` | `model.test.ts`, `handler.test.ts`, `ask.test.ts` |
 | Retry | One, after 1 s, on 429, 5xx or a network error; none on a timeout, 402, other 4xx or a bad answer | `_shared/ai/model.ts` | `model.test.ts` |
 | Browser wait for chat | 45 s, then "Try again" (longer than two 20 s attempts and the pause) | `CHAT_TIMEOUT_MS`, `src/hooks/useLenoreChat.ts` | `useLenoreChat.test.ts` |
+
+There is no overall deadline on a call beyond its attempts, no `Retry-After` handling and no exponential backoff: by decision (B-3.1, 2026-11-04), one retry after a fixed second, and the browser's 45 seconds rather than 30, since it must outlast two attempts.
 
 Chat and document reads spend from the same budgets. A limit that can't be checked refuses the call: guest sessions are free to create, so failing open would leave spend unbounded. There is no per-intake limit; the per-user quota bounds an intake.
 

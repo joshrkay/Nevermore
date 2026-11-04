@@ -55,6 +55,8 @@ describe("isRequiredField", () => {
     expect(isRequiredField("pay_frequency")).toBe(true);
     expect(isRequiredField("industry")).toBe(false);
     expect(isRequiredField("employee_count")).toBe(false);
+    // The census is recommended (D2, D25), so the workspace never marks it Required.
+    expect(isRequiredField("census")).toBe(false);
   });
 });
 

@@ -22,7 +22,7 @@ interface ReviewDocument {
 interface ReviewTabProps {
   data: ChamberData;
   provenance?: ProvenanceMap;
-  /** Fields an advisor verified: settled whatever their status, so never listed. */
+  /** Fields an advisor verified: settled whatever their status, so never listed (B-2.2). */
   verified?: ReadonlySet<string>;
   onAction?: (action: FieldAction) => void;
   onProceed: () => void;
@@ -83,7 +83,7 @@ const rowId = (field: FieldKey) => `review-field-${field}`;
 const sectionId = (section: ReviewSection) => `review-section-${section}`;
 
 /** Brings an answer into view and puts the keyboard on its Add or Edit button. */
-function jumpTo(item: Pick<ReadinessItem, "field" | "section">) {
+function jumpTo(item: ReadinessItem) {
   const target = document.getElementById(item.field ? rowId(item.field) : sectionId(item.section));
   target?.scrollIntoView?.({ block: "center", behavior: "smooth" });
   target?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
@@ -103,7 +103,7 @@ const Section = ({ section, title, progress, children }: { section: ReviewSectio
   </section>
 );
 
-const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [], focusRequest = 0 }: ReviewTabProps) => {
+const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAction, onProceed, documents = [], focusRequest = 0 }: ReviewTabProps) => {
   const headingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     if (focusRequest > 0) headingRef.current?.focus();
@@ -160,19 +160,19 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
         </p>
       </div>
 
-      {/* What's still needed: required answers block certification, recommended ones never do */}
-      {blocking > 0 ? (
+      {/* What's still needed: required answers missing or in conflict block certification; recommended ones never do */}
+      {stillNeeded.length > 0 ? (
         <div role="region" aria-label="Still needed" className="bg-card border border-destructive/40 rounded-xl p-6 space-y-3">
           <p className="text-xs font-mono text-destructive uppercase tracking-wider">
-            Still needed before The Manuscript can be generated: {blocking}
+            Still needed before The Manuscript can be generated: {stillNeeded.length}
           </p>
           <ul className="space-y-2">
-            {stillNeeded.map((item) => (
-              <li key={item.item} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+            {required.map((item) => (
+              <li key={item.key} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
                 <span className="font-medium">{item.label}</span>
-                <span className="text-muted-foreground text-xs">{stillNeededNote(item)}</span>
-                <button type="button" onClick={() => jumpTo(item.viaCensus ? CENSUS_SPOT : item.readiness)} className="text-xs font-medium text-primary underline underline-offset-2">
-                  Go to {(item.viaCensus ? "Employee census" : item.label).toLowerCase()}
+                <span className="text-muted-foreground text-xs">{item.hint}</span>
+                <button type="button" onClick={() => jumpTo(item)} className="text-xs font-medium text-primary underline underline-offset-2">
+                  Go to {item.label.toLowerCase()}
                 </button>
               </li>
             ))}
@@ -359,7 +359,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
         </dl>
       </div>
 
-      {blocking > 0 && (
+      {stillNeeded.length > 0 && (
         <p className="text-xs text-muted-foreground">
           You can choose a PEO now. The answers marked Required are needed, each with one answer, before The Manuscript can be generated.
         </p>

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildUserPrompt, serializeContext } from "../../chamber-extract/prompt";
+import { buildUserPrompt, userTurnParts } from "../../chamber-extract/prompt";
 import * as chat from "../../chamber-extract/schema";
 import * as documents from "../../document-extract/schema";
 
@@ -15,11 +15,19 @@ const KNOWN = {
 };
 
 // chamber-extract's user turn (prompt.ts, shared with the extraction eval) is part of its contract too
-// (B-1.4), so its wording, rendered for fixed inputs with and without context, is fingerprinted per version.
-const USER_TURNS = [buildUserPrompt("<message>", ""), buildUserPrompt("<message>", serializeContext({ company_name: "<value>" }))];
+// (B-1.4), so its wording, rendered for fixed inputs (empty, and with answers, a status, a message and a
+// field still to settle), is fingerprinted per version. Recorded from version 3, when the turn took
+// D22's statuses and recent conversation; earlier versions' turns aren't rendered by today's builder.
+const USER_TURNS = [
+  buildUserPrompt("<message>", userTurnParts(undefined, {}, []), []),
+  buildUserPrompt(
+    "<message>",
+    userTurnParts({ company_name: "<value>" }, { company_name: "inferred" }, [{ sender: "lenore", text: "<question>" }]),
+    [{ key: "<field>", label: "<label>" }],
+  ),
+];
 const USER_TURN_KNOWN: Record<number, string> = {
-  1: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
-  2: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
+  3: "ce6711f6c7922a56b9ad548c83a82b5d15d0317dee621fa658bcdf81a0a462b6",
 };
 
 describe("prompt versions", () => {

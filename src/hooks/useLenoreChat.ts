@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { describeInvokeError, type AiFailureKind } from "@/data/aiFailure";
 import type { ChamberData } from "@/data/chamberTypes";
-import type { ChatMessage } from "@/data/chat";
+import { chatRequest, type ChatMessage } from "@/data/chat";
 import type { ProvenanceMap } from "@/data/provenance";
 import { redactSensitive } from "@/data/sensitive";
 import { chatContext } from "../../supabase/functions/_shared/chatContext.ts";
@@ -38,9 +38,8 @@ interface UseLenoreChatOptions {
   provenance?: ProvenanceMap;
   /** The conversation so far: the last few messages go with each call, so a short answer can be placed (D22). */
   messages?: readonly ChatMessage[];
-  setChamberData: (updater: (prev: ChamberData) => ChamberData) => void;
-  /** May return the stored message so extracted values can point back to it. */
-  addUserMessage: (text: string) => { id: string; text: string } | void;
+  /** Records the prospect's message and returns it, so extracted values can point back to it. */
+  addUserMessage: (text: string) => { id: string; text: string };
   addLenoreMessage: (text: string) => void;
   onOrbStateChange: (state: OrbState) => void;
   /**
@@ -63,7 +62,7 @@ const FALLBACK_REPLY = "Thank you, I've noted that.";
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
  */
-export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance, messages, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
+export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance, messages, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
   const [failure, setFailure] = useState<ChatFailure | null>(null);
   const [pending, setPending] = useState(false);
   const dataRef = useRef(chamberData);
@@ -123,7 +122,7 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       if (error) throw error;
 
       if (data?.extracted) onExtracted(data.extracted, data, message);
-      const reply = (typeof data?.reply === "string" && data.reply.trim()) || FALLBACK_REPLY;
+      const reply = (typeof data?.reply === "string" && data.reply.trim()) || CHAT_FALLBACK_REPLY;
       onOrbStateChange("speaking");
       addLenoreMessage(reply);
       idleTimer.current = setTimeout(() => onOrbStateChange("idle"), 2000);

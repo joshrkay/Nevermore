@@ -9,10 +9,12 @@ import type { OutboxStatus } from "@/data/outbox";
 import {
   isPipelineStatus,
   manuscriptStoragePath,
+  reconcileDocuments,
   reviewMap,
   sha256Hex,
   type FieldReview,
   type PipelineStatus,
+  type ReviewedDocument,
   type ReviewMap,
   type ReviewState,
 } from "@/data/advisor";
@@ -26,7 +28,8 @@ export type StatusHistoryRow = Tables["submission_status_history"]["Row"];
 export type AdvisorNote = Tables["advisor_notes"]["Row"];
 export type ReviewEvent = Tables["advisor_review_events"]["Row"];
 export type ManuscriptVersion = Tables["manuscript_versions"]["Row"];
-export type UploadedDocument = Pick<Tables["documents"]["Row"], "id" | "file_name" | "file_size" | "category" | "status" | "storage_path" | "created_at">;
+export type UploadedDocument = Pick<Tables["documents"]["Row"], "id" | "file_name" | "file_size" | "category" | "status" | "storage_path" | "created_at" | "file_sha256">;
+export type DocumentEvent = Tables["document_events"]["Row"];
 
 export class AdvisorApiError extends Error {
   constructor(message: string, readonly code?: string, readonly unauthenticated = false) {
@@ -56,10 +59,30 @@ export async function fetchIsAdvisor(): Promise<boolean> {
   return data === true;
 }
 
-export async function listSubmissions(status: PipelineStatus | null): Promise<SubmissionSummary[]> {
-  const { data, error } = await supabase.rpc("advisor_list_submissions", status ? { p_status: status } : {});
+/** How many submissions the queue shows at a time. */
+export const QUEUE_PAGE_SIZE = 25;
+
+export interface SubmissionPage {
+  rows: SubmissionSummary[];
+  /** How many submissions match the status and search, across every page. */
+  total: number;
+}
+
+/**
+ * One page of the queue, filtered by status and searched (every word must appear in the company,
+ * contact or reference) in the database. Pages count from 1.
+ */
+export async function listSubmissions(opts: { status: PipelineStatus | null; search?: string; page?: number }): Promise<SubmissionPage> {
+  const page = Math.max(1, Math.floor(opts.page ?? 1));
+  const { data, error } = await supabase.rpc("advisor_list_submissions", {
+    p_status: opts.status,
+    p_search: opts.search?.trim() || null,
+    p_limit: QUEUE_PAGE_SIZE,
+    p_offset: (page - 1) * QUEUE_PAGE_SIZE,
+  });
   if (error) fail(error, "Couldn't load submissions.");
-  return data ?? [];
+  const rows = data ?? [];
+  return { rows, total: rows[0]?.total_count ?? 0 };
 }
 
 // ---------- Outbox & notifications (G-1.3) ----------
@@ -114,11 +137,19 @@ export interface SubmissionDetail {
   updatedAt: string;
   /** The values as the prospect certified them (or as saved, if not certified). */
   data: ChamberData;
+  /**
+   * The same answers exactly as stored, before the browser tidies them for display. A review names
+   * the stored answer it was made on, so the database can refuse it if the prospect has changed it since.
+   */
+  storedAnswers: Record<string, Json | undefined>;
   provenance: ProvenanceMap;
   /** True when `data` is the certified snapshot. */
   certified: boolean;
   submission: ChamberSubmission | null;
+  /** The conversation as certified when the intake is certified (otherwise as it stands). */
   transcript: ChatMessage[];
+  /** The prospect's conversation has changed since they certified; `transcript` shows it as certified. */
+  transcriptChangedSinceCertified: boolean;
   contactName: string | null;
   phone: string | null;
   history: StatusHistoryRow[];
@@ -126,7 +157,10 @@ export interface SubmissionDetail {
   reviews: ReviewMap;
   reviewEvents: ReviewEvent[];
   versions: ManuscriptVersion[];
-  documents: UploadedDocument[];
+  /** The documents set against the list the intake was certified with. */
+  documents: ReviewedDocument[];
+  /** Every document added, removed, renamed or re-categorised, newest first. */
+  documentEvents: DocumentEvent[];
 }
 
 export async function loadSubmission(id: string): Promise<SubmissionDetail | null> {
@@ -150,20 +184,27 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   // Row security hides sessions the caller may not see; a missing pipeline row means the same.
   if (!row || !workflow.data) return null;
 
-  const [docs, profile] = await Promise.all([
+  const [docs, profile, docEvents] = await Promise.all([
     supabase
       .from("documents")
-      .select("id, file_name, file_size, category, status, storage_path, created_at")
+      .select("id, file_name, file_size, category, status, storage_path, created_at, file_sha256")
       // This intake's uploads only, not everything the same prospect has ever uploaded.
       .eq("session_id", id)
       .order("created_at", { ascending: false }),
     supabase.from("profiles").select("contact_name, phone").eq("user_id", row.user_id).maybeSingle(),
+    supabase.from("document_events").select("*").eq("session_id", id).order("id", { ascending: false }),
   ]);
   if (docs.error) fail(docs.error, "Couldn't load uploaded documents.");
+  if (docEvents.error) fail(docEvents.error, "Couldn't load the document history.");
 
   const submission = (row.submission as unknown as ChamberSubmission | null) ?? null;
   const certified = row.status === "submitted" && !!submission?.signer_name;
   const useSnapshot = certified && submission?.chamber_data !== undefined;
+  // The database decides which copy an advisor sees the same way (public.advisor_visible_answers).
+  const shown = useSnapshot ? (submission!.chamber_data as Json) : row.chamber_data;
+  const storedAnswers = shown && typeof shown === "object" && !Array.isArray(shown) ? (shown as Record<string, Json | undefined>) : {};
+  // The evidence as certified, when the certification kept it (submissions from before it did don't).
+  const certifiedTranscript = useSnapshot && submission!.transcript !== undefined ? submission!.transcript : undefined;
   return {
     id: row.id,
     userId: row.user_id,
@@ -172,12 +213,16 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     pipelineStatus: isPipelineStatus(workflow.data.status) ? workflow.data.status : "draft",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    data: parseChamberData(useSnapshot ? submission!.chamber_data : row.chamber_data),
+    data: parseChamberData(shown),
+    storedAnswers,
     // Pair provenance with whichever copy of the data is shown, as the prospect's Manuscript does.
     provenance: parseProvenance(useSnapshot ? submission!.field_provenance : row.field_provenance),
     certified,
     submission,
-    transcript: parseTranscript(row.transcript),
+    transcript: parseTranscript(certifiedTranscript ?? row.transcript),
+    // Both copies come back from the database the same way, so equal copies serialise identically.
+    transcriptChangedSinceCertified:
+      certifiedTranscript !== undefined && JSON.stringify(certifiedTranscript) !== JSON.stringify(row.transcript),
     contactName: profile.data?.contact_name ?? null,
     phone: profile.data?.phone ?? null,
     history: history.data ?? [],
@@ -185,7 +230,8 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     reviews: reviewMap((reviews.data ?? []) as unknown as FieldReview[]),
     reviewEvents: events.data ?? [],
     versions: versions.data ?? [],
-    documents: docs.data ?? [],
+    documents: reconcileDocuments(docs.data ?? [], useSnapshot ? submission!.documents : undefined),
+    documentEvents: docEvents.data ?? [],
   };
 }
 
@@ -206,12 +252,19 @@ export async function addNote(sessionId: string, body: string): Promise<void> {
 
 export type CorrectionChange = { kind: "keep" } | { kind: "set"; value: unknown } | { kind: "clear" };
 
+/**
+ * Records an advisor's review of one field. `answer` is the stored answer the advisor was looking
+ * at (`SubmissionDetail.storedAnswers[field]`, undefined when there was none): the database refuses
+ * the review (code PT409, HTTP 409) if the prospect has changed it since, so a review always belongs to the
+ * answer it was made on.
+ */
 export async function reviewField(
   sessionId: string,
   field: FieldKey,
   state: ReviewState | null,
   correction: CorrectionChange,
   reason: string,
+  answer: Json | undefined,
 ): Promise<void> {
   const { error } = await supabase.rpc("review_submission_field", {
     p_session_id: sessionId,
@@ -220,6 +273,8 @@ export async function reviewField(
     p_correction: correction.kind,
     p_value: correction.kind === "set" ? (correction.value as Json) : null,
     p_reason: reason.trim() || null,
+    // {} says "there was no answer"; a missing key can't be told apart from a missing argument.
+    p_answer: answer === undefined ? {} : { value: answer },
   });
   if (error) fail(error, "Couldn't save the review.");
 }
@@ -236,13 +291,21 @@ async function signedUrl(bucket: "documents" | "manuscripts", path: string, down
   return data!.signedUrl;
 }
 
-export const documentUrl = (doc: UploadedDocument) => signedUrl("documents", doc.storage_path, doc.file_name);
+export const documentUrl = (doc: Pick<UploadedDocument, "storage_path" | "file_name">) =>
+  signedUrl("documents", doc.storage_path, doc.file_name);
 
 export const manuscriptUrl = (v: ManuscriptVersion, filename: string) => signedUrl("manuscripts", v.storage_path, filename);
 
 /**
- * Stores a generated Manuscript as the next version of a submission. The database refuses it if
- * someone else generated a version or changed the review in the meantime.
+ * The prospect's own final Manuscript (public.prospect_final_manuscript). Storage signs it only for that
+ * intake's owner, and only while it is the latest version built from their current certification.
+ */
+export const finalManuscriptUrl = (storagePath: string, filename: string) => signedUrl("manuscripts", storagePath, filename);
+
+/**
+ * Stores a generated Manuscript as the next version of a submission. The database refuses it
+ * (code PT409, HTTP 409) if, since the page loaded, someone else generated a version, the review changed, or
+ * the prospect certified again: the version must name the certification it was built from.
  */
 export async function saveManuscriptVersion(opts: {
   sessionId: string;
@@ -251,6 +314,9 @@ export async function saveManuscriptVersion(opts: {
   reviewEventId: number;
   correctionsApplied: number;
   sensitiveRevealed: boolean;
+  /** The certification the PDF was built from: its `data_sha256` and `certified_at`, as loaded. */
+  certifiedDataHash: string | null;
+  certifiedAt: string | null;
 }): Promise<ManuscriptVersion> {
   const path = manuscriptStoragePath(opts.sessionId, opts.version, crypto.randomUUID());
   const upload = await supabase.storage
@@ -265,6 +331,8 @@ export async function saveManuscriptVersion(opts: {
     p_review_event_id: opts.reviewEventId,
     p_corrections_applied: opts.correctionsApplied,
     p_sensitive_revealed: opts.sensitiveRevealed,
+    p_certified_data_hash: opts.certifiedDataHash,
+    p_certified_at: opts.certifiedAt,
   });
   if (error || !data) {
     // Not recorded, so not a version: don't leave the file behind.

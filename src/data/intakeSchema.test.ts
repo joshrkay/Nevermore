@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { REQUIRED_ITEMS } from "@/data/readiness";
 import {
   assertSupportedSchema,
   FIELD_SECTIONS,
@@ -65,7 +66,9 @@ describe("intake schema v2", () => {
     expect(INTAKE_FIELDS.map((f) => f.section).filter((s, i, all) => all.indexOf(s) === i).sort()).toEqual([...FIELD_SECTIONS].sort());
   });
 
-  it("requires exactly the core four, and ranks them first, in the order Lenore asks", () => {
+  // One list of required answers (D2, D25): the one the Review, the Reckoning and the certification gate use.
+  it("requires exactly the answers readiness requires before certifying, and ranks them first, in the order Lenore asks", () => {
+    expect(INTAKE_FIELDS.filter((f) => f.required).map((f) => f.key)).toEqual(REQUIRED_ITEMS.map((item) => item.field));
     expect(INTAKE_FIELDS.filter((f) => f.required).map((f) => f.key)).toEqual([...REQUIRED_FIELDS]);
     expect(INTAKE_FIELDS.map((f) => f.rank)).toEqual(INTAKE_FIELDS.map((_, i) => i + 1));
     expect(INTAKE_FIELDS.slice(0, REQUIRED_FIELDS.length).every((f) => f.required)).toBe(true);

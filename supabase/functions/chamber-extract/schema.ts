@@ -3,51 +3,54 @@
 // (_shared/intakeSchema.ts), so chat can answer every top-level field but the census, and nothing the schema
 // doesn't know. Relative imports only, so it runs under Deno and Vitest alike.
 
-import { INTAKE_FIELDS, INTAKE_SCHEMA, type JsonSchema } from "../_shared/intakeSchema.ts";
+import { INTAKE_FIELDS, INTAKE_SCHEMA, LIMITS, type JsonSchema } from "../_shared/intakeSchema.ts";
 
-/** What each field means, for the model. Every field the chat extracts has one (schema.test.ts checks). */
+/**
+ * What each field means, for the model. Every field the chat extracts has one (extraction.test.ts checks). An
+ * answer the workspace only shows beside its flag says to report the flag with it.
+ */
 export const FIELD_GUIDE: Record<string, string> = {
   company_name: "The company's legal or business name",
   industry: "What the business does, its industry",
   hq_state: "Two-letter US state code of the headquarters, such as CA",
-  states: "Two-letter US state codes of every state where employees work",
+  states: "Two-letter US state codes of every state where employees work, one state per item",
   employee_count: "Total number of employees (a whole number)",
   start_month: "When they want PEO coverage or benefits to start, as they said it",
   multiple_entities: "true if the business runs as more than one legal entity",
-  fein_count: "How many federal employer ID numbers (FEINs) the business has",
+  fein_count: "How many federal employer ID numbers (FEINs) the business has (a whole number); report multiple_entities with it",
   virgin_medical: "true if they have never offered employer medical coverage, false if they have it now",
   current_carrier: "Their current medical insurance carrier",
   renewal_date: "When their current medical plan renews, as they said it",
   rate_history: "What they said about recent medical rate increases",
   benefits_waiting_period: "How long new hires wait before benefits start",
   ancillary_benefits: "Other benefits they offer, such as dental, vision or life",
-  has_401k: "true if they offer a retirement plan such as a 401(k)",
-  retirement_type: "What kind of retirement plan, such as 401(k), SIMPLE IRA or 403(b)",
-  employer_contributes: "true if the employer contributes to the retirement plan",
+  has_401k: "true if they offer any employer retirement plan (a 401(k), 403(b), SIMPLE IRA or similar), false if they offer none",
+  retirement_type: "What kind of retirement plan, such as 401(k), SIMPLE IRA or 403(b); report has_401k with it",
+  employer_contributes: "true if the employer contributes to or matches the retirement plan; report has_401k with it",
   payroll_vendor: "Who runs their payroll now, such as Gusto or ADP",
   pay_frequency: "How often they run payroll: weekly, bi-weekly, semi-monthly or monthly",
   funding_days: "How many days before payday they fund payroll (a whole number)",
   has_nonexempt: "true if any employees are hourly or overtime-eligible (nonexempt)",
-  nonexempt_count: "How many employees are nonexempt (a whole number)",
-  exempt_count: "How many employees are exempt (a whole number)",
+  nonexempt_count: "How many employees are nonexempt (a whole number); report has_nonexempt with it",
+  exempt_count: "How many employees are exempt (a whole number); report has_nonexempt with it",
   pto_types: "Kinds of paid time off they offer, such as vacation or sick",
   accrual_method: "How paid time off accrues, such as per pay period or up front",
   has_handbook: "true if they have an employee handbook",
-  handbook_last_updated: "When the handbook was last updated, as they said it",
-  hr_staff_count: "How many people work in HR in-house (a whole number)",
+  handbook_last_updated: "When the handbook was last updated, as they said it (such as \"2024\")",
+  hr_staff_count: "How many people handle HR in-house (a whole number)",
   has_1099: "true if they use 1099 contractors",
   ca_contractors: "true if any contractors work in California",
-  uses_physical_clocks: "true if employees clock in on a physical time clock",
-  uses_mobile_app: "true if employees track time in a mobile app",
-  uses_computer_timekeeping: "true if employees track time on a computer",
-  shift_differentials: "true if some shifts pay more",
-  hris_system: "Their HR information system, if any",
+  uses_physical_clocks: "true if employees clock in on a physical time clock, false if not",
+  uses_mobile_app: "true if employees track time in a mobile app, false if not",
+  uses_computer_timekeeping: "true if employees track time on a computer, false if not",
+  shift_differentials: "true if some shifts (nights, weekends) pay a different rate, false if not",
+  hris_system: "The HR information system (HRIS) or tool they keep employee records in, by name",
   key_challenges: "The HR or compliance challenges they describe",
   business_goals: "The business goals they mention",
-  wc_carrier: "Their current workers' compensation carrier",
+  wc_carrier: "Their current workers' compensation carrier, by name",
   wc_renewal_date: "When their workers' comp policy renews, as they said it",
-  wc_experience_mod: "Their workers' comp experience modification factor, a decimal such as 0.92",
-  wc_annual_premium: "Their annual workers' comp premium in whole dollars",
+  wc_experience_mod: "Their workers' comp experience modification factor, a decimal such as 0.92 (from 0 to 10)",
+  wc_annual_premium: "Their annual workers' comp premium in whole US dollars (from 0 to 100,000,000)",
 };
 
 /**
@@ -118,7 +121,7 @@ export const FIELD_TYPES: Record<string, JsonSchema> = Object.fromEntries(FIELDS
 export const FIELD_STATUSES = ["confirmed", "inferred", "incomplete", "unknown"];
 export const MAX_EVIDENCE_CHARS = 200;
 // An answer can carry a value, a status and a quote for every field, plus the reply: well past the
-// Anthropic adapter's default cap, which would cut it off. Not part of the contract hash.
+// Anthropic adapter's default cap, which would cut it off. Not part of the contract fingerprint.
 export const CHAT_MAX_TOKENS = 8192;
 
 const LABELS = new Map(INTAKE_FIELDS.map((f) => [f.key, f.label]));
@@ -142,6 +145,8 @@ You MUST use the extract_chamber_data tool to return the extracted fields. Only 
 
 Field definitions:
 ${fieldLines}
+
+Integers are whole numbers from 0 to 1,000,000 unless a field says otherwise. Text is at most 1,000 characters. An array holds at most 100 items, one entry per item, never a comma-separated string.
 
 Never extract the employee census or details of individual employees: the roster comes only from an uploaded file.
 

@@ -29,6 +29,7 @@ const session = {
   restoredThrough: null as string | null,
   messages: [] as ChatMessage[],
   certification: { status: "none" as string },
+  updateIntake: vi.fn(),
   addMessage: vi.fn(),
   conversationEpoch: {} as object,
   chamberData: { ...EMPTY_CHAMBER_DATA } as ChamberData,
@@ -47,7 +48,12 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 vi.mock("@/hooks/useChamberSession", () => ({ useChamberSession: () => session }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 vi.mock("@/data/intakeBackup", () => ({ browserStorageWorks: () => storageWorks }));
-vi.mock("@/hooks/useLenoreVoice", () => ({ useLenoreVoice: () => ({ startVoice: vi.fn(), isConnected: voice.isConnected, hasAgentId: false }) }));
+vi.mock("@/hooks/useLenoreVoice", () => ({
+  useLenoreVoice: (options: typeof hooks.voice) => {
+    hooks.voice = options;
+    return { startVoice: vi.fn(), isConnected: voice.isConnected, hasAgentId: false };
+  },
+}));
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
 // The orb only shows what Lenore last said; the workspace panes are not what these tests are about.
 vi.mock("@/components/chamber/VoiceOrb", () => ({ default: ({ lastSpokenText }: { lastSpokenText: string }) => <p data-testid="orb">{lastSpokenText}</p> }));

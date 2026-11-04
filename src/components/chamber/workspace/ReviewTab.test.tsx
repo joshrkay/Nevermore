@@ -79,7 +79,7 @@ describe("ReviewTab needs your review", () => {
     render(<ReviewTab data={data} provenance={provenance} onAction={() => {}} onProceed={() => {}} />);
     // Missing and conflicting both hold certification back; the census is only recommended.
     expect(stillNeeded()).toEqual(["States of operation", "Pay frequency"]);
-    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Your answers conflict");
+    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("You've given two different answers");
     expect(screen.queryByText(/Every required answer is here/)).not.toBeInTheDocument();
     expect(screen.getByText("Needs your review — 3 items")).toBeInTheDocument();
     expectListed([
@@ -97,6 +97,12 @@ describe("ReviewTab needs your review", () => {
     );
     expect(screen.getByText("Needs your review — 1 item")).toBeInTheDocument();
     expectListed([["Incomplete", "Employee count"]]);
+  });
+
+  it("still needs a required answer in conflict, even if an advisor verified its field, as the database refuses it", () => {
+    render(<ReviewTab data={data} provenance={provenance} verified={new Set(["pay_frequency"])} onAction={() => {}} onProceed={() => {}} />);
+    expect(stillNeeded()).toEqual(["States of operation", "Pay frequency"]);
+    expect(screen.getByRole("button", { name: "Choose pay frequency" })).toBeInTheDocument();
   });
 
   it("still needs a required answer that was never given, even if an advisor verified its field", () => {
@@ -124,14 +130,14 @@ describe("ReviewTab needs your review", () => {
     ]);
   });
 
-  it("says the census's conflict holds the states back when the census alone names them", () => {
+  // The gate (D26) reads each required field's own status, so a census conflict never holds certification back,
+  // even while the census alone names the states; the census is reviewed like any other open field.
+  it("doesn't hold certification back for a census conflict, even when the census alone names the states", () => {
     const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
     const conflicting = { status: "conflicting" as const, source: said("m4"), updated_at: at, candidates: [] };
     render(<ReviewTab data={{ ...data, census, states: [] }} provenance={{ census: conflicting }} onProceed={() => {}} />);
-    expect(stillNeeded()).toEqual(["States of operation"]);
-    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("The census's answers conflict");
-    expect(screen.getByRole("button", { name: "Go to employee census" })).toBeInTheDocument();
-    expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Still needed" })).not.toBeInTheDocument();
+    expectListed([["Conflicting answers", "Employee census"]]);
   });
 
   it("asks nothing when every required answer is settled and nothing else is open", () => {
