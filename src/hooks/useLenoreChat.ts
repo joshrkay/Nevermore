@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { describeInvokeError, type AiFailureKind } from "@/data/aiFailure";
 import type { ChamberData } from "@/data/chamberTypes";
-import { chatRequest, type ChatMessage } from "@/data/chat";
+import { CHAT_FALLBACK_REPLY, chatRequestBody, type ChatMessage } from "@/data/chat";
 import type { ProvenanceMap } from "@/data/provenance";
 import { redactSensitive } from "@/data/sensitive";
 import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
@@ -96,7 +96,8 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       controller.abort();
     }, CHAT_TIMEOUT_MS);
     try {
-      const body: Record<string, unknown> = { message: text, ...chatRequest(dataRef.current, provenanceRef.current ?? {}, messagesRef.current ?? [], message.id) };
+      // The answers without the roster, their field statuses and the recent conversation (chatRequestBody).
+      const body: Record<string, unknown> = { ...chatRequestBody({ id: message.id, text }, dataRef.current, provenanceRef.current, messagesRef.current ?? []) };
       const sessionId = intakeIdRef.current ?? (ensureIntakeRef.current ? await ensureIntakeRef.current() : null);
       if (sessionId) body.session_id = sessionId;
       const { data, error } = await supabase.functions.invoke("chamber-extract", { body, signal: controller.signal });

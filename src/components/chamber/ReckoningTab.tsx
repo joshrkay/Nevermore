@@ -5,7 +5,7 @@ import { CheckCircle2, Download, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
-import type { ProvenanceMap } from "@/data/provenance";
+import { certificationBlockingItems, NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
 import {
   CONSENT_IS_DRAFT,
@@ -15,7 +15,7 @@ import {
   consentStatements,
 } from "@/data/certification";
 import { useAuth } from "@/hooks/useAuth";
-import { conflictingRequired, missingRequired } from "@/data/readiness";
+import type { ProvenanceMap } from "@/data/provenance";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import VerifyEmailGate from "./VerifyEmailGate";
 
@@ -23,6 +23,8 @@ interface ReckoningTabProps {
   data: ChamberData;
   /** Each answer's field status: a required answer in conflict blocks certification until one is chosen. */
   provenance?: ProvenanceMap;
+  /** Fields an advisor verified: a verified census settles the States of operation it gives. */
+  verified?: ReadonlySet<string>;
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
   sessionId: string | null;

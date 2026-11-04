@@ -109,6 +109,12 @@ CREATE FUNCTION public.is_us_state_code(code text) RETURNS boolean LANGUAGE sql 
   ]), false);
 $$;
 \i supabase/migrations/20261104103000_required_items.sql
+\i supabase/migrations/20261104110000_pin_reviews_and_manuscripts_to_answers.sql
+\i supabase/migrations/20261104111000_pipeline_follows_the_prospect.sql
+\i supabase/migrations/20261104112000_certified_evidence.sql
+\i supabase/migrations/20261104113000_share_reviewed_manuscript.sql
+\i supabase/migrations/20261104114000_paged_advisor_queue.sql
+\i supabase/migrations/20261104115000_advisor_review_followups.sql
 
 -- Runs `stmt` as `who` and fails the run unless it's refused (permission, row security or a
 -- deliberate check).

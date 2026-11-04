@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildUserPrompt, userTurnParts } from "../../chamber-extract/prompt";
+import { buildUserPrompt } from "../../chamber-extract/prompt";
 import * as chat from "../../chamber-extract/schema";
 import * as documents from "../../document-extract/schema";
 
@@ -12,28 +12,32 @@ const fingerprint = (prompt: string, tool: unknown) => createHash("sha256").upda
 const KNOWN = {
   "chamber-extract": {
     1: "89db609d8c6914c5db41973ad37c4869602bb24d1c3facfce87e81cd84ed5231",
-    // 2: every top-level field but the census, from intake schema v2, and "unknown" (US-2.1b).
+    // 2: every top-level intake field but the census (US-2.1b). The B-1.1 branch built its own 2 at the same
+    // time (9353e3ba7b62efffdcbdf7d58d28c910f1d2d545532a50bbece21cefbd2b52e8), never on main by itself.
     2: "df5be12a55b4b2732660a15192245b18ca8d663a4cc58acbac0486bb6073e75d",
-    // 3: B-1.1's wording on top: any retirement plan for has_401k, the flag each count needs, the limits.
-    3: "f01ad780872409706705ab075961b6b1f8f225ce3d320a7e8613642f131a9303",
+    // 3: the two merged: US-2.1b's fields and guide with B-1.1's definitions and caps.
+    3: "3ac5338acfc6e8e95733f47435620ab76a25ed020ae86f92cc1647a3ac30bcb5",
   } as Record<number, string>,
   "document-extract": { 1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526" } as Record<number, string>,
 };
 
 // chamber-extract's user turn (prompt.ts, shared with the extraction eval) is part of its contract too
-// (B-1.4), so its wording, rendered for fixed inputs (empty, and with answers, a status, a message and a
-// field still to settle), is fingerprinted per version. Recorded from version 3, when the turn took
-// D22's statuses and recent conversation; earlier versions' turns aren't rendered by today's builder.
+// (B-1.4), so its wording, rendered for fixed inputs with and without context, is fingerprinted per version.
 const USER_TURNS = [
-  buildUserPrompt("<message>", userTurnParts(undefined, {}, []), []),
-  buildUserPrompt(
-    "<message>",
-    userTurnParts({ company_name: "<value>" }, { company_name: "inferred" }, [{ sender: "lenore", text: "<question>" }]),
-    [{ key: "<field>", label: "<label>" }],
-  ),
+  buildUserPrompt({ message: "<message>" }),
+  buildUserPrompt({
+    message: "<message>",
+    context: { company_name: "<value>" },
+    statuses: { company_name: "inferred" },
+    recent: [{ sender: "lenore", text: "<question>" }, { sender: "user", text: "<answer>" }],
+  }),
 ];
 const USER_TURN_KNOWN: Record<number, string> = {
-  3: "ce6711f6c7922a56b9ad548c83a82b5d15d0317dee621fa658bcdf81a0a462b6",
+  // 1 and B-1.1's 2: the captured answers and the message, rendered by the earlier buildUserPrompt(message, context).
+  1: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
+  2: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
+  // 3: the answers, their statuses, what isn't settled and the recent conversation (US-2.1b), shared with the eval.
+  3: "09db07ee0c4748efff56941a37f763ef8e51bb213111ee8e4cb9bae97a6b7c82",
 };
 
 describe("prompt versions", () => {

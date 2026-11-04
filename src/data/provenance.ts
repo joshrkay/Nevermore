@@ -540,7 +540,7 @@ export function transcriptExtraction(message: { id: string; text: string; spoken
  * Extraction options for a voice <extract>. The agent's prompt lives in ElevenLabs, outside
  * PROMPT_VERSION, so a prompt_version in what it wrote is never stored as chamber-extract's.
  */
-export function voiceExtraction(message: { id: string; text: string; spoken?: boolean }, data: unknown): ExtractionOptions {
+export function voiceExtraction(message: { id: string; text: string }, data: unknown): ExtractionOptions {
   const { prompt_version: _unversioned, ...meta } = (typeof data === "object" && data !== null ? data : {}) as Record<string, unknown>;
   return transcriptExtraction(message, meta);
 }

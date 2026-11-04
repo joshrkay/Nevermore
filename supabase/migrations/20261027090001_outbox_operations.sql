@@ -18,22 +18,38 @@
 --   with 403. Who requeued an event, and how often, is recorded on the event.
 --
 -- Deploy this BEFORE the dispatch-outbox function that calls note_outbox_config_problem.
+--
+-- Safe to run on a database that already has the later outbox migrations (20261028090000_email_delivery_events
+-- and on), as one set up while this file was missing from the repository has (docs/SUPABASE_SETUP.md): it
+-- adds only what is missing and leaves the later, suppression-aware versions of the claim, the advisor list
+-- and summary, and the status check as they are. On a database without them it does what it always did.
 
 -- Fail fast instead of queueing behind a long transaction and stalling submissions behind us.
 SET lock_timeout = '3s';
 
 -- ---------- The claim vocabulary ----------
 
-ALTER TABLE public.outbox_events DROP CONSTRAINT outbox_events_status_check;
-UPDATE public.outbox_events SET status = 'claimed' WHERE status = 'sending';
-ALTER TABLE public.outbox_events
-  ADD CONSTRAINT outbox_events_status_check CHECK (status IN ('pending', 'claimed', 'sent', 'dead'));
+-- A status check that already knows 'claimed' is this one or a later one (which adds 'suppressed'): kept.
+DO $vocabulary$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.outbox_events'::regclass AND conname = 'outbox_events_status_check'
+      AND pg_get_constraintdef(oid) LIKE '%''claimed''%'
+  ) THEN
+    ALTER TABLE public.outbox_events DROP CONSTRAINT IF EXISTS outbox_events_status_check;
+    UPDATE public.outbox_events SET status = 'claimed' WHERE status = 'sending';
+    ALTER TABLE public.outbox_events
+      ADD CONSTRAINT outbox_events_status_check CHECK (status IN ('pending', 'claimed', 'sent', 'dead'));
+  END IF;
+END
+$vocabulary$;
 
 ALTER TABLE public.outbox_events
-  ADD COLUMN claimed_at timestamptz,
-  ADD COLUMN requeue_count integer NOT NULL DEFAULT 0,
-  ADD COLUMN last_requeued_at timestamptz,
-  ADD COLUMN last_requeued_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS claimed_at timestamptz,
+  ADD COLUMN IF NOT EXISTS requeue_count integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS last_requeued_at timestamptz,
+  ADD COLUMN IF NOT EXISTS last_requeued_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
 
 COMMENT ON COLUMN public.outbox_events.claimed_at IS
   'When the worker holding the claim took it; null unless status is claimed. locked_until is when the claim lapses.';
@@ -43,13 +59,13 @@ COMMENT ON COLUMN public.outbox_events.requeue_count IS
 -- In-flight claims from before this migration were taken under the old 5 minute lease.
 UPDATE public.outbox_events
 SET claimed_at = COALESCE(locked_until - interval '5 minutes', now())
-WHERE status = 'claimed';
+WHERE status = 'claimed' AND claimed_at IS NULL;
 
 -- The due index follows the vocabulary; the second one serves the advisor list (newest first, by status).
-DROP INDEX public.outbox_events_due_idx;
+DROP INDEX IF EXISTS public.outbox_events_due_idx;
 CREATE INDEX outbox_events_due_idx ON public.outbox_events (next_attempt_at)
   WHERE status IN ('pending', 'claimed');
-CREATE INDEX outbox_events_status_created_idx ON public.outbox_events (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS outbox_events_status_created_idx ON public.outbox_events (status, created_at DESC);
 
 -- ---------- Enqueueing: the advisor alert's fields ----------
 
@@ -179,6 +195,11 @@ $$;
 -- Claims up to `p_batch` due events of the given kinds for one worker, for `p_lock_seconds` (10
 -- minutes by default). Concurrent workers never get the same event (FOR UPDATE SKIP LOCKED). A
 -- claim that has lapsed is taken over again.
+-- Defined here only while 20261028090000_email_delivery_events hasn't run; it replaces this one.
+DO $later$
+BEGIN
+  IF to_regclass('public.email_suppressions') IS NULL THEN
+    EXECUTE $def$
 CREATE OR REPLACE FUNCTION public.claim_outbox_events(
   p_kinds text[],
   p_batch integer,
@@ -207,7 +228,11 @@ BEGIN
   )
   RETURNING e.*;
 END;
-$$;
+$$
+    $def$;
+  END IF;
+END
+$later$;
 
 -- Same as before, for the renamed status: only the worker holding the claim can freeze.
 CREATE OR REPLACE FUNCTION public.freeze_outbox_message(
@@ -287,7 +312,7 @@ $$;
 -- the events stay pending and go out the moment the setting is fixed (a send then clears the
 -- note). `p_error` names settings, never their values. Rows already carrying this exact note are
 -- left alone, so the every-minute run does not rewrite the table. Returns how many it changed.
-CREATE FUNCTION public.note_outbox_config_problem(p_kind text, p_error text)
+CREATE OR REPLACE FUNCTION public.note_outbox_config_problem(p_kind text, p_error text)
 RETURNS integer
 LANGUAGE sql
 SECURITY DEFINER
@@ -308,8 +333,8 @@ $$;
 -- built from the stored payload and the current settings, under a fresh key. Check the provider
 -- log for the old key first when the event was dead with a frozen message. `p_actor` is who asked
 -- (null for an operator at the SQL editor). Returns whether it requeued.
-DROP FUNCTION public.requeue_outbox_event(uuid, boolean);
-CREATE FUNCTION public.requeue_outbox_event(p_id uuid, p_rebuild boolean DEFAULT false, p_actor uuid DEFAULT NULL)
+DROP FUNCTION IF EXISTS public.requeue_outbox_event(uuid, boolean);
+CREATE OR REPLACE FUNCTION public.requeue_outbox_event(p_id uuid, p_rebuild boolean DEFAULT false, p_actor uuid DEFAULT NULL)
 RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -339,7 +364,12 @@ $$;
 -- recognising the event, the state of the delivery, never the payload or the frozen email.
 -- `claim_lapsed` marks a claim whose worker is gone (the next run takes it over). `frozen` marks an
 -- event with an email already written, which an ambiguous attempt may have delivered.
-CREATE FUNCTION public.advisor_list_outbox_events(p_status text DEFAULT NULL, p_limit integer DEFAULT 100)
+-- Defined here only while 20261028090000_email_delivery_events hasn't run; it replaces this one.
+DO $later$
+BEGIN
+  IF to_regclass('public.email_suppressions') IS NULL THEN
+    EXECUTE $def$
+CREATE OR REPLACE FUNCTION public.advisor_list_outbox_events(p_status text DEFAULT NULL, p_limit integer DEFAULT 100)
 RETURNS TABLE (
   id uuid,
   kind text,
@@ -386,12 +416,21 @@ BEGIN
   ORDER BY e.created_at DESC, e.id
   LIMIT LEAST(GREATEST(COALESCE(p_limit, 100), 1), 500);
 END;
-$$;
+$$
+    $def$;
+  END IF;
+END
+$later$;
 
 -- One row per status (zero counts included), for the tabs. `oldest_due_at` is, for pending, when
 -- the longest-waiting due event became due: it keeps growing when nothing is working the queue
 -- (the schedule is down, or a kind's settings are incomplete).
-CREATE FUNCTION public.advisor_outbox_summary()
+-- Defined here only while 20261028090000_email_delivery_events hasn't run; it replaces this one.
+DO $later$
+BEGIN
+  IF to_regclass('public.email_suppressions') IS NULL THEN
+    EXECUTE $def$
+CREATE OR REPLACE FUNCTION public.advisor_outbox_summary()
 RETURNS TABLE (status text, events bigint, oldest_due_at timestamptz)
 LANGUAGE plpgsql
 STABLE
@@ -407,7 +446,11 @@ BEGIN
   LEFT JOIN public.outbox_events e ON e.status = v.status
   GROUP BY v.status;
 END;
-$$;
+$$
+    $def$;
+  END IF;
+END
+$later$;
 
 -- One-click retry for a dead event. `rebuild_payload` drops the email already written for it, so
 -- the next send is rebuilt from the stored payload and the current settings under a new key: use it
@@ -417,7 +460,7 @@ $$;
 -- not re-read from live data. Resets attempts to 0 and schedules it now. Returns false when the
 -- event is not dead (someone else already requeued it, or it was sent), so a double click is
 -- harmless.
-CREATE FUNCTION public.advisor_requeue_outbox_event(event_id uuid, rebuild_payload boolean DEFAULT false)
+CREATE OR REPLACE FUNCTION public.advisor_requeue_outbox_event(event_id uuid, rebuild_payload boolean DEFAULT false)
 RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER

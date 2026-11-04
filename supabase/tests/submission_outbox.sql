@@ -1579,3 +1579,29 @@ BEGIN
   IF seen <> 11 THEN RAISE EXCEPTION 'FAIL: expected 11 outbox functions, found %', seen; END IF;
   RAISE NOTICE 'submission_outbox: operations privilege cases passed';
 END $$;
+
+-- The census, the roster's current name, counts toward the alert's headcount (20261104117100).
+\i supabase/migrations/20261104117100_alert_headcount_census.sql
+DO $$
+DECLARE
+  p jsonb;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', false);
+  p := pg_temp.certify_with('census@acme.example', '{"company_name":"Census Co","census":[{"classification":"w2"},{"classification":"1099"},{"classification":"w2"}]}');
+  IF (p ->> 'employee_count')::int IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'FAIL: W-2 census count is %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('census1099@acme.example', '{"company_name":"Census 1099 Co","census":[{"classification":"1099"}]}');
+  IF p -> 'employee_count' <> 'null'::jsonb THEN RAISE EXCEPTION 'FAIL: a census with no W-2 rows gave %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('both@acme.example', '{"company_name":"Both Co","census":[{"classification":"w2"}],"employees":[{"classification":"W2"},{"classification":"W2"}]}');
+  IF (p ->> 'employee_count')::int IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FAIL: the census should win over the old roster, got %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('stated@acme.example', '{"company_name":"Stated Co","employee_count":30,"census":[{"classification":"w2"}]}');
+  IF (p ->> 'employee_count')::int IS DISTINCT FROM 30 THEN RAISE EXCEPTION 'FAIL: the stated count should win, got %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('legacy@acme.example', '{"company_name":"Legacy Co","employees":[{"classification":"W2"}]}');
+  IF (p ->> 'employee_count')::int IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FAIL: a roster saved before the census gave %', p -> 'employee_count'; END IF;
+  p := pg_temp.certify_with('oddrow@acme.example', '{"company_name":"Odd Co","census":["w2", 3, null, {"classification":"w2"}]}');
+  IF (p ->> 'employee_count')::int IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FAIL: rows that are not objects were counted: %', p -> 'employee_count'; END IF;
+  IF has_function_privilege('authenticated', 'public.enqueue_certification_notifications(uuid)', 'EXECUTE')
+     OR has_function_privilege('service_role', 'public.enqueue_certification_notifications(uuid)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'FAIL: the enqueue helper became executable by a client or the service role';
+  END IF;
+  RAISE NOTICE 'submission_outbox: census headcount cases passed';
+END $$;

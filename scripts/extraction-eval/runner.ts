@@ -6,13 +6,13 @@
 // system and the process.
 
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { chatRequest, createChatMessage, type ChatMessage } from "@/data/chat";
+import { CHAT_FALLBACK_REPLY, chatRequestBody, createChatMessage, openingMessage, type ChatMessage } from "@/data/chat";
 import { applyExtraction, transcriptExtraction, type IntakeState } from "@/data/provenance";
 import { redactSensitive } from "@/data/sensitive";
 import { callModel, type ModelRequest, type ModelResult } from "../../supabase/functions/_shared/ai/model.ts";
 import { selectAdapter } from "../../supabase/functions/_shared/ai/providers.ts";
 import { shapeExtraction } from "../../supabase/functions/chamber-extract/extraction.ts";
-import { buildUserPrompt, nextFields, userTurnParts } from "../../supabase/functions/chamber-extract/prompt.ts";
+import { buildUserPrompt } from "../../supabase/functions/chamber-extract/prompt.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema.ts";
 import { FIXTURES, type Fixture } from "./fixtures";
 import { describeCell, diffBaseline, formatBaseline, formatTable, parseBaseline, scoreFixture, type Baseline, type Cells } from "./scoring";
@@ -52,17 +52,18 @@ export interface FixtureRun {
 /** Sends the fixture's messages one after another, carrying the intake forward as the Chamber does. */
 export async function runFixture(fixture: Fixture, model: ModelCall): Promise<FixtureRun> {
   let state: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
-  const transcript: ChatMessage[] = [];
+  // The conversation so far, as the Chamber keeps it, from Lenore's opening line: each call carries its last few messages.
+  const transcript: ChatMessage[] = [openingMessage()];
   for (const [i, turn] of fixture.turns.entries()) {
     // useLenoreChat.send: the model and the transcript only see the message with sensitive numbers removed.
     const text = redactSensitive(turn.message);
     const message = createChatMessage("user", text);
     transcript.push(message);
-    // The request body crosses the network as JSON, and the handler reads it back with req.json().
-    const body = JSON.parse(JSON.stringify({ message: text, ...chatRequest(state.data, state.provenance, transcript, message.id) }));
-    // The handler redacts the recent messages again, works out what's left, and builds the turn (prompt.ts).
-    const recent = (body.recent as { sender: "user" | "lenore"; text: string }[]).map((m) => ({ ...m, text: redactSensitive(m.text) }));
-    const user = buildUserPrompt(body.message, userTurnParts(body.context, body.statuses, recent), nextFields(body.context ?? {}, body.statuses));
+    // The request body crosses the network as JSON, and the handler reads it back with req.json(). The handler
+    // removes sensitive numbers from the recent conversation again (readRecent), Lenore's lines included.
+    const body = JSON.parse(JSON.stringify(chatRequestBody(message, state.data, state.provenance, transcript)));
+    const recent = body.recent.map((m: { sender: "user" | "lenore"; text: string }) => ({ ...m, text: redactSensitive(m.text) }));
+    const user = buildUserPrompt({ message: body.message, context: body.context, statuses: body.statuses, recent });
 
     const result = await model({ system: SYSTEM_PROMPT, user });
     if (!result.ok) {
@@ -72,9 +73,10 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
     if (!result.args) return { state, error: `turn ${i + 1}: the model made no tool call (invalid_response)` };
     // What the handler returns, as the browser parses it.
     const response = JSON.parse(JSON.stringify(shapeExtraction(result.args)));
-    // ChamberPage's onExtracted for a chat message, then Lenore's reply joins the conversation.
+    // ChamberPage's onExtracted for a chat message.
     if (response.extracted) state = applyExtraction(state, response.extracted, transcriptExtraction(message, response));
-    if (typeof response.reply === "string" && response.reply.trim()) transcript.push(createChatMessage("lenore", response.reply));
+    // useLenoreChat: her reply, or the fallback line when the answer has none.
+    transcript.push(createChatMessage("lenore", (typeof response.reply === "string" && response.reply.trim()) || CHAT_FALLBACK_REPLY));
   }
   return { state, error: null };
 }
