@@ -153,7 +153,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 |---|---|---|---|---|---|---|
 | 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
 | A Durable session | 7 | 0 | 4 | 0 | 0 | 11 |
-| B AI extraction | 5 | 3 | 0 | 1 | 0 | 9 |
+| B AI extraction | 7 | 1 | 1 | 0 | 0 | 9 |
 | C Review, certify, submit | 2 | 7 | 0 | 1 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
 | E Documents | 6 | 1 | 3 | 1 | 0 | 11 |
@@ -162,9 +162,9 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **39** | **41** | **12** | **9** | **5** | **106** |
+| **Total** | **41** | **39** | **13** | **8** | **5** | **106** |
 
-26 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 20 of 39 M2; 5 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+29 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 20 of 39 M2; 5 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -210,7 +210,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | D22 | **New (US-2.3).** What each `chamber-extract` call includes | **Decided 2026-11-03:** the new message, the captured values, each field's status, the missing list, and the last ~10 transcript messages. SSNs and bank numbers are redacted with `redactSensitive`, and everything stays inside the 20,000-character context cap. The census is still left out. | PM + BE | US-2.3 |
 | D23 | **New (US-2.1, US-2.2).** Recording "doesn't know" and "doesn't apply" | **Decided 2026-11-03:** two new provenance statuses. `unknown`: the prospect doesn't know yet, so Lenore stops asking and the field stays an open item ("Prospect to provide"). `not_applicable`: the field is closed and its open item clears. Neither stores a value. | PM | US-2.1, US-2.2, US-2.3 |
 | D24 | **New (US-2.3).** How voice Lenore knows what to ask | **Decided 2026-11-03:** after each extraction the browser sends the ElevenLabs agent a contextual update (`sendContextualUpdate`) naming, by label only, the next missing fields and the ones already settled. The agent's prompt moves into the repo with a version number. | PM + BE | US-2.3 |
-| D25 | **New (US-2.1, US-2.3).** Field tiers | **Decided 2026-11-03:** required stays the core four: company legal name, states of operation, pay frequency and a non-empty census. Every other field gets a rank in a "recommended" tier, which Lenore asks about after the required fields. The draft ranking, for PM to edit: employee count, industry, HQ state, current medical carrier, medical renewal date, payroll vendor, WC carrier, WC renewal date, WC experience mod, WC annual premium, then the rest in schema order. | PM | US-2.1, US-2.3 |
+| D25 | **New (US-2.1, US-2.3).** Field tiers | **Decided 2026-11-03, amended 2026-11-04:** required is the three answers D2 requires: company legal name, states of operation and pay frequency. The census is recommended, as D2 and `src/data/readiness.ts` have it, and ranks first in the recommended tier (the 2026-11-03 text made it a fourth required field; the schema's `x-intake` now agrees with readiness, and `intakeSchema.test.ts` holds the two together). Every other field gets a rank in the "recommended" tier, which Lenore asks about after the required fields. The draft ranking, for PM to edit: the census, employee count, industry, HQ state, current medical carrier, medical renewal date, payroll vendor, WC carrier, WC renewal date, WC experience mod, WC annual premium, then the rest in schema order. | PM | US-2.1, US-2.3 |
 | D26 | **New (US-2.3).** When an intake is ready to certify | **Decided 2026-11-03:** an intake is *ready to certify* (not "ready for review", which collides with the advisor's "Under review"; see `GLOSSARY.md`) when every required field holds a value that is not `conflicting` or `incomplete`, or is marked `unknown` or `not_applicable`. Inferred values count. Inferred and unknown fields remain open items. | PM | US-2.3, C-1.3 |
 | D27 | **New (US-2.3).** Where readiness lives | **Decided 2026-11-03:** derived, not stored. One shared function, used by the Chamber and by `chamber-extract`, computes it from `chamber_data` and `field_provenance`. The Chamber shows that the intake is ready to certify (prospect-facing copy may say "Ready for your review"), and Lenore says so by pointing to Review. Advisors can't filter drafts by readiness. This replaces B-1.3's server-set `ready_for_review`. | PM + BE | US-2.3, B-1.3 |
 | D28 | **New (US-2.2).** Where prospects see every field | **Decided 2026-11-03:** the Review tab lists every captured field, grouped by section, each with its status badge and Confirm/Edit, not only the open ones. Workspace tabs are unchanged. | PM + FE | US-2.2, B-2.1 |
@@ -334,7 +334,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic B: Make AI Extraction Auditable and Useful
 
-*As built:* Provenance, conflict handling, confirm-or-edit controls and failure states are built. The extraction function loads and is tested, and chat extracts every intake field except the census. Prompt versioning and a live extraction eval are built and wait on a first recorded baseline, and the follow-up policy is not started.
+*As built:* Provenance, conflict handling, confirm-or-edit controls and failure states are built. The extraction function loads and is tested, and chat extracts every intake field except the census. Prompt versioning and a live extraction eval are built and wait on a first recorded baseline. The follow-up policy (B-1.3) moved to US-2.3a, which is not started.
 
 *Re-scoped (2026-11-03):* the remaining work in this epic is planned as US-2.1 to US-2.4 and their nine child stories, under "US-2.1 to US-2.4" at the end of this epic (decisions D17 to D33). Vocabulary follows `GLOSSARY.md`.
 
@@ -378,9 +378,11 @@ Status is the state of each decision in the code today. Engineering proceeds on 
   - **Tests:** Unit tests for each rank pair in both orders, conflict settlement, corrections across kinds, list extension across ranks, repeated values, the notes' cap, de-duplication and clearing, reading old entries, and the chat and voice call sites.
 
 #### B-1.3 Lenore follow-up policy and completion state
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** B-1.2, D2 · **Milestone:** M1
-- **Built:** The prompt has no missing-field list, no 'ask one item' rule and no 'do not re-ask' rule. Nothing sets `ready_for_review`.
-- **Remaining:** All of it. D2 is decided: the required items and their states are `public.intake_required_items` (B-2.2).
+- **Status:** **SUPERSEDED** by US-2.3a · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** B-1.2, D2 · **Milestone:** M1
+- **Built:** Nothing in this story. The prompt has no missing-field list, no 'ask one item' rule and no 'do not re-ask' rule. The work moves to US-2.3a (follow-up policy, ready to certify, wrap-up and golden transcripts), on the readiness rule B-2.2 built (`requiredItems`, `isIntakeComplete`, `public.intake_required_items`). The product owner's decisions for it (2026-11-04) are recorded in US-2.3a's entry.
+- **Remaining:** As US-2.3a, which is not started.
+- **Notes:**
+  - **Revised.** No `ready_for_review` status: completion is derived when it is read, never stored or set by the server (D27). An intake is complete when every required item is settled (B-2.2).
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Compute the list of missing required fields and conflicts on the server. Pass the top priority items into the prompt. Lenore asks about one missing item per turn and does not re-ask a confirmed field. The session becomes `ready_for_review` when every required field is confirmed or marked not applicable and no conflicts remain.
   - **AC:**
@@ -428,19 +430,34 @@ Status is the state of each decision in the code today. Engineering proceeds on 
   - **Tests:** The shared case table in SQL and vitest, with every state of every item, stored provenance and state codes read as the browser reads them, and the gate's agreement; verified fields as the owner, another user, an advisor, a guest token and a signed-out caller, and for an archived intake; the Review lists' order, reasons and counts; the Manuscript's open items; the PDF marker and the web chip, combined rows included; the certification blocker.
 
 #### B-3.1 Timeouts, retries, and rate limits
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** B-1.1, F-0.2 · **Milestone:** M1
-- **Built:** `model.ts` has a 20-second timeout and one retry after 1 second on 429, 5xx or a network error (none on 402 or other 4xx). The handler now calls it, and `handler.test.ts` covers a retry that succeeds, a persistent 429, a 500, a 402 and a stalled provider (504). Quotas exist: per user 15 a minute and 300 a day, per IP 20 a minute and 400 a day, and a global 2,000 a day that fails closed with a 503. They live in `_shared/ai/budget.ts` and both AI functions spend from them, so chat and document reads share the per-address and global counts (a refused document read goes back to 'ready to read' and never reaches the provider).
-- **Remaining:** The limits differ from the plan's 30 per session per 10 minutes, and no session-level limit exists: decide whether the per-user, per-IP and global quotas replace it. Errors are `{error}` with no `code`.
+- **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** B-1.1, F-0.2 · **Milestone:** M1
+- **Built:** `model.ts` gives each chat attempt 20 seconds (a document read's attempt 30, `document-extract/ask.ts`) and retries once, after 1 second, on a 429, a 5xx or a network error; never on a timeout, a 402, another 4xx or a bad answer. Both functions call it, and a stalled provider is answered with a 504 `timeout`. Every failure carries an error code (US-2.4a, B-3.2). Quotas: per user 15 a minute and 300 a day, per address 20 a minute and 400 a day, and a global 2,000 a day that fails closed with a 503 `daily_cap`. They live in `_shared/ai/budget.ts` and both AI functions spend from them, so chat and document reads share the per-address and global counts (a refused document read goes back to 'ready to read' and never reaches the provider), and only a request that passed validation spends any (US-2.4a). The browser gives up on a chat answer after 45 seconds (`CHAT_TIMEOUT_MS`), longer than the function's worst case of two 20-second attempts and the pause. Tested in `model.test.ts`, `handler.test.ts` (a retry that succeeds, a persistent 429, a 500, a 402, a stalled provider), `budget.test.ts`, `allowance.test.ts`, `supabase/tests/ai_abuse_limits.sql` and `useLenoreChat.test.ts`. The limits are in `docs/AI_OPERATIONS.md` → "Limits and timeouts".
+- **Notes:**
+  - **Revised.** The per-user, per-address and global quotas replace the plan's 30 requests per session per 10 minutes (decided 2026-11-04). There is no per-intake limit; the per-user quota bounds an intake.
+  - **Not built, by decision (2026-11-04):** no overall deadline on a call beyond its attempts, no `Retry-After` handling, and no exponential backoff (one retry, after a fixed second). The browser waits 45 seconds, not the plan's 30, because it must outlast two 20-second attempts.
+- *Revised scope, AC and tests:*
+  - **Scope:** A time limit on each provider attempt and one retry on the errors that can clear; per-user, per-address and global quotas in place of a per-session limit; a browser wait longer than the function's worst case.
+  - **AC:**
+    - A stalled provider is answered with `timeout`, and a chat with no answer after 45 seconds ends in the browser's timeout state.
+    - A 429, a 5xx or a network error is retried once; a timeout, a 402 or another 4xx is not.
+    - A caller over a quota, or any call past the daily ceiling, is refused before the provider is called, and a malformed request spends no quota.
+  - **Tests:** Model and handler tests for each retry case and the stall, quota tests in SQL and in unit tests, and the browser timeout in the chat hook's test.
 
 #### B-3.2 User-facing failure states
 - **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** B-3.1 · **Milestone:** M1
-- **Built:** 'Try again' and 'Continue manually', the prospect's message stays, and the input is never disabled. Tested for a 502, a thrown error, retry and dismiss. Since 2026-11-04 'Continue manually' also opens Review with the keyboard on its heading, where every answer can be added.
-- **Notes:** No client-side timeout: `pending` lasts as long as `functions.invoke` takes.
+- **Built:** The chat says why Lenore couldn't answer, in words chosen by the function's error code (US-2.4a, `CHAT_FAILURE_MESSAGES` in `src/data/aiFailure.ts`): a rate limit, the daily cap, a timeout, Lenore not set up or paid for (`unavailable`), the provider or the function not answering (`provider_error`, or no answer at all: now told apart from `unavailable` as `unreachable`), and any other failure. The prospect's message stays in the conversation, and the input is never disabled. 'Continue manually' is always offered, and opens Review with the keyboard on its heading, where every answer can be added (2026-11-04). 'Try again' is offered only when retrying could clear the failure (`retryCanClear`), so never for `daily_cap` or `unavailable`, whose words say instead that the prospect can keep filling in the workspace. A chat with no answer after 45 seconds shows the timeout's words, with Try again (B-3.1). The Upload tab says why the last read of a file didn't go through, and follows the same rule: after a daily cap or `unavailable` it offers no 'Read it' or 'Try again' until the page is reloaded, and its words for `unavailable` no longer promise a retry. Tested in `ChatFailureNotice.test.tsx` (each kind's words and buttons), `TranscriptPanel.test.tsx` (under each kind's notice, the message stays on screen and the input sends), `useLenoreChat.test.ts` (each code's kind, the request id, the timeout, retry and dismiss), `UploadTab.test.tsx` and `useSessionDocuments.test.ts`.
+- **Notes:**
+  - **Revised.** v1.0 offered 'Try again' on every failure. A daily cap, or a provider that isn't set up, can't be checked or can't be paid, doesn't clear by retrying, so the button is not shown for them (decided 2026-11-04). The function's own wording for `unavailable` ("Please try again in a few minutes", in the raw response) is not shown to prospects and is unchanged.
+  - **Words for `unavailable`.** The chat's words changed although they promised no retry: US-2.4a's "Lenore can't be reached right now. Your message is saved." didn't tell the prospect they could carry on in the workspace, which is all that is left to them once Try again is gone. Those words now belong to `unreachable`, which keeps Try again.
+  - **Per file in the Upload tab.** The rule applies to the file whose read was put off: its retry is hidden. Another file still offers 'Read it', a first read, which the function refuses the same way and the tab then says why. The hidden button comes back when the page is reloaded, so after the daily cap resets a reload is needed to read that file. Judged enough for now (2026-11-04).
+  - The browser waits 45 seconds, not 30 (B-3.1). A document read has no browser timeout: one left processing shows as failed after 5 minutes (US-2.4a).
 
 #### B-3.3 Operational logs with redaction
-- **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-3.1 · **Milestone:** M1
-- **Built:** `failureLogLine` and `unexpectedErrorLine` emit only fixed fields (request id, provider, kind, status, attempts, latency), and the handler uses them: the raw provider body is no longer logged. Tests assert that a provider body and an unexpected error's message appear in neither the logs nor the response.
-- **Remaining:** No session id is logged or sent, so a failure cannot be found by session.
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-3.1 · **Milestone:** M1
+- **Built:** `failureLogLine` and `unexpectedErrorLine` emit only fixed fields, built from codes and ids (request id, intake id as `session=`, provider, kind, status, attempts, latency), and both functions use them: the raw provider body is never logged, and a document reader's failure names the error's class only, since its message can quote the file (US-2.4a). Every signed-in call to either AI function also leaves one row in `ai_extraction_events` with its request id, intake id, outcome and error code, so a failure is found by intake (`docs/AI_OPERATIONS.md` → "Finding a failed extraction"); the table's checks refuse anything in `fields` or `refused_paths` that isn't a field name or a schema path. No log line or event holds prospect content: a message, a quote, a value or a provider's response. Before text is stored or sent to the model, `redactSensitive` (`supabase/functions/_shared/sensitive.ts`, shared by the browser and the functions) now also removes an SSN written with en or em dashes or with dots throughout (123–45–6789, 123.45.6789), an SSN glued to its label (ssn123456789, SSN_123-45-6789, SS123-45-6789; SSN#123-45-6789 was already caught), and a card number in groups, with spaces or hyphens (four groups of four, three of four and the rest up to 19 digits, and American Express's 4-6-5), when it starts as a card number does and passes the card's check digit (Luhn), also where it follows other groups of digits (1042 4111 1111 1111 1111, as a document's joined table cells read). An EIN (12-3456789), a phone number with separators, an amount (a rate sheet's 512.40 1124.80 included), a date and a row of years or plan years are left alone. Tested in `chamber-extract/handler.test.ts` and `document-extract/handler.test.ts` (a provider body and an error's message in neither the logs nor the response), `events.test.ts`, `supabase/tests/ai_extraction_events.sql` and `sensitive.test.ts`; every user of the redaction (the census reader, `document-extract`'s parser and header check, the chat, the sanitiser, provenance) still passes its tests.
+- **Notes:**
+  - **Revised.** The intake id is logged and recorded where v1.0 asked for a session id: an intake is the session. `chamber-extract` takes it as an optional `session_id`, so a tab running an older front end keeps working (US-2.4a).
+  - A bare run of nine or more digits is still redacted whatever it is, an order number included (an over-redaction accepted 2026-11-04). So is a row of four-digit groups that starts like a card and happens to pass the check digit, about one such row in ten (a row of class codes, for instance; accepted 2026-11-04). A dot counts as an SSN's separator only when both are dots, so an amount next to another number stays.
 
 #### US-2.1 to US-2.4: re-scoped (D17 to D33)
 
@@ -476,6 +493,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Notes:**
   - **Writers today.** Nothing writes `unknown` until 2.1b (the model) and nothing writes `not_applicable` until 2.2a (the "Doesn't apply" control). Only voice `<extract>` writes the workers' comp fields until 2.1b, and they have no workspace home until 2.2a.
   - **Advisor queue.** Its open-field count still counts only inferred, incomplete and conflicting fields. 2.2a brings it in line with the open items.
+  - **Census tier (2026-11-04).** `REQUIRED_FIELDS` now names three; the census ranks first among the recommended fields (D25 as amended), as `src/data/readiness.ts` has it.
   - **Deploy order:** the two migrations, then the front end. A tab still running the old bundle reads a row holding workers' comp answers without them, and its next save drops them, so prospects with an intake open should reload after the deploy (as in A-2.2).
 - **Scope:**
   - Intake schema v2 is v1 plus four workers' comp fields (D18):
@@ -525,7 +543,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
     - Chat hook tests for each code and the timeout.
     - The e2e chat writes a real event.
 - **Notes:**
-  - **Codes.** `provider_unavailable` from the scope above became two codes: `unavailable` (not set up, budget unreadable, provider can't pay) and `provider_error`. The prospect sees the same words for both.
+  - **Codes.** `provider_unavailable` from the scope above became two codes: `unavailable` (not set up, budget unreadable, provider can't pay) and `provider_error`. The prospect saw the same words for both until B-3.2 told them apart (2026-11-04): `unavailable`, like `daily_cap`, no longer offers Try again, since retrying can't clear it.
   - **Optional intake id.** `session_id` is optional for now, so a tab running the previous front end keeps working. Make it required once old bundles are gone.
   - **Document reads have no browser timeout.** A read can take two 30-second attempts. A read left `processing` still shows as failed after 5 minutes, as before.
   - **Reading events.** Events are read in SQL only; the advisor screens don't show them yet.
@@ -576,6 +594,15 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 
 ##### US-2.3a Follow-up policy, ready to certify, wrap-up and golden transcripts
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** 2.1b · **Milestone:** M1
+- **Notes:**
+  - **Decisions carried over from B-1.3** (product owner, 2026-11-04; B-1.3 is superseded by this story):
+    - One item per turn: the missing required items first, then a request to confirm an inferred or incomplete value. A plain "yes" to a confirmation comes back as `confirmed`.
+    - A required field whose answers conflict: Lenore says the answers disagree and points to the Review tab's 'Use this'. She does not resolve it in chat.
+    - The census: only once the required items are settled, Lenore recommends uploading one (the Upload tab, or Your Team). She never lists employees in chat.
+    - When the required items are settled, she says so once and keeps discovering.
+    - Completion is derived when it is read; no status is stored (D27).
+    - Settled means confirmed by anyone, verified by an advisor, `not_applicable` on a present value, or a value with no provenance (B-2.2's rule, `requiredItems`).
+    - Verification: deterministic prompt tests with a stubbed model, plus one manual check in preview. The live extraction eval (`scripts/extraction-eval`, B-1.4) must be run on the new prompt.
 - **Scope:**
   - One shared function returns two things from the answers and field statuses (D26, D27): the unsettled fields by rank, and whether the intake is ready to certify.
   - The prompt names the next few unsettled fields, and Lenore asks about one at a time.
@@ -1214,7 +1241,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | Tier | Stories | Why |
 |---|---|---|
 | 0: put the fixes in front of users | Confirm which builds of `chamber-extract` and `document-extract` are deployed, deploy both (and check the deploy bundles `supabase/functions/_shared`), and make one real Lenore exchange and one real document read in preview (the open part of F-0.2). | The fixes are verified in code, tests, a Deno run and a CI run, not live. |
-| 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.4 (make the checks required), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus making the end-to-end test (I-4.3, built) a required check. D2 is decided (US-1.2, B-2.2): C-1.3 is done, and C-2.1 and B-1.3 can start. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
+| 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.4 (make the checks required), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus making the end-to-end test (I-4.3, built) a required check. D2 is decided (US-1.2, B-2.2): C-1.3 is done, and C-2.1 can start. B-1.3's follow-up policy moved to US-2.3a. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
 | 2: gate the private pilot (M2) | All M2 stories, plus the M1-tagged hardening stories that do not block the demo path: B-1.1, B-1.3, B-1.4, B-2.2, D-1.1 to D-1.4, D-2.2, D-3.1 to D-3.3, E-4.1, I-4.2. In practice: E-4.1, E-4.3, E-4.2, F-2.1, F-4.1, F-4.3, G-1.1 (schedule in a migration), G-1.3, H-1.1 to H-1.3, H-2.1, H-2.3, H-3.1, H-3.3, H-4.1 to H-4.3, I-1.x, I-2.x | Retention, deletion, upload hardening, an admin view of failed emails, legal pages, alerting, a runbook, and accessibility. Most wait on D3, D4, D10 and D13. |
 | 3: public launch (M3) | G-2.2, G-3.x, I-5.x, J-1.2, J-2.x, J-3.x | Bounces, voice reliability, domain, analytics and the launch checklist. G-3.x closed with D6 (the Advisor Console, no CRM). |
 
@@ -1277,13 +1304,13 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | A-3.2 | Restore the transcript on resume | S | High | M1 | DONE |
 | B-1.1 | Extraction response contract and parser | M | Highest | M1 | DONE |
 | B-1.2 | Merge policy and conflict capture | M | Highest | M1 | DONE |
-| B-1.3 | Lenore follow-up policy and completion state | M | Highest | M1 | NOT STARTED |
+| B-1.3 | Lenore follow-up policy and completion state | M | Highest | M1 | SUPERSEDED |
 | B-1.4 | Prompt versioning and golden-transcript fixtures | S | High | M1 | PARTIAL |
 | B-2.1 | Provenance badges and confirm-or-edit controls | M | High | M2 | DONE |
 | B-2.2 | Derive open items from the schema | S | High | M1 | DONE |
-| B-3.1 | Timeouts, retries, and rate limits | M | High | M1 | PARTIAL |
+| B-3.1 | Timeouts, retries, and rate limits | M | High | M1 | DONE |
 | B-3.2 | User-facing failure states | S | High | M1 | DONE |
-| B-3.3 | Operational logs with redaction | S | High | M1 | PARTIAL |
+| B-3.3 | Operational logs with redaction | S | High | M1 | DONE |
 | C-1.1 | Read-only review by Manuscript section | M | Highest | M1 | PARTIAL |
 | C-1.2 | Inline editing that writes to the canonical record | M | Highest | M1 | PARTIAL |
 | C-1.3 | Readiness gate with jump links | M | Highest | M1 | DONE |
@@ -1414,7 +1441,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 **Changed expectations worth a second look**
 - E-1.3: the URL lifetime is 60 seconds, not 5 minutes. Shorter is stricter, so the AC should be amended.
-- B-3.1: per-user, per-IP and global quotas exist instead of the plan's 30 requests per session per 10 minutes.
+- B-3.1: per-user, per-IP and global quotas exist instead of the plan's 30 requests per session per 10 minutes. Decided 2026-11-04: they replace it.
 - G-1.1: `last_error` holds the provider's error name and message (addresses replaced by `[email]`, key-like strings by `[redacted]`, 140 characters) rather than the raw response, which can echo the message. Raw provider bodies would put recipient addresses in the queue table and on the advisor page.
 - F-4.1: nine pipeline statuses with different names and no transition allow-list.
 

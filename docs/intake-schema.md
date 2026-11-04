@@ -62,7 +62,7 @@ Writers: **C** chat extraction (`chamber-extract`, which asks for every field bu
 | Company | `fein_count` | FEIN count | count | Recommended | 17 | C V |
 | Locations | `states` | States of operation | state list | Required | 2 | C D V E |
 | Locations | `hq_state` | HQ state | state | Recommended | 7 | C D V E |
-| Census | `census` | Employee census | census (read-only in the workspace) | Required | 4 | D V |
+| Census | `census` | Employee census | census (read-only in the workspace) | Recommended | 4 | D V |
 | Census | `has_1099` | 1099 contractors | boolean | Recommended | 34 | C D V |
 | Census | `ca_contractors` | California contractors | boolean | Recommended | 35 | C D V |
 | Benefits | `current_carrier` | Current carrier | text | Recommended | 8 | C D V E |
@@ -104,9 +104,9 @@ Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`
 Each field's `x-intake` annotation in the schema names its label, its section, whether it is required, and its rank. The vocabulary is `GLOSSARY.md`'s.
 
 - **Sections:** Company, Locations, Census, Benefits, Payroll, Workers' comp, and Operations & HR. Dependents have no section of their own: they sit inside each employee in the census. Locations are `hq_state`, `states` and each employee's `work_state` and `zip_code`; there is no list of worksites (decision D18). Workers' comp is the four `wc_` fields plus each employee's `class_code`.
-- **Required fields** are the four an intake needs before it is *ready to certify*: company legal name, states of operation, pay frequency and the census (D17). This is report-only for now: certification does not check it (C-1.3).
-- **Recommended fields** are every other field. None is needed to certify.
-- **Rank** is the order Lenore asks in, 1 first. The required fields rank first, then the recommended fields in the order of decision D25 (employee count, industry, HQ state, current medical carrier, renewal date, payroll vendor, then the four workers' comp fields), then the rest in the order the schema lists them. The product team owns the order; change `REQUIRED_FIELDS` or `RANKED_RECOMMENDED` in `supabase/functions/_shared/intakeSchema.ts`, then regenerate the published schema.
+- **Required fields** are the three an intake needs before it is *ready to certify*: company legal name, states of operation and pay frequency (D2, D25). They are `REQUIRED_ITEMS` in `src/data/readiness.ts`, which the Review, the Reckoning and the certification gate (`EA003`) use, and `src/data/intakeSchema.test.ts` fails while the schema's `required` flags differ from that list.
+- **Recommended fields** are every other field, the census first. None is needed to certify. The census is recommended because today it only comes from an uploaded file, and no document is required (D2).
+- **Rank** is the order Lenore asks in, 1 first. The required fields rank first, then the recommended fields in the order of decision D25 (the census, employee count, industry, HQ state, current medical carrier, renewal date, payroll vendor, then the four workers' comp fields), then the rest in the order the schema lists them. The product team owns the order; change `REQUIRED_FIELDS` or `RANKED_RECOMMENDED` in `supabase/functions/_shared/intakeSchema.ts`, then regenerate the published schema.
 - **Open items** are not stored. They are worked out from the answers and their field statuses (see "Field provenance").
 
 ### State codes
@@ -232,7 +232,7 @@ Intakes, provenance entries, advisor reviews and signed snapshots saved before t
 
 #### Never stored
 
-Social Security numbers and bank account details are not stored anywhere. `redactSensitive` (`supabase/functions/_shared/sensitive.ts`) replaces a formatted SSN, a labelled account or routing number, and any run of nine or more digits with `[redacted]` in free-text fields of `chamber_data`, chat messages (before they are stored or sent to the model), evidence quotes and everything `document-extract` reads or returns. Spreadsheet columns headed like an SSN or bank detail (`SSN`, `Tax ID`, `Routing Number`, `Direct Deposit Account` and similar) are never read, and the prospect is told which columns were skipped. The uploaded file is kept as it was, so a prospect can be told to upload a copy without those columns.
+Social Security numbers and bank account details are not stored anywhere. `redactSensitive` (`supabase/functions/_shared/sensitive.ts`) replaces a formatted SSN (groups split by hyphens, spaces, or en or em dashes, or by dots throughout: `123-45-6789`, `123–45–6789`, `123.45.6789`), an SSN glued to its label (`ssn123456789`, `SSN_123-45-6789`, `SS123-45-6789`), a labelled account or routing number, a card number in groups split by spaces or hyphens (`4111 1111 1111 1111`, three groups of four and the rest up to 19 digits, or American Express's `3782 822463 10005`) when it starts as a card number does (2 to 6) and passes the card's check digit (Luhn), also where it follows other groups of digits (a table's ID or year cell joined before it: `1042 4111 1111 1111 1111`), and any run of nine or more digits with `[redacted]` in free-text fields of `chamber_data`, chat messages (before they are stored or sent to the model), evidence quotes and everything `document-extract` reads or returns. Spreadsheet columns headed like an SSN or bank detail (`SSN`, `Tax ID`, `Routing Number`, `Direct Deposit Account` and similar) are never read, and the prospect is told which columns were skipped. The uploaded file is kept as it was, so a prospect can be told to upload a copy without those columns. An EIN (`12-3456789`), a phone number with separators (`(555) 123-4567`, `+1 555 123 4567`), an amount (`$85,000`, or a rate sheet's `512.40 1124.80`), a date (`01/02/1985`) and a row of years or class codes (`2021 2022 2023 2024`) are left alone. Two over-redactions are accepted: a bare run of nine or more digits is removed whatever it is, and so is a row of four-digit groups that starts like a card and happens to pass the check digit (about one such row in ten, a row of class codes for instance).
 
 ## Field provenance
 

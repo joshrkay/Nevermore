@@ -68,8 +68,8 @@ export const SECTION_LABELS: Record<FieldSection, string> = {
 
 /**
  * Published on each top-level property as `x-intake`.
- * - `required`: the intake needs the field before it is ready to certify (GLOSSARY.md, D17). Report-only:
- *   certification does not check it yet (C-1.3).
+ * - `required`: the intake needs the field before it is ready to certify (GLOSSARY.md, D2, D25): the
+ *   answers src/data/readiness.ts requires and the certification gate checks.
  * - `rank`: the order Lenore asks in, 1 first. Every required field ranks before every recommended one (D25).
  */
 export interface IntakeFieldMeta {
@@ -79,13 +79,14 @@ export interface IntakeFieldMeta {
   rank: number;
 }
 
-// The required fields, in the order Lenore asks for them.
-export const REQUIRED_FIELDS = ["company_name", "states", "pay_frequency", "census"] as const;
+// The required fields, in the order Lenore asks for them: readiness.ts's list (src/data/intakeSchema.test.ts).
+export const REQUIRED_FIELDS = ["company_name", "states", "pay_frequency"] as const;
 
-// The recommended fields ranked first (D25, a draft for the product team to edit). Every other field
-// follows in the order the schema lists it.
+// The recommended fields ranked first (D25, a draft for the product team to edit), the census before all
+// of them: it is recommended, not required (D2), since today it only comes from an uploaded file. Every
+// other field follows in the order the schema lists it.
 const RANKED_RECOMMENDED = [
-  "employee_count", "industry", "hq_state", "current_carrier", "renewal_date", "payroll_vendor",
+  "census", "employee_count", "industry", "hq_state", "current_carrier", "renewal_date", "payroll_vendor",
   "wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium",
 ] as const;
 

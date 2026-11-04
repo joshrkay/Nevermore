@@ -116,7 +116,7 @@ describe("useLenoreChat", () => {
     [503, "daily_cap", "daily_cap"],
     [504, "timeout", "timeout"],
     [503, "unavailable", "unavailable"],
-    [502, "provider_error", "unavailable"],
+    [502, "provider_error", "unreachable"],
     [502, "invalid_response", "failed"],
     [500, "internal", "failed"],
   ] as const)("tells a %i %s apart from other failures, as %s, and keeps the request id", async (status, code, kind) => {
@@ -133,11 +133,11 @@ describe("useLenoreChat", () => {
     expect(result.current.failure?.requestId).toBe("req-from-header");
   });
 
-  it("calls a request that couldn't reach Lenore at all unavailable", async () => {
+  it("calls a request that couldn't reach Lenore at all unreachable, which trying again can clear", async () => {
     invoke.mockResolvedValue({ data: null, error: new FunctionsFetchError(new TypeError("Failed to fetch")) });
     const { result } = setup();
     await act(async () => { await result.current.send("hi"); });
-    expect(result.current.failure).toEqual({ text: "hi", kind: "unavailable" });
+    expect(result.current.failure).toEqual({ text: "hi", kind: "unreachable" });
   });
 
   it(`gives up after ${CHAT_TIMEOUT_MS / 1000} seconds with no answer, keeps the message and offers to try again`, async () => {
