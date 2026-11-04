@@ -102,7 +102,10 @@ async function verifiedProspect(request: APIRequestContext) {
         },
       },
     });
-  return { id, certify };
+  // An ordinary save, as the Chamber's autosave sends one.
+  const save = (fields: Record<string, unknown>) =>
+    request.patch(`${GATEWAY_URL}/rest/v1/chamber_sessions?id=eq.${id}&select=id,status`, { headers, data: fields });
+  return { id, certify, save };
 }
 
 test("the database refuses a certification without the required answers, and names them", async ({ request }) => {
@@ -115,6 +118,30 @@ test("the database refuses a certification without the required answers, and nam
   expect(await sql("SELECT count(*)::int AS n FROM chamber_certifications WHERE session_id = $1", [id])).toEqual([{ n: 0 }]);
 
   const accepted = await certify({ company_name: "Thin Co", states: ["NY"], pay_frequency: "weekly" });
+  expect(accepted.status()).toBe(200);
+  expect(await accepted.json()).toEqual([{ id, status: "submitted" }]);
+});
+
+test("the database refuses a certification while a required answer has two values, and names it", async ({ request }) => {
+  const { id, certify, save } = await verifiedProspect(request);
+  const answers = { company_name: "Two Names Co", states: ["NY"], pay_frequency: "weekly" };
+  const source = { kind: "transcript", message_id: "m1" };
+  const conflicting = {
+    status: "conflicting", source, updated_at: new Date().toISOString(),
+    candidates: [{ value: "Two Names Co", source }, { value: "Two Names LLC", source: { kind: "document", document_id: "d1" } }],
+  };
+  expect(await save({ chamber_data: answers, field_provenance: { company_name: conflicting } })).toBeOK();
+
+  const refused = await certify(answers);
+  expect(refused.status()).toBe(400);
+  expect(await refused.json()).toMatchObject({ code: "EA008", details: "company_name" });
+  expect(await sql("SELECT status FROM chamber_sessions WHERE id = $1", [id])).toEqual([{ status: "in_progress" }]);
+  expect(await sql("SELECT count(*)::int AS n FROM chamber_certifications WHERE session_id = $1", [id])).toEqual([{ n: 0 }]);
+
+  // The prospect picks one, which confirms it, and certifying goes through.
+  const picked = { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: new Date().toISOString() };
+  expect(await save({ field_provenance: { company_name: picked } })).toBeOK();
+  const accepted = await certify(answers);
   expect(accepted.status()).toBe(200);
   expect(await accepted.json()).toEqual([{ id, status: "submitted" }]);
 });

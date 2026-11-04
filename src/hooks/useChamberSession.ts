@@ -12,7 +12,7 @@ import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup }
 import { INTAKE_SCHEMA_VERSION, validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
-import { describeMissingKeys } from "@/data/readiness";
+import { describeRequiredKeys } from "@/data/readiness";
 import {
   certificationFromRow,
   fileIdForSession,
@@ -129,6 +129,9 @@ const CLOSED_INTAKE_CODE = "EA002";
 // Raised when a certification arrives without the answers it requires; DETAIL lists their keys. The
 // Reckoning doesn't send one, so this means the answers changed under it. Nothing was written.
 const NOT_READY_CODE = "EA003";
+// Raised when a certification arrives while a required answer holds two competing values; DETAIL lists their
+// keys. The Reckoning doesn't send one, so the provenance changed under it. Nothing was written.
+const CONFLICTING_CODE = "EA008";
 // Archiving an intake that is already archived, or isn't this person's: either way it is out of the Chamber.
 // (PostgREST answers this SQLSTATE with HTTP 404.)
 const NOT_FOUND_CODE = "PT404";
@@ -1156,8 +1159,12 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       return blockedMessage();
     } else if (error?.code === NOT_READY_CODE) {
       // A definite refusal: nothing changed, and saving goes on as before.
-      const missing = describeMissingKeys(error.details);
+      const missing = describeRequiredKeys(error.details);
       return { message: `Add ${missing.length > 0 ? missing.join(", ").toLowerCase() : "the required answers"} on the Review tab, then certify.` };
+    } else if (error?.code === CONFLICTING_CODE) {
+      // As definite as a missing answer: nothing changed.
+      const conflicting = describeRequiredKeys(error.details);
+      return { message: `Choose one answer for ${conflicting.length > 0 ? conflicting.join(", ").toLowerCase() : "each answer given twice"} on the Review tab, then certify.` };
     } else if (error) {
       // It may have landed anyway; a later write has to be able to tell.
       rememberUnconfirmed(version, { submitted: submission, chamber_data: storedData }, isOwnSubmission);

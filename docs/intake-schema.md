@@ -327,6 +327,14 @@ The employee census is recommended, not required (`RECOMMENDED_ITEMS`): it can o
 - **In the database.** `public.intake_missing_required(chamber_data)` returns the missing keys in the order above. A certification sent from the browser (`current_user` `anon` or `authenticated`) is refused while any are missing, with SQLSTATE `EA003` and the keys, comma-separated, in DETAIL (`company_name,pay_frequency`). Nothing is written. Other saves, existing certifications and privileged writes are not checked. `src/data/schemaSync.test.ts` compares the function's keys with `REQUIRED_ITEMS`.
 - **On `EA003`.** The client names the missing answers and points to the Review tab. It is a definite refusal: saving carries on as before.
 
+#### A required answer in conflict
+
+A required answer whose field status is `conflicting` (Lenore and a document, or two things the prospect said, disagree) blocks certification too, until the prospect picks one with "Use this" in Review, which confirms it (B-2, decision D26). A conflict on any other field is an open item and never blocks. A states conflict blocks even when census rows carry work states.
+
+- **In the app.** `conflictingRequired(provenance)` in `src/data/readiness.ts`. Review lists each under "Still needed" with a link to the field and its candidates; The Reckoning lists them ("choose one answer for") and `certificationBlockers` keeps Generate disabled.
+- **In the database.** `public.intake_conflicting_required(field_provenance)` returns the keys in the order above (migration `20261104100000_certification_conflicts.sql`). A certification from the browser is refused while any are in conflict, after the missing-answer check, with SQLSTATE `EA008` and the keys, comma-separated, in DETAIL. It reads the row's `field_provenance`, which the browser saves before it certifies. Nothing is written; other saves, existing certifications and privileged writes are not checked, and a conflict that appears after a certification doesn't withdraw it (the certified answers haven't changed). `src/data/schemaSync.test.ts` compares the keys with `REQUIRED_ITEMS`. Field provenance is written by the browser and not validated, so this holds an honest client to its own state.
+- **On `EA008`.** The client names the answers and points to the Review tab. It is a definite refusal, like `EA003`.
+
 ### The chosen PEO (`chosen_peo`)
 
 `chamber_sessions.chosen_peo` (text, nullable, migration `20261103100000_chosen_peo.sql`) is the PEO the prospect picked on PEO Match, kept so that a reload during the final steps doesn't lose it. It is `NULL` until they pick one, which they never have to: we don't rank PEOs or choose for them. It can be a listed PEO or one the prospect typed in.

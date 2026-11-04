@@ -1510,6 +1510,26 @@ describe("useChamberSession", () => {
         expect(result.current.saveStatus).toBe("saved");
       });
 
+      it("names the answers in conflict when the database refuses a certification over them, and keeps saving", async () => {
+        const { result } = await open();
+        let ok: SubmitResult | undefined;
+        const pending = result.current.submit(submission).then((r) => { ok = r; });
+        await drain();
+        updates[0].resolve({ error: { message: "This intake can't be certified yet: company_name, states has two different answers", code: "EA008", details: "company_name,states" } });
+        await act(async () => { await pending; });
+        expect(ok).toEqual({ message: "Choose one answer for company legal name, states of operation on the Review tab, then certify." });
+        expect(result.current.certification.status).toBe("none");
+        expect(dispatchOutbox).not.toHaveBeenCalled();
+
+        edit(result, "Acme Inc");
+        await autosave();
+        expect(updates).toHaveLength(2);
+        expect(updates[1].payload).not.toHaveProperty("status");
+        updates[1].resolve({ error: null });
+        await drain();
+        expect(result.current.saveStatus).toBe("saved");
+      });
+
       it("says which answer was refused when the submission write itself is refused", async () => {
         // Certifying re-checks the answers even when nothing was edited, so an older row can fail here.
         const { result } = await open();

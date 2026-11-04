@@ -150,6 +150,11 @@ describe("server and client intake rules agree", () => {
     expect(keys).toEqual(REQUIRED_ITEMS.map((item) => item.key));
   });
 
+  it("blocks certification on a conflict in the same required fields", () => {
+    const keys = quoted(blocks("required_conflict_fields").join("\n"));
+    expect(keys).toEqual(REQUIRED_ITEMS.flatMap((item) => (item.field ? [item.field] : [])));
+  });
+
   it("keeps the same longest PEO name", () => {
     const [sql] = blocks("chosen_peo_length");
     const limits = /BETWEEN\s+(\d+)\s+AND\s+(\d+)/.exec(sql);
