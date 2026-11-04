@@ -202,7 +202,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
 
   // A value whose answers conflict says so wherever the web Manuscript shows its red chip; a reader of
   // the printed packet would otherwise take it as settled. A field an advisor verified is settled
-  // (buildManuscript shows it confirmed), so it is never marked.
+  // (buildManuscript shows it confirmed), so it is not marked, unless it is a required answer in conflict.
   const keyValues = (rows: ManuscriptRow[]) =>
     table(
       [

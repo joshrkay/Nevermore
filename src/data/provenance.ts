@@ -211,11 +211,19 @@ export function parseProvenance(raw: unknown): ProvenanceMap {
  * show: one that still needs the prospect (inferred, incomplete, in conflict). A confirmed answer is already
  * settled, and unknown or not applicable hold no answer, so they keep their status. A REQUIRED answer in conflict
  * is never settled this way: certification (D26, EA008) reads the field's status, not the advisor's review, so
- * it still blocks and the prospect still has to choose one answer. The open-items list, the required-items rule
- * and the advisor's own packet (`applyAdvisorReview`) settle every status instead.
+ * it still blocks and the prospect still has to choose one answer. The required-items rule and the advisor's own
+ * packet (`applyAdvisorReview`) settle every status instead, and the open-items list every status but that one
+ * (`verificationClosesOpenItem`).
  */
 export const verificationSettles = (status: FieldStatus | undefined, required = false): boolean =>
   status === "inferred" || status === "incomplete" || (status === "conflicting" && !required);
+
+/**
+ * Whether an advisor's verification closes an item in the open-items list: every status but a REQUIRED answer in
+ * conflict, which still has to be chosen. (`verificationSettles` is narrower: it is about what the answer shows as.)
+ */
+export const verificationClosesOpenItem = (status: FieldStatus | undefined, required: boolean): boolean =>
+  !(status === "conflicting" && required);
 
 /**
  * The also-heard notes worth showing: those that aren't already one of a conflict's rival answers, when those
@@ -490,7 +498,7 @@ export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_
  */
 export function fieldOpenItems(provenance: ProvenanceMap, verified: ReadonlySet<string> = new Set()): FieldOpenItem[] {
   return OPEN_FIELD_STATUSES.flatMap((status) =>
-    FIELD_KEYS.filter((f) => provenance[f]?.status === status && !(verified.has(f) && !(status === "conflicting" && isRequiredField(f)))).map((field) => ({
+    FIELD_KEYS.filter((f) => provenance[f]?.status === status && !(verified.has(f) && verificationClosesOpenItem(status, isRequiredField(f)))).map((field) => ({
       field,
       label: FIELD_LABELS[field],
       reason: FIELD_OPEN_REASONS[status],

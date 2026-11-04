@@ -19,11 +19,3 @@ export async function readVerifiedFields(sessionId: string): Promise<ReadonlySet
     return null;
   }
 }
-
-/**
- * The fields an advisor verified on the intake. None when they can't be read: that only means a field
- * stays on the prospect's list a little longer.
- */
-export async function fetchVerifiedFields(sessionId: string): Promise<ReadonlySet<string>> {
-  return (await readVerifiedFields(sessionId)) ?? NO_VERIFIED_FIELDS;
-}

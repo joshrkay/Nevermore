@@ -1,11 +1,14 @@
 // Open items (GLOSSARY.md, US-2.2a): what the prospect still owes on an intake, one list, used by Review, The
-// Manuscript and (by its SQL copy, public.advisor_list_submissions) the advisor queue. Each item says why it is open.
+// Manuscript and (by its SQL copy, public.advisor_list_submissions) the advisor queue, which differs in one case: it
+// leaves out a required answer in conflict that an advisor verified, as every other verified field. Each item says
+// why it is open.
 //
 // - A required answer with none: "Not provided" ("Prospect to provide" when the prospect said they don't know).
 // - The employee census when none is uploaded: "Document needed". It is recommended, not required (D2): it never
 //   blocks certification, but underwriters need one, and it can only come from a document.
 // - Any other field whose status is conflicting, incomplete, unknown or inferred, in that order (fieldOpenItems),
-//   except one an advisor verified, which is settled.
+//   except one an advisor verified, which is settled (verificationClosesOpenItem): not a required answer in conflict,
+//   which certification still needs chosen.
 // A field marked "Doesn't apply" is closed. A recommended field with no answer is not an open item.
 import type { ChamberData } from "./chamberTypes";
 import { fieldOpenItems, OPEN_FIELD_STATUSES, type FieldKey, type FieldOpenReason, type ProvenanceMap } from "./provenance";

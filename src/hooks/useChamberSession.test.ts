@@ -729,6 +729,45 @@ describe("useChamberSession", () => {
       await waitFor(() => expect(verified(result)).toEqual(["company_name"]));
     });
 
+    describe("when the prospect keeps their changes over another tab's save", () => {
+      // The prospect edits something else; the save is refused because another tab saved first.
+      const conflicted = async (otherTab: Record<string, unknown>) => {
+        const result = await open(["company_name"]);
+        vi.useFakeTimers();
+        act(() => result.current.setChamberData((prev) => ({ ...prev, pay_frequency: "Bi-weekly" })));
+        await act(async () => { vi.advanceTimersByTime(2000); });
+        resumeRow = rowOf(otherTab, { data_version: 5 });
+        rpcResult = { data: [], error: null }; // the server reset the review if that tab changed the answer
+        updates[0].resolve({ error: null, data: [] });
+        await drain();
+        expect(result.current.saveStatus).toBe("conflict");
+        expect(verified(result)).toEqual(["company_name"]); // nothing has been decided yet
+        return result;
+      };
+
+      it("drops one the other tab changed, even though the prospect's own answer is still the one verified", async () => {
+        const result = await conflicted({ company_name: "Totally Different Corp" });
+        act(() => result.current.keepMine());
+        // Their answer goes back over the other tab's, but the server reset that review and won't restore it.
+        expect(verified(result)).toEqual([]);
+        await drain();
+        updates[1].resolve({ error: null });
+        await drain();
+        expect(result.current.chamberData.company_name).toBe("Acme Bindery");
+        expect(verified(result)).toEqual([]);
+      });
+
+      it("keeps one the other tab left alone", async () => {
+        const result = await conflicted({ industry: "Printing" });
+        act(() => result.current.keepMine());
+        expect(verified(result)).toEqual(["company_name"]);
+        await drain();
+        updates[1].resolve({ error: null });
+        await drain();
+        expect(verified(result)).toEqual(["company_name"]);
+      });
+    });
+
     it("has none for a new intake, without asking", async () => {
       const { result } = renderHook(() => useChamberSession());
       await startIntake(result);

@@ -180,36 +180,35 @@ describe("ReviewTab sections", () => {
     expect(section("Benefits")).toHaveTextContent("Retirement planNo");
   });
 
-  it("counts an answer an advisor verified as settled in its section's progress", () => {
-    const incomplete: ProvenanceMap = {
-      pay_frequency: { status: "incomplete", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-04T00:00:00Z" },
-    };
-    const settledInPayroll = (verified: string[]) => {
-      const { unmount } = render(<ReviewTab data={complete} provenance={incomplete} verified={new Set(verified)} onAction={() => {}} onProceed={() => {}} />);
-      const settled = Number(/^(\d+) of/.exec(screen.getByTestId("progress-payroll").textContent ?? "")?.[1]);
-      unmount();
-      return settled;
-    };
-    expect(settledInPayroll(["pay_frequency"])).toBe(settledInPayroll([]) + 1);
-  });
-
-  it("doesn't count as settled a verified answer that is still unresolved: one in required conflict, or none at all", () => {
+  describe("an answer an advisor verified, in its section's progress", () => {
     const at = "2026-11-04T00:00:00Z";
     const said = { kind: "transcript" as const, message_id: "m1" };
-    const progress = (id: string, data: typeof complete, provenance: ProvenanceMap, verified: string[]) => {
+    // How many of a section's answers are settled, with these answers and verifications.
+    const settled = (id: string, data: typeof complete, provenance: ProvenanceMap, verified: string[]) => {
       const { unmount } = render(<ReviewTab data={data} provenance={provenance} verified={new Set(verified)} onAction={() => {}} onProceed={() => {}} />);
-      const settled = Number(/^(\d+) of/.exec(screen.getByTestId(id).textContent ?? "")?.[1]);
+      const count = Number(/^(\d+) of/.exec(screen.getByTestId(id).textContent ?? "")?.[1]);
       unmount();
-      return settled;
+      return count;
     };
-    // Company legal name in conflict: certification (and the row) still need it chosen, verified or not.
-    const conflict: ProvenanceMap = {
-      company_name: { status: "conflicting", source: said, updated_at: at, candidates: [{ value: "Acme", source: said }, { value: "Acme Press", source: said }] },
-    };
-    expect(progress("progress-company", complete, conflict, ["company_name"])).toBe(progress("progress-company", complete, conflict, []));
-    // Pay frequency with no answer: verifying never supplies one.
-    const blank = { ...complete, pay_frequency: "" };
-    expect(progress("progress-payroll", blank, {}, ["pay_frequency"])).toBe(progress("progress-payroll", blank, {}, []));
+
+    it("counts as settled", () => {
+      const incomplete: ProvenanceMap = { pay_frequency: { status: "incomplete", source: said, updated_at: at } };
+      expect(settled("progress-payroll", complete, incomplete, ["pay_frequency"])).toBe(settled("progress-payroll", complete, incomplete, []) + 1);
+    });
+
+    it("doesn't count one in required conflict: certification still needs it chosen", () => {
+      const conflict: ProvenanceMap = {
+        company_name: { status: "conflicting", source: said, updated_at: at, candidates: [{ value: "Acme", source: said }, { value: "Acme Press", source: said }] },
+      };
+      expect(settled("progress-company", complete, conflict, ["company_name"])).toBe(settled("progress-company", complete, conflict, []));
+    });
+
+    it("doesn't count one with no answer: verifying never supplies one", () => {
+      // The status is one verification would settle, so only the missing answer keeps it open.
+      const blank = { ...complete, pay_frequency: "" };
+      const incomplete: ProvenanceMap = { pay_frequency: { status: "incomplete", source: said, updated_at: at } };
+      expect(settled("progress-payroll", blank, incomplete, ["pay_frequency"])).toBe(settled("progress-payroll", blank, incomplete, []));
+    });
   });
 
   it("lists every answer in the intake schema, each with its badge, and says how much of each section is settled (D28)", () => {
