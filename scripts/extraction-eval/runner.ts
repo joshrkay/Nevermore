@@ -6,7 +6,7 @@
 // system and the process.
 
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { chatRequestBody, createChatMessage, type ChatMessage } from "@/data/chat";
+import { CHAT_FALLBACK_REPLY, chatRequestBody, createChatMessage, openingMessage, type ChatMessage } from "@/data/chat";
 import { applyExtraction, transcriptExtraction, type IntakeState } from "@/data/provenance";
 import { redactSensitive } from "@/data/sensitive";
 import { callModel, type ModelRequest, type ModelResult } from "../../supabase/functions/_shared/ai/model.ts";
@@ -52,8 +52,8 @@ export interface FixtureRun {
 /** Sends the fixture's messages one after another, carrying the intake forward as the Chamber does. */
 export async function runFixture(fixture: Fixture, model: ModelCall): Promise<FixtureRun> {
   let state: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
-  // The conversation so far, as the Chamber keeps it: each call carries its last few messages.
-  const transcript: ChatMessage[] = [];
+  // The conversation so far, as the Chamber keeps it, from Lenore's opening line: each call carries its last few messages.
+  const transcript: ChatMessage[] = [openingMessage()];
   for (const [i, turn] of fixture.turns.entries()) {
     // useLenoreChat.send: the model and the transcript only see the message with sensitive numbers removed.
     const text = redactSensitive(turn.message);
@@ -75,7 +75,8 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
     const response = JSON.parse(JSON.stringify(shapeExtraction(result.args)));
     // ChamberPage's onExtracted for a chat message.
     if (response.extracted) state = applyExtraction(state, response.extracted, transcriptExtraction(message, response));
-    if (typeof response.reply === "string" && response.reply.trim()) transcript.push(createChatMessage("lenore", response.reply.trim()));
+    // useLenoreChat: her reply, or the fallback line when the answer has none.
+    transcript.push(createChatMessage("lenore", (typeof response.reply === "string" && response.reply.trim()) || CHAT_FALLBACK_REPLY));
   }
   return { state, error: null };
 }

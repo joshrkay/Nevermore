@@ -152,7 +152,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
   // in their fixed order, as certificationBlockingItems decides for the Reckoning too. A missing one is
   // listed even if an advisor verified its field (verifying never supplies a value), and so is one in
   // conflict (the database refuses it whoever verified it).
-  const stillNeeded = certificationBlockingItems(data, provenance);
+  const stillNeeded = certificationBlockingItems(data, provenance, verified);
   // Then the required answers given but not settled, in order, ahead of every other field that still needs
   // the prospect. A field is listed once, and never one an advisor verified. While the census decides States
   // of operation, the census is the answer to confirm.

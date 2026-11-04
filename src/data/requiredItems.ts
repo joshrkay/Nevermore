@@ -107,11 +107,12 @@ export const isIntakeComplete = (items: readonly RequiredItem[]): boolean =>
  * it too, EA003) or in conflict. A required field whose answers conflict blocks whoever verified it and
  * whatever the census says, as the database's gate does (B-2 D26, EA008: it reads the field statuses, not
  * the advisor's reviews). States of operation that only a census in conflict gives blocks too, in the browser
- * only (B-2.2), and is named as the census. The recommended census never blocks by itself.
+ * only (B-2.2), and is named as the census; the database never reads the census, so an advisor's verification
+ * of it settles it, as it does everywhere else. The recommended census never blocks by itself.
  */
-export function certificationBlockingItems(data: ChamberData, provenance: ProvenanceMap): RequiredItem[] {
+export function certificationBlockingItems(data: ChamberData, provenance: ProvenanceMap, verified: ReadonlySet<string>): RequiredItem[] {
   const refused = new Set(conflictingRequired(provenance).map((item) => item.key));
-  return requiredItems(data, provenance, NO_VERIFIED_FIELDS).flatMap((item): RequiredItem[] => {
+  return requiredItems(data, provenance, verified).flatMap((item): RequiredItem[] => {
     if (!item.required) return [];
     if (item.state === "missing") return [item];
     if (refused.has(item.item)) {

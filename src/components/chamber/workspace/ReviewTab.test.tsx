@@ -97,6 +97,12 @@ describe("ReviewTab needs your review", () => {
     expectListed([["Incomplete", "Employee count"]]);
   });
 
+  it("still needs a required answer in conflict, even if an advisor verified its field, as the database refuses it", () => {
+    render(<ReviewTab data={data} provenance={provenance} verified={new Set(["pay_frequency"])} onAction={() => {}} onProceed={() => {}} />);
+    expect(stillNeeded()).toEqual(["States of operation", "Pay frequency"]);
+    expect(screen.getByRole("button", { name: "Choose pay frequency" })).toBeInTheDocument();
+  });
+
   it("still needs a required answer that was never given, even if an advisor verified its field", () => {
     render(<ReviewTab data={EMPTY_CHAMBER_DATA} verified={new Set(["company_name", "census"])} onProceed={() => {}} />);
     expect(stillNeeded()).toEqual(["Company legal name", "States of operation", "Pay frequency"]);

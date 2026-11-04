@@ -271,10 +271,10 @@ describe("ReckoningTab certification", () => {
       // Only conflicts hold certification back for now; an unconfirmed item doesn't.
       company_name: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-03T12:00:00Z" },
     };
-    const mount = (provenance: ProvenanceMap, data = DEMO_CHAMBER_DATA) =>
+    const mount = (provenance: ProvenanceMap, data = DEMO_CHAMBER_DATA, verified?: ReadonlySet<string>) =>
       render(
         <MemoryRouter>
-          <ReckoningTab data={data} provenance={provenance} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+          <ReckoningTab data={data} provenance={provenance} verified={verified} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
         </MemoryRouter>,
       );
 
@@ -296,6 +296,24 @@ describe("ReckoningTab certification", () => {
       sign();
       expect(submitButton()).toBeDisabled();
       expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for employee census");
+      expect(screen.getByRole("alert", { name: "Answers still needed" })).toHaveTextContent("Its answers conflict, and it gives your states.");
+    });
+
+    it("still holds back a field in conflict that an advisor verified, as the database refuses it", () => {
+      mount(conflicting, DEMO_CHAMBER_DATA, new Set(["pay_frequency"]));
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeDisabled();
+    });
+
+    it("lets the census's states through once an advisor verified the census", () => {
+      const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+      mount({ census: { ...conflicting.pay_frequency!, candidates: [] } }, { ...DEMO_CHAMBER_DATA, states: [], census }, new Set(["census"]));
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeEnabled();
     });
   });
 });

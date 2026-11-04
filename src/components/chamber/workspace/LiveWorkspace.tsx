@@ -139,6 +139,7 @@ const LiveWorkspace = ({
           <ReckoningTab
             data={data}
             provenance={provenance}
+            verified={verified}
             peoName={chosenPeo}
             sessionId={sessionId}
             fileId={fileId}

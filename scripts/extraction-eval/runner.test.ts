@@ -2,7 +2,7 @@
 // stub model with canned tool arguments. No provider is called.
 import { describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { chatContext } from "@/data/chat";
+import { chatAnswers, OPENING_MESSAGE } from "@/data/chat";
 import type { ModelRequest, ModelResult } from "../../supabase/functions/_shared/ai/model";
 import { buildUserPrompt } from "../../supabase/functions/chamber-extract/prompt";
 import { CHAT_MAX_TOKENS, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema";
@@ -91,19 +91,23 @@ describe("runFixture", () => {
     expect(model.requests).toHaveLength(2);
     expect(model.requests[0]).toEqual({
       system: SYSTEM_PROMPT,
-      user: buildUserPrompt({ message: "We have 40 employees.", context: chatContext(EMPTY_CHAMBER_DATA), statuses: {}, recent: [] }),
+      user: buildUserPrompt({ message: "We have 40 employees.", context: chatAnswers(EMPTY_CHAMBER_DATA), statuses: {}, recent: [{ sender: "lenore", text: OPENING_MESSAGE }] }),
     });
     const afterFirst = { ...EMPTY_CHAMBER_DATA, employee_count: 40 };
     expect(model.requests[1].user).toBe(
       buildUserPrompt({
         message: "Payroll is getting harder to manage with 55 employees.",
-        context: chatContext(afterFirst),
+        context: chatAnswers(afterFirst),
         statuses: { employee_count: "confirmed" },
-        // Lenore's answer to the first message is part of the conversation the second carries.
-        recent: [{ sender: "user", text: "We have 40 employees." }, { sender: "lenore", text: "Noted." }],
+        // The conversation so far, from Lenore's opening line to her answer to the first message.
+        recent: [
+          { sender: "lenore", text: OPENING_MESSAGE },
+          { sender: "user", text: "We have 40 employees." },
+          { sender: "lenore", text: "Noted." },
+        ],
       }),
     );
-    expect(model.requests[1].user).not.toContain("census\"");
+    expect(model.requests[1].user).not.toContain("census");
     expect(run.error).toBeNull();
   });
 
