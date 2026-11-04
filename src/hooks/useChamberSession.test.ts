@@ -641,6 +641,18 @@ describe("useChamberSession", () => {
       await waitFor(() => expect(verified(result)).toEqual(["pay_frequency"]));
     });
 
+    it("drops one that changed and was changed back while the read that names it was on its way", async () => {
+      deferVerifiedRead = true;
+      resumeRow = rowOf();
+      const { result } = renderHook(() => useChamberSession("s7"));
+      await waitFor(() => expect(pendingVerifiedReads).toHaveLength(1));
+      // Two corrections in a row: the answer is back where it was loaded, but the server reset that review at the first.
+      act(() => result.current.updateIntake((prev) => ({ data: { ...prev.data, company_name: "Beta LLC" }, provenance: prev.provenance })));
+      act(() => result.current.updateIntake((prev) => ({ data: { ...prev.data, company_name: "Acme Bindery" }, provenance: prev.provenance })));
+      await answerRead(0, ["company_name", "pay_frequency"]);
+      await waitFor(() => expect(verified(result)).toEqual(["pay_frequency"]));
+    });
+
     it("reads again when the latest saved row is loaded, so another tab's change drops the badge", async () => {
       const result = await open(["company_name"]);
       // Another tab changed the answer, and the server reset that review.

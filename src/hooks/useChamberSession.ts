@@ -288,6 +288,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // to, so another intake on screen never shows them. See readVerified and forgetChangedVerifications.
   const [verified, setVerified] = useState<{ sessionId: string; answers: Record<string, string> } | null>(null);
   const verifiedReadRef = useRef(0);
+  // The read still on its way: the answers it was started against and the fields that have differed from them
+  // since, for good, even if the old answer was written back.
+  const pendingVerifiedRead = useRef<{ read: number; loaded: ChamberData; changed: Set<string> } | null>(null);
   // Changes whenever the conversation on screen is replaced by a blank one (start over, another person
   // signing in), so a reply or a voice line meant for the old conversation is never added to the new one.
   const [conversationEpoch, setConversationEpoch] = useState(0);
@@ -433,6 +436,12 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // the next read; and the set is read again whenever a row is loaded (opening the intake, Load latest, Discard),
   // which is also what brings back a verification the server still holds after a local edit is discarded.
   const forgetChangedVerifications = useCallback((next: ChamberData) => {
+    const pending = pendingVerifiedRead.current;
+    if (pending) {
+      for (const field of Object.keys(next)) {
+        if (answerOf(next, field) !== answerOf(pending.loaded, field)) pending.changed.add(field);
+      }
+    }
     setVerified((current) => {
       if (!current) return current;
       const kept = Object.entries(current.answers).filter(([field, answer]) => answerOf(next, field) === answer);
@@ -442,16 +451,20 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
 
   const readVerified = useCallback((id: string, loaded: ChamberData, stored: unknown) => {
     const read = ++verifiedReadRef.current;
+    const pending = { read, loaded, changed: new Set<string>() };
+    pendingVerifiedRead.current = pending;
     void readVerifiedFields(id).then((fields) => {
       if (read !== verifiedReadRef.current) return; // a later read supersedes this one
+      pendingVerifiedRead.current = null;
       if (fields === null) return; // couldn't be read: keep what is known rather than show nothing as verified
       const storedAnswer = (field: string) => (typeof stored === "object" && stored !== null ? (stored as Record<string, unknown>)[field] : undefined);
       const covered = [...fields].filter((field) =>
         // The saved answer must be the loaded one: the first save writes the cleaned form of an older row (a roster
         // without ids, a headcount saved as text, one keyed `employees`), and the server resets that review.
         sameJson(storedAnswer(field), (loaded as unknown as Record<string, unknown>)[field])
-        // And nothing may have changed it while the read was on its way.
-        && answerOf(dataRef.current, field) === answerOf(loaded, field));
+        // And nothing may have changed it while the read was on its way, even if it was changed back: the server
+        // reset that review at the first change.
+        && !pending.changed.has(field) && answerOf(dataRef.current, field) === answerOf(loaded, field));
       setVerified({ sessionId: id, answers: Object.fromEntries(covered.map((field) => [field, answerOf(loaded, field)])) });
     });
   }, []);
