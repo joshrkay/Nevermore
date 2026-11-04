@@ -9,7 +9,7 @@ There is no Docker or hosted Supabase in the sandbox, so `harness/` stands up th
 
 | Layer | Real or stand-in |
 |---|---|
-| Postgres 16, the real migrations (certification, guest block, field provenance, outbox, outbox reliability, outbox operations, outbox schedule, email delivery events, intake validation and versioning, chosen PEO, certification readiness, submission records) | **real** (Supabase's `auth` schema and roles are stubbed in `setup.sql`, as are a `documents` table and `schema_version`; the advisor role objects are a verbatim copy of lines 17-73 of the advisor migration, since the rest needs storage and documents) |
+| Postgres 16, the real migrations (certification, guest block, field provenance, outbox, outbox reliability, outbox operations, outbox schedule, email delivery events, intake validation and versioning, chosen PEO, certification readiness, submission records, the certification File ID check) | **real** (Supabase's `auth` schema and roles are stubbed in `setup.sql`, as are a `documents` table and `schema_version`; the advisor role objects are a verbatim copy of lines 17-73 of the advisor migration, since the rest needs storage and documents) |
 | PostgREST 12.2.3 (so `authenticated` / `anon` / `service_role` table privileges are enforced; function ACLs are not, see Gotchas) | **real** |
 | `supabase/functions/dispatch-outbox/index.ts` under Deno | **real, unmodified** |
 | `supabase/functions/resend-webhook/index.ts` under Deno on :8001 (`webhook.sh`) | **real, unmodified** |

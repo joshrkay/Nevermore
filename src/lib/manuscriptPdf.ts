@@ -1,4 +1,5 @@
 import jsPDF from "jspdf";
+import { CONSENT_DRAFT_LABEL } from "@/data/certification";
 import { foldLatin, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
 
 export interface ManuscriptPdfOptions {
@@ -38,6 +39,7 @@ const ACCENT: RGB = [92, 64, 200];
 const WARN: RGB = [168, 98, 0];
 const OK: RGB = [22, 120, 70];
 const HEAD_FILL: RGB = [240, 241, 247];
+const WATERMARK: RGB = [242, 228, 208]; // WARN, faint on white
 
 // jsPDF's built-in fonts only cover Latin-1 and a few Windows-1252 extras. Anything else would
 // print as garbage, so fold accents to ASCII and replace what remains with "?".
@@ -102,6 +104,22 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   };
   const ensure = (needed: number) => {
     if (y + needed > BOTTOM) newPage();
+  };
+
+  // A large, light, diagonal "DRAFT" centred on the band [top, top + height] of this page. Drawn before what it
+  // sits under, so the text over it stays legible with no transparency.
+  const draftWatermark = (top: number, height: number) => {
+    const size = 96;
+    const angle = 24;
+    font("bold", size);
+    setInk(WATERMARK);
+    const w = pdf.getTextWidth("DRAFT");
+    const capH = size * 0.3528 * 0.72;
+    const rad = (angle * Math.PI) / 180;
+    const cx = MARGIN + CONTENT_W / 2;
+    const cy = top + height / 2;
+    // jsPDF rotates about the baseline's start, counter-clockwise: offset it so the word's centre lands on (cx, cy).
+    pdf.text("DRAFT", cx - (w / 2) * Math.cos(rad) + (capH / 2) * Math.sin(rad), cy + (w / 2) * Math.sin(rad) + (capH / 2) * Math.cos(rad), { angle });
   };
 
   const paragraph = (text: string, size = 9, style: "normal" | "bold" | "italic" = "normal", color: RGB = INK, gap = 2) => {
@@ -398,8 +416,11 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   // ---------- 12 Certification ----------
   // Kept together on one page: a signature block split across pages isn't a signature block.
   const consentLines = m.signer ? wrap(m.signer.consent.replace(/\n+/g, " "), CONTENT_W - 8) : [];
-  const certHeight = 84 + consentLines.length * lineHeight(9);
+  // Consent wording counsel hasn't approved is marked where it is printed (C-2.4, D3), as the web page marks it.
+  const draftNote = m.signer?.consentDraft ? `Consent wording ${m.signer.consentVersion ?? "not recorded"} · ${CONSENT_DRAFT_LABEL}` : null;
+  const certHeight = 84 + consentLines.length * lineHeight(9) + (draftNote ? lineHeight(8) + 1.5 : 0);
   ensure(certHeight);
+  if (draftNote) draftWatermark(y, certHeight);
   y += 4;
   pdf.setDrawColor(...ACCENT);
   pdf.setLineWidth(0.5);
@@ -426,6 +447,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   ]);
   if (m.signer) {
     subheading("Consent");
+    if (draftNote) paragraph(draftNote, 8, "bold", WARN, 1.5);
     paragraph(m.signer.consent.replace(/\n+/g, " "), 9, "italic", INK, 3);
     paragraph(`Signed electronically by ${m.signer.name} on ${m.signer.signedAtFull}.`, 9, "normal", MUTED, 3);
   } else {

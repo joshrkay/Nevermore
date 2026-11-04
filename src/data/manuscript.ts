@@ -1,4 +1,5 @@
 import type { ChamberData } from "./chamberTypes";
+import { isDraftConsent } from "./certification";
 import { classificationLabel, COVERAGE_TIER_LABELS, isAssumed, isW2, type CensusEmployee } from "./census";
 import { categoryInfo } from "./documentCategories";
 import { documentStatusInfo } from "./documentStatus";
@@ -42,6 +43,13 @@ export interface ChamberSubmission {
   transcript?: unknown;
   documents?: SubmittedDocument[];
 }
+
+/**
+ * What The Reckoning sends to certify: the signature, the consent and the PEO. No File ID: the database assigns it
+ * from its per-year sequence at the first certification and stamps it, with the version and hash, onto what it
+ * stores (C-3.1, D15).
+ */
+export type CertificationRequest = Omit<ChamberSubmission, "file_id">;
 
 /** A document as it stood at certification (snapshot_certified_evidence stamps these into the submission). */
 export interface SubmittedDocument {
@@ -368,6 +376,10 @@ export interface ManuscriptSigner {
   /** Date and time with zone, as recorded for the certification. */
   signedAtFull: string;
   consent: string;
+  /** The version of the consent wording signed; null when the certification predates storing it. */
+  consentVersion: string | null;
+  /** Whether that wording is a draft counsel hasn't approved (C-2.4, D3): the page and the PDF mark it. */
+  consentDraft: boolean;
 }
 
 /**
@@ -462,6 +474,7 @@ export function buildManuscript(
     });
 
   const submittedDocuments = opts.submission?.documents;
+  const consentVersion = opts.submission ? opts.submission.consent_version || opts.submission.consent_text_version || null : null;
 
   return {
     fileId: opts.fileId,
@@ -576,6 +589,8 @@ export function buildManuscript(
             (Array.isArray(opts.submission.consent_text)
               ? opts.submission.consent_text.join("\n")
               : opts.submission.consent_text) || LEGACY_CONSENT_TEXT,
+          consentVersion,
+          consentDraft: isDraftConsent(consentVersion),
         }
       : null,
     advisorReview: opts.advisor ? { version: opts.advisor.version, corrections: opts.advisor.corrections } : null,

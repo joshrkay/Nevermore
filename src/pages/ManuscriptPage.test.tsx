@@ -98,6 +98,40 @@ describe("ManuscriptPage", () => {
     expect(screen.getAllByRole("link", { name: /Back to Review/ })[0]).toHaveAttribute("href", "/start?session=s1");
   });
 
+  it("marks the consent wording the prospect signed as a draft until counsel approves it, as the PDF does", async () => {
+    vi.mocked(buildManuscriptPdf).mockClear();
+    row = certified({
+      submission: {
+        ...certified().submission,
+        consent_version: "2026-10-draft-1",
+        consent_text: ["The information I've provided is accurate.", "By signing, I certify."],
+      },
+    });
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Consent wording 2026-10-draft-1 · DRAFT: NOT LEGALLY REVIEWED")).toBeInTheDocument();
+    // The watermark is decoration: the line above says it in words, for everyone.
+    expect(screen.getByTestId("consent-draft-watermark")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText(/The information I've provided is accurate\./)).toBeInTheDocument();
+
+    // The PDF is built from the same packet, with the same mark.
+    fireEvent.click(screen.getAllByRole("button", { name: /Download The Manuscript \(PDF\)/ })[0]);
+    await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
+    expect(vi.mocked(buildManuscriptPdf).mock.calls[0][0].signer).toMatchObject({ consentVersion: "2026-10-draft-1", consentDraft: true });
+  });
+
+  it("marks a certification that recorded no consent wording as a draft too", async () => {
+    row = certified();
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Consent wording not recorded · DRAFT: NOT LEGALLY REVIEWED")).toBeInTheDocument();
+  });
+
+  it("puts no draft mark on the unsigned sample", async () => {
+    renderAt("/manuscript/demo");
+    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(screen.queryByText(/DRAFT: NOT LEGALLY REVIEWED/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("consent-draft-watermark")).not.toBeInTheDocument();
+  });
+
   // What the database leaves behind when a signed intake is edited: the status is back to in progress,
   // the draft holds the new answers, and the signed snapshot is still on the submission.
   it("still shows the packet as signed after the answers changed, marked as withdrawn, never the draft", async () => {

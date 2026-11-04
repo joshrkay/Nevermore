@@ -3,7 +3,27 @@
 //
 // DRAFT: NOT LEGALLY REVIEWED. Production needs LEGAL-approved text (plan decision D3).
 export const CONSENT_TEXT_VERSION = "2026-10-draft-1";
-export const CONSENT_IS_DRAFT = true;
+
+/**
+ * The consent wordings counsel has approved, by version, as recorded in docs/LEGAL_REVIEW.md. Empty until
+ * LEGAL signs off (D3, D10). Every other version is a draft, and so is a certification that recorded no version.
+ */
+export const APPROVED_CONSENT_VERSIONS: readonly string[] = [];
+
+/**
+ * Whether the consent wording a certification was signed with is a draft. It depends on the version that was
+ * signed, not on today's wording, so a packet signed with a draft stays marked as one after a later wording
+ * is approved.
+ */
+export function isDraftConsent(version: string | null | undefined, approved: readonly string[] = APPROVED_CONSENT_VERSIONS): boolean {
+  return !version || !approved.includes(version);
+}
+
+/** Whether the wording signed today is a draft. */
+export const CONSENT_IS_DRAFT = isDraftConsent(CONSENT_TEXT_VERSION);
+
+/** The mark beside draft consent wording, wherever it appears: The Reckoning, the Manuscript page and its PDF. */
+export const CONSENT_DRAFT_LABEL = "DRAFT: NOT LEGALLY REVIEWED";
 
 /** The statements the signer acknowledges, in the order they are shown and stored. */
 export function consentStatements(chosenPeo: string | null): string[] {

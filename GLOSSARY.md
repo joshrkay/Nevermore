@@ -96,7 +96,7 @@ The underwriting document rendered from a submission, for the prospect to send t
 _Avoid_: packet, report, PDF, proposal
 
 **File ID**:
-The identifier of one intake, such as EAA-2026-1A2B3C4D, shown in the app, on the signed Manuscript and in every email about it. It is set when the intake starts and never changes.
+The identifier of one intake, such as EAA-2026-0042, shown in the app, on the signed Manuscript and in every email about it. The database assigns it from that year's sequence the first time the intake is certified, and it never changes after; no two intakes share one, and a draft has none. Intakes certified before the database assigned it keep the one they were given, such as EAA-2026-1A2B3C4D.
 _Avoid_: reference, submission reference, submission ID, file number, case number
 
 **The Reckoning**:

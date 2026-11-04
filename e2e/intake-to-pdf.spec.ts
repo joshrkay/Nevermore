@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test as base, type APIRequestContext, type Page } from "@playwright/test";
 import pg from "pg";
-import { consentStatements } from "../src/data/certification";
+import { CONSENT_DRAFT_LABEL, CONSENT_TEXT_VERSION, consentStatements } from "../src/data/certification";
 import { manuscriptFilename } from "../src/data/manuscript";
 import { DATABASE, GATEWAY_URL, PG } from "./stack/config.mjs";
 import { COMPANY_NAME, INTAKE_EXTRACTION, INTAKE_MESSAGE } from "./stack/intake-script.mjs";
@@ -342,6 +342,8 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(page.getByText(COMPANY_NAME, { exact: true }).first()).toBeVisible();
     await expect(page.getByText(`Signed electronically by ${SIGNER.name}`)).toBeVisible();
     await expect(page.getByText(new RegExp(`^PREPARED FOR\\s*${PEO}$`))).toBeVisible();
+    // The consent wording is a draft until counsel approves it, and says so where it is printed (C-2.4).
+    await expect(page.getByText(`Consent wording ${CONSENT_TEXT_VERSION} · ${CONSENT_DRAFT_LABEL}`, { exact: true })).toBeVisible();
 
     // The header, footer and signature block above would all pass with an empty body, so the intake's
     // values are checked in their own rows. A row is the flex line holding the label and the value.
@@ -383,6 +385,8 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     expect(text).toContain(fileId);
     expect(text).toContain("data version"); // the certification's version line
     expect(text).toContain("Submission Certification");
+    expect(text).toContain(`Consent wording ${CONSENT_TEXT_VERSION} · ${CONSENT_DRAFT_LABEL}`);
+    expect(text.split("\n")).toContain("DRAFT"); // the watermark over the certification
     expect(text).toContain(COMPANY_NAME);
     expect(text).toContain(SIGNER.name);
     expect(text).toContain(PEO);

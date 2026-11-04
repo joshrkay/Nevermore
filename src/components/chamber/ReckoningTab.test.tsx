@@ -150,8 +150,6 @@ describe("ReckoningTab certification", () => {
     expect(sent).toMatchObject({
       signer_name: "Jo Doe",
       signer_title: "CEO",
-      // The intake's own File ID, as the session gave it: never one made up from today's date.
-      file_id: "EAA-2026-S1",
       // One version, under both names: the app's and the one the database's certification check reads.
       consent_text_version: CONSENT_TEXT_VERSION,
       consent_version: CONSENT_TEXT_VERSION,
@@ -162,6 +160,8 @@ describe("ReckoningTab certification", () => {
     expect(sent.consent_text[0]).toMatch(/accurate and complete/);
     expect(sent.consent_text[3]).toMatch(/By signing, I certify/);
     expect(sent).not.toHaveProperty("peo");
+    // The database assigns the File ID (C-3.1): even an intake that already has one doesn't send it.
+    expect(sent).not.toHaveProperty("file_id");
   });
 
   it("confirms clearly after a successful submission", async () => {

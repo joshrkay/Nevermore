@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
+import { CONSENT_DRAFT_LABEL } from "@/data/certification";
 import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
 import { describeSource, parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
@@ -638,11 +639,22 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
                 <div><span className="text-muted-foreground text-xs">File ID</span><br /><span className="font-mono text-primary">{d.fileId}</span></div>
                 <div><span className="text-muted-foreground text-xs">Certification</span><br /><span className="font-mono">{versionLine}</span></div>
               </div>
-              <div className="border border-border rounded-lg p-4 mb-8">
-                <p className="text-foreground text-sm italic whitespace-pre-line">
+              <div className="relative overflow-hidden border border-border rounded-lg p-4 mb-8">
+                {/* Wording counsel hasn't approved is marked where it is printed, as the PDF marks it (C-2.4). */}
+                {d.signer?.consentDraft && (
+                  <>
+                    <div aria-hidden="true" data-testid="consent-draft-watermark" className="pointer-events-none select-none absolute inset-0 flex items-center justify-center">
+                      <span className="font-display font-bold text-6xl md:text-8xl tracking-[0.3em] text-warning/15 -rotate-[18deg]">DRAFT</span>
+                    </div>
+                    <p className="relative text-xs font-mono font-medium text-warning mb-3">
+                      Consent wording {d.signer.consentVersion ?? "not recorded"} · {CONSENT_DRAFT_LABEL}
+                    </p>
+                  </>
+                )}
+                <p className="relative text-foreground text-sm italic whitespace-pre-line">
                   {d.signer ? d.signer.consent : "I confirm the information in this submission is accurate and complete to the best of my knowledge."}
                 </p>
-                <div className="mt-4 flex gap-8 text-sm text-muted-foreground">
+                <div className="relative mt-4 flex gap-8 text-sm text-muted-foreground">
                   {d.signer ? (
                     <span>Signed electronically by {d.signer.name} on {d.signer.signedAtFull}</span>
                   ) : (

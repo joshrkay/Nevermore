@@ -176,6 +176,24 @@ describe("buildManuscript", () => {
     expect(older.documents).toBeNull();
     expect(older.date).toBe("May 1, 2026"); // the signing time, when the server never stamped a certification time
   });
+
+  it("carries the consent wording's version, and whether it is a draft, with the signer", () => {
+    const m = buildManuscript(EMPTY_CHAMBER_DATA, { fileId: certified.file_id, submission: { ...certified, consent_version: "2026-10-draft-1" } });
+    expect(m.signer).toMatchObject({ consentVersion: "2026-10-draft-1", consentDraft: true });
+    // An older submission kept the version under its first name only.
+    const older = buildManuscript(EMPTY_CHAMBER_DATA, {
+      fileId: certified.file_id,
+      submission: { ...certified, consent_version: undefined, consent_text_version: "2026-10-draft-1" },
+    });
+    expect(older.signer).toMatchObject({ consentVersion: "2026-10-draft-1", consentDraft: true });
+    // One that recorded neither shows the legacy wording, still marked as a draft.
+    const legacy = buildManuscript(EMPTY_CHAMBER_DATA, {
+      fileId: certified.file_id,
+      submission: { ...certified, consent_version: undefined, consent_text: undefined },
+    });
+    expect(legacy.signer).toMatchObject({ consent: LEGACY_CONSENT_TEXT, consentVersion: null, consentDraft: true });
+    expect(buildManuscript(EMPTY_CHAMBER_DATA, { fileId: "EAA-1" }).signer).toBeNull();
+  });
 });
 
 describe("buildManuscript covers the whole intake", () => {
