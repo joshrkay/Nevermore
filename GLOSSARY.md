@@ -70,24 +70,40 @@ _Avoid_: open item, flag
 ### Certifying and what it produces
 
 **Certification**:
-The prospect's signed statement that the intake's answers are true, made in The Reckoning. Changing an answer afterwards withdraws it.
-_Avoid_: submit, sign-off, attestation
+The prospect's signed statement that the intake's answers are true, made in The Reckoning. Changing an answer afterwards withdraws it, and the intake is certified again.
+_Avoid_: submit, signing, sign-off, attestation
 
 **Submission**:
-The answers and their field statuses exactly as they stood at certification, frozen.
-_Avoid_: snapshot, packet, application
+An intake that has been certified at least once. Certifying changed answers updates the same submission rather than creating another. Every submission is one the advisory team works; there is no separate qualifying step.
+_Avoid_: lead, submission record, qualified submission, packet, application
 
 **The Manuscript**:
 The underwriting document rendered from a submission, for the prospect to send to PEOs. Advisors can render further versions of it.
 _Avoid_: packet, report, PDF, proposal
 
-**Reference**:
-The identifier a submission carries, such as EAA-2026-0042.
-_Avoid_: File ID, file number, case number
+**File ID**:
+The identifier of one intake, such as EAA-2026-1A2B3C4D, shown in the app, on the signed Manuscript and in every email about it. It is set when the intake starts and never changes.
+_Avoid_: reference, submission reference, submission ID, file number, case number
 
 **The Reckoning**:
 The last step in The Chamber, where the prospect certifies.
 _Avoid_: checkout, submit page
+
+### Communications
+
+**Advisor Alert**:
+The email telling the advisory team that a submission arrived or was updated.
+_Avoid_: internal notification, new-submission notification
+
+**Confirmation**:
+The transactional email a prospect receives after each certification, saying what was received and what happens next. It is a receipt, not marketing, so it needs no opt-in.
+_Avoid_: receipt, acknowledgement
+
+### Advisors
+
+**Advisor Console**:
+The advisory team's operating workflow: every submission with its pipeline stage, notes and history. The team works submissions here, not in a separate CRM.
+_Avoid_: CRM, admin queue
 
 ### Where an answer came from
 
@@ -163,5 +179,7 @@ _Avoid_: status, extraction status
 - An **Extraction** comes from one prospect message and proposes answers for several **Fields**
 - A **Document candidate** comes from one uploaded document and changes nothing until the **Prospect** applies it
 - A **Prospect**'s own action always beats an **Extraction** or a **Document candidate** for the same field
-- A **Certification** produces one **Submission**, which carries one **Reference**; **The Manuscript** is rendered from a **Submission**
-- An **Intake** can be certified more than once; each **Certification** produces a new **Submission**
+- An **Intake** has one **File ID** and any number of **Certifications**; its first **Certification** makes it a **Submission**
+- **The Manuscript** is rendered from a **Submission**'s certified answers
+- Each **Certification** of new answers produces one **Advisor Alert** and one **Confirmation**; certifying the same answers again produces neither
+- Every **Submission** appears in the **Advisor Console**
