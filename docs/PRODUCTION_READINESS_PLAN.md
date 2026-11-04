@@ -828,7 +828,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 
 #### D-3.2 File name, metadata, and masking default
 - **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** FE · **Depends:** D-3.1 · **Milestone:** M1
-- **Built (2026-11-04):** `The_Manuscript_<File ID>_v<version>_<company>_<certified YYYYMMDD>.pdf`, the same from the same submission wherever it is generated (an advisor's version adds `_advisor-v<n>`). Title, subject (File ID, version, certified date), author and creation date are set. Dates of birth are masked by default; the prospect's page and PDF have no reveal, and only the advisor's generate step can include full dates of birth. EIN and bank data are not collected, so nothing else is masked.
+- **Built (2026-11-04):** `The_Manuscript_<File ID>_v<version>_<company>_<certified YYYYMMDD>.pdf`, the same from the same submission wherever it is generated. An advisor's stored version is named from what it recorded, not from the certification on record now: `The_Manuscript_<File ID>_<company>_<certified YYYYMMDD>_advisor-v<n>.pdf` (a stored version doesn't record which certification number it came from), so a later certification never renames it. Title, subject (File ID, version, certified date), author and creation date are set. Dates of birth are masked by default; the prospect's page and PDF have no reveal, and only the advisor's generate step can include full dates of birth. EIN and bank data are not collected, so nothing else is masked.
 
 #### D-3.3 Cross-browser and mobile download verification
 - **Status:** **NOT VERIFIABLE** · **Size:** S · **Priority:** High · **Owner:** QA · **Depends:** D-3.1 · **Milestone:** M1
