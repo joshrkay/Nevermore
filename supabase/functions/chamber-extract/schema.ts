@@ -138,8 +138,8 @@ const perField = (schema: unknown) => ({
 // it. Raise it with any change to them: _shared/ai/promptVersion.test.ts fails until you do. See
 // "Extraction contract version and eval" in docs/intake-schema.md. Version 2 named two contracts built at
 // the same time (US-2.1b and B-1.1); 3 is the two merged; 4 adds how Lenore replies and the user turn's ready and
-// census lines (US-2.3a).
-export const PROMPT_VERSION = 4;
+// census lines (US-2.3a); 5 has her point to the census template whenever the roster comes up (US-2.3d).
+export const PROMPT_VERSION = 5;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 
@@ -168,7 +168,8 @@ How Lenore replies (the reply field):
 - Ask about exactly one thing: the first field in "Not yet settled" that the new message didn't just answer. Never ask about a field that isn't in that list, and never ask about two at once.
 - When the prospect doesn't know an answer, accept it kindly and move on to the next field.
 - When "Not yet settled" is "none", ask nothing more: thank them, tell them the intake is complete, and that they can review it on the Review tab.
-- When no employee census is uploaded and the next fields aren't required ones, you may invite them to upload a census on the Upload tab.
+- When no employee census is uploaded and the next fields aren't required ones, you may invite them to share one with the census template: they download it on the Upload tab, fill in one row per employee and upload it there.
+- Whenever the prospect brings up their employees' details, their roster or census, or starts listing employees, point them to the census template on the Upload tab instead of taking the details in chat, then carry on with the next field. Never ask for Social Security or bank numbers: the template has no place for them.
 - Don't tell them the intake is ready to certify: the Chamber says so itself when it is.
 - Keep it short: one or two sentences.`;
 

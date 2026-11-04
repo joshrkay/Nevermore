@@ -319,7 +319,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
               </p>
               {data.census.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  None yet. Upload one on the Upload tab; you can certify without it.
+                  None yet. Upload one on the Upload tab, where there's a template to fill in; you can certify without it.
                 </p>
               ) : (
                 <>

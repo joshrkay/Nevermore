@@ -72,7 +72,7 @@ describe("ops-monitor: alerting", () => {
   });
 
   it("points every kind at its runbook playbook", () => {
-    for (const kind of ["app_error", "upload_failed", "ai_failed", "auth_denied", "deletion_failed"]) {
+    for (const kind of ["app_error", "upload_failed", "ai_failed", "auth_denied", "deletion_failed", "voice_failed"]) {
       const text = alertText({ ...AI, kind });
       expect(text).toContain("docs/RUNBOOK.md");
       expect(text).toContain(`"${PLAYBOOKS[kind]}"`);

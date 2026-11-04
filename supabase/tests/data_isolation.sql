@@ -80,6 +80,7 @@
 \i supabase/migrations/20261104117100_alert_headcount_census.sql
 \i supabase/migrations/20261104118000_open_items.sql
 \i supabase/migrations/20261104120000_submission_records.sql
+\i supabase/migrations/20261104121000_voice_failed_ops_kind.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

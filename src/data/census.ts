@@ -21,6 +21,13 @@ export {
   samePerson,
   stripUnstorable,
 } from "../../supabase/functions/_shared/census.ts";
+export {
+  CENSUS_TEMPLATE_COLUMNS,
+  CENSUS_TEMPLATE_FILE_NAME,
+  CENSUS_TEMPLATE_GUIDE,
+  censusTemplateCsv,
+} from "../../supabase/functions/_shared/censusTemplate.ts";
+export type { CensusTemplateColumn } from "../../supabase/functions/_shared/censusTemplate.ts";
 export type {
   CensusAssumable,
   CensusDependent,

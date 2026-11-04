@@ -5,6 +5,8 @@ import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
 import type { IntakeState, ProvenanceMap } from "@/data/provenance";
 import { READY_MESSAGE } from "@/data/followUp";
+import type { OrbState } from "@/components/chamber/VoiceOrb";
+import type { VoiceState } from "@/data/voiceSession";
 
 const session = {
   sessionId: null as string | null,
@@ -30,6 +32,7 @@ const session = {
   certification: { status: "none" as string },
   updateIntake: vi.fn(),
   addMessage: vi.fn(),
+  readIntake: vi.fn(),
   conversationEpoch: {} as object,
   verifiedFields: new Set<string>() as ReadonlySet<string>,
   chamberData: { ...EMPTY_CHAMBER_DATA } as ChamberData,
@@ -39,10 +42,20 @@ const session = {
 // What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
 const hooks = {
   workspace: null as null | { verified?: ReadonlySet<string> },
-  voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
-  chat: null as null | { onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string }) => void },
+  voice: null as null | { onSpokenMessage: (message: ChatMessage) => unknown; context: string },
+  chat: null as null | {
+    onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string; spoken?: boolean }) => void;
+    onOrbStateChange: (state: OrbState) => void;
+    readIntake?: unknown;
+  },
+  orb: null as null | { orbState: OrbState; voice: VoiceState; onTypeInstead: () => void },
 };
-const voice = { isConnected: false };
+const voice = {
+  isConnected: false,
+  state: { status: "idle", attempt: 0 } as VoiceState,
+  dismissFailure: vi.fn(),
+};
+let mobile = false;
 const auth = {
   isAnonymous: true,
   requestSignInCode: vi.fn(async () => ({ error: null, noAccount: false })),
@@ -58,12 +71,24 @@ vi.mock("@/data/intakeBackup", () => ({ browserStorageWorks: () => storageWorks 
 vi.mock("@/hooks/useLenoreVoice", () => ({
   useLenoreVoice: (options: typeof hooks.voice) => {
     hooks.voice = options;
-    return { startVoice: vi.fn(), isConnected: voice.isConnected, hasAgentId: false };
+    return {
+      voice: voice.state,
+      startVoice: vi.fn(),
+      endVoice: vi.fn(),
+      dismissFailure: voice.dismissFailure,
+      isConnected: voice.isConnected,
+      hasAgentId: false,
+    };
   },
 }));
-vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
-// The orb only shows what Lenore last said; the workspace panes are not what these tests are about.
-vi.mock("@/components/chamber/VoiceOrb", () => ({ default: ({ lastSpokenText }: { lastSpokenText: string }) => <p data-testid="orb">{lastSpokenText}</p> }));
+vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => mobile }));
+// The orb shows what Lenore last said, and is handed the orb state; the workspace panes are not what these tests are about.
+vi.mock("@/components/chamber/VoiceOrb", () => ({
+  default: (props: { lastSpokenText: string; orbState: OrbState; voice: VoiceState; onTypeInstead: () => void }) => {
+    hooks.orb = props;
+    return <p data-testid="orb">{props.lastSpokenText}</p>;
+  },
+}));
 vi.mock("@/components/chamber/TranscriptPanel", () => ({ default: () => null }));
 vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
   default: (props: typeof hooks.workspace) => {
@@ -71,14 +96,16 @@ vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
     return null;
   },
 }));
+const extractSpoken = vi.fn();
 vi.mock("@/hooks/useLenoreChat", () => ({
   useLenoreChat: (options: typeof hooks.chat) => {
     hooks.chat = options;
-    return { send: vi.fn(), retry: vi.fn(), dismissFailure: vi.fn(), failure: null, pending: false };
+    return { send: vi.fn(), extractSpoken, retry: vi.fn(), dismissFailure: vi.fn(), failure: null, pending: false };
   },
 }));
 
 const { default: ChamberPage } = await import("./ChamberPage");
+const { voiceContextUpdate } = await import("@/data/voiceAgent");
 
 const renderPage = () => render(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
 const lenore = (id: string, text: string): ChatMessage => ({ id, sender: "lenore", text, timestamp: "" });
@@ -99,6 +126,9 @@ describe("ChamberPage", () => {
     session.startOver.mockReset().mockResolvedValue(true);
     auth.isAnonymous = true;
     storageWorks = true;
+    mobile = false;
+    voice.state = { status: "idle", attempt: 0 };
+    voice.dismissFailure.mockClear();
     for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges, session.restoreBackup, session.discardBackup, session.updateIntake]) {
       fn.mockClear();
     }
@@ -246,24 +276,25 @@ describe("ChamberPage", () => {
   describe("merging what Lenore extracted", () => {
     const EMPTY: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
     const applied = () => (session.updateIntake.mock.calls[0][0] as (prev: IntakeState) => IntakeState)(EMPTY);
-    const spoken: ChatMessage = { id: "v1", sender: "user", text: "We're about 40 people", timestamp: "" };
+    const spoken: ChatMessage = { id: "v1", sender: "user", text: "We're about 40 people", timestamp: "", spoken: true };
 
-    it("merges a voice extraction with its provenance, citing the prospect's message", () => {
+    it("sends what the prospect says in a voice call through chat's extraction, the same call as a typed message (US-2.3b)", () => {
       renderPage();
-      hooks.voice!.onExtract({ employee_count: 40, field_status: { employee_count: "confirmed" } }, spoken);
+      expect(hooks.voice!.onSpokenMessage).toBe(extractSpoken);
+      // Calls are built from the intake as it stands, so spoken messages read one after another see each other's answers.
+      expect(hooks.chat!.readIntake).toBe(session.readIntake);
+    });
+
+    it("merges a spoken message's answers as inferred at most, citing it, so they wait for the prospect to confirm (D33)", () => {
+      renderPage();
+      hooks.chat!.onExtracted({ employee_count: 40 }, { field_status: { employee_count: "confirmed" }, prompt_version: 4 }, { ...spoken, spoken: true });
       expect(session.updateIntake).toHaveBeenCalledTimes(1);
       const next = applied();
       expect(next.data.employee_count).toBe(40);
       expect(next.provenance.employee_count).toMatchObject({
-        status: "confirmed",
-        source: { kind: "transcript", message_id: "v1", quote: "We're about 40 people" },
+        status: "inferred",
+        source: { kind: "transcript", message_id: "v1", quote: "We're about 40 people", prompt_version: 4 },
       });
-    });
-
-    it("drops a voice extraction with no prospect message to cite, rather than merging it untracked", () => {
-      renderPage();
-      hooks.voice!.onExtract({ employee_count: 40 }, null);
-      expect(session.updateIntake).not.toHaveBeenCalled();
     });
 
     it("merges a chat extraction with its provenance", () => {
@@ -320,6 +351,18 @@ describe("ChamberPage", () => {
     });
   });
 
+  describe("what Lenore's voice is told", () => {
+    it("is the intake update for the answers on screen, by label only (D24)", () => {
+      session.chamberData = { ...EMPTY_CHAMBER_DATA, company_name: "Quill & Ink Bindery" };
+      session.provenance = {};
+      renderPage();
+      expect(hooks.voice!.context).toBe(voiceContextUpdate(session.chamberData, session.provenance));
+      expect(hooks.voice!.context).toContain("Company legal name");
+      expect(hooks.voice!.context).not.toContain("Quill");
+      session.chamberData = { ...EMPTY_CHAMBER_DATA };
+    });
+  });
+
   describe("voice calls in the transcript", () => {
     beforeEach(() => {
       voice.isConnected = false;
@@ -348,6 +391,40 @@ describe("ChamberPage", () => {
       voice.isConnected = false;
       rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
       expect(notes().map((m) => m.text)).toEqual(["Voice call started"]);
+    });
+  });
+
+  describe("the orb", () => {
+    it("follows the text chat when no call is under way, and the call while one is", () => {
+      renderPage();
+      expect(hooks.orb?.orbState).toBe("idle");
+      act(() => hooks.chat!.onOrbStateChange("thinking"));
+      expect(hooks.orb?.orbState).toBe("thinking");
+
+      voice.state = { status: "active", attempt: 1, speaking: true };
+      act(() => hooks.chat!.onOrbStateChange("idle"));
+      expect(hooks.orb?.orbState).toBe("speaking");
+      expect(hooks.orb?.voice).toEqual(voice.state);
+    });
+  });
+
+  describe("on a phone", () => {
+    beforeEach(() => {
+      mobile = true;
+    });
+
+    it("opens the whole conversation from the chat bar", () => {
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "Read the conversation" }));
+      expect(screen.getByRole("dialog", { name: "Conversation with Lenore" })).toBeInTheDocument();
+    });
+
+    it("continues in text after a voice failure: the notice goes and the cursor is in the input", () => {
+      voice.state = { status: "failed", attempt: 1, failure: "dropped" };
+      renderPage();
+      act(() => hooks.orb!.onTypeInstead());
+      expect(voice.dismissFailure).toHaveBeenCalledTimes(1);
+      expect(screen.getByPlaceholderText("Message Lenore...")).toHaveFocus();
     });
   });
 

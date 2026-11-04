@@ -63,7 +63,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | Area | What exists today |
 |---|---|
 | Entry and accounts | Guests sign in anonymously (optional Turnstile CAPTCHA). Certifying needs an email-verified account: the guest adds an email, enters a 6-digit code, and is upgraded in place (`VerifyEmailGate`, a database trigger blocks guest certification). Password sign-in and sign-up are at `/login`. |
-| Lenore chat | `chamber-extract` (`handler.ts`, behind a thin `index.ts`) extracts every intake field except the census with a per-field status and evidence quote, and writes a reply. It requires a signed-in user, caps a message at 2,000 characters and context at 20,000, and enforces per-user (15 a minute, 300 a day), per-IP (20 a minute, 400 a day) and global (2,000 a day) call limits that fail closed. Voice (ElevenLabs) is an opt-in beta behind `VITE_ELEVENLABS_AGENT_ID`. |
+| Lenore chat | `chamber-extract` (`handler.ts`, behind a thin `index.ts`) extracts every intake field except the census with a per-field status and evidence quote, and writes a reply. It requires a signed-in user, caps a message at 2,000 characters and context at 20,000, and enforces per-user (15 a minute, 300 a day), per-IP (20 a minute, 400 a day) and global (2,000 a day) call limits that fail closed. Voice (ElevenLabs) is an opt-in beta behind `VITE_ELEVENLABS_AGENT_ID`: what the prospect says goes through `chamber-extract` too, and the agent's prompt is `docs/prompts/voice-agent-v1.md` (US-2.3b). |
 | Workspace | Nine tabs: Upload, Company, Payroll, Benefits, Your Team (census), Dependents, Review, PEO Match, The Reckoning. Autosave runs 2 seconds after the last change with a 10-second retry. A session survives refresh through `?session=`. |
 | Provenance | Each captured field is `confirmed`, `inferred`, `incomplete` or `conflicting`, with a source. The prospect can confirm, edit, or choose between conflicting candidates. An AI value never overwrites a prospect edit. |
 | Documents | PDF, Excel, CSV and Word uploads (20 MB, enforced in the browser only) in a private bucket, with seven categories. `document-extract` reads CSV, XLSX/XLS and text PDF into candidate values that the prospect reviews and applies, using the same AI provider setting as chat. Word files are saved but not read. |
@@ -149,10 +149,12 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-11-04 | An intake is created on the prospect's first change, not when the Chamber opens, and a person has one open draft at a time (A-1): migration `20261104102000_one_open_draft.sql` (`EA009`, either deploy order), `ensureIntake` for chat and uploads, and the address cleared after Start over. See A-1.3 and `docs/intake-schema.md`, When an intake is created. |
 | 2026-11-04 | US-2.1b, the extraction contract: chat extracts every field but the census, with `unknown` for what the prospect doesn't know, and each call carries the field statuses and the last 10 messages; prompt version 2. No migration; deploy `chamber-extract` with the front end (an old bundle's requests still work). See US-2.1b and `docs/intake-schema.md`, Extraction contract. |
 | 2026-11-04 | US-2.3a: Lenore asks about the next unsettled field, one at a time, wraps up when none is left, and says once when the intake is ready to certify ("Ready for your review" in the header); one shared readiness rule; ten golden transcripts; prompt version 4. No migration. See US-2.3a and `GLOSSARY.md`, Ready to certify. |
+| 2026-11-04 | US-2.3b: what the prospect says in a voice call goes through `chamber-extract` like a typed message, one spoken message at a time, and is stored as inferred at most (D33); `<extract>` tags are ignored; Lenore's voice gets the open and settled fields by label when a call connects and after every spoken message (D24); her prompt is in the repo, versioned (`docs/prompts/voice-agent-v1.md`). Decisions D35 to D38. No migration; front end only, then paste the prompt into the ElevenLabs agent. See US-2.3b. |
 | 2026-11-04 | US-2.2a: Review lists every field with its badge and how much of each section is settled, "Doesn't apply" with Undo, one open-items list (Review, The Manuscript, the advisor queue, migration `20261104118000_open_items.sql`, either deploy order), the census's status on the Census tab, and advisors can review workers' comp answers. See US-2.2a. |
 | 2026-11-04 | C-2, C-3 and D-1 to D-3 (Epics C and D). The database assigns the File ID (`EAA-YYYY-NNNN`, D15 decided) and numbers each certification as an immutable submission with its own copy of the answers, field statuses, chosen PEO, documents and versions; a repeated submit records nothing; the Reckoning reads the File ID and version back, refuses a second click while saving and keeps the signature after a failed save. The Manuscript opens by File ID (`/manuscript/<File ID>`), maps every intake field in Review's sections, is deterministic, resolves only confirmed facts, and the PDF carries the company, File ID, version and generated date on every page with a fixed file name. Migration `20261104120000_submission_records.sql`, to deploy before the front end. See C-2.1 to D-3.2. |
 | 2026-11-04 | Merged main into Epics C and D. `submission_records` is `20261104120000`, after main's advisor-review and snapshot migrations, which it builds on (`chamber_certifications` already holds the answers and field statuses from `20261104117000`; the certified document list is `20261104112000`'s); main's `20261104103000_required_items`, `20261027090001_outbox_operations` and `20261103110001_document_storage_path` names stand. Review, the open-items list, "Doesn't apply" and the single blocking list are US-2.2a's and B-2's, and the Manuscript's sections follow Review's (`reviewFields.ts`). A required answer in conflict blocks certification whoever verified it (the gate reads field statuses, D26). |
-| 2026-11-04 | C-3.1 marked DONE: the story still read PARTIAL after `20261104120000` shipped the server-assigned File ID and the repeat check. Added a test that sends the same certification twice at the same moment on two connections (dblink), with the browser's version check and without, and certifies two intakes at once. It found no fault: the second request waits on the first's row lock and records nothing, and the second intake takes the next number. Section 1.2, the defects table, D15, D34 and the glossary no longer describe the File ID as built in the browser or set when the intake starts. The exit-criteria counts in section 6 had fallen behind the summary table and are recounted from it (M1 32 of 54, M2 20 of 39, M3 5 of 13). No code or migration change. |
+| 2026-11-04 | US-2.3d: the Upload tab offers a census template, a CSV whose 12 headers are the census row's own keys (`first_name` to `class_code`), with no SSN or bank column, and says what goes in each column. A filled-in template reads with every column matched and no notes. Lenore points to it whenever the roster comes up (prompt version 5), and Your Team, Review and the Reckoning mention it. The extraction eval also scores Lenore's replies (reply checks), with two fixtures for the template rule. No migration; deploy `chamber-extract` with the front end. See US-2.3d. |
+| 2026-11-04 | C-3.1 marked DONE: the story still read PARTIAL after `20261104120000` shipped the server-assigned File ID and the repeat check. Added a test that sends the same certification twice at the same moment on two connections (dblink), with the browser's version check and without, and certifies two intakes at once. It found no fault: the second request waits on the first's row lock and records nothing, and the second intake takes the next number. Section 1.2, the defects table, D15, D34 and the glossary no longer describe the File ID as built in the browser or set when the intake starts. The Story Index (section 7), the section 1.5 counts and the section 6 exit criteria had fallen behind the stories' own status lines (Epics C and D closed without them, and the section 1.5 counts missed later Epic I changes); all three are regenerated from the status lines: 14 Epic C and D rows in the Story Index, Epics C, D and I in section 1.5, and M1 43 of 54, M2 20 of 39, M3 6 of 13. No code or migration change. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -164,17 +166,17 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
 | A Durable session | 7 | 0 | 4 | 0 | 0 | 11 |
 | B AI extraction | 7 | 1 | 1 | 0 | 0 | 9 |
-| C Review, certify, submit | 2 | 7 | 0 | 1 | 0 | 10 |
-| D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
+| C Review, certify, submit | 9 | 1 | 0 | 0 | 0 | 10 |
+| D Manuscript | 9 | 0 | 0 | 0 | 1 | 10 |
 | E Documents | 6 | 1 | 3 | 1 | 0 | 11 |
 | F Advisor | 4 | 6 | 1 | 0 | 0 | 11 |
 | G Communications | 6 | 0 | 2 | 0 | 0 | 8 |
 | H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
-| I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
+| I Quality and accessibility | 3 | 9 | 0 | 1 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **41** | **39** | **13** | **8** | **5** | **106** |
+| **Total** | **58** | **27** | **11** | **5** | **5** | **106** |
 
-29 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 20 of 39 M2; 5 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+43 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 20 of 39 M2; 6 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -230,6 +232,10 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | D32 | **New.** How US-2.1 to US-2.4 are split | **Decided 2026-11-03:** US-2.1 to US-2.4 stay as parent stories, and the work ships as nine S or M child stories, each releasable alone with its migration first. In deploy order: 2.1a schema metadata, the WC block and the new statuses (M); 2.4a extraction events, session and request ids, error codes and the client timeout (M); 2.1b the extraction contract and Lenore's context (M); 2.3a the follow-up policy, readiness, wrap-up and golden transcripts (M); 2.2a Review lists every field, with "Doesn't apply" and one open-items list (M); 2.3b voice through `chamber-extract` with live context (M); 2.3c voice failure states and the mobile transcript (S); 2.1c Manuscript coverage (M); 2.3d the census template (S). | PM | US-2.1 to US-2.4 |
 | D33 | **New (US-2.2).** What field status a spoken answer can have | **Decided 2026-11-03:** an extraction from a voice utterance can be `inferred`, `incomplete` or `unknown`, never `confirmed`. Speech-to-text mishears: "fifteen" stored as a confirmed 50 would change PEO eligibility and never show as an open item. A spoken answer shows as "Please confirm" until the prospect confirms it in Review or types it. Transcript messages record whether they were spoken. Vocabulary for this and D26 is in `GLOSSARY.md`. | PM | US-2.2, US-2.3 |
 | D34 | **New.** Name of the intake's identifier, and what a Submission is | **Decided 2026-11-04:** **File ID** is the canonical name of the intake's identifier (EAA-…): it is what the app, the Manuscript, the signed PDF, both emails and the advisor queue show, and it belongs to the intake, assigned by the database at its first certification (D15) and never changed. "Reference" is retired from the glossary and from D15's and the stories' wording. This reverses the 2026-11-03 vocabulary choice of "Reference", made before the File ID work (US-5.1) shipped. **Submission** keeps the Epic G meaning: an intake certified at least once, updated in place when certified again. The copy each certification keeps of the answers it covered (migration `20261104117000`) has no glossary term. | PM | `GLOSSARY.md`, C-3.1, D-3.2 |
+| D35 | **New (US-2.3b).** Does `chamber-extract` know a message was spoken? | **Decided 2026-11-04:** no. A spoken message's request is the typed one, and only the browser caps its answers at `inferred` when it stores them (D33), as it stores every answer. A server cap would guard only against a browser bug, since the browser can already save any answer as the prospect's own edit. Consequence: the extraction events don't say which calls were spoken. | PM | US-2.3b |
+| D36 | **New (US-2.3b).** A typed answer and a different spoken one | **Decided 2026-11-04:** they are the same kind of source (something the prospect said), so the field is `conflicting` and the prospect chooses, as for two typed answers. A typed answer doesn't outrank a spoken one: that would demote a real spoken correction of a typo. A required field in conflict keeps the intake from being ready to certify until the prospect chooses. In `GLOSSARY.md`, Field source. | PM | US-2.3b |
+| D37 | **New (US-2.3b).** Where Lenore's voice prompt runs from | **Decided 2026-11-04:** the repo file (`docs/prompts/voice-agent-v{n}.md`, versioned and fingerprinted in CI) is pasted into the ElevenLabs agent; the Chamber sends no prompt override at call start, which would fail every call on an agent with overrides switched off. The cost: what ElevenLabs runs can drift from the repo, so the agent's description names the version deployed. During a call Lenore never says the intake is ready (the Chamber shows it on screen, D29), her wrap-up says that what was said aloud waits for confirmation in Review, and a message typed during a call is answered in text as any typed message is. | PM | US-2.3b |
+| D38 | **New (US-2.3b).** What the prospect sees when a spoken message's answers can't be noted | **Decided 2026-11-04:** the chat's failure notice, in words for speech: Lenore heard them but couldn't note that answer, and it's in the transcript (she has already answered aloud, so "couldn't respond" would be false). Try again reads every such message again, oldest first, without a reply, offered exactly when it is for a typed message. The rest of voice's failure states are US-2.3c. | PM | US-2.3b, US-2.3c |
 
 ---
 
@@ -301,7 +307,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Built:** `ChamberData` (37 flat fields plus an `employees` array) in `chamberTypes.ts`. Zod rules in `chamberValidation.ts` sanitise in the browser, and the database enforces the same limits (A-2.2). Provenance in a sibling `field_provenance` jsonb column. `docs/intake-schema.md` exists. Zero counts are accepted.
 - **JSON Schema and strict checks:** `supabase/functions/_shared/intakeSchema.ts` is the canonical schema, v1, as a draft 2020-12 JSON Schema, published as `docs/intake-schema.v1.json` (`npm run schema:intake`; a test fails while they differ). Its validator is strict: no coercion, unknown keys refused at every level, paths named like the database's, values never echoed, and any keyword it doesn't implement refused. It runs where data comes in: `chamber-extract` refuses each extracted field that breaks it and returns `rejected`, logging paths only; a local backup is checked before it is offered; a saved row is checked as it loads and mismatches are logged. Everything it accepts the database accepts: `schemaSync.test.ts` holds its codes, caps, value lists and kinds to the migrations, and the sanitiser's output always passes it (golden and seeded random inputs). `chamber_sessions.schema_version` (migration `20261103091000`) records v1 on every row and refuses any other value.
 - **Notes:**
-  - Provenance stays a sibling map rather than a `{value, status, source, …}` envelope, as D14 recommends; amend the AC. Statuses lack `not_applicable` and sources lack `advisor_edit` and `system` (advisor changes live in `advisor_field_reviews`). There is no per-field required-for-submission flag: D2 is decided as three required answers and a recommended census, in `readiness.ts` and one presence rule in the database (US-1.2, B-2.2). D2 adds no workers' comp, EIN or contractor sections. Voice `<extract>` data still goes through the lenient sanitiser. `chamber-extract` keeps its own field list, every field but the census since B-1.1 (`schemaSync.test.ts` holds it to `ChamberData`), checked value by value against the schema. Nothing checks the field table in `docs/intake-schema.md` against the code (the JSON file is checked). Zero-versus-absent is untested, and the Review tab shows 0 as a dash.
+  - Provenance stays a sibling map rather than a `{value, status, source, …}` envelope, as D14 recommends; amend the AC. Statuses lack `not_applicable` and sources lack `advisor_edit` and `system` (advisor changes live in `advisor_field_reviews`). There is no per-field required-for-submission flag: D2 is decided as three required answers and a recommended census, in `readiness.ts` and one presence rule in the database (US-1.2, B-2.2). D2 adds no workers' comp, EIN or contractor sections. Voice `<extract>` data went through the lenient sanitiser until US-2.3b, which sends spoken messages through `chamber-extract` and ignores the tags. `chamber-extract` keeps its own field list, every field but the census since B-1.1 (`schemaSync.test.ts` holds it to `ChamberData`), checked value by value against the schema. Nothing checks the field table in `docs/intake-schema.md` against the code (the JSON file is checked). Zero-versus-absent is untested, and the Review tab shows 0 as a dash.
   - Remaining schema work (found by B-1.1): the epic's categories that have no field at all, so chat can't extract them: workers' comp basics, the legal and business address, a prior PEO arrangement, total payroll estimates, a dependent coverage summary, a contractor count and the list of entities. Each needs a migration, the client's constants and a schema v1 property ("Adding a field" in `docs/intake-schema.md`), and then a line in `chamber-extract`'s field list and prompt. D2 requires none of them, so the status stands.
 
 #### A-2.2 Server-side validation and versioned writes
@@ -358,7 +364,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
   - The eval's baseline must be recorded with a live provider key for prompt version 4; none is committed yet (B-1.4).
   - Categories the epic names that have no field yet can't be extracted until the schema has them; they are listed in A-2.1's Notes as remaining schema work.
   - The Anthropic adapter is shared, so a `document-extract` read cut off at its own cap (4,096 tokens) now fails like an unreadable reply instead of keeping part of the list.
-  - Voice is unchanged: the ElevenLabs agent has its own prompt, and its `<extract>` data still goes through the lenient sanitiser.
+  - Voice was unchanged here: the ElevenLabs agent had its own prompt, and its `<extract>` data went through the lenient sanitiser. US-2.3b sends spoken messages through `chamber-extract` instead.
 - *Revised scope, AC and tests:*
   - **Scope:** The model returns field updates, each with a value, status and short evidence quote, plus a `reply`, for any intake field except the census. The server checks each value against the intake schema and keeps or refuses it on its own. Only fields on the list are kept.
   - **AC:**
@@ -405,7 +411,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### B-1.4 Prompt versioning and golden-transcript fixtures
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-1.1 · **Milestone:** M1
-- **Built:** `PROMPT_VERSION` (`chamber-extract/schema.ts`) versions the whole extraction contract: the system prompt, the tool schema and the response shape. `schema.test.ts` hashes the prompt and tool schema and fails CI when either changes without a new version, naming the hash to record. Every successful response, an empty one included, carries `prompt_version`, and the browser stores it on the field's transcript source (`transcriptExtraction` in `provenance.ts`); stored provenance without it still parses, and a malformed one is dropped. Voice extractions, whose prompt lives in the ElevenLabs agent, carry none: `voiceExtraction` drops any version the agent writes. `npm run eval:extraction` (`scripts/extraction-eval`) sends 10 synthetic transcripts through the production path (the browser's redaction and context, the handler's prompt, now `buildUserPrompt` in `prompt.ts`, the shared adapter, `shapeExtraction`, then `applyExtraction` as the Chamber merges a reply) against the configured provider. It scores each asserted field's final value and status (a field left conflicting fails unless the fixture expects the conflict), fields that must stay empty and an SSN that must never be stored, prints a table and the accuracy, and exits 1 on any cell that passed in the committed baseline and fails now. Its scoring, baseline comparison, fixtures and the whole path against a stub model are unit-tested in CI. The rule and the commands are in `docs/intake-schema.md`. Ten golden transcripts also run in CI against a stubbed model (US-2.3a, `supabase/functions/chamber-extract/golden.test.ts`): they hold our side of the contract (the prompt, the request building, the merge), not how a real model answers, which stays the live eval.
+- **Built:** `PROMPT_VERSION` (`chamber-extract/schema.ts`) versions the whole extraction contract: the system prompt, the tool schema and the response shape. `schema.test.ts` hashes the prompt and tool schema and fails CI when either changes without a new version, naming the hash to record. Every successful response, an empty one included, carries `prompt_version`, and the browser stores it on the field's transcript source (`transcriptExtraction` in `provenance.ts`); stored provenance without it still parses, and a malformed one is dropped. Spoken messages' answers carry it too, since US-2.3b sends them through `chamber-extract` (before that, a voice `<extract>` carried none). `npm run eval:extraction` (`scripts/extraction-eval`) sends 10 synthetic transcripts through the production path (the browser's redaction and context, the handler's prompt, now `buildUserPrompt` in `prompt.ts`, the shared adapter, `shapeExtraction`, then `applyExtraction` as the Chamber merges a reply) against the configured provider. It scores each asserted field's final value and status (a field left conflicting fails unless the fixture expects the conflict), fields that must stay empty and an SSN that must never be stored, prints a table and the accuracy, and exits 1 on any cell that passed in the committed baseline and fails now. Its scoring, baseline comparison, fixtures and the whole path against a stub model are unit-tested in CI. The rule and the commands are in `docs/intake-schema.md`. Ten golden transcripts also run in CI against a stubbed model (US-2.3a, `supabase/functions/chamber-extract/golden.test.ts`): they hold our side of the contract (the prompt, the request building, the merge), not how a real model answers, which stays the live eval.
 - **Remaining:** Record the first baseline with a live provider key; no key is available in the build environment.
 - *Revised scope, AC and tests:*
   - **Scope:** One version string for the extraction contract, stored on each transcript provenance source rather than an extraction row (there is no extraction table). The golden suite is a live, on-demand eval against a committed baseline rather than a stubbed CI suite: a stub can only replay answers we wrote, while the risk is a prompt or model change that alters what the model extracts.
@@ -596,7 +602,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
   - **Statuses.** The model may say `confirmed`, `inferred`, `incomplete`, or `unknown` (with evidence, no value) when the prospect doesn't know; never `conflicting` or `not_applicable`. `shapeExtraction` keeps `unknown` only for a known field with no value and no refused value. The browser marks such a field `unknown` while it has no answer (`applyExtraction`'s `unknown`), never over the prospect's own edit or "Doesn't apply".
   - **Context (D22).** The chat sends the answers (census left out), each field's status and the last 10 messages (`_shared/chatContext.ts`, cut to fit 20,000 characters). The function checks their shape and size before any quota is spent, redacts the messages again, works out the unsettled fields by rank (`_shared/followUp.ts`, the one rule for D26) and names the first eight in the prompt.
   - **Tests:** a contract test per field (each kind accepted with its status and evidence), the census refused, `unknown` kept and refused, context validation cases (each a `bad_request` with no quota spent), the prompt's parts, redaction, `followUp.test.ts`, `chatContext.test.ts`, the browser's `unknown` handling and the chat body.
-- **Notes:** A one-word answer is placed by the model from the recent conversation; the golden transcripts that hold that and the follow-up order to a stubbed model are 2.3a. The prompt still asks Lenore only to "ask a follow-up question"; asking about the first unsettled field, announcing readiness and wrapping up are 2.3a. Voice still goes through `<extract>` (2.3b).
+- **Notes:** A one-word answer is placed by the model from the recent conversation; the golden transcripts that hold that and the follow-up order to a stubbed model are 2.3a. The prompt still asks Lenore only to "ask a follow-up question"; asking about the first unsettled field, announcing readiness and wrapping up are 2.3a. Voice went through `<extract>` until 2.3b.
 - **Scope:**
   - `chamber-extract` extracts every top-level field of schema v2 except the census. Each answer has a field status (`confirmed`, `inferred`, `incomplete` or `unknown`; never `conflicting` or `not_applicable`, D31) and an evidence quote. Each answer is checked against schema v2, and refused paths go into the event.
   - Each call carries (D22):
@@ -620,7 +626,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
   - **No canned reply.** When the model gives no reply, the function asks the next unsettled field's question (`FIELD_QUESTION`), or wraps up. "Could you tell me more about your team?" is gone; the browser's fallback for an older function is a plain acknowledgement.
   - **Ready, once (D29).** When the intake first becomes ready in a visit, after Lenore's own answer, the Chamber adds her fixed `READY_MESSAGE`, recognised by its words so it is said once per intake and nothing new is stored. An intake that was ready when it opened gets no announcement. The header shows "Ready for your review" while it is ready and uncertified.
   - **Golden transcripts.** `supabase/functions/chamber-extract/golden.test.ts`: ten conversations through the real request building, the real `chamber-extract` handler with the model stubbed, and the real merge: the required order and one announcement, a one-word yes, a conflict that blocks until chosen, a correction, "don't know", an incomplete answer, the fallback question, a refused answer, census work states and the wrap-up. Every turn checks that the prompt names no settled field and keeps rank order (a mutation that names settled fields fails them).
-- **Notes:** The census template Lenore would point to is 2.3d. Voice doesn't get the context yet (2.3b). The golden transcripts hold our side to the contract; how a real model follows the prompt is checked only by a live exchange, which hasn't been done.
+- **Notes:** The census template Lenore points to is 2.3d's (prompt version 5). Voice gets the context since 2.3b (an intake update by label, D24). The golden transcripts hold our side to the contract; how a real model follows the prompt is checked only by a live exchange, which hasn't been done.
   - **Decisions carried over from B-1.3** (product owner, 2026-11-04; B-1.3 is superseded by this story):
     - One item per turn: the missing required items first, then a request to confirm an inferred or incomplete value. A plain "yes" to a confirmation comes back as `confirmed`.
     - A required field whose answers conflict: Lenore says the answers disagree and points to the Review tab's 'Use this'. She does not resolve it in chat.
@@ -665,7 +671,19 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Tests:** component tests, open-items unit tests, and the advisor-queue sync test.
 
 ##### US-2.3b Voice answers through `chamber-extract`, with live context
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** FE + BE · **Depends:** 2.1b, 2.3a · **Milestone:** M2
+- **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** FE + BE · **Depends:** 2.1b, 2.3a · **Milestone:** M2
+- **Built (2026-11-04):**
+  - **One contract (ADR 0001, D19).** Each thing the prospect finishes saying in a call is recorded as a spoken message (`useLenoreVoice`) and sent to `chamber-extract` by `useLenoreChat`'s `extractSpoken`: the same request as a typed message (the answers, field statuses, census summary and the last 10 messages before it, D22; `chatContext` stops at the message, so one read late is never placed against a question Lenore asked after it), checked against schema v2 by the same handler and recorded as one extraction event. Spoken messages are read one at a time in the order said, each built from the intake as it stands (`useChamberSession`'s `readIntake`), so each sees what the one before captured; one queued before Start over is never sent. A message past 2,000 characters is cut to fit the function (the transcript keeps it all). The function's reply is dropped: Lenore's voice has already answered aloud, and the orb stays the call's.
+  - **Inferred at most (D33).** The answers are merged by `applyExtraction` with `transcriptExtraction`, citing the spoken message (its id, the evidence quote or the message, and `prompt_version`), which caps `confirmed` at `inferred`. The request doesn't say the message was spoken (D35): the browser stores the answer, so the cap lives there. A typed answer and a different spoken one are a conflict (D36).
+  - **`<extract>` ignored.** Tags in Lenore's replies, closed or not, are stripped from the transcript and the orb and never read. `voiceExtraction` and the direct merge are gone.
+  - **Live context (D24).** `voiceContextUpdate` (`src/data/voiceAgent.ts`) names, by label only, the next unsettled fields (the same rule, order and count as the typed prompt's, `unsettledForTurn`; required ones marked), the settled ones, and whether a census is in. It is sent with `sendContextualUpdate` when a call connects, whenever it changes during the call, and after every spoken message's extraction settles (again, unchanged, when the answers changed nothing or the call failed, so Lenore knows nothing was taken).
+  - **The voice prompt.** `docs/prompts/voice-agent-v1.md`: the first message, the system prompt (conversation only, one field at a time from the latest update, no tags, no employee details or sensitive numbers, readiness left to the screen, a wrap-up that says spoken answers wait for confirmation in Review) and how to deploy it (pasted into the agent, D37). `VOICE_PROMPT_VERSION` is 1; `voiceAgent.test.ts` fingerprints each recorded version's prompt and the update's wording, and checks the prompt describes every line of the update and that its example is one the Chamber sends.
+  - **Failures (D38).** A spoken message whose extraction fails shows the chat's notice in words for speech (`SPOKEN_FAILURE_MESSAGES`: "Lenore heard you, but couldn't note that answer. It's in the transcript."); Try again reads it again with no reply. Every spoken message whose answers weren't noted waits, oldest first: Try again reads each one again, and the notice stays until all are noted, so a later spoken message that works, or a retry of only the last one, never hides an earlier one. A typed message or "Continue manually" sets them aside, as before.
+  - **Tests:** `useLenoreVoice.test.ts` (a fake conversation: spoken messages handed on, redaction, `<extract>` ignored, every update rule, a replaced conversation), `useLenoreChat.test.ts` (the spoken call, order, freshness, cutting, failures and retry, in-flight count, Start over), `provenance.test.ts` (the spoken cap through the merge: inferred, not raised by saying it again, confirmed by typing or Confirm, never lowered, a typed and spoken conflict), `voiceAgent.test.ts`, `ChatFailureNotice.test.tsx`, `ChamberPage.test.tsx`, and a golden voice-call transcript in `golden.test.ts` through the real handler.
+- **Notes:**
+  - **Deploy:** the front end only; no migration and no function change (`chamber-extract` only moved its message limit into `_shared/chatContext.ts`). Paste the v1 prompt into the ElevenLabs agent with or after the front end. An agent still running an older prompt keeps working: its `<extract>` tags are ignored, but it gets the updates without being told what they are.
+  - **Cost:** every spoken message is one AI call against the same quotas as typed chat (ADR 0001). The extraction events don't say which calls were spoken (D35).
+  - **Not covered:** a live call against ElevenLabs and a real model (no e2e voice test). Voice failure states (connecting, the microphone, a dropped call) are US-2.3c's state machine, which this sits on: spoken messages are handed on only from the call the conversation still hears, and updates go only while a call is active.
 - **Scope:**
   - Each finished prospect utterance in a call goes to `chamber-extract`, marked as spoken (ADR 0001, D19). Agent `<extract>` tags are stripped and ignored, and the direct merge with no transcript message is removed.
   - A spoken answer is stored as `inferred` at most (D33).
@@ -679,7 +697,16 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Tests:** hook tests with a fake conversation, and a merge test for the spoken cap.
 
 ##### US-2.3c Voice failure states and the mobile transcript
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** none · **Milestone:** M1
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** none · **Milestone:** M1
+- **Built (2026-11-04):**
+  - **One state.** A call is a state machine (`src/data/voiceSession.ts`, I-5.1): idle, connecting (the microphone, then the server), active (listening or speaking), disconnected, failed. The orb, the button and the notice read it alone.
+  - **No setup instructions.** With no `VITE_ELEVENLABS_AGENT_ID` there is no "Speak with Lenore" and the orb isn't clickable; the developer modal is gone.
+  - **15 seconds.** The microphone is asked for first, untimed, with nothing spinning and a Cancel. Once it is ready the connection has 15 seconds, then fails as a timeout, and a connection opening later is ignored.
+  - **A second click starts nothing.** The button is disabled and reads "Connecting..." while connecting.
+  - **Each failure has its own message** (blocked microphone, no or busy microphone, a browser without one, a timeout, a refused connection, a dropped call) with "Continue in text", which clears the notice and puts the cursor in the text input, and "Try voice again" unless the browser can't do voice (`VoiceFailureNotice`).
+  - **Mobile transcript.** On a phone, a "Chat" button beside the input opens the whole conversation in a sheet (`MobileTranscript`): every message in full, with its own input.
+  - **Reported.** A failure on our side or the service's is reported as `voice_failed` (I-5.1); a blocked or missing microphone is not.
+- **Notes:** The causes found and their fixes are in `docs/VOICE_ISSUES.md`. Not tried with a real microphone or a real ElevenLabs agent: the tests use a fake SDK.
 - **Scope:**
   - "Speak with Lenore" is hidden when voice isn't configured, so no setup instructions reach prospects.
   - Connecting times out after 15 seconds.
@@ -691,6 +718,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
   - Prospects never see setup instructions.
   - On a phone, every Lenore reply can be read in full.
 - **Tests:** hook tests for each failure and the timeout, and a component test for the mobile transcript.
+  - *Built:* `useLenoreVoice.test.ts` (each failure, the timeout with fake timers, a second click, cancel, stale attempts), `voiceSession.test.ts` (the transitions), `VoiceOrb.test.tsx`, `MobileTranscript.test.tsx` and `ChamberPage.test.tsx` (the orb follows the call; "Continue in text" focuses the input on a phone).
 
 ##### US-2.1c Manuscript coverage
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** FE · **Depends:** 2.1a · **Milestone:** M1
@@ -705,7 +733,13 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Tests:** mapper tests, a coverage test that fails on an unmapped field, and a PDF test.
 
 ##### US-2.3d Census template
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** FE + PM · **Depends:** none · **Milestone:** M1
+- **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** FE + PM · **Depends:** none · **Milestone:** M1
+- **Built (2026-11-04):**
+  - **The template.** `supabase/functions/_shared/censusTemplate.ts`, beside the census contract and re-exported by `src/data/census.ts`: a CSV, `employee-census-template.csv`, holding one header row and nothing else, so no sample person can end up in a census. Its 12 headers are the census row's own keys: `first_name`, `last_name`, `dob`, `work_state`, `zip_code`, `job_title`, `annual_salary`, `compensation_type`, `employment_type`, `classification`, `coverage_tier`, `class_code`. There is no SSN, tax ID or bank column. The Upload tab builds it in the browser from that list (`downloadBlob`), so the file can't drift from the reader, and the download works before an intake exists.
+  - **The Upload tab.** An "Employee census template" section under the drop zone: the download button, a line asking the prospect to leave out Social Security and bank numbers, and "What goes in each column", which gives each column's format and accepted values. The value lists come from the census contract (`COMPENSATION_TYPES`, `EMPLOYMENT_TYPES`, `CLASSIFICATIONS`, `COVERAGE_TIERS`). The census category's example names the template too.
+  - **Lenore (prompt version 5).** Whenever the prospect brings up their employees' details, their roster or census, or starts listing employees, she points to the template on the Upload tab instead of taking the details in chat, then carries on with the next field, and never asks for Social Security or bank numbers. Her invitation when no census is in names the template too. The user turn is unchanged. Your Team's empty state, Review's census line and the census's open-item hint (Review and the Reckoning) say the Upload tab has a template.
+  - **Tests.** `parse.test.ts`: every template header maps to the census column of the same name with none set aside; a filled-in template, one row as typed and one as a spreadsheet saves it (a US date, a ZIP that lost its leading zero), reads with every fact stated, nothing assumed, no notes and nothing sent to the model; and an empty template is not a census. `censusTemplate.test.ts`: the exact header row, no sensitive header, and a guide line naming every accepted value. `UploadTab.test.tsx`: the download (name, type and contents, with no intake yet) and the guide. `extraction.test.ts`: the prompt's template rule. `promptVersion.test.ts`: version 5's fingerprints.
+- **Notes:** The template has `annual_salary` but no hourly rate or hours column, as the scope lists, so hourly staff are asked for what they earn in a usual year. The reader still takes an hourly rate from any other roster. Whether a real model follows the new rule is checked by the live extraction eval (`npm run eval:extraction`), which now scores Lenore's replies as well as what is extracted: two fixtures, `roster-in-chat` (employees listed in chat, and the headcount stays the one stated) and `roster-question` (how to send the list), require her reply to name the template and the Upload tab. It hasn't been run on version 5: this environment has no provider key, and no baseline is committed yet.
 - **Scope:**
   - The Upload tab offers a CSV template (D21). It has one row per employee and the columns `document-extract` reads:
     - first and last name, date of birth, work state and ZIP;
@@ -1153,9 +1187,9 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Remaining:** Whether the checks, `e2e` included, are required for merge is not verifiable from the repo: `README.md` asks the owner to set it. The edge-function type check (F-0.4) is in `verify`. Its config also bans what Node's type stripping cannot run, because the `e2e` gateway loads `chamber-extract` that way.
 
 #### I-5.1 Voice reliability diagnosis and state machine
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Medium · **Owner:** FE · **Depends:** A-3.1, D8 · **Milestone:** M3
-- **Built:** `OrbState` is idle, listening, speaking, thinking, disabled, set ad hoc from hook callbacks (`useLenoreVoice.ts`) and by the chat hook.
-- **Remaining:** No connecting, active, disconnected or failed states, no single driver, no `docs/VOICE_ISSUES.md`, no hosted test.
+- **Status:** **PARTIAL** · **Size:** M · **Priority:** Medium · **Owner:** FE · **Depends:** A-3.1, D8 · **Milestone:** M3
+- **Built (2026-11-04, with US-2.3c):** `src/data/voiceSession.ts` is the state machine: idle, connecting (microphone, then server), active (listening or speaking), disconnected and failed, changed only by `reduceVoice`. Every SDK callback is bound to the attempt that opened it, and an event from any other attempt changes nothing. The orb follows the call while one is starting or under way (`orbForVoice`), and the text chat otherwise. Failures on our side or the service's are reported as ops kind `voice_failed` (`voice_connect_timeout`, `voice_connect_failed`, `voice_dropped:<close code>`, `voice_error`; migration `20261104121000_voice_failed_ops_kind.sql`), which alerts at 5 in 15 minutes (`docs/RUNBOOK.md`, "Voice failures"). `docs/VOICE_ISSUES.md` logs ten causes, nine found by reading the hook against the SDK's source and one by driving the built app in headless Chromium, each with its fix and test.
+- **Remaining:** No hosted-environment test with a real microphone in each browser, so no cause has yet been reproduced live. Open in `docs/VOICE_ISSUES.md`: a stalled connection holds up the next attempt (the SDK waits on it), bounded by the timeout.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Define the states: connecting, active, listening, speaking, disconnected, failed. Reproduce failures in the hosted environment and fix the top causes. Drive the orb from this state machine only.
   - **AC:**
@@ -1166,12 +1200,11 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 #### I-5.2 Voice fallback and browser support matrix
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** Medium · **Owner:** PM + FE · **Depends:** I-5.1 · **Milestone:** M3
 - **Built:** Voice never auto-starts, text input is always present, and voice is behind `VITE_ELEVENLABS_AGENT_ID`.
-- **Remaining:** No browser-support detection or definition and no microphone help text. A missing agent id opens a developer-facing modal.
+- **Remaining:** No browser-support definition. A browser without a microphone API is detected and told voice won't work there, and a blocked microphone is told how to allow it (US-2.3c). A missing agent id now hides voice instead of opening a developer-facing modal.
 
 #### I-5.3 Voice failure UX
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** FE · **Depends:** I-5.1 · **Milestone:** M3
-- **Built:** Permission denied, start failure, `onError` and disconnect only call `console.error` and set the orb to idle (`useLenoreVoice.ts`).
-- **Remaining:** No user-facing messages. Text chat is merely unaffected.
+- **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** FE · **Depends:** I-5.1 · **Milestone:** M3
+- **Built (2026-11-04, with US-2.3c):** A blocked microphone, a missing or busy one, a browser without one, a timeout, a refused connection and a dropped call each have their own message, with "Continue in text" (which focuses the text input) and, except for an unsupported browser, "Try voice again". The text chat is untouched by any of them. Each is simulated in `useLenoreVoice.test.ts` and shown in `VoiceOrb.test.tsx`.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Explain permission-denied, device-unavailable, connection-failed, and mid-call disconnect. Keep the text chat fully usable in each case.
   - **AC:**
@@ -1266,7 +1299,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Criterion | Status |
 |---|---|
-| All M1 stories are done. | **Not met.** 32 of 54 are DONE or SUPERSEDED. |
+| All M1 stories are done. | **Not met.** 43 of 54 are DONE or SUPERSEDED. |
 | A test prospect completes text intake, review, certification, submission, and PDF download with real data. | **Shown in CI against stand-ins, not live.** The end-to-end test (I-4.3) completes text intake, review, certification, submission and PDF download in a browser with a scripted AI model and a Supabase stand-in. It is not shown on a deployed environment, with a real model or real Supabase, or with document upload. |
 | No "Meridian" text appears in the live path. | **Mostly met.** The live Manuscript never renders the sample (tested). 'Meridian Creative Group' remains in `chamberTypes.ts` and an `AuthPage` placeholder (D-1.5). |
 | Two sessions cannot access each other's data (automated test). | **Met at the database level.** The SQL matrix covers cross-user reads and writes and runs in CI (not run in this refresh). There is no HTTP-level test. |
@@ -1287,7 +1320,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Criterion | Status |
 |---|---|
-| All M3 stories are done, including voice items if voice is marketed (D8). | **Not met.** 5 of 13 are DONE or SUPERSEDED. |
+| All M3 stories are done, including voice items if voice is marketed (D8). | **Not met.** 6 of 13 are DONE or SUPERSEDED. |
 | Branded email is live and verified. | **Not met.** The emails are built and plain text. The sender domain is unverified. |
 | Analytics consent is in place. | **Not met.** No analytics or consent exists. |
 | Launch checklist is signed off and rollback is rehearsed. | **Not met.** Email-only checklist, unchecked. |
@@ -1325,22 +1358,22 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | C-1.1 | Read-only review by Manuscript section | M | Highest | M1 | DONE |
 | C-1.2 | Inline editing that writes to the canonical record | M | Highest | M1 | DONE |
 | C-1.3 | Readiness gate with jump links | M | Highest | M1 | DONE |
-| C-2.1 | Certification record and endpoint | M | Highest | M1 | PARTIAL |
+| C-2.1 | Certification record and endpoint | M | Highest | M1 | DONE |
 | C-2.2 | Certification screen | S | Highest | M1 | DONE |
-| C-2.3 | Re-certification after material changes | M | Highest | M1 | PARTIAL |
-| C-2.4 | One consent definition, marked DRAFT everywhere it appears | S | Highest | M1 | NOT STARTED |
+| C-2.3 | Re-certification after material changes | M | Highest | M1 | DONE |
+| C-2.4 | One consent definition, marked DRAFT everywhere it appears | S | Highest | M1 | PARTIAL |
 | C-3.1 | Submit with idempotency and a human-readable reference | M | Highest | M1 | DONE |
-| C-3.2 | Immutable submission snapshot | M | Highest | M1 | PARTIAL |
-| C-3.3 | Confirmation screen | S | Highest | M1 | PARTIAL |
-| D-1.1 | Mapper: company, workforce, locations, state mix | M | Highest | M1 | PARTIAL |
-| D-1.2 | Mapper: census, dependents, benefits, payroll | M | Highest | M1 | PARTIAL |
-| D-1.3 | Mapper: workers' comp, documents, resolved and open items | S | High | M1 | PARTIAL |
-| D-1.4 | Mapper unit tests | S | High | M1 | PARTIAL |
-| D-1.5 | Remove sample data from the live path | S | Highest | M1 | PARTIAL |
-| D-2.1 | Manuscript route by submission reference | M | Highest | M1 | SUPERSEDED |
-| D-2.2 | Safe error states | S | High | M1 | SUPERSEDED |
-| D-3.1 | Print layout: pagination, headers, footers, tables | M | Highest | M1 | PARTIAL |
-| D-3.2 | File name, metadata, and masking default | S | Highest | M1 | PARTIAL |
+| C-3.2 | Immutable submission snapshot | M | Highest | M1 | DONE |
+| C-3.3 | Confirmation screen | S | Highest | M1 | DONE |
+| D-1.1 | Mapper: company, workforce, locations, state mix | M | Highest | M1 | DONE |
+| D-1.2 | Mapper: census, dependents, benefits, payroll | M | Highest | M1 | DONE |
+| D-1.3 | Mapper: workers' comp, documents, resolved and open items | S | High | M1 | DONE |
+| D-1.4 | Mapper unit tests | S | High | M1 | DONE |
+| D-1.5 | Remove sample data from the live path | S | Highest | M1 | DONE |
+| D-2.1 | Manuscript route by submission reference | M | Highest | M1 | DONE |
+| D-2.2 | Safe error states | S | High | M1 | DONE |
+| D-3.1 | Print layout: pagination, headers, footers, tables | M | Highest | M1 | DONE |
+| D-3.2 | File name, metadata, and masking default | S | Highest | M1 | DONE |
 | D-3.3 | Cross-browser and mobile download verification | S | High | M1 | NOT VERIFIABLE |
 | E-1.1 | Session-linked upload API and private storage | M | High | M1 | SUPERSEDED |
 | E-1.2 | Upload list, refresh, and removal in the UI | M | High | M1 | DONE |
@@ -1395,9 +1428,9 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | I-4.2 | Integration test harness on local Supabase | M | Highest | M1 | PARTIAL |
 | I-4.3 | End-to-end test: intake to PDF | M | Highest | M1 | DONE |
 | I-4.4 | CI pipeline that gates releases | S | Highest | M1 | PARTIAL |
-| I-5.1 | Voice reliability diagnosis and state machine | M | Medium | M3 | NOT STARTED |
+| I-5.1 | Voice reliability diagnosis and state machine | M | Medium | M3 | PARTIAL |
 | I-5.2 | Voice fallback and browser support matrix | S | Medium | M3 | PARTIAL |
-| I-5.3 | Voice failure UX | S | Medium | M3 | NOT STARTED |
+| I-5.3 | Voice failure UX | S | Medium | M3 | DONE |
 | J-1.1 | Environment separation | M | Highest | M1 | NOT VERIFIABLE |
 | J-1.2 | Production domain, HTTPS, canonical URL, and sender domain | S | High | M3 | NOT STARTED |
 | J-2.1 | Funnel analytics events | M | Medium | M3 | NOT STARTED |
