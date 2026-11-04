@@ -1,4 +1,5 @@
-// Synthetic chat transcripts for the extraction eval, each with what the intake must hold after it.
+// Synthetic chat transcripts for the extraction eval, each with what the intake must hold after it and, for some
+// turns, what Lenore's reply must say.
 // Every company, vendor and carrier here is invented. Only fields chamber-extract extracts today
 // (FIELD_TYPES in supabase/functions/chamber-extract/schema.ts) are asserted; fixtures.test.ts
 // checks that, and that every expected value is one the intake would store as written.
@@ -12,17 +13,31 @@ export interface ExpectedField {
   status?: FieldStatus;
 }
 
+/**
+ * What Lenore's reply to a turn must say: each pattern, by name, must match her own reply. The function's fallback
+ * question, asked when the model gives no reply, doesn't count. Names are lower-case words, as they key a cell.
+ */
+export type ReplyCheck = Record<string, RegExp>;
+
+export interface Turn {
+  message: string;
+  reply?: ReplyCheck;
+}
+
 export interface Fixture {
   id: string;
   description: string;
   /** The prospect's chat messages, sent one after another. */
-  turns: { message: string }[];
+  turns: Turn[];
   expected: Partial<Record<FieldKey, ExpectedField>>;
   /** Fields that must stay empty: nothing in the transcript supports them, so the model mustn't guess. */
   absent?: FieldKey[];
   /** Digit sequences (an SSN, an account number) no stored value or quote may contain, whatever separates the digits. */
   forbidden_digits?: string[];
 }
+
+/** Lenore names the census template and where to get it (the Upload tab). */
+export const CENSUS_TEMPLATE_REPLY: ReplyCheck = { template: /\btemplate\b/i, upload_tab: /\bupload/i };
 
 export const FIXTURES: Fixture[] = [
   {
@@ -152,5 +167,29 @@ export const FIXTURES: Fixture[] = [
       uses_mobile_app: { value: true },
       uses_physical_clocks: { value: false },
     },
+  },
+  {
+    id: "roster-in-chat",
+    description: "The prospect starts listing employees in chat: Lenore points to the census template on the Upload tab (US-2.3d), and the people listed don't change the headcount.",
+    turns: [
+      { message: "We're Brightwater Dental Group: 12 employees, all in Oregon." },
+      {
+        message: "Here's the team so far: Maria Lopez, office manager, born 4/2/1988, $58,000 a year; Dev Patel, hygienist, born 9/14/1979, $41 an hour.",
+        reply: CENSUS_TEMPLATE_REPLY,
+      },
+    ],
+    expected: {
+      company_name: { value: "Brightwater Dental Group" },
+      // Two people listed is not a headcount of two: a conflict here fails the cell.
+      employee_count: { value: 12 },
+      states: { value: ["OR"] },
+    },
+  },
+  {
+    id: "roster-question",
+    description: "Asked how to send the employee list, Lenore points to the census template on the Upload tab (US-2.3d).",
+    turns: [{ message: "What's the easiest way to get you our employee list?", reply: CENSUS_TEMPLATE_REPLY }],
+    expected: {},
+    absent: ["employee_count"],
   },
 ];

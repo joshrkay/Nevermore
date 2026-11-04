@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CENSUS_TEMPLATE_COLUMNS, censusTemplateCsv } from "../_shared/censusTemplate";
 import {
   buildPromptText,
   censusCandidates,
@@ -273,6 +274,47 @@ describe("readGrids", () => {
       [{ field: "employee_count", value: 40, location: "Page 1" }, { field: "current_carrier", value: "Aetna", location: "Page 1" }],
     );
     expect(merged.map((c) => [c.field, c.value])).toEqual([["employee_count", 12], ["current_carrier", "Aetna"]]);
+  });
+});
+
+// US-2.3d: the CSV the Upload tab offers. A filled-in template must read with every column matched.
+describe("the census template", () => {
+  // The template holds no quoted cells, so splitting on commas reads it as the spreadsheet reader would.
+  const csvRows = (csv: string) => csv.trim().split(/\r?\n/).map((line) => line.split(","));
+
+  it("matches every header to the census column of the same name, with none set aside", () => {
+    const { columns, sensitive } = mapCensusColumns([...CENSUS_TEMPLATE_COLUMNS]);
+    expect(sensitive).toEqual([]);
+    expect(columns).toEqual(Object.fromEntries(CENSUS_TEMPLATE_COLUMNS.map((column, i) => [column, i])));
+  });
+
+  it("reads a filled-in template, as typed and as a spreadsheet saves it, with every fact stated and no notes", () => {
+    const csv = [
+      censusTemplateCsv().trim(),
+      "Ann,Lee,1990-01-01,CA,94105,Engineer,105000,salary,full_time,w2,EE+SP,8810",
+      // Saved from a spreadsheet: a US date, the ZIP's leading zero gone.
+      "Bo,Ray,3/15/1988,NJ,7030,Cashier,31200,hourly,part_time,1099,WAIVE,8017",
+    ].join("\r\n");
+    const reading = readGrids([{ label: "CSV", rows: csvRows(csv) }], NOW);
+
+    expect(reading.notes).toEqual([]);
+    // Every row is read column by column, so nothing in the file goes to the model.
+    expect(reading.textSections).toEqual([]);
+    const census = reading.candidates.find((c) => c.field === "census")!;
+    expect(census.location).toBe("CSV, rows 2–3");
+    expect(census.facts).toEqual([
+      "dob", "work_state", "zip_code", "job_title", "annual_salary", "compensation_type", "employment_type",
+      "classification", "coverage_tier", "class_code",
+    ]);
+    // No fact is a default (no `assumed`): the template states each one.
+    expect(census.value).toEqual([
+      { id: expect.any(String), first_name: "Ann", last_name: "Lee", dob: "1990-01-01", work_state: "CA", zip_code: "94105", job_title: "Engineer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810" },
+      { id: expect.any(String), first_name: "Bo", last_name: "Ray", dob: "1988-03-15", work_state: "NJ", zip_code: "07030", job_title: "Cashier", annual_salary: 31200, compensation_type: "hourly", employment_type: "part_time", classification: "1099", coverage_tier: "WAIVE", class_code: "8017" },
+    ]);
+  });
+
+  it("finds no census in the template before it is filled in", () => {
+    expect(findCensus(csvRows(censusTemplateCsv()), "CSV", 1, NOW)).toBeNull();
   });
 });
 

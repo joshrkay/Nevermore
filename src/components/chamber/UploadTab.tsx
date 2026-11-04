@@ -1,8 +1,10 @@
 import { useCallback } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
-import { Upload, FileText, CheckCircle, AlertTriangle, Trash2 } from "lucide-react";
+import { Upload, FileText, CheckCircle, AlertTriangle, Trash2, Download } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CENSUS_TEMPLATE_COLUMNS, CENSUS_TEMPLATE_FILE_NAME, CENSUS_TEMPLATE_GUIDE, censusTemplateCsv } from "@/data/census";
 import type { ChamberData } from "@/data/chamberTypes";
 import { DOCUMENT_CATEGORIES, isDocumentCategory, missingRecommended } from "@/data/documentCategories";
 import type { CandidateResolution } from "@/data/documentCandidates";
@@ -10,8 +12,13 @@ import type { ProvenanceMap } from "@/data/provenance";
 import { canRetryExtraction, documentStatusInfo } from "@/data/documentStatus";
 import { DOCUMENT_FAILURE_MESSAGES, retryCanClear } from "@/data/aiFailure";
 import type { SessionDocument, UploadRejection, UseSessionDocumentsReturn } from "@/hooks/useSessionDocuments";
+import { downloadBlob } from "@/lib/downloadFile";
 import { MAX_DOCUMENTS_PER_INTAKE, MAX_UPLOAD_BYTES } from "@/lib/uploadCheck";
 import DocumentCandidates from "./DocumentCandidates";
+
+// The census template (US-2.3d): built from the columns document-extract reads, so it can't drift from them.
+const downloadCensusTemplate = () =>
+  downloadBlob(new Blob([censusTemplateCsv()], { type: "text/csv;charset=utf-8" }), CENSUS_TEMPLATE_FILE_NAME);
 
 const REJECTION_MESSAGES: Record<UploadRejection, (name: string) => string> = {
   empty: (name) => `${name} is empty.`,
@@ -102,6 +109,36 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
           PDF, Excel, CSV, or Word · Max 20 MB · Up to {MAX_DOCUMENTS_PER_INTAKE} files
         </p>
       </div>
+
+      {/* Downloadable before an intake exists: getting the template starts nothing. */}
+      <section aria-labelledby="census-template-heading" className="rounded-lg border border-border p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 id="census-template-heading" className="text-sm font-medium">
+              Employee census template
+            </h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              The surest way to share your team: fill in one row per employee and drop the file above, and Lenore
+              reads every column. Leave out Social Security and bank numbers — the template has no place for them.
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={downloadCensusTemplate}>
+            <Download className="w-4 h-4" aria-hidden="true" />
+            Download census template (CSV)
+          </Button>
+        </div>
+        <details className="text-xs">
+          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">What goes in each column</summary>
+          <dl className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-[max-content_1fr]">
+            {CENSUS_TEMPLATE_COLUMNS.map((column) => (
+              <div key={column} className="contents">
+                <dt className="font-mono text-foreground">{column}</dt>
+                <dd className="text-muted-foreground mb-1 sm:mb-0">{CENSUS_TEMPLATE_GUIDE[column]}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      </section>
 
       {/* What's useful to share: a checklist, never a gate */}
       <section aria-labelledby="helpful-heading" className="space-y-2">

@@ -1,12 +1,17 @@
 // What the Upload tab says about a read that didn't go through, and when it offers to read the file
-// again: never while reading again can't help (the daily cap, a Lenore that isn't set up), B-3.2.
+// again: never while reading again can't help (the daily cap, a Lenore that isn't set up), B-3.2. And the census
+// template it offers (US-2.3d).
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import UploadTab from "./UploadTab";
+import { CENSUS_TEMPLATE_COLUMNS, CENSUS_TEMPLATE_GUIDE, censusTemplateCsv } from "@/data/census";
 import { DOCUMENT_FAILURE_MESSAGES, type AiFailureKind } from "@/data/aiFailure";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { EMPTY_EXTRACTION } from "@/data/documentCandidates";
 import type { SessionDocument, UseSessionDocumentsReturn } from "@/hooks/useSessionDocuments";
+
+const downloadBlob = vi.fn();
+vi.mock("@/lib/downloadFile", () => ({ downloadBlob: (...args: unknown[]) => downloadBlob(...args) }));
 
 const doc = (status: string, readIssue: AiFailureKind | null): SessionDocument => ({
   id: "d1",
@@ -73,5 +78,45 @@ describe("UploadTab: a read that didn't go through", () => {
   it.each(["extracted", "unsupported", "processing"])("offers no read again for a %s file", (status) => {
     renderTab(doc(status, null));
     expect(screen.queryByRole("button", { name: /Read it|Try again/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("UploadTab: the census template", () => {
+  const noDocuments: UseSessionDocumentsReturn = {
+    docs: [],
+    isLoading: false,
+    uploading: false,
+    upload: vi.fn(),
+    remove: vi.fn(),
+    setCategory: vi.fn(),
+    markApplied: vi.fn(),
+    extract: vi.fn(),
+  };
+
+  it("downloads the CSV, even before there is an intake to upload to", async () => {
+    downloadBlob.mockClear();
+    render(<UploadTab documents={noDocuments} sessionId={null} data={EMPTY_CHAMBER_DATA} />);
+    fireEvent.click(screen.getByRole("button", { name: "Download census template (CSV)" }));
+    expect(downloadBlob).toHaveBeenCalledTimes(1);
+    const [blob, name] = downloadBlob.mock.calls[0] as [Blob, string];
+    expect(name).toBe("employee-census-template.csv");
+    expect(blob.type).toBe("text/csv;charset=utf-8");
+    // jsdom's Blob has no text().
+    const text = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blob);
+    });
+    expect(text).toBe(censusTemplateCsv());
+  });
+
+  it("says to leave out Social Security and bank numbers, and what goes in each column", () => {
+    render(<UploadTab documents={noDocuments} sessionId="s1" data={EMPTY_CHAMBER_DATA} />);
+    const section = screen.getByRole("region", { name: "Employee census template" });
+    expect(section).toHaveTextContent(/Leave out Social Security and bank numbers/);
+    for (const column of CENSUS_TEMPLATE_COLUMNS) {
+      expect(within(section).getByText(column)).toBeInTheDocument();
+      expect(within(section).getByText(CENSUS_TEMPLATE_GUIDE[column])).toBeInTheDocument();
+    }
   });
 });
