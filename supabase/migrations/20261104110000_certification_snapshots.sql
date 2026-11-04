@@ -17,8 +17,9 @@ COMMENT ON COLUMN public.chamber_certifications.chamber_data IS
 COMMENT ON COLUMN public.chamber_certifications.field_provenance IS
   'Field status and source as signed, paired with chamber_data.';
 
--- The certification still in force on each intake: its snapshot is the session's current submission.
--- Older, superseded certifications lost theirs to the overwrite and stay null.
+-- The session's submission belongs to its latest certification only, so only that one gets it. Earlier ones
+-- lost theirs to the overwrite and stay null, even one that certified the same answers: answers changed and
+-- then restored hash the same, but their field status and sources can differ, so they can't be told apart.
 UPDATE public.chamber_certifications c
 SET chamber_data = s.submission -> 'chamber_data',
     field_provenance = s.submission -> 'field_provenance'
@@ -26,7 +27,14 @@ FROM public.chamber_sessions s
 WHERE s.id = c.session_id
   AND c.chamber_data IS NULL
   AND s.submission ? 'chamber_data'
-  AND c.data_sha256 = s.submission ->> 'data_sha256';
+  AND c.data_sha256 = s.submission ->> 'data_sha256'
+  AND c.signed_at = (s.submission ->> 'signed_at')::timestamptz
+  AND c.id = (
+    SELECT latest.id FROM public.chamber_certifications latest
+    WHERE latest.session_id = s.id
+    ORDER BY latest.recorded_at DESC, latest.id DESC
+    LIMIT 1
+  );
 
 -- As before, plus the snapshot.
 CREATE OR REPLACE FUNCTION public.record_certification()

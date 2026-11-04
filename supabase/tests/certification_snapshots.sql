@@ -49,6 +49,30 @@ BEGIN
   UPDATE before_ SET sid = new_id;
 END $$;
 
+-- An intake certified twice with the same answers (changed, then changed back): both certifications hash the
+-- same, but only the latest one's signing is on the submission, so only it may be given that snapshot.
+CREATE TEMP TABLE twice_ AS SELECT NULL::uuid AS sid;
+DO $$
+DECLARE
+  uid uuid := gen_random_uuid();
+  new_id uuid;
+  data jsonb := '{"company_name":"Twice Co"}';
+  base jsonb := jsonb_build_object('signer_name', 'Ann', 'signer_title', 'COO', 'file_id', 'EAA-T',
+    'consent_version', 'v1', 'consent_text', 'I certify.', 'chamber_data', '{"company_name":"Twice Co"}'::jsonb);
+BEGIN
+  PERFORM set_config('request.jwt.claims', format('{"sub":"%s","is_anonymous":false}', uid), false);
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, data) RETURNING id INTO new_id;
+  UPDATE public.chamber_sessions SET status = 'submitted',
+    submission = base || jsonb_build_object('signed_at', '2026-04-01T12:00:00Z', 'field_provenance', '{"company_name":{"status":"inferred"}}'::jsonb)
+  WHERE id = new_id;
+  UPDATE public.chamber_sessions SET chamber_data = '{"company_name":"Other Co"}' WHERE id = new_id;
+  UPDATE public.chamber_sessions SET chamber_data = data WHERE id = new_id;
+  UPDATE public.chamber_sessions SET status = 'submitted',
+    submission = base || jsonb_build_object('signed_at', '2026-04-02T12:00:00Z', 'field_provenance', '{"company_name":{"status":"confirmed"}}'::jsonb)
+  WHERE id = new_id;
+  UPDATE twice_ SET sid = new_id;
+END $$;
+
 \i supabase/migrations/20261104110000_certification_snapshots.sql
 
 DO $$
@@ -67,6 +91,14 @@ BEGIN
   IF (SELECT chamber_data FROM public.chamber_certifications WHERE session_id = early) IS DISTINCT FROM '{"company_name":"Early Co"}'::jsonb
      OR (SELECT field_provenance ->> 'company_name' FROM public.chamber_certifications WHERE session_id = early) IS NULL THEN
     RAISE EXCEPTION 'FAIL: the backfill did not copy the current snapshot';
+  END IF;
+  IF (SELECT count(*) FROM public.chamber_certifications WHERE session_id = (SELECT twice_.sid FROM twice_)) <> 2
+     OR (SELECT count(*) FROM public.chamber_certifications WHERE session_id = (SELECT twice_.sid FROM twice_) AND chamber_data IS NOT NULL) <> 1
+     OR (SELECT field_provenance -> 'company_name' ->> 'status' FROM public.chamber_certifications
+         WHERE session_id = (SELECT twice_.sid FROM twice_) AND chamber_data IS NOT NULL) IS DISTINCT FROM 'confirmed'
+     OR (SELECT signed_at FROM public.chamber_certifications
+         WHERE session_id = (SELECT twice_.sid FROM twice_) AND chamber_data IS NOT NULL) IS DISTINCT FROM '2026-04-02T12:00:00Z'::timestamptz THEN
+    RAISE EXCEPTION 'FAIL: the backfill gave an earlier certification of the same answers the latest one''s snapshot';
   END IF;
 
   PERFORM set_config('request.jwt.claims', format('{"sub":"%s","is_anonymous":false}', uid), false);
