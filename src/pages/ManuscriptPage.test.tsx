@@ -89,11 +89,9 @@ describe("ManuscriptPage", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/changed your answers after certifying/);
     expect(screen.getByText(/Withdrawn Underwriting Packet/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Back to The Chamber/ })).toHaveAttribute("href", "/start?session=s1");
-
-    fireEvent.click(screen.getAllByRole("button", { name: /Download The Manuscript \(PDF\)/ })[0]);
-    await waitFor(() => expect(downloadBlob).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(buildManuscriptPdf).mock.calls[0][1]).toMatchObject({ withdrawn: true });
-    expect(vi.mocked(buildManuscriptPdf).mock.calls[0][0].companyName).toBe("Signed Co");
+    // Shown for reference only: nothing to download that could pass as a current certification.
+    expect(screen.queryByRole("button", { name: /Download/ })).not.toBeInTheDocument();
+    expect(buildManuscriptPdf).not.toHaveBeenCalled();
   });
 
   it("asks for a new certification when an edited submission has no stored snapshot to show", async () => {

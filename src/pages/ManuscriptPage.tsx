@@ -167,11 +167,12 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
   const backUrl = state.kind === "ready" && sessionId ? `/start?session=${sessionId}` : "/start";
 
   const handleDownloadPDF = async () => {
-    if (!d || downloading) return;
+    // A withdrawn certification is shown for reference only: no PDF that could be sent on as current.
+    if (!d || downloading || withdrawn) return;
     setDownloading(true);
     try {
       // Built from the same data as the page, not a screenshot of it, so the text stays selectable.
-      const pdf = buildManuscriptPdf(d, { revealSensitive: !showMasked, sample: isSample, withdrawn });
+      const pdf = buildManuscriptPdf(d, { revealSensitive: !showMasked, sample: isSample });
       downloadBlob(pdf.blob, pdf.filename);
     } catch (err) {
       console.error("Failed to generate manuscript PDF:", err);
@@ -283,12 +284,12 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               {showMasked ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
               {showMasked ? "Data masked" : "Data visible"}
             </button>
-            <button onClick={handleDownloadPDF} disabled={downloading}
+            {!withdrawn && <button onClick={handleDownloadPDF} disabled={downloading}
               className="inline-flex items-center gap-2 text-sm whitespace-nowrap bg-primary text-primary-foreground px-3 sm:px-4 py-1.5 rounded-md hover:bg-primary/90 transition-colors disabled:opacity-60">
               {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
               <span className="sm:hidden">Download PDF</span>
               <span className="hidden sm:inline">Download The Manuscript (PDF)</span>
-            </button>
+            </button>}
           </div>
         </div>
       </div>
@@ -303,8 +304,8 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <div role="status" className="bg-warning/15 border border-warning/40 rounded-xl p-4 text-sm text-foreground">
             <p>
               You changed your answers after certifying, so this certification no longer applies. Below is The
-              Manuscript exactly as you signed it{d.signer ? ` on ${d.signer.signedAt}` : ""}. Certify again in The
-              Reckoning to bring it up to date.
+              Manuscript exactly as you signed it{d.signer ? ` on ${d.signer.signedAt}` : ""}, for reference: it can't be
+              downloaded. Certify again in The Reckoning to get an up-to-date Manuscript.
             </p>
             <Link to={`/start?session=${sessionId}`} className="inline-block mt-2 text-primary underline hover:text-primary/90">
               Back to The Chamber
@@ -540,10 +541,10 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Bottom Actions */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center py-8">
-          <button onClick={handleDownloadPDF} disabled={downloading}
+          {!withdrawn && <button onClick={handleDownloadPDF} disabled={downloading}
             className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-60">
             {downloading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download The Manuscript (PDF)
-          </button>
+          </button>}
           <Link to={backUrl}
             className="inline-flex items-center justify-center gap-2 border border-border text-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-muted transition-colors">
             <ArrowLeft className="w-5 h-5" /> {isSample ? "Start Yours" : "Back to Review"}

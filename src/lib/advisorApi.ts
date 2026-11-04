@@ -117,6 +117,11 @@ export interface SubmissionDetail {
   provenance: ProvenanceMap;
   /** True when `data` is the certified snapshot. */
   certified: boolean;
+  /**
+   * What the prospect signed, when they changed their answers afterwards and so withdrew the
+   * certification: `data` is then their current answers, and this the copy they certified.
+   */
+  signed: { data: ChamberData; signedAt: string } | null;
   submission: ChamberSubmission | null;
   transcript: ChatMessage[];
   contactName: string | null;
@@ -176,6 +181,10 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     // Pair provenance with whichever copy of the data is shown, as the prospect's Manuscript does.
     provenance: parseProvenance(useSnapshot ? submission!.field_provenance : row.field_provenance),
     certified,
+    signed:
+      !certified && submission?.signer_name && submission.chamber_data !== undefined && submission.chamber_data !== null
+        ? { data: parseChamberData(submission.chamber_data), signedAt: submission.certified_at ?? submission.signed_at }
+        : null,
     submission,
     transcript: parseTranscript(row.transcript),
     contactName: profile.data?.contact_name ?? null,
