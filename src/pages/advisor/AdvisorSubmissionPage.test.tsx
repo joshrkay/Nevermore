@@ -474,6 +474,24 @@ describe("AdvisorSubmissionPage", () => {
     expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "The_Manuscript_EAA-2026-S1_Signed_Co_20261001_advisor-v1.pdf");
   });
 
+  it("names a stored version from its own certification, never from the one on record now", async () => {
+    // The prospect certified again (version 3, 2026-10-01); v1 was built from the certification of 2026-09-30.
+    const v = {
+      id: "v1", session_id: "s1", version: 1, file_id: "EAA-2026-S1", storage_path: "s1/v1.pdf", pdf_sha256: "a".repeat(64),
+      certified_data_hash: "d".repeat(64), certified_signed_at: "2026-09-30T12:00:00Z", certified_at: "2026-09-30T12:00:05Z", review_event_id: 0, corrections_applied: 0,
+      sensitive_revealed: false, generated_by: "a1", generated_by_email: "adv@example.com", generated_at: "2026-09-30T13:00:00Z",
+    };
+    const base = detail();
+    api.loadSubmission.mockResolvedValue(detail({ versions: [v], submission: { ...base.submission!, version: 3 } }));
+    Object.defineProperty(window, "location", { value: { ...window.location, assign: vi.fn() }, writable: true });
+    api.manuscriptUrl.mockResolvedValue("https://storage.example/signed");
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Download v1" }));
+    await waitFor(() => expect(api.manuscriptUrl).toHaveBeenCalled());
+    // Its own date, and no certification number it doesn't know: the same name however many times they certify.
+    expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "The_Manuscript_EAA-2026-S1_Signed_Co_20260930_advisor-v1.pdf");
+  });
+
   it("shows what the prospect signed beside their current answers when they changed them afterwards", async () => {
     const current = { ...signedData, employee_count: 14, pay_frequency: "Weekly" };
     api.loadSubmission.mockResolvedValue(
