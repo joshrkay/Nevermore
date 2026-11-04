@@ -175,7 +175,7 @@ Where the intake stands for the prospect: in progress, submitted (certified), ex
 _Avoid_: status, state, session status
 
 **Pipeline stage**:
-Where an intake stands in the advisors' work, from draft through submitted, under review, information requested, sent to carrier and quoted, to won, lost or archived.
+Where an intake stands in the advisors' work, from draft through submitted, under review, information requested, ready for market, sent to carrier and quoted, to won, lost or archived. Advisors move it one step at a time, along the allow-list in `docs/ADVISOR_ACCESS.md`; an archived intake is reopened as submitted.
 _Avoid_: status, intake status, workflow status
 
 **Also heard**:
@@ -185,6 +185,10 @@ _Avoid_: alternative, rejected value
 **Review state**:
 An advisor's verdict on one field: verified, incomplete or needs follow-up. Separate from the field status the prospect sees, though a verified field reads as settled to the prospect too ("Verified by your advisor"), except a required answer in conflict.
 _Avoid_: field status, status, advisor status
+
+**Audit badge**:
+Whose value an answer is, as the advisor's field review shows it: **Prospect confirmed** (the field status is confirmed and nothing replaces it) or **Advisor overridden** (an advisor's correction, verified, replaces it in the advisor Manuscript). An answer that is neither has no badge.
+_Avoid_: source tag, approval
 
 **Document status**:
 How far reading an uploaded document has got, from uploaded through read to unreadable or failed.

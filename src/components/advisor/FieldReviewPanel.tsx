@@ -1,17 +1,24 @@
-import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Loader2, PencilLine, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
 import {
+  AUDIT_BADGE_LABELS,
+  AUDIT_BADGES,
+  auditBadges,
   correctionInput,
+  countAuditBadges,
   isStaleRefusal,
   parseCorrection,
   REVIEW_LABELS,
   REVIEW_STATES,
+  type AuditBadge,
   type FieldReview,
   type ReviewMap,
   type ReviewState,
 } from "@/data/advisor";
+import type { ReviewSection } from "@/data/readiness";
+import { REVIEW_FIELDS, REVIEW_SECTIONS } from "@/data/reviewFields";
 import {
   describeSource,
   FIELD_LABELS,
@@ -25,7 +32,37 @@ import type { Json } from "@/integrations/supabase/types";
 import { reviewField, type CorrectionChange } from "@/lib/advisorApi";
 import { formatDateTime } from "./format";
 
-const FIELDS = Object.keys(FIELD_LABELS) as FieldKey[];
+// The seven sections of The Manuscript, as the prospect's Review shows them. The census is reviewed in
+// Workforce, after its other answers, with its table beneath.
+const SECTION_FIELDS: Record<ReviewSection, readonly FieldKey[]> = { ...REVIEW_FIELDS, workforce: [...REVIEW_FIELDS.workforce, "census"] };
+const FIELDS: readonly FieldKey[] = REVIEW_SECTIONS.flatMap(({ key }) => SECTION_FIELDS[key]);
+
+const sectionId = (section: ReviewSection) => `advisor-section-${section}`;
+
+const AUDIT_CLASS: Record<AuditBadge, string> = {
+  prospect_confirmed: "bg-success/15 text-success border-success/40",
+  advisor_overridden: "bg-primary/15 text-primary border-primary/40",
+};
+
+const AUDIT_ICON: Record<AuditBadge, typeof UserCheck> = {
+  prospect_confirmed: UserCheck,
+  advisor_overridden: PencilLine,
+};
+
+/** Whose value an answer is: the prospect's own confirmation, or an advisor's verified correction. */
+export const AuditBadgeChip = ({ badge, count }: { badge: AuditBadge; count?: number }) => {
+  const Icon = AUDIT_ICON[badge];
+  return (
+    <span
+      data-testid={count === undefined ? `audit-${badge}` : `audit-summary-${badge}`}
+      className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border whitespace-nowrap ${AUDIT_CLASS[badge]}`}
+    >
+      <Icon className="w-3 h-3" aria-hidden="true" />
+      {AUDIT_BADGE_LABELS[badge]}
+      {count !== undefined && <span className="font-mono">· {count}</span>}
+    </span>
+  );
+};
 
 const REVIEW_CLASS: Record<ReviewState, string> = {
   verified: "bg-success/15 text-success border-success/40",
@@ -44,31 +81,84 @@ interface FieldReviewPanelProps {
   messageIds: Set<string>;
   onShowMessage: (messageId: string) => void;
   onChanged: () => void;
+  /** The census table, shown in Workforce under the census's own row. */
+  census?: ReactNode;
 }
 
-const FieldReviewPanel = (props: FieldReviewPanelProps) => {
-  const reviewed = FIELDS.filter((f) => props.reviews[f]?.review_state === "verified").length;
+type RowProps = Omit<FieldReviewPanelProps, "census"> & { field: FieldKey; badge: AuditBadge | undefined };
+
+const FieldReviewPanel = ({ census, ...props }: FieldReviewPanelProps) => {
+  const badges = useMemo(() => auditBadges(props.data, props.provenance, props.reviews), [props.data, props.provenance, props.reviews]);
+  const verified = (fields: readonly FieldKey[]) => fields.filter((f) => props.reviews[f]?.review_state === "verified").length;
+  const totals = countAuditBadges(badges, FIELDS);
   return (
     <section aria-labelledby="fields-heading" className="border border-border rounded-xl">
-      <div className="p-5 border-b border-border">
-        <h2 id="fields-heading" className="font-display text-lg font-bold">Captured fields</h2>
-        <p className="text-xs text-muted-foreground">
-          {reviewed} of {FIELDS.length} verified.{" "}
-          Prospect values are never changed here. A correction is kept beside the prospect's value and is used in the
-          advisor Manuscript once the field is marked Verified.
-        </p>
+      <div className="p-5 border-b border-border space-y-3">
+        <div>
+          <h2 id="fields-heading" className="font-display text-lg font-bold">Captured fields</h2>
+          <p className="text-xs text-muted-foreground">
+            {verified(FIELDS)} of {FIELDS.length} verified.{" "}
+            Prospect values are never changed here. A correction is kept beside the prospect's value and is used in the
+            advisor Manuscript once the field is marked Verified.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Whose values these are">
+          {AUDIT_BADGES.map((badge) => (
+            <AuditBadgeChip key={badge} badge={badge} count={totals[badge]} />
+          ))}
+          <span className="text-xs text-muted-foreground">
+            {totals.advisor_overridden > 0
+              ? "An overridden answer is replaced by the advisor's correction in the advisor Manuscript."
+              : "No advisor correction replaces a prospect's answer."}
+          </span>
+        </div>
+        <nav aria-label="Field sections">
+          <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+            {REVIEW_SECTIONS.map(({ key, title }) => (
+              <li key={key}>
+                <a href={`#${sectionId(key)}`} className="text-primary underline">{title}</a>
+              </li>
+            ))}
+          </ul>
+        </nav>
       </div>
-      <ul className="divide-y divide-border">
-        {FIELDS.map((field) => (
-          <FieldRow key={field} field={field} {...props} />
-        ))}
-      </ul>
+      {REVIEW_SECTIONS.map(({ key, title }) => {
+        const fields = SECTION_FIELDS[key];
+        const counts = countAuditBadges(badges, fields);
+        return (
+          <section
+            key={key}
+            id={sectionId(key)}
+            aria-labelledby={`${sectionId(key)}-title`}
+            data-testid={`section-${key}`}
+            className="border-b border-border last:border-0 scroll-mt-4"
+          >
+            <div className="px-5 pt-4 pb-2 flex flex-wrap items-baseline justify-between gap-2 bg-muted/30">
+              <h3 id={`${sectionId(key)}-title`} className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
+                {title}
+              </h3>
+              <p className="text-[11px] text-muted-foreground" data-testid={`section-summary-${key}`}>
+                {verified(fields)} of {fields.length} verified
+                {counts.prospect_confirmed > 0 && ` · ${counts.prospect_confirmed} prospect confirmed`}
+                {counts.advisor_overridden > 0 && ` · ${counts.advisor_overridden} advisor overridden`}
+              </p>
+            </div>
+            <ul className="divide-y divide-border">
+              {fields.map((field) => (
+                <FieldRow key={field} field={field} badge={badges[field]} {...props} />
+              ))}
+            </ul>
+            {key === "workforce" && census && <div className="px-5 pb-5">{census}</div>}
+          </section>
+        );
+      })}
     </section>
   );
 };
 
 const FieldRow = ({
   field,
+  badge,
   sessionId,
   data,
   storedAnswers,
@@ -77,7 +167,7 @@ const FieldRow = ({
   messageIds,
   onShowMessage,
   onChanged,
-}: FieldReviewPanelProps & { field: FieldKey }) => {
+}: RowProps) => {
   const review: FieldReview | undefined = reviews[field];
   const prov = provenance[field];
   const [saving, setSaving] = useState(false);
@@ -121,7 +211,10 @@ const FieldRow = ({
   return (
     <li className="p-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]" data-testid={`field-${field}`}>
       <div>
-        <p className="text-xs text-muted-foreground">{label}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs text-muted-foreground">{label}</p>
+          {badge && <AuditBadgeChip badge={badge} />}
+        </div>
         <p className="font-mono text-sm">{formatFieldValue(data[field])}</p>
         {prov ? (
           <p className="text-xs text-muted-foreground mt-1">

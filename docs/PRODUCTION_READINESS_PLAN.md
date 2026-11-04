@@ -169,14 +169,14 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | C Review, certify, submit | 9 | 1 | 0 | 0 | 0 | 10 |
 | D Manuscript | 9 | 0 | 0 | 0 | 1 | 10 |
 | E Documents | 6 | 1 | 3 | 1 | 0 | 11 |
-| F Advisor | 4 | 6 | 1 | 0 | 0 | 11 |
+| F Advisor | 6 | 4 | 1 | 0 | 0 | 11 |
 | G Communications | 6 | 0 | 2 | 0 | 0 | 8 |
 | H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
 | I Quality and accessibility | 3 | 9 | 0 | 1 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **58** | **27** | **11** | **5** | **5** | **106** |
+| **Total** | **43** | **37** | **13** | **8** | **5** | **106** |
 
-30 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 21 of 39 M2; 5 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+29 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 22 of 39 M2; 5 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -945,7 +945,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 
 ### Epic F: Build the Advisor Workflow
 
-*As built:* The advisor workflow is largely built on RLS and database functions, with a strong access matrix test. Gaps are pagination, the status allow-list, and a submission-level follow-up flag.
+*As built:* The advisor workflow is largely built on RLS and database functions, with a strong access matrix test. Gaps are pagination and a submission-level follow-up flag.
 
 #### F-1.1 Role model
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** F-0.3, D5 · **Milestone:** M2
@@ -973,9 +973,9 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Remaining:** No 3-character minimum.
 
 #### F-3.1 Submission detail: structured sections
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** FS · **Depends:** F-2.1, C-3.2 · **Milestone:** M2
-- **Built:** The detail page uses the certified snapshot when there is one. Each field shows its status, its source and a separate 'Advisor correction' block.
-- **Remaining:** Not grouped by Manuscript section (a flat list of 38 fields plus a census table, which now shows each employee's dependents and the tier the Manuscript prints, and the header the certified PEO). No distinct 'advisor-updated' badge.
+- **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** FS · **Depends:** F-2.1, C-3.2 · **Milestone:** M2
+- **Built:** The detail page uses the certified snapshot when there is one. Each field shows its status, its source and a separate 'Advisor correction' block. The fields are grouped into The Manuscript's seven sections (Company, Workforce, Locations, Payroll, Benefits, Workers' comp, Operations & HR: `REVIEW_SECTIONS` and `REVIEW_FIELDS`, the same map the prospect's Review uses), each with its verified count and a link in a section nav; the census is reviewed in Workforce with its table (each employee's dependents and the tier the Manuscript prints) beneath. Each answer carries an audit badge: 'Prospect confirmed' (field status confirmed, nothing replaces it) or 'Advisor overridden' (a verified correction replaces it: exactly the corrections `applyAdvisorReview` puts in the advisor Manuscript), with the totals of both at the top of the field review and per section. Tested in `AdvisorSubmissionPage.test.tsx` and `advisor.test.ts`.
+- **Notes:** A correction not yet verified shows no badge (it says 'Not used until verified', as before). The header shows the certified PEO.
 
 #### F-3.2 Transcript evidence and documents in detail
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** FS · **Depends:** F-3.1, E-1.3, B-2.1 · **Milestone:** M2
@@ -988,9 +988,9 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Remaining:** Intent met. Differences: an edit does not create version v+1 by itself (the advisor regenerates it); a correction applies only once the field is 'Verified'; the census cannot be corrected; only 38 allow-listed fields can be reviewed.
 
 #### F-4.1 Status model and history
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** Medium · **Owner:** BE · **Depends:** F-2.1 · **Milestone:** M2
-- **Built:** `submission_workflow` and append-only `submission_status_history` (who, when, from, to, note). Every advisor change and every prospect certification or withdrawal writes history, whatever the status. Certifying answers an information request (back to `submitted`). An intake never certified can only be archived. The prospect is never left on 'information requested' after the advisor moves on (migration `20261104111000`). Tested.
-- **Remaining:** Nine statuses against the plan's ten: draft, submitted, under_review, information_requested, sent_to_carrier, quoted, won, lost, archived. 'Ready for market' is absent, 'Sent to PEO' is `sent_to_carrier` and 'Quote received' is `quoted`. No transition allow-list among certified statuses: an advisor can move any certified intake to any non-draft status, including archived to under_review.
+- **Status:** **DONE** · **Size:** M · **Priority:** Medium · **Owner:** BE · **Depends:** F-2.1 · **Milestone:** M2
+- **Built:** `submission_workflow` and append-only `submission_status_history` (who, when, from, to, note). Every advisor change and every prospect certification or withdrawal writes history, whatever the status. Certifying answers an information request (back to `submitted`). An intake never certified can only be archived. The prospect is never left on 'information requested' after the advisor moves on (migration `20261104111000`). Ten stages: draft, submitted, under_review, information_requested, ready_for_market, sent_to_carrier, quoted, won, lost, archived; `ready_for_market` is internal. A transition allow-list (`pipeline_next_statuses`, migration `20261104122000`) is enforced in `set_submission_status`: the pipeline moves one step at a time, won and lost can only be archived, and an archived file is reopened as `submitted` (never straight to `under_review`). The Status panel offers only the allowed next stages (`PIPELINE_TRANSITIONS`, held equal to the database's by `schemaSync.test.ts`). Tested in `advisor_operations.sql` (including that a refused move writes no history) and the page tests.
+- **Notes:** 'Sent to PEO' is `sent_to_carrier` and 'Quote received' is `quoted`. The prospect's own moves (certifying, withdrawing) are not limited by the allow-list. A certification withdrawn at `submitted` returns the intake to `draft`, which an advisor can only archive until the prospect certifies again.
 
 #### F-4.2 Internal notes
 - **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** BE · **Depends:** F-3.1 · **Milestone:** M2
@@ -1286,8 +1286,8 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | Tier | Stories | Why |
 |---|---|---|
 | 0: put the fixes in front of users | Confirm which builds of `chamber-extract` and `document-extract` are deployed, deploy both (and check the deploy bundles `supabase/functions/_shared`), and make one real Lenore exchange and one real document read in preview (the open part of F-0.2). | The fixes are verified in code, tests, a Deno run and a CI run, not live. |
-| 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.4 (make the checks required), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus making the end-to-end test (I-4.3, built) a required check. D2 is decided (US-1.2, B-2.2): C-1.3 is done, and C-2.1 can start. B-1.3's follow-up policy moved to US-2.3a. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. D15 is decided and C-3.1 is done. |
-| 2: gate the private pilot (M2) | All M2 stories, plus the M1-tagged hardening stories that do not block the demo path: B-1.1, B-1.3, B-1.4, B-2.2, D-1.1 to D-1.4, D-2.2, D-3.1 to D-3.3, E-4.1, I-4.2. In practice: E-4.1, E-4.3, E-4.2, F-2.1, F-4.1, F-4.3, G-1.1 (schedule in a migration), G-1.3, H-1.1 to H-1.3, H-2.1, H-2.3, H-3.1, H-3.3, H-4.1 to H-4.3, I-1.x, I-2.x | Retention, deletion, upload hardening, an admin view of failed emails, legal pages, alerting, a runbook, and accessibility. Most wait on D3, D4, D10 and D13. |
+| 1: close the M1 demo gaps | C-2.4, C-3.1, D-1.5, C-1.1, C-1.2, C-1.3, C-2.1, C-2.3, C-3.3, H-2.2, I-3.1, I-4.4 (make the checks required), F-0.1 (history scan), F-0.3, J-1.1 | The M1 stories that decide whether the intake-to-PDF path can be demonstrated, plus making the end-to-end test (I-4.3, built) a required check. D2 is decided (US-1.2, B-2.2): C-1.3 is done, and C-2.1 can start. B-1.3's follow-up policy moved to US-2.3a. C-2.4 and H-2.2 wait for D3 wording but can ship the structure now. C-3.1 waits for D15. |
+| 2: gate the private pilot (M2) | All M2 stories, plus the M1-tagged hardening stories that do not block the demo path: B-1.1, B-1.3, B-1.4, B-2.2, D-1.1 to D-1.4, D-2.2, D-3.1 to D-3.3, E-4.1, I-4.2. In practice: E-4.1, E-4.3, E-4.2, F-2.1, F-4.3, G-1.1 (schedule in a migration), G-1.3, H-1.1 to H-1.3, H-2.1, H-2.3, H-3.1, H-3.3, H-4.1 to H-4.3, I-1.x, I-2.x | Retention, deletion, upload hardening, an admin view of failed emails, legal pages, alerting, a runbook, and accessibility. Most wait on D3, D4, D10 and D13. |
 | 3: public launch (M3) | G-2.2, G-3.x, I-5.x, J-1.2, J-2.x, J-3.x | Bounces, voice reliability, domain, analytics and the launch checklist. G-3.x closed with D6 (the Advisor Console, no CRM). |
 
 **Critical path to a credible demo:** `C-2.1 → C-3.1 → D-1.5` (A-2.2 and C-1.3 are done), with the end-to-end test (I-4.3, built) kept passing as each lands. D15 is decided and C-3.1 is done; D2 is decided (US-1.2, B-2.2).
@@ -1392,10 +1392,10 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | F-1.3 | Sign-in, sign-out, and unauthorized states | S | High | M2 | PARTIAL |
 | F-2.1 | Submission queue | M | High | M2 | PARTIAL |
 | F-2.2 | Filter and search | S | High | M2 | PARTIAL |
-| F-3.1 | Submission detail: structured sections | M | High | M2 | PARTIAL |
+| F-3.1 | Submission detail: structured sections | M | High | M2 | DONE |
 | F-3.2 | Transcript evidence and documents in detail | M | High | M2 | DONE |
 | F-3.3 | Advisor edits tracked separately | M | High | M2 | SUPERSEDED |
-| F-4.1 | Status model and history | M | Medium | M2 | PARTIAL |
+| F-4.1 | Status model and history | M | Medium | M2 | DONE |
 | F-4.2 | Internal notes | S | Medium | M2 | DONE |
 | F-4.3 | Follow-up flag and status filter | S | Medium | M2 | PARTIAL |
 | G-1.1 | Outbox and event dispatch | M | High | M2 | DONE |
@@ -1488,7 +1488,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 - E-1.3: the URL lifetime is 60 seconds, not 5 minutes. Shorter is stricter, so the AC should be amended.
 - B-3.1: per-user, per-IP and global quotas exist instead of the plan's 30 requests per session per 10 minutes. Decided 2026-11-04: they replace it.
 - G-1.1: `last_error` holds the provider's error name and message (addresses replaced by `[email]`, key-like strings by `[redacted]`, 140 characters) rather than the raw response, which can echo the message. Raw provider bodies would put recipient addresses in the queue table and on the advisor page.
-- F-4.1: nine pipeline statuses with different names and no transition allow-list.
+- F-4.1: 'Sent to PEO' and 'Quote received' are named `sent_to_carrier` and `quoted`.
 
 ### Split log (from v1.0)
 
