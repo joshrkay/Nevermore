@@ -156,6 +156,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-11-04 | US-2.3d: the Upload tab offers a census template, a CSV whose 12 headers are the census row's own keys (`first_name` to `class_code`), with no SSN or bank column, and says what goes in each column. A filled-in template reads with every column matched and no notes. Lenore points to it whenever the roster comes up (prompt version 5), and Your Team, Review and the Reckoning mention it. The extraction eval also scores Lenore's replies (reply checks), with two fixtures for the template rule. No migration; deploy `chamber-extract` with the front end. See US-2.3d. |
 | 2026-11-04 | C-3.1 marked DONE: the story still read PARTIAL after `20261104120000` shipped the server-assigned File ID and the repeat check. Added a test that sends the same certification twice at the same moment on two connections (dblink), with the browser's version check and without, and certifies two intakes at once. It found no fault: the second request waits on the first's row lock and records nothing, and the second intake takes the next number. Section 1.2, the defects table, D15, D34 and the glossary no longer describe the File ID as built in the browser or set when the intake starts. The Story Index (section 7), the section 1.5 counts and the section 6 exit criteria had fallen behind the stories' own status lines (Epics C and D closed without them, and the section 1.5 counts missed later Epic I changes); all three are regenerated from the status lines: 14 Epic C and D rows in the Story Index, Epics C, D and I in section 1.5, and M1 43 of 54, M2 20 of 39, M3 6 of 13. No code or migration change. |
 | 2026-11-04 | C-2.4 closed, and C-3.1 tightened. Draft consent wording is marked on the Manuscript page and PDF (label and watermark), decided by the version signed, with one label and one approved-versions list in `certification.ts`. The browser no longer sends a File ID; migration `20261104131000_certification_file_id_check.sql` (either deploy order) refuses a certification whose File ID isn't its intake's. An end-to-end test sends four identical certifications through the HTTP stack at once and gets one. LEGAL's sign-off (D3, D10) is still open. See C-2.4, C-3.1. |
+| 2026-11-04 | F-0.3 closed and I-2.1 down to its manual run: `docs/ROUTE_ACCESS.md` with a test that keeps it equal to `App.tsx`; the workspace tab bar as a keyboard-operable tab list, named chat fields, focus rings on form fields, `AuthPage` labels tied to their fields, the voice orb left to the pointer, and an automated accessible-name check. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -164,7 +165,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 
 | Epic | Done | Partial | Superseded | Not started | Not verifiable | Total |
 |---|---|---|---|---|---|---|
-| 0 Foundations | 1 | 3 | 0 | 0 | 0 | 4 |
+| 0 Foundations | 2 | 2 | 0 | 0 | 0 | 4 |
 | A Durable session | 7 | 0 | 4 | 0 | 0 | 11 |
 | B AI extraction | 7 | 1 | 1 | 0 | 0 | 9 |
 | C Review, certify, submit | 10 | 0 | 0 | 0 | 0 | 10 |
@@ -175,9 +176,9 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
 | I Quality and accessibility | 3 | 9 | 0 | 1 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **64** | **22** | **11** | **4** | **5** | **106** |
+| **Total** | **65** | **21** | **11** | **4** | **5** | **106** |
 
-45 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 24 of 39 M2; 6 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+46 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 24 of 39 M2; 6 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -257,9 +258,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Remaining:** Errors are still `{error}` with no `code` field (the AC asks for a code and a message). The one manual Lenore exchange in a preview environment has not been done, and neither fixed function has been deployed or called live. The functions now import from `supabase/functions/_shared`, so confirm the deploy mechanism bundles it.
 
 #### F-0.3 Document the route access map
-- **Status:** **PARTIAL** · **Size:** S · **Priority:** Highest · **Owner:** PM + FS · **Depends:** none · **Milestone:** M1
-- **Built:** Guards exist: `RequireAuth` on `/start` and `/profile`, `RequireAdvisor` on `/advisor*`. `/manuscript` has no route guard, but the page needs a signed-in user and a `?session=` id and RLS decides what is returned. `/manuscript/demo` is a labelled sample. `docs/ADVISOR_ACCESS.md` documents the two advisor routes.
-- **Remaining:** Write `docs/ROUTE_ACCESS.md` covering every route in `src/App.tsx` (including `/login`, `/profile`, `/manuscript`, `/manuscript/demo`) and add the test that fails when a route is missing from it. The guards are named `RequireAuth` and `RequireAdvisor`; there is no `ProtectedRoute`.
+- **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** PM + FS · **Depends:** none · **Milestone:** M1
+- **Built:** `docs/ROUTE_ACCESS.md` covers every route in `src/App.tsx`: who can open it, its UI guard (`RequireAuth`, `IntakeConsentGate`, `RequireAdvisor`, or none) and what protects its data (row security or an advisor-only function). `src/routeAccess.test.ts` fails when a route in `App.tsx` is missing from the table, or the table lists one `App.tsx` no longer has. There is no `ProtectedRoute`. `docs/ADVISOR_ACCESS.md` keeps the detail of the advisor routes.
 
 #### F-0.4 Type-check and import-check edge functions in CI
 - **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** BE · **Depends:** F-0.2 · **Milestone:** M1
@@ -1142,8 +1142,8 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 
 #### I-2.1 Keyboard and labels for intake, review, and certification
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** FE · **Depends:** I-1.1 · **Milestone:** M2
-- **Built:** `aria-label`s in `ProvenanceField`, `UploadTab` and the Reckoning name and role fields. A screen-reader-only checkbox with a focus ring. `VerifyEmailGate` uses `htmlFor`.
-- **Remaining:** The workspace tab bar has no tablist or `aria-selected`. The send button and chat inputs are unnamed. The voice orb is a clickable div. `AuthPage` labels have no `htmlFor`. Inputs use `outline-none` with a faint border focus. No automated name check and no keyboard-only run.
+- **Built:** `aria-label`s in `ProvenanceField`, `UploadTab` and the Reckoning name and role fields. A screen-reader-only checkbox with a focus ring. `VerifyEmailGate` uses `htmlFor`. The workspace tab bar is a `tablist` ("Intake steps") with `aria-selected` and one tab stop; the arrows, Home and End move between steps, and the panel is a `tabpanel` named by its tab, reachable by the keyboard. Both chat fields are named "Message Lenore" and show a focus ring around their box (the send button was already named "Send"). The voice orb is hidden from assistive technology and takes no focus: it is a larger pointer target for the labelled "Speak with Lenore" / "End voice call" button beside it, which is the keyboard and screen-reader path, rather than a second control doing the same. `AuthPage` ties each label to its field and sets `autocomplete`. Form fields that dropped the outline for a faint border now show a focus ring. `expectEveryControlNamed` (`src/test/a11y.ts`) fails when any button, link, field, checkbox or tab has no accessible name; it runs on every workspace step, the sign-in and sign-up forms, the transcript and the voice controls.
+- **Remaining:** A keyboard-only run through intake, review and certification in a browser.
 
 #### I-2.2 Live-region announcements
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** I-2.1, B-3.2 · **Milestone:** M2
@@ -1302,7 +1302,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Criterion | Status |
 |---|---|
-| All M1 stories are done. | **Not met.** 45 of 54 are DONE or SUPERSEDED. |
+| All M1 stories are done. | **Not met.** 46 of 54 are DONE or SUPERSEDED. |
 | A test prospect completes text intake, review, certification, submission, and PDF download with real data. | **Shown in CI against stand-ins, not live.** The end-to-end test (I-4.3) completes text intake, review, certification, submission and PDF download in a browser with a scripted AI model and a Supabase stand-in. It is not shown on a deployed environment, with a real model or real Supabase, or with document upload. |
 | No "Meridian" text appears in the live path. | **Mostly met.** The live Manuscript never renders the sample (tested). 'Meridian Creative Group' remains in `chamberTypes.ts` and an `AuthPage` placeholder (D-1.5). |
 | Two sessions cannot access each other's data (automated test). | **Met at the database level.** The SQL matrix covers cross-user reads and writes and runs in CI (not run in this refresh). There is no HTTP-level test. |
@@ -1336,7 +1336,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 |---|---|---|---|---|---|
 | F-0.1 | Stop tracking `.env` and confirm secret hygiene | S | Highest | M1 | PARTIAL |
 | F-0.2 | Put the AI provider behind an adapter | M | Highest | M1 | PARTIAL |
-| F-0.3 | Document the route access map | S | Highest | M1 | PARTIAL |
+| F-0.3 | Document the route access map | S | Highest | M1 | DONE |
 | F-0.4 | Type-check and import-check edge functions in CI | S | Highest | M1 | DONE |
 | A-1.1 | Intake session data model | M | Highest | M1 | SUPERSEDED |
 | A-1.2 | Create a guest session and issue a continuation token | M | Highest | M1 | SUPERSEDED |
