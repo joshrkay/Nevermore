@@ -193,6 +193,13 @@ export type Database = {
           metadata: string | null
           mime_type: string | null
           processing_started_at: string | null
+          scan_attempts: number
+          scan_error: string | null
+          scan_locked_until: string | null
+          scan_next_at: string
+          scan_signature: string | null
+          scan_verdict: string
+          scanned_at: string | null
           session_id: string | null
           size_bytes: number | null
           status: string
@@ -210,6 +217,13 @@ export type Database = {
           metadata?: string | null
           mime_type?: string | null
           processing_started_at?: string | null
+          scan_attempts?: number
+          scan_error?: string | null
+          scan_locked_until?: string | null
+          scan_next_at?: string
+          scan_signature?: string | null
+          scan_verdict?: string
+          scanned_at?: string | null
           session_id?: string | null
           size_bytes?: number | null
           status?: string
@@ -227,6 +241,13 @@ export type Database = {
           metadata?: string | null
           mime_type?: string | null
           processing_started_at?: string | null
+          scan_attempts?: number
+          scan_error?: string | null
+          scan_locked_until?: string | null
+          scan_next_at?: string
+          scan_signature?: string | null
+          scan_verdict?: string
+          scanned_at?: string | null
           session_id?: string | null
           size_bytes?: number | null
           status?: string

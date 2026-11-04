@@ -19,6 +19,7 @@ const doc = (status: string, readIssue: AiFailureKind | null): SessionDocument =
   status,
   created_at: "2026-11-03T10:00:00Z",
   storage_path: "u/s/benefits.pdf",
+  scan_verdict: "clean",
   extraction: EMPTY_EXTRACTION,
   readIssue,
 });
@@ -73,5 +74,36 @@ describe("UploadTab: a read that didn't go through", () => {
   it.each(["extracted", "unsupported", "processing"])("offers no read again for a %s file", (status) => {
     renderTab(doc(status, null));
     expect(screen.queryByRole("button", { name: /Read it|Try again/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("UploadTab: the virus check", () => {
+  // Every upload is scanned before anyone can open it (20261104130000_document_scanning.sql).
+  it("says a file is being checked, and offers no read until the check passes", () => {
+    renderTab({ ...doc("uploaded", null), scan_verdict: "pending" });
+    expect(screen.getByText("Checking for viruses.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Read it|Try again/ })).not.toBeInTheDocument();
+  });
+
+  it("says a flagged file is blocked, lets the prospect remove it, and doesn't count it as provided", () => {
+    renderTab({ ...doc("uploaded", "rate_limited"), scan_verdict: "infected" });
+    expect(screen.getByText("Blocked.")).toBeInTheDocument();
+    expect(screen.getByText(/flagged this file/)).toBeInTheDocument();
+    // Not the read's reason: the virus check is all there is to say about it.
+    expect(screen.queryByText(DOCUMENT_FAILURE_MESSAGES.rate_limited, { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Read it|Try again/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove benefits.pdf" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Uploaded")).not.toBeInTheDocument();
+  });
+
+  it("says a file that couldn't be checked can't be opened yet", () => {
+    renderTab({ ...doc("uploaded", null), scan_verdict: "failed" });
+    expect(screen.getByText("Couldn't be checked.")).toBeInTheDocument();
+  });
+
+  it.each(["clean", "skipped"])("reads a %s file as before", (verdict) => {
+    renderTab({ ...doc("uploaded", null), scan_verdict: verdict });
+    expect(screen.getByRole("button", { name: "Read it" })).toBeInTheDocument();
+    expect(screen.queryByText(/viruses/)).not.toBeInTheDocument();
   });
 });

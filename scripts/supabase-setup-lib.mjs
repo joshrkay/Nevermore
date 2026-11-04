@@ -1,7 +1,10 @@
 // Pure helpers for scripts/supabase-setup.mjs: parsing, validation, the SQL it runs and how it
 // reads the results. No I/O, so they are unit-tested (scripts/supabase-setup-lib.test.ts).
 
-export const FUNCTIONS = ["chamber-extract", "document-extract", "dispatch-outbox", "resend-webhook", "purge-intakes", "ops-monitor"];
+export const FUNCTIONS = ["chamber-extract", "document-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "purge-intakes", "ops-monitor"];
+
+/** What MALWARE_SCANNER may be (supabase/functions/_shared/malwareScan.ts). */
+export const MALWARE_SCANNERS = ["clamav", "http", "none"];
 
 /** Secrets the email notifications need. Without them emails wait in the queue; nothing is lost. */
 export const EMAIL_SECRETS = ["RESEND_API_KEY", "EMAIL_FROM", "ADVISORY_NOTIFY_EMAIL", "SUPPORT_EMAIL", "PROSPECT_RESPONSE_TIME"];
@@ -62,6 +65,22 @@ export function checkSecrets(env) {
   // Sending works without it, so it is not one of the email secrets; only the bounces are lost.
   if (set("RESEND_API_KEY") && !set("RESEND_WEBHOOK_SECRET")) {
     warnings.push("Bounces and spam complaints are not processed until RESEND_WEBHOOK_SECRET is set: the signing secret of a Resend webhook pointed at the resend-webhook function (docs/NOTIFICATIONS.md)");
+  }
+
+  // The malware scanner (E-4.3, decision D13). Unset holds every upload; set but incomplete is a mistake.
+  const scanner = set("MALWARE_SCANNER") ? env.MALWARE_SCANNER.trim().toLowerCase() : null;
+  if (scanner === null) {
+    warnings.push("Uploads are held, unreadable, until MALWARE_SCANNER is set: clamav (CLAMAV_HOST), http (MALWARE_SCANNER_URL and MALWARE_SCANNER_TOKEN), or none for the internal demo only (docs/RUNBOOK.md)");
+  } else if (!MALWARE_SCANNERS.includes(scanner)) {
+    errors.push(`MALWARE_SCANNER must be clamav, http or none, not "${env.MALWARE_SCANNER}"`);
+  } else if (scanner === "clamav" && !set("CLAMAV_HOST")) {
+    errors.push("CLAMAV_HOST is required when MALWARE_SCANNER=clamav");
+  } else if (scanner === "http" && (!set("MALWARE_SCANNER_URL") || !set("MALWARE_SCANNER_TOKEN"))) {
+    errors.push("MALWARE_SCANNER_URL and MALWARE_SCANNER_TOKEN are required when MALWARE_SCANNER=http");
+  } else if (scanner === "http" && !/^https:\/\//.test(env.MALWARE_SCANNER_URL.trim())) {
+    errors.push("MALWARE_SCANNER_URL must be an https:// address");
+  } else if (scanner === "none") {
+    warnings.push("MALWARE_SCANNER=none: uploads are not scanned for malware. Fine for the internal demo, not for prospects' files (docs/RUNBOOK.md)");
   }
 
   return { errors, warnings };
@@ -265,11 +284,13 @@ export function vaultSecretSql(serviceRoleKey) {
  * - dispatch-outbox every minute: submission emails, retries and healing (docs/NOTIFICATIONS.md).
  * - purge-intakes hourly: carries out intake deletions (docs/DATA_HANDLING.md).
  * - ops-monitor every five minutes: alerts on failures over their thresholds (docs/RUNBOOK.md).
+ * - document-scan every five minutes: scans uploads that weren't settled when they arrived (docs/RUNBOOK.md).
  */
 export const SCHEDULED_FUNCTIONS = [
   { fn: "dispatch-outbox", schedule: "* * * * *", status: "schedule", label: "Email schedule", every: "every minute", missing: "not scheduled" },
   { fn: "purge-intakes", schedule: "23 * * * *", status: "purge_schedule", label: "Deletion schedule", every: "hourly", missing: "not scheduled: requested and retention deletions never run" },
   { fn: "ops-monitor", schedule: "*/5 * * * *", status: "monitor_schedule", label: "Alert schedule", every: "every five minutes", missing: "not scheduled: failures are recorded but nobody is alerted" },
+  { fn: "document-scan", schedule: "*/5 * * * *", status: "scan_schedule", label: "Malware scan schedule", every: "every five minutes", missing: "not scheduled: an upload the scanner couldn't check at once stays unreadable" },
 ];
 
 /** Runs one scheduled function on the project's own URL. Scheduling the same name again replaces the job. */
@@ -327,13 +348,14 @@ export const STATUS_QUERIES = {
   intake_table: "select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name = 'chamber_sessions';",
   // The app's tables rely on the platform's default grants to the API roles (row security does the rest).
   table_grants: "select (has_table_privilege('authenticated', 'public.chamber_sessions', 'SELECT') and has_table_privilege('authenticated', 'public.chamber_sessions', 'INSERT') and has_table_privilege('authenticated', 'public.chamber_sessions', 'UPDATE'))::int as n;",
-  buckets: "select count(*)::int as n from storage.buckets where id in ('documents', 'manuscripts');",
+  buckets: "select count(*)::int as n from storage.buckets where id in ('documents', 'manuscripts', 'quarantine');",
   extensions: "select count(*)::int as n from pg_extension where extname in ('pg_cron', 'pg_net');",
   vault_secret: "select count(*)::int as n from vault.secrets where name = 'service_role_key';",
   schedule: "select count(*)::int as n from cron.job where jobname = 'dispatch-outbox' and schedule = '* * * * *';",
   expiry_schedule: "select count(*)::int as n from cron.job where jobname = 'expire-idle-intakes';",
   purge_schedule: "select count(*)::int as n from cron.job where jobname = 'purge-intakes';",
   monitor_schedule: "select count(*)::int as n from cron.job where jobname = 'ops-monitor';",
+  scan_schedule: "select count(*)::int as n from cron.job where jobname = 'document-scan';",
   retention_schedule: "select count(*)::int as n from cron.job where jobname = 'run-retention';",
   role_grants: "select count(*)::int as n from public.user_roles;",
 };
@@ -390,7 +412,7 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
   add("Migrations applied", s.migrations === localMigrations, `${s.migrations ?? "?"} of ${localMigrations}`);
   add("App tables exist", s.intake_table === 1, s.intake_table === 1 ? "chamber_sessions found" : "chamber_sessions missing");
   add("Signed-in users can reach the tables", s.table_grants === 1, s.table_grants === 1 ? "authenticated has select, insert, update" : "the API roles lack table grants");
-  add("Storage buckets", s.buckets === 2, `${s.buckets ?? "?"} of 2 (documents, manuscripts)`);
+  add("Storage buckets", s.buckets === 3, `${s.buckets ?? "?"} of 3 (documents, manuscripts, quarantine)`);
   add("pg_cron and pg_net", s.extensions === 2, `${s.extensions ?? "?"} of 2 enabled`);
   add("Service-role key in Vault", s.vault_secret === 1, s.vault_secret === 1 ? "stored" : "missing");
   for (const job of SCHEDULED_FUNCTIONS) {
@@ -446,7 +468,9 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
     const emailMissing = EMAIL_SECRETS.filter((n) => !names.includes(n));
     add("Email secrets", emailMissing.length === 0, emailMissing.length === 0 ? "all set" : `missing: ${emailMissing.join(", ")} (emails wait in the queue)`, false);
     const alerts = names.includes("ENGINEERING_ALERT_WEBHOOK_URL");
-    add("Engineering alerts", alerts, alerts ? "ENGINEERING_ALERT_WEBHOOK_URL set" : "ENGINEERING_ALERT_WEBHOOK_URL not set: dead emails, failed deletions and failure spikes are only logged", false);
+    add("Engineering alerts", alerts, alerts ? "ENGINEERING_ALERT_WEBHOOK_URL set" : "ENGINEERING_ALERT_WEBHOOK_URL not set: dead emails, failed deletions, malware detections and failure spikes are only logged", false);
+    const scanner = names.includes("MALWARE_SCANNER");
+    add("Malware scanner", scanner, scanner ? "MALWARE_SCANNER set" : "MALWARE_SCANNER not set: every upload is held, unreadable, until it is (clamav, http, or none for the internal demo)", false);
   } else {
     add("Function secrets", false, "could not list secret names");
   }

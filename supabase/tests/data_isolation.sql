@@ -80,6 +80,7 @@
 \i supabase/migrations/20261104117100_alert_headcount_census.sql
 \i supabase/migrations/20261104118000_open_items.sql
 \i supabase/migrations/20261104120000_submission_records.sql
+\i supabase/migrations/20261104130000_document_scanning.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -184,6 +185,21 @@ BEGIN
   IF r IS DISTINCT FROM expected THEN RAISE EXCEPTION 'FAIL: % gave %, expected %', label, r, expected; END IF;
 END $$;
 
+-- A file as document-upload stores it: with the service role (prospects can't store files themselves since
+-- 20261104130000_document_scanning.sql), then back to whoever was acting.
+CREATE FUNCTION pg_temp.store_file(bucket text, path text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  claims text := current_setting('request.jwt.claims', true);
+  acting text := current_user;
+BEGIN
+  RESET ROLE;
+  INSERT INTO storage.objects (bucket_id, name) VALUES (bucket, path);
+  IF acting <> session_user THEN
+    EXECUTE format('SET LOCAL ROLE %I', acting);
+    PERFORM set_config('request.jwt.claims', claims, false);
+  END IF;
+END $$;
+
 -- The callers that must never reach someone else's intake.
 CREATE FUNCTION pg_temp.outsiders(owner text) RETURNS SETOF text LANGUAGE sql AS $$
   SELECT c FROM unnest(ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor_as_guest']) c WHERE c <> owner
@@ -224,7 +240,7 @@ BEGIN
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Expired"}') RETURNING id INTO ga_expired;
   INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
   VALUES (ga, ga_expired, 'payroll.pdf', '1 KB', ga || '/' || ga_expired || '/payroll.pdf', 'payroll_report');
-  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', ga || '/' || ga_expired || '/payroll.pdf');
+  PERFORM pg_temp.store_file('documents', ga || '/' || ga_expired || '/payroll.pdf');
   RESET ROLE;
   UPDATE public.chamber_sessions SET last_activity_at = now() - interval '40 days' WHERE id = ga_expired;
   PERFORM pg_temp.become('service');
@@ -234,7 +250,7 @@ BEGIN
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Archived"}') RETURNING id INTO ga_archived;
   INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
   VALUES (ga, ga_archived, 'loss-runs.pdf', '1 KB', ga || '/' || ga_archived || '/loss-runs.pdf', 'workers_comp_loss_runs');
-  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', ga || '/' || ga_archived || '/loss-runs.pdf');
+  PERFORM pg_temp.store_file('documents', ga || '/' || ga_archived || '/loss-runs.pdf');
   IF public.archive_chamber_session(ga_archived) <> 'archived' THEN RAISE EXCEPTION 'setup: archive failed'; END IF;
 
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Revoked"}') RETURNING id INTO ga_revoked;
@@ -249,7 +265,7 @@ BEGIN
   RETURNING id INTO ga_open;
   INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
   VALUES (ga, ga_open, 'census.csv', '1 KB', ga || '/' || ga_open || '/census.csv', 'employee_census');
-  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', ga || '/' || ga_open || '/census.csv');
+  PERFORM pg_temp.store_file('documents', ga || '/' || ga_open || '/census.csv');
 
   -- Guest B: one open draft with a file.
   PERFORM pg_temp.become('guest_b');
@@ -258,14 +274,14 @@ BEGIN
   RETURNING id INTO gb_open;
   INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path)
   VALUES (gb, gb_open, 'roster.xlsx', '1 KB', gb || '/' || gb_open || '/roster.xlsx');
-  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', gb || '/' || gb_open || '/roster.xlsx');
+  PERFORM pg_temp.store_file('documents', gb || '/' || gb_open || '/roster.xlsx');
 
   -- Prospects A and B each certify one intake from the browser, then keep a draft; A's certified one has a file.
   PERFORM pg_temp.become('prospect_a');
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pa, format(ready, 'Prospect A Co')::jsonb) RETURNING id INTO pa_cert;
   INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path)
   VALUES (pa, pa_cert, 'benefits.pdf', '1 KB', pa || '/' || pa_cert || '/benefits.pdf');
-  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', pa || '/' || pa_cert || '/benefits.pdf');
+  PERFORM pg_temp.store_file('documents', pa || '/' || pa_cert || '/benefits.pdf');
   UPDATE public.chamber_sessions
   SET status = 'submitted',
       submission = jsonb_build_object('signer_name', 'Pat A', 'signer_title', 'CEO', 'signed_at', '2026-11-01T12:00:00Z',
@@ -284,7 +300,7 @@ BEGIN
 
   -- A file planted in guest B's folder under guest A's intake: neither of them may read it.
   RESET ROLE;
-  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', gb || '/' || ga_open || '/planted.csv');
+  PERFORM pg_temp.store_file('documents', gb || '/' || ga_open || '/planted.csv');
 
   -- The advisor works on prospect A's submission, so every advisor-side table has a row to protect.
   PERFORM pg_temp.become('advisor');
@@ -323,6 +339,10 @@ BEGIN
   IF NOT public.consume_ai_quota(15, 300) THEN RAISE EXCEPTION 'setup: ai quota refused'; END IF;
 
   RESET ROLE;
+  -- Every file above passed its malware scan, as document-upload records it (20261104130000); a file whose
+  -- scan hasn't is withheld, which document_scanning.sql checks. One more upload waits in quarantine.
+  UPDATE public.documents SET scan_verdict = 'clean', scanned_at = now();
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('quarantine', ga || '/' || ga_open || '/held.pdf');
   PERFORM set_config('request.jwt.claims', '', false);
   INSERT INTO fx VALUES
     ('ga_open', ga_open), ('ga_expired', ga_expired), ('ga_archived', ga_archived), ('ga_revoked', ga_revoked),
@@ -350,6 +370,8 @@ INSERT INTO matrix VALUES
   -- A prospect reads one stored Manuscript: their final one (the latest version, built from their current
   -- certification; prospect_final_manuscript). Every other file in the bucket is the advisors'.
   ('storage.objects WHERE bucket_id = ''manuscripts''', '{"prospect_a":1,"advisor":"all","admin":"all"}'),
+  -- Uploads whose malware scan hasn't passed (20261104130000): the service role's alone.
+  ('storage.objects WHERE bucket_id = ''quarantine''',  '{}'),
   ('storage.buckets',                                   '{}'),
   -- Everyone sees their own profile; the advisor's account behind a guest token is still that account.
   ('public.profiles',                                   '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all","advisor_as_guest":1}'),
@@ -502,7 +524,8 @@ BEGIN
       END IF;
       PERFORM pg_temp.expect(format('UPDATE public.chamber_sessions SET chosen_peo = %L WHERE id = %L', 'A PEO', sid), 'rows:1', t.owner || ' saving their own intake');
       PERFORM pg_temp.expect(format('UPDATE public.documents SET category = %L WHERE id = %L', 'other', doc), 'rows:1', t.owner || ' changing their own document');
-      PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'documents', owner_id || '/' || sid || '/new.csv'), 'rows:1', t.owner || ' storing a file');
+      -- Not even the owner stores a file directly: document-upload checks its bytes and stores it (20261104130000).
+      PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'documents', owner_id || '/' || sid || '/new.csv'), '42501', t.owner || ' storing a file directly');
       PERFORM pg_temp.expect(format('INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path) VALUES (%L, %L, %L, %L, %L)',
         owner_id, sid, 'new.csv', '1 KB', owner_id || '/' || sid || '/new.csv'), 'rows:1', t.owner || ' adding a document');
       -- A certified intake keeps the file it was certified with, for the advisor (20261104112000); removing the
@@ -622,6 +645,7 @@ INSERT INTO callable VALUES
   ('prospect_final_manuscript(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s final Manuscript (latest version, current certification); nothing for anyone else''s'),
   ('is_own_final_manuscript(p_name text)',     'helper',  NULL, 'the manuscripts read policy calls it as the caller; true only for the file of the caller''s own final Manuscript'),
   ('is_certified_evidence(p_name text)',       'helper',  NULL, 'the documents delete policy calls it as the caller; answers only about the caller''s own certified intakes'),
+  ('is_withheld_document_file(p_name text)',   'helper',  NULL, 'the documents read policies call it as the reader; answers only whether the document stored at that exact path has a scan that hasn''t passed'),
   ('consume_ai_quota(per_minute integer, per_day integer)', 'own', NULL, 'the AI functions call it with the caller''s token; spends only the caller''s own allowance (SR-6)'),
   ('current_intake_consent_id(p_user_id uuid)', 'helper', NULL, 'the consent triggers call it as the caller; row security limits it to the caller''s own agreement (all, for advisors)'),
   ('chamber_data_census_row_error(census_row jsonb, base text, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),
@@ -697,6 +721,8 @@ BEGIN
     'SELECT public.run_retention()',
     'SELECT public.queue_retention_deletions(1)',
     'SELECT count(*) FROM public.claim_intake_deletions(1, 600)',
+    'SELECT count(*) FROM public.claim_document_scans(1, 60)',
+    'SELECT count(*) FROM public.document_scan_orphans(10)',
     format('SELECT count(*) FROM public.intake_stored_files(%L, %L)', sid, pg_temp.id('prospect_a')),
     format('SELECT public.complete_intake_deletion(%L, 0)', nobody),
     format('SELECT public.fail_intake_deletion(%L, ''probe'', 60)', nobody)
@@ -882,7 +908,9 @@ BEGIN
   -- (c) Every bucket is private.
   SELECT string_agg(id, ', ') INTO missing FROM storage.buckets WHERE public IS DISTINCT FROM false;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'FAIL: public storage buckets: %', missing; END IF;
-  IF (SELECT count(*) FROM storage.buckets) <> 2 THEN RAISE EXCEPTION 'FAIL: expected exactly the documents and manuscripts buckets'; END IF;
+  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'quarantine'] THEN
+    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts and quarantine buckets';
+  END IF;
 
   -- (d) The API roles hold no TRUNCATE (it ignores row security), REFERENCES or TRIGGER on any public table
   --     (SR-3), and nothing at all on the AI rate-limit tables (SR-4).

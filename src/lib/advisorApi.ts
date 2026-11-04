@@ -19,6 +19,7 @@ import {
   type ReviewState,
 } from "@/data/advisor";
 
+import { downloadName } from "../../supabase/functions/_shared/fileSignature.ts";
 // Every call here is authorized by the database (row security and advisor-only functions);
 // the advisor routes in the UI are a convenience on top of that, not the control.
 
@@ -28,7 +29,7 @@ export type StatusHistoryRow = Tables["submission_status_history"]["Row"];
 export type AdvisorNote = Tables["advisor_notes"]["Row"];
 export type ReviewEvent = Tables["advisor_review_events"]["Row"];
 export type ManuscriptVersion = Tables["manuscript_versions"]["Row"];
-export type UploadedDocument = Pick<Tables["documents"]["Row"], "id" | "file_name" | "file_size" | "category" | "status" | "storage_path" | "created_at" | "file_sha256">;
+export type UploadedDocument = Pick<Tables["documents"]["Row"], "id" | "file_name" | "file_size" | "category" | "status" | "storage_path" | "created_at" | "file_sha256" | "scan_verdict">;
 export type DocumentEvent = Tables["document_events"]["Row"];
 
 export class AdvisorApiError extends Error {
@@ -193,7 +194,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   const [docs, profile, docEvents] = await Promise.all([
     supabase
       .from("documents")
-      .select("id, file_name, file_size, category, status, storage_path, created_at, file_sha256")
+      .select("id, file_name, file_size, category, status, storage_path, created_at, file_sha256, scan_verdict")
       // This intake's uploads only, not everything the same prospect has ever uploaded.
       .eq("session_id", id)
       .order("created_at", { ascending: false }),
@@ -292,11 +293,16 @@ export async function reviewField(
 /** How long a link to a stored file works. src/lib/fileLinks.test.ts holds every link to this. */
 export const SIGNED_URL_SECONDS = 60;
 
-/** A short-lived link to a stored file, issued only if the caller may read it. */
-async function signedUrl(bucket: "documents" | "manuscripts", path: string, download?: string): Promise<string> {
+/**
+ * A short-lived link to a stored file, issued only if the caller may read it. Every link asks Storage for
+ * `Content-Disposition: attachment`, so the browser saves the file and never shows it inline. Storage
+ * doesn't sign that request, but every document is also stored as application/octet-stream
+ * (20261104130000_document_scanning.sql), which a browser downloads whatever the link says.
+ */
+async function signedUrl(bucket: "documents" | "manuscripts", path: string, download: string): Promise<string> {
   const { data, error } = await supabase.storage
     .from(bucket)
-    .createSignedUrl(path, SIGNED_URL_SECONDS, download ? { download } : undefined);
+    .createSignedUrl(path, SIGNED_URL_SECONDS, { download: downloadName(download) });
   if (error || !data) fail(error, "Couldn't open that file.");
   return data!.signedUrl;
 }
