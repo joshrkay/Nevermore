@@ -256,6 +256,41 @@ describe("parsing", () => {
   });
 });
 
+describe("a field the prospect doesn't know (unknown, D23)", () => {
+  const source = { kind: "transcript" as const, message_id: "m9" };
+  const state = (over: Partial<IntakeState> = {}): IntakeState => ({ data: { ...EMPTY_CHAMBER_DATA }, provenance: {}, ...over });
+
+  it("records it as unknown, with the prospect's words and no answer", () => {
+    const next = applyExtraction(state(), {}, { source, unknown: ["wc_experience_mod"], evidence: { wc_experience_mod: "no idea" } });
+    expect(next.data.wc_experience_mod).toBeNull();
+    expect(next.provenance.wc_experience_mod).toMatchObject({ status: "unknown", source: { kind: "transcript", message_id: "m9", quote: "no idea" } });
+    expect(fieldOpenItems(next.provenance)).toContainEqual({ field: "wc_experience_mod", label: FIELD_LABELS.wc_experience_mod, reason: "Prospect to provide" });
+  });
+
+  it("leaves an answer already given, the prospect's own edit and \"Doesn't apply\" alone", () => {
+    const given = applyExtraction(state({ data: { ...EMPTY_CHAMBER_DATA, renewal_date: "July" }, provenance: { renewal_date: { status: "inferred", source, updated_at: "2026-11-01T00:00:00Z" } } }), {}, { source, unknown: ["renewal_date"] });
+    expect(given.provenance.renewal_date?.status).toBe("inferred");
+    expect(given.data.renewal_date).toBe("July");
+    const edited = applyExtraction(state({ provenance: { renewal_date: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-11-01T00:00:00Z" } } }), {}, { source, unknown: ["renewal_date"] });
+    expect(edited.provenance.renewal_date?.status).toBe("confirmed");
+    const na = applyExtraction(state({ provenance: { renewal_date: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: "2026-11-01T00:00:00Z" } } }), {}, { source, unknown: ["renewal_date"] });
+    expect(na.provenance.renewal_date?.status).toBe("not_applicable");
+  });
+
+  it("comes from the model's field statuses for fields it gave no answer, and an answer later replaces it", () => {
+    const opts = transcriptExtraction({ id: "m9", text: "not sure, but we have about 12 people" }, {
+      field_status: { employee_count: "inferred", renewal_date: "unknown", census: "unknown" },
+      evidence: { renewal_date: "not sure" },
+    });
+    expect(opts.unknown).toEqual(["renewal_date"]);
+    const marked = applyExtraction(state(), { employee_count: 12 }, opts);
+    expect(marked.provenance.renewal_date?.status).toBe("unknown");
+    const answered = applyExtraction(marked, { renewal_date: "March" }, { source: { kind: "transcript", message_id: "m10" } });
+    expect(answered.data.renewal_date).toBe("March");
+    expect(answered.provenance.renewal_date?.status).toBe("inferred");
+  });
+});
+
 describe("transcriptExtraction", () => {
   it("never leaves half an emoji in the quote, which Postgres jsonb refuses", () => {
     const text = `${"a".repeat(198)}😀${"b".repeat(20)}`;

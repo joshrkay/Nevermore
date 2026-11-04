@@ -142,6 +142,8 @@ const ChamberPage = () => {
     intakeId: sessionId,
     ensureIntake,
     chamberData,
+    provenance,
+    messages,
     setChamberData,
     addUserMessage: (text) => {
       const message = createChatMessage("user", text);

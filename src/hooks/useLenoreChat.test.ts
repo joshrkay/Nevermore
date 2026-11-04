@@ -57,6 +57,30 @@ describe("useLenoreChat", () => {
     expect(body.context).not.toHaveProperty("census");
   });
 
+  it("sends each answer's status and the recent conversation, without the message being sent or the Chamber's notes", async () => {
+    invoke.mockResolvedValue({ data: { extracted: {}, reply: "ok" }, error: null });
+    const sent = { id: "m3", text: "Yes" };
+    const { result } = renderHook(() =>
+      useLenoreChat({
+        intakeId: null,
+        chamberData: { ...EMPTY_CHAMBER_DATA, company_name: "Acme" },
+        provenance: { company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-11-01T00:00:00Z" } },
+        messages: [
+          { id: "m1", sender: "lenore", text: "Does anyone work in California?", timestamp: "" },
+          { id: "m2", sender: "system", text: "Voice call started", timestamp: "" },
+          { id: "m3", sender: "user", text: "Yes", timestamp: "" },
+        ],
+        setChamberData: vi.fn(), addUserMessage: vi.fn(() => sent), addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(),
+      }),
+    );
+    await act(async () => { await result.current.send("Yes"); });
+    const body = invoke.mock.calls[0][1].body;
+    expect(body.message).toBe("Yes");
+    expect(body.statuses).toEqual({ company_name: "confirmed" });
+    expect(body.recent).toEqual([{ sender: "lenore", text: "Does anyone work in California?" }]);
+    expect(body.context).not.toHaveProperty("census");
+  });
+
   it("starts the intake when the prospect hasn't, and names it, so the call is recorded against it", async () => {
     invoke.mockResolvedValue({ data: { extracted: {}, reply: "ok" }, error: null });
     const ensureIntake = vi.fn(async () => "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
