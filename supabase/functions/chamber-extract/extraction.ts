@@ -4,7 +4,7 @@
 // extracted, or (status "unknown" and its evidence) for a field the prospect said they don't know. No Deno or network imports, so it is unit-tested with the frontend suite.
 
 import { type IntakeIssue, validateIntakeField } from "../_shared/intakeSchema.ts";
-import { FIELDS, FIELD_STATUSES, MAX_EVIDENCE_CHARS } from "./schema.ts";
+import { FIELDS, FIELD_STATUSES, MAX_EVIDENCE_CHARS, PROMPT_VERSION } from "./schema.ts";
 
 export interface Extraction {
   extracted: Record<string, unknown>;
@@ -14,10 +14,20 @@ export interface Extraction {
   reply: string | null;
   /** Fields the model sent that the intake schema refuses, by path and reason (never the value). */
   rejected: IntakeIssue[];
+  /** The contract this answer was produced under (PROMPT_VERSION), which the browser stores with each value. */
+  prompt_version: number;
 }
 
 /** What the browser gets when the model made no tool call: nothing extracted, and no reply of ours. */
-export const emptyExtraction = (): Extraction => ({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null, rejected: [] });
+export const emptyExtraction = (): Extraction => ({
+  extracted: {},
+  field_status: {},
+  evidence: {},
+  corrected_fields: [],
+  reply: null,
+  rejected: [],
+  prompt_version: PROMPT_VERSION,
+});
 
 // Keeps only entries for the fields in `keep` (those extracted, or with a status).
 function pickPerField<T>(raw: unknown, keep: Record<string, unknown>, ok: (v: unknown) => v is T): Record<string, T> {
@@ -65,5 +75,5 @@ export function shapeExtraction(args: Record<string, unknown>): Extraction {
     ? args.corrected_fields.filter((f: unknown): f is string => typeof f === "string" && f in extracted)
     : [];
   const reply = typeof args.reply === "string" && args.reply.trim() ? args.reply : null;
-  return { extracted, field_status, evidence, corrected_fields, reply, rejected };
+  return { extracted, field_status, evidence, corrected_fields, reply, rejected, prompt_version: PROMPT_VERSION };
 }

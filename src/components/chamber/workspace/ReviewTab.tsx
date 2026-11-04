@@ -3,7 +3,8 @@ import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
 import { fieldOpenItems, formatFieldValue, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
-import { conflictingRequired, missingRecommendedItems, missingRequired, type ReadinessItem, type ReviewSection } from "@/data/readiness";
+import { missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
+import { NO_VERIFIED_FIELDS, REQUIRED_ITEM_REASONS, requiredItems, type RequiredItem } from "@/data/requiredItems";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
 import { CheckCircle, AlertTriangle, HelpCircle, FileText } from "lucide-react";
@@ -19,6 +20,8 @@ interface ReviewDocument {
 interface ReviewTabProps {
   data: ChamberData;
   provenance?: ProvenanceMap;
+  /** Fields an advisor verified: settled whatever their status, so never listed. */
+  verified?: ReadonlySet<string>;
   onAction?: (action: FieldAction) => void;
   onProceed: () => void;
   documents?: ReviewDocument[];
@@ -112,11 +115,22 @@ const rowId = (field: FieldKey) => `review-field-${field}`;
 const sectionId = (section: ReviewSection) => `review-section-${section}`;
 
 /** Brings an answer into view and puts the keyboard on its Add or Edit button. */
-function jumpTo(item: ReadinessItem) {
+function jumpTo(item: Pick<ReadinessItem, "field" | "section">) {
   const target = document.getElementById(item.field ? rowId(item.field) : sectionId(item.section));
   target?.scrollIntoView?.({ block: "center", behavior: "smooth" });
   target?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
 }
+
+/** Where the census is answered, for States of operation that the census decides. */
+const CENSUS_SPOT = { section: "workforce" as ReviewSection };
+
+/** Why a required answer is still needed: what to give, or that its answers disagree. */
+const stillNeededNote = (item: RequiredItem): string =>
+  item.state === "missing"
+    ? item.readiness.hint
+    : item.viaCensus
+      ? "The census's answers conflict, and it gives your states. Choose which is right."
+      : "Your answers conflict. Choose which is right.";
 
 const Section = ({ section, title, children }: { section: ReviewSection; title: string; children: ReactNode }) => (
   <section id={sectionId(section)} aria-labelledby={`${sectionId(section)}-title`} className="bg-card border border-border rounded-xl p-6 space-y-4">
@@ -133,7 +147,21 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
     if (focusRequest > 0) headingRef.current?.focus();
   }, [focusRequest]);
   const eeCount = headcount(data);
-  const needsReview = fieldOpenItems(provenance);
+  const required = requiredItems(data, provenance, verified).filter((i) => i.required);
+  // Still needed: the required answers that block certification, missing (US-1.2) or in conflict (B-2.2),
+  // in their fixed order. A missing one is listed even if an advisor verified its field: verifying never
+  // supplies a value.
+  const stillNeeded = required.filter((i) => i.state === "missing" || i.state === "conflicting");
+  // Then the required answers given but not settled, in order, ahead of every other field that still needs
+  // the prospect. A field is listed once, and never one an advisor verified. While the census decides States
+  // of operation, the census is the answer to confirm.
+  const toSettle = required.flatMap((i) =>
+    i.state === "incomplete" || i.state === "unconfirmed"
+      ? [i.viaCensus ? { field: "census" as FieldKey, label: "Employee census", reason: REQUIRED_ITEM_REASONS[i.state] } : { field: i.field, label: i.label, reason: REQUIRED_ITEM_REASONS[i.state] }]
+      : [],
+  );
+  const listed = new Set<FieldKey>([...stillNeeded.flatMap((i) => (i.viaCensus ? [i.field, "census" as FieldKey] : [i.field])), ...toSettle.map((i) => i.field)]);
+  const needsReview = [...toSettle, ...fieldOpenItems(provenance, verified).filter((i) => !listed.has(i.field))];
   const checks = eligibilityChecks(data);
   const flaggedEmployees = data.census.filter(e => employeeFlag(e) !== null);
   const uploaded = documents.filter((d) => d.status !== "uploading");
@@ -186,12 +214,12 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
             Still needed before The Manuscript can be generated: {blocking}
           </p>
           <ul className="space-y-2">
-            {required.map((item) => (
-              <li key={item.key} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+            {stillNeeded.map((item) => (
+              <li key={item.item} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
                 <span className="font-medium">{item.label}</span>
-                <span className="text-muted-foreground text-xs">{item.hint}</span>
-                <button type="button" onClick={() => jumpTo(item)} className="text-xs font-medium text-primary underline underline-offset-2">
-                  Go to {item.label.toLowerCase()}
+                <span className="text-muted-foreground text-xs">{stillNeededNote(item)}</span>
+                <button type="button" onClick={() => jumpTo(item.viaCensus ? CENSUS_SPOT : item.readiness)} className="text-xs font-medium text-primary underline underline-offset-2">
+                  Go to {(item.viaCensus ? "Employee census" : item.label).toLowerCase()}
                 </button>
               </li>
             ))}

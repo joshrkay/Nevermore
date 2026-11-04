@@ -1,3 +1,5 @@
+import type { RequiredItem } from "./requiredItems";
+
 // The wording a prospect certifies. The version is stored with every certification so we can
 // always tell which text a signer agreed to; bump it whenever any wording below changes.
 //
@@ -22,7 +24,11 @@ export interface SignerDetails {
   title: string;
 }
 
-/** Why certification can't be completed yet; empty when it can. Drives the submit button and its hint. */
+/**
+ * Why certification can't be completed yet; empty when it can. Drives the submit button and its hint.
+ * Missing required answers come first (US-1.2; the database refuses them too, EA003); a required answer
+ * whose answers conflict blocks it as well, in the browser only (B-2.2). The census never blocks.
+ */
 export function certificationBlockers(opts: {
   acknowledged: boolean[];
   signer: SignerDetails;
@@ -41,6 +47,12 @@ export function certificationBlockers(opts: {
   ];
   if (opts.isGuest) blockers.push("Verify your email");
   if (!opts.hasFileId) blockers.push("Wait for your intake to finish saving");
+  // A required answer whose answers conflict can't be certified as either; the recommended census never
+  // blocks. States of operation taken from a conflicting census is resolved on the census, so it is named.
+  for (const item of opts.requiredItems ?? []) {
+    if (!item.required || item.state !== "conflicting") continue;
+    blockers.push(`Resolve the conflicting answers for ${item.viaCensus ? "Employee census" : item.label}`);
+  }
   if (!opts.acknowledged.every(Boolean)) blockers.push("Check every statement");
   if (!opts.signer.name.trim()) blockers.push("Enter your full name");
   if (!opts.signer.title.trim()) blockers.push("Enter your role");

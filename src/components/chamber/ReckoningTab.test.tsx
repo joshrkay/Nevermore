@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { toast } from "sonner";
 import { MemoryRouter } from "react-router-dom";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
+import type { ProvenanceMap } from "@/data/provenance";
 
 const auth = {
   isAnonymous: true,
@@ -254,6 +255,48 @@ describe("ReckoningTab certification", () => {
     rerenderWith({ ...DEMO_CHAMBER_DATA, company_name: "Renamed Inc" });
     await waitFor(() => expect(screen.queryByText("Certification recorded")).not.toBeInTheDocument());
     expect(screen.getByRole("alert")).toHaveTextContent(/certify again/);
+  });
+
+  describe("with a required item whose answers conflict", () => {
+    const conflicting: ProvenanceMap = {
+      pay_frequency: {
+        status: "conflicting",
+        source: { kind: "transcript", message_id: "m1" },
+        updated_at: "2026-11-03T12:00:00Z",
+        candidates: [
+          { value: "Bi-weekly", source: { kind: "transcript", message_id: "m1" } },
+          { value: "Weekly", source: { kind: "transcript", message_id: "m2" } },
+        ],
+      },
+      // Only conflicts hold certification back for now; an unconfirmed item doesn't.
+      company_name: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-03T12:00:00Z" },
+    };
+    const mountWith = (verified?: ReadonlySet<string>) =>
+      render(
+        <MemoryRouter>
+          <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={conflicting} verified={verified} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+        </MemoryRouter>,
+      );
+
+    it("won't submit until the prospect settles it, and says which one", () => {
+      mountWith();
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeDisabled();
+      expect(screen.getByTestId("certification-blockers")).toHaveTextContent(
+        "Before you can submit: Resolve the conflicting answers for Pay frequency",
+      );
+    });
+
+    it("lets it through once an advisor has verified the field", () => {
+      mountWith(new Set(["pay_frequency"]));
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeEnabled();
+      expect(screen.queryByTestId("certification-blockers")).not.toBeInTheDocument();
+    });
   });
 });
 

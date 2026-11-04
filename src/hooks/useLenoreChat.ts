@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { describeInvokeError, type AiFailureKind } from "@/data/aiFailure";
-import { mergeChamberData } from "@/data/chamberValidation";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
 import type { ProvenanceMap } from "@/data/provenance";
@@ -45,10 +44,10 @@ interface UseLenoreChatOptions {
   addLenoreMessage: (text: string) => void;
   onOrbStateChange: (state: OrbState) => void;
   /**
-   * Handles what Lenore extracted from a message (with her full response, for field status and
-   * evidence). Without it, or when the message wasn't recorded, the plain merge is used.
+   * Merges what Lenore extracted from a message (with her full response, for field status and
+   * evidence). The hook never merges on its own, so every value goes through provenance.
    */
-  onExtracted?: (extracted: Partial<ChamberData>, response: unknown, message: { id: string; text: string }) => void;
+  onExtracted: (extracted: Partial<ChamberData>, response: unknown, message: { id: string; text: string }) => void;
   /**
    * Which conversation this is (useChamberSession's `conversationEpoch`). When it changes, an answer still
    * on its way belongs to the old conversation: it is dropped, and so is a failure notice about it.
@@ -91,7 +90,7 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
     setFailure(null);
   }, [epoch]);
 
-  const ask = useCallback(async (text: string, message: { id: string; text: string } | null): Promise<boolean> => {
+  const ask = useCallback(async (text: string, message: { id: string; text: string }): Promise<boolean> => {
     const askedIn = epochRef.current;
     const replaced = () => !Object.is(epochRef.current, askedIn);
     setPending(true);
@@ -123,10 +122,7 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       }
       if (error) throw error;
 
-      if (data?.extracted) {
-        if (onExtracted && message) onExtracted(data.extracted, data, message);
-        else setChamberData((prev) => mergeChamberData(prev, data.extracted));
-      }
+      if (data?.extracted) onExtracted(data.extracted, data, message);
       const reply = (typeof data?.reply === "string" && data.reply.trim()) || FALLBACK_REPLY;
       onOrbStateChange("speaking");
       addLenoreMessage(reply);
@@ -148,18 +144,18 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       clearTimeout(timer);
       setPending(false);
     }
-  }, [addLenoreMessage, onOrbStateChange, setChamberData, onExtracted]);
+  }, [addLenoreMessage, onOrbStateChange, onExtracted]);
 
   const send = useCallback(async (text: string) => {
     setFailure(null);
     // The model and the transcript only ever see the message with sensitive numbers removed.
     const clean = redactSensitive(text);
-    await ask(clean, addUserMessage(clean) || null);
+    await ask(clean, addUserMessage(clean));
   }, [addUserMessage, ask]);
 
   /** Resends the message that failed, without adding it to the conversation a second time. */
   const retry = useCallback(async () => {
-    if (!failure) return;
+    if (!failure || !failedMessageRef.current) return;
     await ask(failure.text, failedMessageRef.current);
   }, [ask, failure]);
 
