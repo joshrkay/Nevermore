@@ -191,6 +191,25 @@ export function employeeFlag(emp: CensusEmployee): string | null {
 
 // ---------- Manuscript view model ----------
 
+/**
+ * The packet's sections, numbered, in order. The page and the PDF both take their headings from here, so they show the
+ * same sections (US-2.1c).
+ */
+export const MANUSCRIPT_SECTIONS = {
+  company: "1 — Company Profile",
+  workforce: "2 — Workforce Summary",
+  census: "3 — Employee Census",
+  dependents: "4 — Dependent Summary",
+  locations: "5 — Locations",
+  payroll: "6 — Payroll & Time",
+  benefits: "7 — Current Benefits",
+  workersComp: "8 — Workers' Compensation",
+  operations: "9 — Operations & HR",
+  documents: "10 — Documents",
+  readiness: "11 — Underwriting Readiness",
+  certification: "12 — Submission Certification",
+} as const;
+
 const MONOPOLISTIC_STATES = new Set(["ND", "OH", "WA", "WY"]);
 const STATE_RATING_BUREAUS: Record<string, string> = {
   CA: "WCIRB",
@@ -246,11 +265,28 @@ const yesNo = (v: boolean | null) => (v === null ? NOT_PROVIDED : v ? "Yes" : "N
 
 const dollars = (v: number | null) => (v === null ? NOT_PROVIDED : `$${v.toLocaleString("en-US")}`);
 
+/**
+ * The intake schema's fields The Manuscript leaves out, each with why (US-2.1c, D30). Every other field is shown: a
+ * top-level answer in its section's rows, a census row's facts in the census table, and dependents counted in the
+ * Dependent Summary. src/data/manuscript.test.ts fails on a schema field that is neither shown nor listed here.
+ */
+export const NOT_IN_THE_MANUSCRIPT: Readonly<Record<string, string>> = {
+  "census[].id": "An internal identifier for the row, not a fact about the employee.",
+  "census[].assumed":
+    "Marks which values the census only defaulted. Each of those prints as \"Not provided\" or \"est.\" and is listed as an open item, rather than the marker itself.",
+  "census[].dependents[].first_name": "Dependents are counted by coverage tier, never named: underwriting needs the tiers, and the packet carries no more personal data than that.",
+  "census[].dependents[].last_name": "Dependents are counted by coverage tier, never named.",
+  "census[].dependents[].dob": "Dependents are counted by coverage tier; their dates of birth are not printed.",
+  "census[].dependents[].relationship": "Shown only through the coverage tier it implies when the census states none.",
+};
+
 export interface ManuscriptCensusRow {
   name: string;
   /** Date of birth, or "Age N" when the census gave only an age. */
   dob: string;
   state: string;
+  /** The ZIP code of where the person works (D30), or "Not provided". */
+  zip: string;
   title: string;
   salary: string;
   /** "W-2" or "1099", with "PT" for part time; "Not provided" when the census didn't say. */
@@ -498,6 +534,7 @@ export function buildManuscript(
       name: `${e.first_name} ${e.last_name}`.trim(),
       dob: e.dob || (e.age !== undefined ? `Age ${e.age}` : NOT_PROVIDED),
       state: e.work_state || NOT_PROVIDED,
+      zip: e.zip_code || NOT_PROVIDED,
       title: e.job_title || NOT_PROVIDED,
       salary: salaryLabel(e),
       classification: typeLabel(e),

@@ -108,6 +108,7 @@ Each field's `x-intake` annotation in the schema names its label, its section, w
 - **Recommended fields** are every other field, the census first. None is needed to certify. The census is recommended because today it only comes from an uploaded file, and no document is required (D2).
 - **Rank** is the order Lenore asks in, 1 first. The required fields rank first, then the recommended fields in the order of decision D25 (the census, employee count, industry, HQ state, current medical carrier, renewal date, payroll vendor, then the four workers' comp fields), then the rest in the order the schema lists them. The product team owns the order; change `REQUIRED_FIELDS` or `RANKED_RECOMMENDED` in `supabase/functions/_shared/intakeSchema.ts`, then regenerate the published schema.
 - **Open items** are not stored. They are worked out from the answers and their field statuses (see "Field provenance").
+- **The Manuscript** shows every field: a top-level answer in the section of the same name, a census row's facts in the census table (state and ZIP, class code), and dependents counted by tier in the Dependent Summary. What it leaves out is `NOT_IN_THE_MANUSCRIPT` in `src/data/manuscript.ts`, each with its reason (a row's internal id, the `assumed` marker, dependents' names, dates of birth and relationships). `src/data/manuscript.test.ts` walks this schema and fails on a field that is neither shown nor listed (US-2.1c, D30).
 
 ### State codes
 

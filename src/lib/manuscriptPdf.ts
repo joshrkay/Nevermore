@@ -1,5 +1,5 @@
 import jsPDF from "jspdf";
-import { foldLatin, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
+import { foldLatin, MANUSCRIPT_SECTIONS, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
 
 export interface ManuscriptPdfOptions {
   /** Show dates of birth in full. Off unless an authorized workflow turns it on. */
@@ -248,29 +248,33 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   ]);
 
   // ---------- 1 Company ----------
-  sectionHeading("1 — Company Profile");
+  sectionHeading(MANUSCRIPT_SECTIONS.company);
   keyValues(m.companyRows);
 
   // ---------- 2 Workforce ----------
-  sectionHeading("2 — Workforce Summary");
+  sectionHeading(MANUSCRIPT_SECTIONS.workforce);
   keyValues(m.workforceRows);
 
   // ---------- 3 Census ----------
-  sectionHeading("3 — Employee Census");
+  sectionHeading(MANUSCRIPT_SECTIONS.census);
   if (m.census.length === 0) {
     paragraph("No employee census captured yet.", 9, "normal", MUTED);
   } else {
     const columns: Column[] = [
-      { header: "#", width: 8 },
-      { header: "Name", width: 30 },
+      // Each width fits its widest usual value on one line at 8.5 pt, padding included: a five-digit ZIP (D30), a
+      // four-digit class code, a seven-figure salary, "Employee Only", and the Note's "See 1". A long name, title or tier
+      // wraps, and a ZIP+4 wraps at its hyphen.
+      { header: "#", width: 7 },
+      { header: "Name", width: 26 },
       { header: "DOB", width: 21, mono: true },
-      { header: "St", width: 10 },
+      { header: "St", width: 9 },
+      { header: "ZIP", width: 13, mono: true },
       { header: "Title", width: 26 },
-      { header: "Salary", width: 21, align: "right" },
+      { header: "Salary", width: 19, align: "right" },
       { header: "Type", width: 11 },
-      { header: "Coverage Tier", width: 25 },
-      { header: "Class", width: 10, mono: true },
-      { header: "Note", width: CONTENT_W - 162 },
+      { header: "Coverage Tier", width: 24 },
+      { header: "Class", width: 12, mono: true },
+      { header: "Note", width: CONTENT_W - 168 },
     ];
     const notes: string[] = [];
     const flagged = new Set<number>();
@@ -282,7 +286,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
         noteRef = `See ${notes.length}`;
       }
       const dob = !reveal && e.dob !== NOT_PROVIDED ? maskDob(e.dob) : e.dob;
-      return [String(i + 1), e.name, dob, e.state, e.title, e.salary, e.classification, e.tier, e.classCode === NOT_PROVIDED ? "—" : e.classCode, noteRef];
+      return [String(i + 1), e.name, dob, e.state, e.zip === NOT_PROVIDED ? "—" : e.zip, e.title, e.salary, e.classification, e.tier, e.classCode === NOT_PROVIDED ? "—" : e.classCode, noteRef];
     });
     table(columns, rows, { flagged });
     if (notes.length > 0) {
@@ -292,7 +296,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   }
 
   // ---------- 4 Dependents ----------
-  sectionHeading("4 — Dependent Summary");
+  sectionHeading(MANUSCRIPT_SECTIONS.dependents);
   table(
     [
       { header: "Tier", width: CONTENT_W - 70 },
@@ -307,7 +311,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   paragraph("Dependent figures are self-reported. Actual election rates may vary at open enrollment.", 8.5, "italic", MUTED);
 
   // ---------- 5 Locations ----------
-  sectionHeading("5 — Locations");
+  sectionHeading(MANUSCRIPT_SECTIONS.locations);
   keyValues(m.locationRows);
   subheading("State breakdown");
   if (m.states.length === 0) {
@@ -324,23 +328,23 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   }
 
   // ---------- 6 Payroll ----------
-  sectionHeading("6 — Payroll & Time");
+  sectionHeading(MANUSCRIPT_SECTIONS.payroll);
   keyValues(m.payrollRows);
 
   // ---------- 7 Benefits ----------
-  sectionHeading("7 — Current Benefits");
+  sectionHeading(MANUSCRIPT_SECTIONS.benefits);
   keyValues(m.benefitsRows);
 
   // ---------- 8 Workers' comp ----------
-  sectionHeading("8 — Workers' Compensation");
+  sectionHeading(MANUSCRIPT_SECTIONS.workersComp);
   keyValues(m.workersCompRows);
 
   // ---------- 9 Operations ----------
-  sectionHeading("9 — Operations & HR");
+  sectionHeading(MANUSCRIPT_SECTIONS.operations);
   keyValues(m.operationsRows);
 
   // ---------- 10 Documents ----------
-  sectionHeading("10 — Documents", 16);
+  sectionHeading(MANUSCRIPT_SECTIONS.documents, 16);
   if (m.documents === null) {
     paragraph(opts.sample ? "No documents in the sample." : "Documents were not recorded with this certification.", 9, "normal", MUTED);
   } else if (m.documents.length === 0) {
@@ -357,7 +361,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   }
 
   // ---------- 11 Readiness ----------
-  sectionHeading("11 — Underwriting Readiness");
+  sectionHeading(MANUSCRIPT_SECTIONS.readiness);
   subheading("Confirmed");
   if (m.resolved.length === 0) paragraph("Nothing confirmed yet.", 9, "normal", MUTED);
   m.resolved.forEach((item) => paragraph(`•  ${item}`, 9, "normal", INK, 1));
@@ -407,7 +411,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   y += 6;
   font("bold", 12);
   setInk(INK);
-  pdf.text("12 — Submission Certification", MARGIN, y + 3);
+  pdf.text(pdfSafe(MANUSCRIPT_SECTIONS.certification), MARGIN, y + 3);
   y += 9;
   paragraph(
     `Authorized representative of ${m.companyName} has reviewed and confirmed accuracy of this submission through Edgar Allan Advisory's intake process.`,

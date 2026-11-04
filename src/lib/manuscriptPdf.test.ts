@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { buildManuscript, type ChamberSubmission } from "@/data/manuscript";
+import { buildManuscript, MANUSCRIPT_SECTIONS, type ChamberSubmission } from "@/data/manuscript";
 import { buildManuscriptPdf, pdfSafe } from "./manuscriptPdf";
 
 const FILE_ID = "EAA-2026-ABC12345";
@@ -93,18 +93,28 @@ describe("buildManuscriptPdf", () => {
     expect(occurrences(text, `(File ID ${FILE_ID} · v1 · data version 4)`)).toBe(pageCount);
   });
 
-  it("prints every section of the packet, numbered, in the page's order", async () => {
+  it("prints every section of the packet, numbered, in the page's order (the one list both use)", async () => {
     const { text } = await render();
-    for (const heading of [
-      "1 — Company Profile", "2 — Workforce Summary", "3 — Employee Census", "4 — Dependent Summary", "5 — Locations",
-      "6 — Payroll & Time", "7 — Current Benefits", "8 — Workers' Compensation", "9 — Operations & HR", "10 — Documents",
-      "11 — Underwriting Readiness", "12 — Submission Certification",
-    ]) {
-      expect(text).toContain(heading);
-    }
+    const at = Object.values(MANUSCRIPT_SECTIONS).map((heading) => text.indexOf(`(${pdfSafe(heading)})`));
+    for (const [i, heading] of Object.values(MANUSCRIPT_SECTIONS).entries()) expect(at[i], heading).toBeGreaterThan(-1);
+    expect(at).toEqual([...at].sort((a, b) => a - b));
     expect(text).toContain("Pinnacle Mutual"); // the workers' comp carrier
     expect(text).toContain("census.csv"); // the document snapshot
     expect(text).toContain("8810"); // the class code column
+  });
+
+  it("prints each person's ZIP code in the census, and a dash where the census has none (D30)", async () => {
+    const { text } = await render();
+    expect(text).toContain("(ZIP)");
+    for (const person of DEMO_CHAMBER_DATA.census) expect(text).toContain(`(${person.zip_code})`);
+    // Each cell's value on one line: a class code split as "881" and "0" read as two codes.
+    const withCode = DEMO_CHAMBER_DATA.census.filter((p) => p.class_code === "8810").length;
+    expect(occurrences(text, "(8810)")).toBe(withCode);
+    expect(text).not.toContain("(881)");
+    const noZip = { ...DEMO_CHAMBER_DATA, census: [{ ...DEMO_CHAMBER_DATA.census[0], zip_code: undefined }] };
+    const { text: without } = await render(noZip);
+    expect(without).toContain("(ZIP)");
+    expect(without).not.toContain(`(${DEMO_CHAMBER_DATA.census[0].zip_code})`);
   });
 
   it("prints a multi-state submission's state breakdown, and an incomplete one without clipping", async () => {

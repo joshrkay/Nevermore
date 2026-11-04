@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { rowProvenance } from "@/data/manuscript";
+import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { MANUSCRIPT_SECTIONS, rowProvenance } from "@/data/manuscript";
 
 let row: Record<string, unknown> | null = null;
 // What the page asked the database for: the column it filtered on and the value.
@@ -196,13 +196,9 @@ describe("ManuscriptPage", () => {
     row = certified();
     renderAt("/manuscript/EAA-2026-0042");
     expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
-    for (const name of [
-      "1 — Company Profile", "2 — Workforce Summary", "3 — Employee Census", "4 — Dependent Summary", "5 — Locations",
-      "6 — Payroll & Time", "7 — Current Benefits", "8 — Workers' Compensation", "9 — Operations & HR", "10 — Documents",
-      "11 — Underwriting Readiness",
-    ]) {
-      expect(screen.getByRole("heading", { name })).toBeInTheDocument();
-    }
+    // The same sections as the PDF, in the same order: both take them from MANUSCRIPT_SECTIONS.
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(headings.filter((h) => (Object.values(MANUSCRIPT_SECTIONS) as string[]).includes(h ?? ""))).toEqual(Object.values(MANUSCRIPT_SECTIONS));
     const payroll = screen.getByRole("heading", { name: "6 — Payroll & Time" }).closest("section")!;
     expect(payroll).toHaveTextContent("weekly");
     const documents = screen.getByRole("heading", { name: "10 — Documents" }).closest("section")!;
@@ -417,6 +413,14 @@ describe("ManuscriptPage", () => {
     expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
     expect(screen.getByText(/sample manuscript built from fictional data/)).toBeInTheDocument();
     expect(lastQuery).toBeNull();
+  });
+
+  it("shows each person's ZIP code in the census, beside their state (D30)", async () => {
+    renderAt("/manuscript/demo");
+    const census = (await screen.findByRole("heading", { name: MANUSCRIPT_SECTIONS.census })).closest("section")!;
+    const headers = within(census).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers.slice(3, 5)).toEqual(["State", "ZIP"]);
+    for (const person of DEMO_CHAMBER_DATA.census) expect(census).toHaveTextContent(person.zip_code!);
   });
 
   it("masks dates of birth, with no way for a prospect to reveal them", async () => {

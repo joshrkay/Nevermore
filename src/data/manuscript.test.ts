@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { INTAKE_SCHEMA, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import type { CensusEmployee } from "./chamberTypes";
 import type { ProvenanceMap } from "./provenance";
@@ -14,6 +15,7 @@ import {
   manuscriptFilename,
   maskDob,
   NOT_APPLICABLE,
+  NOT_IN_THE_MANUSCRIPT,
   wcSystem,
   type ChamberSubmission,
   rowProvenance,
@@ -198,7 +200,8 @@ describe("buildManuscript covers the whole intake", () => {
     // The census is a table of its own, in the Workforce section.
     const renderedElsewhere: Record<string, string> = { census: "the census table and the state breakdown" };
     const keyed = new Map<string, string>(Object.entries(rows).flatMap(([section, list]) => list.flatMap(([, , field]) => (field ? [[field, section] as [string, string]] : []))));
-    for (const field of Object.keys(EMPTY_CHAMBER_DATA)) {
+    // Every top-level field of the published intake schema, not only the ones the browser's type knows.
+    for (const field of Object.keys(INTAKE_SCHEMA.properties as object)) {
       if (field in renderedElsewhere) continue;
       expect(keyed.has(field), `${field} has no row in The Manuscript`).toBe(true);
       expect(keyed.get(field), `${field} is in the wrong section`).toBe(reviewSectionOf[field]);
@@ -216,6 +219,59 @@ describe("buildManuscript covers the whole intake", () => {
       "Class Codes on Census": "8810 (5)",
     });
     expect(m.census[0].classCode).toBe("8810");
+  });
+
+  // Each field of a census row (and of a dependent) is shown in the census table or the Dependent Summary, or listed in
+  // NOT_IN_THE_MANUSCRIPT with the reason it is left out (US-2.1c, D30). `shownBy` checks the value really appears for one
+  // person whose every answer is distinctive; a field the schema gains fails until it is added to one or the other.
+  const defs = (INTAKE_SCHEMA as { $defs: Record<string, JsonSchema> }).$defs;
+  const propsOf = (def: string) => Object.keys(defs[def].properties as object);
+  const ada = emp({
+    id: "e-ada", first_name: "Ada", last_name: "Lovelace", dob: "1990-12-10", work_state: "NJ", zip_code: "07030",
+    job_title: "Bookbinder", annual_salary: 61000, compensation_type: "hourly", employment_type: "part_time",
+    classification: "w2", coverage_tier: "EE+SP", class_code: "4299", dependents: [{ first_name: "Charles", last_name: "King", dob: "1805-11-21", relationship: "spouse" }],
+  });
+  // An age instead of a date of birth, and dependents named with no tier stated.
+  const grace = emp({ id: "e-grace", first_name: "Grace", last_name: "Hopper", dob: "", age: 41, dependents: [{ first_name: "Vincent", last_name: "Hopper", dob: "", relationship: "child" }] });
+  const shownBy: Record<string, (m: ReturnType<typeof buildManuscript>) => void> = {
+    first_name: (m) => expect(m.census[0].name).toContain("Ada"),
+    last_name: (m) => expect(m.census[0].name).toContain("Lovelace"),
+    dob: (m) => expect(m.census[0].dob).toBe("1990-12-10"),
+    age: (m) => expect(m.census[1].dob).toBe("Age 41"),
+    work_state: (m) => expect(m.census[0].state).toBe("NJ"),
+    zip_code: (m) => expect(m.census[0].zip).toBe("07030"),
+    job_title: (m) => expect(m.census[0].title).toBe("Bookbinder"),
+    annual_salary: (m) => expect(m.census[0].salary).toContain("$61,000"),
+    compensation_type: (m) => expect(m.census[0].salary).toContain("(hourly)"),
+    employment_type: (m) => expect(m.census[0].classification).toContain("PT"),
+    classification: (m) => expect(m.census[0].classification).toMatch(/^W-2/),
+    coverage_tier: (m) => expect(m.census[0].tier).toBe("Employee + Spouse"),
+    class_code: (m) => expect(m.census[0].classCode).toBe("4299"),
+    // Counted, not named: a tier when none is stated, and the Dependent Summary's total.
+    dependents: (m) => {
+      expect(m.census[1].tier).toBe("Employee + Child(ren)");
+      expect(m.totalDependents).toBe("2");
+    },
+  };
+
+  it("shows every field of a census row, or says why it is left out (D30)", () => {
+    const m = buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [ada, grace] }, opts);
+    for (const field of propsOf("censusRow")) {
+      const excluded = NOT_IN_THE_MANUSCRIPT[`census[].${field}`];
+      expect(Boolean(shownBy[field]) !== Boolean(excluded), `census[].${field} is neither shown nor left out with a reason (or is both)`).toBe(true);
+      if (shownBy[field]) shownBy[field](m);
+    }
+  });
+
+  it("names no dependent, saying why, and leaves nothing listed that the schema doesn't have", () => {
+    for (const field of propsOf("dependent")) {
+      expect(NOT_IN_THE_MANUSCRIPT[`census[].dependents[].${field}`], `census[].dependents[].${field} has no reason`).toBeTruthy();
+    }
+    const known = new Set([...propsOf("censusRow").map((f) => `census[].${f}`), ...propsOf("dependent").map((f) => `census[].dependents[].${f}`)]);
+    for (const [path, reason] of Object.entries(NOT_IN_THE_MANUSCRIPT)) {
+      expect(known.has(path), `${path} isn't in the intake schema`).toBe(true);
+      expect(reason.trim().length, `${path} has no reason`).toBeGreaterThan(10);
+    }
   });
 
   it("shows operations and HR answers in their own section", () => {

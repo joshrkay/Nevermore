@@ -8,7 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
-import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
+import { buildManuscript, isFileId, MANUSCRIPT_SECTIONS, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
 import { describeSource, parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
@@ -432,17 +432,17 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         </div>
 
         <section>
-          <SectionHeader>1 — Company Profile</SectionHeader>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.company}</SectionHeader>
           <Card>{renderRows(d.companyRows, d.provenance)}</Card>
         </section>
 
         <section>
-          <SectionHeader>2 — Workforce Summary</SectionHeader>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.workforce}</SectionHeader>
           <Card>{renderRows(d.workforceRows, d.provenance)}</Card>
         </section>
 
         <section>
-          <SectionHeader>3 — Employee Census</SectionHeader>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.census}</SectionHeader>
           {d.census.length === 0 ? (
             <div className="bg-card border border-border rounded-xl p-6 text-sm text-muted-foreground">
               No employee census captured yet.
@@ -452,7 +452,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border bg-muted/50">
-                    {["#", "Name", "DOB", "State", "Title", "Salary", "Type", "Coverage Tier", "Class", "Status"].map((h) => (
+                    {["#", "Name", "DOB", "State", "ZIP", "Title", "Salary", "Type", "Coverage Tier", "Class", "Status"].map((h) => (
                       <th key={h} className="text-left px-3 py-2.5 text-muted-foreground font-medium">{h}</th>
                     ))}
                   </tr>
@@ -464,6 +464,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
                       <td className="px-3 py-2 font-medium">{emp.name}</td>
                       <td className="px-3 py-2 font-mono text-muted-foreground">{emp.dob !== NOT_PROVIDED ? maskDob(emp.dob) : emp.dob}</td>
                       <td className="px-3 py-2 font-mono">{emp.state}</td>
+                      <td className="px-3 py-2 font-mono">{emp.zip}</td>
                       <td className="px-3 py-2">{emp.title}</td>
                       <td className="px-3 py-2 font-mono">{emp.salary}</td>
                       <td className="px-3 py-2 font-mono">{emp.classification}</td>
@@ -485,7 +486,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         </section>
 
         <section>
-          <SectionHeader>4 — Dependent Summary</SectionHeader>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.dependents}</SectionHeader>
           <Card>
             <table className="w-full text-sm">
               <thead><tr className="text-muted-foreground text-left border-b border-border"><th className="pb-2">Tier</th><th className="pb-2 text-right">Employees</th><th className="pb-2 text-right">%</th></tr></thead>
@@ -509,7 +510,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         </section>
 
         <section>
-          <SectionHeader>5 — Locations</SectionHeader>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.locations}</SectionHeader>
           <div className="grid md:grid-cols-2 gap-6">
             <Card>{renderRows(d.locationRows, d.provenance)}</Card>
             <Card>
@@ -535,27 +536,27 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         </section>
 
         <section>
-          <SectionHeader>6 — Payroll &amp; Time</SectionHeader>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.payroll}</SectionHeader>
           <Card>{renderRows(d.payrollRows, d.provenance)}</Card>
         </section>
 
         <section>
-          <SectionHeader>7 — Current Benefits</SectionHeader>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.benefits}</SectionHeader>
           <Card>{renderRows(d.benefitsRows, d.provenance)}</Card>
         </section>
 
         <section>
-          <SectionHeader>8 — Workers' Compensation</SectionHeader>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.workersComp}</SectionHeader>
           <Card>{renderRows(d.workersCompRows, d.provenance)}</Card>
         </section>
 
         <section>
-          <SectionHeader>9 — Operations &amp; HR</SectionHeader>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.operations}</SectionHeader>
           <Card>{renderRows(d.operationsRows, d.provenance)}</Card>
         </section>
 
         <section>
-          <SectionHeader>10 — Documents</SectionHeader>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.documents}</SectionHeader>
           <Card>
             {d.documents === null ? (
               <p className="text-sm text-muted-foreground">{isSample ? "No documents in the sample." : "Documents were not recorded with this certification."}</p>
@@ -579,7 +580,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         </section>
 
         <section>
-          <SectionHeader>11 — Underwriting Readiness</SectionHeader>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.readiness}</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6 space-y-3">
             <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">Confirmed</p>
             {d.resolved.length === 0 && <p className="text-sm text-muted-foreground">Nothing confirmed yet.</p>}
@@ -614,8 +615,8 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           </div>
         </section>
 
-        {/* Section 12 — Certification */}
         <section>
+          <SectionHeader>{MANUSCRIPT_SECTIONS.certification}</SectionHeader>
           <div className="bg-[hsl(230,25%,8%)] border border-primary/40 rounded-xl overflow-hidden">
             <div className="h-1.5 bg-primary" />
             <div className="p-8 md:p-10">
