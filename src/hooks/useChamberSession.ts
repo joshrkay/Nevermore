@@ -18,6 +18,7 @@ import { readVerifiedFields } from "@/lib/verifiedFields";
 import {
   certificationFromRow,
   NO_CERTIFICATION,
+  type CertificationRequest,
   type CertificationState,
   type ChamberSubmission,
 } from "@/data/manuscript";
@@ -112,7 +113,7 @@ interface UseChamberSessionReturn {
   readIntake: () => IntakeState & { messages: ChatMessage[] };
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   /** With `signedDataKey` (the answers as signed, JSON), refuses to save if the answers have since changed. */
-  submit: (submission: ChamberSubmission, signedDataKey?: string) => Promise<boolean | SubmitFailure>;
+  submit: (submission: CertificationRequest, signedDataKey?: string) => Promise<boolean | SubmitFailure>;
   /** Whether the answers are certified, or were changed after being certified. */
   certification: CertificationState;
   /** The PEO the packet is prepared for, saved with the intake; null until the prospect picks one. */
@@ -224,7 +225,7 @@ const matchesSave = (stored: { chamber_data: unknown; field_provenance: unknown;
 
 // Whether a saved row is the result of certifying `submission` over `signedData` (as stored). The File ID is
 // not compared: the database assigns it, replacing whatever was sent.
-const matchesSubmission = (submission: ChamberSubmission, signedData: unknown) => (row: ServerRow) => {
+const matchesSubmission = (submission: CertificationRequest, signedData: unknown) => (row: ServerRow) => {
   const saved = row.submission as Partial<ChamberSubmission> | null;
   return row.status === "submitted" &&
     saved?.signer_name === submission.signer_name &&
@@ -1266,7 +1267,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     }
   }, []);
 
-  const submit = useCallback((submission: ChamberSubmission, signedDataKey?: string) => enqueue(async (): Promise<boolean | SubmitFailure> => {
+  const submit = useCallback((submission: CertificationRequest, signedDataKey?: string) => enqueue(async (): Promise<boolean | SubmitFailure> => {
     const sid = sessionIdRef.current;
     if (!sid) return false;
     if (stopsSaving(blockRef.current)) return blockedMessage();
@@ -1279,7 +1280,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       return false;
     }
     const signedData = dataRef.current;
-    let certifiedSubmission = { ...submission, chamber_data: signedData, field_provenance: provenanceRef.current };
+    // Sent without a File ID: the database assigns it (C-3.1). Once the certification lands, its stamped copy is
+    // what the prospect sees.
+    const sent: CertificationRequest = { ...submission, chamber_data: signedData, field_provenance: provenanceRef.current };
+    let certifiedSubmission: ChamberSubmission | null = null;
+    let assigned: string | null = null;
     const storedData = asStored(signedData);
     const isOwnSubmission = matchesSubmission(submission, storedData);
     savingRef.current = true;
@@ -1295,7 +1300,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
             // Written alongside the certified copy so the two always agree, even when the saved row
             // predates fields that loading fills in (the database requires them to be identical).
             chamber_data: signedData as unknown as Json,
-            submission: certifiedSubmission as unknown as Json,
+            submission: sent as unknown as Json,
           })
           .eq("id", sid)
           .eq("data_version", version)
@@ -1318,8 +1323,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       adoptVersion(sid, updated[0].data_version);
       // The database stamps the File ID, the version and the documents onto the submission: show its copy.
       const stamped = certificationFromRow(updated[0].status, updated[0].submission);
-      if (stamped.status === "certified") certifiedSubmission = stamped.submission as typeof certifiedSubmission;
-      const assigned = fileIdOf({ file_id: updated[0].file_id ?? null, submission: (updated[0].submission ?? null) as Json | null });
+      if (stamped.status === "certified") certifiedSubmission = stamped.submission;
+      assigned = fileIdOf({ file_id: updated[0].file_id ?? null, submission: (updated[0].submission ?? null) as Json | null });
       if (assigned && mountedRef.current) setFileId(assigned);
     } else if (error?.code === INVALID_DATA_CODE) {
       markInvalid(error);
@@ -1347,8 +1352,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       // The certification on record, as the database stamped it: for a lost response, that is the one to show.
       const recorded = certificationFromRow(outcome.row.status, outcome.row.submission);
       if (outcome.kind === "earlier" && recorded.status !== "certified") return false; // not a certification: certifying again, from the new version, works
-      if (recorded.status === "certified") certifiedSubmission = recorded.submission as typeof certifiedSubmission;
-      const assigned = fileIdOf(outcome.row);
+      if (recorded.status === "certified") certifiedSubmission = recorded.submission;
+      assigned = fileIdOf(outcome.row);
       if (assigned && mountedRef.current) setFileId(assigned);
     } else if (outcome?.kind === "conflict") {
       markConflict(outcome.row);
@@ -1364,7 +1369,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       console.error("Failed to submit session:", outcome?.kind === "unreadable" ? outcome.error : "no row was updated");
       return false;
     }
-    const certified: CertificationState = { status: "certified", submission: certifiedSubmission };
+    const certified: CertificationState = { status: "certified", submission: certifiedSubmission ?? { ...sent, file_id: assigned ?? "" } };
     certificationRef.current = certified;
     setCertification(certified);
     // The notifications were queued with the submission; this just sends them promptly.

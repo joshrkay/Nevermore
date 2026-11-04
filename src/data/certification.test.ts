@@ -1,5 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { certificationBlockers, consentStatements } from "./certification";
+import {
+  APPROVED_CONSENT_VERSIONS,
+  CONSENT_IS_DRAFT,
+  CONSENT_TEXT_VERSION,
+  certificationBlockers,
+  consentStatements,
+  isDraftConsent,
+} from "./certification";
+
+describe("isDraftConsent", () => {
+  it("treats the wording signed today as a draft until counsel approves its version", () => {
+    expect(APPROVED_CONSENT_VERSIONS).not.toContain(CONSENT_TEXT_VERSION);
+    expect(CONSENT_IS_DRAFT).toBe(true);
+    expect(isDraftConsent(CONSENT_TEXT_VERSION)).toBe(true);
+  });
+
+  it("is not a draft once its version is approved, and every other version still is", () => {
+    const approved = ["2027-01-v1"];
+    expect(isDraftConsent("2027-01-v1", approved)).toBe(false);
+    expect(isDraftConsent("2026-10-draft-1", approved)).toBe(true);
+  });
+
+  it("treats a certification that recorded no version as a draft", () => {
+    for (const version of [undefined, null, ""]) expect(isDraftConsent(version, ["2027-01-v1"])).toBe(true);
+  });
+});
 
 const ready = {
   acknowledged: [true, true, true],

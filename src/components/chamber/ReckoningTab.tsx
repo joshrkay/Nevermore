@@ -6,8 +6,9 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
 import { certificationBlockingItems, NO_VERIFIED_FIELDS } from "@/data/requiredItems";
-import { manuscriptPath, NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
+import { manuscriptPath, NO_CERTIFICATION, type CertificationRequest, type CertificationState } from "@/data/manuscript";
 import {
+  CONSENT_DRAFT_LABEL,
   CONSENT_IS_DRAFT,
   CONSENT_SIGNING_STATEMENT,
   CONSENT_TEXT_VERSION,
@@ -34,7 +35,7 @@ interface ReckoningTabProps {
    * `signedDataKey` is the answers as signed; the save is refused if they have moved on. Resolves
    * `true` once certified, otherwise `false` or the reason, in words for the prospect.
    */
-  onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
+  onSubmit: (submission: CertificationRequest, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   /** Whether this intake is already certified, or was changed after it was. */
   certification?: CertificationState;
   /** Opens the Review step, where the missing answers can be added. */
@@ -144,13 +145,11 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
     submittingRef.current = true;
     setSubmitting(true);
     setFailure(null);
-    const submission: ChamberSubmission = {
+    // No File ID: the database assigns it at the first certification and keeps it (C-3.1).
+    const submission: CertificationRequest = {
       signer_name: signerName.trim(),
       signer_title: signerTitle.trim(),
       signed_at: signedAt.toISOString(),
-      // The database assigns the File ID at the first certification and keeps it; what is sent here is
-      // the one already on record, or nothing.
-      file_id: recordedFileId ?? "",
       consent_text_version: CONSENT_TEXT_VERSION,
       // Same version under the name the database's certification check reads.
       consent_version: CONSENT_TEXT_VERSION,
@@ -282,7 +281,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
           ))}
           <p className="text-xs text-muted-foreground font-mono">
             Consent wording {CONSENT_TEXT_VERSION}
-            {CONSENT_IS_DRAFT && " · DRAFT: NOT LEGALLY REVIEWED"}
+            {CONSENT_IS_DRAFT && ` · ${CONSENT_DRAFT_LABEL}`}
           </p>
         </fieldset>
 

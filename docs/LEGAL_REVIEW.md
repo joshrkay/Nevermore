@@ -12,7 +12,7 @@ complete, every page that shows this copy says it is a draft pending legal revie
 | Privacy Policy (`/privacy`) | `src/pages/PrivacyPage.tsx`. Its data classes and retention table are rendered from `src/data/dataPolicy.ts`, its service providers from `src/data/legal.ts` | `PRIVACY_POLICY_VERSION` `2026-11-draft-1` | Accuracy against the product, every commitment it makes, the retention windows, the provider list |
 | Terms of Use (`/terms`) | `src/pages/TermsPage.tsx` | `TERMS_VERSION` `2026-11-draft-1` | Role and what we don't do, eligibility, accuracy, acceptable use, ownership of the packet; write the three bracketed sections (below) |
 | Intake consent (shown before the Chamber opens) | `src/data/intakeConsent.ts`, rendered by `src/components/chamber/IntakeConsentGate.tsx` | `INTAKE_CONSENT_VERSION` `2026-11-draft-1`, also `public.intake_consent_version()` in `supabase/migrations/20261104090000_intake_consent.sql` | Who we are, what is shared, how it's used, how long it's kept, and the agreement line (authority to share employee data). The exact text is stored with every agreement (`intake_consents`) |
-| Certification consent (The Reckoning) | `src/data/certification.ts` | `CONSENT_TEXT_VERSION` `2026-10-draft-1` | The three statements and the signing statement (D3). `src/data/manuscript.ts` still holds an unused second wording, `2026-10-v1`, with no draft flag (plan C-2.4): settle which one is used |
+| Certification consent (The Reckoning, then printed on the Manuscript page and its PDF) | `src/data/certification.ts`, the only definition | `CONSENT_TEXT_VERSION` `2026-10-draft-1` | The three statements and the signing statement (D3), and the draft mark's wording, `CONSENT_DRAFT_LABEL` |
 | Retention windows | `src/data/dataPolicy.ts` (`RETENTION`), enforced by the database functions it names | D4 | Draft 30 days after last change; closed drafts deleted 30 days after closing; submitted records reviewed for deletion 3 years after the latest certification; email delivery events 365 days; monitoring events 90 days; rate-limit records 1 day; browser backup 7 days |
 | Role disclosure across the site | Landing page, intake consent, Privacy Policy, Terms of Use, The Reckoning, the notification emails, the Manuscript | n/a | Nothing implies we are a PEO, carrier or agency, that we act or submit for the prospect, or that a listed PEO endorses or works with us. `src/copy.guard.test.ts` bans the phrases we know of |
 
@@ -91,8 +91,10 @@ Copy counsel changed goes in first, then:
    migration, in `public.intake_consent_version()` (`src/data/schemaSync.test.ts` fails until the two agree).
    Every account is then asked to agree again. Set `INTAKE_CONSENT_IS_DRAFT = false`.
 3. **Certification consent.** If the wording changed, give it a new `CONSENT_TEXT_VERSION`; every certification
-   stores the version and text it was signed with. Set `CONSENT_IS_DRAFT = false`, which removes the "DRAFT: NOT
-   LEGALLY REVIEWED" mark in The Reckoning. Remove the unused `2026-10-v1` wording (C-2.4).
+   stores the version and text it was signed with. Add the approved version to `APPROVED_CONSENT_VERSIONS` in
+   `src/data/certification.ts`. That removes the "DRAFT: NOT LEGALLY REVIEWED" mark in The Reckoning, and the mark
+   and watermark on the Manuscript page and PDF of every packet signed with that version. Packets signed with a
+   draft wording stay marked: the mark follows the version signed, not today's.
 4. **Retention.** If a window changed, change it in `src/data/dataPolicy.ts` and in a new migration that replaces
    the matching database function; `src/data/schemaSync.test.ts` keeps the two equal. The Privacy Policy follows
    on its own.
@@ -109,3 +111,6 @@ Copy counsel changed goes in first, then:
   disclosure, every retention rule and service provider, the counsel placeholders.
 - The draft notices: the Privacy Policy and Terms (`LEGAL_COPY_APPROVED`), the intake consent
   (`INTAKE_CONSENT_IS_DRAFT`) and The Reckoning (`CONSENT_IS_DRAFT`) each say the wording is a draft while it is.
+  The Manuscript page and its PDF mark the certification consent by the version that was signed
+  (`isDraftConsent`), with a watermark behind the certification block (`ManuscriptPage.test.tsx`,
+  `manuscriptPdf.test.ts`, and the end-to-end test, which reads the downloaded PDF).

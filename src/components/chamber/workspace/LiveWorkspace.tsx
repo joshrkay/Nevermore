@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
-import type { CertificationState, ChamberSubmission } from "@/data/manuscript";
+import type { CertificationRequest, CertificationState } from "@/data/manuscript";
 import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance";
 import { resolutionFields, resolveCandidate, type CandidateResolution } from "@/data/documentCandidates";
 import { useSessionDocuments, type SessionDocument } from "@/hooks/useSessionDocuments";
@@ -35,7 +35,7 @@ interface LiveWorkspaceProps {
   sessionId: string | null;
   /** The intake's File ID, for The Reckoning; null while there is no intake. */
   fileId?: string | null;
-  onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
+  onSubmit: (submission: CertificationRequest, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   provenance?: ProvenanceMap;
   /** Fields an advisor verified, still on the answer they saw: settled (`verificationSettles`). */
   verified?: ReadonlySet<string>;

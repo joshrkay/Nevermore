@@ -4,8 +4,9 @@
 -- Submission records (20261104120000_submission_records.sql): the File ID is assigned by the database from
 -- a per-year sequence and kept for good, each certification is a numbered, immutable copy of what was
 -- certified, a repeat of the same certification records nothing (sent after the first or at the same time,
--- on two connections through dblink), a required answer that is conflicting or
--- incomplete blocks certifying, and nobody but the owner or an advisor can read a packet by its File ID.
+-- on two connections through dblink), a required answer that is conflicting or incomplete blocks certifying,
+-- nobody but the owner or an advisor can read a packet by its File ID, and a certification can only ever
+-- carry its own intake's File ID (20261104131000).
 -- Everything a prospect does runs as `authenticated` with their JWT claims, so row security is on.
 \set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
@@ -59,6 +60,7 @@
 \i supabase/migrations/20261104117100_alert_headcount_census.sql
 \i supabase/migrations/20261104118000_open_items.sql
 \i supabase/migrations/20261104120000_submission_records.sql
+\i supabase/migrations/20261104131000_certification_file_id_check.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -425,6 +427,64 @@ BEGIN
   IF (SELECT submission ->> 'file_id' FROM public.chamber_sessions WHERE id = b) <> fresh THEN RAISE EXCEPTION 'FAIL: the submission names another File ID'; END IF;
   RESET ROLE;
   RAISE NOTICE 'submission_records: shared File ID cases passed';
+END $$;
+
+-- ---------- a certification carries its own intake's File ID ----------
+-- 20261104131000: the File ID on a certification is its intake's, the one the unique index keeps to one intake.
+-- A row with another intake's File ID, a made-up one or none is refused, whoever writes it.
+DO $$
+DECLARE
+  uid uuid := pg_temp.new_user();
+  a uuid;
+  b uuid;
+  complete jsonb := '{"company_name":"Acme","states":["NY"],"pay_frequency":"bi-weekly"}';
+  fid_a text;
+  fid_b text;
+  insert_as text := $f$INSERT INTO public.chamber_certifications
+    (session_id, user_id, signer_name, signer_title, consent_version, consent_text, file_id, signed_at, data_sha256, version)
+    VALUES (%L, %L, 'Mallory', 'CEO', '2026-10-draft-1', 'I certify.', %L, now(), 'not-a-hash', 99)$f$;
+  inserted boolean := false;
+BEGIN
+  PERFORM pg_temp.as_user(uid);
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.agree();
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, complete) RETURNING id INTO a;
+  IF pg_temp.certify(a, complete) <> 'ok' THEN RAISE EXCEPTION 'FAIL: setup could not certify the first intake'; END IF;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, complete) RETURNING id INTO b;
+  IF pg_temp.certify(b, complete) <> 'ok' THEN RAISE EXCEPTION 'FAIL: setup could not certify the second intake'; END IF;
+  -- The owner can't write a certification at all; certifying is the only way one is recorded.
+  PERFORM pg_temp.must_raise(format(insert_as, a, uid, (SELECT file_id FROM public.chamber_sessions WHERE id = a)), '42501', 'the owner writing a certification row');
+  RESET ROLE;
+
+  fid_a := (SELECT file_id FROM public.chamber_sessions WHERE id = a);
+  fid_b := (SELECT file_id FROM public.chamber_sessions WHERE id = b);
+  IF fid_a IS NULL OR fid_b IS NULL OR fid_a = fid_b THEN RAISE EXCEPTION 'FAIL: setup expected two File IDs, got % and %', fid_a, fid_b; END IF;
+  IF EXISTS (SELECT 1 FROM public.chamber_certifications c JOIN public.chamber_sessions s ON s.id = c.session_id
+             WHERE c.session_id IN (a, b) AND c.file_id IS DISTINCT FROM s.file_id) THEN
+    RAISE EXCEPTION 'FAIL: a certification carries a File ID that is not its intake''s';
+  END IF;
+
+  SET LOCAL ROLE service_role;
+  PERFORM pg_temp.must_raise(format(insert_as, a, uid, fid_b), '23514', 'the service role recording a certification under another intake''s File ID');
+  PERFORM pg_temp.must_raise(format(insert_as, a, uid, 'EAA-2026-9999'), '23514', 'the service role recording a certification under a made-up File ID');
+  PERFORM pg_temp.must_raise(format(insert_as, a, uid, NULL), '23514', 'the service role recording a certification with no File ID');
+  PERFORM pg_temp.must_raise(format(insert_as, a, uid, ' '), '23514', 'the service role recording a certification with a blank File ID');
+  RESET ROLE;
+  PERFORM pg_temp.must_raise(format(insert_as, b, uid, fid_a), '23514', 'a superuser recording a certification under another intake''s File ID');
+
+  -- The intake's own File ID passes the check (so it refuses only what it should); undone straight after.
+  BEGIN
+    EXECUTE format(insert_as, a, uid, fid_a);
+    inserted := true;
+    RAISE EXCEPTION 'undo' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN raise_exception THEN
+    NULL;
+  END;
+  IF NOT inserted THEN RAISE EXCEPTION 'FAIL: a certification under its own intake''s File ID was refused'; END IF;
+  IF (SELECT count(*) FROM public.chamber_certifications WHERE session_id IN (a, b)) <> 2 THEN
+    RAISE EXCEPTION 'FAIL: a refused certification row was recorded';
+  END IF;
+  RAISE NOTICE 'submission_records: File ID check cases passed';
 END $$;
 
 -- ---------- the same certification sent twice at once ----------

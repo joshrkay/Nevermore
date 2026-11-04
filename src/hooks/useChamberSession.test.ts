@@ -834,17 +834,21 @@ describe("useChamberSession", () => {
       expect(again.result.current.fileId).toBeNull();
     });
 
-    it("learns the File ID from the certification's answer, with the submission as the database stamped it", async () => {
+    it("sends no File ID, and learns the one the database assigned from its answer, with the submission as it stamped it", async () => {
       const { result } = renderHook(() => useChamberSession());
       await startIntake(result);
       act(() => result.current.setChamberData((prev) => ({ ...prev, industry: "Retail" })));
       let ok: SubmitResult | undefined;
-      const pending = result.current.submit(submission).then((r) => { ok = r; });
+      // What The Reckoning sends (CertificationRequest): the signature and consent, never a File ID.
+      const { file_id: _none, ...request } = submission;
+      const pending = result.current.submit(request).then((r) => { ok = r; });
       await waitFor(() => expect(updates).toHaveLength(1));
       updates[0].resolve({ error: null });
       await waitFor(() => expect(updates).toHaveLength(2));
       expect(updates[1].columns).toBe("id, data_version, status, submission, file_id");
       const sent = updates[1].payload.submission as Record<string, unknown>;
+      expect(sent).not.toHaveProperty("file_id");
+      expect(updates[1].payload).not.toHaveProperty("file_id");
       const stamped = { ...sent, file_id: "EAA-2026-0042", version: 1, data_version: 3, certified_at: "2026-10-27T00:00:00Z", data_sha256: "abc", documents: [] };
       updates[1].resolve({ error: null, data: [{ id: "s1", data_version: 3, status: "submitted", submission: stamped, file_id: "EAA-2026-0042" }] });
       await act(async () => { await pending; });
