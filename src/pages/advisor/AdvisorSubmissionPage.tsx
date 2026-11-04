@@ -11,6 +11,7 @@ import NotesPanel from "@/components/advisor/NotesPanel";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
+import { changesSinceSigning } from "@/data/advisor";
 import { censusPay, isW2 } from "@/data/census";
 import { coverageTier, NOT_PROVIDED } from "@/data/manuscript";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
@@ -126,7 +127,7 @@ const Detail = ({
           {detail.certified && sub
             ? `Certified by ${sub.signer_name}${sub.signer_title ? `, ${sub.signer_title}` : ""} · ${formatDateTime(sub.certified_at ?? sub.signed_at)}${sub.peo ? ` · Prepared for ${sub.peo}` : ""}`
             : sub?.signer_name
-              ? "Certification withdrawn: the prospect changed their answers after signing. Showing their current answers."
+              ? `Certification withdrawn: the prospect changed their answers after signing. Showing their current answers${detail.signed ? "; what changed is listed below" : ""}.`
               : "Not certified yet. Showing the prospect's answers so far."}
           {detail.contactName && ` · Contact: ${detail.contactName}`}
           {detail.phone && ` · ${detail.phone}`}
@@ -135,6 +136,7 @@ const Detail = ({
 
       <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
         <div className="space-y-6 min-w-0">
+          {detail.signed && <ChangedSinceSigning detail={detail} signed={detail.signed} />}
           <FieldReviewPanel
             sessionId={detail.id}
             data={detail.data}
@@ -178,6 +180,41 @@ const RELATIONSHIP_LABELS: Record<string, string> = {
   domestic_partner: "Domestic partner",
   child: "Child",
   other: "Other",
+};
+
+/** What the prospect certified beside what the intake holds now, for an intake edited after signing. */
+const ChangedSinceSigning = ({ detail, signed }: { detail: SubmissionDetail; signed: NonNullable<SubmissionDetail["signed"]> }) => {
+  const changes = changesSinceSigning(signed.data, detail.data);
+  return (
+    <section aria-labelledby="changed-heading" className="border border-warning/40 bg-warning/5 rounded-xl p-5">
+      <h2 id="changed-heading" className="font-display text-lg font-bold">Changed since signing</h2>
+      <p className="text-xs text-muted-foreground mb-3">Signed {formatDateTime(signed.signedAt)}</p>
+      {changes.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No answer differs from the signed copy.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-muted-foreground border-b border-border">
+                <th className="py-1.5 pr-3 font-medium">Field</th>
+                <th className="py-1.5 pr-3 font-medium">As signed</th>
+                <th className="py-1.5 font-medium">Now</th>
+              </tr>
+            </thead>
+            <tbody>
+              {changes.map((c) => (
+                <tr key={c.field} className="border-b border-border last:border-0 align-top">
+                  <td className="py-1.5 pr-3">{c.label}</td>
+                  <td className="py-1.5 pr-3 font-mono">{c.signed}</td>
+                  <td className="py-1.5 font-mono">{c.current}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
 };
 
 const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (

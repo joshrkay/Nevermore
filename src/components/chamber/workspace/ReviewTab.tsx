@@ -22,7 +22,7 @@ interface ReviewDocument {
 interface ReviewTabProps {
   data: ChamberData;
   provenance?: ProvenanceMap;
-  /** Fields an advisor verified: settled whatever their status, so never listed (B-2.2). */
+  /** Fields an advisor verified: settled whatever their status, so never listed. */
   verified?: ReadonlySet<string>;
   onAction?: (action: FieldAction) => void;
   onProceed: () => void;
@@ -83,7 +83,7 @@ const rowId = (field: FieldKey) => `review-field-${field}`;
 const sectionId = (section: ReviewSection) => `review-section-${section}`;
 
 /** Brings an answer into view and puts the keyboard on its Add or Edit button. */
-function jumpTo(item: ReadinessItem) {
+function jumpTo(item: Pick<ReadinessItem, "field" | "section">) {
   const target = document.getElementById(item.field ? rowId(item.field) : sectionId(item.section));
   target?.scrollIntoView?.({ block: "center", behavior: "smooth" });
   target?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
@@ -167,22 +167,13 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
             Still needed before The Manuscript can be generated: {stillNeeded.length}
           </p>
           <ul className="space-y-2">
-            {required.map((item) => (
-              <li key={item.key} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+            {stillNeeded.map((item) => (
+              <li key={item.item} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
                 <span className="font-medium">{item.label}</span>
-                <span className="text-muted-foreground text-xs">{item.hint}</span>
-                <button type="button" onClick={() => jumpTo(item)} className="text-xs font-medium text-primary underline underline-offset-2">
-                  Go to {item.label.toLowerCase()}
-                </button>
-              </li>
-            ))}
-            {/* A required answer given two ways: picking one ("Use this") settles it. */}
-            {conflicting.map((item) => (
-              <li key={`conflict-${item.key}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
-                <span className="font-medium">{item.label}</span>
-                <span className="text-muted-foreground text-xs">You've given two different answers. Choose the right one.</span>
-                <button type="button" onClick={() => jumpTo(item)} className="text-xs font-medium text-primary underline underline-offset-2">
-                  Choose {item.label.toLowerCase()}
+                <span className="text-muted-foreground text-xs">{stillNeededNote(item)}</span>
+                {/* A required answer given two ways is settled where it sits, by picking one ("Use this"). */}
+                <button type="button" onClick={() => jumpTo(item.viaCensus ? CENSUS_SPOT : item.readiness)} className="text-xs font-medium text-primary underline underline-offset-2">
+                  {item.state === "conflicting" && !item.viaCensus ? "Choose" : "Go to"} {(item.viaCensus ? "Employee census" : item.label).toLowerCase()}
                 </button>
               </li>
             ))}

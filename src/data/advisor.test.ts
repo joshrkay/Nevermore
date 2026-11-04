@@ -1,9 +1,10 @@
 import { Blob as NodeBlob } from "node:buffer";
 import { describe, expect, it } from "vitest";
-import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
+import { EMPTY_CHAMBER_DATA, type ChamberData, type CensusEmployee } from "./chamberTypes";
 import {
   ADVISOR_SETTABLE_STATUSES,
   applyAdvisorReview,
+  changesSinceSigning,
   completenessOf,
   formatStates,
   isCurrentVersion,
@@ -286,5 +287,35 @@ describe("isCurrentVersion", () => {
   it("matches a version recorded before certified_at existed by its signing time and data", () => {
     expect(isCurrentVersion({ ...v, certified_at: null }, submission)).toBe(true);
     expect(isCurrentVersion({ ...v, certified_at: null }, { ...submission, signed_at: "2026-10-02T12:00:00Z" })).toBe(false);
+  });
+});
+
+describe("changesSinceSigning", () => {
+  const person: CensusEmployee = {
+    id: "e1", first_name: "Ada", last_name: "Lee", work_state: "CA",
+    compensation_type: "salary", employment_type: "full_time", classification: "w2",
+  };
+  const signed: ChamberData = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", has_handbook: true, pto_types: ["Vacation"], census: [person] };
+
+  it("is empty when nothing changed", () => {
+    expect(changesSinceSigning(signed, structuredClone(signed))).toEqual([]);
+  });
+
+  it("lists each changed answer as signed and as it is now", () => {
+    const now = { ...signed, company_name: "Acme Inc", has_handbook: null, pto_types: ["Vacation", "Sick"] };
+    expect(changesSinceSigning(signed, now)).toEqual([
+      expect.objectContaining({ field: "company_name", signed: "Acme", current: "Acme Inc" }),
+      expect.objectContaining({ field: "pto_types", signed: "Vacation", current: "Vacation, Sick" }),
+      expect.objectContaining({ field: "has_handbook", signed: "Yes", current: "—" }),
+    ].sort((a, b) => Object.keys(signed).indexOf(a.field) - Object.keys(signed).indexOf(b.field)));
+  });
+
+  it("sums up the census as one entry, by head count or changed details", () => {
+    const added = { ...signed, census: [person, { ...person, id: "e2", first_name: "Bo" }] };
+    expect(changesSinceSigning(signed, added)).toEqual([expect.objectContaining({ field: "census", signed: "1 person", current: "2 people" })]);
+    const moved = { ...signed, census: [{ ...person, work_state: "TX" }] };
+    expect(changesSinceSigning(signed, moved)).toEqual([
+      expect.objectContaining({ field: "census", signed: "1 person", current: "1 person, details changed" }),
+    ]);
   });
 });

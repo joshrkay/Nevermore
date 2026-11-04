@@ -31,8 +31,7 @@ const corsHeaders = {
 // everything the browser sends besides the message: the answers, their field statuses and the recent
 // conversation (D22).
 export const MAX_MESSAGE_CHARS = 2000;
-export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES };
-export { NEXT_FIELDS } from "./prompt.ts";
+export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES, NEXT_FIELDS };
 
 const SCHEMA_KEYS = new Set(Object.keys(INTAKE_SCHEMA.properties as object));
 
@@ -234,7 +233,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     ].join("\n\n");
     const result = await callModel(
       chosen.adapter,
-      { system: SYSTEM_PROMPT, user: buildUserPrompt(message, parts, next) },
+      { system: SYSTEM_PROMPT, user: buildUserPrompt({ message, ...turn }) },
       { fetch: deps.fetch, sleep: deps.sleep, now: deps.now },
     );
     event.attempts = result.attempts;

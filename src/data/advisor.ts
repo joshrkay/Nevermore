@@ -224,6 +224,32 @@ export function applyAdvisorReview(data: ChamberData, provenance: ProvenanceMap,
   return { data: next, provenance: nextProvenance, corrections, followUps };
 }
 
+export interface ChangeSinceSigning {
+  field: FieldKey;
+  label: string;
+  signed: string;
+  current: string;
+}
+
+const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
+
+/**
+ * The answers that differ between what the prospect signed and what the intake holds now, in the field
+ * review's order. The census is one entry: its head count, and whether anyone's details changed.
+ */
+export function changesSinceSigning(signed: ChamberData, current: ChamberData): ChangeSinceSigning[] {
+  return (Object.keys(FIELD_LABELS) as FieldKey[]).flatMap((field): ChangeSinceSigning[] => {
+    const before = signed[field];
+    const after = current[field];
+    if (JSON.stringify(before) === JSON.stringify(after)) return [];
+    if (field === "census") {
+      const [a, b] = [signed.census.length, current.census.length];
+      return [{ field, label: FIELD_LABELS[field], signed: people(a), current: a === b ? `${people(b)}, details changed` : people(b) }];
+    }
+    return [{ field, label: FIELD_LABELS[field], signed: formatFieldValue(before), current: formatFieldValue(after) }];
+  });
+}
+
 /** Parses an advisor's typed correction for a field. Null when it isn't a valid value. */
 export function parseCorrection(field: FieldKey, input: string): { value: unknown } | null {
   if (field === "census") return null;

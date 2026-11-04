@@ -1,4 +1,3 @@
-
 // The wording a prospect certifies. The version is stored with every certification so we can
 // always tell which text a signer agreed to; bump it whenever any wording below changes.
 //

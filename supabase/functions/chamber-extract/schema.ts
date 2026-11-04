@@ -16,25 +16,25 @@ export const FIELD_GUIDE: Record<string, string> = {
   states: "Two-letter US state codes of every state where employees work, one state per item",
   employee_count: "Total number of employees (a whole number)",
   start_month: "When they want PEO coverage or benefits to start, as they said it",
-  multiple_entities: "true if the business runs as more than one legal entity",
+  multiple_entities: "true if the business runs as more than one legal entity (separate companies or FEINs), false if it is one",
   fein_count: "How many federal employer ID numbers (FEINs) the business has (a whole number); report multiple_entities with it",
   virgin_medical: "true if they have never offered employer medical coverage, false if they have it now",
   current_carrier: "Their current medical insurance carrier",
   renewal_date: "When their current medical plan renews, as they said it",
-  rate_history: "What they said about recent medical rate increases",
-  benefits_waiting_period: "How long new hires wait before benefits start",
-  ancillary_benefits: "Other benefits they offer, such as dental, vision or life",
+  rate_history: "How their medical rates changed at recent renewals, as they describe it (such as \"up 12% last year\")",
+  benefits_waiting_period: "How long new hires wait before benefits start (such as \"30 days\")",
+  ancillary_benefits: "Benefits they offer besides medical and retirement, such as dental, vision or life insurance, one benefit per item",
   has_401k: "true if they offer any employer retirement plan (a 401(k), 403(b), SIMPLE IRA or similar), false if they offer none",
-  retirement_type: "What kind of retirement plan, such as 401(k), SIMPLE IRA or 403(b); report has_401k with it",
-  employer_contributes: "true if the employer contributes to or matches the retirement plan; report has_401k with it",
+  retirement_type: "What kind of retirement plan, such as traditional 401(k), SIMPLE IRA or 403(b); report has_401k with it",
+  employer_contributes: "true if the employer contributes to or matches the retirement plan, false if it doesn't; report has_401k with it",
   payroll_vendor: "Who runs their payroll now, such as Gusto or ADP",
   pay_frequency: "How often they run payroll: weekly, bi-weekly, semi-monthly or monthly",
   funding_days: "How many days before payday they fund payroll (a whole number)",
-  has_nonexempt: "true if any employees are hourly or overtime-eligible (nonexempt)",
-  nonexempt_count: "How many employees are nonexempt (a whole number); report has_nonexempt with it",
-  exempt_count: "How many employees are exempt (a whole number); report has_nonexempt with it",
-  pto_types: "Kinds of paid time off they offer, such as vacation or sick",
-  accrual_method: "How paid time off accrues, such as per pay period or up front",
+  has_nonexempt: "true if any employees are hourly or overtime-eligible (nonexempt), false if all are salaried and exempt",
+  nonexempt_count: "How many employees are nonexempt, hourly or overtime-eligible (a whole number); report has_nonexempt with it",
+  exempt_count: "How many employees are exempt, salaried and not overtime-eligible (a whole number); report has_nonexempt with it",
+  pto_types: "Kinds of paid time off they offer, such as vacation, sick or holidays, one kind per item",
+  accrual_method: "How paid time off accrues, such as per pay period or all at the start of the year",
   has_handbook: "true if they have an employee handbook",
   handbook_last_updated: "When the handbook was last updated, as they said it (such as \"2024\")",
   hr_staff_count: "How many people handle HR in-house (a whole number)",
@@ -50,7 +50,7 @@ export const FIELD_GUIDE: Record<string, string> = {
   wc_carrier: "Their current workers' compensation carrier, by name",
   wc_renewal_date: "When their workers' comp policy renews, as they said it",
   wc_experience_mod: "Their workers' comp experience modification factor, a decimal such as 0.92 (from 0 to 10)",
-  wc_annual_premium: "Their annual workers' comp premium in whole US dollars (from 0 to 100,000,000)",
+  wc_annual_premium: "Their annual workers' comp premium in whole US dollars (a whole number, from 0 to 100,000,000)",
 };
 
 /**
@@ -121,7 +121,7 @@ export const FIELD_TYPES: Record<string, JsonSchema> = Object.fromEntries(FIELDS
 export const FIELD_STATUSES = ["confirmed", "inferred", "incomplete", "unknown"];
 export const MAX_EVIDENCE_CHARS = 200;
 // An answer can carry a value, a status and a quote for every field, plus the reply: well past the
-// Anthropic adapter's default cap, which would cut it off. Not part of the contract fingerprint.
+// Anthropic adapter's default cap, which would cut it off. Not part of the contract hash.
 export const CHAT_MAX_TOKENS = 8192;
 
 const LABELS = new Map(INTAKE_FIELDS.map((f) => [f.key, f.label]));
@@ -146,7 +146,7 @@ You MUST use the extract_chamber_data tool to return the extracted fields. Only 
 Field definitions:
 ${fieldLines}
 
-Integers are whole numbers from 0 to 1,000,000 unless a field says otherwise. Text is at most 1,000 characters. An array holds at most 100 items, one entry per item, never a comma-separated string.
+Integers are whole numbers from 0 to ${LIMITS.count.toLocaleString("en-US")} unless a field says otherwise. Text is at most ${LIMITS.text.toLocaleString("en-US")} characters. An array holds at most ${LIMITS.listItems} items, one entry per item, never a comma-separated string.
 
 Never extract the employee census or details of individual employees: the roster comes only from an uploaded file.
 

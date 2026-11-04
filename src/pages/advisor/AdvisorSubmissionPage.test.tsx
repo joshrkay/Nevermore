@@ -49,6 +49,7 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
     },
   },
   certified: true,
+  signed: null,
   submission: {
     signer_name: "Jo Doe",
     signer_title: "CEO",
@@ -471,6 +472,27 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Download v1" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/signed"));
     expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "The_Manuscript_EAA-2026-S1-v1_Signed_Co.pdf");
+  });
+
+  it("shows what the prospect signed beside their current answers when they changed them afterwards", async () => {
+    const current = { ...signedData, employee_count: 14, pay_frequency: "Weekly" };
+    api.loadSubmission.mockResolvedValue(
+      detail({ certified: false, intakeStatus: "in_progress", data: current, signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z" } }),
+    );
+    renderPage();
+    const section = (await screen.findByRole("heading", { name: "Changed since signing" })).closest("section")!;
+    const rows = within(section).getAllByRole("row").slice(1).map((r) => r.textContent);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r?.includes("Bi-weekly"))).toContain("Weekly");
+    expect(rows.find((r) => r?.includes("12"))).toContain("14");
+    expect(screen.getByText(/what changed is listed below/)).toBeInTheDocument();
+  });
+
+  it("has no signed-copy section while the certification holds", async () => {
+    api.loadSubmission.mockResolvedValue(detail());
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    expect(screen.queryByRole("heading", { name: "Changed since signing" })).not.toBeInTheDocument();
   });
 
   it("won't generate a Manuscript for an intake that isn't certified", async () => {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { describeInvokeError, type AiFailureKind } from "@/data/aiFailure";
 import type { ChamberData } from "@/data/chamberTypes";
-import { chatRequest, type ChatMessage } from "@/data/chat";
+import { CHAT_FALLBACK_REPLY, chatRequestBody, type ChatMessage } from "@/data/chat";
 import type { ProvenanceMap } from "@/data/provenance";
 import { redactSensitive } from "@/data/sensitive";
 import { chatContext } from "../../supabase/functions/_shared/chatContext.ts";
