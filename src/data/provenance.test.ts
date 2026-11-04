@@ -465,7 +465,7 @@ describe("fieldOpenItems", () => {
     expect(fieldOpenItems(state.provenance)).toEqual([{ field: "industry", label: "Industry", reason: "Please confirm" }]);
   });
 
-  it("leaves out fields an advisor verified, whatever their status", () => {
+  it("leaves out fields an advisor verified, in any status", () => {
     let state = applyExtraction(EMPTY, { employee_count: 40, industry: "Retail" }, { source: msg("m1") });
     state = applyExtraction(state, { employee_count: 45 }, { source: msg("m2") });
     expect(fieldOpenItems(state.provenance, new Set(["employee_count"]))).toEqual([
@@ -700,5 +700,22 @@ describe("transcriptExtraction", () => {
     });
     // Typed, the model's status stands.
     expect(transcriptExtraction({ id: "m1", text: "15 people" }, meta).statuses?.employee_count).toBe("confirmed");
+  });
+});
+
+describe("fieldOpenItems and advisor verification", () => {
+  const at = "2026-11-04T00:00:00Z";
+  const said = { kind: "transcript" as const, message_id: "m1" };
+  const conflicting = { status: "conflicting" as const, source: said, updated_at: at, candidates: [] };
+
+  it("leaves a verified answer off the list, except a required one in conflict, which still has to be chosen", () => {
+    const provenance = {
+      industry: { status: "inferred" as const, source: said, updated_at: at },
+      hq_state: conflicting,
+      company_name: conflicting,
+    };
+    const verified = new Set(["industry", "hq_state", "company_name"]);
+    expect(fieldOpenItems(provenance, verified).map((i) => i.field)).toEqual(["company_name"]);
+    expect(fieldOpenItems(provenance).map((i) => i.field)).toEqual(["company_name", "hq_state", "industry"]);
   });
 });

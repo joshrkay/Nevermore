@@ -37,7 +37,7 @@ interface LiveWorkspaceProps {
   fileId?: string | null;
   onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   provenance?: ProvenanceMap;
-  /** Fields an advisor verified: settled whatever their status. */
+  /** Fields an advisor verified, still on the answer they saw: settled (`verificationSettles`). */
   verified?: ReadonlySet<string>;
   /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
   onFieldAction?: (action: FieldAction) => void;

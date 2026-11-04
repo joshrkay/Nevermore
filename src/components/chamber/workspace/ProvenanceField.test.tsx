@@ -249,6 +249,17 @@ describe("advisor verification and what else was heard", () => {
     expect(screen.getByText("Also heard: 38 — From your message: “closer to 38”")).toBeInTheDocument();
   });
 
+  it("still shows a note that repeats a rival answer when the advisor's verification hides the rival answers", () => {
+    field(entry({
+      status: "conflicting",
+      candidates: [{ value: 40, source: said }, { value: 45, source: register }],
+      also_heard: [{ value: 45, source: register }],
+    }), { verified: ["employee_count"] });
+    expect(screen.getByText("Verified by your advisor")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Answers for Employee Count" })).not.toBeInTheDocument();
+    expect(screen.getByText("Also heard: 45 — From Payroll.xlsx")).toBeInTheDocument();
+  });
+
   it("badges a verified value that has no provenance, such as one typed before provenance existed", () => {
     const { unmount } = field(undefined, { verified: ["employee_count"] });
     expect(screen.getByText("Verified by your advisor")).toBeInTheDocument();

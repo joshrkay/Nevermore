@@ -2,12 +2,12 @@ import { useEffect, useRef, type ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
-import { FIELD_LABELS, formatFieldValue, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
+import { FIELD_LABELS, formatFieldValue, isEmpty, verificationSettles, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import { isSettled } from "@/data/followUp";
 import { openItems } from "@/data/openItems";
 import { REVIEW_FIELDS } from "@/data/reviewFields";
 import { SECTION_STATUS_LABELS, sectionStatus, type SectionStatus } from "@/data/sectionStatus";
-import { missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
+import { isRequiredField, missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
 import { certificationBlockingItems, NO_VERIFIED_FIELDS, requiredItems, type RequiredItem } from "@/data/requiredItems";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
@@ -24,7 +24,7 @@ interface ReviewDocument {
 interface ReviewTabProps {
   data: ChamberData;
   provenance?: ProvenanceMap;
-  /** Fields an advisor verified: settled whatever their status, so never listed. */
+  /** Fields an advisor verified: settled (`verificationSettles`), so not listed, counted or asked about. */
   verified?: ReadonlySet<string>;
   onAction?: (action: FieldAction) => void;
   onProceed: () => void;
@@ -72,9 +72,13 @@ function rowsBySection(data: ChamberData): Record<ReviewSection, Row[]> {
 }
 
 /** How many of a section's answers are settled (an answer, or "Doesn't apply" or "Not known yet"), of how many. */
-function sectionProgress(section: ReviewSection, data: ChamberData, provenance: ProvenanceMap): { settled: number; total: number } {
+function sectionProgress(section: ReviewSection, data: ChamberData, provenance: ProvenanceMap, verified: ReadonlySet<string>): { settled: number; total: number } {
   const fields = REVIEW_FIELDS[section];
-  const settled = fields.filter((f) => isSettled(data[f], provenance[f]?.status)).length;
+  // An answer an advisor verified is settled too, as in the rows and the open items: not one in required
+  // conflict (certification still needs it chosen) and not one with no answer (verifying never supplies one).
+  const settled = fields.filter((f) =>
+    isSettled(data[f], provenance[f]?.status)
+    || (verified.has(f) && !isEmpty(data[f]) && verificationSettles(provenance[f]?.status, isRequiredField(f)))).length;
   // The census counts in Workforce, settled once one is uploaded.
   return section === "workforce"
     ? { settled: settled + (data.census.length > 0 ? 1 : 0), total: fields.length + 1 }
@@ -304,7 +308,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
       </div>
 
       {SECTIONS.map(({ key, title }) => (
-        <Section key={key} section={key} title={title} progress={sectionProgress(key, data, provenance)} status={statuses[key]}>
+        <Section key={key} section={key} title={title} progress={sectionProgress(key, data, provenance, verified)} status={statuses[key]}>
           {renderRows(rows[key])}
 
           {key === "workforce" && (

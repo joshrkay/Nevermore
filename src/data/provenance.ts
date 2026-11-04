@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
 import { INTAKE_FIELDS, INTAKE_SCHEMA } from "./intakeSchema";
+import { isRequiredField } from "./readiness";
 import { redactSensitive } from "./sensitive";
 import { CERTIFICATION_REQUIRED } from "../../supabase/functions/_shared/followUp.ts";
 
@@ -208,18 +209,22 @@ export function parseProvenance(raw: unknown): ProvenanceMap {
 /**
  * Whether an advisor's verification settles an answer in this status for what the prospect and the Manuscript
  * show: one that still needs the prospect (inferred, incomplete, in conflict). A confirmed answer is already
- * settled, and unknown or not applicable hold no answer. The open-items list, the required-items rule and the
- * advisor's packet settle every status instead, since none of them shows a badge for it.
+ * settled, and unknown or not applicable hold no answer, so they keep their status. A REQUIRED answer in conflict
+ * is never settled this way: certification (D26, EA008) reads the field's status, not the advisor's review, so
+ * it still blocks and the prospect still has to choose one answer. The open-items list, the required-items rule
+ * and the advisor's own packet (`applyAdvisorReview`) settle every status instead.
  */
-export const verificationSettles = (status: FieldStatus | undefined): boolean =>
-  status === "inferred" || status === "incomplete" || status === "conflicting";
+export const verificationSettles = (status: FieldStatus | undefined, required = false): boolean =>
+  status === "inferred" || status === "incomplete" || (status === "conflicting" && !required);
 
 /**
- * The also-heard notes worth showing: those that aren't already one of a conflict's rival answers, which the
- * prospect and the advisor see in the candidate list.
+ * The also-heard notes worth showing: those that aren't already one of a conflict's rival answers, when those
+ * are listed beside them. `candidatesShown` is false where the rival answers are hidden (a conflict an advisor
+ * verified), so a note repeating one still has somewhere to be seen.
  */
-export function visibleAlsoHeard(entry: FieldProvenance): FieldCandidate[] {
-  return (entry.also_heard ?? []).filter((heard) => !entry.candidates?.some((c) => same(c.value, heard.value)));
+export function visibleAlsoHeard(entry: FieldProvenance, candidatesShown = true): FieldCandidate[] {
+  const notes = entry.also_heard ?? [];
+  return candidatesShown ? notes.filter((heard) => !entry.candidates?.some((c) => same(c.value, heard.value))) : notes;
 }
 
 // ---------- Merging extractions ----------
@@ -480,11 +485,12 @@ export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_
 /**
  * Fields that still need the prospect: conflicts first, then incomplete, then unknown, then inferred.
  * A field marked not applicable is closed and never listed, and a field in `verified` (an advisor
- * verified it) is settled whatever its status, so it is left out too.
+ * verified it) is settled, so it is left out too, except a required answer in conflict: it still has to be
+ * chosen (`verificationSettles`), and the Manuscript would otherwise mark it unresolved with nothing to point to.
  */
 export function fieldOpenItems(provenance: ProvenanceMap, verified: ReadonlySet<string> = new Set()): FieldOpenItem[] {
   return OPEN_FIELD_STATUSES.flatMap((status) =>
-    FIELD_KEYS.filter((f) => provenance[f]?.status === status && !verified.has(f)).map((field) => ({
+    FIELD_KEYS.filter((f) => provenance[f]?.status === status && !(verified.has(f) && !(status === "conflicting" && isRequiredField(f)))).map((field) => ({
       field,
       label: FIELD_LABELS[field],
       reason: FIELD_OPEN_REASONS[status],

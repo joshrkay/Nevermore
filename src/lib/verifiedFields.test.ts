@@ -3,10 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...args: unknown[]) => rpc(...args) } }));
 
-const { fetchVerifiedFields } = await import("./verifiedFields");
+const { fetchVerifiedFields, readVerifiedFields } = await import("./verifiedFields");
+
+const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
 describe("fetchVerifiedFields", () => {
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   beforeEach(() => {
     rpc.mockReset();
     warn.mockClear();
@@ -32,5 +33,27 @@ describe("fetchVerifiedFields", () => {
   it("keeps only names", async () => {
     rpc.mockResolvedValue({ data: ["states", 7, null], error: null });
     expect([...(await fetchVerifiedFields("s1"))]).toEqual(["states"]);
+  });
+});
+
+describe("readVerifiedFields", () => {
+  beforeEach(() => {
+    rpc.mockReset();
+    warn.mockClear();
+  });
+
+  it("says it couldn't read them (null), rather than that none are verified, so a caller can keep what it has", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "Failed to fetch" } });
+    expect(await readVerifiedFields("s1")).toBeNull();
+    rpc.mockRejectedValueOnce(new Error("offline"));
+    expect(await readVerifiedFields("s1")).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the names when it can, and an empty set when the answer is malformed", async () => {
+    rpc.mockResolvedValueOnce({ data: ["states"], error: null });
+    expect([...(await readVerifiedFields("s1"))!]).toEqual(["states"]);
+    rpc.mockResolvedValueOnce({ data: "states", error: null });
+    expect((await readVerifiedFields("s1"))!.size).toBe(0);
   });
 });

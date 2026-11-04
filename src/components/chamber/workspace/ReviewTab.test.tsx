@@ -180,6 +180,38 @@ describe("ReviewTab sections", () => {
     expect(section("Benefits")).toHaveTextContent("Retirement planNo");
   });
 
+  it("counts an answer an advisor verified as settled in its section's progress", () => {
+    const incomplete: ProvenanceMap = {
+      pay_frequency: { status: "incomplete", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-04T00:00:00Z" },
+    };
+    const settledInPayroll = (verified: string[]) => {
+      const { unmount } = render(<ReviewTab data={complete} provenance={incomplete} verified={new Set(verified)} onAction={() => {}} onProceed={() => {}} />);
+      const settled = Number(/^(\d+) of/.exec(screen.getByTestId("progress-payroll").textContent ?? "")?.[1]);
+      unmount();
+      return settled;
+    };
+    expect(settledInPayroll(["pay_frequency"])).toBe(settledInPayroll([]) + 1);
+  });
+
+  it("doesn't count as settled a verified answer that is still unresolved: one in required conflict, or none at all", () => {
+    const at = "2026-11-04T00:00:00Z";
+    const said = { kind: "transcript" as const, message_id: "m1" };
+    const progress = (id: string, data: typeof complete, provenance: ProvenanceMap, verified: string[]) => {
+      const { unmount } = render(<ReviewTab data={data} provenance={provenance} verified={new Set(verified)} onAction={() => {}} onProceed={() => {}} />);
+      const settled = Number(/^(\d+) of/.exec(screen.getByTestId(id).textContent ?? "")?.[1]);
+      unmount();
+      return settled;
+    };
+    // Company legal name in conflict: certification (and the row) still need it chosen, verified or not.
+    const conflict: ProvenanceMap = {
+      company_name: { status: "conflicting", source: said, updated_at: at, candidates: [{ value: "Acme", source: said }, { value: "Acme Press", source: said }] },
+    };
+    expect(progress("progress-company", complete, conflict, ["company_name"])).toBe(progress("progress-company", complete, conflict, []));
+    // Pay frequency with no answer: verifying never supplies one.
+    const blank = { ...complete, pay_frequency: "" };
+    expect(progress("progress-payroll", blank, {}, ["pay_frequency"])).toBe(progress("progress-payroll", blank, {}, []));
+  });
+
   it("lists every answer in the intake schema, each with its badge, and says how much of each section is settled (D28)", () => {
     const fields = Object.keys(FIELD_LABELS).filter((f) => f !== "census") as FieldKey[];
     expect(Object.values(REVIEW_FIELDS).flat().sort()).toEqual([...fields].sort());

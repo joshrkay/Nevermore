@@ -150,7 +150,7 @@ The prospect said the field doesn't apply to them. Only the prospect can mark it
 _Avoid_: N/A as a value, none, skipped
 
 **Settled**:
-A field is settled when it holds an answer that is not conflicting or incomplete, or is marked unknown or not applicable, or an advisor has verified it. Lenore asks again only about fields that are not settled.
+A field is settled when it holds an answer that is not conflicting or incomplete, or is marked unknown or not applicable. An advisor's verification settles an unconfirmed answer in Review, the open items and the Manuscript, except a required answer in conflict, which still has to be chosen. Lenore's follow-up does not read verification: she asks about the fields her own rule leaves unsettled.
 
 ### Other kinds of status
 
@@ -165,11 +165,11 @@ Where an intake stands in the advisors' work, from draft through submitted, unde
 _Avoid_: status, intake status, workflow status
 
 **Also heard**:
-An answer Lenore heard for a field from a lower-ranked source than the one kept (a chat answer beside a document's, say). It is shown under the answer to the prospect and to the advisor, never in The Manuscript, and goes when the prospect confirms or edits the field.
+An answer Lenore heard for a field from another source than the one kept (a chat answer beside a document's, say, or the value a spoken correction replaced). It is shown under the answer to the prospect and to the advisor, never in The Manuscript, and goes when the prospect confirms or edits the field.
 _Avoid_: alternative, rejected value
 
 **Review state**:
-An advisor's verdict on one field: verified, incomplete or needs follow-up. Separate from the field status the prospect sees, though a verified field reads as settled to the prospect too ("Verified by your advisor").
+An advisor's verdict on one field: verified, incomplete or needs follow-up. Separate from the field status the prospect sees, though a verified field reads as settled to the prospect too ("Verified by your advisor"), except a required answer in conflict.
 _Avoid_: field status, status, advisor status
 
 **Document status**:

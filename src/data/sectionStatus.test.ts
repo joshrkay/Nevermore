@@ -44,4 +44,12 @@ describe("sectionStatus", () => {
     expect(sectionStatus("company", data, provenance)).toBe("needs_confirmation");
     expect(sectionStatus("company", data, provenance, new Set(["industry"]))).toBe("complete");
   });
+
+  it("doesn't settle a required answer in conflict by verification: certification still needs it chosen", () => {
+    const provenance = { ...confirmed, company_name: { ...entry("conflicting"), candidates: [] } };
+    expect(sectionStatus("company", complete, provenance, new Set(["company_name"]))).toBe("incomplete");
+    // An optional answer in conflict is settled by it, as before.
+    const optional = { ...confirmed, industry: { ...entry("conflicting"), candidates: [] } };
+    expect(sectionStatus("company", { ...complete, industry: "Retail" }, optional, new Set(["industry"]))).toBe("complete");
+  });
 });

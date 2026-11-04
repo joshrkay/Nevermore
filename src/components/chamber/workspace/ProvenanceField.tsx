@@ -106,9 +106,8 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
 
   const status = provenance?.status;
   const verifiedByAdvisor = useVerifiedFields().has(field);
-  // A required answer in conflict still blocks certification whoever verified it (the database's gate reads the
-  // field's status, not the advisor's review), so it keeps its rival answers to choose between.
-  const settledByAdvisor = verifiedByAdvisor && verificationSettles(status) && !(status === "conflicting" && required);
+  // A required answer in conflict still blocks certification whoever verified it, so it keeps its rival answers.
+  const settledByAdvisor = verifiedByAdvisor && verificationSettles(status, required);
   // A value the prospect confirmed or typed says so, apart from one Lenore heard stated outright (B-2).
   const badge = onAction && status
     ? settledByAdvisor
@@ -187,7 +186,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
         <p className="text-[10px] text-muted-foreground mt-0.5 break-words">{sourceLine(provenance.source)}</p>
       )}
 
-      {!editing && onAction && display && provenance && visibleAlsoHeard(provenance).map((heard, i) => (
+      {!editing && onAction && display && provenance && visibleAlsoHeard(provenance, !settledByAdvisor).map((heard, i) => (
         <p key={i} className="text-[10px] text-muted-foreground mt-0.5 break-words">
           {`Also heard: ${formatFieldValue(heard.value)} — ${sourceLine(heard.source)}`}
         </p>
