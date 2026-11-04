@@ -44,6 +44,8 @@
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
 \i supabase/migrations/20261104100000_certification_conflicts.sql
+\i supabase/migrations/20261104100100_required_items.sql
+\i supabase/migrations/20261104110100_certification_verified_fields.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -186,6 +188,44 @@ BEGIN
   IF outcome <> 'EA008 company_name' THEN RAISE EXCEPTION 'FAIL: re-certifying over a conflict gave %', outcome; END IF;
   RESET ROLE;
   RAISE NOTICE 'certification_conflicts: prospect cases passed';
+END $$;
+
+-- ---------- a field an advisor verified is settled, in the gate as in the browser (20261104110100) ----------
+DO $$
+DECLARE
+  uid uuid := pg_temp.new_prospect();
+  adv uuid := pg_temp.new_prospect();
+  sid uuid;
+  complete jsonb := '{"company_name":"Acme","states":["NY"],"pay_frequency":"bi-weekly"}';
+  outcome text;
+BEGIN
+  INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor');
+  PERFORM pg_temp.as_user(uid);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data, field_provenance)
+  VALUES (uid, complete, jsonb_build_object('company_name', pg_temp.prov('conflicting'), 'pay_frequency', pg_temp.prov('conflicting')))
+  RETURNING id INTO sid;
+  RESET ROLE;
+
+  -- The advisor verified the company name; the pay frequency is still the prospect's to settle.
+  PERFORM pg_temp.as_user(adv);
+  PERFORM public.review_submission_field(sid, 'company_name', 'verified');
+  PERFORM pg_temp.as_user(uid);
+  SET LOCAL ROLE authenticated;
+  outcome := pg_temp.certify(sid);
+  IF outcome <> 'EA008 pay_frequency' THEN RAISE EXCEPTION 'FAIL: with the company name verified, certifying gave %', outcome; END IF;
+  RESET ROLE;
+
+  -- Both verified: nothing is left for the prospect to choose, so the certification goes through.
+  PERFORM pg_temp.as_user(adv);
+  PERFORM public.review_submission_field(sid, 'pay_frequency', 'verified');
+  PERFORM pg_temp.as_user(uid);
+  SET LOCAL ROLE authenticated;
+  outcome := pg_temp.certify(sid);
+  IF outcome <> 'ok' THEN RAISE EXCEPTION 'FAIL: an intake whose conflicts an advisor verified could not be certified: %', outcome; END IF;
+  IF (SELECT status FROM public.chamber_sessions WHERE id = sid) <> 'submitted' THEN RAISE EXCEPTION 'FAIL: not submitted'; END IF;
+  RESET ROLE;
+  RAISE NOTICE 'certification_conflicts: verified field cases passed';
 END $$;
 
 -- ---------- what isn't checked ----------
