@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from "react-router-do
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { RavenIcon } from "@/components/RavenLogo";
+import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { parseAuthRedirect, safeNext, takeInitialAuthRedirect, type AuthRedirect } from "@/lib/authRedirect";
 
@@ -52,6 +53,7 @@ const Card = ({ title, children }: { title: string; children: ReactNode }) => {
           <h1 ref={heading} tabIndex={-1} className="font-display text-2xl font-bold text-center outline-none">{title}</h1>
           {children}
         </div>
+        <LegalLinks className="text-center mt-6" />
       </div>
     </div>
   );

@@ -267,7 +267,7 @@ Resend tells the product what became of a message by webhook. The `resend-webhoo
 - **A bounce flags the submission.** `advisor_email_problems()` lists the submissions whose confirmation bounced, was reported as spam, or is blocked by the provider; the advisor queue shows an "Email bounced" / "Reported as spam" badge and the submission page a banner saying to reach the prospect another way. It is read beside the queue, so a failure of that check never takes the queue down.
 - **The advisory team is never suppressed.** `ADVISORY_NOTIFY_EMAIL` is protected, and so is any message the queue shows was sent to the team. A bounce on one is recorded as `protected` and logged as `WEBHOOK_ADVISOR_BOUNCE`.
 - **Only what was emailed is suppressed.** Resend reports every recipient of a message; for a confirmation (one recipient) only the address the queue sent it to is suppressed. A message that is not in the queue at all (the sign-in codes go through the same Resend account) concerns the recipients as reported: those addresses are suppressed here, which only matters to the confirmations.
-- **What is kept.** The event's type, the provider's message id, the recipients, the bounce type and the provider's explanation with addresses and key-like strings replaced, capped at 200 characters. The subject, sender, body and tags the provider sends are never read. Both tables hold email addresses: fold them into the retention rule (D4). Deleting rows is safe.
+- **What is kept.** The event's type, the provider's message id, the recipients, the bounce type and the provider's explanation with addresses and key-like strings replaced, capped at 200 characters. The subject, sender, body and tags the provider sends are never read. Both tables hold email addresses. Delivery events are pruned after 365 days by the daily retention job (`public.run_retention()`); a suppression keeps its address until it is removed by hand, so a bounced address is never mailed again (`docs/DATA_HANDLING.md`). Deleting rows is safe.
 
 ```sql
 -- Who is suppressed, and why
@@ -409,7 +409,7 @@ included.
 - Certifications from before the outbox existed were not queued; nothing is back-filled. Queue one on
   purpose with the recipe above.
 - Queue rows keep the recipient's address after sending, and a dead event keeps its whole frozen
-  email. Fold them into the retention rule (D4). Deleting them is safe.
+  email, for as long as their intake is kept: they are deleted with it (`docs/DATA_HANDLING.md`).
 
 ## Tests
 

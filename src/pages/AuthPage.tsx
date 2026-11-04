@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useLocation, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { RavenIcon } from "@/components/RavenLogo";
+import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 
@@ -238,6 +239,14 @@ const AuthPage = () => {
             >
               {loading ? "..." : isSignUp ? "Create Account" : "Sign In"}
             </button>
+            {isSignUp && (
+              <p className="text-xs text-muted-foreground text-center">
+                By creating an account you agree to the{" "}
+                <Link to="/terms" className="underline underline-offset-2 hover:text-foreground">Terms of Use</Link>{" "}
+                and acknowledge the{" "}
+                <Link to="/privacy" className="underline underline-offset-2 hover:text-foreground">Privacy Policy</Link>.
+              </p>
+            )}
           </form>
           )}
 
@@ -262,6 +271,7 @@ const AuthPage = () => {
         <p className="text-center text-xs text-muted-foreground mt-6">
           © Edgar Allan Advisory. All nightmares are optional.
         </p>
+        <LegalLinks className="text-center mt-2" />
       </motion.div>
     </div>
   );

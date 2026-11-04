@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { errorDetail, reportOpsEvent } from "@/lib/monitoring";
 
 interface ErrorBoundaryState {
   error: Error | null;
@@ -13,6 +14,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("Unhandled render error:", error, info.componentStack);
+    // The error's kind and message only: the component stack can name what was on screen.
+    reportOpsEvent("app_error", { code: "render_error", detail: errorDetail(error) });
   }
 
   render() {

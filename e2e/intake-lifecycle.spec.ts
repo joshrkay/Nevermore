@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import pg from "pg";
 import { DATABASE, PG } from "./stack/config.mjs";
+import { agreeToIntakeConsent } from "./support/consent";
 
 // The intake lifecycle in a real browser, against the real migrations: "Start over" archives the draft
 // and nothing reaches it again (A-1.5); an idle draft expires and says so (A-1.5); answers whose save
@@ -30,8 +31,10 @@ async function setTargetStart(page: Page, value: string, existing = false) {
 
 const saved = (page: Page) => page.getByRole("status").getByText("Saved", { exact: true });
 
+// Each test is a new browser context, so a new guest, who is asked for consent first.
 async function openNewIntake(page: Page) {
   await page.goto("/start");
+  await agreeToIntakeConsent(page);
   await expect(page).toHaveURL(SESSION_URL);
   return SESSION_URL.exec(page.url())![1];
 }

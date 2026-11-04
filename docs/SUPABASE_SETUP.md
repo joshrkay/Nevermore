@@ -19,9 +19,63 @@ front end that uses it is deployed.
 | Auth: guest sign-in on, email confirmation on, Site URL and Redirect URLs (below), the sign-up, email-change and sign-in (magic-link) messages (below), sign-in emails through Resend's SMTP. First, so a later failure can't leave sign-up links broken | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
 | Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push` | SQL editor, file by file |
 | Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set` from a private temporary file | Edge Functions → Secrets |
-| Deploy `chamber-extract`, `document-extract`, `dispatch-outbox` | `supabase functions deploy` | (CLI only) |
-| Schedules: `pg_cron`, `pg_net`, the service-role key in Vault, `dispatch-outbox` every minute, and `expire-idle-intakes` hourly (uncertified drafts idle for 30 days expire) | Management API SQL endpoint | SQL editor, `docs/NOTIFICATIONS.md` → Schedule; `select cron.schedule('expire-idle-intakes', '17 * * * *', 'select public.expire_idle_intakes();');` |
+| Deploy `chamber-extract`, `document-extract`, `dispatch-outbox`, `resend-webhook`, `purge-intakes`, `ops-monitor` | `supabase functions deploy` | (CLI only) |
+| Schedules: `pg_cron`, `pg_net`, the service-role key in Vault, and the five jobs in "Schedules" below | Management API SQL endpoint | SQL editor: the statements in "Schedules" below |
 | Check all of the above, and that each function boots | SQL counts, the public auth settings, the auth config (Site URL, Redirect URLs, templates), a signed-out call to each function (a deployed one answers its own 401) | |
+
+### Schedules
+
+The database runs five jobs. The migrations create each one when `pg_cron` (and, for the three that
+call a function, `pg_net`) exist as they run; the script schedules them again after it enables the
+extensions, so a project that gets them only from the script is covered too. The three function jobs
+send the service-role key from Vault (`service_role_key`); each function refuses any other caller with
+its own 401.
+
+| Job | When | What it does | Without it |
+|---|---|---|---|
+| `dispatch-outbox` | every minute | Sends and retries the submission emails (`docs/NOTIFICATIONS.md`) | Emails go out only when a browser nudges right after a submission; no retries |
+| `purge-intakes` | hourly, at :23 | Carries out intake deletions: removes the stored files through the Storage API, then the rows (`docs/DATA_HANDLING.md`) | Requested deletions and expired drafts are never deleted |
+| `ops-monitor` | every five minutes | Alerts when errors, failed uploads, AI failures, refused access or failed deletions cross their thresholds (`docs/RUNBOOK.md`) | Failures are recorded, nobody is told |
+| `expire-idle-intakes` | hourly, at :17 | Expires uncertified drafts idle for 30 days | Idle drafts never expire |
+| `run-retention` | daily, 03:41 UTC | Queues closed drafts for deletion 30 days after they closed; prunes monitoring events (90 days), email delivery events (365 days) and AI rate-limit records (1 day) | Nothing is queued for deletion or pruned |
+
+To schedule one by hand (SQL editor), with your project ref in the URL:
+
+```sql
+select cron.schedule('purge-intakes', '23 * * * *', $job$
+  select net.http_post(
+    url := 'https://<ref>.supabase.co/functions/v1/purge-intakes',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'service_role_key'),
+      'Content-Type', 'application/json'),
+    body := '{}'::jsonb
+  );
+$job$);
+-- The same for ops-monitor ('*/5 * * * *') and dispatch-outbox ('* * * * *').
+select cron.schedule('expire-idle-intakes', '17 * * * *', 'select public.expire_idle_intakes();');
+select cron.schedule('run-retention', '41 3 * * *', 'select public.run_retention();');
+```
+
+Check them with `select jobname, schedule, active from cron.job order by 1;` (five rows) and recent runs
+with `select j.jobname, d.status, d.start_time from cron.job_run_details d join cron.job j using (jobid)
+order by d.start_time desc limit 20;`. A function job's run only says the request was sent: the
+function's own answer is in Edge Functions → Logs (`DELETION_*`, `OPS_ALERT`, `OUTBOX_*` lines) and in
+`select status_code, created from net._http_response order by created desc limit 20;`.
+
+### Engineering alerts
+
+`ENGINEERING_ALERT_WEBHOOK_URL` (a Slack or Teams incoming webhook, or anything that takes a JSON POST
+with a `text` field) is optional but should be set before launch. Three functions use it:
+
+- `dispatch-outbox`: a notification email that gave up (`OUTBOX_DEAD`).
+- `purge-intakes`: a deletion that ran out of attempts (`DELETION_FAILED`).
+- `ops-monitor`: a failure kind over its threshold (`OPS_ALERT`), with the runbook playbook to follow.
+
+Alerts carry ids, kinds, counts and failure codes, never names, addresses, file names or intake
+content, so a shared channel is fine. Unset, each alert is only logged, and `--check` lists
+"Engineering alerts" as a to-do. Set it in the secrets file with the others, or with
+`supabase secrets set ENGINEERING_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/... --project-ref <ref>`.
+It must be https (http only for localhost).
 
 ### Auth URLs and emails
 
@@ -136,7 +190,7 @@ only rejects a localhost or non-https Site URL.
 
 A rerun applies new migrations, sets the secrets again (an existing `IP_HASH_SECRET` is kept),
 redeploys the functions, re-sends the Resend SMTP settings (so a rotated key is picked up), replaces
-the Vault copy of the service-role key and re-creates the schedule under the same name. It doesn't
+the Vault copy of the service-role key and re-creates each schedule under the same name. It doesn't
 remove redirect URLs or replace an email template that already sends the code (for sign-up: the
 code and an app link, with no `{{ .ConfirmationURL }}`). A project set up
 before the sign-in code existed fails `--check` on "Sign-in code message" until a rerun (or the
@@ -154,8 +208,15 @@ they always ran in:
 
 | Was | Now |
 | --- | --- |
-| `20261027090000_outbox_operations.sql` | `20261027090001_outbox_operations.sql` |
-| `20261103110000_document_storage_path.sql` | `20261103110001_document_storage_path.sql` |
+| `20261027090000_outbox_operations.sql` | `20261027090100_outbox_operations.sql` |
+| `20261103110000_document_storage_path.sql` | `20261103110100_document_storage_path.sql` |
+
+Two fixes landed at once and briefly left a second copy of each renumbered file, as `20261027090001` and
+`20261103110001`; those copies were removed (applying `outbox_operations` twice fails on the column its first run adds).
+A project that recorded either number has run that file: record the kept number as applied and drop the
+stray one before pushing, for example
+`supabase migration repair --status applied 20261027090100 --linked` then
+`supabase migration repair --status reverted 20261027090001 --linked`, and likewise for `20261103110001`.
 
 A project pushed with the old names has the first file of each pair recorded under the shared number and
 the second never applied, along with everything after it. Before pushing again, list what is recorded:
@@ -164,7 +225,7 @@ the second never applied, along with everything after it. Before pushing again, 
 supabase migration list --linked
 ```
 
-- `20261027090001` and `20261103110001` show as not applied, and the project was only ever updated with
+- `20261027090100` and `20261103110100` show as not applied, and the project was only ever updated with
   `supabase db push` (this script): push. They run now, followed by everything the failed push left out.
 - Either was applied some other way (the SQL editor, for example): neither is safe to run twice, so mark
   it applied before pushing. `outbox_operations` ran if the index `public.outbox_events_status_created_idx`
@@ -172,8 +233,8 @@ supabase migration list --linked
   on `public.documents` checks `storage_path`.
 
   ```sh
-  supabase migration repair --status applied 20261027090001 --linked
-  supabase migration repair --status applied 20261103110001 --linked
+  supabase migration repair --status applied 20261027090100 --linked
+  supabase migration repair --status applied 20261103110100 --linked
   ```
 
 For a few minutes on 2026-11-03 `main` held each of the two files twice, also as
@@ -207,9 +268,9 @@ migration is in the folder twice, under one name or with the same SQL.
 - **Auth settings or the schedule:** the script calls the Management API endpoints listed above.
   If one is refused, make the same change in the dashboard (the table's last column) and rerun
   with `--check`.
-- **"Couldn't read the project's legacy service_role key":** `dispatch-outbox` authenticates the
-  schedule with the legacy JWT service-role key. Re-enable legacy API keys (Project Settings → API
-  Keys) and rerun.
+- **"Couldn't read the project's legacy service_role key":** `dispatch-outbox`, `purge-intakes` and
+  `ops-monitor` authenticate the schedule with the legacy JWT service-role key. Re-enable legacy API
+  keys (Project Settings → API Keys) and rerun.
 
 ## If sign-up confirmation links fail
 

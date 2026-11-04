@@ -168,6 +168,8 @@ describe("supabase-setup", () => {
       `functions deploy document-extract`,
       `functions deploy dispatch-outbox`,
       `functions deploy resend-webhook`,
+      `functions deploy purge-intakes`,
+      `functions deploy ops-monitor`,
     ]);
 
     const secretsCall = cliCalls().find((c) => c.secrets);
@@ -187,7 +189,10 @@ describe("supabase-setup", () => {
       smtp_pass: SECRETS.RESEND_API_KEY,
     });
     expect(fake.queries.some((q) => q.includes("vault.create_secret") && q.includes(SERVICE_KEY))).toBe(true);
-    expect(fake.queries.some((q) => q.includes(`https://${REF}.supabase.co/functions/v1/dispatch-outbox`))).toBe(true);
+    for (const fn of ["dispatch-outbox", "purge-intakes", "ops-monitor"]) {
+      expect(fake.queries.some((q) => q.includes(`https://${REF}.supabase.co/functions/v1/${fn}`))).toBe(true);
+    }
+    expect(fake.queries.some((q) => q.includes("cron.schedule('run-retention'"))).toBe(true);
 
     for (const secret of [SERVICE_KEY, SECRETS.LOVABLE_API_KEY, SECRETS.RESEND_API_KEY, ipHashSecret!, "sbp_token"]) {
       expect(out).not.toContain(secret);
