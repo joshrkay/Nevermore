@@ -188,6 +188,7 @@ describe("ReviewTab sections", () => {
       const { unmount } = render(<ReviewTab data={data} provenance={provenance} verified={new Set(verified)} onAction={() => {}} onProceed={() => {}} />);
       const count = Number(/^(\d+) of/.exec(screen.getByTestId(id).textContent ?? "")?.[1]);
       unmount();
+      expect(count, `${id} says how many are settled`).not.toBeNaN(); // two NaNs would compare equal
       return count;
     };
 
