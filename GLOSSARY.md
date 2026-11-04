@@ -67,6 +67,20 @@ _Avoid_: requirement, open item
 A field an advisor has marked as needing more from the prospect. It belongs to the advisor's review, not to the prospect's open items.
 _Avoid_: open item, flag
 
+### Talking with Lenore
+
+**Transcript**:
+Everything the prospect and Lenore have said in an intake, typed or spoken, in order, with The Chamber's own notes such as a voice call starting. Prospect-facing copy may call it the conversation.
+_Avoid_: chat, chat log, conversation history, messages
+
+**Voice call**:
+A spoken conversation with Lenore, from when it connects until it ends. An attempt that never connects is not a call.
+_Avoid_: voice session, voice mode
+
+**Dropped call**:
+A voice call that the connection ended, rather than the prospect or Lenore.
+_Avoid_: disconnect, hang-up
+
 ### Certifying and what it produces
 
 **Certification**:
@@ -181,6 +195,8 @@ _Avoid_: status, extraction status
 - An **Intake** holds one answer per **Field**, a **Census**, and for every captured field one **Field status** and one **Field source**
 - An **Employee** in the **Census** has zero or more **Dependents**
 - An **Extraction** comes from one prospect message and proposes answers for several **Fields**
+- An **Intake** begins with the **Prospect**'s first message, typed or spoken; The Chamber's own notes never begin one
+- An **Intake** has one **Transcript**; each **Voice call** adds its spoken lines to it and notes when the call started and when it ended or dropped
 - A **Document candidate** comes from one uploaded document and changes nothing until the **Prospect** applies it
 - A **Prospect**'s own action always beats an **Extraction** or a **Document candidate** for the same field
 - An **Intake** has one **File ID** and any number of **Certifications**; its first **Certification** makes it a **Submission**

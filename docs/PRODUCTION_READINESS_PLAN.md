@@ -679,7 +679,16 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Tests:** hook tests with a fake conversation, and a merge test for the spoken cap.
 
 ##### US-2.3c Voice failure states and the mobile transcript
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** none · **Milestone:** M1
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** none · **Milestone:** M1
+- **Built (2026-11-04):**
+  - **One state.** A call is a state machine (`src/data/voiceSession.ts`, I-5.1): idle, connecting (the microphone, then the server), active (listening or speaking), disconnected, failed. The orb, the button and the notice read it alone.
+  - **No setup instructions.** With no `VITE_ELEVENLABS_AGENT_ID` there is no "Speak with Lenore" and the orb isn't clickable; the developer modal is gone.
+  - **15 seconds.** The microphone is asked for first, untimed, with nothing spinning and a Cancel. Once it is ready the connection has 15 seconds, then fails as a timeout, and a connection opening later is ignored.
+  - **A second click starts nothing.** The button is disabled and reads "Connecting..." while connecting.
+  - **Each failure has its own message** (blocked microphone, no or busy microphone, a browser without one, a timeout, a refused connection, a dropped call) with "Continue in text", which clears the notice and puts the cursor in the text input, and "Try voice again" unless the browser can't do voice (`VoiceFailureNotice`).
+  - **Mobile transcript.** On a phone, a "Chat" button beside the input opens the whole conversation in a sheet (`MobileTranscript`): every message in full, with its own input.
+  - **Reported.** A failure on our side or the service's is reported as `voice_failed` (I-5.1); a blocked or missing microphone is not.
+- **Notes:** The causes found and their fixes are in `docs/VOICE_ISSUES.md`. Not tried with a real microphone or a real ElevenLabs agent: the tests use a fake SDK.
 - **Scope:**
   - "Speak with Lenore" is hidden when voice isn't configured, so no setup instructions reach prospects.
   - Connecting times out after 15 seconds.
@@ -691,6 +700,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
   - Prospects never see setup instructions.
   - On a phone, every Lenore reply can be read in full.
 - **Tests:** hook tests for each failure and the timeout, and a component test for the mobile transcript.
+  - *Built:* `useLenoreVoice.test.ts` (each failure, the timeout with fake timers, a second click, cancel, stale attempts), `voiceSession.test.ts` (the transitions), `VoiceOrb.test.tsx`, `MobileTranscript.test.tsx` and `ChamberPage.test.tsx` (the orb follows the call; "Continue in text" focuses the input on a phone).
 
 ##### US-2.1c Manuscript coverage
 - **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** FE · **Depends:** 2.1a · **Milestone:** M1
@@ -1161,9 +1171,9 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Remaining:** Whether the checks, `e2e` included, are required for merge is not verifiable from the repo: `README.md` asks the owner to set it. The edge-function type check (F-0.4) is in `verify`. Its config also bans what Node's type stripping cannot run, because the `e2e` gateway loads `chamber-extract` that way.
 
 #### I-5.1 Voice reliability diagnosis and state machine
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Medium · **Owner:** FE · **Depends:** A-3.1, D8 · **Milestone:** M3
-- **Built:** `OrbState` is idle, listening, speaking, thinking, disabled, set ad hoc from hook callbacks (`useLenoreVoice.ts`) and by the chat hook.
-- **Remaining:** No connecting, active, disconnected or failed states, no single driver, no `docs/VOICE_ISSUES.md`, no hosted test.
+- **Status:** **PARTIAL** · **Size:** M · **Priority:** Medium · **Owner:** FE · **Depends:** A-3.1, D8 · **Milestone:** M3
+- **Built (2026-11-04, with US-2.3c):** `src/data/voiceSession.ts` is the state machine: idle, connecting (microphone, then server), active (listening or speaking), disconnected and failed, changed only by `reduceVoice`. Every SDK callback is bound to the attempt that opened it, and an event from any other attempt changes nothing. The orb follows the call while one is starting or under way (`orbForVoice`), and the text chat otherwise. Failures on our side or the service's are reported as ops kind `voice_failed` (`voice_connect_timeout`, `voice_connect_failed`, `voice_dropped:<close code>`, `voice_error`; migration `20261104121000_voice_failed_ops_kind.sql`), which alerts at 5 in 15 minutes (`docs/RUNBOOK.md`, "Voice failures"). `docs/VOICE_ISSUES.md` logs ten causes, nine found by reading the hook against the SDK's source and one by driving the built app in headless Chromium, each with its fix and test.
+- **Remaining:** No hosted-environment test with a real microphone in each browser, so no cause has yet been reproduced live. Open in `docs/VOICE_ISSUES.md`: a stalled connection holds up the next attempt (the SDK waits on it), bounded by the timeout.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Define the states: connecting, active, listening, speaking, disconnected, failed. Reproduce failures in the hosted environment and fix the top causes. Drive the orb from this state machine only.
   - **AC:**
@@ -1174,12 +1184,11 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 #### I-5.2 Voice fallback and browser support matrix
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** Medium · **Owner:** PM + FE · **Depends:** I-5.1 · **Milestone:** M3
 - **Built:** Voice never auto-starts, text input is always present, and voice is behind `VITE_ELEVENLABS_AGENT_ID`.
-- **Remaining:** No browser-support detection or definition and no microphone help text. A missing agent id opens a developer-facing modal.
+- **Remaining:** No browser-support definition. A browser without a microphone API is detected and told voice won't work there, and a blocked microphone is told how to allow it (US-2.3c). A missing agent id now hides voice instead of opening a developer-facing modal.
 
 #### I-5.3 Voice failure UX
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** FE · **Depends:** I-5.1 · **Milestone:** M3
-- **Built:** Permission denied, start failure, `onError` and disconnect only call `console.error` and set the orb to idle (`useLenoreVoice.ts`).
-- **Remaining:** No user-facing messages. Text chat is merely unaffected.
+- **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** FE · **Depends:** I-5.1 · **Milestone:** M3
+- **Built (2026-11-04, with US-2.3c):** A blocked microphone, a missing or busy one, a browser without one, a timeout, a refused connection and a dropped call each have their own message, with "Continue in text" (which focuses the text input) and, except for an unsupported browser, "Try voice again". The text chat is untouched by any of them. Each is simulated in `useLenoreVoice.test.ts` and shown in `VoiceOrb.test.tsx`.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Explain permission-denied, device-unavailable, connection-failed, and mid-call disconnect. Keep the text chat fully usable in each case.
   - **AC:**
@@ -1403,9 +1412,9 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | I-4.2 | Integration test harness on local Supabase | M | Highest | M1 | PARTIAL |
 | I-4.3 | End-to-end test: intake to PDF | M | Highest | M1 | DONE |
 | I-4.4 | CI pipeline that gates releases | S | Highest | M1 | PARTIAL |
-| I-5.1 | Voice reliability diagnosis and state machine | M | Medium | M3 | NOT STARTED |
+| I-5.1 | Voice reliability diagnosis and state machine | M | Medium | M3 | PARTIAL |
 | I-5.2 | Voice fallback and browser support matrix | S | Medium | M3 | PARTIAL |
-| I-5.3 | Voice failure UX | S | Medium | M3 | NOT STARTED |
+| I-5.3 | Voice failure UX | S | Medium | M3 | DONE |
 | J-1.1 | Environment separation | M | Highest | M1 | NOT VERIFIABLE |
 | J-1.2 | Production domain, HTTPS, canonical URL, and sender domain | S | High | M3 | NOT STARTED |
 | J-2.1 | Funnel analytics events | M | Medium | M3 | NOT STARTED |

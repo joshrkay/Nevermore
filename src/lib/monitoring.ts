@@ -9,7 +9,7 @@
 // at most MAX_REPORTS_PER_PAGE reports and one per kind and code a minute. The Supabase client is loaded
 // only when there is something to send, so importing this module never needs it configured.
 
-export type OpsKind = "app_error" | "upload_failed" | "ai_failed" | "auth_denied";
+export type OpsKind = "app_error" | "upload_failed" | "ai_failed" | "auth_denied" | "voice_failed";
 
 export interface OpsReport {
   /** A short machine code: letters, digits and _ : . - (anything else is dropped). */

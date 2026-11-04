@@ -9,6 +9,7 @@ import { useChamberSession } from "@/hooks/useChamberSession";
 import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import TranscriptPanel from "@/components/chamber/TranscriptPanel";
+import MobileTranscript from "@/components/chamber/MobileTranscript";
 import ChatFailureNotice from "@/components/chamber/ChatFailureNotice";
 import SaveStatus from "@/components/chamber/SaveStatus";
 import BackupNotice from "@/components/chamber/BackupNotice";
@@ -22,6 +23,7 @@ import { isReadyToCertify, READY_MESSAGE, shouldAnnounceReady } from "@/data/fol
 import { browserStorageWorks } from "@/data/intakeBackup";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
 import { applyExtraction, applyFieldAction, transcriptExtraction, voiceExtraction, type FieldAction } from "@/data/provenance";
+import { orbForVoice } from "@/data/voiceSession";
 
 const spokenLine = (text: string) => (text.length > 120 ? text.slice(0, 120) + "..." : text);
 const primaryButton = "bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors";
@@ -40,7 +42,9 @@ const Notice = ({ title, children }: { title: string; children: ReactNode }) => 
 const ChamberPage = () => {
   const isMobile = useIsMobile();
   const { isAnonymous } = useAuth();
-  const [orbState, setOrbState] = useState<OrbState>("idle");
+  // What the text chat shows on the orb (thinking, then speaking). A voice call starting or under way shows its
+  // own state instead (orbForVoice), so the orb follows the call's state machine alone (I-5.1).
+  const [chatOrbState, setChatOrbState] = useState<OrbState>("idle");
   // What Lenore last said, under the orb: her latest line in the conversation, or one she just spoke.
   const [lastSpokenText, setLastSpokenText] = useState("");
   const chatInputRef = useRef<HTMLInputElement>(null);
@@ -112,9 +116,9 @@ const ChamberPage = () => {
     setLastSpokenText(spokenLine(text));
   }, [addMessage]);
 
-  const { startVoice, isConnected, hasAgentId } = useLenoreVoice({
+  const { voice, startVoice, endVoice, dismissFailure: dismissVoiceFailure, isConnected, hasAgentId } = useLenoreVoice({
     epoch: conversationEpoch,
-    onOrbStateChange: setOrbState,
+    intakeId: sessionId,
     onNewMessage: addMessage,
     onLastSpokenText: setLastSpokenText,
     // Every AI value is merged with its provenance, so an extraction with no prospect message to
@@ -151,7 +155,7 @@ const ChamberPage = () => {
       return message;
     },
     addLenoreMessage,
-    onOrbStateChange: setOrbState,
+    onOrbStateChange: setChatOrbState,
     onExtracted: (extracted, response, message) =>
       updateIntake((prev) => applyExtraction(prev, extracted, transcriptExtraction(message, response))),
   });
@@ -188,7 +192,11 @@ const ChamberPage = () => {
     [updateIntake],
   );
 
+  const orbState = orbForVoice(voice) ?? chatOrbState;
+
+  // "Type instead", and "Continue in text" after a voice failure: the notice goes, and the cursor is in the input.
   const handleTypeInstead = () => {
+    dismissVoiceFailure();
     chatInputRef.current?.focus();
   };
 
@@ -318,10 +326,11 @@ const ChamberPage = () => {
       <VoiceOrb
         orbState={orbState}
         lastSpokenText={lastSpokenText}
-        onStartVoice={startVoice}
-        onTypeInstead={handleTypeInstead}
+        voice={voice}
         hasAgentId={hasAgentId}
-        isVoiceConnected={isConnected}
+        onStartVoice={startVoice}
+        onEndVoice={endVoice}
+        onTypeInstead={handleTypeInstead}
       />
 
       {/* Transcript & Workspace */}
@@ -359,24 +368,32 @@ const ChamberPage = () => {
         </div>
       </div>
 
-      {/* Mobile: floating chat input */}
+      {/* Mobile: floating chat input, and the whole conversation a tap away (the transcript panel has no room) */}
       {isMobile && (
         <div className="fixed bottom-0 left-0 right-0 p-3 bg-card border-t border-border z-30">
           {failureNotice}
-          <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
-            <input
-              ref={chatInputRef}
-              type="text"
-              placeholder="Message Lenore..."
-              maxLength={2000}
-              className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
-                  handleSendMessage((e.target as HTMLInputElement).value.trim());
-                  (e.target as HTMLInputElement).value = "";
-                }
-              }}
+          <div className="flex items-center gap-2">
+            <MobileTranscript
+              messages={messages}
+              onSendMessage={handleSendMessage}
+              notice={failureNotice}
+              restoredThrough={restoredThrough}
             />
+            <div className="flex-1 flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
+              <input
+                ref={chatInputRef}
+                type="text"
+                placeholder="Message Lenore..."
+                maxLength={2000}
+                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
+                    handleSendMessage((e.target as HTMLInputElement).value.trim());
+                    (e.target as HTMLInputElement).value = "";
+                  }
+                }}
+              />
+            </div>
           </div>
         </div>
       )}
