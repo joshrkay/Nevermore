@@ -477,6 +477,74 @@ describe("useLenoreChat: spoken messages", () => {
     expect(result.current.failure).toBeNull();
   });
 
+  it("keeps every spoken message whose answers weren't noted, and Try again reads each again, oldest first", async () => {
+    const outage = { data: null, error: httpError(502, { code: "provider_error" }) };
+    invoke
+      .mockResolvedValueOnce(outage)
+      .mockResolvedValueOnce(outage)
+      .mockResolvedValueOnce({ data: { extracted: { company_name: "Acme" } }, error: null })
+      .mockResolvedValueOnce({ data: { extracted: { pay_frequency: "weekly" } }, error: null });
+    const { result, onExtracted } = mount();
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v1", "We're Acme.")); });
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v2", "We pay weekly.")); });
+    expect(result.current.failure).toMatchObject({ kind: "unreachable", spoken: true });
+
+    await act(async () => { await result.current.retry(); });
+    expect(invoke.mock.calls.slice(2).map(([, opts]) => opts.body.message)).toEqual(["We're Acme.", "We pay weekly."]);
+    expect(onExtracted.mock.calls.map(([, , m]) => m.id)).toEqual(["v1", "v2"]);
+    expect(result.current.failure).toBeNull();
+  });
+
+  it("keeps the notice up while any of them still isn't noted, and the next Try again reads only those", async () => {
+    const outage = { data: null, error: httpError(502, { code: "provider_error" }) };
+    invoke
+      .mockResolvedValueOnce(outage)
+      .mockResolvedValueOnce(outage)
+      .mockResolvedValueOnce({ data: { extracted: { company_name: "Acme" } }, error: null })
+      .mockResolvedValueOnce(outage)
+      .mockResolvedValueOnce({ data: { extracted: { pay_frequency: "weekly" } }, error: null });
+    const { result } = mount();
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v1", "We're Acme.")); });
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v2", "We pay weekly.")); });
+    await act(async () => { await result.current.retry(); });
+    expect(result.current.failure).toMatchObject({ text: "We pay weekly.", spoken: true });
+    await act(async () => { await result.current.retry(); });
+    expect(invoke.mock.calls.at(-1)?.[1].body.message).toBe("We pay weekly.");
+    expect(invoke).toHaveBeenCalledTimes(5);
+    expect(result.current.failure).toBeNull();
+  });
+
+  it("stops reading them again once the conversation is replaced partway through Try again", async () => {
+    const outage = { data: null, error: httpError(502, { code: "provider_error" }) };
+    let answer!: (v: unknown) => void;
+    invoke
+      .mockResolvedValueOnce(outage)
+      .mockResolvedValueOnce(outage)
+      .mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    const { result, rerender } = mount();
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v1", "We're Acme.")); });
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v2", "We pay weekly.")); });
+    let retrying!: Promise<void>;
+    act(() => { retrying = result.current.retry(); });
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(3));
+    rerender({ epoch: 1 });
+    await act(async () => { answer({ data: { extracted: { company_name: "Acme" } }, error: null }); await retrying; });
+    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(result.current.failure).toBeNull();
+  });
+
+  it("lets the prospect carry on by hand, after which Try again never reads the messages they set aside", async () => {
+    const outage = { data: null, error: httpError(502, { code: "provider_error" }) };
+    invoke.mockResolvedValueOnce(outage).mockResolvedValueOnce(outage).mockResolvedValueOnce({ data: { extracted: {} }, error: null });
+    const { result } = mount();
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v1", "We're Acme.")); });
+    act(() => result.current.dismissFailure());
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v2", "We pay weekly.")); });
+    await act(async () => { await result.current.retry(); });
+    expect(invoke.mock.calls.map(([, opts]) => opts.body.message)).toEqual(["We're Acme.", "We pay weekly.", "We pay weekly."]);
+    expect(result.current.failure).toBeNull();
+  });
+
   it("counts as in flight, alongside a typed message, until both are answered", async () => {
     const answer: Record<string, (v: unknown) => void> = {};
     invoke.mockImplementation((_name: string, opts: { body: { message: string } }) => new Promise((r) => { answer[opts.body.message] = r; }));

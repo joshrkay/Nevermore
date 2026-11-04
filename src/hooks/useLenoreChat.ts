@@ -93,9 +93,11 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
   intakeIdRef.current = intakeId;
   const ensureIntakeRef = useRef(ensureIntake);
   ensureIntakeRef.current = ensureIntake;
-  // The recorded message behind the current failure, so a retry still cites it. Each request
-  // otherwise carries its own message, so overlapping sends can't be attributed to each other.
-  const failedMessageRef = useRef<AskedMessage | null>(null);
+  // Every message whose answers weren't taken, oldest first, with the text that was sent, so "Try again" reads each one
+  // again and still cites it. Several can be waiting: spoken messages keep coming while the call goes on, and one
+  // failing never makes an earlier one's answers noted. Each request otherwise carries its own message, so
+  // overlapping sends can't be attributed to each other.
+  const failedRef = useRef<{ text: string; message: AskedMessage }[]>([]);
   // Spoken messages are asked about in the order they were said, one at a time, so each call carries what the one
   // before it captured.
   const spokenQueue = useRef<Promise<unknown>>(Promise.resolve());
@@ -106,7 +108,7 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
     if (Object.is(epochRef.current, epoch)) return;
     epochRef.current = epoch;
     // "Try again" would resend a message from the conversation that was just replaced.
-    failedMessageRef.current = null;
+    failedRef.current = [];
     setFailure(null);
   }, [epoch]);
 
@@ -154,12 +156,10 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
         addLenoreMessage(reply);
         idleTimer.current = setTimeout(() => onOrbStateChange("idle"), 2000);
       }
-      // The notice is about this message (a retry that worked), or nothing is waiting on it. A failure about another
-      // message stays up: a later spoken message doesn't make an earlier one's answers noted.
-      if (!failedMessageRef.current || failedMessageRef.current.id === message.id) {
-        failedMessageRef.current = null;
-        setFailure(null);
-      }
+      // This message's answers are in. The notice goes once no other message is waiting: a later spoken message
+      // working doesn't make an earlier one's answers noted.
+      failedRef.current = failedRef.current.filter((f) => f.message.id !== message.id);
+      if (failedRef.current.length === 0) setFailure(null);
       return true;
     } catch (err) {
       orb("idle");
@@ -169,7 +169,8 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       // chamber-extract records every call it answers (ai_extraction_events); this covers it never answering.
       const unrecorded = timedOut ? "chat_timeout" : unrecordedFunctionFailure("chat", err, info.requestId);
       if (unrecorded) reportOpsEvent("ai_failed", { code: unrecorded, detail: errorDetail(err) });
-      failedMessageRef.current = message;
+      // Kept in its place when it was already waiting (a retry that failed again), so they stay oldest first.
+      if (!failedRef.current.some((f) => f.message.id === message.id)) failedRef.current = [...failedRef.current, { text, message }];
       setFailure({ text, ...info, ...(spoken ? { spoken: true as const } : {}) });
       return false;
     } finally {
@@ -191,7 +192,7 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
 
   const send = useCallback(async (text: string) => {
     // Something new: the notice about an earlier message goes, as "Continue manually" would.
-    failedMessageRef.current = null;
+    failedRef.current = [];
     setFailure(null);
     // The model and the transcript only ever see the message with sensitive numbers removed.
     const clean = redactSensitive(text);
@@ -210,15 +211,25 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
     [askSpoken],
   );
 
-  /** Resends the message that failed, without adding it to the conversation a second time. */
+  /**
+   * Resends every message whose answers weren't taken, oldest first, without adding any to the conversation a second
+   * time. One that fails again stays waiting, and so does the notice.
+   */
   const retry = useCallback(async () => {
-    const message = failedMessageRef.current;
-    if (!failure || !message) return;
-    await (message.spoken ? askSpoken(failure.text, message) : ask(failure.text, message));
+    if (!failure) return;
+    const retriedIn = epochRef.current;
+    for (const { text, message } of [...failedRef.current]) {
+      // The conversation was replaced partway: the rest belong to the old one.
+      if (!Object.is(epochRef.current, retriedIn)) return;
+      await (message.spoken ? askSpoken(text, message) : ask(text, message));
+    }
   }, [ask, askSpoken, failure]);
 
-  /** "Continue manually": drop the notice and let the prospect fill in the workspace themselves. */
-  const dismissFailure = useCallback(() => setFailure(null), []);
+  /** "Continue manually": drop the notice, and what it was waiting on, and let the prospect fill in the workspace themselves. */
+  const dismissFailure = useCallback(() => {
+    failedRef.current = [];
+    setFailure(null);
+  }, []);
 
   return { send, extractSpoken, retry, dismissFailure, failure, pending };
 }
