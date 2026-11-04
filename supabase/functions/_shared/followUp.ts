@@ -37,7 +37,9 @@ export function unsettledFields(
   return INTAKE_FIELDS.filter((f) => {
     if (opts.exclude?.has(f.key)) return false;
     const status = statuses[f.key];
-    if (f.key === "states" && opts.census?.workStates && status !== "conflicting" && status !== "incomplete") return false;
+    // The census answers the states question when B-2.2's rule says it does (it names work states and is settled,
+    // or nothing else names states), unless that answer is itself in conflict or incomplete.
+    if (f.key === "states" && opts.census?.workStates && isReadyState(requiredItemStates(answers, statuses, opts.census).states)) return false;
     return !isSettled(answers[f.key], status);
   });
 }
@@ -54,21 +56,62 @@ export interface CensusSummary {
   workStates: boolean;
 }
 
+export type RequiredItemState = "missing" | "conflicting" | "incomplete" | "unconfirmed" | "settled";
+
+const hasText = (v: unknown) => typeof v === "string" && v.trim() !== "";
+
 /**
- * Ready to certify (GLOSSARY.md, D26 as certification decides it, D2): every answer certification requires holds an
- * answer that isn't in conflict or incomplete. "Unknown" or "doesn't apply" can't stand in for one, because
- * certification needs the answer itself. States count as answered when the census names work states, as the
- * Reckoning counts them.
+ * Where each required answer stands, by B-2.2's rule (src/data/requiredItems.ts, public.intake_required_items): a
+ * present answer is settled when it has no provenance or is confirmed, not applicable or verified by an advisor;
+ * inferred or unknown is unconfirmed; incomplete and conflicting are themselves. States of operation is settled by
+ * `states`, or by a settled census that names work states; while only the census names states, it takes the
+ * census's state, so a census in conflict holds it back too. A required answer whose own status is conflicting stays
+ * in conflict, verified or not, as the gate has it. Pass `verified` where it is known (the browser).
+ */
+export function requiredItemStates(
+  answers: Record<string, unknown>,
+  statuses: Record<string, string | undefined>,
+  census: CensusSummary = { rows: 0, workStates: false },
+  verified: ReadonlySet<string> = new Set(),
+): Record<(typeof CERTIFICATION_REQUIRED)[number], RequiredItemState> {
+  const state = (present: boolean, field: string): RequiredItemState => {
+    if (!present) return "missing";
+    const status = statuses[field];
+    // A status that isn't one counts as no provenance, as the browser reads stored provenance.
+    if (!status || !(FIELD_STATUSES as readonly string[]).includes(status)) return "settled";
+    if (status === "confirmed" || status === "not_applicable" || verified.has(field)) return "settled";
+    if (status === "inferred" || status === "unknown") return "unconfirmed";
+    return status as RequiredItemState;
+  };
+  const statesListed = Array.isArray(answers.states) && answers.states.some(hasText);
+  const statesState = state(statesListed, "states");
+  const censusState = state(census.rows > 0, "census");
+  const statesViaCensus = statesState !== "settled" && census.workStates && (censusState === "settled" || statesState === "missing");
+  // A required answer whose own status is `conflicting` stays in conflict whoever verified it and whatever the census
+  // says: the gate reads the field statuses, not the advisor's reviews (EA008; certificationBlockingItems).
+  const refused = (key: (typeof CERTIFICATION_REQUIRED)[number], item: RequiredItemState): RequiredItemState =>
+    item !== "missing" && statuses[key] === "conflicting" ? "conflicting" : item;
+  return {
+    company_name: refused("company_name", state(hasText(answers.company_name), "company_name")),
+    states: refused("states", statesViaCensus ? censusState : statesState),
+    pay_frequency: refused("pay_frequency", state(hasText(answers.pay_frequency), "pay_frequency")),
+  };
+}
+
+/** Whether a required item lets the intake be ready to certify: given, and not in conflict or incomplete. */
+export const isReadyState = (state: RequiredItemState): boolean => state === "settled" || state === "unconfirmed";
+
+/**
+ * Ready to certify (GLOSSARY.md, D26 as certification decides it, D2): every answer certification requires is
+ * there and none is in conflict (what the gate refuses, EA003 and EA008) or incomplete. "Unknown" or "doesn't apply"
+ * can't stand in for an answer, because certification needs the answer itself. One rule with the gate: the item
+ * states are B-2.2's (requiredItemStates).
  */
 export function readyToCertify(
   answers: Record<string, unknown>,
   statuses: Record<string, string | undefined>,
   census: CensusSummary = { rows: 0, workStates: false },
+  verified: ReadonlySet<string> = new Set(),
 ): boolean {
-  return CERTIFICATION_REQUIRED.every((key) => {
-    const status = statuses[key];
-    if (status === "conflicting" || status === "incomplete") return false;
-    if (key === "states" && census.workStates && !(status === "unknown" || status === "not_applicable")) return true;
-    return !isEmpty(answers[key]) && status !== "unknown" && status !== "not_applicable";
-  });
+  return Object.values(requiredItemStates(answers, statuses, census, verified)).every(isReadyState);
 }
