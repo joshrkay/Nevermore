@@ -104,6 +104,13 @@ Advisor tools are at `/advisor`, the Advisor Console: the team's operating workf
 Submitting an intake queues an advisor alert and a prospect confirmation email. Setup, scheduling,
 failure handling and the pre-launch checklist: `docs/NOTIFICATIONS.md`.
 
+## Voice
+
+Voice is an opt-in beta: `VITE_ELEVENLABS_AGENT_ID` names the ElevenLabs agent, and without it the Chamber is text
+only. The agent only holds the conversation. What the prospect says in a call goes through `chamber-extract`, as a typed
+message does, and is kept as inferred until they confirm it (ADR 0001). Its prompt is versioned in the repo: paste
+`docs/prompts/voice-agent-v1.md` into the agent as that file says.
+
 ## Data handling, privacy and operations
 
 - Classification, retention windows, the deletion process and the advisory team's responsibilities:

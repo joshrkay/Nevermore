@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { ReviewedDocument } from "@/data/advisor";
 import { categoryInfo } from "@/data/documentCategories";
+import { advisorScanNotice } from "@/data/documentStatus";
 import { documentUrl, type DocumentEvent } from "@/lib/advisorApi";
 import { actorName, formatDateTime } from "./format";
 
@@ -41,7 +42,9 @@ const DocumentsPanel = ({ documents, events, prospectUserId }: DocumentsPanelPro
         <p className="text-sm text-muted-foreground">The prospect hasn't uploaded any documents.</p>
       ) : (
         <ul className="space-y-2">
-          {documents.map((doc) => (
+          {documents.map((doc) => {
+            const held = advisorScanNotice(doc.scan_verdict);
+            return (
             // A document re-created under its id with another file appears twice: certified (removed) and added.
             <li key={`${doc.id}:${doc.certification ?? ""}:${doc.storage_path}`} className="flex items-start justify-between gap-3 text-sm" data-testid={`document-${doc.id}`}>
               <div className="min-w-0">
@@ -65,17 +68,19 @@ const DocumentsPanel = ({ documents, events, prospectUserId }: DocumentsPanelPro
                 {doc.certifiedFileName !== undefined && (
                   <p className="text-xs text-warning">Certified as “{doc.certifiedFileName}”; renamed{by(doc, "renamed")}.</p>
                 )}
+                {held && <p className="text-xs text-warning">{held}</p>}
               </div>
               <button
                 onClick={() => void open(doc)}
-                disabled={opening === doc.id}
+                disabled={opening === doc.id || held !== null}
                 className="text-xs text-primary underline flex items-center gap-1 disabled:opacity-50"
                 aria-label={`Open ${doc.file_name}`}
               >
                 {opening === doc.id && <Loader2 className="w-3 h-3 animate-spin" />} Open
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </section>

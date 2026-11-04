@@ -50,52 +50,52 @@ Postgres jsonb refuses NUL and unpaired surrogate characters before any trigger 
 
 Every field belongs to a section and is either required or recommended, with a rank: see "Sections, required fields and rank" below. The table is generated from the schema's `x-intake` annotations, and `src/data/intakeSchemaDoc.test.ts` fails while it differs from them.
 
-Writers: **C** chat extraction (`chamber-extract`, which asks for every field but the census), **D** document candidates (`document-extract`; a census sheet also supplies `census`, `employee_count`, `states`, `has_1099` and `ca_contractors`), **V** voice `<extract>` JSON (accepts any key), **E** hand edit in the workspace.
+Writers: **C** chat extraction (`chamber-extract`, which asks for every field but the census, for typed and spoken messages alike: a voice call's answers go through it too, US-2.3b), **D** document candidates (`document-extract`; a census sheet also supplies `census`, `employee_count`, `states`, `has_1099` and `ca_contractors`), **E** hand edit in the workspace.
 
 | Section | Key | Label | Kind | Required | Rank | Writers |
 | --- | --- | --- | --- | --- | --- | --- |
-| Company | `company_name` | Company legal name | text | Required | 1 | C D V E |
-| Company | `employee_count` | Employee count | count | Recommended | 5 | C D V E |
-| Company | `industry` | Industry | text | Recommended | 6 | C D V E |
-| Company | `start_month` | Target start | text | Recommended | 15 | C D V E |
-| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 16 | C V E |
-| Company | `fein_count` | FEIN count | count | Recommended | 17 | C V |
-| Locations | `states` | States of operation | state list | Required | 2 | C D V E |
-| Locations | `hq_state` | HQ state | state | Recommended | 7 | C D V E |
-| Census | `census` | Employee census | census (read-only in the workspace) | Recommended | 4 | D V |
-| Census | `has_1099` | 1099 contractors | boolean | Recommended | 34 | C D V |
-| Census | `ca_contractors` | California contractors | boolean | Recommended | 35 | C D V |
-| Benefits | `current_carrier` | Current carrier | text | Recommended | 8 | C D V E |
-| Benefits | `renewal_date` | Renewal date | text | Recommended | 9 | C D V E |
-| Benefits | `virgin_medical` | First-time medical coverage | boolean | Recommended | 18 | C D V |
-| Benefits | `rate_history` | Rate history | text | Recommended | 19 | C D V E |
-| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 20 | C D V E |
-| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 21 | C D V E |
-| Benefits | `has_401k` | Retirement plan | boolean | Recommended | 22 | C D V E |
-| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 23 | C D V |
-| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 24 | C D V |
-| Payroll | `pay_frequency` | Pay frequency | text (free text, not an enum) | Required | 3 | C D V E |
-| Payroll | `payroll_vendor` | Payroll vendor | text | Recommended | 10 | C D V E |
-| Payroll | `funding_days` | Funding lead time | count | Recommended | 25 | C V E |
-| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 26 | C V |
-| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 27 | C D V |
-| Payroll | `exempt_count` | Exempt count | count | Recommended | 28 | C D V |
-| Payroll | `pto_types` | PTO types | text list | Recommended | 29 | C V E |
-| Payroll | `accrual_method` | Accrual method | text | Recommended | 30 | C V E |
-| Workers' comp | `wc_carrier` | Workers' comp carrier | text | Recommended | 11 | C V |
-| Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | C V |
-| Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | C V |
-| Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | C V |
-| Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 31 | C D V |
-| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 32 | C V |
-| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 33 | C V |
-| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 36 | C V |
-| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 37 | C V |
-| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 38 | C V |
-| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 39 | C V |
-| Operations & HR | `hris_system` | HRIS system | text | Recommended | 40 | C V |
-| Operations & HR | `key_challenges` | Key challenges | text | Recommended | 41 | C V |
-| Operations & HR | `business_goals` | Business goals | text | Recommended | 42 | C V |
+| Company | `company_name` | Company legal name | text | Required | 1 | C D E |
+| Company | `employee_count` | Employee count | count | Recommended | 5 | C D E |
+| Company | `industry` | Industry | text | Recommended | 6 | C D E |
+| Company | `start_month` | Target start | text | Recommended | 15 | C D E |
+| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 16 | C E |
+| Company | `fein_count` | FEIN count | count | Recommended | 17 | C |
+| Locations | `states` | States of operation | state list | Required | 2 | C D E |
+| Locations | `hq_state` | HQ state | state | Recommended | 7 | C D E |
+| Census | `census` | Employee census | census (read-only in the workspace) | Recommended | 4 | D |
+| Census | `has_1099` | 1099 contractors | boolean | Recommended | 34 | C D |
+| Census | `ca_contractors` | California contractors | boolean | Recommended | 35 | C D |
+| Benefits | `current_carrier` | Current carrier | text | Recommended | 8 | C D E |
+| Benefits | `renewal_date` | Renewal date | text | Recommended | 9 | C D E |
+| Benefits | `virgin_medical` | First-time medical coverage | boolean | Recommended | 18 | C D |
+| Benefits | `rate_history` | Rate history | text | Recommended | 19 | C D E |
+| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 20 | C D E |
+| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 21 | C D E |
+| Benefits | `has_401k` | Retirement plan | boolean | Recommended | 22 | C D E |
+| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 23 | C D |
+| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 24 | C D |
+| Payroll | `pay_frequency` | Pay frequency | text (free text, not an enum) | Required | 3 | C D E |
+| Payroll | `payroll_vendor` | Payroll vendor | text | Recommended | 10 | C D E |
+| Payroll | `funding_days` | Funding lead time | count | Recommended | 25 | C E |
+| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 26 | C |
+| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 27 | C D |
+| Payroll | `exempt_count` | Exempt count | count | Recommended | 28 | C D |
+| Payroll | `pto_types` | PTO types | text list | Recommended | 29 | C E |
+| Payroll | `accrual_method` | Accrual method | text | Recommended | 30 | C E |
+| Workers' comp | `wc_carrier` | Workers' comp carrier | text | Recommended | 11 | C |
+| Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | C |
+| Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | C |
+| Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | C |
+| Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 31 | C D |
+| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 32 | C |
+| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 33 | C |
+| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 36 | C |
+| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 37 | C |
+| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 38 | C |
+| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 39 | C |
+| Operations & HR | `hris_system` | HRIS system | text | Recommended | 40 | C |
+| Operations & HR | `key_challenges` | Key challenges | text | Recommended | 41 | C |
+| Operations & HR | `business_goals` | Business goals | text | Recommended | 42 | C |
 
 Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`, `dob`) are free text. `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks. `transcript` is checked message by message (see "The transcript" below).
 
@@ -185,7 +185,7 @@ Where it runs:
 | The browser's backup of unsaved answers (see "Session lifecycle") | The whole copy is discarded, not offered for restore, and a warning names the paths. |
 | A saved intake as the Chamber loads it | The mismatch is logged (paths and reasons). Rows saved by earlier versions stay editable: the sanitiser still loads what is valid. |
 
-Voice extractions (`<extract>` tags) still go through the sanitiser, which repairs what it can (a lower-case state, a comma list, `"1,200"`).
+A voice call's answers are checked the same way: each spoken message goes through `chamber-extract` like a typed one (US-2.3b). The agent's own `<extract>` tags, which used to reach the intake through the sanitiser alone, are never read.
 
 ### Adding a field
 
@@ -275,16 +275,16 @@ Open items are listed conflicting first, then incomplete, unknown and inferred. 
 
 | `kind` | Fields | Produced by |
 | --- | --- | --- |
-| `transcript` | `message_id` (the `ChatMessage.id` in `transcript`), optional `quote` (≤ 200 chars), optional `prompt_version` (a positive integer; see "Extraction contract version and eval" below) | Chat extraction (`chamber-extract`) and voice `<extract>` tags |
+| `transcript` | `message_id` (the `ChatMessage.id` in `transcript`), optional `quote` (≤ 200 chars), optional `prompt_version` (a positive integer; see "Extraction contract version and eval" below) | An extraction (`chamber-extract`) from a typed or spoken message. A spoken message's answers are `inferred` at most (D33) |
 | `document` | `document_id`, optional `document_name`, `location` (e.g. sheet/row or page) | A value the prospect applied from an uploaded document (see "Document candidates" below) |
 | `prospect_edit` | — | Confirm, Edit, Add, or "Use this" in the workspace |
 
 ### Merge rules (`applyExtraction`)
 
-Every AI value reaches the intake through `applyExtraction`: a chat reply (`useLenoreChat` hands each one to the Chamber with the prospect's message it answers), a voice `<extract>` (one with no prospect message to cite is dropped, never merged untracked), and a document candidate the prospect applies.
+Every AI value reaches the intake through `applyExtraction`: an extraction from a typed or spoken message (`useLenoreChat` hands each one to the Chamber with the prospect's message it answers; a spoken message's statuses are capped at `inferred` by `transcriptExtraction`, D33), and a document candidate the prospect applies.
 
 1. Values are validated per field (`sanitizeChamberPatch`). Invalid and empty values are dropped.
-2. Sources rank `prospect_edit` (3) above `document` (2) above `transcript` (1, chat and voice). A field whose source is `prospect_edit` is never changed by an extraction, and nothing is noted on it; neither is a field marked `not_applicable`, whatever source it records (only the prospect sets it and takes it back). An answer replaces `unknown`.
+2. Sources rank `prospect_edit` (3) above `document` (2) above `transcript` (1, typed and spoken alike: a typed answer and a different spoken one are a conflict for the prospect to choose). A field whose source is `prospect_edit` is never changed by an extraction, and nothing is noted on it; neither is a field marked `not_applicable`, whatever source it records (only the prospect sets it and takes it back). An answer replaces `unknown`.
 3. A field with no value takes the new one, with the model's status (default `inferred`; a document's value is `confirmed`).
 4. The same value heard again can raise the status from `inferred` to `confirmed`, never lower it. The source becomes the new one unless it ranks lower, in which case the higher-ranked source stays. A list with the same entries in another order is the same value, and the stored order is kept.
 5. A different value:
@@ -315,7 +315,7 @@ The tool covers every top-level field of intake schema v2 but the census (`FIELD
 
 ### Extraction contract version and eval
 
-`PROMPT_VERSION` in `supabase/functions/chamber-extract/schema.ts` (a positive integer) versions the whole extraction contract: `SYSTEM_PROMPT`, `EXTRACT_TOOL`, the user turn and the response shape. Every extraction event records it (`ai_extraction_events.prompt_version`, US-2.4a), every successful response carries it as `prompt_version`, and the browser stores it on the transcript source of each value a chat message produced. Voice extractions (the ElevenLabs agent has its own prompt; `voiceExtraction` drops any version its `<extract>` names) and entries saved before versioning have none. A malformed stored version is dropped and the entry kept.
+`PROMPT_VERSION` in `supabase/functions/chamber-extract/schema.ts` (a positive integer) versions the whole extraction contract: `SYSTEM_PROMPT`, `EXTRACT_TOOL`, the user turn and the response shape. Every extraction event records it (`ai_extraction_events.prompt_version`, US-2.4a), every successful response carries it as `prompt_version`, and the browser stores it on the transcript source of each value a typed or spoken message produced. Entries saved before versioning, and from a voice `<extract>` before voice went through `chamber-extract` (US-2.3b), have none. Lenore's voice prompt, which governs only the conversation, has its own version: see `docs/prompts/`. A malformed stored version is dropped and the entry kept.
 
 `supabase/functions/_shared/ai/promptVersion.test.ts` fingerprints each function's prompt and tool per `PROMPT_VERSION`, and for chat also the user turn (`buildUserPrompt` in `prompt.ts`, rendered for fixed inputs). Editing any of them without raising the version fails CI; then record the new version's fingerprints there, keeping the old ones. The response shape is not fingerprinted: raise the version by hand when it changes.
 

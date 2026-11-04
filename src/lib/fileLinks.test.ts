@@ -48,6 +48,26 @@ describe("private file links", () => {
     expect(read(join("src", "lib", "advisorApi.ts"))).toMatch(/\.createSignedUrl\(path, SIGNED_URL_SECONDS,/);
   });
 
+  // E-4.1: every link asks Storage for Content-Disposition: attachment, so a browser saves the file rather than
+  // showing it. The download parameter isn't part of what Storage signs, so documents are also stored as
+  // application/octet-stream (document-upload, document-scan), which a browser never shows inline.
+  it("makes every link a download, under a cleaned name", () => {
+    const api = read(join("src", "lib", "advisorApi.ts"));
+    const signer = api.slice(api.indexOf("async function signedUrl"), api.indexOf("export const documentUrl"));
+    // The name is required, and always sent.
+    expect(signer).toMatch(/async function signedUrl\(bucket: "documents" \| "manuscripts", path: string, download: string\)/);
+    expect(signer).toMatch(/\.createSignedUrl\(path, SIGNED_URL_SECONDS, \{ download: downloadName\(download\) \}\)/);
+    for (const maker of ["documentUrl", "manuscriptUrl", "finalManuscriptUrl"]) {
+      const line = api.split("\n").find((l) => l.startsWith(`export const ${maker} =`)) ?? "";
+      const body = line + api.slice(api.indexOf(line) + line.length).split("\n")[1];
+      expect(body, maker).toMatch(/signedUrl\("(documents|manuscripts)", [\w.]+, \w+(\.file_name)?\)/);
+    }
+    for (const file of FUNCTIONS.filter((f) => /document-(upload|scan)/.test(f))) {
+      const text = read(file);
+      for (const call of text.match(/\.upload\([^)]*\)/g) ?? []) expect(call, file).toContain("contentType: STORED_CONTENT_TYPE");
+    }
+  });
+
   it("uses a link at once and never keeps, logs or routes it", () => {
     const linkMakers = /\b(documentUrl|manuscriptUrl|finalManuscriptUrl)\(/;
     const users = APP.filter((file) => !file.endsWith(join("lib", "advisorApi.ts")) && linkMakers.test(read(file)));

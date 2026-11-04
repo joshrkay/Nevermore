@@ -59,8 +59,9 @@ These make claims that only counsel can stand behind. They are not part of the p
    and injuries. Is the Manuscript's HIPAA data note correct, and does any of this data need more than our
    "restricted" handling?
 8. **Processors.** Are the service providers' data terms (Supabase, Vercel, Resend, the AI provider under D11,
-   ElevenLabs, Cloudflare) adequate, and must the Privacy Policy say more about them (location, sub-processors,
-   whether the AI provider keeps or trains on what it reads)?
+   ElevenLabs, Cloudflare, and the malware scanner under D13, which is sent every uploaded file) adequate, and
+   must the Privacy Policy say more about them (location, sub-processors, whether the AI provider keeps or trains
+   on what it reads, whether the scanner keeps the files it checks)?
 9. **Terms.** Write the disclaimers, limitation of liability and governing law; confirm the rest (acceptable use,
    suspension, ownership of the packet, the change clause).
 10. **Contact address** for privacy and deletion requests (see placeholders).

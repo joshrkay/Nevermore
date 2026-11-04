@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import type { DisconnectionDetails } from "@elevenlabs/react";
+import type { ChatMessage } from "@/data/chat";
 
 // What the hook hands the voice service for one attempt: its callbacks, bound to that attempt.
 type Session = {
@@ -18,8 +19,10 @@ const startSession = vi.fn(async (options: Session) => {
   return "conversation-1";
 });
 const endSession = vi.fn(async () => {});
+// What the hook tells the agent during a call (D24).
+const sendContextualUpdate = vi.fn();
 vi.mock("@elevenlabs/react", () => ({
-  useConversation: () => ({ status: voiceStatus, isSpeaking: false, startSession, endSession }),
+  useConversation: () => ({ status: voiceStatus, isSpeaking: false, startSession, endSession, sendContextualUpdate }),
 }));
 
 const reportOpsEvent = vi.fn();
@@ -34,14 +37,18 @@ vi.stubEnv("VITE_ELEVENLABS_AGENT_ID", "agent_test");
 const { useLenoreVoice } = await import("./useLenoreVoice");
 const { VOICE_CONNECT_TIMEOUT_MS } = await import("@/data/voiceSession");
 
-const mount = () => {
+type MountOptions = { context?: string; onSpokenMessage?: (m: ChatMessage) => Promise<unknown> | void };
+const mount = (opts: MountOptions = {}) => {
   const onNewMessage = vi.fn();
   const onLastSpokenText = vi.fn();
+  // By default an extraction never settles, so a test that isn't about the update sent after one has none arrive late.
+  const onSpokenMessage = vi.fn(opts.onSpokenMessage ?? (() => new Promise<void>(() => {})));
   const hook = renderHook(
-    ({ epoch }) => useLenoreVoice({ epoch, intakeId: "intake-1", onNewMessage, onLastSpokenText, onExtract: vi.fn() }),
-    { initialProps: { epoch: 0 } },
+    ({ epoch, context }: { epoch: number; context: string }) =>
+      useLenoreVoice({ epoch, context, intakeId: "intake-1", onNewMessage, onLastSpokenText, onSpokenMessage }),
+    { initialProps: { epoch: 0, context: opts.context ?? "update 1" } },
   );
-  return { hook, onNewMessage, onLastSpokenText, voice: () => hook.result.current.voice };
+  return { hook, onNewMessage, onLastSpokenText, onSpokenMessage, voice: () => hook.result.current.voice };
 };
 type Mounted = ReturnType<typeof mount>;
 
@@ -62,6 +69,7 @@ beforeEach(() => {
     return "conversation-1";
   });
   endSession.mockClear();
+  sendContextualUpdate.mockReset();
   reportOpsEvent.mockClear();
   getUserMedia.mockClear();
   getUserMedia.mockImplementation(async () => ({ getTracks: () => [{ stop: stopTrack }] }));
@@ -331,7 +339,7 @@ describe("useLenoreVoice when the conversation is replaced", () => {
     said("Hello.", "agent");
     expect(m.onNewMessage).toHaveBeenCalledTimes(1);
 
-    m.hook.rerender({ epoch: 1 });
+    m.hook.rerender({ epoch: 1, context: "update 1" });
     expect(endSession).toHaveBeenCalledTimes(1);
     expect(m.voice()).toEqual({ status: "idle", attempt: 1 });
     said("We're Acme.", "user");
@@ -349,9 +357,156 @@ describe("useLenoreVoice when the conversation is replaced", () => {
     getUserMedia.mockRejectedValueOnce(new DOMException("refused", "NotAllowedError"));
     const m = mount();
     await start(m);
-    m.hook.rerender({ epoch: 1 });
+    m.hook.rerender({ epoch: 1, context: "update 1" });
     expect(m.voice()).toEqual({ status: "idle", attempt: 1 });
     expect(endSession).not.toHaveBeenCalled();
+  });
+});
+
+// Lets a spoken message's extraction settle, and the update that follows it go.
+const settle = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+const sent = () => sendContextualUpdate.mock.calls.map(([t]) => t);
+
+describe("useLenoreVoice: what the prospect says goes through extraction (US-2.3b)", () => {
+  it("records each finished thing the prospect says as a spoken message, then hands that same message on for its answers", async () => {
+    const m = mount();
+    await connect(m);
+    said("We're Acme, about forty people.", "user");
+    const recorded = m.onNewMessage.mock.calls[0][0] as ChatMessage;
+    expect(recorded).toMatchObject({ sender: "user", text: "We're Acme, about forty people.", spoken: true });
+    expect(m.onSpokenMessage).toHaveBeenCalledTimes(1);
+    expect(m.onSpokenMessage).toHaveBeenCalledWith(recorded);
+  });
+
+  it("hands on only the prospect's words, never Lenore's", async () => {
+    const m = mount();
+    await connect(m);
+    said("Hello, I'm Lenore.", "agent");
+    said("How many people work for you?", "agent");
+    expect(m.onSpokenMessage).not.toHaveBeenCalled();
+  });
+
+  it("removes the prospect's Social Security number before the message is kept or handed on", async () => {
+    const m = mount();
+    await connect(m);
+    said("My SSN is 123-45-6789", "user");
+    expect(m.onSpokenMessage.mock.calls[0][0].text).toBe("My SSN is [redacted]");
+  });
+
+  it("ignores an <extract> tag in Lenore's reply: nothing is extracted from it, and it never reaches the transcript", async () => {
+    const m = mount();
+    await connect(m);
+    said('Noted. <extract>{"employee_count": 40, "field_status": {"employee_count": "confirmed"}}</extract>', "agent");
+    expect(m.onSpokenMessage).not.toHaveBeenCalled();
+    expect(m.onNewMessage.mock.calls.map(([msg]) => msg.text)).toEqual(["Noted."]);
+    expect(m.onLastSpokenText).toHaveBeenLastCalledWith("Noted.");
+    // A reply that is only a tag, or one left unclosed, adds nothing to the transcript.
+    said('<extract>{"company_name": "Acme"}</extract>', "agent");
+    said('And how often do you run payroll? <extract>{"pay_frequency": "weekly"', "agent");
+    expect(m.onNewMessage.mock.calls.map(([msg]) => msg.text)).toEqual(["Noted.", "And how often do you run payroll?"]);
+    expect(m.onSpokenMessage).not.toHaveBeenCalled();
+  });
+
+  it("hands on nothing from a call the conversation has left behind", async () => {
+    const m = mount();
+    await connect(m);
+    m.hook.rerender({ epoch: 1, context: "update 1" });
+    said("We're Acme.", "user");
+    expect(m.onSpokenMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("useLenoreVoice: telling Lenore's voice what is still open (D24)", () => {
+  it("sends the intake update when the call connects, and nothing before", async () => {
+    const m = mount({ context: "Ask about next: Company legal name" });
+    await start(m);
+    expect(sendContextualUpdate).not.toHaveBeenCalled();
+    act(() => session().onConnect({ conversationId: "conversation-1" }));
+    expect(sent()).toEqual(["Ask about next: Company legal name"]);
+  });
+
+  it("sends it again after every spoken message has been through extraction, changed or not", async () => {
+    const m = mount({ context: "u1", onSpokenMessage: async () => {} });
+    await connect(m);
+    said("We're Acme.", "user");
+    // The answers it brought change the update: it goes once, not twice.
+    m.hook.rerender({ epoch: 0, context: "u2" });
+    await settle();
+    expect(sent()).toEqual(["u1", "u2"]);
+    // Nothing new captured: Lenore still hears, after the message, what is open.
+    said("Hmm, let me think.", "user");
+    await settle();
+    expect(sent()).toEqual(["u1", "u2", "u2"]);
+  });
+
+  it("sends one update, not two, when the answers a message brought land as its extraction settles", async () => {
+    let done!: () => void;
+    const m = mount({ context: "u1", onSpokenMessage: () => new Promise<void>((r) => { done = r; }) });
+    await connect(m);
+    said("We're Acme.", "user");
+    await act(async () => {
+      done();
+      await Promise.resolve();
+      await Promise.resolve();
+      m.hook.rerender({ epoch: 0, context: "u2" });
+    });
+    expect(sent()).toEqual(["u1", "u2"]);
+  });
+
+  it("sends it after an extraction that failed too, so Lenore knows nothing was taken from it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const m = mount({ context: "u1", onSpokenMessage: async () => { throw new Error("rate limited"); } });
+    await connect(m);
+    said("We're Acme.", "user");
+    await settle();
+    expect(m.onSpokenMessage).toHaveBeenCalledTimes(1);
+    expect(sent()).toEqual(["u1", "u1"]);
+  });
+
+  it("waits for a message's extraction before sending the update that follows it", async () => {
+    let done!: () => void;
+    const m = mount({ context: "u1", onSpokenMessage: () => new Promise<void>((r) => { done = r; }) });
+    await connect(m);
+    said("We're Acme.", "user");
+    await settle();
+    expect(sendContextualUpdate).toHaveBeenCalledTimes(1);
+    await act(async () => { done(); });
+    await settle();
+    expect(sendContextualUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends a change made outside the call (a typed answer, an edit in Review) while the call is open, and nothing once it ends", async () => {
+    const m = mount({ context: "u1" });
+    await connect(m);
+    m.hook.rerender({ epoch: 0, context: "u2" });
+    m.hook.rerender({ epoch: 0, context: "u2" });
+    expect(sent()).toEqual(["u1", "u2"]);
+    act(() => m.hook.result.current.endVoice());
+    m.hook.rerender({ epoch: 0, context: "u3" });
+    expect(sendContextualUpdate).toHaveBeenCalledTimes(2);
+    // A new call starts from the update as it now stands.
+    await connect(m);
+    expect(sent().at(-1)).toBe("u3");
+  });
+
+  it("keeps the call going when an update can't be sent, and tries again with the next one", async () => {
+    sendContextualUpdate.mockImplementationOnce(() => { throw new Error("socket closing"); });
+    const m = mount({ context: "u1" });
+    await connect(m);
+    m.hook.rerender({ epoch: 0, context: "u2" });
+    expect(sent()).toEqual(["u1", "u2"]);
+    expect(m.voice()).toMatchObject({ status: "active" });
+  });
+
+  it("sends no update for a message from the old conversation whose extraction settles after it was replaced", async () => {
+    let done!: () => void;
+    const m = mount({ context: "u1", onSpokenMessage: () => new Promise<void>((r) => { done = r; }) });
+    await connect(m);
+    said("We're Acme.", "user");
+    m.hook.rerender({ epoch: 1, context: "u1" });
+    await act(async () => { done(); });
+    await settle();
+    expect(sent()).toEqual(["u1"]);
   });
 });
 
@@ -360,7 +515,7 @@ describe("useLenoreVoice without an agent", () => {
     vi.resetModules();
     vi.stubEnv("VITE_ELEVENLABS_AGENT_ID", "");
     const { useLenoreVoice: unconfigured } = await import("./useLenoreVoice");
-    const { result } = renderHook(() => unconfigured({ onNewMessage: vi.fn(), onLastSpokenText: vi.fn(), onExtract: vi.fn() }));
+    const { result } = renderHook(() => unconfigured({ onNewMessage: vi.fn(), onLastSpokenText: vi.fn(), onSpokenMessage: vi.fn(), context: "" }));
     expect(result.current.hasAgentId).toBe(false);
     await act(async () => { await result.current.startVoice(); });
     expect(result.current.voice).toEqual({ status: "idle", attempt: 0 });

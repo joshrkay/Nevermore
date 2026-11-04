@@ -364,6 +364,11 @@ export interface DocumentRecord {
   created_at: string;
   /** SHA-256 of the stored bytes, when known. */
   file_sha256?: string | null;
+  /**
+   * The malware scan, for a live document (20261104130000_document_scanning.sql). Absent for a certified copy
+   * whose live row is gone: storage decides then, and withholds nothing it has no row for.
+   */
+  scan_verdict?: string;
 }
 
 /** A document as an advisor reviews it: where it stands against what the prospect certified. */

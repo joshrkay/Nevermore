@@ -15,13 +15,28 @@ let storageRemoveResult: Result = { data: [{ name: "x" }], error: null };
 let existsResult: boolean | Error = false;
 let uploadGate: Promise<void> | null = null;
 let invokeResult: { data: unknown; error: unknown } = { data: {}, error: null };
+// What document-upload answers: the stored document's row, or a refusal.
+let uploadResult: { data: unknown; error: unknown } = { data: null, error: null };
 let readBackStatus = "extracted";
 
 const row = (over: Record<string, unknown> = {}) => ({
   id: "d1", file_name: "census.csv", file_size: "1 KB", size_bytes: 1024, mime_type: "text/csv",
   category: "employee_census", status: "uploaded", created_at: "2026-10-20T00:00:00Z",
-  storage_path: "u1/s1/x_census.csv", extraction: null, ...over,
+  storage_path: "u1/s1/x_census.csv", extraction: null, scan_verdict: "clean", ...over,
 });
+const stored = (over: Record<string, unknown> = {}) => ({ data: { document: row(over) }, error: null });
+const refusedWith = (code: string, status: number) => ({
+  data: null,
+  error: new FunctionsHttpError(new Response(JSON.stringify({ code, request_id: "r" }), { status })),
+});
+// The form each document-upload call carried, as plain values.
+const uploads = () =>
+  calls.filter((c) => c.op === "invoke" && c.args[0] === "document-upload").map((c) => {
+    const form = (c.args[1] as { body: FormData }).body;
+    const file = form.get("file") as File;
+    return { session_id: form.get("session_id"), category: form.get("category"), name: file.name, size: file.size };
+  });
+const reads = () => calls.filter((c) => c.op === "invoke" && c.args[0] === "document-extract").map((c) => (c.args[1] as { body: { document_id: string } }).body.document_id);
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 vi.mock("@/integrations/supabase/client", () => {
@@ -56,7 +71,14 @@ vi.mock("@/integrations/supabase/client", () => {
           },
         }),
       },
-      functions: { invoke: async (name: string, opts: unknown) => { log("invoke", name, opts); return invokeResult; } },
+      functions: {
+        invoke: async (name: string, opts: unknown) => {
+          log("invoke", name, opts);
+          if (name !== "document-upload") return invokeResult;
+          await uploadGate;
+          return uploadResult;
+        },
+      },
     },
   };
 });
@@ -73,6 +95,7 @@ describe("useSessionDocuments", () => {
     existsResult = false;
     uploadGate = null;
     invokeResult = { data: {}, error: null };
+    uploadResult = { data: null, error: null };
     readBackStatus = "extracted";
   });
 
@@ -132,8 +155,8 @@ describe("useSessionDocuments", () => {
       return { ...hook, ensure };
     };
 
-    it("starts the intake, waits for its list, then stores the file under it", async () => {
-      insertResult = { data: row({ id: "d9", storage_path: "u1/s9/x_census.csv" }), error: null };
+    it("starts the intake, waits for its list, then uploads the file to it", async () => {
+      uploadResult = stored({ id: "d9", storage_path: "u1/s9/x_census.csv" });
       const { result, ensure } = startable("s9");
       await waitFor(() => expect(result.current.isLoading).toBe(false));
       // Not inside act: the upload waits for a render (the new intake's list) that act would hold back.
@@ -143,10 +166,10 @@ describe("useSessionDocuments", () => {
       expect(ensure).toHaveBeenCalledTimes(1);
       expect(outcome).toEqual({ saved: 1, failed: [], rejected: [] });
       const listed = calls.findIndex((c) => c.op === "select.eq" && c.args[0] === "session_id" && c.args[1] === "s9");
-      const stored = calls.findIndex((c) => c.op === "storage.upload");
+      const sent = calls.findIndex((c) => c.op === "invoke" && c.args[0] === "document-upload");
       expect(listed).toBeGreaterThan(-1);
-      expect(stored).toBeGreaterThan(listed);
-      expect(calls[stored].args[0]).toMatch(/^u1\/s9\//);
+      expect(sent).toBeGreaterThan(listed);
+      expect(uploads()[0].session_id).toBe("s9");
       // The new intake's list loaded first, so it didn't wipe the file out.
       await waitFor(() => expect(result.current.docs.map((d) => d.id)).toContain("d9"));
     });
@@ -158,13 +181,13 @@ describe("useSessionDocuments", () => {
       await act(async () => { outcome = await result.current.upload([new File(["x"], "a.csv", { type: "text/csv" })]); });
       expect(ensure).toHaveBeenCalledTimes(1);
       expect(outcome).toEqual({ saved: 0, failed: ["a.csv"], rejected: [] });
-      expect(calls.some((c) => c.op === "storage.upload")).toBe(false);
+      expect(uploads()).toEqual([]);
       expect(result.current.uploading).toBe(false);
     });
   });
 
-  it("stores uploads under the intake, records metadata, then reads them", async () => {
-    insertResult = { data: row({ id: "d9" }), error: null };
+  it("sends uploads to document-upload with the intake and category, never to storage itself, then reads them", async () => {
+    uploadResult = stored({ id: "d9" });
     const { result } = renderHook(() => useSessionDocuments("s1"));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     const file = new File(["First,Last\nAnn,Lee"], "Employee Census.csv", { type: "text/csv" });
@@ -172,28 +195,69 @@ describe("useSessionDocuments", () => {
     await act(async () => { outcome = await result.current.upload([file]); });
     expect(outcome).toEqual({ saved: 1, failed: [], rejected: [] });
 
-    const path = calls.find((c) => c.op === "storage.upload")!.args[0] as string;
-    expect(path).toMatch(/^u1\/s1\/[0-9a-f-]+_Employee_Census\.csv$/);
-    expect(calls.find((c) => c.op === "insert")!.args[0]).toMatchObject({
-      user_id: "u1", session_id: "s1", file_name: "Employee Census.csv", size_bytes: file.size,
-      mime_type: "text/csv", category: "employee_census", storage_path: path,
-      file_sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
-    });
-    await waitFor(() => expect(calls).toContainEqual({ op: "invoke", args: ["document-extract", { body: { document_id: "d9" } }] }));
+    expect(uploads()).toEqual([{ session_id: "s1", category: "employee_census", name: "Employee Census.csv", size: file.size }]);
+    // The function checks the bytes, writes the row and stores the file; the browser does neither.
+    expect(calls.some((c) => c.op === "storage.upload" || c.op === "insert")).toBe(false);
+    await waitFor(() => expect(reads()).toEqual(["d9"]));
     await waitFor(() => expect(result.current.docs[0].status).toBe("extracted"));
   });
 
-  it("removes the stored file when the record can't be saved", async () => {
-    insertResult = { data: null, error: { message: "denied" } };
+  it("reports a file document-upload couldn't store as one to try again", async () => {
+    uploadResult = refusedWith("storage", 502);
     const { result } = renderHook(() => useSessionDocuments("s1"));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     let outcome: unknown;
     await act(async () => { outcome = await result.current.upload([new File(["x"], "a.csv")]); });
     expect(outcome).toEqual({ saved: 0, failed: ["a.csv"], rejected: [] });
-    const path = calls.find((c) => c.op === "storage.upload")!.args[0];
-    expect(calls).toContainEqual({ op: "storage.remove", args: [[path]] });
     expect(result.current.docs).toEqual([]);
-    expect(calls.some((c) => c.op === "invoke")).toBe(false);
+    expect(reads()).toEqual([]);
+  });
+
+  it.each([
+    ["executable", 415, "mismatch"],
+    ["mismatch", 415, "mismatch"],
+    ["unsupported", 415, "mismatch"],
+    ["empty", 422, "empty"],
+    ["too_large", 413, "too_large"],
+    ["limit", 409, "limit"],
+  ] as const)("explains the server's %s refusal as %s", async (code, status, reason) => {
+    uploadResult = refusedWith(code, status);
+    const { result } = renderHook(() => useSessionDocuments("s1"));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    let outcome: unknown;
+    await act(async () => { outcome = await result.current.upload([new File(["x,y"], "a.csv")]); });
+    expect(outcome).toEqual({ saved: 0, failed: [], rejected: [{ name: "a.csv", reason }] });
+    expect(result.current.docs).toEqual([]);
+  });
+
+  it("holds a file waiting for its malware scan, reads it once the scan passes, and never reads a blocked one", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      uploadResult = stored({ id: "d9", scan_verdict: "pending" });
+      const { result } = renderHook(() => useSessionDocuments("s1"));
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await act(async () => { await result.current.upload([new File(["x,y"], "a.csv")]); });
+      expect(result.current.docs[0].scan_verdict).toBe("pending");
+      expect(reads()).toEqual([]);
+      // Asking to read it does nothing while it is held.
+      await act(async () => { await result.current.extract(result.current.docs[0]); });
+      expect(reads()).toEqual([]);
+
+      // document-scan clears it; the next look sees that and Lenore reads it.
+      listRows = [row({ id: "d9", scan_verdict: "clean" })];
+      await act(async () => { vi.advanceTimersByTime(16_000); });
+      await waitFor(() => expect(reads()).toEqual(["d9"]));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes a held file's record only: its quarantined file is out of the prospect's reach", async () => {
+    listRows = [row({ scan_verdict: "infected" })];
+    const { result, ok } = await removeFirst();
+    expect(ok).toBe(true);
+    expect(ops()).toEqual(["delete"]);
+    expect(result.current.docs).toEqual([]);
   });
 
   it("refuses a file whose contents don't match its name, without storing anything", async () => {
@@ -203,14 +267,14 @@ describe("useSessionDocuments", () => {
     const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], "census.pdf");
     await act(async () => { outcome = await result.current.upload([png]); });
     expect(outcome).toEqual({ saved: 0, failed: [], rejected: [{ name: "census.pdf", reason: "mismatch" }] });
-    expect(calls.some((c) => c.op === "storage.upload")).toBe(false);
+    expect(uploads()).toEqual([]);
     expect(result.current.docs).toEqual([]);
   });
 
   it("stores a file once per intake, whether it's already there or dropped twice", async () => {
     const hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"; // sha256("abc")
     listRows = [row({ file_sha256: hash })];
-    insertResult = { data: row({ id: "d9" }), error: null };
+    uploadResult = stored({ id: "d9" });
     const { result } = renderHook(() => useSessionDocuments("s1"));
     await waitFor(() => expect(result.current.docs).toHaveLength(1));
     let outcome: unknown;
@@ -222,23 +286,22 @@ describe("useSessionDocuments", () => {
       failed: [],
       rejected: [{ name: "again.csv", reason: "duplicate" }, { name: "new copy.csv", reason: "duplicate" }],
     });
-    expect(calls.filter((c) => c.op === "storage.upload")).toHaveLength(1);
+    expect(uploads()).toHaveLength(1);
   });
 
-  it("treats the database's refusal of a second copy as a duplicate, and cleans up the stored file", async () => {
-    insertResult = { data: null, error: { message: "duplicate key", code: "23505" } as { message: string } };
+  it("treats the database's refusal of a second copy as a duplicate", async () => {
+    uploadResult = refusedWith("duplicate", 409);
     const { result } = renderHook(() => useSessionDocuments("s1"));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     let outcome: unknown;
     await act(async () => { outcome = await result.current.upload([new File(["abc"], "a.csv")]); });
     expect(outcome).toEqual({ saved: 0, failed: [], rejected: [{ name: "a.csv", reason: "duplicate" }] });
-    const path = calls.find((c) => c.op === "storage.upload")!.args[0];
-    expect(calls).toContainEqual({ op: "storage.remove", args: [[path]] });
+    expect(calls.some((c) => c.op === "storage.remove")).toBe(false);
   });
 
   it("stops at 25 documents an intake", async () => {
     listRows = Array.from({ length: 24 }, (_, i) => row({ id: `d${i}`, file_sha256: null }));
-    insertResult = { data: row({ id: "d99" }), error: null };
+    uploadResult = stored({ id: "d99" });
     const { result } = renderHook(() => useSessionDocuments("s1"));
     await waitFor(() => expect(result.current.docs).toHaveLength(24));
     let outcome: unknown;
@@ -357,7 +420,7 @@ describe("useSessionDocuments", () => {
   it("keeps an upload with the intake it started in, even if another intake is opened meanwhile", async () => {
     let release!: () => void;
     uploadGate = new Promise<void>((r) => { release = r; });
-    insertResult = { data: row({ id: "d9" }), error: null };
+    uploadResult = stored({ id: "d9" });
     const { result, rerender } = renderHook(({ sid }) => useSessionDocuments(sid), { initialProps: { sid: "s1" as string | null } });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     let pending!: Promise<unknown>;
@@ -366,9 +429,7 @@ describe("useSessionDocuments", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     await act(async () => { release(); await pending; });
 
-    const path = calls.find((c) => c.op === "storage.upload")!.args[0] as string;
-    expect(path).toMatch(/^u1\/s1\//);
-    expect(calls.find((c) => c.op === "insert")!.args[0]).toMatchObject({ session_id: "s1" });
+    expect(uploads()[0].session_id).toBe("s1");
     expect(result.current.docs).toEqual([]);
   });
 });

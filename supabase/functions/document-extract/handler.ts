@@ -31,7 +31,7 @@ const corsHeaders = {
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const DOCUMENT_COLUMNS = "id, user_id, session_id, file_name, storage_path, size_bytes, status, category, file_sha256";
+const DOCUMENT_COLUMNS = "id, user_id, session_id, file_name, storage_path, size_bytes, status, category, file_sha256, scan_verdict";
 
 type DbError = { message?: string; code?: string } | null;
 
@@ -134,6 +134,11 @@ export async function handleDocumentRequest(req: Request, deps: DocumentHandlerD
     }
     event.documentId = documentId;
     event.sessionId = doc.session_id;
+    // A file is read only once its malware scan passed (20261104130000_document_scanning.sql); storage refuses
+    // it until then anyway. The row is left as it is: the browser asks again once the scan has passed.
+    if (doc.scan_verdict !== "clean" && doc.scan_verdict !== "skipped") {
+      return await fail(aiError("not_found", { status: 409, message: "This document hasn't passed its malware scan." }));
+    }
 
     const save = async (o: Outcome, code: AiErrorCode | null) => {
       const candidates = o.candidates ?? [];

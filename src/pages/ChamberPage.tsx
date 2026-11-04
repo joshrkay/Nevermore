@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, type ReactNode } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -22,7 +22,8 @@ import { createChatMessage } from "@/data/chat";
 import { isReadyToCertify, READY_MESSAGE, shouldAnnounceReady } from "@/data/followUp";
 import { browserStorageWorks } from "@/data/intakeBackup";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
-import { applyExtraction, applyFieldAction, transcriptExtraction, voiceExtraction, type FieldAction } from "@/data/provenance";
+import { applyExtraction, applyFieldAction, transcriptExtraction, type FieldAction } from "@/data/provenance";
+import { voiceContextUpdate } from "@/data/voiceAgent";
 import { orbForVoice } from "@/data/voiceSession";
 
 const spokenLine = (text: string) => (text.length > 120 ? text.slice(0, 120) + "..." : text);
@@ -74,6 +75,7 @@ const ChamberPage = () => {
     setChamberData,
     updateIntake,
     addMessage,
+    readIntake,
     ensureIntake,
     submit,
     certification,
@@ -116,16 +118,38 @@ const ChamberPage = () => {
     setLastSpokenText(spokenLine(text));
   }, [addMessage]);
 
+  const { send: handleSendMessage, extractSpoken, retry, dismissFailure, failure, pending } = useLenoreChat({
+    epoch: conversationEpoch,
+    intakeId: sessionId,
+    ensureIntake,
+    chamberData,
+    provenance,
+    messages,
+    readIntake,
+    addUserMessage: (text) => {
+      const message = createChatMessage("user", text);
+      addMessage(message);
+      return message;
+    },
+    addLenoreMessage,
+    onOrbStateChange: setChatOrbState,
+    // Typed and spoken alike, every value cites the message it came from; a spoken one is never stored as confirmed
+    // (transcriptExtraction, D33).
+    onExtracted: (extracted, response, message) =>
+      updateIntake((prev) => applyExtraction(prev, extracted, transcriptExtraction(message, response))),
+  });
+
+  // What Lenore's voice is told is still open, by label only (D24).
+  const voiceContext = useMemo(() => voiceContextUpdate(chamberData, provenance), [chamberData, provenance]);
+  // A voice call only holds the conversation: what the prospect says goes through chamber-extract like a typed
+  // message (US-2.3b, ADR 0001), and Lenore's own answer is the one she speaks.
   const { voice, startVoice, endVoice, dismissFailure: dismissVoiceFailure, isConnected, hasAgentId } = useLenoreVoice({
     epoch: conversationEpoch,
     intakeId: sessionId,
     onNewMessage: addMessage,
     onLastSpokenText: setLastSpokenText,
-    // Every AI value is merged with its provenance, so an extraction with no prospect message to
-    // cite (Lenore speaking before the prospect has said anything) is dropped.
-    onExtract: (data, message) => {
-      if (message) updateIntake((prev) => applyExtraction(prev, data, voiceExtraction(message, data)));
-    },
+    onSpokenMessage: extractSpoken,
+    context: voiceContext,
   });
 
   // The transcript notes when a voice call starts and ends, so whoever reads it can tell which part was
@@ -141,24 +165,6 @@ const ChamberPage = () => {
       if (sameConversation) addMessage(createChatMessage("system", "Voice call ended"));
     }
   }, [isConnected, conversationEpoch, addMessage]);
-
-  const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
-    epoch: conversationEpoch,
-    intakeId: sessionId,
-    ensureIntake,
-    chamberData,
-    provenance,
-    messages,
-    addUserMessage: (text) => {
-      const message = createChatMessage("user", text);
-      addMessage(message);
-      return message;
-    },
-    addLenoreMessage,
-    onOrbStateChange: setChatOrbState,
-    onExtracted: (extracted, response, message) =>
-      updateIntake((prev) => applyExtraction(prev, extracted, transcriptExtraction(message, response))),
-  });
 
   // Lenore says once, when the intake first becomes ready to certify, that it is (US-2.3a, D29), after her own
   // answer to the message that made it so. An intake that was ready when it opened is left alone.

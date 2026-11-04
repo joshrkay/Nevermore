@@ -9,7 +9,7 @@ import type { ChamberData } from "@/data/chamberTypes";
 import { DOCUMENT_CATEGORIES, isDocumentCategory, missingRecommended } from "@/data/documentCategories";
 import type { CandidateResolution } from "@/data/documentCandidates";
 import type { ProvenanceMap } from "@/data/provenance";
-import { canRetryExtraction, documentStatusInfo } from "@/data/documentStatus";
+import { canRetryExtraction, documentStatusInfo, scanStatusInfo } from "@/data/documentStatus";
 import { DOCUMENT_FAILURE_MESSAGES, retryCanClear } from "@/data/aiFailure";
 import type { SessionDocument, UploadRejection, UseSessionDocumentsReturn } from "@/hooks/useSessionDocuments";
 import { downloadBlob } from "@/lib/downloadFile";
@@ -23,6 +23,7 @@ const downloadCensusTemplate = () =>
 const REJECTION_MESSAGES: Record<UploadRejection, (name: string) => string> = {
   empty: (name) => `${name} is empty.`,
   mismatch: (name) => `${name} doesn't contain what its name says (PDF, Word, Excel, or CSV). Check it's the right file.`,
+  too_large: (name) => `${name} is over 20 MB.`,
   duplicate: (name) => `${name} is already uploaded to this intake.`,
   limit: (name) => `${name} wasn't uploaded: an intake holds up to ${MAX_DOCUMENTS_PER_INTAKE} files.`,
 };
@@ -46,7 +47,8 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
   // Before the prospect has started an intake, an upload starts one.
   const canUpload = Boolean(sessionId) || canStart;
   const { docs, upload, remove, setCategory, extract, uploading } = documents;
-  const uploaded = docs.filter((d) => d.status !== "uploading");
+  // A file the virus check blocked, or couldn't finish, doesn't count as provided.
+  const uploaded = docs.filter((d) => d.status !== "uploading" && d.scan_verdict !== "infected" && d.scan_verdict !== "failed");
   const present = new Set(uploaded.map((d) => d.category));
   const missing = missingRecommended(uploaded);
 
@@ -173,13 +175,15 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
             Categories are suggested from file names — change any that are off.
           </p>
           {docs.map((doc) => {
-            const status = documentStatusInfo(doc.status);
+            // Until its virus check passes, that is all there is to say about a file (not while it uploads).
+            const scan = doc.status === "uploading" ? null : scanStatusInfo(doc.scan_verdict);
+            const status = scan ?? documentStatusInfo(doc.status);
             // Why the last read in this tab didn't go through, while the file is still unread.
-            const readIssue = doc.readIssue && canRetryExtraction(doc.status) ? doc.readIssue : null;
+            const readIssue = !scan && doc.readIssue && canRetryExtraction(doc.status) ? doc.readIssue : null;
             // No "Read it" or "Try again" while reading again can't help (the daily cap, a Lenore that isn't set
-            // up); after a reload it is offered again.
-            const canRead = canRetryExtraction(doc.status) && (!readIssue || retryCanClear(readIssue));
-            const busy = doc.status === "uploading" || doc.status === "processing";
+            // up, a file not yet cleared by the virus check); after a reload it is offered again.
+            const canRead = !scan && canRetryExtraction(doc.status) && (!readIssue || retryCanClear(readIssue));
+            const busy = doc.status === "uploading" || doc.status === "processing" || status.tone === "busy";
             return (
               <div key={doc.id} className="bg-muted rounded-lg p-3">
                 <div className="flex items-center gap-3">
@@ -226,7 +230,8 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
                 </div>
                 {status.message && (
                   <p className={`text-xs mt-1.5 ml-8 ${status.tone === "warn" || readIssue ? "text-warning" : "text-muted-foreground"}`}>
-                    <span className="font-medium">{status.label}.</span> {readIssue ? DOCUMENT_FAILURE_MESSAGES[readIssue] : doc.extraction.message ?? status.message}
+                    <span className="font-medium">{status.label}.</span>{" "}
+                    {scan ? scan.message : readIssue ? DOCUMENT_FAILURE_MESSAGES[readIssue] : doc.extraction.message ?? status.message}
                     {canRead && (
                       <button onClick={() => void extract(doc)} className="ml-1.5 text-primary hover:underline">
                         {doc.status === "uploaded" ? "Read it" : "Try again"}
@@ -234,7 +239,7 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
                     )}
                   </p>
                 )}
-                {doc.status === "extracted" && (
+                {!scan && doc.status === "extracted" && (
                   <div className="ml-8">
                     <DocumentCandidates
                       fileName={doc.file_name}

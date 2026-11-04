@@ -4,8 +4,8 @@ import type { ChamberData } from "./chamberTypes";
 import { normalizeCensus, stripUnstorable } from "./census";
 import { redactSensitive } from "./sensitive";
 
-// Extracted data comes from an LLM (edge function or voice agent <extract> tags) or
-// from a stored jsonb column, so every field is checked before it reaches state.
+// Extracted data comes from an LLM (chamber-extract, for typed and spoken messages alike, or
+// document-extract) or from a stored jsonb column, so every field is checked before it reaches state.
 // Invalid fields are dropped individually rather than rejecting the whole patch.
 // Free text never keeps a Social Security or bank account number (see sensitive.ts).
 

@@ -96,7 +96,7 @@ The underwriting document rendered from a submission, for the prospect to send t
 _Avoid_: packet, report, PDF, proposal
 
 **File ID**:
-The identifier of one intake, such as EAA-2026-1A2B3C4D, shown in the app, on the signed Manuscript and in every email about it. It is set when the intake starts and never changes.
+The identifier of one intake, such as EAA-2026-0042, shown in the app, on the signed Manuscript and in every email about it. The database assigns it from a per-year sequence the first time the intake is certified, and it never changes after that. Intakes certified before then keep the File ID they were given, such as EAA-2026-1A2B3C4D.
 _Avoid_: reference, submission reference, submission ID, file number, case number
 
 **The Reckoning**:
@@ -130,7 +130,7 @@ An answer read from an uploaded document. It waits for the prospect to apply it,
 _Avoid_: suggestion, extracted value
 
 **Field source**:
-Where a field's current answer came from: something the prospect said (with the message it came from), an uploaded document (with where in it), or the prospect's own action in the workspace.
+Where a field's current answer came from: something the prospect said (with the message it came from), an uploaded document (with where in it), or the prospect's own action in the workspace. Typed and spoken messages are the same kind of source: when they give different answers, the field is conflicting and the prospect chooses.
 _Avoid_: origin, provenance (provenance is the source and the field status together)
 
 **Evidence quote**:
