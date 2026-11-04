@@ -25,6 +25,7 @@ import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
 import { isFileId } from "@/data/manuscript";
 import { OPEN_ITEM_STATUSES } from "@/data/openItems";
+import { PIPELINE_STATUSES, PIPELINE_TRANSITIONS } from "@/data/advisor";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
@@ -344,5 +345,22 @@ describe("server and client intake rules agree", () => {
   // A prospect agrees to the wording in src/data/intakeConsent.ts; the database refuses any other version.
   it("asks for agreement to the consent version the database requires", () => {
     expect(quoted(blocks("intake_consent_version").join("\n"))).toEqual([INTAKE_CONSENT_VERSION]);
+  });
+});
+
+// F-4.1: the stages the database accepts and the moves set_submission_status allows from each are the ones
+// the advisor's Status panel offers (migration 20261104122000_pipeline_transitions.sql).
+describe("server and client pipeline agree", () => {
+  it("holds the same stages, in the same order", () => {
+    expect(ownersOf("pipeline_statuses")).toEqual(["submission_workflow_status_check"]);
+    expect(quoted(blocks("pipeline_statuses").join("\n"))).toEqual([...PIPELINE_STATUSES]);
+  });
+
+  it("allows the same moves from each stage", () => {
+    expect(ownersOf("pipeline_transitions")).toEqual(["public.pipeline_next_statuses"]);
+    const server = Object.fromEntries(
+      [...blocks("pipeline_transitions").join("\n").matchAll(/WHEN '(\w+)' THEN ARRAY\[([^\]]*)\]/g)].map((m) => [m[1], quoted(m[2])]),
+    );
+    expect(server).toEqual(Object.fromEntries(Object.entries(PIPELINE_TRANSITIONS).map(([from, to]) => [from, [...to]])));
   });
 });

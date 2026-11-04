@@ -5,6 +5,7 @@ const CLASS: Record<PipelineStatus, string> = {
   submitted: "bg-primary/15 text-primary",
   under_review: "bg-primary/15 text-primary",
   information_requested: "bg-warning/15 text-warning",
+  ready_for_market: "bg-primary/15 text-primary",
   sent_to_carrier: "bg-primary/15 text-primary",
   quoted: "bg-primary/15 text-primary",
   won: "bg-success/15 text-success",

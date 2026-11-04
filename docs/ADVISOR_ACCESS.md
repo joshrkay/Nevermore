@@ -63,6 +63,26 @@ a sign-out the app asked for is remembered until the event arrives.
   update too). A prospect who certifies while the status is `information_requested` has answered it,
   so it returns to `submitted`; a first certification enters as `submitted` even from `archived`. Any
   other advisor-set status stays as it is (migration `20261104111000`).
+- The pipeline moves one step at a time (migration `20261104122000`). `set_submission_status()` refuses
+  (22023, naming the stages it can move to) any move that `pipeline_next_statuses()` doesn't list for the
+  current stage, and the Status panel offers only those:
+
+  | From | An advisor can move it to |
+  |---|---|
+  | `draft` | `archived` (until the prospect certifies) |
+  | `submitted` | `under_review`, `information_requested`, `lost`, `archived` |
+  | `under_review` | `information_requested`, `ready_for_market`, `lost`, `archived` |
+  | `information_requested` | `under_review`, `lost`, `archived` |
+  | `ready_for_market` | `under_review`, `information_requested`, `sent_to_carrier`, `lost`, `archived` |
+  | `sent_to_carrier` | `information_requested`, `quoted`, `lost`, `archived` |
+  | `quoted` | `sent_to_carrier`, `won`, `lost`, `archived` |
+  | `won`, `lost` | `archived` |
+  | `archived` | `submitted` (reopen; not for an intake the prospect never certified) |
+
+  So an archived file is reopened as `submitted` and reviewed again, never sent straight back to
+  `under_review`, and information that arrives after a request is reviewed again before the file goes
+  to market. The prospect's own moves above (certifying, withdrawing) are not limited by this list.
+  `ready_for_market` is internal, like every stage after it: the prospect keeps the last status we share.
 - Review the evidence as certified. Certifying stamps a copy of the transcript and of the document
   list (name, category, size, storage path, SHA-256) into the submission; the detail page shows that
   transcript (and says if the prospect's conversation changed since) and marks documents removed,
@@ -74,7 +94,7 @@ a sign-out the app asked for is remembered until the event arrives.
   with another file shows as the certified one removed and a new one added. Once the certification
   moves on (the prospect withdraws or certifies again), a kept file is no longer listed in the app;
   its `removed` event records its path, and purging such files is retention's job (H-1.2).
-- "Certified at least once" (which unlocks every status, and decides whether a certification is the
+- "Certified at least once" (which unlocks every move but archiving, and decides whether a certification is the
   intake's first) means a certification row or a history row that reached `submitted`, so intakes
   certified before certification rows existed count (migration `20261104115000`).
 - Add internal notes (`advisor_notes`); notes can't be edited or deleted and prospects can't read them.

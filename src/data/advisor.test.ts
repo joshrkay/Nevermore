@@ -2,16 +2,19 @@ import { Blob as NodeBlob } from "node:buffer";
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA, type ChamberData, type CensusEmployee } from "./chamberTypes";
 import {
-  ADVISOR_SETTABLE_STATUSES,
   applyAdvisorReview,
+  auditBadges,
   changesSinceSigning,
   completenessOf,
+  countAuditBadges,
   formatStates,
   isCurrentVersion,
   isStaleRefusal,
   manuscriptStoragePath,
+  nextPipelineStatuses,
   parseCorrection,
   PIPELINE_STATUSES,
+  PIPELINE_TRANSITIONS,
   prospectStatusAfter,
   reconcileDocuments,
   prospectStatusMessage,
@@ -36,19 +39,108 @@ const review = (over: Partial<FieldReview> & Pick<FieldReview, "field">): FieldR
 describe("pipeline statuses", () => {
   it("covers every status the workflow needs", () => {
     expect(PIPELINE_STATUSES).toEqual([
-      "draft", "submitted", "under_review", "information_requested", "sent_to_carrier", "quoted", "won", "lost", "archived",
+      "draft", "submitted", "under_review", "information_requested", "ready_for_market", "sent_to_carrier", "quoted", "won", "lost", "archived",
     ]);
-  });
-
-  it("doesn't let advisors move a submission back to draft", () => {
-    expect(ADVISOR_SETTABLE_STATUSES).not.toContain("draft");
   });
 
   it("only has prospect wording for statuses we share", () => {
     expect(prospectStatusMessage("under_review")).toMatch(/reviewing/);
-    for (const internal of ["draft", "sent_to_carrier", "quoted", "won", "lost", "archived", "bogus", null]) {
+    for (const internal of ["draft", "ready_for_market", "sent_to_carrier", "quoted", "won", "lost", "archived", "bogus", null]) {
       expect(prospectStatusMessage(internal)).toBeNull();
     }
+  });
+});
+
+describe("pipeline transitions (F-4.1)", () => {
+  it("never lets an advisor move an intake to draft, or to where it already is", () => {
+    for (const from of PIPELINE_STATUSES) {
+      expect(PIPELINE_TRANSITIONS[from]).not.toContain("draft");
+      expect(PIPELINE_TRANSITIONS[from]).not.toContain(from);
+    }
+  });
+
+  it("lets every open stage be archived, and only reopens an archived one as submitted", () => {
+    for (const from of PIPELINE_STATUSES.filter((s) => s !== "archived")) expect(PIPELINE_TRANSITIONS[from]).toContain("archived");
+    expect(PIPELINE_TRANSITIONS.archived).toEqual(["submitted"]);
+  });
+
+  it("doesn't skip review: an archived file can't go straight to under review", () => {
+    expect(PIPELINE_TRANSITIONS.archived).not.toContain("under_review");
+    expect(PIPELINE_TRANSITIONS.submitted).not.toContain("ready_for_market");
+    expect(PIPELINE_TRANSITIONS.submitted).not.toContain("sent_to_carrier");
+    expect(PIPELINE_TRANSITIONS.under_review).not.toContain("sent_to_carrier");
+    expect(PIPELINE_TRANSITIONS.information_requested).toEqual(["under_review", "lost", "archived"]);
+  });
+
+  it("reaches won only through ready for market, sent to carrier and quoted", () => {
+    // Every way from submitted to won passes through each of these stages.
+    for (const via of ["under_review", "ready_for_market", "sent_to_carrier", "quoted"] as const) {
+      const seen = new Set<string>(["submitted"]);
+      const queue: string[] = ["submitted"];
+      while (queue.length > 0) {
+        const at = queue.shift()! as keyof typeof PIPELINE_TRANSITIONS;
+        for (const to of PIPELINE_TRANSITIONS[at]) {
+          if (to === via || seen.has(to)) continue;
+          seen.add(to);
+          queue.push(to);
+        }
+      }
+      expect(seen.has("won"), `won is reachable without ${via}`).toBe(false);
+    }
+  });
+
+  it("closes won and lost: they can only be archived", () => {
+    expect(PIPELINE_TRANSITIONS.won).toEqual(["archived"]);
+    expect(PIPELINE_TRANSITIONS.lost).toEqual(["archived"]);
+  });
+
+  it("offers only Archived for an intake the prospect never certified, and nothing once it's archived", () => {
+    expect(nextPipelineStatuses("draft", false)).toEqual(["archived"]);
+    expect(nextPipelineStatuses("archived", false)).toEqual([]);
+    expect(nextPipelineStatuses("archived", true)).toEqual(["submitted"]);
+    expect(nextPipelineStatuses("under_review", true)).toEqual(["information_requested", "ready_for_market", "lost", "archived"]);
+  });
+});
+
+describe("auditBadges", () => {
+  const data = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", employee_count: 12, pay_frequency: "Bi-weekly", industry: "Retail" };
+  const said = { kind: "transcript" as const, message_id: "m1" };
+  const provenance: ProvenanceMap = {
+    company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "x" },
+    employee_count: { status: "confirmed", source: said, updated_at: "x" },
+    pay_frequency: { status: "inferred", source: said, updated_at: "x" },
+    industry: { status: "inferred", source: said, updated_at: "x" },
+  };
+
+  it("marks the prospect's confirmed answers, and the corrections the advisor Manuscript applies", () => {
+    const reviews = reviewMap([
+      // A verified correction replaces the prospect's confirmed answer: the override wins.
+      review({ field: "employee_count", review_state: "verified", has_correction: true, corrected_value: 14, reason: "payroll" }),
+      review({ field: "pay_frequency", review_state: "verified", has_correction: true, corrected_value: "Weekly", reason: "register" }),
+      // Verified without a correction: the prospect's value stands, and it was never confirmed by them.
+      review({ field: "industry", review_state: "verified" }),
+    ]);
+    expect(auditBadges(data, provenance, reviews)).toEqual({
+      company_name: "prospect_confirmed",
+      employee_count: "advisor_overridden",
+      pay_frequency: "advisor_overridden",
+    });
+  });
+
+  it("doesn't call a correction an override until it is verified, or when it isn't a valid value", () => {
+    const reviews = reviewMap([
+      review({ field: "company_name", review_state: "follow_up", has_correction: true, corrected_value: "Acme LLC", reason: "W-9" }),
+      review({ field: "employee_count", review_state: "verified", has_correction: true, corrected_value: "lots", reason: "?" }),
+    ]);
+    expect(auditBadges(data, provenance, reviews)).toEqual({ company_name: "prospect_confirmed", employee_count: "prospect_confirmed" });
+  });
+
+  it("counts each badge over the fields asked about", () => {
+    const badges = auditBadges(data, provenance, reviewMap([
+      review({ field: "pay_frequency", review_state: "verified", has_correction: true, corrected_value: "Weekly", reason: "register" }),
+    ]));
+    expect(countAuditBadges(badges, ["company_name", "employee_count", "pay_frequency", "industry"])).toEqual({ prospect_confirmed: 2, advisor_overridden: 1 });
+    expect(countAuditBadges(badges, ["industry"])).toEqual({ prospect_confirmed: 0, advisor_overridden: 0 });
   });
 });
 

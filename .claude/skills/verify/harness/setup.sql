@@ -109,7 +109,7 @@ $$;
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
 \i supabase/migrations/20261104120000_submission_records.sql
-\i supabase/migrations/20261104122000_certification_file_id_check.sql
+\i supabase/migrations/20261104131000_certification_file_id_check.sql
 
 -- Seed: a verified prospect (with a profile), a guest, and one fixed session per scenario.
 INSERT INTO auth.users VALUES

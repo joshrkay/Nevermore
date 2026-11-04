@@ -6,7 +6,7 @@
 -- certified, a repeat of the same certification records nothing (sent after the first or at the same time,
 -- on two connections through dblink), a required answer that is conflicting or incomplete blocks certifying,
 -- nobody but the owner or an advisor can read a packet by its File ID, and a certification can only ever
--- carry its own intake's File ID (20261104122000).
+-- carry its own intake's File ID (20261104131000).
 -- Everything a prospect does runs as `authenticated` with their JWT claims, so row security is on.
 \set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
@@ -60,7 +60,7 @@
 \i supabase/migrations/20261104117100_alert_headcount_census.sql
 \i supabase/migrations/20261104118000_open_items.sql
 \i supabase/migrations/20261104120000_submission_records.sql
-\i supabase/migrations/20261104122000_certification_file_id_check.sql
+\i supabase/migrations/20261104131000_certification_file_id_check.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -430,7 +430,7 @@ BEGIN
 END $$;
 
 -- ---------- a certification carries its own intake's File ID ----------
--- 20261104122000: the File ID on a certification is its intake's, the one the unique index keeps to one intake.
+-- 20261104131000: the File ID on a certification is its intake's, the one the unique index keeps to one intake.
 -- A row with another intake's File ID, a made-up one or none is refused, whoever writes it.
 DO $$
 DECLARE

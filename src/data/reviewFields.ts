@@ -15,3 +15,17 @@ export const REVIEW_FIELDS: Record<ReviewSection, FieldKey[]> = {
   workers_comp: ["wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium"],
   operations: ["has_handbook", "handbook_last_updated", "hr_staff_count", "uses_physical_clocks", "uses_mobile_app", "uses_computer_timekeeping", "shift_differentials", "hris_system", "key_challenges", "business_goals"],
 };
+
+/**
+ * The seven sections, in the order shown, with their titles: the prospect's Review and the advisor's field
+ * review group answers the same way, and The Manuscript keeps each answer in the same section.
+ */
+export const REVIEW_SECTIONS: readonly { key: ReviewSection; title: string }[] = [
+  { key: "company", title: "Company" },
+  { key: "workforce", title: "Workforce" },
+  { key: "locations", title: "Locations" },
+  { key: "payroll", title: "Payroll" },
+  { key: "benefits", title: "Benefits" },
+  { key: "workers_comp", title: "Workers' comp" },
+  { key: "operations", title: "Operations & HR" },
+];
