@@ -52,6 +52,45 @@ describe("LiveWorkspace", () => {
     expect(onFieldAction).toHaveBeenCalledWith({ type: "confirm", field: "census" });
   });
 
+  it("in Review, keeps a verified required conflict choosable, settles a verified optional answer and shows what else was heard", () => {
+    const at = "2026-11-03T12:00:00Z";
+    const said = (id: string) => ({ kind: "transcript" as const, message_id: id });
+    const provenance: ProvenanceMap = {
+      company_name: {
+        status: "conflicting",
+        source: said("m1"),
+        updated_at: at,
+        candidates: [{ value: "Acme Bindery", source: said("m1") }, { value: "Acme Press", source: said("m2") }],
+      },
+      employee_count: {
+        status: "inferred",
+        source: said("m3"),
+        updated_at: at,
+        also_heard: [{ value: 45, source: { kind: "document", document_id: "d1", document_name: "Payroll.xlsx" } }],
+      },
+    };
+    render(
+      <MemoryRouter>
+        <LiveWorkspace
+          data={{ ...DEMO_CHAMBER_DATA, company_name: "Acme Bindery", employee_count: 40 }}
+          isDemo={false}
+          sessionId="s1"
+          onSubmit={async () => true}
+          provenance={provenance}
+          verified={new Set(["company_name", "employee_count"])}
+          onFieldAction={() => {}}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    // The required conflict blocks certification whoever verified it, so its rival answers stay choosable.
+    expect(screen.getAllByRole("button", { name: /^Use Acme Press for / }).length).toBeGreaterThan(0);
+    // The optional answer is settled by the advisor: badged, not offered for confirmation, and its note is shown.
+    expect(screen.getAllByText("Verified by your advisor")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /^Confirm Employee/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Also heard: 45 — From Payroll.xlsx")).toBeInTheDocument();
+  });
+
   it("moves from Review to PEO Match to The Reckoning", () => {
     render(
       <MemoryRouter>
