@@ -135,9 +135,9 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(page.getByText("5 of 7 fields captured")).toBeVisible();
 
     // Industry is the one value Lenore inferred rather than read from the message.
-    await expect(page.getByText("Lenore inferred this")).toHaveCount(1);
+    await expect(page.getByText("Lenore captured this — please confirm")).toHaveCount(1);
     await page.getByRole("button", { name: "Confirm Industry", exact: true }).click();
-    await expect(page.getByText("Lenore inferred this")).toHaveCount(0);
+    await expect(page.getByText("Lenore captured this — please confirm")).toHaveCount(0);
     await expect(page.getByText("You confirmed this")).toHaveCount(1);
 
     await page.getByRole("button", { name: "Add Target Start", exact: true }).click();

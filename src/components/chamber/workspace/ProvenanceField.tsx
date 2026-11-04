@@ -15,7 +15,7 @@ import { isRequiredField } from "@/data/readiness";
 
 const BADGES: Record<FieldProvenance["status"], { text: string; color: string }> = {
   confirmed: { text: "Confirmed", color: "bg-success/15 text-success" },
-  inferred: { text: "Lenore inferred this", color: "border border-warning/50 text-warning" },
+  inferred: { text: "Lenore captured this — please confirm", color: "border border-warning/50 text-warning" },
   incomplete: { text: "Incomplete", color: "bg-warning/15 text-warning" },
   conflicting: { text: "Conflicting answers", color: "bg-destructive/15 text-destructive" },
   unknown: { text: "Not known yet", color: "border border-warning/50 text-warning" },
@@ -94,7 +94,10 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
   };
 
   const status = provenance?.status;
-  const badge = onAction && status ? BADGES[status] : null;
+  // A value the prospect confirmed or typed says so, apart from one Lenore heard stated outright (B-2).
+  const badge = onAction && status
+    ? status === "confirmed" && provenance?.source.kind === "prospect_edit" ? { ...BADGES.confirmed, text: "Confirmed by you" } : BADGES[status]
+    : null;
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>

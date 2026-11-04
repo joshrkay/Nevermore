@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { CertificationState, ChamberSubmission } from "@/data/manuscript";
 import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance";
@@ -43,6 +43,8 @@ interface LiveWorkspaceProps {
   /** The PEO chosen on PEO Match, kept with the intake. With onChoosePeo; without them the choice lasts only for this page. */
   chosenPeo?: string | null;
   onChoosePeo?: (name: string) => void;
+  /** Raise it to open Review with the keyboard on its heading (e.g. "Continue manually" when Lenore can't answer). */
+  openReview?: number;
 }
 
 const LiveWorkspace = ({
@@ -57,9 +59,13 @@ const LiveWorkspace = ({
   updateIntake,
   chosenPeo: savedPeo,
   onChoosePeo,
+  openReview = 0,
 }: LiveWorkspaceProps) => {
   const onAction = isDemo ? undefined : onFieldAction;
   const [activeTab, setActiveTab] = useState("upload");
+  useEffect(() => {
+    if (openReview > 0) setActiveTab("review");
+  }, [openReview]);
   const documentSessionId = isDemo ? null : sessionId;
   const documents = useSessionDocuments(documentSessionId);
   const handleResolve =
@@ -110,7 +116,7 @@ const LiveWorkspace = ({
         {activeTab === "benefits" && <BenefitsTab data={data} provenance={provenance} onAction={onAction} />}
         {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} />}
         {activeTab === "dependents" && <DependentsTab data={data} />}
-        {activeTab === "review" && <ReviewTab data={data} provenance={provenance} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} />}
+        {activeTab === "review" && <ReviewTab data={data} provenance={provenance} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} focusRequest={openReview} />}
         {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
         {activeTab === "reckoning" && <ReckoningTab data={data} provenance={provenance} peoName={chosenPeo} sessionId={sessionId} fileId={fileId} onSubmit={onSubmit} certification={certification} onReview={() => setActiveTab("review")} />}
       </div>

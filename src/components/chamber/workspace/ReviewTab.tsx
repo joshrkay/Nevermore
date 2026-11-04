@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
@@ -22,6 +22,8 @@ interface ReviewTabProps {
   onAction?: (action: FieldAction) => void;
   onProceed: () => void;
   documents?: ReviewDocument[];
+  /** Raise it to put the keyboard on the heading, as when the prospect chose to fill the intake in themselves. */
+  focusRequest?: number;
 }
 
 interface Row {
@@ -125,7 +127,11 @@ const Section = ({ section, title, children }: { section: ReviewSection; title: 
   </section>
 );
 
-const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] }: ReviewTabProps) => {
+const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [], focusRequest = 0 }: ReviewTabProps) => {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (focusRequest > 0) headingRef.current?.focus();
+  }, [focusRequest]);
   const eeCount = headcount(data);
   const needsReview = fieldOpenItems(provenance);
   const checks = eligibilityChecks(data);
@@ -165,7 +171,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h2 className="font-display text-2xl font-bold mb-2">Review</h2>
+        <h2 ref={headingRef} tabIndex={-1} className="font-display text-2xl font-bold mb-2 focus:outline-none">Review</h2>
         <p className="text-muted-foreground text-sm">
           Everything that goes into The Manuscript, by section. Correct anything here and it's saved right away: no need
           to start the conversation over. <span className="text-primary font-medium">Required</span> answers are needed

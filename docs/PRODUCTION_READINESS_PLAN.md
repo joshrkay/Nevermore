@@ -139,6 +139,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-11-04 | US-6.1 to US-6.4 (Epic H). Classification and retention (`docs/DATA_HANDLING.md`, `src/data/dataPolicy.ts`) with a daily retention job and a deletion process that removes stored files, then rows (`purge-intakes`); the Privacy Policy, Terms of Use, legal links on every page and an intake consent gate the database enforces; an isolation test over every migration with a findings register (`docs/SECURITY_REVIEW.md`) and a fix migration; failure monitoring with threshold alerts (`ops-monitor`) and `docs/RUNBOOK.md`. Deploy order: migrations `20261104090000` to `20261104093000`, then the `purge-intakes` and `ops-monitor` functions and the updated `chamber-extract` and `document-extract` (they import `_shared`), then the front end, close behind the consent migration. See H-1 to H-4. |
 | 2026-11-04 | A required answer in conflict blocks certification (B-2, D26): Review and the Reckoning list it, and the database refuses the certification with `EA008` (migration `20261104100000_certification_conflicts.sql`, which can deploy before or after the front end). See C-1.3 and `docs/intake-schema.md`, Required answers. |
 | 2026-11-04 | The transcript as evidence (A-3): ISO timestamps, a `system` sender (voice call notes), a `spoken` flag that caps a spoken answer at `inferred` (D33), and a database check of each message (migration `20261104101000_transcript_validation.sql`, either deploy order). See A-3.1 and `docs/intake-schema.md`, The transcript. |
+| 2026-11-04 | Review copy and failure states: 'Lenore captured this — please confirm', 'Confirmed by you' for the prospect's own confirmations, a headcount of 0 shown as 0 on PEO Match, and 'Continue manually' opening Review (B-2.1, B-3.2). No migration. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -367,7 +368,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 #### B-2.1 Provenance badges and confirm-or-edit controls
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** FE · **Depends:** B-1.2 · **Milestone:** M2
 - **Built:** Status badges, Confirm and Edit/Add controls, conflict candidates with 'Use this', and a 'Needs your review' list in the Review tab. Confirm sets source `prospect_edit`. Tested (`ProvenanceField.test.tsx`).
-- **Notes:** The copy differs from the plan: 'Lenore inferred this' with a Confirm button. Since 2026-11-04 a required answer in conflict can't be certified until one value is chosen (C-1.3), so a conflicting required value never reaches The Manuscript as a certified fact.
+- **Notes:** Since 2026-11-04 the copy is the plan's: 'Lenore captured this — please confirm' with a Confirm button, and a value the prospect confirmed or typed is badged 'Confirmed by you', apart from one Lenore heard stated outright ('Confirmed'). Since 2026-11-04 a required answer in conflict can't be certified until one value is chosen (C-1.3), so a conflicting required value never reaches The Manuscript as a certified fact.
 
 #### B-2.2 Derive open items from the schema
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-1.2, A-2.1 · **Milestone:** M1
@@ -381,7 +382,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### B-3.2 User-facing failure states
 - **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** B-3.1 · **Milestone:** M1
-- **Built:** 'Try again' and 'Continue manually', the prospect's message stays, and the input is never disabled. Tested for a 502, a thrown error, retry and dismiss.
+- **Built:** 'Try again' and 'Continue manually', the prospect's message stays, and the input is never disabled. Tested for a 502, a thrown error, retry and dismiss. Since 2026-11-04 'Continue manually' also opens Review with the keyboard on its heading, where every answer can be added.
 - **Notes:** No client-side timeout: `pending` lasts as long as `functions.invoke` takes.
 
 #### B-3.3 Operational logs with redaction

@@ -143,8 +143,15 @@ const ChamberPage = () => {
       updateIntake((prev) => applyExtraction(prev, extracted, transcriptExtraction(message, response))),
   });
 
+  // "Continue manually": the prospect fills the intake in themselves, in Review, where every answer can be added.
+  const [reviewRequest, setReviewRequest] = useState(0);
+  const continueManually = useCallback(() => {
+    dismissFailure();
+    setReviewRequest((n) => n + 1);
+  }, [dismissFailure]);
+
   const failureNotice = failure && (
-    <ChatFailureNotice failure={failure} pending={pending} onRetry={retry} onDismiss={dismissFailure} />
+    <ChatFailureNotice failure={failure} pending={pending} onRetry={retry} onDismiss={continueManually} />
   );
 
   const handleFieldAction = useCallback(
@@ -311,6 +318,7 @@ const ChamberPage = () => {
             updateIntake={updateIntake}
             chosenPeo={chosenPeo}
             onChoosePeo={choosePeo}
+            openReview={reviewRequest}
           />
         </div>
       </div>
