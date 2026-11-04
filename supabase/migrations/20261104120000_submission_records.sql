@@ -10,8 +10,9 @@
 --   Intakes certified before this carry the File ID their certification recorded, whatever rule made it.
 -- * Every certification row now holds the submission as certified: version (1, 2, ... per intake),
 --   data_version (the intake version the certification landed at), schema_version, chamber_data,
---   field_provenance, chosen_peo, and the uploaded documents as they stood (id, name, category, status).
---   The same facts are stamped into submission (version, data_version, schema_version, documents) beside
+--   field_provenance, chosen_peo, and the uploaded documents as they stood (the list 20261104112000 stamps
+--   into the submission: id, name, category, status, size, storage path, SHA-256).
+--   The numbers are stamped into submission (version, data_version, schema_version) beside
 --   certified_at and data_sha256, so the row and the record always agree. Later edits withdraw the
 --   certification and never touch the row, so every submitted version stays recoverable.
 -- * A repeat of the certification on record (the same signer, signing time, PEO and answers: a second
@@ -101,10 +102,13 @@ ALTER TABLE public.chamber_certifications
 COMMENT ON COLUMN public.chamber_certifications.version IS 'Which certification of its intake this is: 1 for the first, then 2, 3, ... The File ID stays the same.';
 COMMENT ON COLUMN public.chamber_certifications.data_version IS 'The intake''s data_version once this certification was saved.';
 COMMENT ON COLUMN public.chamber_certifications.chamber_data IS 'The answers exactly as certified. Null on a certification recorded before this column existed and since withdrawn.';
-COMMENT ON COLUMN public.chamber_certifications.documents IS 'The uploaded documents as they stood at certification: id, file_name, category, status, uploaded_at.';
+COMMENT ON COLUMN public.chamber_certifications.documents IS 'The uploaded documents as they stood at certification, as snapshot_certified_evidence stamps them into the submission: id, file_name, file_size, category, status, storage_path, file_sha256, created_at.';
 
 -- Existing rows: numbered in the order they were recorded. The one still in force gets the answers from
--- its intake's saved submission when that is the copy it hashed; withdrawn ones have no copy to recover.
+-- its intake's saved submission when that is the copy it hashed (20261104117000 already gave most of them
+-- theirs); withdrawn ones have no copy to recover. Not a save: the immutable-snapshot trigger that
+-- migration added stays out of the way for this backfill, and is back before the next statement.
+ALTER TABLE public.chamber_certifications DISABLE TRIGGER USER;
 UPDATE public.chamber_certifications c
 SET version = numbered.version
 FROM (
@@ -125,6 +129,7 @@ WHERE s.id = c.session_id
   AND c.chamber_data IS NULL
   AND jsonb_typeof(s.submission -> 'chamber_data') = 'object'
   AND s.submission ->> 'data_sha256' = c.data_sha256;
+ALTER TABLE public.chamber_certifications ENABLE TRIGGER USER;
 
 ALTER TABLE public.chamber_certifications DROP CONSTRAINT IF EXISTS chamber_certifications_session_version_key;
 ALTER TABLE public.chamber_certifications ADD CONSTRAINT chamber_certifications_session_version_key UNIQUE (session_id, version);
@@ -133,6 +138,10 @@ ALTER TABLE public.chamber_certifications ADD CONSTRAINT chamber_certifications_
 ALTER TABLE public.chamber_certifications DROP CONSTRAINT IF EXISTS chamber_certifications_session_id_fkey;
 
 -- ---------- Append-only ----------
+
+-- 20261104117000 added chamber_certifications_immutable, which refuses a change to what was signed. This guard
+-- is the stricter one: it also fixes the rest of the row (the versions, the PEO, the documents) and refuses a
+-- delete, so it fires first (triggers run in name order) and the older trigger stays as a second line.
 
 -- What may change on a certification after it is recorded: superseding it (once), and the outbox's
 -- marker columns (20261026090000_outbox_reliability.sql). Everything else, and the row itself, is fixed.
@@ -173,9 +182,8 @@ CREATE TRIGGER chamber_certifications_guard
 -- ---------- Certifying ----------
 
 -- Validates a certification, stamps the server's facts onto it (the File ID, the version numbers, the
--- hash, the time, the documents), withdraws a stale one, and keeps a repeat from recording twice.
--- SECURITY DEFINER so it can take the next reference and read the intake's documents; it changes nothing
--- but the row being written.
+-- hash, the time), withdraws a stale one, and keeps a repeat from recording twice.
+-- SECURITY DEFINER so it can take the next reference; it changes nothing but the row being written.
 CREATE OR REPLACE FUNCTION public.validate_certification()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -188,7 +196,6 @@ DECLARE
   reference text;
   cert_version integer;
   certified_data_version integer;
-  docs jsonb;
 BEGIN
   -- The File ID is the database's: the browser can neither set nor change it.
   IF TG_OP = 'UPDATE' THEN
@@ -256,21 +263,15 @@ BEGIN
     cert_version := (SELECT count(*) FROM public.chamber_certifications c WHERE c.session_id = NEW.id) + 1;
     -- What chamber_sessions_data_version (which runs after this trigger) will set.
     certified_data_version := CASE WHEN TG_OP = 'INSERT' THEN 1 ELSE OLD.data_version + 1 END;
-    docs := (
-      SELECT COALESCE(jsonb_agg(jsonb_build_object(
-        'id', d.id, 'file_name', d.file_name, 'category', d.category, 'status', d.status, 'uploaded_at', d.created_at
-      ) ORDER BY d.created_at, d.id), '[]'::jsonb)
-      FROM public.documents d WHERE d.session_id = NEW.id
-    );
-    -- The client can't set these: they always reflect what the database saw.
+    -- The client can't set these: they always reflect what the database saw. (The document list and the
+    -- conversation are stamped beside them by snapshot_certified_evidence, 20261104112000, which fires next.)
     NEW.submission := NEW.submission || jsonb_build_object(
       'certified_at', now(),
       'data_sha256', hash,
       'file_id', reference,
       'version', cert_version,
       'data_version', certified_data_version,
-      'schema_version', NEW.schema_version,
-      'documents', docs
+      'schema_version', NEW.schema_version
     );
   ELSIF TG_OP = 'UPDATE' AND OLD.status = 'submitted' AND NEW.chamber_data IS DISTINCT FROM OLD.chamber_data THEN
     -- Answers changed after certification: the old certification no longer covers them.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { emptyExtraction, shapeExtraction } from "./extraction";
-import { EXTRACT_TOOL, FIELD_GUIDE, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 import { INTAKE_SCHEMA, LIMITS } from "../_shared/intakeSchema";
+import { EXTRACT_TOOL, FIELD_GUIDE, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 
 describe("shapeExtraction", () => {
   it("keeps the fields the model extracted, with their status, evidence and corrections", () => {
@@ -179,6 +179,7 @@ describe("extraction tool schema", () => {
     expect(FIELDS.filter((field) => !defined.has(field))).toEqual([]);
   });
 
+  // Each line reads "- key (Label): what it means".
   const definition = (field: string) => SYSTEM_PROMPT.match(new RegExp(`^- ${field} \\([^)]*\\): (.*)$`, "m"))?.[1] ?? "";
 
   // The workspace labels has_401k "Retirement plan", and shows the plan type and match only while it is true.

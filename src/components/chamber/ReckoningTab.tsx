@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, Download, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
+import { certificationBlockingItems, NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { manuscriptPath, NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
 import {
   CONSENT_IS_DRAFT,
@@ -12,20 +13,17 @@ import {
   CONSENT_TEXT_VERSION,
   certificationBlockers,
   consentStatements,
-  type NeededAnswer,
 } from "@/data/certification";
 import { useAuth } from "@/hooks/useAuth";
-import { blockingItems } from "@/data/readiness";
-import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import type { ProvenanceMap } from "@/data/provenance";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import VerifyEmailGate from "./VerifyEmailGate";
 
 interface ReckoningTabProps {
   data: ChamberData;
-  /** Status and source of each answer: a required answer given two ways blocks certifying (B-2, D26). */
+  /** Each answer's field status: a required answer in conflict blocks certification until one is chosen. */
   provenance?: ProvenanceMap;
-  /** Fields an advisor verified: settled whatever their status. */
+  /** Fields an advisor verified: a verified census settles the States of operation it gives. */
   verified?: ReadonlySet<string>;
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
@@ -48,7 +46,9 @@ const formatSigned = (iso: string) =>
 
 const GENERIC_FAILURE = "We couldn't save your submission. Please try again.";
 
-const ReckoningTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
+const NO_PROVENANCE: ProvenanceMap = {};
+
+const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED_FIELDS, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
   const peoName = chosenPeo ?? "your PEO";
   const { isAnonymous } = useAuth();
   // A returning signer doesn't retype their name and role to certify again.
@@ -87,17 +87,26 @@ const ReckoningTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, pe
   }, [dataKey, signedDataKey]);
 
   const signed = signedAt !== null;
-  // The required answers that are missing, or given two ways (one list, shared with Review).
-  const needed = blockingItems(data, provenance, verified);
-  const missingAnswers = needed.filter((item) => item.reason === "missing");
-  const conflictingAnswers = needed.filter((item) => item.reason !== "missing");
+  // What the intake still needs, as Review lists it (certificationBlockingItems): the missing answers, then
+  // those in conflict, which the database refuses (EA008), and States of operation that only a census in
+  // conflict gives, which only the browser checks.
+  const blocking = certificationBlockingItems(data, provenance, verified);
+  const missingAnswers = blocking.filter((item) => item.state === "missing").map((item) => item.readiness);
+  const conflictingAnswers = blocking
+    .filter((item) => item.state === "conflicting")
+    .map((item) =>
+      item.viaCensus
+        ? { key: "census", label: "Employee census", note: "Its answers conflict, and it gives your states." }
+        : { key: item.item, label: item.label, note: "You've given two different answers." },
+    );
   const blockers = certificationBlockers({
     acknowledged: checks,
     signer: { name: signerName, title: signerTitle },
     signed,
     hasIntake: !!sessionId,
     isGuest: isAnonymous,
-    needed: needed.map((item) => ({ label: item.label, reason: item.reason as NeededAnswer["reason"] })),
+    missingAnswers: missingAnswers.map((item) => item.label),
+    conflictingAnswers: conflictingAnswers.map((item) => item.label),
   });
   const allChecked = blockers.length === 0;
   const recordedFileId = fileId ?? (certification.status === "none" ? null : certification.submission.file_id) ?? null;
@@ -185,8 +194,8 @@ const ReckoningTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, pe
           </p>
         </div>
 
-        {/* The Manuscript can't be generated without these; the database refuses the certification too. */}
-        {needed.length > 0 && !certifiedAndCurrent && (
+        {/* The Manuscript can't be generated without these; the database refuses the certification too, but for the census's states. */}
+        {(missingAnswers.length > 0 || conflictingAnswers.length > 0) && !certifiedAndCurrent && (
           <div role="alert" aria-label="Answers still needed" className="border border-destructive/40 bg-destructive/5 rounded-xl p-4 text-sm space-y-2">
             {missingAnswers.length > 0 && (
               <>
@@ -194,7 +203,7 @@ const ReckoningTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, pe
                 <ul className="list-disc pl-5 space-y-0.5">
                   {missingAnswers.map((item) => (
                     <li key={item.key}>
-                      {item.label} <span className="text-muted-foreground text-xs">{item.action}</span>
+                      {item.label} <span className="text-muted-foreground text-xs">{item.hint}</span>
                     </li>
                   ))}
                 </ul>
@@ -208,7 +217,7 @@ const ReckoningTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, pe
                 <ul className="list-disc pl-5 space-y-0.5">
                   {conflictingAnswers.map((item) => (
                     <li key={item.key}>
-                      {item.label} <span className="text-muted-foreground text-xs">{item.action}</span>
+                      {item.label} <span className="text-muted-foreground text-xs">{item.note}</span>
                     </li>
                   ))}
                 </ul>

@@ -5,49 +5,100 @@
 
 import { INTAKE_FIELDS, INTAKE_SCHEMA, LIMITS, type JsonSchema } from "../_shared/intakeSchema.ts";
 
-/** What each field means, for the model. Every field the chat extracts has one (schema.test.ts checks). */
+/**
+ * What each field means, for the model. Every field the chat extracts has one (extraction.test.ts checks). An
+ * answer the workspace only shows beside its flag says to report the flag with it.
+ */
 export const FIELD_GUIDE: Record<string, string> = {
   company_name: "The company's legal or business name",
   industry: "What the business does, its industry",
   hq_state: "Two-letter US state code of the headquarters, such as CA",
-  states: "Two-letter US state codes of every state where employees work",
+  states: "Two-letter US state codes of every state where employees work, one state per item",
   employee_count: "Total number of employees (a whole number)",
   start_month: "When they want PEO coverage or benefits to start, as they said it",
-  multiple_entities: "true if the business runs as more than one legal entity",
+  multiple_entities: "true if the business runs as more than one legal entity (separate companies or FEINs), false if it is one",
   fein_count: "How many federal employer ID numbers (FEINs) the business has (a whole number); report multiple_entities with it",
   virgin_medical: "true if they have never offered employer medical coverage, false if they have it now",
   current_carrier: "Their current medical insurance carrier",
   renewal_date: "When their current medical plan renews, as they said it",
-  rate_history: "What they said about recent medical rate increases",
-  benefits_waiting_period: "How long new hires wait before benefits start",
-  ancillary_benefits: "Other benefits they offer, such as dental, vision or life",
+  rate_history: "How their medical rates changed at recent renewals, as they describe it (such as \"up 12% last year\")",
+  benefits_waiting_period: "How long new hires wait before benefits start (such as \"30 days\")",
+  ancillary_benefits: "Benefits they offer besides medical and retirement, such as dental, vision or life insurance, one benefit per item",
   has_401k: "true if they offer any employer retirement plan (a 401(k), 403(b), SIMPLE IRA or similar), false if they offer none",
-  retirement_type: "What kind of retirement plan, such as 401(k), SIMPLE IRA or 403(b); report has_401k with it",
-  employer_contributes: "true if the employer contributes to or matches the retirement plan; report has_401k with it",
+  retirement_type: "What kind of retirement plan, such as traditional 401(k), SIMPLE IRA or 403(b); report has_401k with it",
+  employer_contributes: "true if the employer contributes to or matches the retirement plan, false if it doesn't; report has_401k with it",
   payroll_vendor: "Who runs their payroll now, such as Gusto or ADP",
   pay_frequency: "How often they run payroll: weekly, bi-weekly, semi-monthly or monthly",
   funding_days: "How many days before payday they fund payroll (a whole number)",
-  has_nonexempt: "true if any employees are hourly or overtime-eligible (nonexempt)",
-  nonexempt_count: "How many employees are nonexempt (a whole number); report has_nonexempt with it",
-  exempt_count: "How many employees are exempt (a whole number); report has_nonexempt with it",
-  pto_types: "Kinds of paid time off they offer, such as vacation or sick",
-  accrual_method: "How paid time off accrues, such as per pay period or up front",
+  has_nonexempt: "true if any employees are hourly or overtime-eligible (nonexempt), false if all are salaried and exempt",
+  nonexempt_count: "How many employees are nonexempt, hourly or overtime-eligible (a whole number); report has_nonexempt with it",
+  exempt_count: "How many employees are exempt, salaried and not overtime-eligible (a whole number); report has_nonexempt with it",
+  pto_types: "Kinds of paid time off they offer, such as vacation, sick or holidays, one kind per item",
+  accrual_method: "How paid time off accrues, such as per pay period or all at the start of the year",
   has_handbook: "true if they have an employee handbook",
-  handbook_last_updated: "When the handbook was last updated, as they said it",
-  hr_staff_count: "How many people work in HR in-house (a whole number)",
+  handbook_last_updated: "When the handbook was last updated, as they said it (such as \"2024\")",
+  hr_staff_count: "How many people handle HR in-house (a whole number)",
   has_1099: "true if they use 1099 contractors",
   ca_contractors: "true if any contractors work in California",
-  uses_physical_clocks: "true if employees clock in on a physical time clock",
-  uses_mobile_app: "true if employees track time in a mobile app",
-  uses_computer_timekeeping: "true if employees track time on a computer",
-  shift_differentials: "true if some shifts pay more",
-  hris_system: "Their HR information system, if any",
+  uses_physical_clocks: "true if employees clock in on a physical time clock, false if not",
+  uses_mobile_app: "true if employees track time in a mobile app, false if not",
+  uses_computer_timekeeping: "true if employees track time on a computer, false if not",
+  shift_differentials: "true if some shifts (nights, weekends) pay a different rate, false if not",
+  hris_system: "The HR information system (HRIS) or tool they keep employee records in, by name",
   key_challenges: "The HR or compliance challenges they describe",
   business_goals: "The business goals they mention",
-  wc_carrier: "Their current workers' compensation carrier",
+  wc_carrier: "Their current workers' compensation carrier, by name",
   wc_renewal_date: "When their workers' comp policy renews, as they said it",
-  wc_experience_mod: "Their workers' comp experience modification factor, a decimal such as 0.92",
-  wc_annual_premium: "Their annual workers' comp premium in whole dollars",
+  wc_experience_mod: "Their workers' comp experience modification factor, a decimal such as 0.92 (from 0 to 10)",
+  wc_annual_premium: "Their annual workers' comp premium in whole US dollars (a whole number, from 0 to 100,000,000)",
+};
+
+/**
+ * How Lenore asks for each field when the model gave no reply of its own (US-2.3a): always the next unsettled
+ * field, never a canned question. Every field the chat extracts has one (extraction.test.ts checks).
+ */
+export const FIELD_QUESTION: Record<string, string> = {
+  company_name: "What is the company's legal name?",
+  industry: "What does the business do?",
+  hq_state: "Which state is the company headquartered in?",
+  states: "Which states do your employees work in?",
+  employee_count: "How many employees do you have?",
+  start_month: "When would you like coverage to start?",
+  multiple_entities: "Does the business run as more than one legal entity?",
+  fein_count: "How many federal employer ID numbers does the business have?",
+  virgin_medical: "Do you offer employer medical coverage today?",
+  current_carrier: "Who is your current medical carrier?",
+  renewal_date: "When does your current medical plan renew?",
+  rate_history: "How have your medical rates changed at recent renewals?",
+  benefits_waiting_period: "How long do new hires wait before their benefits start?",
+  ancillary_benefits: "Which other benefits do you offer, such as dental or vision?",
+  has_401k: "Do you offer a retirement plan, such as a 401(k)?",
+  retirement_type: "What kind of retirement plan do you offer?",
+  employer_contributes: "Does the company contribute to the retirement plan?",
+  payroll_vendor: "Who runs your payroll today?",
+  pay_frequency: "How often do you run payroll?",
+  funding_days: "How many days before payday do you fund payroll?",
+  has_nonexempt: "Are any of your employees hourly or eligible for overtime?",
+  nonexempt_count: "How many of your employees are nonexempt?",
+  exempt_count: "How many of your employees are exempt?",
+  pto_types: "What kinds of paid time off do you offer?",
+  accrual_method: "How does paid time off accrue?",
+  has_handbook: "Do you have an employee handbook?",
+  handbook_last_updated: "When was the handbook last updated?",
+  hr_staff_count: "How many people work in HR in-house?",
+  has_1099: "Do you work with any 1099 contractors?",
+  ca_contractors: "Do any of your contractors work in California?",
+  uses_physical_clocks: "Do employees clock in on a physical time clock?",
+  uses_mobile_app: "Do employees track their time in a mobile app?",
+  uses_computer_timekeeping: "Do employees track their time on a computer?",
+  shift_differentials: "Do any shifts pay more than others?",
+  hris_system: "Which HR information system do you use, if any?",
+  key_challenges: "What are your biggest HR or compliance challenges right now?",
+  business_goals: "What are the business's goals for the year ahead?",
+  wc_carrier: "Who is your workers' compensation carrier?",
+  wc_renewal_date: "When does your workers' comp policy renew?",
+  wc_experience_mod: "Do you know your workers' comp experience mod?",
+  wc_annual_premium: "What is your annual workers' comp premium?",
 };
 
 // The census (the employee roster) comes only from an uploaded file (D21).
@@ -81,9 +132,14 @@ const perField = (schema: unknown) => ({
   additionalProperties: false,
 });
 
-// Recorded on every extraction event. Raise it with any change to SYSTEM_PROMPT or EXTRACT_TOOL: promptVersion.test.ts
-// fails until you do, so an event always says which prompt produced it.
-export const PROMPT_VERSION = 3;
+// Versions the whole extraction contract: SYSTEM_PROMPT, EXTRACT_TOOL, the user turn (prompt.ts) and the
+// response shape. Recorded on every extraction event (US-2.4a), returned with every extraction, and stored
+// by the browser on each value's provenance (B-1.4), so a value can be traced to the prompt that produced
+// it. Raise it with any change to them: _shared/ai/promptVersion.test.ts fails until you do. See
+// "Extraction contract version and eval" in docs/intake-schema.md. Version 2 named two contracts built at
+// the same time (US-2.1b and B-1.1); 3 is the two merged; 4 adds how Lenore replies and the user turn's ready and
+// census lines (US-2.3a).
+export const PROMPT_VERSION = 4;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 
@@ -95,9 +151,9 @@ You MUST use the extract_chamber_data tool to return the extracted fields. Only 
 Field definitions:
 ${fieldLines}
 
-Never extract the employee census or details of individual employees: the roster comes only from an uploaded file.
+Integers are whole numbers from 0 to ${LIMITS.count.toLocaleString("en-US")} unless a field says otherwise. Text is at most ${LIMITS.text.toLocaleString("en-US")} characters. An array holds at most ${LIMITS.listItems} items, one entry per item, never a comma-separated string.
 
-Whole numbers are whole numbers from 0 to ${LIMITS.count.toLocaleString("en-US")} unless a field says otherwise. Text is at most ${LIMITS.text.toLocaleString("en-US")} characters. A list holds at most ${LIMITS.listItems} items, one entry per item, never a comma-separated string.
+Never extract the employee census or details of individual employees: the roster comes only from an uploaded file.
 
 A short answer ("yes", "no", "about twelve", "weekly") answers the question Lenore asked last in the recent conversation: capture it against the field that question was about.
 
@@ -106,7 +162,15 @@ For every field you return, also report:
 - evidence: the short phrase from the prospect's message that supports it (at most ${MAX_EVIDENCE_CHARS} characters, quoted verbatim).
 - corrected_fields: list a field only when the prospect explicitly corrects a value already captured ("actually it's 45 people, not 40").
 
-When the prospect says they don't know a field's answer, or can't say yet, give that field no value: set its field_status to "unknown" and its evidence to the phrase where they said so. Never mark a field "unknown" because the message simply doesn't mention it.`;
+When the prospect says they don't know a field's answer, or can't say yet, give that field no value: set its field_status to "unknown" and its evidence to the phrase where they said so. Never mark a field "unknown" because the message simply doesn't mention it.
+
+How Lenore replies (the reply field):
+- Ask about exactly one thing: the first field in "Not yet settled" that the new message didn't just answer. Never ask about a field that isn't in that list, and never ask about two at once.
+- When the prospect doesn't know an answer, accept it kindly and move on to the next field.
+- When "Not yet settled" is "none", ask nothing more: thank them, tell them the intake is complete, and that they can review it on the Review tab.
+- When no employee census is uploaded and the next fields aren't required ones, you may invite them to upload a census on the Upload tab.
+- Don't tell them the intake is ready to certify: the Chamber says so itself when it is.
+- Keep it short: one or two sentences.`;
 
 export const EXTRACT_TOOL = {
   name: "extract_chamber_data",
@@ -118,7 +182,7 @@ export const EXTRACT_TOOL = {
       field_status: perField({ type: "string", enum: FIELD_STATUSES }),
       evidence: perField({ type: "string" }),
       corrected_fields: { type: "array", items: { type: "string", enum: FIELDS } },
-      reply: { type: "string", description: "A natural conversational reply from Lenore, the gothic HR advisor. Keep her tone intelligent, warm, and slightly literary. Ask a follow-up question to continue the discovery." },
+      reply: { type: "string", description: "Lenore's reply, the gothic HR advisor: intelligent, warm and slightly literary. It acknowledges the answer and asks about the first field in \"Not yet settled\" the message didn't answer, or, when none is left, wraps up." },
     },
     additionalProperties: false,
   } as Record<string, unknown>,

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import type { CensusEmployee } from "./chamberTypes";
 import type { ProvenanceMap } from "./provenance";
-import { SECTION_OF } from "./readiness";
+import { REVIEW_FIELDS } from "./reviewFields";
 import {
   buildManuscript,
   certificationFromRow,
@@ -190,7 +190,9 @@ describe("buildManuscript covers the whole intake", () => {
   });
 
   it("puts every intake field in a section, as the Review step does, or renders it another way", () => {
-    expect(Object.keys(SECTION_OF).sort()).toEqual(Object.keys(EMPTY_CHAMBER_DATA).sort());
+    // Review's sections (src/data/reviewFields.ts) hold every answer but the census, which is a table of its own.
+    const reviewSectionOf: Record<string, string> = Object.fromEntries(Object.entries(REVIEW_FIELDS).flatMap(([section, fields]) => fields.map((f) => [f, section])));
+    expect(Object.keys(reviewSectionOf).sort()).toEqual(Object.keys(EMPTY_CHAMBER_DATA).filter((f) => f !== "census").sort());
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
     const rows = rowsOf(m);
     // The census is a table of its own, in the Workforce section.
@@ -199,7 +201,7 @@ describe("buildManuscript covers the whole intake", () => {
     for (const field of Object.keys(EMPTY_CHAMBER_DATA)) {
       if (field in renderedElsewhere) continue;
       expect(keyed.has(field), `${field} has no row in The Manuscript`).toBe(true);
-      expect(keyed.get(field), `${field} is in the wrong section`).toBe(SECTION_OF[field as keyof typeof SECTION_OF]);
+      expect(keyed.get(field), `${field} is in the wrong section`).toBe(reviewSectionOf[field]);
     }
     expect(m.census.length).toBe(DEMO_CHAMBER_DATA.census.length);
   });
@@ -218,10 +220,19 @@ describe("buildManuscript covers the whole intake", () => {
 
   it("shows operations and HR answers in their own section", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
-    expect(m.operationsRows).toEqual([
-      ["Key Challenges", DEMO_CHAMBER_DATA.key_challenges, "key_challenges"],
-      ["Business Goals", DEMO_CHAMBER_DATA.business_goals, "business_goals"],
+    expect(m.operationsRows.map(([label, , field]) => [label, field])).toEqual([
+      ["Employee Handbook", "has_handbook"],
+      ["Handbook Last Updated", "handbook_last_updated"],
+      ["In-house HR Staff", "hr_staff_count"],
+      ["Physical Time Clocks", "uses_physical_clocks"],
+      ["Mobile Timekeeping", "uses_mobile_app"],
+      ["Computer Timekeeping", "uses_computer_timekeeping"],
+      ["Shift Differentials", "shift_differentials"],
+      ["HRIS", "hris_system"],
+      ["Key Challenges", "key_challenges"],
+      ["Business Goals", "business_goals"],
     ]);
+    expect(m.operationsRows.find(([, , field]) => field === "key_challenges")?.[1]).toBe(DEMO_CHAMBER_DATA.key_challenges);
   });
 });
 
@@ -308,12 +319,15 @@ describe("buildManuscript census and state mix with gaps", () => {
   });
 });
 
-describe("buildManuscript open and resolved items", () => {
-  it("lists each missing core fact as an open item", () => {
+describe("buildManuscript open items for missing core facts", () => {
+  const opts = { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") };
+
+  it("lists each missing core fact as an open item, with the census as a document needed", () => {
     const { open } = buildManuscript(EMPTY_CHAMBER_DATA, opts);
-    for (const fact of ["Company legal name", "States of operation", "Pay frequency", "Employee census"]) {
+    for (const fact of ["Company legal name", "States of operation", "Pay frequency"]) {
       expect(open).toContain(`${fact} — not provided`);
     }
+    expect(open).toContain("Employee census — document needed");
   });
 
   it("lists nothing for facts that were provided", () => {
@@ -347,12 +361,17 @@ describe("buildManuscript open and resolved items", () => {
     expect(open.some((o) => o.startsWith("Company legal name — please"))).toBe(false);
   });
 
-  it("puts the required answers that are missing or unsettled first", () => {
+  it("lists the missing required answers first, then the census, then fields by status", () => {
     const { open } = buildManuscript(
       { ...EMPTY_CHAMBER_DATA, company_name: "Acme", industry: "Retail", states: ["CA"] },
       { fileId: "EAA-1", provenance: { industry: { status: "inferred", source, updated_at: AT }, states: { status: "incomplete", source, updated_at: AT } } },
     );
-    expect(open.slice(0, 3)).toEqual(["Pay frequency — not provided", "States of operation — incomplete", "Industry — please confirm"]);
+    expect(open.slice(0, 4)).toEqual([
+      "Pay frequency — not provided",
+      "Employee census — document needed",
+      "States of operation — incomplete",
+      "Industry — please confirm",
+    ]);
   });
 
   it("resolves only what the prospect confirmed or applied from a document, never a check that merely passed", () => {
@@ -469,14 +488,17 @@ describe("buildManuscript payroll", () => {
       "Funding Lead Time": "2 days",
       "Accrual Method": "Per pay period",
       "PTO Types": "Vacation, Sick",
+    });
+    // Payroll is no longer folded into the company profile; timekeeping and the HRIS sit under Operations & HR,
+    // where Review lists them.
+    expect(m.companyRows.map(([label]) => label)).not.toContain("Pay Frequency");
+    expect(Object.fromEntries(m.operationsRows.map(([label, value]) => [label, value]))).toMatchObject({
       "Computer Timekeeping": "Not provided",
       "Mobile Timekeeping": "Yes",
       "Physical Time Clocks": "No",
       "Shift Differentials": "No",
       HRIS: "BambooHR",
     });
-    // Payroll is no longer folded into the company profile.
-    expect(m.companyRows.map(([label]) => label)).not.toContain("Pay Frequency");
   });
 
   it("says Not provided for each payroll answer never given", () => {

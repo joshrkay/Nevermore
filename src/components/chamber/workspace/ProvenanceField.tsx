@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import type { ReactNode } from "react";
 import { sanitizeChamberPatch } from "@/data/chamberValidation";
+import type { ChamberData } from "@/data/chamberTypes";
 import {
   canMarkNotApplicable,
   FIELD_KINDS,
@@ -68,9 +69,11 @@ interface ProvenanceFieldProps {
   children?: ReactNode;
   /** Marks an answer needed before certifying. Defaults to the required answers (src/data/readiness.ts). */
   required?: boolean;
+  /** Offers "Doesn't apply" for an unanswered field certification doesn't need (Review only, D28, D31). */
+  allowNotApplicable?: boolean;
 }
 
-const ProvenanceField = ({ label, field, display, raw, provenance, onAction, editable = true, children, required = isRequiredField(field) }: ProvenanceFieldProps) => {
+const ProvenanceField = ({ label, field, display, raw, provenance, onAction, editable = true, children, required = isRequiredField(field), allowNotApplicable = false }: ProvenanceFieldProps) => {
   const kind = field === "census" ? null : FIELD_KINDS[field];
   const canEdit = Boolean(onAction && editable && kind);
   const [editing, setEditing] = useState(false);
@@ -99,8 +102,6 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
   const badge = onAction && status
     ? status === "confirmed" && provenance?.source.kind === "prospect_edit" ? { ...BADGES.confirmed, text: "Confirmed by you" } : BADGES[status]
     : null;
-  // "Doesn't apply" is the prospect's to say, never for an answer a PEO always needs (D31).
-  const canClose = Boolean(onAction && editable && canMarkNotApplicable(field));
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
@@ -208,21 +209,22 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
               {display ? "Edit" : "Add"}
             </button>
           )}
-          {canClose && status !== "not_applicable" && (
+          {/* Only the prospect closes a field this way (D31), and only one they haven't answered. */}
+          {allowNotApplicable && status !== "not_applicable" && !display && canMarkNotApplicable(field, { [field]: raw } as unknown as ChamberData) && (
             <button
               type="button"
               onClick={() => onAction({ type: "not_applicable", field })}
-              aria-label={`Mark ${label} as not applicable`}
+              aria-label={`${label} doesn't apply`}
               className="text-[10px] text-muted-foreground hover:text-foreground hover:underline"
             >
               Doesn't apply
             </button>
           )}
-          {canClose && status === "not_applicable" && (
+          {status === "not_applicable" && (
             <button
               type="button"
-              onClick={() => onAction({ type: "applies", field })}
-              aria-label={`${label} applies after all`}
+              onClick={() => onAction({ type: "reopen", field })}
+              aria-label={`Undo: ${label} doesn't apply`}
               className="text-[10px] text-muted-foreground hover:text-foreground hover:underline"
             >
               Undo

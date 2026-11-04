@@ -1,8 +1,9 @@
 import { z } from "zod";
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
-import { INTAKE_FIELDS, INTAKE_SCHEMA, REQUIRED_FIELDS } from "./intakeSchema";
+import { INTAKE_FIELDS, INTAKE_SCHEMA } from "./intakeSchema";
 import { redactSensitive } from "./sensitive";
+import { CERTIFICATION_REQUIRED } from "../../supabase/functions/_shared/followUp.ts";
 
 // Every captured field records how sure we are of it and where it came from, so the
 // prospect and advisor can tell what Lenore inferred from what someone confirmed.
@@ -365,21 +366,18 @@ export type FieldAction =
   | { type: "confirm"; field: FieldKey }
   | { type: "edit"; field: FieldKey; value: unknown }
   | { type: "resolve"; field: FieldKey; candidate: number }
-  // "Doesn't apply": closes the field with no answer (D23, D31). Only the prospect does this.
+  // "Doesn't apply" (D31): only the prospect closes a field this way, and can take it back with "reopen".
   | { type: "not_applicable"; field: FieldKey }
-  // Takes "Doesn't apply" back: the field is open again, still with no answer.
-  | { type: "applies"; field: FieldKey };
+  | { type: "reopen"; field: FieldKey };
 
 /**
- * Whether the prospect may mark a field as not applying to them. Never a required answer (a PEO needs the
- * company legal name, where people work and how they are paid) and never the census, which comes from a file.
+ * Whether the prospect may mark a field "Doesn't apply": a field they haven't answered that certification doesn't
+ * need. A required answer is needed whatever the business, and the census is a document.
  */
-export const canMarkNotApplicable = (field: FieldKey): boolean => !(REQUIRED_FIELDS as readonly string[]).includes(field);
+export const canMarkNotApplicable = (field: FieldKey, data: ChamberData): boolean =>
+  field !== "census" && !(CERTIFICATION_REQUIRED as readonly string[]).includes(field) && isEmpty(data[field]);
 
-/** The answer a field holds once it is closed with none: an empty list for a list, otherwise null. */
-const emptyValue = (field: FieldKey): unknown => (field !== "census" && FIELD_KINDS[field] === "list" ? [] : null);
-
-/** Applies a prospect's confirm, edit, conflict resolution, or "doesn't apply". Invalid edits change nothing. */
+/** Applies a prospect's confirm, edit, or conflict resolution. Invalid edits change nothing. */
 export function applyFieldAction(state: IntakeState, action: FieldAction, now = new Date()): IntakeState {
   const confirmed = (): FieldProvenance => ({ status: "confirmed", source: { kind: "prospect_edit" }, updated_at: now.toISOString() });
   const { field } = action;
@@ -391,14 +389,14 @@ export function applyFieldAction(state: IntakeState, action: FieldAction, now = 
   }
 
   if (action.type === "not_applicable") {
-    if (!canMarkNotApplicable(field)) return state;
+    if (!canMarkNotApplicable(field, state.data)) return state;
     return {
-      data: { ...state.data, [field]: emptyValue(field) },
+      data: state.data,
       provenance: { ...state.provenance, [field]: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: now.toISOString() } },
     };
   }
 
-  if (action.type === "applies") {
+  if (action.type === "reopen") {
     if (state.provenance[field]?.status !== "not_applicable") return state;
     const { [field]: _closed, ...rest } = state.provenance;
     return { data: state.data, provenance: rest };
@@ -448,6 +446,12 @@ export interface FieldOpenItem {
   reason: FieldOpenReason;
 }
 
+/**
+ * The statuses that leave a field open, most pressing first. The advisor queue counts the same ones
+ * (`open_item_statuses` in its migration; src/data/schemaSync.test.ts compares them).
+ */
+export const OPEN_FIELD_STATUSES = ["conflicting", "incomplete", "unknown", "inferred"] as const satisfies readonly FieldStatus[];
+
 /** What the prospect is told about a field in each status that still needs them. */
 export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_applicable">, FieldOpenReason> = {
   conflicting: "Conflicting answers",
@@ -462,8 +466,7 @@ export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_
  * verified it) is settled whatever its status, so it is left out too.
  */
 export function fieldOpenItems(provenance: ProvenanceMap, verified: ReadonlySet<string> = new Set()): FieldOpenItem[] {
-  const order = ["conflicting", "incomplete", "unknown", "inferred"] as const;
-  return order.flatMap((status) =>
+  return OPEN_FIELD_STATUSES.flatMap((status) =>
     FIELD_KEYS.filter((f) => provenance[f]?.status === status && !verified.has(f)).map((field) => ({
       field,
       label: FIELD_LABELS[field],
@@ -541,6 +544,7 @@ export function parseFieldList(raw: unknown): FieldKey[] {
  */
 export function transcriptExtraction(message: { id: string; text: string; spoken?: boolean }, meta: unknown): ExtractionOptions {
   const m = (typeof meta === "object" && meta !== null ? meta : {}) as Record<string, unknown>;
+  const version = promptVersionSchema.safeParse(m.prompt_version);
   const statuses = parseExtractedStatuses(m.field_status);
   const unknown = parseUnknownFields(m.field_status);
   // Speech-to-text mishears ("fifteen" as 50), so a spoken answer is at most inferred until the prospect
@@ -548,8 +552,6 @@ export function transcriptExtraction(message: { id: string; text: string; spoken
   if (message.spoken) {
     for (const field of Object.keys(statuses) as FieldKey[]) if (statuses[field] === "confirmed") statuses[field] = "inferred";
   }
-  // chamber-extract names the prompt that produced the answer (B-1.4); a reply without a valid one is unversioned.
-  const version = promptVersionSchema.safeParse(m.prompt_version);
   return {
     source: {
       kind: "transcript",

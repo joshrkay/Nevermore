@@ -23,20 +23,9 @@ export interface SignerDetails {
 }
 
 /**
- * A required answer the intake can't be certified without: not given yet, or given two ways (B-2, D26).
- * blockingItems in readiness.ts lists them; the database refuses the same (EA003, EA008).
- */
-export interface NeededAnswer {
-  label: string;
-  reason: "missing" | "conflicting";
-}
-
-const neededAction = ({ label, reason }: NeededAnswer): string =>
-  reason === "conflicting" ? `Choose one answer for ${label.toLowerCase()}` : `Add ${label.toLowerCase()}`;
-
-/**
  * Why certification can't be completed yet; empty when it can. Drives the submit button and its hint.
- * What the intake still needs comes first, missing answers before conflicts; then the signer's own steps.
+ * What the intake still needs comes first: the required answers missing (US-1.2; the database refuses them
+ * too, EA003), then those in conflict (B-2 D26, EA008). The recommended census never blocks.
  */
 export function certificationBlockers(opts: {
   acknowledged: boolean[];
@@ -45,11 +34,19 @@ export function certificationBlockers(opts: {
   /** Whether the intake exists on the server yet (its File ID is assigned when it is certified). */
   hasIntake: boolean;
   isGuest: boolean;
-  /** The required answers the intake still needs (blockingItems in readiness.ts). */
-  needed?: NeededAnswer[];
+  /** Labels of the required answers the intake doesn't have yet (missingRequired in readiness.ts). */
+  missingAnswers?: string[];
+  /**
+   * Labels of the required answers in conflict (certificationBlockingItems in requiredItems.ts): those the
+   * database refuses (EA008), and States of operation decided by a census in conflict.
+   */
+  conflictingAnswers?: string[];
 }): string[] {
   // What the intake still needs comes first: no signature can make up for it.
-  const blockers: string[] = (opts.needed ?? []).map(neededAction);
+  const blockers: string[] = [
+    ...(opts.missingAnswers ?? []).map((label) => `Add ${label.toLowerCase()}`),
+    ...(opts.conflictingAnswers ?? []).map((label) => `Choose one answer for ${label.toLowerCase()}`),
+  ];
   if (opts.isGuest) blockers.push("Verify your email");
   if (!opts.hasIntake) blockers.push("Wait for your intake to finish saving");
   if (!opts.acknowledged.every(Boolean)) blockers.push("Check every statement");

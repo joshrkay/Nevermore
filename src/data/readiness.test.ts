@@ -2,22 +2,8 @@ import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "./chamberTypes";
 import type { CensusEmployee } from "./census";
 import type { FieldProvenance, FieldStatus, ProvenanceMap } from "./provenance";
-import {
-  BLOCKING_STATUSES,
-  blockingItems,
-  conflictingRequired,
-  describeRequiredKeys,
-  isRequiredField,
-  missingRecommendedItems,
-  missingRequired,
-  openItems,
-  readyToCertify,
-  REQUIRED_ITEMS,
-  REVIEW_SECTIONS,
-  SECTION_OF,
-  sectionFields,
-  sectionStatus,
-} from "./readiness";
+import { CERTIFICATION_REQUIRED } from "./followUp";
+import { conflictingRequired, describeRequiredKeys, isRequiredField, missingRecommendedItems, missingRequired, REQUIRED_ITEMS } from "./readiness";
 
 const intake = (over: Partial<ChamberData> = {}): ChamberData => ({ ...EMPTY_CHAMBER_DATA, ...over });
 const complete = intake({ company_name: "Acme", states: ["NY"], pay_frequency: "bi-weekly" });
@@ -69,10 +55,18 @@ describe("isRequiredField", () => {
     expect(isRequiredField("pay_frequency")).toBe(true);
     expect(isRequiredField("industry")).toBe(false);
     expect(isRequiredField("employee_count")).toBe(false);
+    // The census is recommended (D2, D25), so the workspace never marks it Required.
+    expect(isRequiredField("census")).toBe(false);
   });
 });
 
 const prov = (status: FieldStatus): FieldProvenance => ({ status, source: { kind: "prospect_edit" }, updated_at: "2026-11-01T12:00:00Z" });
+
+describe("the answers certification needs", () => {
+  it("are the ones Lenore's readiness counts (supabase/functions/_shared/followUp.ts)", () => {
+    expect(REQUIRED_ITEMS.map((item) => item.key)).toEqual([...CERTIFICATION_REQUIRED]);
+  });
+});
 
 describe("conflictingRequired", () => {
   it("lists the required answers in conflict, in the order they are shown", () => {
@@ -104,126 +98,5 @@ describe("describeRequiredKeys", () => {
     expect(describeRequiredKeys("ein")).toEqual(["ein"]);
     expect(describeRequiredKeys(null)).toEqual([]);
     expect(describeRequiredKeys("")).toEqual([]);
-  });
-});
-
-const AT = "2026-11-04T00:00:00Z";
-const source = { kind: "transcript" as const, message_id: "m1" };
-const status = (s: ProvenanceMap[keyof ProvenanceMap] extends infer P ? (P extends { status: infer S } ? S : never) : never) => ({ status: s, source, updated_at: AT });
-
-describe("sections", () => {
-  it("place every intake field in exactly one section, each section in the Review's order", () => {
-    expect(Object.keys(SECTION_OF).sort()).toEqual(Object.keys(EMPTY_CHAMBER_DATA).sort());
-    const listed = REVIEW_SECTIONS.flatMap((s) => sectionFields(s.key));
-    expect(listed.sort()).toEqual(Object.keys(EMPTY_CHAMBER_DATA).sort());
-    expect(REVIEW_SECTIONS.map((s) => s.key)).toEqual(["company", "workforce", "locations", "payroll", "benefits", "workers_comp", "operations"]);
-    expect(sectionFields("workers_comp")).toEqual(["wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium"]);
-    expect(sectionFields("workforce")).toContain("census");
-  });
-});
-
-describe("openItems", () => {
-  it("lists what blocks certification first: required answers missing, then ones given two ways; then the required ones to settle", () => {
-    const items = openItems(intake({ company_name: "Acme", states: ["NY"], industry: "Retail", employee_count: 40 }), {
-      company_name: status("conflicting"),
-      states: status("incomplete"),
-      industry: status("inferred"),
-      employee_count: status("incomplete"),
-    });
-    expect(items.map((i) => [i.key, i.reason, i.blocking])).toEqual([
-      ["pay_frequency", "missing", true],
-      ["company_name", "conflicting", true],
-      ["states", "incomplete", false],
-      ["employee_count", "incomplete", false],
-      ["industry", "inferred", false],
-      ["census", "recommended", false],
-    ]);
-    expect(items[1].action).toMatch(/two different answers.*Choose the right one/);
-    expect(items[2].action).toMatch(/Complete it/);
-    expect(items[4].action).toMatch(/Confirm it/);
-    // Only a conflict holds a given answer back, as the database's gate does (EA008).
-    expect(BLOCKING_STATUSES).toEqual(["conflicting"]);
-  });
-
-  it("settles whatever an advisor verified, but a verified field with no answer is still missing", () => {
-    const provenance: ProvenanceMap = { company_name: status("conflicting"), industry: status("inferred"), pay_frequency: status("incomplete") };
-    const data = intake({ company_name: "Acme", states: ["NY"], pay_frequency: "weekly", industry: "Retail" });
-    expect(openItems(data, provenance, new Set(["company_name", "industry", "pay_frequency"])).map((i) => i.key)).toEqual(["census"]);
-    expect(openItems(intake(), provenance, new Set(["company_name"])).map((i) => [i.key, i.reason])).toEqual([
-      ["company_name", "missing"],
-      ["states", "missing"],
-      ["pay_frequency", "missing"],
-      ["industry", "inferred"],
-      ["census", "recommended"],
-    ]);
-    expect(conflictingRequired(provenance)).toHaveLength(1);
-    expect(conflictingRequired(provenance, new Set(["company_name"]))).toEqual([]);
-  });
-
-  it("holds the states back while only the census names them and the census is in conflict, naming the census", () => {
-    const data = intake({ company_name: "Acme", pay_frequency: "weekly", census: [employee({ work_state: "OR" })] });
-    const items = openItems(data, { census: status("conflicting") });
-    expect(items.map((i) => [i.key, i.field, i.label, i.reason, i.blocking])).toEqual([
-      ["states", "census", "Employee census", "conflicting", true],
-    ]);
-    expect(items[0].action).toMatch(/census's answers conflict/);
-    // An inferred census is the answer to confirm, listed once.
-    expect(openItems(data, { census: status("inferred") }).map((i) => [i.key, i.reason, i.blocking])).toEqual([["census", "inferred", false]]);
-    // Once the states are listed themselves, the census's status is its own business.
-    expect(openItems({ ...data, states: ["OR"] }, { census: status("conflicting") }).map((i) => [i.key, i.blocking])).toEqual([["census", false]]);
-  });
-
-  it("lists each answer once, with its section and a plain-words action", () => {
-    const items = openItems(intake(), { company_name: status("unknown") });
-    const company = items.filter((i) => i.key === "company_name");
-    expect(company).toHaveLength(1);
-    expect(company[0]).toMatchObject({ section: "company", reason: "missing", blocking: true, label: "Company legal name" });
-    expect(items.find((i) => i.key === "census")).toMatchObject({ section: "workforce", reason: "recommended", blocking: false });
-  });
-
-  it("never blocks on a recommended answer, whatever its status, and never lists a closed one", () => {
-    const items = openItems(complete, {
-      wc_carrier: status("conflicting"),
-      industry: status("unknown"),
-      has_401k: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: AT },
-    });
-    expect(items.filter((i) => i.blocking)).toEqual([]);
-    expect(items.map((i) => i.key)).toEqual(["wc_carrier", "industry", "census"]);
-    expect(items.find((i) => i.key === "industry")?.action).toMatch(/mark it as not applicable/);
-  });
-
-  it("is empty, and the intake ready to certify, when every answer is settled", () => {
-    const provenance: ProvenanceMap = { company_name: status("confirmed"), states: status("inferred"), pay_frequency: status("confirmed") };
-    expect(blockingItems(complete, provenance)).toEqual([]);
-    expect(readyToCertify(complete, provenance)).toBe(true);
-    expect(readyToCertify(intake({ ...complete, company_name: null }), provenance)).toBe(false);
-    expect(readyToCertify(complete, { ...provenance, pay_frequency: status("conflicting") })).toBe(false);
-    expect(readyToCertify(complete, { ...provenance, pay_frequency: status("incomplete") })).toBe(true);
-    expect(openItems({ ...complete, census: [employee({ work_state: "NY" })] }, { ...provenance, states: status("confirmed") })).toEqual([]);
-  });
-});
-
-describe("sectionStatus", () => {
-  const settled: ProvenanceMap = { company_name: status("confirmed"), states: status("confirmed"), pay_frequency: status("confirmed") };
-
-  it("is incomplete while a required answer is missing or unsettled, or any answer is still owed", () => {
-    expect(sectionStatus("company", intake(), {})).toBe("incomplete");
-    expect(sectionStatus("company", complete, { company_name: status("conflicting") })).toBe("incomplete");
-    expect(sectionStatus("benefits", complete, { ...settled, current_carrier: status("unknown") })).toBe("incomplete");
-    expect(sectionStatus("workforce", complete, settled)).toBe("incomplete"); // the recommended census
-  });
-
-  it("needs confirmation while an answer is only inferred, and is complete once everything is settled", () => {
-    expect(sectionStatus("company", complete, { ...settled, industry: status("inferred") })).toBe("needs_confirmation");
-    expect(sectionStatus("company", complete, settled)).toBe("complete");
-    expect(sectionStatus("workers_comp", complete, settled)).toBe("complete"); // nothing owed on recommended answers
-    expect(sectionStatus("workforce", { ...complete, census: [employee({ work_state: "NY" })] }, settled)).toBe("complete");
-  });
-
-  it("is not applicable once the prospect marked every answer in the section as not applying", () => {
-    const na = { status: "not_applicable" as const, source: { kind: "prospect_edit" as const }, updated_at: AT };
-    const provenance: ProvenanceMap = { wc_carrier: na, wc_renewal_date: na, wc_experience_mod: na, wc_annual_premium: na };
-    expect(sectionStatus("workers_comp", complete, provenance)).toBe("not_applicable");
-    expect(sectionStatus("workers_comp", complete, { ...provenance, wc_carrier: status("unknown") })).toBe("incomplete");
   });
 });

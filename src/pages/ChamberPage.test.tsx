@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
-import type { IntakeState } from "@/data/provenance";
+import type { IntakeState, ProvenanceMap } from "@/data/provenance";
+import { READY_MESSAGE } from "@/data/followUp";
 
 const session = {
   sessionId: null as string | null,
@@ -27,13 +28,15 @@ const session = {
   restoredThrough: null as string | null,
   messages: [] as ChatMessage[],
   certification: { status: "none" as string },
+  updateIntake: vi.fn(),
   addMessage: vi.fn(),
   conversationEpoch: {} as object,
   verifiedFields: new Set<string>() as ReadonlySet<string>,
-  updateIntake: vi.fn(),
-  ensureIntake: vi.fn(async () => null),
+  chamberData: { ...EMPTY_CHAMBER_DATA } as ChamberData,
+  provenance: {} as ProvenanceMap,
 };
-// What the page hands the workspace and the chat hook, so their props can be checked directly.
+
+// What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
 const hooks = {
   workspace: null as null | { verified?: ReadonlySet<string> },
   voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
@@ -377,6 +380,51 @@ describe("ChamberPage", () => {
       at("/start?session=linked");
       expect(screen.getByTestId("where")).toHaveTextContent("/start?session=linked");
       session.expired = null;
+    });
+  });
+
+  describe("ready to certify", () => {
+    const ready: ChamberData = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY"], pay_frequency: "weekly" };
+    const page = () => <MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>;
+    beforeEach(() => {
+      session.addMessage.mockClear();
+      session.sessionId = "s1";
+      session.messages = [];
+      session.chamberData = { ...EMPTY_CHAMBER_DATA };
+      session.provenance = {};
+      session.certification = { status: "none" };
+    });
+    const announcements = () => session.addMessage.mock.calls.filter(([m]) => (m as ChatMessage).text === READY_MESSAGE);
+
+    it("has Lenore say so once, when the intake becomes ready, and shows it", () => {
+      const { rerender } = render(page());
+      expect(screen.queryByText("Ready for your review")).not.toBeInTheDocument();
+      session.chamberData = ready;
+      rerender(page());
+      expect(announcements()).toHaveLength(1);
+      expect((announcements()[0][0] as ChatMessage).sender).toBe("lenore");
+      expect(screen.getByText("Ready for your review")).toBeInTheDocument();
+      // Once said (it is in the transcript), it isn't said again when readiness comes and goes.
+      session.messages = [{ id: "r", sender: "lenore", text: READY_MESSAGE, timestamp: "" }];
+      session.chamberData = { ...ready, pay_frequency: null };
+      rerender(page());
+      session.chamberData = ready;
+      rerender(page());
+      expect(announcements()).toHaveLength(1);
+    });
+
+    it("says nothing about an intake that was already ready when it opened", () => {
+      session.chamberData = ready;
+      render(page());
+      expect(announcements()).toHaveLength(0);
+      expect(screen.getByText("Ready for your review")).toBeInTheDocument();
+    });
+
+    it("counts a required answer in conflict as not ready", () => {
+      session.chamberData = ready;
+      session.provenance = { company_name: { status: "conflicting", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-04T00:00:00Z" } };
+      render(page());
+      expect(screen.queryByText("Ready for your review")).not.toBeInTheDocument();
     });
   });
 });

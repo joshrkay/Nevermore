@@ -5,7 +5,8 @@ import { documentStatusInfo } from "./documentStatus";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
 import { FIELD_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
-import { openItems, type OpenItem, type OpenItemReason } from "./readiness";
+import { NO_VERIFIED_FIELDS } from "./requiredItems";
+import { describeOpenItem, openItems } from "./openItems";
 
 /** Signed attestation stored on chamber_sessions.submission. */
 export interface ChamberSubmission {
@@ -30,21 +31,27 @@ export interface ChamberSubmission {
   /** The intake's data_version the certification landed at. Stamped by the database; absent on older submissions. */
   data_version?: number;
   schema_version?: number;
-  /** The uploaded documents as they stood at certification. Stamped by the database; absent on older submissions. */
-  documents?: SubmittedDocument[];
   // Copy of the data as signed, so later edits to the session can't change
   // what the certified manuscript shows. Absent on older submissions.
   chamber_data?: unknown;
   // Field status and source as signed. Absent on older submissions.
   field_provenance?: unknown;
+  // Stamped by the database at certification (snapshot_certified_evidence): the conversation and the document
+  // list as certified, which advisors review. Absent on submissions certified before they were kept.
+  transcript?: unknown;
+  documents?: SubmittedDocument[];
 }
 
+/** A document as it stood at certification (snapshot_certified_evidence stamps these into the submission). */
 export interface SubmittedDocument {
   id: string;
   file_name: string;
   category: string;
   status: string;
-  uploaded_at?: string;
+  file_size?: string;
+  storage_path?: string;
+  file_sha256?: string | null;
+  created_at?: string;
 }
 
 // ---------- Certification ----------
@@ -270,9 +277,6 @@ function classCodes(census: CensusEmployee[]): string {
 
 const counted = (n: number, of: number, what: string) => `${n} of ${of} ${what}`;
 
-/** No field verified by an advisor. */
-const NO_VERIFIED: ReadonlySet<string> = new Set();
-
 /**
  * Label, display value, the field whose status and source the row shows, and any other fields the value
  * is built from (a conflict in one of those shows too).
@@ -363,17 +367,6 @@ export interface ManuscriptSigner {
   consent: string;
 }
 
-const OPEN_WORDING: Record<OpenItemReason, string> = {
-  missing: "not provided",
-  conflicting: "conflicting answers",
-  incomplete: "incomplete",
-  unknown: "prospect to provide",
-  inferred: "please confirm",
-  recommended: "not provided",
-};
-
-const openWording = (item: OpenItem) => `${item.label} — ${OPEN_WORDING[item.reason]}`;
-
 /**
  * Builds The Manuscript from an intake's answers. Pure: the same answers, submission and options give the
  * same packet, whenever it is built. The date is the certification's (`certified_at`, else `signed_at`),
@@ -400,7 +393,7 @@ export function buildManuscript(
   const fmtDateTime = (d: Date) =>
     d.toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
   const provenance = opts.provenance ?? {};
-  const verified = opts.verified ?? NO_VERIFIED;
+  const verified = opts.verified ?? NO_VERIFIED_FIELDS;
   // An answer the prospect marked as not applying shows that, whatever the row would have said.
   // The fields a value is also built from stay with it, so a conflict in one of them still marks the row.
   const finish = (rows: ManuscriptRow[]): ManuscriptRow[] =>
@@ -446,9 +439,10 @@ export function buildManuscript(
   if (unknownTier > 0) unstatedItems.push(`Coverage tier — not provided for ${counted(unknownTier, w2.length, "employees")}`);
 
   const checks = eligibilityChecks(data, opts.peo ?? (opts.submission?.peo ? findPeo(opts.submission.peo) ?? undefined : undefined));
-  // One list of open items (src/data/readiness.ts): the required answers missing or unsettled first, then
-  // every answer still owed, then the recommended census.
-  const items = openItems(data, provenance, verified).map(openWording);
+  // The intake's open items, the one list Review and the advisor queue use too (src/data/openItems.ts): the answers
+  // certification requires (always present on a certified packet), the census, then fields by status, less any an
+  // advisor verified.
+  const intakeItems = openItems(data, provenance, verified).map(describeOpenItem);
   const flags = data.census.flatMap((e) => {
     const flag = employeeFlag(e);
     return flag ? [`${e.first_name} ${e.last_name}: ${flag}`] : [];
@@ -480,7 +474,6 @@ export function buildManuscript(
       ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? "Multiple entities" : "Single entity", "multiple_entities"],
       ["FEINs", orNotProvided(data.fein_count), "fein_count"],
       ["Target Start", orNotProvided(data.start_month), "start_month"],
-      ["Coverage Status", data.virgin_medical === null ? NOT_PROVIDED : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage", "virgin_medical"],
     ]),
     workforceRows: finish([
       ["Reported Headcount", orNotProvided(data.employee_count), "employee_count"],
@@ -492,9 +485,6 @@ export function buildManuscript(
       ["Nonexempt Employees", yesNo(data.has_nonexempt), "has_nonexempt"],
       ["Nonexempt Count", orNotProvided(data.nonexempt_count), "nonexempt_count"],
       ["Exempt Count", orNotProvided(data.exempt_count), "exempt_count"],
-      ["In-house HR Staff", orNotProvided(data.hr_staff_count), "hr_staff_count"],
-      ["Employee Handbook", yesNo(data.has_handbook), "has_handbook"],
-      ["Handbook Last Updated", orNotProvided(data.handbook_last_updated), "handbook_last_updated"],
     ]),
     locationRows: finish([
       ["HQ State", orNotProvided(data.hq_state), "hq_state"],
@@ -528,13 +518,9 @@ export function buildManuscript(
       ["Funding Lead Time", data.funding_days === null ? NOT_PROVIDED : `${data.funding_days} day${data.funding_days === 1 ? "" : "s"}`, "funding_days"],
       ["Accrual Method", orNotProvided(data.accrual_method), "accrual_method"],
       ["PTO Types", data.pto_types.length ? data.pto_types.join(", ") : NOT_PROVIDED, "pto_types"],
-      ["Computer Timekeeping", yesNo(data.uses_computer_timekeeping), "uses_computer_timekeeping"],
-      ["Mobile Timekeeping", yesNo(data.uses_mobile_app), "uses_mobile_app"],
-      ["Physical Time Clocks", yesNo(data.uses_physical_clocks), "uses_physical_clocks"],
-      ["Shift Differentials", yesNo(data.shift_differentials), "shift_differentials"],
-      ["HRIS", orNotProvided(data.hris_system), "hris_system"],
     ]),
     benefitsRows: finish([
+      ["Coverage Status", data.virgin_medical === null ? NOT_PROVIDED : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage", "virgin_medical"],
       ["Current Carrier", orNotProvided(data.current_carrier), "current_carrier"],
       ["Renewal Date", orNotProvided(data.renewal_date), "renewal_date"],
       ["Rate History", orNotProvided(data.rate_history), "rate_history"],
@@ -552,6 +538,14 @@ export function buildManuscript(
       ["Class Codes on Census", classCodes(data.census)],
     ]),
     operationsRows: finish([
+      ["Employee Handbook", yesNo(data.has_handbook), "has_handbook"],
+      ["Handbook Last Updated", orNotProvided(data.handbook_last_updated), "handbook_last_updated"],
+      ["In-house HR Staff", orNotProvided(data.hr_staff_count), "hr_staff_count"],
+      ["Physical Time Clocks", yesNo(data.uses_physical_clocks), "uses_physical_clocks"],
+      ["Mobile Timekeeping", yesNo(data.uses_mobile_app), "uses_mobile_app"],
+      ["Computer Timekeeping", yesNo(data.uses_computer_timekeeping), "uses_computer_timekeeping"],
+      ["Shift Differentials", yesNo(data.shift_differentials), "shift_differentials"],
+      ["HRIS", orNotProvided(data.hris_system), "hris_system"],
       ["Key Challenges", orNotProvided(data.key_challenges), "key_challenges"],
       ["Business Goals", orNotProvided(data.business_goals), "business_goals"],
     ]),
@@ -561,7 +555,7 @@ export function buildManuscript(
     resolved,
     checks,
     open: [
-      ...items,
+      ...intakeItems,
       ...unstatedItems,
       ...checks.filter((c) => c.status === "fail").map((c) => `${c.label} — not met`),
       ...checks.filter((c) => c.status === "unknown").map((c) => `${c.label} — not yet verified`),

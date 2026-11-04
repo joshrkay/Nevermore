@@ -47,7 +47,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090100_outbox_operations.sql
+\i supabase/migrations/20261027090001_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -57,7 +57,7 @@
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
-\i supabase/migrations/20261103110100_document_storage_path.sql
+\i supabase/migrations/20261103110001_document_storage_path.sql
 \i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
 \i supabase/migrations/20261103120100_intake_schema_v2_version.sql
 \i supabase/migrations/20261103120200_ai_extraction_events.sql
@@ -66,11 +66,20 @@
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
 \i supabase/migrations/20261104100000_certification_conflicts.sql
-\i supabase/migrations/20261104100100_required_items.sql
 \i supabase/migrations/20261104101000_transcript_validation.sql
 \i supabase/migrations/20261104102000_one_open_draft.sql
-\i supabase/migrations/20261104110000_submission_records.sql
-\i supabase/migrations/20261104110100_certification_verified_fields.sql
+\i supabase/migrations/20261104103000_required_items.sql
+\i supabase/migrations/20261104110000_pin_reviews_and_manuscripts_to_answers.sql
+\i supabase/migrations/20261104111000_pipeline_follows_the_prospect.sql
+\i supabase/migrations/20261104112000_certified_evidence.sql
+\i supabase/migrations/20261104113000_share_reviewed_manuscript.sql
+\i supabase/migrations/20261104114000_paged_advisor_queue.sql
+\i supabase/migrations/20261104115000_advisor_review_followups.sql
+\i supabase/migrations/20261104116000_intake_deletion_removes_document_history.sql
+\i supabase/migrations/20261104117000_certification_snapshots.sql
+\i supabase/migrations/20261104117100_alert_headcount_census.sql
+\i supabase/migrations/20261104118000_open_items.sql
+\i supabase/migrations/20261104120000_submission_records.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -284,7 +293,9 @@ BEGIN
   PERFORM public.review_submission_field(pa_cert, 'company_name', 'verified');
   SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = pa_cert;
   INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', pa_cert || '/v1-matrix.pdf');
-  PERFORM public.record_manuscript_version(pa_cert, 1, pa_cert || '/v1-matrix.pdf', repeat('c', 64), latest, 0, false);
+  PERFORM public.record_manuscript_version(pa_cert, 1, pa_cert || '/v1-matrix.pdf', repeat('c', 64), latest, 0, false,
+    (SELECT s.submission ->> 'data_sha256' FROM public.chamber_sessions s WHERE s.id = pa_cert),
+    (SELECT (s.submission ->> 'certified_at')::timestamptz FROM public.chamber_sessions s WHERE s.id = pa_cert));
 
   -- Monitoring: a guest's report, a signed-out visitor's, and a function's; and one alert.
   PERFORM pg_temp.become('guest_a');
@@ -336,7 +347,9 @@ INSERT INTO matrix VALUES
   ('public.chamber_certifications',                     '{"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all"}'),
   ('public.documents',                                  '{"guest_a":2,"guest_b":1,"prospect_a":1,"advisor":"all","admin":"all"}'),
   ('storage.objects WHERE bucket_id = ''documents''',   '{"guest_a":2,"guest_b":1,"prospect_a":1,"advisor":"all","admin":"all"}'),
-  ('storage.objects WHERE bucket_id = ''manuscripts''', '{"advisor":"all","admin":"all"}'),
+  -- A prospect reads one stored Manuscript: their final one (the latest version, built from their current
+  -- certification; prospect_final_manuscript). Every other file in the bucket is the advisors'.
+  ('storage.objects WHERE bucket_id = ''manuscripts''', '{"prospect_a":1,"advisor":"all","admin":"all"}'),
   ('storage.buckets',                                   '{}'),
   -- Everyone sees their own profile; the advisor's account behind a guest token is still that account.
   ('public.profiles',                                   '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all","advisor_as_guest":1}'),
@@ -348,6 +361,8 @@ INSERT INTO matrix VALUES
   ('public.advisor_field_reviews',                      '{"advisor":"all","admin":"all"}'),
   ('public.advisor_review_events',                      '{"advisor":"all","admin":"all"}'),
   ('public.manuscript_versions',                        '{"advisor":"all","admin":"all"}'),
+  -- Who added, removed, renamed or re-categorised each document, and when: the advisors' audit trail.
+  ('public.document_events',                            '{"advisor":"all","admin":"all"}'),
   ('public.intake_lifecycle_events',                    '{"advisor":"all","admin":"all"}'),
   ('public.intake_deletions',                           '{"advisor":"all","admin":"all"}'),
   -- Monitoring is the admin's: advisors don't need failure codes, routes or account ids.
@@ -490,7 +505,10 @@ BEGIN
       PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'documents', owner_id || '/' || sid || '/new.csv'), 'rows:1', t.owner || ' storing a file');
       PERFORM pg_temp.expect(format('INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path) VALUES (%L, %L, %L, %L, %L)',
         owner_id, sid, 'new.csv', '1 KB', owner_id || '/' || sid || '/new.csv'), 'rows:1', t.owner || ' adding a document');
-      PERFORM pg_temp.expect(format('DELETE FROM storage.objects WHERE name = %L', path), 'rows:1', t.owner || ' removing their own file');
+      -- A certified intake keeps the file it was certified with, for the advisor (20261104112000); removing the
+      -- document still succeeds for its owner. Any other file of theirs they can remove.
+      PERFORM pg_temp.expect(format('DELETE FROM storage.objects WHERE name = %L', path),
+        CASE WHEN t.intake = 'pa_cert' THEN 'rows:0' ELSE 'rows:1' END, t.owner || ' removing their own file');
       RESET ROLE;
     END;
   END LOOP;
@@ -586,13 +604,13 @@ INSERT INTO callable VALUES
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
-  ('intake_missing_required(d jsonb)',         'helper',  NULL, 'pure: required answers missing from the jsonb it is given (signed-in callers only since 20261104100100)'),
+  ('intake_missing_required(d jsonb)',         'helper',  NULL, 'the certification gate''s trigger calls it as the signed-in prospect; pure: required answers missing from the jsonb it is given'),
+  ('intake_answers_present(p_data jsonb)',     'helper',  NULL, 'pure: which answers the jsonb it is given holds; behind intake_missing_required and intake_required_items'),
+  ('intake_required_items(p_data jsonb, p_provenance jsonb, p_verified text[])', 'helper', NULL, 'pure: each required item''s state for the jsonb it is given; behind the advisor queue (B-2.2)'),
+  ('provenance_entry_status(p_entry jsonb)',   'helper',  NULL, 'pure: a stored provenance entry''s status, as the browser reads it'),
+  ('provenance_source_is_valid(p_source jsonb)', 'helper', NULL, 'pure: whether a provenance source is well formed'),
+  ('session_verified_fields(p_session_id uuid)', 'own',   NULL, 'the field names an advisor verified on the caller''s own intake (any intake, for advisors); empty for anyone else''s'),
   ('intake_conflicting_required(p jsonb)',     'anyone',  NULL, 'pure: required fields in conflict in the provenance it is given'),
-  ('intake_answers_present(p_data jsonb)',     'helper',  NULL, 'pure: which answers the jsonb it is given holds (the one presence rule)'),
-  ('intake_required_items(p_data jsonb, p_provenance jsonb, p_verified text[])', 'helper', NULL, 'pure: each required item and how settled it is, from its arguments alone'),
-  ('provenance_entry_status(p_entry jsonb)',   'helper',  NULL, 'pure: a field provenance entry''s status, read as the browser reads it'),
-  ('provenance_source_is_valid(p_source jsonb)', 'helper', NULL, 'pure: whether a field provenance source is well formed'),
-  ('session_verified_fields(p_session_id uuid)', 'own',   NULL, 'the names of the fields an advisor verified on the caller''s own intake; nothing for anyone else''s'),
   ('is_prospect_visible_status(s text)',       'anyone',  NULL, 'pure: whether a status name is shared with prospects'),
   ('is_reviewable_field(f text)',              'anyone',  NULL, 'pure: whether a field name can be reviewed'),
   ('ops_clean_code(p_code text)',              'anyone',  NULL, 'pure: cleans a failure code'),
@@ -601,6 +619,9 @@ INSERT INTO callable VALUES
   ('archive_chamber_session(p_session_id uuid)', 'own',   NULL, 'the prospect''s Start over; PT404 for anyone else''s intake'),
   ('record_intake_consent(p_version text, p_text text)', 'own', NULL, 'records the caller''s own agreement'),
   ('prospect_submission_status(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s shared status; null for anyone else''s'),
+  ('prospect_final_manuscript(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s final Manuscript (latest version, current certification); nothing for anyone else''s'),
+  ('is_own_final_manuscript(p_name text)',     'helper',  NULL, 'the manuscripts read policy calls it as the caller; true only for the file of the caller''s own final Manuscript'),
+  ('is_certified_evidence(p_name text)',       'helper',  NULL, 'the documents delete policy calls it as the caller; answers only about the caller''s own certified intakes'),
   ('consume_ai_quota(per_minute integer, per_day integer)', 'own', NULL, 'the AI functions call it with the caller''s token; spends only the caller''s own allowance (SR-6)'),
   ('current_intake_consent_id(p_user_id uuid)', 'helper', NULL, 'the consent triggers call it as the caller; row security limits it to the caller''s own agreement (all, for advisors)'),
   ('chamber_data_census_row_error(census_row jsonb, base text, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),
@@ -621,17 +642,17 @@ INSERT INTO callable VALUES
   ('ai_event_names_ok(names text[], paths boolean)', 'helper', NULL, 'pure: the AI call records'' check constraint'),
   ('intake_accepts_files(p_session text)',     'helper',  NULL, 'the upload policies call it as the uploader; answers only whether an intake exists with no deletion open (and holds the row against one)'),
   ('ops_alert_rules()',                        'helper',  NULL, 'constants: the alert thresholds'),
-  ('require_advisor()',                        'helper',  NULL, 'advisor_list_submissions runs as the caller and calls it; raises unless an advisor (SR-2)'),
-  ('advisor_list_submissions(p_status text)',  'advisor', 'SELECT count(*) FROM public.advisor_list_submissions(NULL)', 'the queue'),
+  ('advisor_list_submissions(p_status text, p_search text, p_limit integer, p_offset integer)', 'advisor',
+                                                                     'SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 25, 0)', 'the queue: one page, searched'),
   ('advisor_email_problems()',                 'advisor', 'SELECT count(*) FROM public.advisor_email_problems()', 'email problems on the queue'),
   ('advisor_list_outbox_events(p_status text, p_limit integer)', 'advisor', 'SELECT count(*) FROM public.advisor_list_outbox_events(NULL, 10)', 'the outbox page'),
   ('advisor_outbox_summary()',                 'advisor', 'SELECT count(*) FROM public.advisor_outbox_summary()', 'the outbox page'),
   ('advisor_requeue_outbox_event(event_id uuid, rebuild_payload boolean)', 'advisor', 'SELECT public.advisor_requeue_outbox_event(%2$L, false)', 'retrying a dead email'),
   ('set_submission_status(p_session_id uuid, p_status text, p_note text)', 'advisor', 'SELECT public.set_submission_status(%1$L, ''information_requested'', ''probe'')', 'the pipeline'),
-  ('review_submission_field(p_session_id uuid, p_field text, p_review_state text, p_correction text, p_value jsonb, p_reason text)', 'advisor',
+  ('review_submission_field(p_session_id uuid, p_field text, p_review_state text, p_correction text, p_value jsonb, p_reason text, p_answer jsonb)', 'advisor',
                                                                      'SELECT public.review_submission_field(%1$L, ''company_name'', ''flagged'')', 'field review'),
-  ('record_manuscript_version(p_session_id uuid, p_version integer, p_storage_path text, p_pdf_sha256 text, p_review_event_id bigint, p_corrections_applied integer, p_sensitive_revealed boolean)', 'advisor',
-                                                                     'SELECT public.record_manuscript_version(%1$L, 2, %1$L || ''/probe.pdf'', repeat(''d'', 64), 0, 0, false)', 'storing a Manuscript version'),
+  ('record_manuscript_version(p_session_id uuid, p_version integer, p_storage_path text, p_pdf_sha256 text, p_review_event_id bigint, p_corrections_applied integer, p_sensitive_revealed boolean, p_certified_data_hash text, p_certified_at timestamp with time zone)', 'advisor',
+                                                                     'SELECT public.record_manuscript_version(%1$L, 2, %1$L || ''/probe.pdf'', repeat(''d'', 64), 0, 0, false, NULL, NULL)', 'storing a Manuscript version'),
   ('retention_review_due(p_limit integer)',    'advisor', 'SELECT count(*) FROM public.retention_review_due(10)', 'submitted records due for review'),
   ('revoke_chamber_session(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.revoke_chamber_session(%2$L, ''probe'')', 'closing a draft for good'),
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
@@ -713,21 +734,29 @@ BEGIN
     PERFORM pg_temp.become(who);
     FOREACH t IN ARRAY ARRAY['advisor_notes', 'advisor_field_reviews', 'advisor_review_events', 'submission_workflow',
                              'submission_status_history', 'manuscript_versions', 'intake_lifecycle_events', 'outbox_events',
-                             'intake_deletions', 'ops_events', 'ai_extraction_events'] LOOP
+                             'intake_deletions', 'ops_events', 'ai_extraction_events', 'document_events'] LOOP
       IF pg_temp.visible(format('public.%I WHERE session_id = %L', t, sid)) <> 0 THEN
         RAISE EXCEPTION 'FAIL: % can read % about prospect A''s submission', who, t;
       END IF;
     END LOOP;
-    IF pg_temp.visible(format('storage.objects WHERE bucket_id = %L', 'manuscripts')) <> 0 THEN RAISE EXCEPTION 'FAIL: % can read a stored Manuscript', who; END IF;
+    -- Only their own final Manuscript's file, for the prospect whose submission it is.
+    IF pg_temp.visible(format('storage.objects WHERE bucket_id = %L AND name IS DISTINCT FROM %L', 'manuscripts',
+                              CASE WHEN who = 'prospect_a' THEN ms END)) <> 0 THEN
+      RAISE EXCEPTION 'FAIL: % can read a stored Manuscript that isn''t their final one', who;
+    END IF;
     PERFORM pg_temp.refused(format('INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES (%L, %L, %L)', sid, COALESCE(pa, adv), 'x'), who || ' adding an advisor note');
     PERFORM pg_temp.refused(format('INSERT INTO public.user_roles (user_id, role) VALUES (%L, %L)', pa, 'advisor'), who || ' granting a role');
     PERFORM pg_temp.refused(format('INSERT INTO public.ops_events (kind, source) VALUES (%L, %L)', 'app_error', 'forged'), who || ' writing an ops event directly');
     PERFORM pg_temp.refused(format('INSERT INTO public.intake_deletions (session_id, trigger, reason) VALUES (%L, %L, %L)', sid, 'request', 'x'), who || ' queueing a deletion directly');
     PERFORM pg_temp.refused(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'manuscripts', sid || '/forged.pdf'), who || ' storing a Manuscript');
   END LOOP;
-  -- What the prospect is meant to see: the shared status of their own submission.
+  -- What the prospect is meant to see: the shared status of their own submission, and its final Manuscript.
   PERFORM pg_temp.become('prospect_a');
   IF public.prospect_submission_status(sid) IS DISTINCT FROM 'under_review' THEN RAISE EXCEPTION 'FAIL: prospect A can''t see their own shared status'; END IF;
+  IF (SELECT f.storage_path FROM public.prospect_final_manuscript(sid) f) IS DISTINCT FROM ms
+     OR pg_temp.visible(format('storage.objects WHERE bucket_id = %L AND name = %L', 'manuscripts', ms)) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: prospect A can''t fetch their own final Manuscript';
+  END IF;
 
   -- Advisors: read the operational data they work with, nothing beyond it, and change nothing a prospect owns.
   FOREACH who IN ARRAY ARRAY['advisor', 'advisor_as_guest'] LOOP

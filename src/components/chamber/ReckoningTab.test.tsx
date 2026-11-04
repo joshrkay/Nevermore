@@ -248,7 +248,7 @@ describe("ReckoningTab certification", () => {
     );
     const callout = screen.getByRole("alert", { name: "Answers still needed" });
     expect(callout).toHaveTextContent("Company legal name");
-    expect(callout).toHaveTextContent("You've given two different answers. Choose the right one.");
+    expect(callout).toHaveTextContent("You've given two different answers.");
     expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Choose one answer for company legal name");
   });
 
@@ -333,31 +333,49 @@ describe("ReckoningTab certification", () => {
       // Only conflicts hold certification back for now; an unconfirmed item doesn't.
       company_name: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-03T12:00:00Z" },
     };
-    const mountWith = (verified?: ReadonlySet<string>) =>
+    const mount = (provenance: ProvenanceMap, data = DEMO_CHAMBER_DATA, verified?: ReadonlySet<string>) =>
       render(
         <MemoryRouter>
-          <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={conflicting} verified={verified} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+          <ReckoningTab data={data} provenance={provenance} verified={verified} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
         </MemoryRouter>,
       );
 
     it("won't submit until the prospect settles it, and says which one", () => {
-      mountWith();
+      mount(conflicting);
       checkAll();
       fillSigner();
       sign();
       expect(submitButton()).toBeDisabled();
-      expect(screen.getByTestId("certification-blockers")).toHaveTextContent(
-        "Before you can submit: Choose one answer for pay frequency",
-      );
+      expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for pay frequency");
     });
 
-    it("lets it through once an advisor has verified the field", () => {
-      mountWith(new Set(["pay_frequency"]));
+    // States of operation that only the census gives: the database lets it through, the browser asks first (B-2.2).
+    it("names the census when its conflict is what gives the states of operation", () => {
+      const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+      mount({ census: { ...conflicting.pay_frequency!, candidates: [] } }, { ...DEMO_CHAMBER_DATA, states: [], census });
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeDisabled();
+      expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for employee census");
+      expect(screen.getByRole("alert", { name: "Answers still needed" })).toHaveTextContent("Its answers conflict, and it gives your states.");
+    });
+
+    it("still holds back a field in conflict that an advisor verified, as the database refuses it", () => {
+      mount(conflicting, DEMO_CHAMBER_DATA, new Set(["pay_frequency"]));
+      checkAll();
+      fillSigner();
+      sign();
+      expect(submitButton()).toBeDisabled();
+    });
+
+    it("lets the census's states through once an advisor verified the census", () => {
+      const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+      mount({ census: { ...conflicting.pay_frequency!, candidates: [] } }, { ...DEMO_CHAMBER_DATA, states: [], census }, new Set(["census"]));
       checkAll();
       fillSigner();
       sign();
       expect(submitButton()).toBeEnabled();
-      expect(screen.queryByTestId("certification-blockers")).not.toBeInTheDocument();
     });
   });
 });

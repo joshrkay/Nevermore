@@ -605,7 +605,7 @@
       "x-intake": {
         "label": "Employee census",
         "section": "census",
-        "required": true,
+        "required": false,
         "rank": 4
       }
     }
