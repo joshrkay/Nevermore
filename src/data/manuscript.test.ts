@@ -16,6 +16,7 @@ import {
   NOT_APPLICABLE,
   wcSystem,
   type ChamberSubmission,
+  rowProvenance,
 } from "./manuscript";
 
 const emp = (overrides: Partial<CensusEmployee> = {}): CensusEmployee => ({
@@ -547,5 +548,25 @@ describe("buildManuscript never passes a census default off as an answer", () =>
     // A family tier from a census names nobody, so the count is unknown, not zero.
     expect(total([emp({ id: "a", coverage_tier: "FAM" })])).toBe("Not provided");
     expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, census: [emp({ coverage_tier: "WAIVE" })] }, opts).dependentTiers.map((t) => t.tier)).not.toContain("Not provided");
+  });
+});
+
+describe("rowProvenance on the census-derived rows", () => {
+  const at = "2026-05-01T00:00:00Z";
+  const said = { kind: "transcript" as const, message_id: "m1" };
+  const conflicting = { status: "conflicting" as const, source: { kind: "document" as const, document_id: "d1" }, updated_at: at, candidates: [] };
+  const row = (m: ReturnType<typeof buildManuscript>, label: string) => m.workforceRows.find((r) => r[0] === label)!;
+
+  it("marks the counts taken from a census whose answers conflict, and nothing else, through finish()", () => {
+    const data = { ...EMPTY_CHAMBER_DATA, employee_count: 40, census: [emp({ classification: "w2" }), emp({ id: "c", classification: "1099" })] };
+    const m = buildManuscript(data, { fileId: "EAA-1", provenance: { census: conflicting, employee_count: { status: "inferred", source: said, updated_at: at } } });
+    for (const label of ["W-2 Employees on Census", "1099 Contractors on Census"]) {
+      expect(row(m, label)[3]).toEqual(["census"]);
+      expect(rowProvenance(row(m, label), m.provenance)).toBe(m.provenance.census);
+    }
+    expect(rowProvenance(row(m, "Reported Headcount"), m.provenance)?.status).toBe("inferred");
+    // Settled once an advisor verified the census: the row has no field of its own, and no conflict left to show.
+    const settled = buildManuscript(data, { fileId: "EAA-1", provenance: { census: conflicting }, verified: new Set(["census"]) });
+    expect(rowProvenance(row(settled, "W-2 Employees on Census"), settled.provenance)).toBeUndefined();
   });
 });

@@ -402,8 +402,12 @@ export function buildManuscript(
   const provenance = opts.provenance ?? {};
   const verified = opts.verified ?? NO_VERIFIED;
   // An answer the prospect marked as not applying shows that, whatever the row would have said.
+  // The fields a value is also built from stay with it, so a conflict in one of them still marks the row.
   const finish = (rows: ManuscriptRow[]): ManuscriptRow[] =>
-    rows.map(([label, value, field]) => [label, field && provenance[field]?.status === "not_applicable" ? NOT_APPLICABLE : value, field]);
+    rows.map(([label, value, field, alsoFrom]) => {
+      const shown = field && provenance[field]?.status === "not_applicable" ? NOT_APPLICABLE : value;
+      return alsoFrom ? [label, shown, field, alsoFrom] : [label, shown, field];
+    });
 
   // Everyone but a stated 1099 contractor is counted for coverage; whose classification is only the
   // default is reported as not provided rather than as W-2.
