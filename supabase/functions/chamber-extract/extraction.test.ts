@@ -175,12 +175,11 @@ describe("extraction tool schema", () => {
 
   // A field the tool asks for with no definition leaves the model to guess what it means.
   it("defines every field it asks for in the system prompt", () => {
-    const defined = new Set([...SYSTEM_PROMPT.matchAll(/^- (\w+) \([^)]*\): \S/gm)].map((m) => m[1]));
+    const defined = new Set([...SYSTEM_PROMPT.matchAll(/^- (\w+) \([^)]+\): \S/gm)].map((m) => m[1]));
     expect(FIELDS.filter((field) => !defined.has(field))).toEqual([]);
   });
 
-  // Each line reads "- key (Label): what it means".
-  const definition = (field: string) => SYSTEM_PROMPT.match(new RegExp(`^- ${field} \\([^)]*\\): (.*)$`, "m"))?.[1] ?? "";
+  const definition = (field: string) => FIELD_GUIDE[field] ?? "";
 
   // The workspace labels has_401k "Retirement plan", and shows the plan type and match only while it is true.
   it("defines has_401k as any retirement plan, not only a 401(k)", () => {

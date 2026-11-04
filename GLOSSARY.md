@@ -44,11 +44,11 @@ _Avoid_: census row, worker, member
 A spouse, domestic partner, child or other person covered through an employee in the census.
 
 **Required field**:
-A field an intake needs before it is ready to certify: company legal name, states of operation, pay frequency and the census.
+A field an intake needs before it is ready to certify: company legal name, states of operation and pay frequency. The census is a recommended field.
 _Avoid_: core item, required for submission, mandatory field
 
 **Recommended field**:
-A field that is not required but strengthens the Manuscript. Each has a rank, and Lenore asks about them in rank order after the required fields.
+A field that is not required but strengthens the Manuscript. Each has a rank, and Lenore asks about them in rank order after the required fields, the census first.
 _Avoid_: optional field, nice-to-have, priority field
 
 **Ready to certify**:
@@ -56,7 +56,7 @@ An intake is ready to certify when every required field is settled. Lenore says 
 _Avoid_: ready for review, complete, done, discovery complete
 
 **Open item**:
-Something the prospect still owes on a field: a required field with no answer, or any field that is inferred, incomplete, conflicting or unknown. A recommended field with no answer is not an open item.
+Something the prospect still owes on a field: a required field with no answer, or any field that is inferred, incomplete, conflicting or unknown. A recommended field with no answer is not an open item, except the census: a missing census is listed as an open item, under Recommended, and never blocks.
 _Avoid_: gap, missing item, to-do, issue
 
 **Eligibility check**:

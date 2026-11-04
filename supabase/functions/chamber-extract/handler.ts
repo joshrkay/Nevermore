@@ -18,7 +18,7 @@ import { FIELD_STATUSES as CONTEXT_STATUSES } from "../_shared/followUp.ts";
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactSensitive } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
-import { buildUserPrompt, NEXT_FIELDS, serializeTurn } from "./prompt.ts";
+import { buildUserPrompt, nextFields, userTurnLength, userTurnParts } from "./prompt.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
@@ -32,7 +32,8 @@ const corsHeaders = {
 // everything the browser sends besides the message: the answers, their field statuses and the recent
 // conversation (D22).
 export const MAX_MESSAGE_CHARS = 2000;
-export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES, NEXT_FIELDS };
+export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES };
+export { NEXT_FIELDS } from "./prompt.ts";
 
 const SCHEMA_KEYS = new Set(Object.keys(INTAKE_SCHEMA.properties as object));
 
@@ -166,9 +167,8 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     const recent = readRecent(rawRecent);
     if (!recent.ok) return await fail(aiError("bad_request", { message: recent.message }));
     // The same serialisation is measured here and sent to the model (prompt.ts, shared with the eval).
-    const turn = { context, statuses: statuses.statuses, recent: recent.messages };
-    const { contextJson, statusesJson, recentJson } = serializeTurn(turn);
-    if (contextJson.length + statusesJson.length + recentJson.length > MAX_CONTEXT_CHARS) {
+    const parts = userTurnParts(context, statuses.statuses, recent.messages);
+    if (userTurnLength(parts) > MAX_CONTEXT_CHARS) {
       return await fail(aiError("bad_request", { status: 413, message: "context too large" }));
     }
     // Optional for now, so a tab still running the previous front end keeps working; when given, it
@@ -208,9 +208,10 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (!budget.allowed) return await fail(aiError(budget.code, { status: budget.status, message: budget.error }));
 
     // 5. Ask the model, with the user turn built as the extraction eval builds it (prompt.ts).
+    const next = nextFields(isObject(context) ? context : {}, statuses.statuses);
     const result = await callModel(
       chosen.adapter,
-      { system: SYSTEM_PROMPT, user: buildUserPrompt({ message, ...turn }) },
+      { system: SYSTEM_PROMPT, user: buildUserPrompt(message, parts, next) },
       { fetch: deps.fetch, sleep: deps.sleep, now: deps.now },
     );
     event.attempts = result.attempts;

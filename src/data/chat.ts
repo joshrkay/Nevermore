@@ -1,4 +1,4 @@
-import { chatContext as requestContext, type ChatContext } from "../../supabase/functions/_shared/chatContext.ts";
+import { chatContext, type ChatContext } from "../../supabase/functions/_shared/chatContext.ts";
 import type { ChamberData } from "./chamberTypes";
 import type { ProvenanceMap } from "./provenance";
 import { redactSensitive } from "./sensitive";
@@ -124,12 +124,20 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
 export const CHAT_FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?";
 
 /**
- * The answers as Lenore's chat sends them to chamber-extract. The roster isn't extracted from chat and holds
- * personal details, so it is left out.
+ * What Lenore's chat sends chamber-extract besides the message (D22): the answers, each field's status and
+ * the last few messages (_shared/chatContext.ts sizes them). The roster isn't extracted from chat and holds
+ * personal details, so it is left out. `exceptId` is the message being sent, which travels on its own. One
+ * copy: useLenoreChat sends it and scripts/extraction-eval replays it.
  */
-export function chatAnswers(data: ChamberData): Omit<ChamberData, "census"> {
-  const { census: _census, ...context } = data;
-  return context;
+export function chatRequest(
+  data: ChamberData,
+  provenance: ProvenanceMap,
+  messages: readonly { id?: string; sender: string; text: string }[],
+  exceptId?: string,
+): ChatContext {
+  const { census: _census, ...answers } = data;
+  const statuses = Object.fromEntries(Object.entries(provenance).flatMap(([field, p]) => (p ? [[field, p.status]] : [])));
+  return chatContext(answers, statuses, messages, exceptId);
 }
 
 /**

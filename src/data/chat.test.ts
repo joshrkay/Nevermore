@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import {
-  chatAnswers,
-  chatRequestBody,
+  chatRequest,
   createChatMessage,
   dedupeGreetings,
   formatMessageTime,
@@ -95,12 +94,25 @@ describe("sensitive numbers in the transcript", () => {
   });
 });
 
-describe("chatAnswers", () => {
-  it("is the intake without the roster, which chat never extracts and which holds personal details", () => {
-    const context = chatAnswers({ ...EMPTY_CHAMBER_DATA, company_name: "Acme" });
+describe("chatRequest", () => {
+  const at = "2026-05-01T00:00:00Z";
+  it("sends the intake without the roster, which chat never extracts and which holds personal details", () => {
+    const { context } = chatRequest({ ...EMPTY_CHAMBER_DATA, company_name: "Acme" }, {}, []);
     expect(context).not.toHaveProperty("census");
     expect(Object.keys(context)).toEqual(Object.keys(EMPTY_CHAMBER_DATA).filter((k) => k !== "census"));
     expect(context.company_name).toBe("Acme");
+  });
+
+  it("sends each captured field's status and the recent conversation, not the message being sent", () => {
+    const sent = createChatMessage("user", "We're Acme");
+    const request = chatRequest(
+      { ...EMPTY_CHAMBER_DATA, company_name: "Acme" },
+      { company_name: { status: "inferred", source: { kind: "transcript", message_id: sent.id }, updated_at: at } },
+      [createChatMessage("lenore", "Who are you?"), sent],
+      sent.id,
+    );
+    expect(request.statuses).toEqual({ company_name: "inferred" });
+    expect(request.recent).toEqual([{ sender: "lenore", text: "Who are you?" }]);
   });
 });
 

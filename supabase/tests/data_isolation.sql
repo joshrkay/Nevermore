@@ -69,13 +69,6 @@
 \i supabase/migrations/20261104101000_transcript_validation.sql
 \i supabase/migrations/20261104102000_one_open_draft.sql
 \i supabase/migrations/20261104103000_required_items.sql
-\i supabase/migrations/20261104110000_pin_reviews_and_manuscripts_to_answers.sql
-\i supabase/migrations/20261104111000_pipeline_follows_the_prospect.sql
-\i supabase/migrations/20261104112000_certified_evidence.sql
-\i supabase/migrations/20261104113000_share_reviewed_manuscript.sql
-\i supabase/migrations/20261104114000_paged_advisor_queue.sql
-\i supabase/migrations/20261104115000_advisor_review_followups.sql
-\i supabase/migrations/20261104116000_intake_deletion_removes_document_history.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -599,12 +592,12 @@ INSERT INTO callable VALUES
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
   ('intake_missing_required(d jsonb)',         'helper',  NULL, 'the certification gate''s trigger calls it as the signed-in prospect; pure: required answers missing from the jsonb it is given'),
+  ('intake_conflicting_required(p jsonb)',     'anyone',  NULL, 'pure: required fields in conflict in the provenance it is given'),
   ('intake_answers_present(p_data jsonb)',     'helper',  NULL, 'pure: which answers the jsonb it is given holds; behind intake_missing_required and intake_required_items'),
   ('intake_required_items(p_data jsonb, p_provenance jsonb, p_verified text[])', 'helper', NULL, 'pure: each required item''s state for the jsonb it is given; behind the advisor queue (B-2.2)'),
   ('provenance_entry_status(p_entry jsonb)',   'helper',  NULL, 'pure: a stored provenance entry''s status, as the browser reads it'),
   ('provenance_source_is_valid(p_source jsonb)', 'helper', NULL, 'pure: whether a provenance source is well formed'),
   ('session_verified_fields(p_session_id uuid)', 'own',   NULL, 'the field names an advisor verified on the caller''s own intake (any intake, for advisors); empty for anyone else''s'),
-  ('intake_conflicting_required(p jsonb)',     'anyone',  NULL, 'pure: required fields in conflict in the provenance it is given'),
   ('is_prospect_visible_status(s text)',       'anyone',  NULL, 'pure: whether a status name is shared with prospects'),
   ('is_reviewable_field(f text)',              'anyone',  NULL, 'pure: whether a field name can be reviewed'),
   ('ops_clean_code(p_code text)',              'anyone',  NULL, 'pure: cleans a failure code'),
