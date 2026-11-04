@@ -1,5 +1,5 @@
 import jsPDF from "jspdf";
-import { foldLatin, manuscriptFilename, maskDob, NOT_PROVIDED, type Manuscript } from "@/data/manuscript";
+import { foldLatin, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
 
 export interface ManuscriptPdfOptions {
   /** Show dates of birth in full. Off unless an authorized workflow turns it on. */
@@ -188,13 +188,19 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     y += 3;
   };
 
-  const keyValues = (rows: [string, string, ...unknown[]][]) =>
+  // A value whose answers conflict says so wherever the web Manuscript shows its red chip; a reader of
+  // the printed packet would otherwise take it as settled. A field an advisor verified is settled
+  // (buildManuscript shows it confirmed), so it is never marked.
+  const keyValues = (rows: ManuscriptRow[]) =>
     table(
       [
         { header: "", width: 58 },
         { header: "", width: CONTENT_W - 58 },
       ],
-      rows.map(([label, value]) => [label, value]),
+      rows.map((row) => [
+        row[0],
+        rowProvenance(row, m.provenance)?.status === "conflicting" ? `${row[1]} (unresolved — see open items)` : row[1],
+      ]),
       { header: false },
     );
 

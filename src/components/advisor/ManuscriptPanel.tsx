@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { applyAdvisorReview, isCurrentVersion, isStaleRefusal } from "@/data/advisor";
+import { applyAdvisorReview, isCurrentVersion, isStaleRefusal, verifiedFieldsOf } from "@/data/advisor";
 import { buildManuscript, manuscriptFilename } from "@/data/manuscript";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
@@ -36,6 +36,7 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
         fileId: detail.fileId,
         submission: detail.submission,
         provenance: packet.provenance,
+        verified: verifiedFieldsOf(detail.reviews),
         advisor: { version, corrections: packet.corrections, followUps: packet.followUps },
       });
       const pdf = buildManuscriptPdf(manuscript, { revealSensitive });

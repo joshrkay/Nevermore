@@ -97,12 +97,24 @@ INSERT INTO public.chamber_sessions (id, user_id) VALUES ('00000000-0000-0000-00
 \i supabase/migrations/20261024100000_advisor_queue.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
 \i supabase/migrations/20261029091000_census_advisor_review.sql
-\i supabase/migrations/20261104100000_pin_reviews_and_manuscripts_to_answers.sql
-\i supabase/migrations/20261104101000_pipeline_follows_the_prospect.sql
-\i supabase/migrations/20261104102000_certified_evidence.sql
-\i supabase/migrations/20261104103000_share_reviewed_manuscript.sql
-\i supabase/migrations/20261104104000_paged_advisor_queue.sql
-\i supabase/migrations/20261104105000_advisor_review_followups.sql
+-- The queue's missing items now come from public.intake_required_items (the required ones: the census is
+-- recommended, so it is never listed). It reads state codes through is_us_state_code, as 20261027090000
+-- defines it; that migration validates intakes, which would refuse this file's seed data, so the function
+-- alone is copied here.
+CREATE FUNCTION public.is_us_state_code(code text) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+  SELECT coalesce(code = ANY (ARRAY[
+    'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD',
+    'MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC',
+    'SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC','AS','GU','MP','PR','VI'
+  ]), false);
+$$;
+\i supabase/migrations/20261104103000_required_items.sql
+\i supabase/migrations/20261104110000_pin_reviews_and_manuscripts_to_answers.sql
+\i supabase/migrations/20261104111000_pipeline_follows_the_prospect.sql
+\i supabase/migrations/20261104112000_certified_evidence.sql
+\i supabase/migrations/20261104113000_share_reviewed_manuscript.sql
+\i supabase/migrations/20261104114000_paged_advisor_queue.sql
+\i supabase/migrations/20261104115000_advisor_review_followups.sql
 
 -- Runs `stmt` as `who` and fails the run unless it's refused (permission, row security or a
 -- deliberate check).
@@ -232,7 +244,10 @@ BEGIN
     RAISE EXCEPTION 'FAIL: list row reference/footprint was % / %', r.file_id, r.states;
   END IF;
   SELECT * INTO r FROM public.advisor_list_submissions() WHERE session_id = '00000000-0000-0000-0000-0000000000aa';
-  IF cardinality(r.missing_required) <> 4 OR r.submitted_at IS NOT NULL THEN RAISE EXCEPTION 'FAIL: empty draft row was %', r; END IF;
+  -- The three required answers; the census is recommended, never listed as missing.
+  IF r.missing_required IS DISTINCT FROM ARRAY['Company legal name', 'States of operation', 'Pay frequency'] OR r.submitted_at IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: empty draft row was %', r;
+  END IF;
   IF r.file_id IS NOT NULL OR cardinality(r.states) <> 0 THEN RAISE EXCEPTION 'FAIL: empty draft had a reference or states: %', r; END IF;
   SELECT count(*) INTO n FROM public.advisor_list_submissions('submitted');
   IF n <> 1 THEN RAISE EXCEPTION 'FAIL: status filter returned % rows', n; END IF;
@@ -807,7 +822,9 @@ BEGIN
     RAISE EXCEPTION 'FAIL: a census was reported missing: %', r.missing_required;
   END IF;
   SELECT * INTO r FROM public.advisor_list_submissions() l WHERE l.session_id = '00000000-0000-0000-0000-0000000000ee';
-  IF r.states IS DISTINCT FROM ARRAY[]::text[] OR NOT 'Employee census' = ANY (r.missing_required) THEN
+  -- The stale roster's state doesn't count, and a missing census is never listed (it is recommended).
+  IF r.states IS DISTINCT FROM ARRAY[]::text[] OR NOT 'States of operation' = ANY (r.missing_required)
+     OR 'Employee census' = ANY (r.missing_required) THEN
     RAISE EXCEPTION 'FAIL: an empty census was read past: % %', r.states, r.missing_required;
   END IF;
 
@@ -1236,7 +1253,7 @@ BEGIN
 END $$;
 
 -- ====================================================================================
--- Follow-ups (20261104105000): intakes certified before certification rows existed, an intake
+-- Follow-ups (20261104115000): intakes certified before certification rows existed, an intake
 -- created already certified, history read in the order it was written, and Manuscript versions
 -- recorded before certified_at.
 -- ====================================================================================

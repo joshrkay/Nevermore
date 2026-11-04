@@ -12,7 +12,7 @@
 
 ALTER TABLE public.manuscript_versions ADD COLUMN certified_at timestamptz;
 
--- Unchanged from 20261104100000_pin_reviews_and_manuscripts_to_answers.sql except that the version
+-- Unchanged from 20261104110000_pin_reviews_and_manuscripts_to_answers.sql except that the version
 -- records certified_at.
 CREATE OR REPLACE FUNCTION public.record_manuscript_version(
   p_session_id uuid,

@@ -1,7 +1,12 @@
 import { formatMessageTime, type ChatMessage } from "@/data/chat";
 import { messageAnchor } from "./format";
 
-/** The full conversation, with the message a field came from highlighted. */
+const SPEAKER: Record<ChatMessage["sender"], string> = { user: "Prospect", lenore: "Lenore", system: "System" };
+
+/**
+ * The full conversation in the order it happened, with the message a field came from highlighted. Each message
+ * says who it is from, whether it was spoken in a voice call, and when (with the date, where it was saved).
+ */
 const TranscriptEvidence = ({
   messages,
   highlighted,

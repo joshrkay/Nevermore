@@ -423,6 +423,10 @@ export type Database = {
         Args: { _role: Database["public"]["Enums"]["app_role"] }
         Returns: boolean
       }
+      intake_required_items: {
+        Args: { p_data: Json; p_provenance: Json; p_verified: string[] }
+        Returns: Json
+      }
       is_advisor: {
         Args: Record<PropertyKey, never>
         Returns: boolean
@@ -488,6 +492,10 @@ export type Database = {
       revoke_chamber_session: {
         Args: { p_reason: string; p_session_id: string }
         Returns: string
+      }
+      session_verified_fields: {
+        Args: { p_session_id: string }
+        Returns: string[]
       }
       set_submission_status: {
         Args: { p_note?: string | null; p_session_id: string; p_status: string }

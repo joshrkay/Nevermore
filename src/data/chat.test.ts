@@ -92,6 +92,15 @@ describe("sensitive numbers in the transcript", () => {
   });
 });
 
+describe("chatContext", () => {
+  it("is the intake without the roster, which chat never extracts and which holds personal details", () => {
+    const context = chatContext({ ...EMPTY_CHAMBER_DATA, company_name: "Acme" });
+    expect(context).not.toHaveProperty("census");
+    expect(Object.keys(context)).toEqual(Object.keys(EMPTY_CHAMBER_DATA).filter((k) => k !== "census"));
+    expect(context.company_name).toBe("Acme");
+  });
+});
+
 describe("greetings", () => {
   const hello = (text = "Hi, I'm Lenore.") => createChatMessage("lenore", text, { kind: "greeting" });
   const said = (text: string) => createChatMessage("user", text);

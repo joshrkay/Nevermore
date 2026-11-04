@@ -90,6 +90,13 @@ describe("anthropic adapter", () => {
   it("rejects a tool_use whose input isn't an object", () => {
     expect(() => adapter.parseResponse({ content: [{ type: "tool_use", name: "report_things", input: "oops" }] })).toThrow();
   });
+
+  // Reading what a cut-off reply holds would keep some answers and silently lose the rest.
+  it("rejects a reply cut off at its token cap, even one with a tool_use block in it", () => {
+    const toolUse = { type: "tool_use", name: "report_things", input: { thing: "Acme" } };
+    expect(() => adapter.parseResponse({ stop_reason: "max_tokens", content: [toolUse] })).toThrow();
+    expect(adapter.parseResponse({ stop_reason: "tool_use", content: [toolUse] })).toEqual({ thing: "Acme" });
+  });
 });
 
 describe("selectAdapter", () => {

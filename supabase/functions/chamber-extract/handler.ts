@@ -18,7 +18,8 @@ import { FIELD_STATUSES as CONTEXT_STATUSES, unsettledFields } from "../_shared/
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactSensitive } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
-import { EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
+import { buildUserPrompt, serializeContext } from "./prompt.ts";
+import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -180,7 +181,8 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     }
 
     // 2. The provider must be set up.
-    const chosen = selectAdapter(deps.env, EXTRACT_TOOL);
+    // A full answer for every field needs more than a provider's default reply budget (B-1.1).
+    const chosen = selectAdapter(deps.env, EXTRACT_TOOL, { maxTokens: CHAT_MAX_TOKENS });
     if (!chosen.ok) {
       deps.logError(`AI_CONFIG_MISSING: ${chosen.problem}`);
       return await fail(aiError("unavailable"));
@@ -220,7 +222,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     ].join("\n\n");
     const result = await callModel(
       chosen.adapter,
-      { system: SYSTEM_PROMPT, user: userPrompt },
+      { system: SYSTEM_PROMPT, user: buildUserPrompt(message, contextJson) },
       { fetch: deps.fetch, sleep: deps.sleep, now: deps.now },
     );
     event.attempts = result.attempts;

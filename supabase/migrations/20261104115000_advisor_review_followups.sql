@@ -1,4 +1,4 @@
--- Follow-ups from the review of 20261104101000-20261104104000.
+-- Follow-ups from the review of 20261104111000-20261104114000.
 --
 --   * "Certified at least once" no longer means only "has a chamber_certifications row": intakes
 --     certified before that table existed have none, and were left archive-only, with a re-certification
@@ -26,7 +26,7 @@ $$;
 
 REVOKE ALL ON FUNCTION public.intake_ever_certified(uuid) FROM PUBLIC, anon, authenticated;
 
--- Unchanged from 20261104101000_pipeline_follows_the_prospect.sql except the INSERT note and the test
+-- Unchanged from 20261104111000_pipeline_follows_the_prospect.sql except the INSERT note and the test
 -- for a first certification.
 CREATE OR REPLACE FUNCTION public.sync_submission_workflow()
 RETURNS TRIGGER
@@ -100,7 +100,7 @@ $$;
 
 REVOKE ALL ON FUNCTION public.sync_submission_workflow() FROM PUBLIC, anon, authenticated;
 
--- Unchanged from 20261104101000_pipeline_follows_the_prospect.sql except the certified-once test.
+-- Unchanged from 20261104111000_pipeline_follows_the_prospect.sql except the certified-once test.
 CREATE OR REPLACE FUNCTION public.set_submission_status(p_session_id uuid, p_status text, p_note text DEFAULT NULL)
 RETURNS public.submission_workflow
 LANGUAGE plpgsql
@@ -150,7 +150,7 @@ GRANT EXECUTE ON FUNCTION public.set_submission_status(uuid, text, text) TO auth
 
 -- ---------- What the prospect is told: in the order it was written ----------
 
--- Unchanged from 20261104101000_pipeline_follows_the_prospect.sql except the order. changed_at is the
+-- Unchanged from 20261104111000_pipeline_follows_the_prospect.sql except the order. changed_at is the
 -- writing transaction's start, so a row written later (a certification that waited on an advisor's
 -- change) can carry an earlier time; ids follow the order rows were written.
 CREATE OR REPLACE FUNCTION public.prospect_submission_status(p_session_id uuid)
@@ -180,7 +180,7 @@ GRANT EXECUTE ON FUNCTION public.prospect_submission_status(uuid) TO authenticat
 
 -- ---------- Versions recorded before certified_at ----------
 
--- Unchanged from 20261104103000_share_reviewed_manuscript.sql except that a version with no
+-- Unchanged from 20261104113000_share_reviewed_manuscript.sql except that a version with no
 -- certified_at (recorded before that column) is current when its data hash and signing time match.
 CREATE OR REPLACE FUNCTION public.prospect_final_manuscript(p_session_id uuid)
 RETURNS TABLE (version integer, storage_path text, generated_at timestamptz, corrections_applied integer)
@@ -208,7 +208,7 @@ GRANT EXECUTE ON FUNCTION public.prospect_final_manuscript(uuid) TO authenticate
 
 ALTER TABLE public.document_events ADD COLUMN storage_path text;
 
--- Unchanged from 20261104102000_certified_evidence.sql except that every event records the document's
+-- Unchanged from 20261104112000_certified_evidence.sql except that every event records the document's
 -- stored file, and that deleting an intake writes none.
 CREATE OR REPLACE FUNCTION public.record_document_event()
 RETURNS TRIGGER

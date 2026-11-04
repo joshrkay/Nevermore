@@ -4,14 +4,17 @@
 --   * A certified intake is described from its certified copy (submission.chamber_data and
 --     submission.field_provenance), the same copy the detail page shows and the Manuscript is built
 --     from. A save after certifying that changes only provenance no longer changes the queue.
---   * Completeness counts what the advisor can act on: a required item the advisor supplied through a
---     verified correction is not missing, only fields an advisor can review count as unconfirmed, and
---     the census matches a review whichever name (census, or the older employees) either side uses.
+--   * Completeness counts what the advisor can act on: missing_required is the required items
+--     public.intake_required_items reports missing (20261104103000; the recommended census is never
+--     listed), less any the advisor supplied through a verified correction; only fields an advisor can
+--     review count as unconfirmed, and the census matches a review whichever name (census, or the older
+--     employees) either side uses.
 --   * Search (company, contact, reference; every word must match) and paging (p_limit, p_offset, with
 --     the total in every row) run here, so the page loads 25 rows, not every intake ever started.
 --   * The function reads as its owner after its advisor check, so row security isn't evaluated row by
 --     row (is_advisor() per row was most of its cost on a large table).
 
+-- Replaces the one-argument queue (last defined in 20261104103000_required_items.sql).
 DROP FUNCTION IF EXISTS public.advisor_list_submissions(text);
 
 CREATE FUNCTION public.advisor_list_submissions(
@@ -137,22 +140,16 @@ BEGIN
     m.certified_at,
     m.created_at,
     m.updated_at,
-    -- The required items the advisor's Manuscript would list as missing: the prospect's value, or a
-    -- verified advisor correction that supplies one. (The census can't be corrected.)
-    array_remove(ARRAY[
-      CASE WHEN COALESCE(btrim(m.d ->> 'company_name'), '') = ''
-             AND NOT public.advisor_supplied(m.id, 'company_name') THEN 'Company legal name' END,
-      CASE WHEN NOT EXISTS (
-        SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(m.d -> 'states') = 'array' THEN m.d -> 'states' ELSE '[]'::jsonb END) st
-        WHERE btrim(st) <> ''
-      ) AND NOT EXISTS (
-        SELECT 1 FROM jsonb_array_elements(m.roster) e
-        WHERE COALESCE(btrim(COALESCE(e ->> 'work_state', e ->> 'state')), '') <> ''
-      ) AND NOT public.advisor_supplied(m.id, 'states') THEN 'States of operation' END,
-      CASE WHEN COALESCE(btrim(m.d ->> 'pay_frequency'), '') = ''
-             AND NOT public.advisor_supplied(m.id, 'pay_frequency') THEN 'Pay frequency' END,
-      CASE WHEN jsonb_array_length(m.roster) = 0 THEN 'Employee census' END
-    ], NULL),
+    -- The required items still missing, in order (public.intake_required_items, 20261104103000: the
+    -- recommended census is never one), less any the advisor supplied through a verified correction with
+    -- a value, which the advisor's Manuscript shows. A verification alone supplies nothing.
+    ARRAY(
+      SELECT ri.item ->> 'label'
+      FROM jsonb_array_elements(public.intake_required_items(m.d, m.fp, '{}'::text[])) WITH ORDINALITY AS ri(item, ord)
+      WHERE ri.item ->> 'state' = 'missing' AND (ri.item ->> 'required')::boolean
+        AND NOT public.advisor_supplied(m.id, ri.item ->> 'field')
+      ORDER BY ri.ord
+    ),
     -- Reviewable fields still inferred, incomplete or conflicting that no advisor has verified. The
     -- census matches a review under either of its names.
     (SELECT count(*)::integer

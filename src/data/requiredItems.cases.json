@@ -1,0 +1,399 @@
+{
+  "about": "Required items (B-2.2 on US-1.2, decision D2): each case is a stored intake (chamber_data, field_provenance, the fields an advisor verified) and the state of each item, keyed by its field: the three required answers and the recommended census. public.intake_required_items reads the stored values as they are (supabase/tests/required_items.sql, which also checks that the certification gate, intake_missing_required, refuses for exactly the required items reported missing); src/data/requiredItems.ts reads them as the browser loads them (src/data/requiredItems.test.ts). Both must give these states.",
+  "cases": [
+    {
+      "name": "an empty intake is missing every item",
+      "data": {},
+      "provenance": {},
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "missing", "census": "missing" }
+    },
+    {
+      "name": "values with no provenance were typed by the prospect, so they are settled",
+      "data": {
+        "company_name": "Acme Robotics",
+        "states": ["CA", "TX"],
+        "pay_frequency": "Bi-weekly",
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "CA", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {},
+      "verified": [],
+      "expected": { "company_name": "settled", "states": "settled", "pay_frequency": "settled", "census": "settled" }
+    },
+    {
+      "name": "confirmed fields are settled, whoever confirmed them",
+      "data": {
+        "company_name": "Acme Robotics",
+        "states": ["CA"],
+        "pay_frequency": "Weekly",
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "CA", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "company_name": { "status": "confirmed", "source": { "kind": "transcript", "message_id": "m1", "quote": "We're Acme Robotics" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "states": { "status": "confirmed", "source": { "kind": "document", "document_id": "d1", "document_name": "payroll.pdf" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "pay_frequency": { "status": "confirmed", "source": { "kind": "prospect_edit" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "census": { "status": "confirmed", "source": { "kind": "document", "document_id": "d2" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "settled", "states": "settled", "pay_frequency": "settled", "census": "settled" }
+    },
+    {
+      "name": "inferred fields are unconfirmed",
+      "data": {
+        "company_name": "Acme",
+        "states": ["CA"],
+        "pay_frequency": "Monthly",
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "CA", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "company_name": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "states": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "pay_frequency": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m2" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "census": { "status": "inferred", "source": { "kind": "document", "document_id": "d1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "unconfirmed", "states": "unconfirmed", "pay_frequency": "unconfirmed", "census": "unconfirmed" }
+    },
+    {
+      "name": "incomplete fields are incomplete",
+      "data": {
+        "company_name": "Acme",
+        "states": ["CA"],
+        "pay_frequency": "Semi-monthly",
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "company_name": { "status": "incomplete", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "states": { "status": "incomplete", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "pay_frequency": { "status": "incomplete", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "census": { "status": "incomplete", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "incomplete", "states": "incomplete", "pay_frequency": "incomplete", "census": "incomplete" }
+    },
+    {
+      "name": "conflicting fields, the census included, are conflicting",
+      "data": {
+        "company_name": "Acme",
+        "states": ["CA"],
+        "pay_frequency": "Weekly",
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "CA", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "company_name": {
+          "status": "conflicting", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z",
+          "candidates": [
+            { "value": "Acme", "source": { "kind": "transcript", "message_id": "m1" } },
+            { "value": "Acme Holdings", "source": { "kind": "transcript", "message_id": "m2" } }
+          ]
+        },
+        "states": {
+          "status": "conflicting", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z",
+          "candidates": [
+            { "value": ["CA"], "source": { "kind": "transcript", "message_id": "m1" } },
+            { "value": ["NV"], "source": { "kind": "transcript", "message_id": "m2" } }
+          ]
+        },
+        "pay_frequency": {
+          "status": "conflicting", "source": { "kind": "document", "document_id": "d1" }, "updated_at": "2026-11-03T12:00:00Z",
+          "candidates": [
+            { "value": "Weekly", "source": { "kind": "document", "document_id": "d1" } },
+            { "value": "Bi-weekly", "source": { "kind": "document", "document_id": "d2" } }
+          ]
+        },
+        "census": { "status": "conflicting", "source": { "kind": "document", "document_id": "d1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "conflicting", "states": "conflicting", "pay_frequency": "conflicting", "census": "conflicting" }
+    },
+    {
+      "name": "an advisor verifying an inferred field settles it",
+      "data": { "company_name": "Acme", "states": ["WA"], "pay_frequency": "Weekly" },
+      "provenance": {
+        "company_name": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "pay_frequency": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "states": { "status": "conflicting", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": ["company_name", "states", "industry"],
+      "expected": { "company_name": "settled", "states": "settled", "pay_frequency": "unconfirmed", "census": "missing" }
+    },
+    {
+      "name": "an advisor's verification never supplies a missing value",
+      "data": { "company_name": "", "states": [] },
+      "provenance": {},
+      "verified": ["company_name", "states", "pay_frequency", "census"],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "missing", "census": "missing" }
+    },
+    {
+      "name": "a confirmed census that names work states settles States of operation",
+      "data": {
+        "states": [],
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" },
+          { "id": "e2", "first_name": "Bo", "last_name": "Diaz", "work_state": "OR", "compensation_type": "hourly", "employment_type": "part_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "census": { "status": "confirmed", "source": { "kind": "prospect_edit" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "settled", "pay_frequency": "missing", "census": "settled" }
+    },
+    {
+      "name": "a census with no provenance settles the states it names",
+      "data": {
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "NY", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {},
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "settled", "pay_frequency": "missing", "census": "settled" }
+    },
+    {
+      "name": "inferred states are settled by a confirmed census that names states",
+      "data": {
+        "states": ["CA"],
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "CA", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "states": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "census": { "status": "confirmed", "source": { "kind": "document", "document_id": "d1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "settled", "pay_frequency": "missing", "census": "settled" }
+    },
+    {
+      "name": "states named only by an unconfirmed census take the census's state",
+      "data": {
+        "states": [],
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "TX", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "census": { "status": "inferred", "source": { "kind": "document", "document_id": "d1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "unconfirmed", "pay_frequency": "missing", "census": "unconfirmed" }
+    },
+    {
+      "name": "states named only by a conflicting census are conflicting",
+      "data": {
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "TX", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "census": { "status": "conflicting", "source": { "kind": "document", "document_id": "d1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "conflicting", "pay_frequency": "missing", "census": "conflicting" }
+    },
+    {
+      "name": "states the prospect gave keep their own state when the census is not settled",
+      "data": {
+        "states": ["CA"],
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "CA", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "states": { "status": "incomplete", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "census": { "status": "conflicting", "source": { "kind": "document", "document_id": "d1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "incomplete", "pay_frequency": "missing", "census": "conflicting" }
+    },
+    {
+      "name": "a census whose rows name no work state doesn't name states",
+      "data": {
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {},
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "missing", "census": "settled" }
+    },
+    {
+      "name": "an advisor verifying the census settles it and the states it names",
+      "data": {
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "FL", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "census": { "status": "inferred", "source": { "kind": "document", "document_id": "d1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": ["census"],
+      "expected": { "company_name": "missing", "states": "settled", "pay_frequency": "missing", "census": "settled" }
+    },
+    {
+      "name": "a roster saved under the older key employees is the census, with its row states and provenance",
+      "data": {
+        "company_name": "Old Co",
+        "employees": [{ "first_name": "Ada", "last_name": "Lee", "state": "TX" }]
+      },
+      "provenance": {
+        "employees": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-10-01T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "settled", "states": "unconfirmed", "pay_frequency": "missing", "census": "unconfirmed" }
+    },
+    {
+      "name": "an older roster with no provenance settles the census and its states",
+      "data": {
+        "employees": [{ "first_name": "Ada", "last_name": "Lee", "state": "NV" }, { "first_name": "Bo", "last_name": "Diaz" }]
+      },
+      "provenance": {},
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "settled", "pay_frequency": "missing", "census": "settled" }
+    },
+    {
+      "name": "a census key, even an empty one, wins over the older employees key",
+      "data": {
+        "census": [],
+        "employees": [{ "first_name": "Ada", "last_name": "Lee", "state": "NV" }]
+      },
+      "provenance": {},
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "missing", "census": "missing" }
+    },
+    {
+      "name": "the census's provenance is read under the older key when it has none of its own",
+      "data": {
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "employees": { "status": "incomplete", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-10-01T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "missing", "census": "incomplete" }
+    },
+    {
+      "name": "the census's own provenance wins over an entry under the older key",
+      "data": {
+        "census": [
+          { "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }
+        ]
+      },
+      "provenance": {
+        "census": { "status": "confirmed", "source": { "kind": "prospect_edit" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "employees": { "status": "conflicting", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-10-01T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "missing", "census": "settled" }
+    },
+    {
+      "name": "blank answers are not answers, whatever their provenance",
+      "data": { "company_name": "   ", "pay_frequency": "\t\n ", "states": ["  "] },
+      "provenance": {
+        "company_name": { "status": "confirmed", "source": { "kind": "prospect_edit" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "pay_frequency": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "missing", "census": "missing" }
+    },
+    {
+      "name": "an answer with spaces around it is present",
+      "data": { "company_name": "  Acme  ", "pay_frequency": " Weekly", "states": [" CA "] },
+      "provenance": {
+        "pay_frequency": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "settled", "states": "settled", "pay_frequency": "unconfirmed", "census": "missing" }
+    },
+    {
+      "name": "a provenance entry with an unknown status counts as none",
+      "data": { "company_name": "Acme", "pay_frequency": "Weekly" },
+      "provenance": {
+        "company_name": { "status": "guessed", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "pay_frequency": "inferred"
+      },
+      "verified": [],
+      "expected": { "company_name": "settled", "states": "missing", "pay_frequency": "settled", "census": "missing" }
+    },
+    {
+      "name": "a provenance entry the browser can't read counts as none: no updated_at, a bad source, or a bad candidate",
+      "data": { "company_name": "Acme", "states": ["CA"], "pay_frequency": "Weekly", "census": [{ "id": "e1", "first_name": "Ada", "last_name": "Lee", "work_state": "CA", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }] },
+      "provenance": {
+        "company_name": { "status": "conflicting", "source": { "kind": "transcript", "message_id": "m1" } },
+        "states": { "status": "inferred", "source": { "kind": "transcript" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "pay_frequency": { "status": "conflicting", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z", "candidates": [{ "value": "Weekly", "source": { "kind": "transcript", "message_id": "m1" } }, { "value": "Bi-weekly", "source": { "kind": "voice" } }] },
+        "census": { "status": "incomplete", "source": { "kind": "document", "document_id": "d1", "document_name": null }, "updated_at": "2026-11-03T12:00:00Z", "candidates": null }
+      },
+      "verified": [],
+      "expected": { "company_name": "settled", "states": "settled", "pay_frequency": "settled", "census": "settled" }
+    },
+    {
+      "name": "a quote is at most 200 UTF-16 code units, an emoji counting twice, and malformed also_heard notes are ignored",
+      "data": { "company_name": "Acme", "pay_frequency": "Weekly", "states": ["WA"] },
+      "provenance": {
+        "company_name": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1", "quote": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "pay_frequency": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1", "quote": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀" }, "updated_at": "2026-11-03T12:00:00Z" },
+        "states": { "status": "incomplete", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z", "also_heard": "junk", "candidates": [{ "source": { "kind": "prospect_edit" } }] }
+      },
+      "verified": [],
+      "expected": { "company_name": "settled", "states": "incomplete", "pay_frequency": "unconfirmed", "census": "missing" }
+    },
+    {
+      "name": "a state that isn't a state or territory code names no state, in the states list or on an older roster",
+      "data": { "states": ["ZZ", "Texas"], "employees": [{ "first_name": "Ada", "last_name": "Lee", "state": "NA" }, { "first_name": "Bo", "last_name": "Diaz", "state": "Z" }] },
+      "provenance": {},
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "missing", "census": "settled" }
+    },
+    {
+      "name": "a state code in lower case is a state",
+      "data": { "employees": [{ "first_name": "Ada", "last_name": "Lee", "state": "tx" }] },
+      "provenance": {
+        "employees": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T12:00:00Z" }
+      },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "unconfirmed", "pay_frequency": "missing", "census": "unconfirmed" }
+    },
+    {
+      "name": "every kind of whitespace String.trim removes is blank, around a state code too",
+      "data": { "company_name": "\u00a0\u1680\u2000\u2005\u200a\u2028\u2029\u202f\u205f\u3000\ufeff", "pay_frequency": "\u000b\f\r\u2003", "states": ["\u00a0ca\u3000"] },
+      "provenance": {},
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "settled", "pay_frequency": "missing", "census": "missing" }
+    },
+    {
+      "name": "a value marked not applicable is the prospect closing the field: settled",
+      "data": { "pay_frequency": "weekly" },
+      "provenance": { "pay_frequency": { "status": "not_applicable", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T00:00:00Z" } },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "settled", "census": "missing" }
+    },
+    {
+      "name": "not applicable with no value is still missing (the gate reads answers, not statuses)",
+      "data": {},
+      "provenance": { "company_name": { "status": "not_applicable", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T00:00:00Z" } },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "missing", "census": "missing" }
+    },
+    {
+      "name": "a value beside unknown is one the prospect hasn't confirmed",
+      "data": { "company_name": "Acme" },
+      "provenance": { "company_name": { "status": "unknown", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T00:00:00Z" } },
+      "verified": [],
+      "expected": { "company_name": "unconfirmed", "states": "missing", "pay_frequency": "missing", "census": "missing" }
+    }
+  ]
+}

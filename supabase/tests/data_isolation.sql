@@ -47,7 +47,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090100_outbox_operations.sql
+\i supabase/migrations/20261027090001_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -57,7 +57,7 @@
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
-\i supabase/migrations/20261103110100_document_storage_path.sql
+\i supabase/migrations/20261103110001_document_storage_path.sql
 \i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
 \i supabase/migrations/20261103120100_intake_schema_v2_version.sql
 \i supabase/migrations/20261103120200_ai_extraction_events.sql
@@ -65,13 +65,17 @@
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
-\i supabase/migrations/20261104100000_pin_reviews_and_manuscripts_to_answers.sql
-\i supabase/migrations/20261104101000_pipeline_follows_the_prospect.sql
-\i supabase/migrations/20261104102000_certified_evidence.sql
-\i supabase/migrations/20261104103000_share_reviewed_manuscript.sql
-\i supabase/migrations/20261104104000_paged_advisor_queue.sql
-\i supabase/migrations/20261104105000_advisor_review_followups.sql
-\i supabase/migrations/20261104106000_intake_deletion_removes_document_history.sql
+\i supabase/migrations/20261104100000_certification_conflicts.sql
+\i supabase/migrations/20261104101000_transcript_validation.sql
+\i supabase/migrations/20261104102000_one_open_draft.sql
+\i supabase/migrations/20261104103000_required_items.sql
+\i supabase/migrations/20261104110000_pin_reviews_and_manuscripts_to_answers.sql
+\i supabase/migrations/20261104111000_pipeline_follows_the_prospect.sql
+\i supabase/migrations/20261104112000_certified_evidence.sql
+\i supabase/migrations/20261104113000_share_reviewed_manuscript.sql
+\i supabase/migrations/20261104114000_paged_advisor_queue.sql
+\i supabase/migrations/20261104115000_advisor_review_followups.sql
+\i supabase/migrations/20261104116000_intake_deletion_removes_document_history.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -495,7 +499,7 @@ BEGIN
       PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'documents', owner_id || '/' || sid || '/new.csv'), 'rows:1', t.owner || ' storing a file');
       PERFORM pg_temp.expect(format('INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path) VALUES (%L, %L, %L, %L, %L)',
         owner_id, sid, 'new.csv', '1 KB', owner_id || '/' || sid || '/new.csv'), 'rows:1', t.owner || ' adding a document');
-      -- A certified intake keeps the file it was certified with, for the advisor (20261104102000); removing the
+      -- A certified intake keeps the file it was certified with, for the advisor (20261104112000); removing the
       -- document still succeeds for its owner. Any other file of theirs they can remove.
       PERFORM pg_temp.expect(format('DELETE FROM storage.objects WHERE name = %L', path),
         CASE WHEN t.intake = 'pa_cert' THEN 'rows:0' ELSE 'rows:1' END, t.owner || ' removing their own file');
@@ -594,7 +598,7 @@ INSERT INTO callable VALUES
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
-  ('intake_missing_required(d jsonb)',         'anyone',  NULL, 'pure: required answers missing from the jsonb it is given'),
+  ('intake_missing_required(d jsonb)',         'helper',  NULL, 'the certification gate calls it as the signed-in prospect; pure: required answers missing from the jsonb it is given'),
   ('intake_conflicting_required(p jsonb)',     'anyone',  NULL, 'pure: required fields in conflict in the provenance it is given'),
   ('is_prospect_visible_status(s text)',       'anyone',  NULL, 'pure: whether a status name is shared with prospects'),
   ('is_reviewable_field(f text)',              'anyone',  NULL, 'pure: whether a field name can be reviewed'),
@@ -604,6 +608,7 @@ INSERT INTO callable VALUES
   ('archive_chamber_session(p_session_id uuid)', 'own',   NULL, 'the prospect''s Start over; PT404 for anyone else''s intake'),
   ('record_intake_consent(p_version text, p_text text)', 'own', NULL, 'records the caller''s own agreement'),
   ('prospect_submission_status(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s shared status; null for anyone else''s'),
+  ('session_verified_fields(p_session_id uuid)', 'own', NULL, 'the names of the fields an advisor verified on the caller''s own open intake (every intake, for advisors); nothing for anyone else''s'),
   ('prospect_final_manuscript(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s final Manuscript (latest version, current certification); nothing for anyone else''s'),
   ('is_own_final_manuscript(p_name text)',     'helper',  NULL, 'the manuscripts read policy calls it as the caller; true only for the file of the caller''s own final Manuscript'),
   ('is_certified_evidence(p_name text)',       'helper',  NULL, 'the documents delete policy calls it as the caller; answers only about the caller''s own certified intakes'),
@@ -617,6 +622,10 @@ INSERT INTO callable VALUES
   ('chamber_data_is_whole_number(v jsonb, max_value numeric)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_person_error(person jsonb, base text, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),
   ('is_us_state_code(code text)',              'helper',  NULL, 'intake and profile validation; pure'),
+  ('intake_answers_present(p_data jsonb)',    'helper',  NULL, 'the required-items presence rule; pure'),
+  ('intake_required_items(p_data jsonb, p_provenance jsonb, p_verified text[])', 'helper', NULL, 'where each required item stands; pure'),
+  ('provenance_entry_status(p_entry jsonb)',  'helper',  NULL, 'reads a provenance entry as the browser does; pure'),
+  ('provenance_source_is_valid(p_source jsonb)', 'helper', NULL, 'reads a provenance source as the browser does; pure'),
   ('is_valid_phone(phone text)',               'helper',  NULL, 'intake and profile validation; pure'),
   ('intake_draft_retention()',                 'helper',  NULL, 'the lifecycle trigger reads the window as the caller; a constant'),
   ('closed_draft_retention()',                 'helper',  NULL, 'a constant: the closed-draft window'),

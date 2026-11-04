@@ -1,7 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
+import type { IntakeState } from "@/data/provenance";
 
 const session = {
   sessionId: null as string | null,
@@ -46,8 +48,18 @@ vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
 // The orb only shows what Lenore last said; the workspace panes are not what these tests are about.
 vi.mock("@/components/chamber/VoiceOrb", () => ({ default: ({ lastSpokenText }: { lastSpokenText: string }) => <p data-testid="orb">{lastSpokenText}</p> }));
 vi.mock("@/components/chamber/TranscriptPanel", () => ({ default: () => null }));
-vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({ default: () => null }));
-vi.mock("@/hooks/useLenoreChat", () => ({ useLenoreChat: () => ({ send: vi.fn(), retry: vi.fn(), dismissFailure: vi.fn(), failure: null, pending: false }) }));
+vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
+  default: (props: typeof hooks.workspace) => {
+    hooks.workspace = props;
+    return null;
+  },
+}));
+vi.mock("@/hooks/useLenoreChat", () => ({
+  useLenoreChat: (options: typeof hooks.chat) => {
+    hooks.chat = options;
+    return { send: vi.fn(), retry: vi.fn(), dismissFailure: vi.fn(), failure: null, pending: false };
+  },
+}));
 
 const { default: ChamberPage } = await import("./ChamberPage");
 
@@ -66,10 +78,11 @@ describe("ChamberPage", () => {
     session.backupOffer = null;
     session.messages = [];
     session.certification = { status: "none" };
+    session.verifiedFields = new Set();
     session.startOver.mockReset().mockResolvedValue(true);
     auth.isAnonymous = true;
     storageWorks = true;
-    for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges, session.restoreBackup, session.discardBackup]) {
+    for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges, session.restoreBackup, session.discardBackup, session.updateIntake]) {
       fn.mockClear();
     }
   });
@@ -199,11 +212,52 @@ describe("ChamberPage", () => {
     expect(screen.getByText(/isn't keeping site data/)).toBeInTheDocument();
   });
 
+  it("hands the workspace the fields an advisor verified on the intake", () => {
+    session.sessionId = "s1";
+    session.verifiedFields = new Set(["company_name"]);
+    renderPage();
+    expect(hooks.workspace?.verified).toBe(session.verifiedFields);
+  });
+
   it("shows Lenore's latest line under the orb, not a second hello", () => {
     session.sessionId = "s1";
     session.messages = [lenore("m1", "Good evening."), prospect("m2", "We're Acme"), lenore("m3", "Acme it is. How many people?")];
     renderPage();
     expect(screen.getByTestId("orb")).toHaveTextContent("Acme it is. How many people?");
+  });
+
+  describe("merging what Lenore extracted", () => {
+    const EMPTY: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
+    const applied = () => (session.updateIntake.mock.calls[0][0] as (prev: IntakeState) => IntakeState)(EMPTY);
+    const spoken: ChatMessage = { id: "v1", sender: "user", text: "We're about 40 people", timestamp: "" };
+
+    it("merges a voice extraction with its provenance, citing the prospect's message", () => {
+      renderPage();
+      hooks.voice!.onExtract({ employee_count: 40, field_status: { employee_count: "confirmed" } }, spoken);
+      expect(session.updateIntake).toHaveBeenCalledTimes(1);
+      const next = applied();
+      expect(next.data.employee_count).toBe(40);
+      expect(next.provenance.employee_count).toMatchObject({
+        status: "confirmed",
+        source: { kind: "transcript", message_id: "v1", quote: "We're about 40 people" },
+      });
+    });
+
+    it("drops a voice extraction with no prospect message to cite, rather than merging it untracked", () => {
+      renderPage();
+      hooks.voice!.onExtract({ employee_count: 40 }, null);
+      expect(session.updateIntake).not.toHaveBeenCalled();
+    });
+
+    it("merges a chat extraction with its provenance", () => {
+      renderPage();
+      hooks.chat!.onExtracted({ employee_count: 12 }, { evidence: { employee_count: "12 staff" } }, { id: "m1", text: "We have 12 staff" });
+      expect(session.updateIntake).toHaveBeenCalledTimes(1);
+      expect(applied().provenance.employee_count).toMatchObject({
+        status: "inferred",
+        source: { kind: "transcript", message_id: "m1", quote: "12 staff" },
+      });
+    });
   });
 
   describe("when saving has stopped", () => {

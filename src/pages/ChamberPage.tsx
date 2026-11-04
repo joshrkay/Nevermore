@@ -20,8 +20,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { createChatMessage } from "@/data/chat";
 import { browserStorageWorks } from "@/data/intakeBackup";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
-import { mergeChamberData } from "@/data/chamberValidation";
-import { applyExtraction, applyFieldAction, transcriptExtraction, type FieldAction } from "@/data/provenance";
+import { applyExtraction, applyFieldAction, transcriptExtraction, voiceExtraction, type FieldAction } from "@/data/provenance";
 
 const spokenLine = (text: string) => (text.length > 120 ? text.slice(0, 120) + "..." : text);
 const primaryButton = "bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors";
@@ -64,9 +63,9 @@ const ChamberPage = () => {
     conversationEpoch,
     chamberData,
     provenance,
+    verifiedFields,
     messages,
     isLoading: sessionLoading,
-    setChamberData,
     updateIntake,
     addMessage,
     ensureIntake,
@@ -116,11 +115,11 @@ const ChamberPage = () => {
     onOrbStateChange: setOrbState,
     onNewMessage: addMessage,
     onLastSpokenText: setLastSpokenText,
-    // Voice extractions with no prospect message to point to keep the old, untracked merge.
-    onExtract: (data, message) =>
-      message
-        ? updateIntake((prev) => applyExtraction(prev, data, transcriptExtraction(message, data)))
-        : setChamberData((prev) => mergeChamberData(prev, data)),
+    // Every AI value is merged with its provenance, so an extraction with no prospect message to
+    // cite (Lenore speaking before the prospect has said anything) is dropped.
+    onExtract: (data, message) => {
+      if (message) updateIntake((prev) => applyExtraction(prev, data, voiceExtraction(message, data)));
+    },
   });
 
   // The transcript notes when a voice call starts and ends, so whoever reads it can tell which part was
@@ -326,6 +325,7 @@ const ChamberPage = () => {
             fileId={fileId}
             onSubmit={submit}
             provenance={provenance}
+            verified={verifiedFields}
             onFieldAction={handleFieldAction}
             certification={certification}
             updateIntake={updateIntake}

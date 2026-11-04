@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import type { ProvenanceMap } from "@/data/provenance";
 import ReviewTab from "./ReviewTab";
 
 describe("ReviewTab documents", () => {
@@ -41,6 +42,100 @@ describe("ReviewTab documents", () => {
     expect(button).toBeEnabled();
     fireEvent.click(button);
     expect(onProceed).toHaveBeenCalled();
+  });
+});
+
+describe("ReviewTab needs your review", () => {
+  const at = "2026-11-03T12:00:00Z";
+  const said = (id: string) => ({ kind: "transcript" as const, message_id: id });
+  const data = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", pay_frequency: "Weekly", industry: "Retail", employee_count: 40 };
+  const provenance: ProvenanceMap = {
+    company_name: { status: "inferred", source: said("m1"), updated_at: at },
+    pay_frequency: {
+      status: "conflicting",
+      source: said("m1"),
+      updated_at: at,
+      candidates: [
+        { value: "Weekly", source: said("m1") },
+        { value: "Bi-weekly", source: said("m2") },
+      ],
+    },
+    industry: { status: "inferred", source: said("m1"), updated_at: at },
+    employee_count: { status: "incomplete", source: said("m3"), updated_at: at },
+  };
+  // Each listed item reads as its reason, then its label, then its value and source.
+  const expectListed = (expected: [reason: string, label: string][]) => {
+    const section = screen.getByText(/^Needs your review/).parentElement!;
+    const items = [...section.children].slice(1).map((item) => item.textContent ?? "");
+    expect(items).toHaveLength(expected.length);
+    expected.forEach(([reason, label], i) => expect(items[i]).toMatch(new RegExp(`^${reason}${label}`)));
+  };
+  const stillNeeded = () =>
+    [...screen.getByRole("region", { name: "Still needed" }).querySelectorAll("li")].map((li) => li.querySelector("span")?.textContent);
+
+  it("puts required answers that block certification under still needed, and the unsettled ones first in review, each once", () => {
+    render(<ReviewTab data={data} provenance={provenance} onAction={() => {}} onProceed={() => {}} />);
+    // Missing and conflicting both hold certification back; the census is only recommended.
+    expect(stillNeeded()).toEqual(["States of operation", "Pay frequency"]);
+    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Your answers conflict");
+    expect(screen.queryByText(/Every required answer is here/)).not.toBeInTheDocument();
+    expect(screen.getByText("Needs your review — 3 items")).toBeInTheDocument();
+    expectListed([
+      ["Please confirm", "Company legal name"],
+      ["Incomplete", "Employee count"],
+      ["Please confirm", "Industry"],
+    ]);
+    // The conflict is resolved where the answer sits.
+    expect(screen.getByRole("button", { name: "Use Bi-weekly for Pay frequency" })).toBeInTheDocument();
+  });
+
+  it("never lists a field an advisor verified", () => {
+    render(
+      <ReviewTab data={data} provenance={provenance} verified={new Set(["company_name", "industry"])} onAction={() => {}} onProceed={() => {}} />,
+    );
+    expect(screen.getByText("Needs your review — 1 item")).toBeInTheDocument();
+    expectListed([["Incomplete", "Employee count"]]);
+  });
+
+  it("still needs a required answer that was never given, even if an advisor verified its field", () => {
+    render(<ReviewTab data={EMPTY_CHAMBER_DATA} verified={new Set(["company_name", "census"])} onProceed={() => {}} />);
+    expect(stillNeeded()).toEqual(["Company legal name", "States of operation", "Pay frequency"]);
+    expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
+  });
+
+  it("asks for the census to be confirmed while only the census names states", () => {
+    const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+    render(
+      <ReviewTab
+        data={{ ...data, census, states: [] }}
+        provenance={{ ...provenance, census: { status: "inferred", source: said("m4"), updated_at: at } }}
+        onAction={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    expect(stillNeeded()).toEqual(["Pay frequency"]);
+    expectListed([
+      ["Please confirm", "Company legal name"],
+      ["Please confirm", "Employee census"],
+      ["Incomplete", "Employee count"],
+      ["Please confirm", "Industry"],
+    ]);
+  });
+
+  it("says the census's conflict holds the states back when the census alone names them", () => {
+    const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+    const conflicting = { status: "conflicting" as const, source: said("m4"), updated_at: at, candidates: [] };
+    render(<ReviewTab data={{ ...data, census, states: [] }} provenance={{ census: conflicting }} onProceed={() => {}} />);
+    expect(stillNeeded()).toEqual(["States of operation"]);
+    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("The census's answers conflict");
+    expect(screen.getByRole("button", { name: "Go to employee census" })).toBeInTheDocument();
+    expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
+  });
+
+  it("asks nothing when every required answer is settled and nothing else is open", () => {
+    render(<ReviewTab data={DEMO_CHAMBER_DATA} onProceed={() => {}} />);
+    expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Still needed" })).not.toBeInTheDocument();
   });
 });
 

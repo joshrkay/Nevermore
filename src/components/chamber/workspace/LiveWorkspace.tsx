@@ -5,6 +5,7 @@ import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance"
 import { resolutionFields, resolveCandidate, type CandidateResolution } from "@/data/documentCandidates";
 import { useSessionDocuments, type SessionDocument } from "@/hooks/useSessionDocuments";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
+import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import UploadTab from "../UploadTab";
 import CompanyTab from "./CompanyTab";
 import PayrollTab from "./PayrollTab";
@@ -35,6 +36,8 @@ interface LiveWorkspaceProps {
   fileId?: string | null;
   onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   provenance?: ProvenanceMap;
+  /** Fields an advisor verified: settled whatever their status. */
+  verified?: ReadonlySet<string>;
   /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
   onFieldAction?: (action: FieldAction) => void;
   certification?: CertificationState;
@@ -56,6 +59,7 @@ const LiveWorkspace = ({
   fileId = null,
   onSubmit,
   provenance = {},
+  verified = NO_VERIFIED_FIELDS,
   onFieldAction,
   certification,
   updateIntake,
@@ -119,9 +123,21 @@ const LiveWorkspace = ({
         {activeTab === "benefits" && <BenefitsTab data={data} provenance={provenance} onAction={onAction} />}
         {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} />}
         {activeTab === "dependents" && <DependentsTab data={data} />}
-        {activeTab === "review" && <ReviewTab data={data} provenance={provenance} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} focusRequest={openReview} />}
+        {activeTab === "review" && <ReviewTab data={data} provenance={provenance} verified={verified} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} />}
         {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
-        {activeTab === "reckoning" && <ReckoningTab data={data} provenance={provenance} peoName={chosenPeo} sessionId={sessionId} fileId={fileId} onSubmit={onSubmit} certification={certification} onReview={() => setActiveTab("review")} />}
+        {activeTab === "reckoning" && (
+          <ReckoningTab
+            data={data}
+            provenance={provenance}
+            verified={verified}
+            peoName={chosenPeo}
+            sessionId={sessionId}
+            fileId={fileId}
+            onSubmit={onSubmit}
+            certification={certification}
+            onReview={() => setActiveTab("review")}
+          />
+        )}
       </div>
     </div>
   );

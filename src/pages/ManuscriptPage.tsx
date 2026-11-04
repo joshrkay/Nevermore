@@ -8,9 +8,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
-import { buildManuscript, fileIdForSession, manuscriptFilename, maskDob, NOT_PROVIDED, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
+import { buildManuscript, fileIdForSession, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
 import { describeSource, parseProvenance, STATUS_LABELS, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
+import { fetchVerifiedFields } from "@/lib/verifiedFields";
 import { downloadBlob } from "@/lib/downloadFile";
 import { finalManuscriptUrl } from "@/lib/advisorApi";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
@@ -31,9 +32,11 @@ const STATUS_MARKER_CLASS: Record<FieldProvenance["status"], string> = {
   not_applicable: "bg-muted text-muted-foreground",
 };
 
-// Unknown and not applicable hold no answer, but say more than "Not provided" does.
+// A status shows beside an answer. Beside "Not provided" it shows only when it says more: unknown and
+// not applicable hold no answer on purpose, and a conflict always shows, as the PDF marks it.
 const showsStatus = (value: string, provenance?: FieldProvenance): provenance is FieldProvenance =>
-  Boolean(provenance) && (value !== NOT_PROVIDED || provenance!.status === "unknown" || provenance!.status === "not_applicable");
+  Boolean(provenance) &&
+  (value !== NOT_PROVIDED || provenance!.status === "conflicting" || provenance!.status === "unknown" || provenance!.status === "not_applicable");
 
 // Shows whether a value was confirmed or only inferred, and where it came from.
 const DataRow = ({ label, value, provenance }: { label: string; value: string; provenance?: FieldProvenance }) => (
@@ -56,9 +59,7 @@ const DataRow = ({ label, value, provenance }: { label: string; value: string; p
 );
 
 const renderRows = (rows: ManuscriptRow[], provenance: ProvenanceMap) =>
-  rows.map(([label, value, field]) => (
-    <DataRow key={label} label={label} value={value} provenance={field ? provenance[field] : undefined} />
-  ));
+  rows.map((row) => <DataRow key={row[0]} label={row[0]} value={row[1]} provenance={rowProvenance(row, provenance)} />);
 
 
 type LoadState =
@@ -69,7 +70,15 @@ type LoadState =
   | { kind: "unsigned" }
   | { kind: "recertify" }
   | { kind: "expired" }
-  | { kind: "ready"; data: ChamberData; provenance: ProvenanceMap; submission: ChamberSubmission | null; fileId: string };
+  | {
+      kind: "ready";
+      data: ChamberData;
+      provenance: ProvenanceMap;
+      /** Fields an advisor has verified since: settled, so not open items. */
+      verified: ReadonlySet<string>;
+      submission: ChamberSubmission | null;
+      fileId: string;
+    };
 
 /** The advisor-reviewed version of the prospect's certified intake: the final packet, when there is one. */
 interface FinalManuscript {
@@ -105,12 +114,15 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
     }
     let cancelled = false;
     setState({ kind: "loading" });
-    supabase
-      .from("chamber_sessions")
-      .select("chamber_data, field_provenance, submission, status, created_at")
-      .eq("id", sessionId)
-      .maybeSingle()
-      .then(({ data, error }) => {
+    Promise.all([
+      supabase
+        .from("chamber_sessions")
+        .select("chamber_data, field_provenance, submission, status, created_at")
+        .eq("id", sessionId)
+        .maybeSingle(),
+      fetchVerifiedFields(sessionId),
+    ])
+      .then(([{ data, error }, verified]) => {
         if (cancelled) return;
         if (error || !data) {
           setState({ kind: "error", message: "We couldn't find that Manuscript. The link may be out of date, or it belongs to a different account." });
@@ -137,6 +149,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           data: parseChamberData(submission.chamber_data ?? data.chamber_data),
           // Pair provenance with whichever copy of the data is shown, so it never describes other values.
           provenance: parseProvenance(submission.chamber_data ? submission.field_provenance : data.field_provenance),
+          verified,
           submission,
           fileId: submission.file_id || fileIdForSession(sessionId, new Date(data.created_at)),
         });
@@ -159,7 +172,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
   }, [ready, sessionId]);
 
   const d = useMemo(() => {
-    if (state.kind === "ready") return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, provenance: state.provenance });
+    if (state.kind === "ready") {
+      return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, provenance: state.provenance, verified: state.verified });
+    }
     if (state.kind === "sample") return buildManuscript(DEMO_CHAMBER_DATA, { fileId: SAMPLE_FILE_ID });
     return null;
   }, [state]);

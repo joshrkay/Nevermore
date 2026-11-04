@@ -54,7 +54,7 @@ a sign-out the app asked for is remembered until the event arrives.
   different answers), a trigger resets that field's review to unreviewed, keeps any correction as an
   unapproved proposal, marks the field "the prospect changed this answer (it was …)" until an advisor
   reviews it again, and appends an `answer_changed` event naming the prospect and both answers. Reviews
-  of unchanged answers are kept. Reviews recorded before migration `20261104100000` weren't checked
+  of unchanged answers are kept. Reviews recorded before migration `20261104110000` weren't checked
   against the answer they were made on.
 - Change the pipeline status only through `set_submission_status()`, which appends to
   `submission_status_history` (who, when, from, to, note). An intake the prospect has never certified
@@ -62,21 +62,21 @@ a sign-out the app asked for is remembered until the event arrives.
   every certification and every withdrawn certification is a row (a re-certification sent as one
   update too). A prospect who certifies while the status is `information_requested` has answered it,
   so it returns to `submitted`; a first certification enters as `submitted` even from `archived`. Any
-  other advisor-set status stays as it is (migration `20261104101000`).
+  other advisor-set status stays as it is (migration `20261104111000`).
 - Review the evidence as certified. Certifying stamps a copy of the transcript and of the document
   list (name, category, size, storage path, SHA-256) into the submission; the detail page shows that
   transcript (and says if the prospect's conversation changed since) and marks documents removed,
   added, renamed or re-categorised after certification. Every document change is appended to
   `document_events` (who, when; advisors only, nobody can change it). While an intake is certified,
   a certified document's stored file stays when the prospect removes the document, so it can still
-  be opened; the prospect's screen still shows it removed (migration `20261104102000`). A document
+  be opened; the prospect's screen still shows it removed (migration `20261104112000`). A document
   counts as the certified one only while it has the certified file: a row re-created under the same id
   with another file shows as the certified one removed and a new one added. Once the certification
   moves on (the prospect withdraws or certifies again), a kept file is no longer listed in the app;
   its `removed` event records its path, and purging such files is retention's job (H-1.2).
 - "Certified at least once" (which unlocks every status, and decides whether a certification is the
   intake's first) means a certification row or a history row that reached `submitted`, so intakes
-  certified before certification rows existed count (migration `20261104105000`).
+  certified before certification rows existed count (migration `20261104115000`).
 - Add internal notes (`advisor_notes`); notes can't be edited or deleted and prospects can't read them.
 - Read `intake_lifecycle_events`: every draft that expired, was archived by its prospect ("Start
   over") or was revoked, with who and why. The queue lists those intakes with their intake status
@@ -102,7 +102,7 @@ a sign-out the app asked for is remembered until the event arrives.
   Manuscript**: `prospect_final_manuscript()` offers it to them (their own intake only) and a storage
   policy lets them read that one file. Correction reasons are printed in it, so they're
   prospect-visible. The panel marks the shared version and any built from an earlier certification
-  (migration `20261104103000`).
+  (migration `20261104113000`).
 
 ## The submission queue (`/advisor`)
 
@@ -120,7 +120,7 @@ content; those are on the detail page, behind the same checks.
   or the search returns to the first page.
 - **Completeness** describes what the advisor reviews: a certified intake is described from its
   certified copy, a required item supplied by a verified advisor correction isn't missing, and only
-  fields an advisor can review count as unconfirmed (migration `20261104104000`).
+  fields an advisor can review count as unconfirmed (migration `20261104114000`).
 - A click anywhere on a row opens that submission; the company link works for keyboard and new tabs.
 - Loading, empty (none yet / none with this status / no search match / past the last page) and error
   states are all shown.

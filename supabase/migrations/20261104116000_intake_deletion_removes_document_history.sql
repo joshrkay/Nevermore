@@ -1,11 +1,11 @@
 -- Deleting an intake (complete_intake_deletion, 20261104092000_data_retention_and_deletion.sql) deletes its
--- document history (document_events, 20261104102000_certified_evidence.sql) with its other rows, so no file
--- name or path of a deleted intake is kept. record_document_event (20261104105000) writes nothing while an
+-- document history (document_events, 20261104112000_certified_evidence.sql) with its other rows, so no file
+-- name or path of a deleted intake is kept. record_document_event (20261104115000) writes nothing while an
 -- intake is being deleted, so the count of what was removed is what the intake held.
 
 -- Unchanged from 20261104092000_data_retention_and_deletion.sql except that the intake's document_events
--- (20261104102000_certified_evidence.sql) are deleted with its other rows, before its documents, whose
--- deletion records nothing (record_document_event, 20261104105000). The record of what was removed counts them.
+-- (20261104112000_certified_evidence.sql) are deleted with its other rows, before its documents, whose
+-- deletion records nothing (record_document_event, 20261104115000). The record of what was removed counts them.
 CREATE OR REPLACE FUNCTION public.complete_intake_deletion(p_deletion_id uuid, p_files_deleted integer DEFAULT 0)
 RETURNS jsonb
 LANGUAGE plpgsql
