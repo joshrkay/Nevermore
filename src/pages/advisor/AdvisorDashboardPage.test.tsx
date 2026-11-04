@@ -307,6 +307,49 @@ describe("AdvisorDashboardPage", () => {
       await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ search: "pat gamma" })));
     });
 
+    it("doesn't search until at least 3 characters are typed, and says so (F-2.2)", async () => {
+      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+      render(
+        <MemoryRouter initialEntries={["/advisor"]}>
+          <Routes>
+            <Route path="/advisor" element={<><AdvisorDashboardPage /><LocationProbe /></>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      await screen.findByRole("link", { name: "Acme Holdings" });
+      const box = screen.getByLabelText("Search");
+      fireEvent.change(box, { target: { value: " pa " } });
+      expect(screen.getByText("Type at least 3 characters to search.")).toBeInTheDocument();
+      // Give the pause time to pass: still nothing searched, the URL unchanged, every row listed.
+      await new Promise((r) => setTimeout(r, 400));
+      expect(listSubmissions).not.toHaveBeenCalledWith(expect.objectContaining({ search: "pa" }));
+      expect(screen.getByTestId("location")).toHaveTextContent(/^$/);
+      expect(companyOrder()).toEqual(["Acme Holdings", "Beta Works", "Gamma"]);
+      expect(box).toHaveValue(" pa ");
+
+      fireEvent.change(box, { target: { value: "pat" } });
+      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ search: "pat" })));
+      expect(screen.queryByText("Type at least 3 characters to search.")).not.toBeInTheDocument();
+      await waitFor(() => expect(companyOrder()).toEqual(["Acme Holdings", "Gamma"]));
+
+      // Deleting back below the minimum lists everything again, and keeps what's typed.
+      fireEvent.change(box, { target: { value: "pa" } });
+      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query()));
+      await waitFor(() => expect(companyOrder()).toEqual(["Acme Holdings", "Beta Works", "Gamma"]));
+      expect(box).toHaveValue("pa");
+      expect(screen.getByText("Type at least 3 characters to search.")).toBeInTheDocument();
+    });
+
+    it("treats a link with a search under 3 characters as no search", async () => {
+      listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
+      renderAt("/advisor?q=ga");
+      await screen.findByRole("link", { name: "Beta Works" });
+      expect(listSubmissions).toHaveBeenCalledWith(query());
+      expect(listSubmissions).not.toHaveBeenCalledWith(query({ search: "ga" }));
+      expect(screen.getByText("3 submissions")).toBeInTheDocument();
+      expect(screen.getByText("Type at least 3 characters to search.")).toBeInTheDocument();
+    });
+
     it("says how many match, across every page", async () => {
       listSubmissions.mockImplementation(async (opts: { search?: string }) => searchDb(opts));
       renderAt();
