@@ -5,8 +5,12 @@
 // 20261103110000_certification_readiness.sql; src/data/schemaSync.test.ts keeps the two lists equal).
 // The employee census is recommended, not required: today it can only come from an uploaded file, and no
 // document is required, so a missing census is listed as an open item but never blocks.
+//
+// A required answer that holds two competing values (field status `conflicting`) blocks certification too,
+// until the prospect picks one (B-2, decision D26; public.intake_conflicting_required, migration
+// 20261104100000_certification_conflicts.sql). A conflict on any other field is an open item, never a blocker.
 import type { ChamberData } from "./chamberTypes";
-import type { FieldKey } from "./provenance";
+import type { FieldKey, ProvenanceMap } from "./provenance";
 
 /** Where an item is answered in the Review step. */
 export type ReviewSection = "company" | "workforce" | "locations" | "payroll" | "benefits";
@@ -74,8 +78,18 @@ const REQUIRED_FIELDS: ReadonlySet<FieldKey> = new Set(REQUIRED_ITEMS.flatMap((i
 /** Whether a field has to be answered before the intake can be certified. */
 export const isRequiredField = (field: FieldKey): boolean => REQUIRED_FIELDS.has(field);
 
-/** The labels for the keys the database names when it refuses an unready certification (SQLSTATE EA003). */
-export function describeMissingKeys(keys: string | null | undefined): string[] {
+/**
+ * The required answers the prospect gave two different values for, in the order they are shown. Each
+ * blocks certification until one value is chosen in Review.
+ */
+export const conflictingRequired = (provenance: ProvenanceMap): ReadinessItem[] =>
+  REQUIRED_ITEMS.filter((item) => item.field !== undefined && provenance[item.field]?.status === "conflicting");
+
+/**
+ * The labels for the keys the database names when it refuses an unready certification: the missing answers
+ * (SQLSTATE EA003) or those in conflict (EA008).
+ */
+export function describeRequiredKeys(keys: string | null | undefined): string[] {
   const named = (keys ?? "").split(",").map((k) => k.trim()).filter(Boolean);
   return named.map((key) => REQUIRED_ITEMS.find((item) => item.key === key)?.label ?? key);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handleRequest, type HandlerDeps, type SupabaseLike } from "./handler";
+import { handleRequest, NEXT_FIELDS, type HandlerDeps, type SupabaseLike } from "./handler";
 import { EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema";
 
@@ -139,6 +139,19 @@ describe("chamber-extract handler: the request is checked before anything is spe
     ["a context that isn't an object", { message: "hi", context: "company_name=Acme", session_id: INTAKE }, 400],
     ["a context over 20,000 characters", { message: "hi", context: { key_challenges: "x".repeat(20001) }, session_id: INTAKE }, 413],
     ["an intake id that isn't one", { message: "hi", session_id: "not-an-id" }, 400],
+    ["statuses that aren't an object", { message: "hi", statuses: ["confirmed"], session_id: INTAKE }, 400],
+    ["a status for a field the intake doesn't have", { message: "hi", statuses: { favourite_colour: "confirmed" }, session_id: INTAKE }, 400],
+    ["a status that isn't one", { message: "hi", statuses: { company_name: "certain" }, session_id: INTAKE }, 400],
+    ["recent messages that aren't a list", { message: "hi", recent: { sender: "user", text: "hi" }, session_id: INTAKE }, 400],
+    ["more than ten recent messages", { message: "hi", recent: Array.from({ length: 11 }, () => ({ sender: "user", text: "hi" })), session_id: INTAKE }, 400],
+    ["a recent message from someone else", { message: "hi", recent: [{ sender: "system", text: "Voice call started" }], session_id: INTAKE }, 400],
+    ["a recent message over 2,000 characters", { message: "hi", recent: [{ sender: "user", text: "x".repeat(2001) }], session_id: INTAKE }, 400],
+    ["answers, statuses and messages over 20,000 characters together", {
+      message: "hi",
+      context: { key_challenges: "x".repeat(9000), business_goals: "y".repeat(9000) },
+      recent: [{ sender: "user", text: "z".repeat(2000) }],
+      session_id: INTAKE,
+    }, 413],
     ["a body that isn't JSON", "{message: hi", 400],
     ["a body that isn't an object", ["hi"], 400],
   ] as const)("%s: refused as bad_request, with no quota spent and no lookup made", async (_label, body, status) => {
@@ -258,17 +271,49 @@ describe("chamber-extract handler: what is sent to the model", () => {
     expect(sent.messages[0]).toEqual({ role: "system", content: SYSTEM_PROMPT });
     expect(sent.tools).toEqual([{ type: "function", function: EXTRACT_TOOL }]);
     expect(sent.tool_choice).toEqual({ type: "function", function: { name: "extract_chamber_data" } });
-    expect(sent.messages[1].content).toBe(
-      `Previous context (already captured data): {"company_name":"Acme"}\n\nNew user message: ${JSON.stringify('We have 40 "full time" people')}`,
-    );
+    const user = sent.messages[1].content as string;
+    expect(user).toContain(`Captured so far (answers): {"company_name":"Acme"}`);
+    expect(user.endsWith(`New user message: ${JSON.stringify('We have 40 "full time" people')}`)).toBe(true);
     expect(JSON.stringify(sent)).not.toContain(INTAKE);
   });
 
-  it("sends just the quoted message when there is no context", async () => {
+  it("sends empty context, every unsettled field it can ask about, and the quoted message when nothing is captured", async () => {
     const t = setup();
     await handleRequest(post({ message: "hello" }), t.deps);
-    const sent = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string);
-    expect(sent.messages[1].content).toBe('User message: "hello"');
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    expect(user).toContain("Captured so far (answers): {}");
+    expect(user).toContain("Field statuses: {}");
+    expect(user).toContain("Recent conversation, oldest first: []");
+    expect(user.endsWith('New user message: "hello"')).toBe(true);
+    // Most important first, never the census (it comes only from an upload).
+    const next = /Not yet settled, most important first: (.*)/.exec(user)![1];
+    expect(next.startsWith("company_name (Company legal name), states (States of operation), pay_frequency (Pay frequency), employee_count")).toBe(true);
+    expect(next).not.toContain("census");
+    expect(next.split(", ")).toHaveLength(NEXT_FIELDS);
+  });
+
+  it("tells the model what is settled and what isn't, from the answers and their field statuses", async () => {
+    const t = setup();
+    await handleRequest(post({
+      message: "We're in New York",
+      context: { company_name: "Acme", states: [], pay_frequency: "weekly", employee_count: 0, industry: "Print" },
+      statuses: { company_name: "conflicting", pay_frequency: "confirmed", employee_count: "inferred", industry: "incomplete", hq_state: "unknown", current_carrier: "not_applicable" },
+      recent: [{ sender: "lenore", text: "Which states do your people work in?" }],
+    }), t.deps);
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    const next = /Not yet settled, most important first: (.*)/.exec(user)![1].split(", ").map((f) => f.split(" ")[0]);
+    // In conflict, or incomplete: unsettled. An answer, 0 included, or "unknown" or "doesn't apply": settled.
+    expect(next.slice(0, 3)).toEqual(["company_name", "states", "industry"]);
+    for (const settled of ["pay_frequency", "employee_count", "hq_state", "current_carrier"]) expect(next).not.toContain(settled);
+    expect(user).toContain('Recent conversation, oldest first: [{"sender":"lenore","text":"Which states do your people work in?"}]');
+  });
+
+  it("removes Social Security and account numbers from the recent conversation it passes on", async () => {
+    const t = setup();
+    await handleRequest(post({ message: "ok", recent: [{ sender: "user", text: "my SSN is 123-45-6789" }] }), t.deps);
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    expect(user).not.toContain("123-45-6789");
+    expect(user).toContain("[redacted]");
   });
 
   it("goes to Anthropic when AI_PROVIDER says so", async () => {

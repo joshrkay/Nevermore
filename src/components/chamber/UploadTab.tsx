@@ -24,6 +24,8 @@ interface UploadTabProps {
   documents: UseSessionDocumentsReturn;
   /** Uploads attach to this intake; nothing can be uploaded until it exists. */
   sessionId: string | null;
+  /** True when an upload may start the intake (the prospect hasn't yet, and the workspace can create one). */
+  canStart?: boolean;
   data: ChamberData;
   provenance?: ProvenanceMap;
   /** The prospect's decision on what Lenore found in a document; omit for read-only. */
@@ -33,7 +35,9 @@ interface UploadTabProps {
 const uploadedAt = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-const UploadTab = ({ documents, sessionId, data, provenance, onResolveCandidates }: UploadTabProps) => {
+const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, onResolveCandidates }: UploadTabProps) => {
+  // Before the prospect has started an intake, an upload starts one.
+  const canUpload = Boolean(sessionId) || canStart;
   const { docs, upload, remove, setCategory, extract, uploading } = documents;
   const uploaded = docs.filter((d) => d.status !== "uploading");
   const present = new Set(uploaded.map((d) => d.category));
@@ -61,7 +65,7 @@ const UploadTab = ({ documents, sessionId, data, provenance, onResolveCandidates
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    disabled: !sessionId || uploading,
+    disabled: !canUpload || uploading,
     accept: {
       "application/pdf": [".pdf"],
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
@@ -86,7 +90,7 @@ const UploadTab = ({ documents, sessionId, data, provenance, onResolveCandidates
       <div
         {...getRootProps()}
         className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors ${
-          !sessionId || uploading ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
+          !canUpload || uploading ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
         } ${isDragActive ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
       >
         <input {...getInputProps()} />

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 
 type Result = { data?: unknown; error: { message: string } | null };
@@ -113,6 +114,53 @@ describe("useSessionDocuments", () => {
     const { result } = renderHook(() => useSessionDocuments("s1"));
     await waitFor(() => expect(result.current.docs).toHaveLength(1));
     expect(calls).toContainEqual({ op: "select.eq", args: ["session_id", "s1"] });
+  });
+
+  describe("an upload before the prospect has started an intake", () => {
+    // The page's part: the intake id it renders with, which creating the intake sets.
+    const startable = (created: string | null) => {
+      let setSid: (sid: string) => void = () => {};
+      const ensure = vi.fn(async () => {
+        if (created) setSid(created);
+        return created;
+      });
+      const hook = renderHook(() => {
+        const [sid, set] = useState<string | null>(null);
+        setSid = set;
+        return useSessionDocuments(sid, ensure);
+      });
+      return { ...hook, ensure };
+    };
+
+    it("starts the intake, waits for its list, then stores the file under it", async () => {
+      insertResult = { data: row({ id: "d9", storage_path: "u1/s9/x_census.csv" }), error: null };
+      const { result, ensure } = startable("s9");
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      // Not inside act: the upload waits for a render (the new intake's list) that act would hold back.
+      let outcome: unknown;
+      void result.current.upload([new File(["First,Last\nAnn,Lee"], "census.csv", { type: "text/csv" })]).then((o) => { outcome = o; });
+      await waitFor(() => expect(outcome).toBeDefined());
+      expect(ensure).toHaveBeenCalledTimes(1);
+      expect(outcome).toEqual({ saved: 1, failed: [], rejected: [] });
+      const listed = calls.findIndex((c) => c.op === "select.eq" && c.args[0] === "session_id" && c.args[1] === "s9");
+      const stored = calls.findIndex((c) => c.op === "storage.upload");
+      expect(listed).toBeGreaterThan(-1);
+      expect(stored).toBeGreaterThan(listed);
+      expect(calls[stored].args[0]).toMatch(/^u1\/s9\//);
+      // The new intake's list loaded first, so it didn't wipe the file out.
+      await waitFor(() => expect(result.current.docs.map((d) => d.id)).toContain("d9"));
+    });
+
+    it("stores nothing when the intake couldn't be started", async () => {
+      const { result, ensure } = startable(null);
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      let outcome: unknown;
+      await act(async () => { outcome = await result.current.upload([new File(["x"], "a.csv", { type: "text/csv" })]); });
+      expect(ensure).toHaveBeenCalledTimes(1);
+      expect(outcome).toEqual({ saved: 0, failed: ["a.csv"], rejected: [] });
+      expect(calls.some((c) => c.op === "storage.upload")).toBe(false);
+      expect(result.current.uploading).toBe(false);
+    });
   });
 
   it("stores uploads under the intake, records metadata, then reads them", async () => {

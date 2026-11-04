@@ -21,7 +21,7 @@ const readIds: unknown[] = [];
 let inserts = 0;
 const insertedRows: Record<string, unknown>[] = [];
 const insertedColumns: string[] = [];
-let insertError: { message: string } | null = null;
+let insertError: { message: string; code?: string; details?: string } | null = null;
 // When the server says a new intake was created.
 let insertedCreatedAt = "2026-05-01T12:00:00Z";
 // The prospect's latest unfinished intake, as the lookup on a bare /start finds it.
@@ -124,6 +124,16 @@ const drain = () => act(async () => { for (let i = 0; i < 20; i++) await Promise
 
 type SubmitResult = boolean | { message: string };
 
+/**
+ * Waits for the hook to finish looking for an intake, then has the prospect start one (A-1: nothing is created
+ * until they do something; ensureIntake is what their first change calls). An intake that was opened is kept.
+ */
+const startIntake = async (result: { current: ReturnType<typeof useChamberSession> }) => {
+  await waitFor(() => expect(result.current.isLoading).toBe(false));
+  await act(async () => { await result.current.ensureIntake(); });
+  await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+};
+
 // The saved row as another tab (or the server) has it.
 const serverRow = (over: Record<string, unknown> = {}) => ({
   id: "s1",
@@ -169,7 +179,7 @@ describe("useChamberSession", () => {
 
   it("waits for an in-flight autosave before submitting", async () => {
     const { result } = renderHook(() => useChamberSession());
-    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    await startIntake(result);
 
     vi.useFakeTimers();
     act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
@@ -191,7 +201,7 @@ describe("useChamberSession", () => {
 
   it("re-saves and blocks submission when the in-flight autosave fails", async () => {
     const { result } = renderHook(() => useChamberSession());
-    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    await startIntake(result);
 
     vi.useFakeTimers();
     act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
@@ -213,7 +223,7 @@ describe("useChamberSession", () => {
 
   it("snapshots the signed data on submission", async () => {
     const { result } = renderHook(() => useChamberSession());
-    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    await startIntake(result);
     act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
 
     const pending = result.current.submit(submission);
@@ -229,7 +239,7 @@ describe("useChamberSession", () => {
   it("saves pending edits with a keepalive request when the page unloads", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
     const { result } = renderHook(() => useChamberSession());
-    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    await startIntake(result);
     act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
 
     window.dispatchEvent(new Event("beforeunload"));
@@ -245,7 +255,7 @@ describe("useChamberSession", () => {
 
   it("saves field provenance with the data and snapshots it on submission", async () => {
     const { result } = renderHook(() => useChamberSession());
-    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    await startIntake(result);
     act(() =>
       result.current.updateIntake((prev) =>
         applyExtraction(prev, { employee_count: 40 }, { source: { kind: "transcript", message_id: "m1" } }),
@@ -298,7 +308,7 @@ describe("useChamberSession", () => {
     await waitFor(() => expect(result.current.resumeFailed).toBe(true));
 
     act(() => result.current.startNew());
-    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    await startIntake(result);
     expect(result.current.resumeFailed).toBe(false);
     expect(inserts).toBe(1);
   });
@@ -316,7 +326,7 @@ describe("useChamberSession", () => {
 
     it("reports nothing certified for a new intake", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(result.current.certification).toEqual({ status: "none" });
     });
 
@@ -362,7 +372,7 @@ describe("useChamberSession", () => {
 
     it("becomes certified once the submission is saved, and not before", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
 
       let ok: SubmitResult | undefined;
       const pending = result.current.submit(submission).then((r) => { ok = r; });
@@ -389,7 +399,7 @@ describe("useChamberSession", () => {
 
     it("stays uncertified when the submission fails to save", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       const pending = result.current.submit(submission);
       await waitFor(() => expect(updates).toHaveLength(1));
       await act(async () => { updates[0].resolve({ error: { message: "refused" } }); await pending; });
@@ -399,7 +409,7 @@ describe("useChamberSession", () => {
 
   it("refuses to certify answers that changed after they were signed", async () => {
     const { result } = renderHook(() => useChamberSession());
-    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    await startIntake(result);
     const signedKey = JSON.stringify(result.current.chamberData);
 
     act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Changed Inc" })));
@@ -413,7 +423,7 @@ describe("useChamberSession", () => {
 
   it("certifies when the answers still match what was signed", async () => {
     const { result } = renderHook(() => useChamberSession());
-    await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+    await startIntake(result);
     act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
     const signedKey = JSON.stringify(result.current.chamberData);
 
@@ -429,7 +439,7 @@ describe("useChamberSession", () => {
   describe("sending the submission notifications", () => {
     it("asks for them to be sent once the submission is confirmed", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
 
       const pending = result.current.submit(submission);
@@ -443,7 +453,7 @@ describe("useChamberSession", () => {
 
     it("does nothing when the submission fails", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
 
       let ok: SubmitResult | undefined;
@@ -458,7 +468,7 @@ describe("useChamberSession", () => {
 
     it("does nothing when the answers changed after they were signed", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       const signedKey = JSON.stringify(result.current.chamberData);
 
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Changed Inc" })));
@@ -482,7 +492,7 @@ describe("useChamberSession", () => {
 
     it("looks only at the prospect's own unfinished intakes, most recently active first, then at whether the last one expired", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(latestQueries).toEqual([
         ["user_id", "u1", "status", ["in_progress"], "last_activity_at", { ascending: false }, 1],
         ["user_id", "u1", "status", ["expired", "submitted"], "last_activity_at", { ascending: false }, 1],
@@ -499,7 +509,7 @@ describe("useChamberSession", () => {
 
     it("starts a new intake when they have no unfinished one", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(inserts).toBe(1);
     });
 
@@ -546,7 +556,7 @@ describe("useChamberSession", () => {
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.loadFailed).toBe(true));
       act(() => result.current.startNew());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(result.current.loadFailed).toBe(false);
       expect(inserts).toBe(1);
     });
@@ -557,7 +567,7 @@ describe("useChamberSession", () => {
       latestRow = { id: "s7" };
       resumeRow = openRow;
       act(() => result.current.startNew());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(inserts).toBe(1);
     });
   });
@@ -572,7 +582,7 @@ describe("useChamberSession", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(NEXT_YEAR);
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(result.current.fileId).toBe("EAA-2026-S1");
     });
 
@@ -623,7 +633,7 @@ describe("useChamberSession", () => {
 
     it("says nothing until something changes, then saving, then saved once the row comes back", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(result.current.saveStatus).toBe("idle");
 
       vi.useFakeTimers();
@@ -638,7 +648,7 @@ describe("useChamberSession", () => {
 
     it("says not saved when a save fails, and Retry saves again", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       vi.useFakeTimers();
       edit(result);
       await act(async () => { vi.advanceTimersByTime(2000); });
@@ -657,7 +667,7 @@ describe("useChamberSession", () => {
 
     it("treats an update that changed no row as not saved, rather than trusting the missing error", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       // The row is still at the version the update asked for, so nothing explains the empty result.
       resumeRow = serverRow({ data_version: 1 });
       vi.useFakeTimers();
@@ -670,7 +680,7 @@ describe("useChamberSession", () => {
 
     it("refuses to certify when the submission changed no row", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       resumeRow = serverRow({ data_version: 1 });
       let ok: SubmitResult | undefined;
       const pending = result.current.submit(submission).then((r) => { ok = r; });
@@ -684,11 +694,16 @@ describe("useChamberSession", () => {
       insertError = { message: "offline" };
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.isLoading).toBe(false));
+      // Nothing is created, or attempted, until the prospect starts.
       expect(result.current.sessionId).toBeNull();
-      expect(result.current.saveStatus).toBe("failed");
+      expect(inserts).toBe(0);
+      expect(result.current.saveStatus).toBe("idle");
 
       vi.useFakeTimers();
       edit(result);
+      await drain();
+      expect(inserts).toBe(1);
+      expect(result.current.saveStatus).toBe("failed");
       await act(async () => { vi.advanceTimersByTime(2000); });
       await drain();
       // Without an intake row nothing was written, and the indicator doesn't pretend otherwise.
@@ -714,7 +729,7 @@ describe("useChamberSession", () => {
     const autosave = async () => { await act(async () => { vi.advanceTimersByTime(2000); }); };
     const open = async () => {
       const hook = renderHook(() => useChamberSession());
-      await waitFor(() => expect(hook.result.current.sessionId).toBe("s1"));
+      await startIntake(hook.result);
       vi.useFakeTimers();
       return hook;
     };
@@ -1510,6 +1525,26 @@ describe("useChamberSession", () => {
         expect(result.current.saveStatus).toBe("saved");
       });
 
+      it("names the answers in conflict when the database refuses a certification over them, and keeps saving", async () => {
+        const { result } = await open();
+        let ok: SubmitResult | undefined;
+        const pending = result.current.submit(submission).then((r) => { ok = r; });
+        await drain();
+        updates[0].resolve({ error: { message: "This intake can't be certified yet: company_name, states has two different answers", code: "EA008", details: "company_name,states" } });
+        await act(async () => { await pending; });
+        expect(ok).toEqual({ message: "Choose one answer for company legal name, states of operation on the Review tab, then certify." });
+        expect(result.current.certification.status).toBe("none");
+        expect(dispatchOutbox).not.toHaveBeenCalled();
+
+        edit(result, "Acme Inc");
+        await autosave();
+        expect(updates).toHaveLength(2);
+        expect(updates[1].payload).not.toHaveProperty("status");
+        updates[1].resolve({ error: null });
+        await drain();
+        expect(result.current.saveStatus).toBe("saved");
+      });
+
       it("says which answer was refused when the submission write itself is refused", async () => {
         // Certifying re-checks the answers even when nothing was edited, so an older row can fail here.
         const { result } = await open();
@@ -1546,14 +1581,14 @@ describe("useChamberSession", () => {
     const autosave = async () => { await act(async () => { vi.advanceTimersByTime(2000); }); };
     const open = async () => {
       const hook = renderHook(() => useChamberSession());
-      await waitFor(() => expect(hook.result.current.sessionId).toBe("s1"));
+      await startIntake(hook.result);
       vi.useFakeTimers();
       return hook;
     };
 
     it("starts with none", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(result.current.chosenPeo).toBeNull();
       expect(insertedRows[0]).toMatchObject({ chosen_peo: null });
     });
@@ -1655,10 +1690,14 @@ describe("useChamberSession", () => {
 
     it("is cleared when the prospect starts over, and the new intake starts with none", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.choosePeo("Justworks"));
       await act(async () => { await result.current.startOver(); });
-      await waitFor(() => expect(inserts).toBe(2));
+      // Nothing new is created until the prospect starts again.
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(inserts).toBe(1);
+      await startIntake(result);
+      expect(inserts).toBe(2);
       expect(result.current.chosenPeo).toBeNull();
       expect(insertedRows[1]).toMatchObject({ chosen_peo: null });
     });
@@ -1684,7 +1723,7 @@ describe("useChamberSession", () => {
       const { result } = renderHook(() => useChamberSession("s5"));
       await waitFor(() => expect(result.current.expired).not.toBeNull());
       act(() => result.current.startNew());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(result.current.expired).toBeNull();
       expect(insertedRows[0].chamber_data).toMatchObject({ company_name: null });
     });
@@ -1701,7 +1740,7 @@ describe("useChamberSession", () => {
     it("just starts a new intake when what they last did was submit one", async () => {
       lastClosedRow = { id: "s6", status: "submitted" };
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(result.current.expired).toBeNull();
       expect(reads).toEqual([]);
     });
@@ -1711,7 +1750,7 @@ describe("useChamberSession", () => {
         act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
       const open = async () => {
         const hook = renderHook(() => useChamberSession());
-        await waitFor(() => expect(hook.result.current.sessionId).toBe("s1"));
+        await startIntake(hook.result);
         vi.useFakeTimers();
         return hook;
       };
@@ -1764,10 +1803,118 @@ describe("useChamberSession", () => {
     });
   });
 
+  describe("starting an intake (A-1)", () => {
+    it("creates nothing on load, or on a reload, until the prospect does something", async () => {
+      const first = renderHook(() => useChamberSession());
+      await waitFor(() => expect(first.result.current.isLoading).toBe(false));
+      expect(first.result.current.sessionId).toBeNull();
+      expect(first.result.current.messages.map((m) => m.text)).toEqual([OPENING_MESSAGE]);
+      expect(first.result.current.saveStatus).toBe("idle");
+      first.unmount();
+      const again = renderHook(() => useChamberSession());
+      await waitFor(() => expect(again.result.current.isLoading).toBe(false));
+      await drain();
+      expect(inserts).toBe(0);
+      expect(again.result.current.fileId).toBeNull();
+    });
+
+    it("creates exactly one intake on the first message, holding it, and saves nothing twice", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      vi.useFakeTimers();
+      const message = createChatMessage("user", "We are Acme, twelve people in NY");
+      act(() => result.current.addMessage(message));
+      await drain();
+      expect(inserts).toBe(1);
+      expect((insertedRows[0].transcript as { id: string }[]).map((m) => m.id)).toContain(message.id);
+      expect(result.current.sessionId).toBe("s1");
+      expect(result.current.saveStatus).toBe("saved");
+      // The row already holds it: no update follows.
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      await drain();
+      expect(updates).toHaveLength(0);
+
+      // Later changes are saves to that intake, never a second one.
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      await drain();
+      expect(inserts).toBe(1);
+      expect(updates).toHaveLength(1);
+      expect(updates[0].filters).toMatchObject({ id: "s1", data_version: 1 });
+    });
+
+    it("saves a change made while the intake was being created", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      vi.useFakeTimers();
+      act(() => {
+        result.current.choosePeo("TriNet");
+        result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" }));
+      });
+      await drain();
+      expect(inserts).toBe(1);
+      expect(insertedRows[0]).toMatchObject({ chosen_peo: "TriNet" });
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      await drain();
+      // Either the row held everything, or exactly one save sent what it didn't.
+      const saved = updates.map((u) => u.payload.chamber_data as { company_name?: string } | undefined);
+      const held = (insertedRows[0].chamber_data as { company_name?: string }).company_name === "Acme";
+      expect(held || saved.some((d) => d?.company_name === "Acme")).toBe(true);
+      expect(inserts).toBe(1);
+    });
+
+    it("gives everyone waiting the one intake being created", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      let ids: (string | null)[] = [];
+      await act(async () => {
+        ids = await Promise.all([result.current.ensureIntake(), result.current.ensureIntake(), result.current.ensureIntake()]);
+      });
+      expect(ids).toEqual(["s1", "s1", "s1"]);
+      expect(inserts).toBe(1);
+    });
+
+    it("offers the intake another tab started first, rather than making a second", async () => {
+      insertError = { message: "You already have an intake in progress", code: "EA009", details: "s7" };
+      resumeRow = { id: "s7", data_version: 4, chamber_data: { company_name: "Other Tab Co" }, field_provenance: {}, transcript: [], status: "in_progress", submission: null, created_at: "2026-05-01T12:00:00Z" };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      vi.useFakeTimers();
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "This Tab Co" })));
+      await drain();
+      expect(inserts).toBe(1);
+      expect(readIds).toContain("s7");
+      expect(result.current.sessionId).toBe("s7");
+      expect(result.current.saveStatus).toBe("conflict");
+      // Nothing is saved over the other tab's answers unless the prospect says so.
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      await drain();
+      expect(updates).toHaveLength(0);
+
+      act(() => result.current.keepMine());
+      await drain();
+      expect(updates).toHaveLength(1);
+      expect(updates[0].filters).toMatchObject({ id: "s7", data_version: 4 });
+      expect(updates[0].payload).toHaveProperty("chamber_data.company_name", "This Tab Co");
+    });
+
+    it("or loads it, dropping what this tab had", async () => {
+      insertError = { message: "You already have an intake in progress", code: "EA009", details: "s7" };
+      resumeRow = { id: "s7", data_version: 4, chamber_data: { company_name: "Other Tab Co" }, field_provenance: {}, transcript: [], status: "in_progress", submission: null, created_at: "2026-05-01T12:00:00Z" };
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "This Tab Co" })));
+      await waitFor(() => expect(result.current.saveStatus).toBe("conflict"));
+      act(() => result.current.loadLatest());
+      expect(result.current.chamberData.company_name).toBe("Other Tab Co");
+      expect(result.current.saveStatus).toBe("saved");
+    });
+  });
+
   describe("start over", () => {
     it("archives the intake, then begins a blank one with a fresh greeting", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
       const greeting = result.current.messages[0];
 
@@ -1775,7 +1922,14 @@ describe("useChamberSession", () => {
       await act(async () => { ok = await result.current.startOver(); });
       expect(ok).toBe(true);
       expect(rpcCalls).toEqual([{ fn: "archive_chamber_session", args: { p_session_id: "s1" } }]);
-      await waitFor(() => expect(inserts).toBe(2));
+      // The archived intake is no longer the one on screen, so nothing (the address included) names it.
+      expect(result.current.sessionId).toBeNull();
+      expect(result.current.fileId).toBeNull();
+      // Nothing new is created until the prospect starts again.
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(inserts).toBe(1);
+      await startIntake(result);
+      expect(inserts).toBe(2);
       expect(insertedRows[1].chamber_data).toMatchObject({ company_name: null });
       const transcript = insertedRows[1].transcript as { id: string; text: string; kind?: string }[];
       expect(transcript).toHaveLength(1);
@@ -1787,7 +1941,7 @@ describe("useChamberSession", () => {
 
     it("waits for a save already on its way, so it can't land on the archived intake", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
       const saving = act(async () => { await result.current.retrySave(); });
       await saving;
@@ -1805,7 +1959,7 @@ describe("useChamberSession", () => {
     it("changes nothing when the intake couldn't be archived", async () => {
       rpcResult = { data: null, error: { message: "Failed to fetch" } };
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
       let ok: boolean | undefined;
       await act(async () => { ok = await result.current.startOver(); });
@@ -1818,7 +1972,7 @@ describe("useChamberSession", () => {
     it("keeps saving the intake it couldn't set aside: the edit held back for the archive still goes out", async () => {
       rpcResult = { data: null, error: { message: "Failed to fetch" } };
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       vi.useFakeTimers();
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
       await act(async () => { await result.current.startOver(); });
@@ -1830,7 +1984,7 @@ describe("useChamberSession", () => {
 
     it("marks the conversation as replaced, so chat and voice drop what belonged to the old one", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       const before = result.current.conversationEpoch;
       await act(async () => { await result.current.startOver(); });
       expect(result.current.conversationEpoch).not.toBe(before);
@@ -1839,11 +1993,15 @@ describe("useChamberSession", () => {
     it("goes ahead when the intake was already archived (a retry after a lost answer)", async () => {
       rpcResult = { data: null, error: { message: "Intake not found", code: "PT404" } };
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       let ok: boolean | undefined;
       await act(async () => { ok = await result.current.startOver(); });
       expect(ok).toBe(true);
-      await waitFor(() => expect(inserts).toBe(2));
+      // Nothing new is created until the prospect starts again.
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(inserts).toBe(1);
+      await startIntake(result);
+      expect(inserts).toBe(2);
     });
   });
 
@@ -1853,7 +2011,7 @@ describe("useChamberSession", () => {
 
     it("keeps an edit until the save is confirmed, without the census", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.updateIntake((prev) => ({
         ...prev,
         data: { ...prev.data, company_name: "Acme", census: parseChamberData({ census: [{ first_name: "Sarah", work_state: "CA" }] }).census },
@@ -1870,7 +2028,7 @@ describe("useChamberSession", () => {
 
     it("keeps it when the save fails", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
       await act(async () => { await result.current.retrySave(); });
       await act(async () => { updates[0].resolve({ error: networkError }); });
@@ -1959,7 +2117,7 @@ describe("useChamberSession", () => {
 
     it("leaves another tab's copy alone when this tab's save is confirmed", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Tab A" })));
       await act(async () => { void result.current.retrySave(); });
       expect(updates).toHaveLength(1);
@@ -1972,7 +2130,7 @@ describe("useChamberSession", () => {
 
     it("forgets this tab's copy when the prospect loads what another tab saved instead", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Mine" })));
       await waitFor(() => expect(readBackup("u1", "s1")?.chamber_data.company_name).toBe("Mine"));
       await act(async () => { void result.current.retrySave(); });
@@ -2034,7 +2192,7 @@ describe("useChamberSession", () => {
 
     it("drops the guest's blank intake and opens their own latest one", async () => {
       const { result, rerender } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.addMessage(createChatMessage("user", "hello")));
 
       authUserId = "u2";
@@ -2049,13 +2207,17 @@ describe("useChamberSession", () => {
 
     it("doesn't carry the guest's chosen PEO into the new person's blank intake", async () => {
       const { result, rerender } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       act(() => result.current.choosePeo("Justworks"));
       expect(result.current.chosenPeo).toBe("Justworks");
 
-      authUserId = "u2"; // no open intake of their own, so a blank one is made for them
+      authUserId = "u2"; // no open intake of their own, so a blank one is shown for them
       rerender();
-      await waitFor(() => expect(inserts).toBe(2));
+      // Nothing new is created until the new person starts.
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(inserts).toBe(1);
+      await startIntake(result);
+      expect(inserts).toBe(2);
       expect(insertedRows[1]).toMatchObject({ user_id: "u2", chosen_peo: null });
       expect(result.current.chosenPeo).toBeNull();
     });
@@ -2064,8 +2226,8 @@ describe("useChamberSession", () => {
   describe("the conversation", () => {
     it("keeps one greeting: a voice session's own hello is not added again", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
-      act(() => result.current.addMessage(createChatMessage("lenore", "Hi — I'm Lenore.", "greeting")));
+      await startIntake(result);
+      act(() => result.current.addMessage(createChatMessage("lenore", "Hi — I'm Lenore.", { kind: "greeting" })));
       expect(result.current.messages).toHaveLength(1);
       act(() => result.current.addMessage(createChatMessage("lenore", "Noted.")));
       expect(result.current.messages).toHaveLength(2);

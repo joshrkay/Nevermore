@@ -103,6 +103,30 @@ describe("ReviewTab sections", () => {
     expect(screen.queryByText(/You can choose a PEO now/)).not.toBeInTheDocument();
   });
 
+  it("lists a required answer given two ways as still needed, and takes you to choose", () => {
+    const conflict = {
+      status: "conflicting" as const,
+      source: { kind: "transcript" as const, message_id: "m1" },
+      updated_at: "2026-11-01T12:00:00Z",
+      candidates: [
+        { value: "Acme", source: { kind: "transcript" as const, message_id: "m1" } },
+        { value: "Acme LLC", source: { kind: "document" as const, document_id: "d1" } },
+      ],
+    };
+    render(<ReviewTab data={complete} provenance={{ company_name: conflict, industry: conflict }} onProceed={() => {}} onAction={() => {}} />);
+    const needed = section("Still needed");
+    expect(needed).toHaveTextContent("Still needed before The Manuscript can be generated: 1");
+    expect(needed).toHaveTextContent("Company legal name");
+    expect(needed).toHaveTextContent("You've given two different answers");
+    // A recommended field in conflict stays in "Needs your review", never in what's needed.
+    expect(needed).not.toHaveTextContent("Industry");
+    expect(screen.queryByText(/Every required answer is here/)).not.toBeInTheDocument();
+    expect(screen.getByText(/You can choose a PEO now/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose company legal name" }));
+    expect(document.activeElement?.closest("#review-field-company_name")).not.toBeNull();
+  });
+
   it("never lists the census as needed, only as recommended", () => {
     render(<ReviewTab data={complete} onProceed={() => {}} />);
     expect(screen.getByText(/Every required answer is here/)).toBeInTheDocument();

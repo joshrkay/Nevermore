@@ -3,7 +3,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { describeInvokeError, type AiFailureKind } from "@/data/aiFailure";
 import { mergeChamberData } from "@/data/chamberValidation";
 import type { ChamberData } from "@/data/chamberTypes";
+import type { ChatMessage } from "@/data/chat";
+import type { ProvenanceMap } from "@/data/provenance";
 import { redactSensitive } from "@/data/sensitive";
+import { chatContext } from "../../supabase/functions/_shared/chatContext.ts";
 import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 
@@ -25,7 +28,16 @@ export const CHAT_TIMEOUT_MS = 45_000;
 interface UseLenoreChatOptions {
   /** The intake the conversation belongs to; the function checks it is the caller's and records it. */
   intakeId?: string | null;
+  /**
+   * Creates the intake when the prospect hasn't started one yet (their first message does), so the call can
+   * carry its id and its extraction event can be found by intake.
+   */
+  ensureIntake?: () => Promise<string | null>;
   chamberData: ChamberData;
+  /** Each answer's field status, sent so Lenore knows what is settled (D22). */
+  provenance?: ProvenanceMap;
+  /** The conversation so far: the last few messages go with each call, so a short answer can be placed (D22). */
+  messages?: readonly ChatMessage[];
   setChamberData: (updater: (prev: ChamberData) => ChamberData) => void;
   /** May return the stored message so extracted values can point back to it. */
   addUserMessage: (text: string) => { id: string; text: string } | void;
@@ -49,13 +61,19 @@ const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
  */
-export function useLenoreChat({ intakeId, chamberData, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
+export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance, messages, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
   const [failure, setFailure] = useState<ChatFailure | null>(null);
   const [pending, setPending] = useState(false);
   const dataRef = useRef(chamberData);
   dataRef.current = chamberData;
+  const provenanceRef = useRef(provenance);
+  provenanceRef.current = provenance;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const intakeIdRef = useRef(intakeId);
   intakeIdRef.current = intakeId;
+  const ensureIntakeRef = useRef(ensureIntake);
+  ensureIntakeRef.current = ensureIntake;
   // The recorded message behind the current failure, so a retry still cites it. Each request
   // otherwise carries its own message, so overlapping sends can't be attributed to each other.
   const failedMessageRef = useRef<{ id: string; text: string } | null>(null);
@@ -84,9 +102,11 @@ export function useLenoreChat({ intakeId, chamberData, setChamberData, addUserMe
     }, CHAT_TIMEOUT_MS);
     try {
       // The roster isn't extracted from chat and holds personal details, so leave it out of the context.
-      const { census: _census, ...context } = dataRef.current;
-      const body: Record<string, unknown> = { message: text, context };
-      if (intakeIdRef.current) body.session_id = intakeIdRef.current;
+      const { census: _census, ...answers } = dataRef.current;
+      const statuses = Object.fromEntries(Object.entries(provenanceRef.current ?? {}).flatMap(([field, p]) => (p ? [[field, p.status]] : [])));
+      const body: Record<string, unknown> = { message: text, ...chatContext(answers, statuses, messagesRef.current ?? [], message?.id) };
+      const sessionId = intakeIdRef.current ?? (ensureIntakeRef.current ? await ensureIntakeRef.current() : null);
+      if (sessionId) body.session_id = sessionId;
       const { data, error } = await supabase.functions.invoke("chamber-extract", { body, signal: controller.signal });
       // The conversation was replaced while Lenore was answering: her answer belongs to the old one.
       if (replaced()) {

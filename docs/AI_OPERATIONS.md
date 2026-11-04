@@ -14,7 +14,7 @@ The codes are `AI_ERROR_CODES` in `supabase/functions/_shared/ai/errors.ts`. The
 
 | Code | HTTP | When | The prospect sees (`src/data/aiFailure.ts`) |
 | --- | --- | --- | --- |
-| `bad_request` | 400, or 413 for size | A missing or blank message, a message over 2,000 characters, a context that isn't an object or is over 20,000 characters, an intake or document id that isn't one, a body that isn't JSON | "Lenore couldn't respond" |
+| `bad_request` | 400, or 413 for size | A missing or blank message, a message over 2,000 characters, a context that isn't an object, statuses for unknown fields or with unknown statuses, more than 10 recent messages or one from anyone but the prospect or Lenore or over 2,000 characters, context, statuses and recent messages over 20,000 characters together, an intake or document id that isn't one, a body that isn't JSON | "Lenore couldn't respond" |
 | `unauthorized` | 401 | No signed-in user (the publishable key alone isn't one) | — |
 | `not_found` | 404 | The intake or document isn't the caller's, or doesn't exist. An advisor can read every intake but can't run Lenore on someone else's | "Lenore couldn't respond" |
 | `rate_limited` | 429 | The caller's, their address's or the provider's rate limit | "You're writing faster than Lenore can keep up…" |
@@ -47,7 +47,8 @@ Both functions check, in order:
 | Per user | 15 a minute, 300 a rolling day (fixed) | `consume_ai_quota`, `_shared/ai/budget.ts` | `supabase/tests/ai_abuse_limits.sql`, `budget.test.ts` |
 | Per address (hashed, never stored raw) | 20 a minute, 400 a rolling day (`AI_IP_PER_MINUTE`, `AI_IP_PER_DAY`) | `consume_ip_quota` | `ai_abuse_limits.sql`, `budget.test.ts` |
 | Everyone | 2,000 a UTC day (`AI_GLOBAL_DAILY_CALLS`) | `consume_global_ai_budget` | `ai_abuse_limits.sql`, `allowance.test.ts` |
-| Chat message / context | 2,000 / 20,000 characters | `chamber-extract/handler.ts` | `chamber-extract/handler.test.ts` |
+| Chat message / context (answers, statuses and recent messages together) | 2,000 / 20,000 characters | `chamber-extract/handler.ts`, `_shared/chatContext.ts` | `chamber-extract/handler.test.ts`, `_shared/chatContext.test.ts` |
+| Recent messages per call | 10, each at most 2,000 characters | `_shared/chatContext.ts` | `_shared/chatContext.test.ts` |
 | Provider timeout | 20 s a chat attempt, 30 s a document attempt | `_shared/ai/model.ts`, `document-extract/ask.ts` | `model.test.ts`, `handler.test.ts`, `ask.test.ts` |
 | Retry | One, after 1 s, on 429, 5xx or a network error; none on a timeout, 402, other 4xx or a bad answer | `_shared/ai/model.ts` | `model.test.ts` |
 | Browser wait for chat | 45 s, then "Try again" (longer than two 20 s attempts and the pause) | `CHAT_TIMEOUT_MS`, `src/hooks/useLenoreChat.ts` | `useLenoreChat.test.ts` |

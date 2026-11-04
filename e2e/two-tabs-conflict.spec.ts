@@ -42,7 +42,13 @@ const saved = (page: Page) => page.getByRole("status").getByText("Saved", { exac
 test("a tab that is behind is told so and cannot overwrite the other tab's save", async ({ context, page }) => {
   await page.goto("/start");
   await agreeToIntakeConsent(page);
+  // Nothing exists until the prospect starts (A-1): an industry starts this intake.
+  await page.getByRole("button", { name: "② Company", exact: true }).click();
+  await page.getByRole("button", { name: "Add Industry", exact: true }).click();
+  await page.getByRole("textbox", { name: "Industry", exact: true }).fill("Bookbinding");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page).toHaveURL(SESSION_URL);
+  await expect(saved(page)).toBeVisible();
   const sessionId = SESSION_URL.exec(page.url())![1];
 
   // The same browser, so the same guest (who has agreed already): two tabs of one prospect.
