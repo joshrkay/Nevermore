@@ -570,13 +570,13 @@ describe("parsing", () => {
   });
 
   it("keeps a transcript source's prompt version, and still reads entries saved without one", () => {
-    const versioned = { status: "confirmed", source: { kind: "transcript", message_id: "m1", quote: "40 of us", prompt_version: "2026-11-03.1" }, updated_at: "x" };
+    const versioned = { status: "confirmed", source: { kind: "transcript", message_id: "m1", quote: "40 of us", prompt_version: 3 }, updated_at: "x" };
     const unversioned = { status: "inferred", source: { kind: "transcript", message_id: "m2" }, updated_at: "x" };
     expect(parseProvenance({ employee_count: versioned, industry: unversioned })).toEqual({ employee_count: versioned, industry: unversioned });
   });
 
   it("drops a malformed prompt version but keeps the rest of the entry", () => {
-    for (const prompt_version of [42, "", "x".repeat(41), null]) {
+    for (const prompt_version of ["2026-11-03.1", "", 0, -1, 1.5, 40_000, null]) {
       const parsed = parseProvenance({
         employee_count: { status: "confirmed", source: { kind: "transcript", message_id: "m1", prompt_version }, updated_at: "x" },
       });
@@ -635,7 +635,7 @@ describe("transcriptExtraction", () => {
   });
 
   it("leaves the source unversioned when the reply carries no valid version, as a voice extraction doesn't", () => {
-    for (const meta of [{ employee_count: 40 }, { prompt_version: 7 }, { prompt_version: "" }, { prompt_version: "x".repeat(41) }, null]) {
+    for (const meta of [{ employee_count: 40 }, { prompt_version: "7" }, { prompt_version: 0 }, { prompt_version: 2.5 }, null]) {
       expect(transcriptExtraction({ id: "m1", text: "hi" }, meta).source).not.toHaveProperty("prompt_version");
     }
   });

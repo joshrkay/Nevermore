@@ -16,7 +16,7 @@ export interface Cell {
 export type Cells = Record<string, Cell>;
 
 export interface Baseline {
-  prompt_version: string;
+  prompt_version: number;
   provider: string;
   model: string;
   recorded_at: string;
@@ -132,7 +132,7 @@ export function formatTable(cells: Cells): string[] {
 
 const cellSchema = z.object({ pass: z.boolean(), actual: z.unknown(), status: z.string().nullable() });
 const baselineSchema = z.object({
-  prompt_version: z.string(),
+  prompt_version: z.number().int().positive(),
   provider: z.string(),
   model: z.string(),
   recorded_at: z.string(),

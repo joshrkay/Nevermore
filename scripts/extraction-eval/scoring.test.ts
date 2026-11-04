@@ -126,7 +126,7 @@ describe("reporting", () => {
 });
 
 describe("baseline", () => {
-  const meta = { prompt_version: "2026-11-03.1", provider: "lovable", model: "m", recorded_at: "2026-11-03T10:00:00.000Z" };
+  const meta = { prompt_version: 1, provider: "lovable", model: "m", recorded_at: "2026-11-03T10:00:00.000Z" };
 
   it("is written sorted by cell and reads back as it was", () => {
     const text = formatBaseline(meta, {

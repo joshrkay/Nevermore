@@ -373,6 +373,27 @@
       "provenance": {},
       "verified": [],
       "expected": { "company_name": "missing", "states": "settled", "pay_frequency": "missing", "census": "missing" }
+    },
+    {
+      "name": "a value marked not applicable is the prospect closing the field: settled",
+      "data": { "pay_frequency": "weekly" },
+      "provenance": { "pay_frequency": { "status": "not_applicable", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T00:00:00Z" } },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "settled", "census": "missing" }
+    },
+    {
+      "name": "not applicable with no value is still missing (the gate reads answers, not statuses)",
+      "data": {},
+      "provenance": { "company_name": { "status": "not_applicable", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T00:00:00Z" } },
+      "verified": [],
+      "expected": { "company_name": "missing", "states": "missing", "pay_frequency": "missing", "census": "missing" }
+    },
+    {
+      "name": "a value beside unknown is one the prospect hasn't confirmed",
+      "data": { "company_name": "Acme" },
+      "provenance": { "company_name": { "status": "unknown", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-03T00:00:00Z" } },
+      "verified": [],
+      "expected": { "company_name": "unconfirmed", "states": "missing", "pay_frequency": "missing", "census": "missing" }
     }
   ]
 }

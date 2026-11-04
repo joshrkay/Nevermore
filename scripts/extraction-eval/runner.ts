@@ -11,7 +11,7 @@ import { applyExtraction, transcriptExtraction, type IntakeState } from "@/data/
 import { redactSensitive } from "@/data/sensitive";
 import { callModel, type ModelRequest, type ModelResult } from "../../supabase/functions/_shared/ai/model.ts";
 import { selectAdapter } from "../../supabase/functions/_shared/ai/providers.ts";
-import { emptyExtraction, shapeExtraction } from "../../supabase/functions/chamber-extract/extraction.ts";
+import { shapeExtraction } from "../../supabase/functions/chamber-extract/extraction.ts";
 import { buildUserPrompt, serializeContext } from "../../supabase/functions/chamber-extract/prompt.ts";
 import { EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema.ts";
 import { FIXTURES, type Fixture } from "./fixtures";
@@ -64,8 +64,10 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
     if (!result.ok) {
       return { state, error: `turn ${i + 1}: model call failed (${result.kind}, HTTP ${result.httpStatus ?? "-"})` };
     }
+    // The tool call is forced, so the handler answers a reply without one as invalid_response (US-2.4a).
+    if (!result.args) return { state, error: `turn ${i + 1}: the model made no tool call (invalid_response)` };
     // What the handler returns, as the browser parses it.
-    const response = JSON.parse(JSON.stringify(result.args ? shapeExtraction(result.args) : emptyExtraction()));
+    const response = JSON.parse(JSON.stringify(shapeExtraction(result.args)));
     // ChamberPage's onExtracted for a chat message.
     if (response.extracted) state = applyExtraction(state, response.extracted, transcriptExtraction(message, response));
   }

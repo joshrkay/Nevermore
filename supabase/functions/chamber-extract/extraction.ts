@@ -14,8 +14,8 @@ export interface Extraction {
   reply: string | null;
   /** Fields the model sent that the intake schema refuses, by path and reason (never the value). */
   rejected: IntakeIssue[];
-  /** The contract this answer was produced under, which the browser stores with each value. */
-  prompt_version: string;
+  /** The contract this answer was produced under (PROMPT_VERSION), which the browser stores with each value. */
+  prompt_version: number;
 }
 
 /** What the browser gets when the model made no tool call: nothing extracted, and no reply of ours. */

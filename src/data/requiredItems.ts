@@ -5,7 +5,7 @@ import { RECOMMENDED_ITEMS, REQUIRED_ITEMS, type ReadinessItem } from "./readine
 // How far along each item an intake needs is (decision D2): the three required answers, then the
 // recommended census, as src/data/readiness.ts lists them and decides whether each is there. This adds
 // whether a present answer is settled, from its provenance and the advisor's verifications. The
-// database's public.intake_required_items (migration 20261103120000) is the same rule; the advisor queue's
+// database's public.intake_required_items (migration 20261104100000) is the same rule; the advisor queue's
 // "missing required" reads it. requiredItems.cases.json holds the cases both sides are tested against.
 
 /** "unconfirmed" is an inferred field. A settled item needs nothing more from the prospect. */
@@ -39,10 +39,13 @@ export const REQUIRED_ITEM_REASONS: Record<Exclude<RequiredItemState, "settled">
   unconfirmed: FIELD_OPEN_REASONS.inferred,
 };
 
-const UNSETTLED: Record<Exclude<FieldStatus, "confirmed">, RequiredItemState> = {
+// A present answer's status, when it isn't settled. not_applicable is the prospect closing the field (US-2.1a);
+// unknown holds no answer, so a value beside it is one they haven't confirmed.
+const UNSETTLED: Record<Exclude<FieldStatus, "confirmed" | "not_applicable">, RequiredItemState> = {
   conflicting: "conflicting",
   incomplete: "incomplete",
   inferred: "unconfirmed",
+  unknown: "unconfirmed",
 };
 
 const readinessItem = (key: string): ReadinessItem => {
@@ -60,7 +63,7 @@ const CENSUS = readinessItem("census");
 function fieldState(present: boolean, field: FieldKey, provenance: ProvenanceMap, verified: ReadonlySet<string>): RequiredItemState {
   if (!present) return "missing";
   const status = provenance[field]?.status;
-  if (!status || status === "confirmed" || verified.has(field)) return "settled";
+  if (!status || status === "confirmed" || status === "not_applicable" || verified.has(field)) return "settled";
   return UNSETTLED[status];
 }
 

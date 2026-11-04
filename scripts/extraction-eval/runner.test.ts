@@ -13,7 +13,7 @@ import { parseBaseline } from "./scoring";
 const confirmed = (...fields: string[]) => Object.fromEntries(fields.map((f) => [f, "confirmed"]));
 
 // What a well-behaved model answers to each fixture message, keyed by the message as the model
-// receives it (so the SSN message is keyed in its redacted form). null is no tool call at all.
+// receives it (so the SSN message is keyed in its redacted form). {} is a tool call with nothing in it.
 const CANNED: Record<string, Record<string, unknown> | null> = {
   "We're Mossgate Ceramics LLC, headquartered in Oregon. All 23 of our employees work in Oregon.": {
     company_name: "Mossgate Ceramics LLC", hq_state: "OR", states: ["OR"], employee_count: 23,
@@ -30,7 +30,7 @@ const CANNED: Record<string, Record<string, unknown> | null> = {
   "We have 40 employees.": { employee_count: 40, field_status: confirmed("employee_count") },
   "Actually it's 45, not 40.": { employee_count: 45, field_status: confirmed("employee_count"), corrected_fields: ["employee_count"] },
   "Payroll is getting harder to manage with 55 employees.": { employee_count: 55, field_status: confirmed("employee_count") },
-  "hi, what is a PEO?": null,
+  "hi, what is a PEO?": {},
   // Echoes the whole message into a free-text field: only the redaction before the model keeps the SSN out.
   "We're Wrenfield Bakery with 12 employees. For your records, my SSN is [redacted].": {
     company_name: "Wrenfield Bakery", employee_count: 12,
@@ -130,6 +130,12 @@ describe("runFixtures", () => {
       0,
     );
     expect(Object.keys(cells)).toHaveLength(assertions);
+  });
+
+  it("counts a reply with no tool call as a failed call, as the handler answers it invalid_response", async () => {
+    const noToolCall = async (): Promise<ModelResult> => ({ ok: true, args: null, attempts: 1, latencyMs: 0 });
+    const { errors } = await runFixtures(FIXTURES.filter((f) => f.id === "incomplete-states"), noToolCall);
+    expect(errors.join()).toMatch(/no tool call \(invalid_response\)/);
   });
 
   it("fails a fixture's cells when its model call fails, and reports it", async () => {
@@ -282,7 +288,7 @@ describe("main", () => {
 
   it("notes a baseline recorded under an older prompt version", async () => {
     const recorded = JSON.parse(await recordBaseline());
-    const t = setup({ baseline: JSON.stringify({ ...recorded, prompt_version: "2026-01-01.1" }) });
+    const t = setup({ baseline: JSON.stringify({ ...recorded, prompt_version: PROMPT_VERSION + 100 }) });
     expect(await main(t.deps)).toBe(0);
     expect(t.output()).toContain(`The prompt is now ${PROMPT_VERSION}`);
   });

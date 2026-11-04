@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { describeInvokeError, type AiFailureKind } from "@/data/aiFailure";
 import type { ChamberData } from "@/data/chamberTypes";
 import { chatContext } from "@/data/chat";
 import { redactSensitive } from "@/data/sensitive";
@@ -47,7 +48,7 @@ const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
  */
-export function useLenoreChat({ chamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
+export function useLenoreChat({ intakeId, chamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
   const [failure, setFailure] = useState<ChatFailure | null>(null);
   const [pending, setPending] = useState(false);
   const dataRef = useRef(chamberData);
@@ -81,9 +82,9 @@ export function useLenoreChat({ chamberData, addUserMessage, addLenoreMessage, o
       controller.abort();
     }, CHAT_TIMEOUT_MS);
     try {
-      const { data, error } = await supabase.functions.invoke("chamber-extract", {
-        body: { message: text, context: chatContext(dataRef.current) },
-      });
+      const body: Record<string, unknown> = { message: text, context: chatContext(dataRef.current) };
+      if (intakeIdRef.current) body.session_id = intakeIdRef.current;
+      const { data, error } = await supabase.functions.invoke("chamber-extract", { body, signal: controller.signal });
       // The conversation was replaced while Lenore was answering: her answer belongs to the old one.
       if (replaced()) {
         onOrbStateChange("idle");

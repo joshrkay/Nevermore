@@ -11,14 +11,14 @@ const { CHAT_TIMEOUT_MS, useLenoreChat } = await import("./useLenoreChat");
 const httpError = (status: number, body: Record<string, unknown> = {}) =>
   new FunctionsHttpError(new Response(JSON.stringify(body), { status, headers: { "X-Request-Id": "req-from-header" } }));
 
-const setup = () => {
+const setup = (intakeId?: string | null) => {
   const addUserMessage = vi.fn((text: string) => ({ id: "m1", text }));
   const addLenoreMessage = vi.fn();
   const onExtracted = vi.fn();
   const onOrbStateChange = vi.fn();
   const data = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", census: [{ id: "e1", first_name: "Ada", last_name: "L", dob: "1990-01-01", work_state: "TX", job_title: "Eng", annual_salary: 1, compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }] };
   const hook = renderHook(() =>
-    useLenoreChat({ chamberData: data, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted }),
+    useLenoreChat({ intakeId, chamberData: data, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted }),
   );
   return { ...hook, addUserMessage, addLenoreMessage, onExtracted, onOrbStateChange };
 };

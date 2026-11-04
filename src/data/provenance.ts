@@ -20,9 +20,10 @@ export type FieldStatus = (typeof FIELD_STATUSES)[number];
 export type ExtractedStatus = "confirmed" | "inferred" | "incomplete";
 
 export type FieldSource =
-  // prompt_version is chamber-extract's PROMPT_VERSION for a chat extraction. Voice extractions, whose
+  // prompt_version is chamber-extract's PROMPT_VERSION (a positive integer, as ai_extraction_events records
+  // it) for a chat extraction. Voice extractions, whose
   // prompt lives in the ElevenLabs agent, and entries saved before versioning have none.
-  | { kind: "transcript"; message_id: string; quote?: string; prompt_version?: string }
+  | { kind: "transcript"; message_id: string; quote?: string; prompt_version?: number }
   // A value the prospect applied from an uploaded document (document-extract's candidates).
   | { kind: "document"; document_id: string; document_name?: string; location?: string }
   | { kind: "prospect_edit" };
@@ -121,8 +122,8 @@ const clip = (s: string) =>
 
 const MAX_ALSO_HEARD = 5;
 
-const MAX_PROMPT_VERSION_CHARS = 40;
-const promptVersionSchema = z.string().min(1).max(MAX_PROMPT_VERSION_CHARS);
+// chamber-extract's PROMPT_VERSION: a positive integer, the smallint ai_extraction_events stores.
+const promptVersionSchema = z.number().int().positive().max(32767);
 
 // ---------- Comparing values ----------
 
@@ -404,7 +405,7 @@ export interface FieldOpenItem {
 }
 
 /** What the prospect is told about a field in each status that still needs them. */
-export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed">, FieldOpenReason> = {
+export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed" | "not_applicable">, FieldOpenReason> = {
   conflicting: "Conflicting answers",
   incomplete: "Incomplete",
   unknown: "Prospect to provide",
@@ -412,11 +413,12 @@ export const FIELD_OPEN_REASONS: Record<Exclude<FieldStatus, "confirmed">, Field
 };
 
 /**
- * Fields that still need the prospect: conflicts first, then incomplete, then inferred. A field in
- * `verified` (an advisor verified it) is settled whatever its status, so it is left out.
+ * Fields that still need the prospect: conflicts first, then incomplete, then unknown, then inferred.
+ * A field marked not applicable is closed and never listed, and a field in `verified` (an advisor
+ * verified it) is settled whatever its status, so it is left out too.
  */
 export function fieldOpenItems(provenance: ProvenanceMap, verified: ReadonlySet<string> = new Set()): FieldOpenItem[] {
-  const order = ["conflicting", "incomplete", "inferred"] as const;
+  const order = ["conflicting", "incomplete", "unknown", "inferred"] as const;
   return order.flatMap((status) =>
     FIELD_KEYS.filter((f) => provenance[f]?.status === status && !verified.has(f)).map((field) => ({
       field,

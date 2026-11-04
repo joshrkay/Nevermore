@@ -31,27 +31,31 @@ const STATUS_MARKER_CLASS: Record<FieldProvenance["status"], string> = {
   not_applicable: "bg-muted text-muted-foreground",
 };
 
-// Shows whether a value was confirmed or only inferred, and where it came from. A conflict always shows,
-// as the PDF marks it, even beside "Not provided".
-const DataRow = ({ label, value, provenance }: { label: string; value: string; provenance?: FieldProvenance }) => {
-  const shown = provenance && (value !== NOT_PROVIDED || provenance.status === "conflicting") ? provenance : null;
-  return (
-    <div className="py-2 border-b border-border last:border-0">
-      <div className="flex justify-between gap-4">
-        <span className="text-muted-foreground text-sm">{label}</span>
-        <span className="font-mono text-sm text-foreground text-right">
-          {value}
-          {shown && (
-            <span className={`ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded-full ${STATUS_MARKER_CLASS[shown.status]}`}>
-              {STATUS_LABELS[shown.status]}
-            </span>
-          )}
-        </span>
-      </div>
-      {shown && <p className="text-[11px] text-muted-foreground text-right mt-0.5">{describeSource(shown.source)}</p>}
+// A status shows beside an answer. Beside "Not provided" it shows only when it says more: unknown and
+// not applicable hold no answer on purpose, and a conflict always shows, as the PDF marks it.
+const showsStatus = (value: string, provenance?: FieldProvenance): provenance is FieldProvenance =>
+  Boolean(provenance) &&
+  (value !== NOT_PROVIDED || provenance!.status === "conflicting" || provenance!.status === "unknown" || provenance!.status === "not_applicable");
+
+// Shows whether a value was confirmed or only inferred, and where it came from.
+const DataRow = ({ label, value, provenance }: { label: string; value: string; provenance?: FieldProvenance }) => (
+  <div className="py-2 border-b border-border last:border-0">
+    <div className="flex justify-between gap-4">
+      <span className="text-muted-foreground text-sm">{label}</span>
+      <span className="font-mono text-sm text-foreground text-right">
+        {value}
+        {showsStatus(value, provenance) && (
+          <span className={`ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded-full ${STATUS_MARKER_CLASS[provenance.status]}`}>
+            {STATUS_LABELS[provenance.status]}
+          </span>
+        )}
+      </span>
     </div>
-  );
-};
+    {showsStatus(value, provenance) && (
+      <p className="text-[11px] text-muted-foreground text-right mt-0.5">{describeSource(provenance.source)}</p>
+    )}
+  </div>
+);
 
 const renderRows = (rows: ManuscriptRow[], provenance: ProvenanceMap) =>
   rows.map((row) => <DataRow key={row[0]} label={row[0]} value={row[1]} provenance={rowProvenance(row, provenance)} />);

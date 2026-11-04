@@ -74,7 +74,7 @@ PARALLEL SAFE
 AS $$
   SELECT p_entry ->> 'status'
   WHERE jsonb_typeof(p_entry) = 'object'
-    AND p_entry ->> 'status' IN ('confirmed', 'inferred', 'incomplete', 'conflicting')
+    AND p_entry ->> 'status' IN ('confirmed', 'inferred', 'incomplete', 'conflicting', 'unknown', 'not_applicable')
     AND jsonb_typeof(p_entry -> 'updated_at') = 'string'
     AND public.provenance_source_is_valid(p_entry -> 'source')
     AND (NOT p_entry ? 'candidates' OR jsonb_typeof(p_entry -> 'candidates') = 'array')
@@ -170,8 +170,10 @@ BEGIN
     status := public.provenance_entry_status(entry);
     field_state := field_state || jsonb_build_object(f, CASE
       WHEN NOT (present ->> f)::boolean THEN 'missing'
-      WHEN status IS NULL OR status = 'confirmed' OR f = ANY (verified) THEN 'settled'
-      WHEN status = 'inferred' THEN 'unconfirmed'
+      -- not_applicable is the prospect closing the field (US-2.1a); unknown holds no answer, so a value
+      -- beside it is one they haven't confirmed.
+      WHEN status IS NULL OR status IN ('confirmed', 'not_applicable') OR f = ANY (verified) THEN 'settled'
+      WHEN status IN ('inferred', 'unknown') THEN 'unconfirmed'
       ELSE status
     END);
   END LOOP;
@@ -198,8 +200,11 @@ COMMENT ON FUNCTION public.intake_answers_present(jsonb) IS
 COMMENT ON FUNCTION public.intake_required_items(jsonb, jsonb, text[]) IS
   'The three required items (decision D2) then the recommended census, each {item, label, field, required, state}. Mirrored by src/data/requiredItems.ts.';
 
--- Pure, but they call is_us_state_code, which only signed-in callers may. intake_missing_required keeps
--- the privileges 20261103110000 gave it; the gate's trigger runs as the signed-in prospect.
+-- Pure, but they call is_us_state_code, which only signed-in callers may. intake_missing_required now reads
+-- through them too, so signed-out callers lose it as well (they could only have got an error): the gate's
+-- trigger runs as the signed-in prospect.
+REVOKE ALL ON FUNCTION public.intake_missing_required(jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.intake_missing_required(jsonb) TO authenticated, service_role;
 REVOKE ALL ON FUNCTION public.provenance_source_is_valid(jsonb) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.provenance_entry_status(jsonb) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.intake_answers_present(jsonb) FROM PUBLIC, anon;

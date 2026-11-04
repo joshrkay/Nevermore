@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleRequest, type HandlerDeps, type SupabaseLike } from "./handler";
 import { EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
+import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema";
+
+const USER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const OTHER_USER = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const INTAKE = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const SOMEONE_ELSES_INTAKE = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const REQUEST = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 const ENV: Record<string, string | undefined> = {
   SUPABASE_URL: "https://project.test",
@@ -280,8 +287,8 @@ describe("chamber-extract handler: what is sent to the model", () => {
   });
 });
 
-describe("chamber-extract handler: the response", () => {
-  it("returns what the model extracted with its status, evidence, corrections, reply and the contract version", async () => {
+describe("chamber-extract handler: the answer", () => {
+  it("returns what the model extracted with its status, evidence, corrections, reply, the contract version and the request id", async () => {
     const t = setup({
       responses: [gatewayReply({
         employee_count: 45,
@@ -302,6 +309,26 @@ describe("chamber-extract handler: the response", () => {
       reply: "Thank you. And which states?",
       rejected: [],
       prompt_version: PROMPT_VERSION,
+      request_id: REQUEST,
+    });
+    expect(t.event()).toEqual({
+      request_id: REQUEST,
+      function_name: "chamber-extract",
+      user_id: USER,
+      session_id: INTAKE,
+      document_id: null,
+      outcome: "ok",
+      error_code: null,
+      http_status: 200,
+      document_status: null,
+      fields: ["employee_count"],
+      refused_paths: [],
+      prompt_version: PROMPT_VERSION,
+      contract_version: INTAKE_SCHEMA_VERSION,
+      provider: "lovable",
+      model: "google/gemini-3-flash-preview",
+      attempts: 1,
+      latency_ms: 0,
     });
   });
 
@@ -316,7 +343,7 @@ describe("chamber-extract handler: the response", () => {
     expect(t.logs.join() + JSON.stringify(t.events)).not.toMatch(/New York|Acme/);
   });
 
-  it("returns nothing extracted and no reply, still versioned, when the model made no tool call", async () => {
+  it("treats an answer with no tool call as invalid_response, not as 'nothing to extract'", async () => {
     const t = setup({ responses: [new Response(JSON.stringify({ choices: [{ message: { content: "hello" } }] }), { status: 200 })] });
     const { status, body } = await read(await handleRequest(post({ message: "hi", session_id: INTAKE }), t.deps));
     expect(status).toBe(502);
@@ -329,7 +356,7 @@ describe("chamber-extract handler: the response", () => {
     const t = setup({ eventWriteFails: true });
     const { status } = await read(await handleRequest(post({ message: "hi" }), t.deps));
     expect(status).toBe(200);
-    expect(body).toEqual({ extracted: {}, field_status: {}, evidence: {}, corrected_fields: [], reply: null, rejected: [], prompt_version: PROMPT_VERSION });
+    expect(t.logs).toEqual([`AI_EVENT_NOT_RECORDED request=${REQUEST} reason=23514`]);
   });
 });
 
