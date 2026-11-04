@@ -80,6 +80,7 @@
 \i supabase/migrations/20261104117100_alert_headcount_census.sql
 \i supabase/migrations/20261104118000_open_items.sql
 \i supabase/migrations/20261104120000_submission_records.sql
+\i supabase/migrations/20261104121000_voice_failed_ops_kind.sql
 \i supabase/migrations/20261104130000_document_scanning.sql
 SET client_min_messages = notice;
 

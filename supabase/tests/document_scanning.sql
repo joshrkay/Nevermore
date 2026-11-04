@@ -61,6 +61,7 @@
 \i supabase/migrations/20261104117100_alert_headcount_census.sql
 \i supabase/migrations/20261104118000_open_items.sql
 \i supabase/migrations/20261104120000_submission_records.sql
+\i supabase/migrations/20261104121000_voice_failed_ops_kind.sql
 \i supabase/migrations/20261104130000_document_scanning.sql
 SET client_min_messages = notice;
 
@@ -353,6 +354,15 @@ BEGIN
      IS DISTINCT FROM ARRAY['malware_detected', 'scan_failed'] THEN
     RAISE EXCEPTION 'FAIL: ops-monitor wouldn''t alert on a detection and a failed scan';
   END IF;
+
+  -- The kinds that came before still record and alert: this migration rewrites both lists, and must keep
+  -- 20261104121000's voice_failed (the browser reports it through report_client_event).
+  INSERT INTO public.ops_events (kind, source, code) VALUES ('voice_failed', 'browser', 'voice_error');
+  IF (SELECT array_agg(kind ORDER BY kind) FROM public.ops_alert_rules())
+     IS DISTINCT FROM ARRAY['ai_failed', 'app_error', 'auth_denied', 'deletion_failed', 'malware_detected', 'scan_failed', 'upload_failed', 'voice_failed'] THEN
+    RAISE EXCEPTION 'FAIL: the alert rules are %', (SELECT array_agg(kind ORDER BY kind) FROM public.ops_alert_rules());
+  END IF;
+  DELETE FROM public.ops_events WHERE kind = 'voice_failed';
 
   -- An operator requeues the failed one: pending, due now, attempts reset, still unreadable.
   PERFORM pg_temp.become('service');

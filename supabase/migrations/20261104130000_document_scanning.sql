@@ -175,12 +175,14 @@ GRANT EXECUTE ON FUNCTION public.intake_stored_files(uuid, uuid) TO service_role
 
 -- ---------- Alerts ----------
 
+-- The kinds of 20261104121000_voice_failed_ops_kind.sql, plus the two scan kinds. Only the scan functions record
+-- them (record_ops_event, as the service role); report_client_event keeps refusing them from the browser.
 ALTER TABLE public.ops_events DROP CONSTRAINT IF EXISTS ops_events_kind_check;
 ALTER TABLE public.ops_events ADD CONSTRAINT ops_events_kind_check CHECK (kind IN (
-  'app_error', 'upload_failed', 'ai_failed', 'auth_denied', 'deletion_failed', 'malware_detected', 'scan_failed'
+  'app_error', 'upload_failed', 'ai_failed', 'auth_denied', 'deletion_failed', 'voice_failed', 'malware_detected', 'scan_failed'
 ));
 
--- As in 20261104091000_ops_monitoring.sql, plus the two scan kinds: one event is enough.
+-- As in 20261104121000_voice_failed_ops_kind.sql, plus the two scan kinds: one event is enough.
 CREATE OR REPLACE FUNCTION public.ops_alert_rules()
 RETURNS TABLE (kind text, window_minutes integer, threshold integer, cooldown_minutes integer)
 LANGUAGE sql
@@ -194,6 +196,7 @@ AS $$
     ('ai_failed', 15, 5, 60),
     ('auth_denied', 15, 20, 60),
     ('deletion_failed', 60, 1, 60),
+    ('voice_failed', 15, 5, 60),
     ('malware_detected', 60, 1, 60),
     ('scan_failed', 60, 1, 60)
     -- sync:end ops_alert_rules

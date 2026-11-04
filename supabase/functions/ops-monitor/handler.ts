@@ -48,6 +48,7 @@ export const PLAYBOOKS: Record<string, string> = {
   ai_failed: "AI failures",
   auth_denied: "Authorization failures",
   deletion_failed: "Deletion failed",
+  voice_failed: "Voice failures",
   malware_detected: "Malware detected",
   scan_failed: "Scan failed",
 };

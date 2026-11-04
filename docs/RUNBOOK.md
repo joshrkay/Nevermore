@@ -38,6 +38,7 @@ answers, file names, messages, addresses or links.
 | `ai_failed` | Counted from `ai_extraction_events`, the record `chamber-extract` and `document-extract` keep of every call (US-2.4a, `docs/AI_OPERATIONS.md`), when the call failed on our side or the provider's (`<function>:<code>`: `chamber-extract:timeout`, `document-extract:provider_error`, `…:unavailable` for a provider that isn't set up or is out of credit, `…:invalid_response`, `…:internal`). Refusals (bad request, signed out, rate limit, daily cap) are not failures. Plus the browser when `chamber-extract` never answered (`chat_timeout`, `chat_unreachable`, `chat:<5xx>`) | |
 | `auth_denied` | The browser: a signed-in non-advisor on an advisor page (`advisor_route`), the database refusing an advisor read (`advisor_forbidden`) | |
 | `deletion_failed` | `fail_intake_deletion` when a deletion has used every attempt, and `claim_intake_deletions` when a worker died on the last one | `storage_remove:<status>`, `files_remain:<n>`, `rpc_files:<code>`, `rpc_complete:<code>`, `unexpected`, `worker_lost` |
+| `voice_failed` | The browser, when a voice call with Lenore (ElevenLabs) fails on our side or the service's (`src/hooks/useLenoreVoice.ts`, `docs/VOICE_ISSUES.md`). A microphone the prospect blocked or doesn't have is shown to them and not reported | `voice_connect_timeout` (no connection 15 seconds after the microphone was ready), `voice_connect_failed` (the connection was refused), `voice_dropped:<close code>` (a call under way closed with an error), `voice_error` (the service reported an error during a call that carried on) |
 | `malware_detected` | `record_document_scan` (from `document-upload` or `document-scan`) when the scanner names a signature in an upload | `malware:<signature>` |
 | `scan_failed` | `fail_document_scan` when an upload couldn't be scanned after every attempt, `claim_document_scans` when a worker died on the last one, and `document-scan` on every run while no scanner is set up | `config_missing`, `unreachable`, `timeout`, `http:<status>`, `invalid_response`, `clamd_error`, `clamd_size_limit`, `clamd_no_reply`, `file_missing`, `storage_download:<code>`, `storage_release:<code>`, `rpc_record:<code>`, `worker_lost` |
 
@@ -60,6 +61,7 @@ to it. `ops-monitor` runs every five minutes, raises each kind at most once per 
 | `ai_failed` | 5 events | 15 minutes | 60 minutes | [AI failures](#ai-failures) |
 | `auth_denied` | 20 events | 15 minutes | 60 minutes | [Authorization failures](#authorization-failures) |
 | `deletion_failed` | 1 event | 60 minutes | 60 minutes | [Deletion failed](#deletion-failed) |
+| `voice_failed` | 5 events | 15 minutes | 60 minutes | [Voice failures](#voice-failures) |
 | `malware_detected` | 1 event | 60 minutes | 60 minutes | [Malware detected](#malware-detected) |
 | `scan_failed` | 1 event | 60 minutes | 60 minutes | [Scan failed](#scan-failed) |
 
