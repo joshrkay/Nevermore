@@ -20,6 +20,8 @@ const KNOWN = {
     // 4: how Lenore replies (the next unsettled field, wrapping up, never claiming readiness) and the user turn's
     // ready and census lines (US-2.3a).
     4: "560743bff947177c3d747a7b67f0dab8c77dc9d9d18e2f0dd93211626927245b",
+    // 5: Lenore points to the census template on the Upload tab whenever the roster comes up (US-2.3d).
+    5: "2773869d220805289bddade61199df5b03010e1140e24841de36a685e9a4977c",
   } as Record<number, string>,
   "document-extract": { 1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526" } as Record<number, string>,
 };
@@ -45,6 +47,8 @@ const USER_TURN_KNOWN: Record<number, string> = {
   3: "09db07ee0c4748efff56941a37f763ef8e51bb213111ee8e4cb9bae97a6b7c82",
   // 4: the ready and census lines (US-2.3a). Rendered here with a third turn that has a census.
   4: "9b021814414e815258f2934dc7ee157aa9642ca343c3c9be222c618a5c63746d",
+  // 5: unchanged from 4 (US-2.3d changed only the system prompt).
+  5: "9b021814414e815258f2934dc7ee157aa9642ca343c3c9be222c618a5c63746d",
 };
 
 describe("prompt versions", () => {

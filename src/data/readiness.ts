@@ -62,7 +62,7 @@ export const RECOMMENDED_ITEMS: readonly ReadinessItem[] = [
     key: "census",
     label: "Employee census",
     section: "workforce",
-    hint: "Upload a census on the Upload tab. Underwriters will ask for one, but you can certify without it.",
+    hint: "Upload a census on the Upload tab, where there's a template to fill in. Underwriters will ask for one, but you can certify without it.",
     missing: (d) => d.census.length === 0,
   },
 ];
