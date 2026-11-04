@@ -682,7 +682,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Notes:**
   - **Deploy:** the front end only; no migration and no function change (`chamber-extract` only moved its message limit into `_shared/chatContext.ts`). Paste the v1 prompt into the ElevenLabs agent with or after the front end. An agent still running an older prompt keeps working: its `<extract>` tags are ignored, but it gets the updates without being told what they are.
   - **Cost:** every spoken message is one AI call against the same quotas as typed chat (ADR 0001). The extraction events don't say which calls were spoken (D35).
-  - **Not covered:** a live call against ElevenLabs and a real model (no e2e voice test); voice failure states and the setup-instructions modal are US-2.3c.
+  - **Not covered:** a live call against ElevenLabs and a real model (no e2e voice test). Voice failure states (connecting, the microphone, a dropped call) are US-2.3c's state machine, which this sits on: spoken messages are handed on only from the call the conversation still hears, and updates go only while a call is active.
 - **Scope:**
   - Each finished prospect utterance in a call goes to `chamber-extract`, marked as spoken (ADR 0001, D19). Agent `<extract>` tags are stripped and ignored, and the direct merge with no transcript message is removed.
   - A spoken answer is stored as `inferred` at most (D33).

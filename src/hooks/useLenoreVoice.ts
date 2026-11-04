@@ -59,12 +59,11 @@ const endQuietly = (end: () => Promise<void>) => {
  * bound to the attempt that opened it and becomes an event of that attempt, so a late callback from an attempt
  * that timed out or was cancelled changes nothing. See docs/VOICE_ISSUES.md for the failures this handles.
  */
-export function useLenoreVoice({ onNewMessage, onLastSpokenText, onExtract, epoch, intakeId }: UseLenoreVoiceOptions) {
-  const callbacksRef = useRef({ onNewMessage, onLastSpokenText, onExtract, intakeId });
+export function useLenoreVoice({ onNewMessage, onLastSpokenText, onSpokenMessage, context, epoch, intakeId }: UseLenoreVoiceOptions) {
+  const callbacksRef = useRef({ onNewMessage, onLastSpokenText, onSpokenMessage, intakeId });
   // The state is read synchronously by callbacks (a second click, a late SDK event) as well as rendered.
   const stateRef = useRef<VoiceState>(INITIAL_VOICE_STATE);
   const [state, setState] = useState<VoiceState>(INITIAL_VOICE_STATE);
-  const lastUserMessageRef = useRef<ChatMessage | null>(null);
   // The agent opens each voice session with its own hello. Its first line, if it comes before the prospect
   // says anything, is marked as a greeting so the transcript keeps only one (see useChamberSession).
   const awaitingGreetingRef = useRef(false);
@@ -72,10 +71,17 @@ export function useLenoreVoice({ onNewMessage, onLastSpokenText, onExtract, epoc
   // still arriving from it after the prospect hung up are kept; an attempt that never connected is never heard.
   const heardAttemptRef = useRef<number | null>(null);
   const epochRef = useRef(epoch);
+  // Lenore hears the update after every spoken message's extraction. When nothing was sent since the message arrived
+  // (its answers changed nothing, or it failed), this is raised to send the same update again.
+  const [resend, setResend] = useState(0);
+  // The update last sent in this call, and for which resend: nothing is sent twice for the same moment.
+  const lastSentRef = useRef<{ text: string; resend: number } | null>(null);
+  // How many updates have gone, so a settling extraction can tell whether one went since its message arrived.
+  const sentCountRef = useRef(0);
 
   // Keep refs fresh without re-creating the hook
   useEffect(() => {
-    callbacksRef.current = { onNewMessage, onLastSpokenText, onExtract, intakeId };
+    callbacksRef.current = { onNewMessage, onLastSpokenText, onSpokenMessage, intakeId };
   });
 
   // No hook-level callbacks: each attempt passes its own to startSession.
@@ -104,22 +110,20 @@ export function useLenoreVoice({ onNewMessage, onLastSpokenText, onExtract, epoc
     if (role === "user") {
       awaitingGreetingRef.current = false;
       const msg = createChatMessage("user", message, { spoken: true });
-      lastUserMessageRef.current = msg;
       callbacksRef.current.onNewMessage(msg);
+      // Its answers go through chamber-extract like a typed message's, then Lenore hears what is still open. When
+      // they changed the update, it has gone already (the change sends it); otherwise it goes again now. Not for a
+      // call the conversation has since left behind.
+      const sentBefore = sentCountRef.current;
+      void Promise.resolve(callbacksRef.current.onSpokenMessage(msg))
+        .catch((e) => console.error("Couldn't take the answers from a spoken message:", e))
+        .finally(() => {
+          if (heardAttemptRef.current === attempt && sentCountRef.current === sentBefore) setResend((n) => n + 1);
+        });
       return;
     }
 
-    // Lenore's spoken reply may carry structured data in <extract>{...}</extract>;
-    // keep that out of the transcript.
-    const extractMatch = message.match(/<extract>([\s\S]*?)<\/extract>/);
-    if (extractMatch) {
-      try {
-        callbacksRef.current.onExtract(JSON.parse(extractMatch[1]), lastUserMessageRef.current);
-      } catch (e) {
-        console.warn("Failed to parse extract:", e);
-      }
-    }
-    const spoken = message.replace(/<extract>[\s\S]*?<\/extract>/g, "").trim();
+    const spoken = message.replace(EXTRACT_TAGS, "").trim();
     if (!spoken) return;
     const greeting = awaitingGreetingRef.current;
     awaitingGreetingRef.current = false;
@@ -199,6 +203,26 @@ export function useLenoreVoice({ onNewMessage, onLastSpokenText, onExtract, epoc
   const dismissFailure = useCallback(() => {
     dispatch({ type: "dismiss" });
   }, [dispatch]);
+
+  // Tell Lenore's voice what is open (D24): when the call connects, when it changes, and after each spoken message.
+  const callActive = state.status === "active";
+  useEffect(() => {
+    if (!callActive) {
+      lastSentRef.current = null;
+      return;
+    }
+    const last = lastSentRef.current;
+    if (last && last.text === context && last.resend === resend) return;
+    lastSentRef.current = { text: context, resend };
+    try {
+      conversationRef.current.sendContextualUpdate(context);
+      sentCountRef.current += 1;
+    } catch (e) {
+      // The call carries on; the next change or spoken message sends it again.
+      console.warn("Couldn't send Lenore the intake update:", e);
+      lastSentRef.current = null;
+    }
+  }, [callActive, context, resend]);
 
   // Connecting is bounded: if the connection hasn't opened 15 seconds after the microphone was ready, the
   // attempt fails and the pending connection is abandoned.

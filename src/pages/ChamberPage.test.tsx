@@ -42,10 +42,11 @@ const session = {
 // What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
 const hooks = {
   workspace: null as null | { verified?: ReadonlySet<string> },
-  voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
+  voice: null as null | { onSpokenMessage: (message: ChatMessage) => unknown; context: string },
   chat: null as null | {
-    onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string }) => void;
+    onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string; spoken?: boolean }) => void;
     onOrbStateChange: (state: OrbState) => void;
+    readIntake?: unknown;
   },
   orb: null as null | { orbState: OrbState; voice: VoiceState; onTypeInstead: () => void },
 };
@@ -95,6 +96,7 @@ vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
     return null;
   },
 }));
+const extractSpoken = vi.fn();
 vi.mock("@/hooks/useLenoreChat", () => ({
   useLenoreChat: (options: typeof hooks.chat) => {
     hooks.chat = options;
