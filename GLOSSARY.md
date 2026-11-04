@@ -74,7 +74,7 @@ The prospect's signed statement that the intake's answers are true, made in The 
 _Avoid_: submit, sign-off, attestation
 
 **Submission**:
-The answers and their field statuses exactly as they stood at certification, frozen.
+The answers and their field statuses exactly as they stood at certification, frozen, with the documents as they stood and a version number (1, 2, ...) within the intake.
 _Avoid_: snapshot, packet, application
 
 **The Manuscript**:
@@ -82,8 +82,8 @@ The underwriting document rendered from a submission, for the prospect to send t
 _Avoid_: packet, report, PDF, proposal
 
 **Reference**:
-The identifier a submission carries, such as EAA-2026-0042.
-_Avoid_: File ID, file number, case number
+The identifier a submission carries, such as EAA-2026-0042: assigned by the database the first time an intake is certified, and kept by every later version of its submission. The product shows it as the "File ID".
+_Avoid_: file number, case number
 
 **The Reckoning**:
 The last step in The Chamber, where the prospect certifies.

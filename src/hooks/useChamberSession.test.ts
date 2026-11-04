@@ -79,7 +79,7 @@ vi.mock("@/integrations/supabase/client", () => ({
               single: async () =>
                 insertError
                   ? { data: null, error: insertError }
-                  : { data: { id: "s1", data_version: 1, created_at: insertedCreatedAt }, error: null },
+                  : { data: { id: "s1", data_version: 1, file_id: null, created_at: insertedCreatedAt }, error: null },
             };
           },
         };
@@ -563,50 +563,55 @@ describe("useChamberSession", () => {
   });
 
   describe("the File ID", () => {
-    // Late on New Year's Eve: the intake starts in one year and is certified in the next.
-    const NEW_YEARS_EVE = "2026-12-31T23:59:00Z";
-    const NEXT_YEAR = new Date("2027-01-02T10:00:00Z");
-
-    it("takes a new intake's year from when the server created it, not from today", async () => {
-      insertedCreatedAt = NEW_YEARS_EVE;
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(NEXT_YEAR);
+    it("has none for a new intake: the database assigns it at the first certification", async () => {
       const { result } = renderHook(() => useChamberSession());
       await waitFor(() => expect(result.current.sessionId).toBe("s1"));
-      expect(result.current.fileId).toBe("EAA-2026-S1");
+      expect(result.current.fileId).toBeNull();
     });
 
-    it("keeps a resumed intake's File ID from the year it started, so certifying again later can't change it", async () => {
-      resumeRow = serverRow({ id: "s7", created_at: NEW_YEARS_EVE });
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(NEXT_YEAR);
+    it("shows the one the database assigned to a resumed intake", async () => {
+      resumeRow = serverRow({ id: "s7", file_id: "EAA-2026-0042" });
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(result.current.sessionId).toBe("s7"));
-      expect(result.current.fileId).toBe("EAA-2026-S7");
-    });
-
-    it("keeps the File ID a certification already recorded, even one made from another year", async () => {
-      // Certified before File IDs took the start year: its recorded File ID stays the intake's.
-      resumeRow = serverRow({ id: "s7", status: "submitted", created_at: NEW_YEARS_EVE, submission: { ...submission, file_id: "EAA-2027-S7" } });
-      const { result } = renderHook(() => useChamberSession("s7"));
-      await waitFor(() => expect(result.current.sessionId).toBe("s7"));
-      expect(result.current.certification.status).not.toBe("none");
-      expect(result.current.fileId).toBe("EAA-2027-S7");
+      expect(result.current.fileId).toBe("EAA-2026-0042");
     });
 
     it("keeps it when the certification was withdrawn, so certifying again reuses it", async () => {
-      resumeRow = serverRow({ id: "s7", status: "in_progress", created_at: NEW_YEARS_EVE, submission: { ...submission, file_id: "EAA-2027-S7" } });
+      resumeRow = serverRow({ id: "s7", status: "in_progress", file_id: "EAA-2026-0042", submission: { ...submission, file_id: "EAA-2026-0042" } });
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(result.current.sessionId).toBe("s7"));
       expect(result.current.certification.status).toBe("stale");
-      expect(result.current.fileId).toBe("EAA-2027-S7");
+      expect(result.current.fileId).toBe("EAA-2026-0042");
     });
 
-    it("makes one from the start year when the recorded File ID is blank", async () => {
-      resumeRow = serverRow({ id: "s7", status: "submitted", created_at: NEW_YEARS_EVE, submission: { ...submission, file_id: "  " } });
+    it("falls back to the File ID a certification recorded before the intake carried one", async () => {
+      resumeRow = serverRow({ id: "s7", status: "submitted", file_id: null, submission: { ...submission, file_id: "EAA-2027-S7" } });
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(result.current.sessionId).toBe("s7"));
-      expect(result.current.fileId).toBe("EAA-2026-S7");
+      expect(result.current.fileId).toBe("EAA-2027-S7");
+      resumeRow = serverRow({ id: "s8", status: "submitted", file_id: "  ", submission: { ...submission, file_id: "  " } });
+      const again = renderHook(() => useChamberSession("s8"));
+      await waitFor(() => expect(again.result.current.sessionId).toBe("s8"));
+      expect(again.result.current.fileId).toBeNull();
+    });
+
+    it("learns the File ID from the certification's answer, with the submission as the database stamped it", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      let ok: SubmitResult | undefined;
+      const pending = result.current.submit(submission).then((r) => { ok = r; });
+      await waitFor(() => expect(updates).toHaveLength(1));
+      updates[0].resolve({ error: null });
+      await waitFor(() => expect(updates).toHaveLength(2));
+      expect(updates[1].columns).toBe("id, data_version, status, submission, file_id");
+      const sent = updates[1].payload.submission as Record<string, unknown>;
+      const stamped = { ...sent, file_id: "EAA-2026-0042", version: 1, data_version: 3, certified_at: "2026-10-27T00:00:00Z", data_sha256: "abc", documents: [] };
+      updates[1].resolve({ error: null, data: [{ id: "s1", data_version: 3, status: "submitted", submission: stamped, file_id: "EAA-2026-0042" }] });
+      await act(async () => { await pending; });
+      expect(ok).toBe(true);
+      expect(result.current.fileId).toBe("EAA-2026-0042");
+      expect(result.current.certification).toMatchObject({ status: "certified", submission: { file_id: "EAA-2026-0042", version: 1, data_version: 3 } });
     });
 
     it("has none while there is no intake", async () => {
@@ -721,7 +726,7 @@ describe("useChamberSession", () => {
 
     it("writes against the version the server gave a new intake, naming only the row and the version", async () => {
       const { result } = await open();
-      expect(insertedColumns).toEqual(["id, data_version, created_at"]);
+      expect(insertedColumns).toEqual(["id, data_version, file_id"]);
       edit(result);
       await autosave();
       expect(updates[0].filters).toEqual({ id: "s1", data_version: 1 });
@@ -1330,7 +1335,7 @@ describe("useChamberSession", () => {
         expect(updates[1].payload).toMatchObject({ status: "submitted" });
         expect(updates[1].payload).not.toHaveProperty("data_version");
         expect(updates[1].filters).toEqual({ id: "s1", data_version: 2 });
-        expect(updates[1].columns).toBe("id, data_version, status");
+        expect(updates[1].columns).toBe("id, data_version, status, submission, file_id");
         await act(async () => { updates[1].resolve({ error: null }); await pending; });
 
         edit(result, "Acme 2");

@@ -172,7 +172,7 @@ describe("ReckoningTab certification", () => {
     expect(await screen.findByText("Certification recorded")).toBeInTheDocument();
     expect(screen.getByText(/Certified by Jo Doe, CEO/)).toBeInTheDocument();
     expect(screen.getByText("File ID: EAA-2026-S1")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Download The Manuscript/ })).toHaveAttribute("href", "/manuscript?session=s1");
+    expect(screen.getByRole("link", { name: /Download The Manuscript/ })).toHaveAttribute("href", "/manuscript/EAA-2026-S1");
     expect(toast.success).toHaveBeenCalled();
   });
 
@@ -186,7 +186,69 @@ describe("ReckoningTab certification", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("We couldn't save your submission. Please try again."));
     expect(screen.queryByText("Certification recorded")).not.toBeInTheDocument();
     expect(toast.success).not.toHaveBeenCalled();
-    expect(submitButton()).toBeEnabled(); // can retry
+    // The failure stays on screen, the signature is kept, and the same button tries again.
+    expect(screen.getByRole("alert", { name: "Submission not saved" })).toHaveTextContent(/Nothing has been recorded; your signature is still here/);
+    expect(screen.getByText("Jo Doe, CEO")).toBeInTheDocument();
+    expect(submitButton()).toBeEnabled();
+    expect(submitButton()).toHaveTextContent("Try again");
+  });
+
+  it("sends one certification for a double click", async () => {
+    let finish!: (ok: boolean) => void;
+    onSubmit.mockImplementation(() => new Promise<boolean>((r) => { finish = r; }));
+    mount();
+    checkAll();
+    fillSigner();
+    sign();
+    const button = submitButton();
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    await act(async () => { finish(true); });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Certification recorded")).toBeInTheDocument();
+  });
+
+  it("shows the company and the File ID the database assigned on the confirmation", async () => {
+    const tree = (fileId: string | null) => (
+      <MemoryRouter>
+        <ReckoningTab data={DEMO_CHAMBER_DATA} peoName={null} sessionId="s1" fileId={fileId} onSubmit={onSubmit} />
+      </MemoryRouter>
+    );
+    const view = render(tree(null));
+    // Before the first certification there is no File ID: that is not a blocker.
+    expect(screen.queryByTestId("certification-blockers")).toHaveTextContent(/Check every statement/);
+    expect(screen.getByTestId("certification-blockers")).not.toHaveTextContent(/finish saving/);
+    checkAll();
+    fillSigner();
+    sign();
+    const sent = onSubmit.mock.calls.length;
+    onSubmit.mockImplementation(async () => {
+      view.rerender(tree("EAA-2026-0042")); // the session hook learns the File ID from the save
+      return true;
+    });
+    fireEvent.click(submitButton());
+    expect(await screen.findByText("Certification recorded")).toBeInTheDocument();
+    expect(onSubmit).toHaveBeenCalledTimes(sent + 1);
+    expect(screen.getByText("File ID: EAA-2026-0042")).toBeInTheDocument();
+    expect(screen.getByText("Meridian Creative Group")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Download The Manuscript/ })).toHaveAttribute("href", "/manuscript/EAA-2026-0042");
+  });
+
+  it("blocks on a required answer that is conflicting, and says what to do", () => {
+    render(
+      <MemoryRouter>
+        <ReckoningTab
+          data={DEMO_CHAMBER_DATA}
+          provenance={{ company_name: { status: "conflicting", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-04T00:00:00Z", candidates: [] } }}
+          peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit}
+        />
+      </MemoryRouter>,
+    );
+    const callout = screen.getByRole("alert", { name: "Answers still needed" });
+    expect(callout).toHaveTextContent("Company legal name");
+    expect(callout).toHaveTextContent("Two different answers were given. Choose the right one.");
+    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Choose the right company legal name");
   });
 
   it("shows the reason, not the generic message, when the save says why it was refused", async () => {
@@ -282,7 +344,7 @@ describe("ReckoningTab on an intake that is already certified", () => {
   it("is read-only while nothing has changed, so it can't be certified again by accident", () => {
     mountWith({ status: "certified", submission });
     expect(screen.getByRole("status")).toHaveTextContent(/Certified by Jo Doe, CEO/);
-    expect(screen.getByRole("link", { name: "View The Manuscript" })).toHaveAttribute("href", "/manuscript?session=s1");
+    expect(screen.getByRole("link", { name: "View The Manuscript" })).toHaveAttribute("href", "/manuscript/EAA-2026-S1");
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     expect(screen.queryByText("Click to sign digitally")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Generate The Manuscript/ })).not.toBeInTheDocument();
@@ -394,7 +456,7 @@ describe("ReckoningTab required answers", () => {
       </MemoryRouter>,
     );
     const callout = screen.getByRole("alert", { name: "Answers still needed" });
-    expect(callout).toHaveTextContent("Before The Manuscript can be generated, add:");
+    expect(callout).toHaveTextContent("Before The Manuscript can be generated, settle these:");
     expect(callout).toHaveTextContent("Pay frequency");
     expect(callout).not.toHaveTextContent("Company legal name");
 

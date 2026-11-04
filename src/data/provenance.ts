@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
-import { INTAKE_FIELDS, INTAKE_SCHEMA } from "./intakeSchema";
+import { INTAKE_FIELDS, INTAKE_SCHEMA, REQUIRED_FIELDS } from "./intakeSchema";
 import { redactSensitive } from "./sensitive";
 
 // Every captured field records how sure we are of it and where it came from, so the
@@ -229,9 +229,22 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
 export type FieldAction =
   | { type: "confirm"; field: FieldKey }
   | { type: "edit"; field: FieldKey; value: unknown }
-  | { type: "resolve"; field: FieldKey; candidate: number };
+  | { type: "resolve"; field: FieldKey; candidate: number }
+  // "Doesn't apply": closes the field with no answer (D23, D31). Only the prospect does this.
+  | { type: "not_applicable"; field: FieldKey }
+  // Takes "Doesn't apply" back: the field is open again, still with no answer.
+  | { type: "applies"; field: FieldKey };
 
-/** Applies a prospect's confirm, edit, or conflict resolution. Invalid edits change nothing. */
+/**
+ * Whether the prospect may mark a field as not applying to them. Never a required answer (a PEO needs the
+ * company legal name, where people work and how they are paid) and never the census, which comes from a file.
+ */
+export const canMarkNotApplicable = (field: FieldKey): boolean => !(REQUIRED_FIELDS as readonly string[]).includes(field);
+
+/** The answer a field holds once it is closed with none: an empty list for a list, otherwise null. */
+const emptyValue = (field: FieldKey): unknown => (field !== "census" && FIELD_KINDS[field] === "list" ? [] : null);
+
+/** Applies a prospect's confirm, edit, conflict resolution, or "doesn't apply". Invalid edits change nothing. */
 export function applyFieldAction(state: IntakeState, action: FieldAction, now = new Date()): IntakeState {
   const confirmed = (): FieldProvenance => ({ status: "confirmed", source: { kind: "prospect_edit" }, updated_at: now.toISOString() });
   const { field } = action;
@@ -240,6 +253,20 @@ export function applyFieldAction(state: IntakeState, action: FieldAction, now = 
     if (state.provenance[field]?.status === "conflicting") return state; // must pick a value first
     if (isEmpty(state.data[field])) return state; // nothing to confirm (an unknown or not applicable field holds no answer)
     return { data: state.data, provenance: { ...state.provenance, [field]: confirmed() } };
+  }
+
+  if (action.type === "not_applicable") {
+    if (!canMarkNotApplicable(field)) return state;
+    return {
+      data: { ...state.data, [field]: emptyValue(field) },
+      provenance: { ...state.provenance, [field]: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: now.toISOString() } },
+    };
+  }
+
+  if (action.type === "applies") {
+    if (state.provenance[field]?.status !== "not_applicable") return state;
+    const { [field]: _closed, ...rest } = state.provenance;
+    return { data: state.data, provenance: rest };
   }
 
   const value = action.type === "edit" ? action.value : state.provenance[field]?.candidates?.[action.candidate]?.value;

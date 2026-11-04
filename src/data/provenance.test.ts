@@ -9,6 +9,7 @@ import {
   parseExtractedStatuses,
   parseProvenance,
   transcriptExtraction,
+  canMarkNotApplicable,
   type FieldSource,
   type IntakeState,
 } from "./provenance";
@@ -212,6 +213,39 @@ describe("unknown and not applicable", () => {
     const answered = applyFieldAction(notApplicable, { type: "edit", field: "wc_experience_mod", value: "0.85" }, NOW);
     expect(answered.data.wc_experience_mod).toBe(0.85);
     expect(answered.provenance.wc_experience_mod).toEqual({ status: "confirmed", source: { kind: "prospect_edit" }, updated_at: NOW.toISOString() });
+  });
+});
+
+describe("doesn't apply", () => {
+  const NA = { status: "not_applicable" as const, source: { kind: "prospect_edit" as const }, updated_at: NOW.toISOString() };
+
+  it("closes a recommended answer with no value, and lists are emptied rather than nulled", () => {
+    const start = applyExtraction(EMPTY, { wc_carrier: "Acme Mutual", ancillary_benefits: ["Dental"] }, { source: msg("m1") });
+    const closed = applyFieldAction(applyFieldAction(start, { type: "not_applicable", field: "wc_carrier" }, NOW), { type: "not_applicable", field: "ancillary_benefits" }, NOW);
+    expect(closed.data.wc_carrier).toBeNull();
+    expect(closed.data.ancillary_benefits).toEqual([]);
+    expect(closed.provenance.wc_carrier).toEqual(NA);
+    expect(closed.provenance.ancillary_benefits).toEqual(NA);
+    expect(fieldOpenItems(closed.provenance)).toEqual([]);
+  });
+
+  it("is refused on a required answer and on the census, which a PEO always needs", () => {
+    const start = applyExtraction(EMPTY, { company_name: "Acme", states: ["CA"], pay_frequency: "weekly" }, { source: msg("m1") });
+    for (const field of ["company_name", "states", "pay_frequency", "census"] as const) {
+      expect(canMarkNotApplicable(field)).toBe(false);
+      expect(applyFieldAction(start, { type: "not_applicable", field }, NOW)).toEqual(start);
+    }
+    expect(canMarkNotApplicable("industry")).toBe(true);
+    expect(canMarkNotApplicable("wc_carrier")).toBe(true);
+  });
+
+  it("can be taken back, leaving the field open and still unanswered", () => {
+    const closed: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: { wc_carrier: NA } };
+    const reopened = applyFieldAction(closed, { type: "applies", field: "wc_carrier" }, NOW);
+    expect(reopened.provenance).toEqual({});
+    expect(reopened.data.wc_carrier).toBeNull();
+    // Taking back what was never marked changes nothing.
+    expect(applyFieldAction(EMPTY, { type: "applies", field: "wc_carrier" }, NOW)).toEqual(EMPTY);
   });
 });
 

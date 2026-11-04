@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import type { ReactNode } from "react";
 import { sanitizeChamberPatch } from "@/data/chamberValidation";
 import {
+  canMarkNotApplicable,
   FIELD_KINDS,
   formatFieldValue,
   type FieldAction,
@@ -95,6 +96,8 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
 
   const status = provenance?.status;
   const badge = onAction && status ? BADGES[status] : null;
+  // "Doesn't apply" is the prospect's to say, never for an answer a PEO always needs (D31).
+  const canClose = Boolean(onAction && editable && canMarkNotApplicable(field));
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
@@ -186,7 +189,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
       )}
 
       {!editing && onAction && (
-        <div className="flex gap-2 mt-1">
+        <div className="flex flex-wrap gap-2 mt-1">
           {display && (status === "inferred" || status === "incomplete") && (
             <button
               type="button"
@@ -200,6 +203,26 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
           {canEdit && (
             <button type="button" onClick={startEdit} aria-label={`${display ? "Edit" : "Add"} ${label}`} className="text-[10px] text-muted-foreground hover:text-foreground hover:underline">
               {display ? "Edit" : "Add"}
+            </button>
+          )}
+          {canClose && status !== "not_applicable" && (
+            <button
+              type="button"
+              onClick={() => onAction({ type: "not_applicable", field })}
+              aria-label={`Mark ${label} as not applicable`}
+              className="text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+            >
+              Doesn't apply
+            </button>
+          )}
+          {canClose && status === "not_applicable" && (
+            <button
+              type="button"
+              onClick={() => onAction({ type: "applies", field })}
+              aria-label={`${label} applies after all`}
+              className="text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+            >
+              Undo
             </button>
           )}
         </div>

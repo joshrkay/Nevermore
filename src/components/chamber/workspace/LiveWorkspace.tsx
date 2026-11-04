@@ -112,7 +112,7 @@ const LiveWorkspace = ({
         {activeTab === "dependents" && <DependentsTab data={data} />}
         {activeTab === "review" && <ReviewTab data={data} provenance={provenance} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} />}
         {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
-        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={chosenPeo} sessionId={sessionId} fileId={fileId} onSubmit={onSubmit} certification={certification} onReview={() => setActiveTab("review")} />}
+        {activeTab === "reckoning" && <ReckoningTab data={data} provenance={provenance} peoName={chosenPeo} sessionId={sessionId} fileId={fileId} onSubmit={onSubmit} certification={certification} onReview={() => setActiveTab("review")} />}
       </div>
     </div>
   );

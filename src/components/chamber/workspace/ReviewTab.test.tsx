@@ -16,6 +16,7 @@ describe("ReviewTab documents", () => {
       />,
     );
     expect(screen.getByText("Documents — 2 uploaded")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Documents — 2 uploaded" })).toHaveTextContent("Incomplete");
     expect(screen.getByText("census.xlsx").closest("li")).toHaveTextContent("Employee census");
     expect(screen.getByText("sbc.pdf").closest("li")).toHaveTextContent("Password-protected");
     expect(screen.getByText("Employee census, Benefits summary")).toBeInTheDocument();
@@ -74,7 +75,83 @@ describe("ReviewTab sections", () => {
     expect(section("Payroll")).toHaveTextContent("3 days");
     expect(section("Payroll")).toHaveTextContent("Vacation, Sick");
     expect(section("Benefits")).toHaveTextContent("Aetna");
-    expect(section("Benefits")).toHaveTextContent("No retirement plan");
+    expect(section("Benefits")).toHaveTextContent("Retirement planNo");
+    for (const name of ["Workers' comp", "Operations & HR"]) expect(section(name)).toBeInTheDocument();
+  });
+
+  it("lists every intake field in its section, with the same grouping as The Manuscript", () => {
+    render(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} onAction={() => {}} />);
+    for (const field of Object.keys(EMPTY_CHAMBER_DATA)) {
+      if (field === "census") continue;
+      expect(document.getElementById(`review-field-${field}`), `${field} is not in the Review`).not.toBeNull();
+    }
+    expect(within(section("Workers' comp")).getByText("Workers' comp carrier")).toBeInTheDocument();
+    expect(within(section("Operations & HR")).getByText("Business goals")).toBeInTheDocument();
+    expect(within(section("Workforce")).getByText(/Employee census/)).toBeInTheDocument();
+  });
+
+  it("shows each section's status, and lets the prospect jump to one", () => {
+    const at = "2026-11-04T00:00:00Z";
+    render(
+      <ReviewTab
+        data={{ ...complete, industry: "Bookbinding", wc_carrier: null }}
+        provenance={{
+          company_name: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: at },
+          states: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: at },
+          industry: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: at },
+          pay_frequency: { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: at },
+          current_carrier: { status: "unknown", source: { kind: "transcript", message_id: "m1" }, updated_at: at },
+          wc_carrier: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: at },
+          wc_renewal_date: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: at },
+          wc_experience_mod: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: at },
+          wc_annual_premium: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: at },
+        }}
+        onProceed={() => {}}
+        onAction={() => {}}
+      />,
+    );
+    const nav = screen.getByRole("navigation", { name: "Sections" });
+    const chip = (name: string) => within(nav).getByRole("button", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) });
+    expect(chip("Company")).toHaveTextContent("Needs confirmation"); // the inferred industry
+    expect(chip("Locations")).toHaveTextContent("Complete");
+    expect(chip("Payroll")).toHaveTextContent("Complete");
+    expect(chip("Benefits")).toHaveTextContent("Incomplete"); // the carrier the prospect doesn't know yet
+    expect(chip("Workers' comp")).toHaveTextContent("Not applicable");
+    expect(chip("Workforce")).toHaveTextContent("Incomplete"); // the recommended census
+    expect(screen.getByRole("status", { name: "Ready to certify" })).toBeInTheDocument();
+
+    fireEvent.click(chip("Benefits"));
+    expect(section("Benefits").querySelector("button")).toHaveFocus();
+    const review = screen.getByRole("region", { name: "Needs your review" });
+    expect(review).toHaveTextContent("Current carrier");
+    expect(review).toHaveTextContent("You said you didn't know this yet");
+    expect(review).toHaveTextContent("Industry");
+    expect(review).toHaveTextContent("Lenore took this from the conversation");
+  });
+
+  it("lets the prospect mark an answer that doesn't apply, and never a required one", () => {
+    const onAction = vi.fn();
+    render(<ReviewTab data={complete} onProceed={() => {}} onAction={onAction} />);
+    fireEvent.click(screen.getByRole("button", { name: "Mark Workers' comp carrier as not applicable" }));
+    expect(onAction).toHaveBeenCalledWith({ type: "not_applicable", field: "wc_carrier" });
+    expect(screen.queryByRole("button", { name: "Mark Company legal name as not applicable" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mark Pay frequency as not applicable" })).not.toBeInTheDocument();
+  });
+
+  it("blocks certification on a required answer that is conflicting or incomplete, and says what to do", () => {
+    const at = "2026-11-04T00:00:00Z";
+    render(
+      <ReviewTab
+        data={complete}
+        provenance={{ company_name: { status: "conflicting", source: { kind: "transcript", message_id: "m1" }, updated_at: at, candidates: [] } }}
+        onProceed={() => {}}
+        onAction={() => {}}
+      />,
+    );
+    const needed = section("Still needed");
+    expect(needed).toHaveTextContent("Still needed before The Manuscript can be generated: 1");
+    expect(needed).toHaveTextContent("Company legal name");
+    expect(needed).toHaveTextContent("Two different answers were given. Choose the right one.");
   });
 
   it("marks the required answers wherever they sit, and only those", () => {
@@ -106,8 +183,9 @@ describe("ReviewTab sections", () => {
   it("never lists the census as needed, only as recommended", () => {
     render(<ReviewTab data={complete} onProceed={() => {}} />);
     expect(screen.getByText(/Every required answer is here/)).toBeInTheDocument();
-    // In the summary at the top, and beside the census itself.
-    expect(screen.getAllByText("Recommended")).toHaveLength(2);
+    // Beside the census itself, and as a non-blocking item in the review list.
+    expect(screen.getAllByText("Recommended")).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Needs your review" })).toHaveTextContent("Employee census");
     expect(screen.getByText(/Upload a census on the Upload tab/)).toBeInTheDocument();
   });
 

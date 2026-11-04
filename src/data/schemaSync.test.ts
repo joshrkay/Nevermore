@@ -22,7 +22,8 @@ import { RETENTION } from "@/data/dataPolicy";
 import { INTAKE_CONSENT_VERSION } from "@/data/intakeConsent";
 import { AI_ERROR_CODES } from "../../supabase/functions/_shared/ai/errors";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
-import { REQUIRED_ITEMS } from "@/data/readiness";
+import { BLOCKING_STATUSES, REQUIRED_ITEMS } from "@/data/readiness";
+import { isFileId } from "@/data/manuscript";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
 
@@ -148,6 +149,19 @@ describe("server and client intake rules agree", () => {
   it("requires the same answers before certifying", () => {
     const keys = [...blocks("required_items").join("\n").matchAll(/THEN '(\w+)' END/g)].map((m) => m[1]);
     expect(keys).toEqual(REQUIRED_ITEMS.map((item) => item.key));
+  });
+
+  // A required answer that is conflicting or incomplete blocks certifying on both sides (20261104100000).
+  it("refuses the same unsettled field statuses on a required answer", () => {
+    expect(quoted(blocks("unsettled_statuses").join("\n"))).toEqual([...BLOCKING_STATUSES]);
+  });
+
+  // The File ID the database assigns (D15) is one the Manuscript route accepts.
+  it("assigns File IDs in the form the Manuscript route accepts", () => {
+    const sql = blocks("reference_format").join("\n");
+    expect(sql).toMatch(/format\('EAA-%s-%s', p_year, lpad\(n::text, 4, '0'\)\)/);
+    expect(isFileId("EAA-2026-0001")).toBe(true);
+    expect(isFileId("EAA-2026-12345")).toBe(true);
   });
 
   it("keeps the same longest PEO name", () => {

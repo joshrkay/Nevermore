@@ -18,9 +18,10 @@
 --   click, or a retry after a lost response) records nothing new: the saved submission is kept as it is,
 --   no certification row is added and no notification is queued.
 -- * chamber_certifications is append-only: a row can be superseded (superseded_at, superseded_reason, once)
---   and its outbox marker columns can change; nothing else can, and no row can be deleted, by any role.
---   The foreign key to chamber_sessions is dropped, as the other audit tables have none: the record
---   outlives the intake row.
+--   and its outbox marker columns can change; nothing else can, and no row can be deleted, by any role,
+--   except by complete_intake_deletion() deleting the whole intake (20261104092000). The foreign key to
+--   chamber_sessions is dropped, as the other audit tables have none: the record outlives the intake row
+--   until the intake is deleted on purpose.
 -- * A required answer that is conflicting or incomplete (its field_provenance status) blocks certification
 --   the way a missing one does (EA003, the key in DETAIL), as the Review step and the Reckoning say.
 --
@@ -34,7 +35,10 @@ CREATE TABLE IF NOT EXISTS public.submission_reference_counters (
   year integer PRIMARY KEY,
   last integer NOT NULL DEFAULT 0 CHECK (last >= 0)
 );
-REVOKE ALL ON public.submission_reference_counters FROM PUBLIC, anon, authenticated, service_role;
+-- Nobody reads or writes it through the API; row security (with no policy) backs the revoked grants up. The
+-- service role keeps its default access, as on every table (the jobs never touch it).
+ALTER TABLE public.submission_reference_counters ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.submission_reference_counters FROM PUBLIC, anon, authenticated;
 
 -- The next reference for a year. Only the certification trigger calls it; the row lock on the counter
 -- makes two certifications in the same instant take different numbers.
@@ -143,6 +147,12 @@ DECLARE
   mutable constant text[] := ARRAY['superseded_at', 'superseded_reason', 'outbox_queued_at', 'outbox_failures', 'outbox_last_failed_at', 'outbox_last_sqlstate'];
 BEGIN
   IF TG_OP = 'DELETE' THEN
+    -- Only the deletion of the one intake complete_intake_deletion() is deleting, inside that function
+    -- (20261104092000_data_retention_and_deletion.sql: the same rule as public.reject_audit_change).
+    IF current_user NOT IN ('anon', 'authenticated', 'service_role')
+       AND NULLIF(current_setting('eaa.deleting_intake', true), '') = OLD.session_id::text THEN
+      RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'chamber_certifications records cannot be deleted' USING ERRCODE = '42501';
   END IF;
   IF (to_jsonb(NEW) - mutable) IS DISTINCT FROM (to_jsonb(OLD) - mutable) THEN

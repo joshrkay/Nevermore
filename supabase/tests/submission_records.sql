@@ -39,6 +39,10 @@
 \i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
 \i supabase/migrations/20261103120100_intake_schema_v2_version.sql
 \i supabase/migrations/20261103120200_ai_extraction_events.sql
+\i supabase/migrations/20261104090000_intake_consent.sql
+\i supabase/migrations/20261104091000_ops_monitoring.sql
+\i supabase/migrations/20261104092000_data_retention_and_deletion.sql
+\i supabase/migrations/20261104093000_security_review_fixes.sql
 \i supabase/migrations/20261104100000_submission_records.sql
 SET client_min_messages = notice;
 
@@ -47,6 +51,12 @@ CREATE FUNCTION pg_temp.as_user(uid uuid) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM set_config('request.jwt.claims',
     jsonb_build_object('sub', uid, 'is_anonymous', false, 'role', 'authenticated', 'email', uid || '@example.test')::text, false);
+END $$;
+
+-- A prospect who has agreed to the intake consent (20261104090000), which creating an intake requires.
+CREATE FUNCTION pg_temp.agree() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM public.record_intake_consent(public.intake_consent_version(), 'I agree to how my information is used.');
 END $$;
 
 CREATE FUNCTION pg_temp.new_user() RETURNS uuid LANGUAGE plpgsql AS $$
@@ -119,6 +129,7 @@ DECLARE
 BEGIN
   PERFORM pg_temp.as_user(uid);
   SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.agree();
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, complete) RETURNING id INTO sid;
   INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category, status)
   VALUES (uid, sid, 'census.csv', '1 KB', uid || '/' || sid || '/census.csv', 'employee_census', 'extracted');
@@ -244,6 +255,7 @@ DECLARE
 BEGIN
   PERFORM pg_temp.as_user(uid);
   SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.agree();
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, complete) RETURNING id INTO sid;
   IF pg_temp.certify(sid, complete) <> 'ok' THEN RAISE EXCEPTION 'FAIL: could not certify'; END IF;
   SELECT id INTO cid FROM public.chamber_certifications WHERE session_id = sid;
@@ -277,6 +289,38 @@ BEGIN
   RAISE NOTICE 'submission_records: append-only cases passed';
 END $$;
 
+-- ---------- deleting an intake on purpose takes its records with it ----------
+DO $$
+DECLARE
+  uid uuid := pg_temp.new_user();
+  adm uuid := pg_temp.new_user();
+  sid uuid;
+  did uuid;
+  complete jsonb := '{"company_name":"Gone Co","states":["NY"],"pay_frequency":"weekly"}';
+BEGIN
+  INSERT INTO public.user_roles (user_id, role) VALUES (adm, 'admin');
+  PERFORM pg_temp.as_user(uid);
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.agree();
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (uid, complete) RETURNING id INTO sid;
+  IF pg_temp.certify(sid, complete) <> 'ok' THEN RAISE EXCEPTION 'FAIL: could not certify'; END IF;
+  RESET ROLE;
+
+  -- An admin asks (20261104092000); the purge worker claims and completes it, as the service role.
+  PERFORM pg_temp.as_user(adm);
+  SET LOCAL ROLE authenticated;
+  did := public.request_intake_deletion(sid, 'Owner asked; verified from the account address');
+  RESET ROLE;
+  SET LOCAL ROLE service_role;
+  IF (SELECT count(*) FROM public.claim_intake_deletions(5, 600)) <> 1 THEN RAISE EXCEPTION 'FAIL: the deletion was not claimed'; END IF;
+  PERFORM public.complete_intake_deletion(did, 0);
+  RESET ROLE;
+  IF EXISTS (SELECT 1 FROM public.chamber_certifications WHERE session_id = sid) THEN RAISE EXCEPTION 'FAIL: the purge left the certification records'; END IF;
+  IF EXISTS (SELECT 1 FROM public.chamber_sessions WHERE id = sid) THEN RAISE EXCEPTION 'FAIL: the purge left the intake'; END IF;
+  IF (SELECT status FROM public.intake_deletions WHERE id = did) <> 'done' THEN RAISE EXCEPTION 'FAIL: the deletion is not done'; END IF;
+  RAISE NOTICE 'submission_records: deletion cases passed';
+END $$;
+
 -- ---------- a required answer must be settled ----------
 DO $$
 DECLARE
@@ -303,6 +347,7 @@ BEGIN
 
   PERFORM pg_temp.as_user(uid);
   SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.agree();
   INSERT INTO public.chamber_sessions (user_id, chamber_data, field_provenance) VALUES (uid, complete, conflicting) RETURNING id INTO sid;
   outcome := pg_temp.certify(sid, complete);
   IF outcome <> 'EA003 company_name' THEN RAISE EXCEPTION 'FAIL: certifying with a conflicting company name gave %', outcome; END IF;

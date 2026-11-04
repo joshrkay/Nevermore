@@ -302,9 +302,9 @@ export const DATA_CLASSES: DataClass[] = [
     id: "operational",
     label: "Operational monitoring and abuse limits",
     sensitivity: "internal",
-    examples: "Failure counts and codes (errors, failed uploads, AI failures, refused access), the alerts raised from them, a record of each AI call (ids, codes and the names of the fields it read, never their values), and the counters that rate-limit AI use (a one-way hash of the network address, never the address).",
+    examples: "Failure counts and codes (errors, failed uploads, AI failures, refused access), the alerts raised from them, a record of each AI call (ids, codes and the names of the fields it read, never their values), the counters that rate-limit AI use (a one-way hash of the network address, never the address), and the per-year counter that numbers File IDs.",
     stored: {
-      tables: ["ops_events", "ops_alerts", "ai_extraction_events", "ai_request_log", "ai_ip_log", "ai_global_usage"],
+      tables: ["ops_events", "ops_alerts", "ai_extraction_events", "ai_request_log", "ai_ip_log", "ai_global_usage", "submission_reference_counters"],
       buckets: [],
       elsewhere: ["Supabase and Vercel logs"],
     },

@@ -3,7 +3,7 @@ import type { Database, Json } from "@/integrations/supabase/types";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
 import { parseTranscript, type ChatMessage } from "@/data/chat";
-import { fileIdForSession, type ChamberSubmission } from "@/data/manuscript";
+import type { ChamberSubmission } from "@/data/manuscript";
 import { parseProvenance, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import type { OutboxStatus } from "@/data/outbox";
 import {
@@ -107,7 +107,8 @@ export async function requeueOutboxEvent(eventId: string, rebuild: boolean): Pro
 export interface SubmissionDetail {
   id: string;
   userId: string;
-  fileId: string;
+  /** The File ID, assigned by the database at the first certification; null for a draft never certified. */
+  fileId: string | null;
   intakeStatus: string;
   pipelineStatus: PipelineStatus;
   createdAt: string;
@@ -133,7 +134,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   const [session, workflow, history, notes, reviews, events, versions] = await Promise.all([
     supabase
       .from("chamber_sessions")
-      .select("id, user_id, chamber_data, field_provenance, transcript, status, submission, created_at, updated_at")
+      .select("id, user_id, chamber_data, field_provenance, transcript, status, submission, created_at, updated_at, file_id")
       .eq("id", id)
       .maybeSingle(),
     supabase.from("submission_workflow").select("status").eq("session_id", id).maybeSingle(),
@@ -167,7 +168,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   return {
     id: row.id,
     userId: row.user_id,
-    fileId: submission?.file_id || fileIdForSession(row.id, new Date(row.created_at)),
+    fileId: row.file_id ?? submission?.file_id ?? null,
     intakeStatus: row.status,
     pipelineStatus: isPipelineStatus(workflow.data.status) ? workflow.data.status : "draft",
     createdAt: row.created_at,

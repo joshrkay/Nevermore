@@ -102,6 +102,9 @@ export type Database = {
           // When an uncertified draft expires; null once it was ever certified. Set by the database.
           expires_at: string | null
           field_provenance: Json
+          // The File ID (EAA-<year>-<number>), assigned by the database at the first certification and kept
+          // for good; null until then. Nothing the browser sends sets or changes it.
+          file_id: string | null
           id: string
           // The agreement (intake_consents) the intake was started under. Set by the database.
           intake_consent_id: string | null
@@ -123,6 +126,7 @@ export type Database = {
           data_version?: never
           expires_at?: never
           field_provenance?: Json
+          file_id?: never
           id?: string
           intake_consent_id?: never
           last_activity_at?: never
@@ -140,6 +144,7 @@ export type Database = {
           data_version?: never
           expires_at?: never
           field_provenance?: Json
+          file_id?: never
           id?: string
           intake_consent_id?: never
           last_activity_at?: never

@@ -6,7 +6,7 @@ export interface ManuscriptPdfOptions {
   revealSensitive?: boolean;
   /** Marks the packet as a sample built from fictional data. */
   sample?: boolean;
-  /** When the PDF is generated; printed in the footer. Defaults to now. */
+  /** When the PDF is generated; printed in the footer and set as the file's creation date. Defaults to now. */
   generatedOn?: Date;
   /** Compress page streams. Tests turn this off so the text can be read back. */
   compress?: boolean;
@@ -36,6 +36,7 @@ const MUTED: RGB = [96, 100, 118];
 const RULE: RGB = [208, 211, 222];
 const ACCENT: RGB = [92, 64, 200];
 const WARN: RGB = [168, 98, 0];
+const OK: RGB = [22, 120, 70];
 const HEAD_FILL: RGB = [240, 241, 247];
 
 // jsPDF's built-in fonts only cover Latin-1 and a few Windows-1252 extras. Anything else would
@@ -64,17 +65,27 @@ interface Column {
   mono?: boolean;
 }
 
+/** The version line printed on the packet: "v2 · data version 17", or what stands in for it. */
+const versionLine = (m: Manuscript, sample: boolean) =>
+  m.version ? `v${m.version}${m.dataVersion ? ` · data version ${m.dataVersion}` : ""}` : sample ? "Sample" : "Not recorded";
+
 /** Lays out the manuscript on US Letter pages with text that stays selectable and searchable. */
 export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {}): ManuscriptPdf {
   const reveal = opts.revealSensitive === true;
-  const generated = (opts.generatedOn ?? new Date()).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const generatedOn = opts.generatedOn ?? new Date();
+  const generated = generatedOn.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const version = versionLine(m, opts.sample === true);
   const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "letter", compress: opts.compress !== false });
   pdf.setProperties({
-    title: pdfSafe(`The Manuscript — ${m.companyName} (${m.fileId})`),
-    subject: pdfSafe(`Underwriting packet ${m.fileId}`),
+    title: pdfSafe(`The Manuscript — ${m.companyName} (${m.fileId}, ${version})`),
+    subject: pdfSafe(`Underwriting packet ${m.fileId} ${version}, certified ${m.date}`),
     author: "Edgar Allan Advisory",
     creator: "Edgar Allan Advisory",
   });
+  // The file's own creation date, set explicitly so it is the generation time and not whatever jsPDF defaults to.
+  if (typeof (pdf as { setCreationDate?: (d: Date) => unknown }).setCreationDate === "function") {
+    (pdf as unknown as { setCreationDate: (d: Date) => unknown }).setCreationDate(generatedOn);
+  }
 
   let y = TOP;
 
@@ -117,8 +128,9 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     y += 9;
   };
 
-  const subheading = (text: string) => {
-    ensure(12);
+  // A sub-heading stays with what follows it: at least `keepWith` mm of its content comes on the same page.
+  const subheading = (text: string, keepWith = 14) => {
+    ensure(6 + keepWith);
     font("bold", 8);
     setInk(MUTED);
     pdf.text(pdfSafe(text.toUpperCase()), MARGIN, y + 3);
@@ -216,10 +228,11 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     ...(m.submittedTo ? ([["Prepared For", m.submittedTo]] as [string, string][]) : []),
     ["Prepared By", "Edgar Allan Advisory · Lenore"],
     [m.signer ? "Certified" : "Date", m.date],
+    ["Version", version],
     ["Generated", generated],
     ["File ID", m.fileId],
     ...(m.advisorReview
-      ? ([["Version", `v${m.advisorReview.version} · reviewed by Edgar Allan Advisory`]] as [string, string][])
+      ? ([["Advisor Version", `v${m.advisorReview.version} · reviewed by Edgar Allan Advisory`]] as [string, string][])
       : []),
     ["Prospect", m.companyName],
     ["Sensitive Fields", reveal ? "Shown in full" : "Masked (dates of birth show year only)"],
@@ -229,13 +242,64 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   sectionHeading("1 — Company Profile");
   keyValues(m.companyRows);
 
-  // ---------- 2 Payroll ----------
-  sectionHeading("2 — Payroll & Time");
-  keyValues(m.payrollRows);
-
-  // ---------- 3 Workforce ----------
-  sectionHeading("3 — Workforce Summary");
+  // ---------- 2 Workforce ----------
+  sectionHeading("2 — Workforce Summary");
   keyValues(m.workforceRows);
+
+  // ---------- 3 Census ----------
+  sectionHeading("3 — Employee Census");
+  if (m.census.length === 0) {
+    paragraph("No employee census captured yet.", 9, "normal", MUTED);
+  } else {
+    const columns: Column[] = [
+      { header: "#", width: 8 },
+      { header: "Name", width: 30 },
+      { header: "DOB", width: 21, mono: true },
+      { header: "St", width: 10 },
+      { header: "Title", width: 26 },
+      { header: "Salary", width: 21, align: "right" },
+      { header: "Type", width: 11 },
+      { header: "Coverage Tier", width: 25 },
+      { header: "Class", width: 10, mono: true },
+      { header: "Note", width: CONTENT_W - 162 },
+    ];
+    const notes: string[] = [];
+    const flagged = new Set<number>();
+    const rows = m.census.map((e, i) => {
+      let noteRef = "—";
+      if (e.flag) {
+        notes.push(`${i + 1}. ${e.name}: ${e.flag}`);
+        flagged.add(i);
+        noteRef = `See ${notes.length}`;
+      }
+      const dob = !reveal && e.dob !== NOT_PROVIDED ? maskDob(e.dob) : e.dob;
+      return [String(i + 1), e.name, dob, e.state, e.title, e.salary, e.classification, e.tier, e.classCode === NOT_PROVIDED ? "—" : e.classCode, noteRef];
+    });
+    table(columns, rows, { flagged });
+    if (notes.length > 0) {
+      subheading("Census notes");
+      notes.forEach((n) => paragraph(n, 8.5, "normal", WARN, 1));
+    }
+  }
+
+  // ---------- 4 Dependents ----------
+  sectionHeading("4 — Dependent Summary");
+  table(
+    [
+      { header: "Tier", width: CONTENT_W - 70 },
+      { header: "Employees", width: 40, align: "right" },
+      { header: "%", width: 30, align: "right" },
+    ],
+    [
+      ...m.dependentTiers.map((t) => [t.tier, String(t.count), t.pct]),
+      ["Total Dependents", m.totalDependents, ""],
+    ],
+  );
+  paragraph("Dependent figures are self-reported. Actual election rates may vary at open enrollment.", 8.5, "italic", MUTED);
+
+  // ---------- 5 Locations ----------
+  sectionHeading("5 — Locations");
+  keyValues(m.locationRows);
   subheading("State breakdown");
   if (m.states.length === 0) {
     paragraph("No states captured yet.", 9, "normal", MUTED);
@@ -250,65 +314,50 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     );
   }
 
-  // ---------- 4 Census ----------
-  sectionHeading("4 — Employee Census");
-  if (m.census.length === 0) {
-    paragraph("No employee census captured yet.", 9, "normal", MUTED);
-  } else {
-    const columns: Column[] = [
-      { header: "#", width: 8 },
-      { header: "Name", width: 34 },
-      { header: "DOB", width: 21, mono: true },
-      { header: "St", width: 10 },
-      { header: "Title", width: 29 },
-      { header: "Salary", width: 21, align: "right" },
-      { header: "Type", width: 11 },
-      { header: "Coverage Tier", width: 25 },
-      { header: "Note", width: CONTENT_W - 159 },
-    ];
-    const notes: string[] = [];
-    const flagged = new Set<number>();
-    const rows = m.census.map((e, i) => {
-      let noteRef = "—";
-      if (e.flag) {
-        notes.push(`${i + 1}. ${e.name}: ${e.flag}`);
-        flagged.add(i);
-        noteRef = `See ${notes.length}`;
-      }
-      const dob = !reveal && e.dob !== NOT_PROVIDED ? maskDob(e.dob) : e.dob;
-      return [String(i + 1), e.name, dob, e.state, e.title, e.salary, e.classification, e.tier, noteRef];
-    });
-    table(columns, rows, { flagged });
-    if (notes.length > 0) {
-      subheading("Census notes");
-      notes.forEach((n) => paragraph(n, 8.5, "normal", WARN, 1));
-    }
-  }
+  // ---------- 6 Payroll ----------
+  sectionHeading("6 — Payroll & Time");
+  keyValues(m.payrollRows);
 
-  // ---------- 5 Dependents ----------
-  sectionHeading("5 — Dependent Summary");
-  table(
-    [
-      { header: "Tier", width: CONTENT_W - 70 },
-      { header: "Employees", width: 40, align: "right" },
-      { header: "%", width: 30, align: "right" },
-    ],
-    [
-      ...m.dependentTiers.map((t) => [t.tier, String(t.count), t.pct]),
-      ["Total Dependents", m.totalDependents, ""],
-    ],
-  );
-  paragraph("Dependent figures are self-reported. Actual election rates may vary at open enrollment.", 8.5, "italic", MUTED);
-
-  // ---------- 6 Benefits ----------
-  sectionHeading("6 — Current Benefits");
+  // ---------- 7 Benefits ----------
+  sectionHeading("7 — Current Benefits");
   keyValues(m.benefitsRows);
 
-  // ---------- 7 Readiness ----------
-  sectionHeading("7 — Underwriting Readiness");
+  // ---------- 8 Workers' comp ----------
+  sectionHeading("8 — Workers' Compensation");
+  keyValues(m.workersCompRows);
+
+  // ---------- 9 Operations ----------
+  sectionHeading("9 — Operations & HR");
+  keyValues(m.operationsRows);
+
+  // ---------- 10 Documents ----------
+  sectionHeading("10 — Documents", 16);
+  if (m.documents === null) {
+    paragraph(opts.sample ? "No documents in the sample." : "Documents were not recorded with this certification.", 9, "normal", MUTED);
+  } else if (m.documents.length === 0) {
+    paragraph("No documents were uploaded with this submission.", 9, "normal", MUTED);
+  } else {
+    table(
+      [
+        { header: "Document", width: CONTENT_W - 90 },
+        { header: "Kind", width: 50 },
+        { header: "Status", width: 40 },
+      ],
+      m.documents.map((d) => [d.name, d.category, d.status]),
+    );
+  }
+
+  // ---------- 11 Readiness ----------
+  sectionHeading("11 — Underwriting Readiness");
   subheading("Confirmed");
   if (m.resolved.length === 0) paragraph("Nothing confirmed yet.", 9, "normal", MUTED);
   m.resolved.forEach((item) => paragraph(`•  ${item}`, 9, "normal", INK, 1));
+  y += 2;
+  subheading("Eligibility checks");
+  m.checks.forEach((c) => {
+    const word = c.status === "pass" ? "Passes" : c.status === "fail" ? "Not met" : "Not yet verified";
+    paragraph(`•  ${c.label} — ${word}`, 9, "normal", c.status === "pass" ? OK : c.status === "fail" ? WARN : MUTED, 1);
+  });
   if (m.open.length > 0) {
     y += 2;
     subheading("Open items");
@@ -318,7 +367,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   // The prospect certified their own values; say plainly which ones an advisor changed since.
   if (m.advisorReview && m.advisorReview.corrections.length > 0) {
     y += 2;
-    subheading("Advisor corrections");
+    subheading("Advisor corrections", 24);
     paragraph(
       "These values were corrected and verified by Edgar Allan Advisory after the prospect certified this submission. The prospect certified the original values shown.",
       8.5,
@@ -337,10 +386,10 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     );
   }
 
-  // ---------- 8 Certification ----------
+  // ---------- 12 Certification ----------
   // Kept together on one page: a signature block split across pages isn't a signature block.
   const consentLines = m.signer ? wrap(m.signer.consent.replace(/\n+/g, " "), CONTENT_W - 8) : [];
-  const certHeight = 78 + consentLines.length * lineHeight(9);
+  const certHeight = 84 + consentLines.length * lineHeight(9);
   ensure(certHeight);
   y += 4;
   pdf.setDrawColor(...ACCENT);
@@ -349,7 +398,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   y += 6;
   font("bold", 12);
   setInk(INK);
-  pdf.text("8 — Submission Certification", MARGIN, y + 3);
+  pdf.text("12 — Submission Certification", MARGIN, y + 3);
   y += 9;
   paragraph(
     `Authorized representative of ${m.companyName} has reviewed and confirmed accuracy of this submission through Edgar Allan Advisory's intake process.`,
@@ -364,6 +413,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     ["Company", m.companyName],
     ["Signed", m.signer?.signedAtFull ?? "—"],
     ["File ID", m.fileId],
+    ["Certification", version],
   ]);
   if (m.signer) {
     subheading("Consent");
@@ -387,7 +437,15 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     setInk(MUTED);
     pdf.text("THE MANUSCRIPT", MARGIN, MARGIN + 4);
     font("normal", 8);
-    pdf.text(pdfSafe(`File ID ${m.fileId}`), PAGE_W - MARGIN, MARGIN + 4, { align: "right" });
+    const right = pdfSafe(`File ID ${m.fileId} · ${version}`);
+    const rightW = pdf.getTextWidth(right);
+    pdf.text(right, PAGE_W - MARGIN, MARGIN + 4, { align: "right" });
+    // The company name sits between the title and the reference, shortened before it can run into either.
+    const titleW = pdf.getTextWidth("THE MANUSCRIPT") + 4;
+    let company = pdfSafe(m.companyName);
+    const room = CONTENT_W - titleW - rightW - 6;
+    while (company.length > 1 && pdf.getTextWidth(company) > room) company = company.slice(0, -2).trimEnd() + "…";
+    if (room > 10) pdf.text(company, MARGIN + titleW, MARGIN + 4);
     pdf.setDrawColor(...RULE);
     pdf.setLineWidth(0.2);
     pdf.line(MARGIN, MARGIN + 7, PAGE_W - MARGIN, MARGIN + 7);
@@ -395,20 +453,23 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     const footY = PAGE_H - MARGIN;
     pdf.line(MARGIN, footY - 6, PAGE_W - MARGIN, footY - 6);
     font("normal", 7.5);
-    const left = pdfSafe(`Edgar Allan Advisory · ${m.fileId} · ${m.companyName} · Generated ${generated}`);
-    const right = `Page ${p} of ${pageCount}`;
-    const rightW = pdf.getTextWidth(right);
-    const room = CONTENT_W - rightW - 6;
+    const left = pdfSafe(`Edgar Allan Advisory · ${m.fileId} · ${version} · ${m.companyName} · Generated ${generated}`);
+    const pageLabel = `Page ${p} of ${pageCount}`;
+    const pageW = pdf.getTextWidth(pageLabel);
+    const footRoom = CONTENT_W - pageW - 6;
     let leftText = left;
     // Shorten with an ellipsis rather than letting a long company name run into the page number.
-    while (leftText.length > 1 && pdf.getTextWidth(leftText) > room) leftText = leftText.slice(0, -2).trimEnd() + "…";
+    while (leftText.length > 1 && pdf.getTextWidth(leftText) > footRoom) leftText = leftText.slice(0, -2).trimEnd() + "…";
     pdf.text(leftText, MARGIN, footY - 1.5);
-    pdf.text(right, PAGE_W - MARGIN, footY - 1.5, { align: "right" });
+    pdf.text(pageLabel, PAGE_W - MARGIN, footY - 1.5, { align: "right" });
   }
 
   return {
     blob: pdf.output("blob"),
-    filename: manuscriptFilename(m.fileId, m.companyName === "[Company name not provided]" ? null : m.companyName),
+    filename: manuscriptFilename(m.fileId, m.companyName === "[Company name not provided]" ? null : m.companyName, {
+      version: m.version,
+      date: m.certifiedAt,
+    }),
     pageCount,
   };
 }

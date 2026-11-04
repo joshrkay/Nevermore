@@ -22,20 +22,34 @@ export interface SignerDetails {
   title: string;
 }
 
+/** A required answer the intake can't be certified without: not given yet, or given but not settled. */
+export interface NeededAnswer {
+  label: string;
+  reason: "missing" | "conflicting" | "incomplete";
+}
+
+const neededAction = ({ label, reason }: NeededAnswer): string => {
+  const name = label.toLowerCase();
+  if (reason === "conflicting") return `Choose the right ${name}`;
+  if (reason === "incomplete") return `Complete ${name}`;
+  return `Add ${name}`;
+};
+
 /** Why certification can't be completed yet; empty when it can. Drives the submit button and its hint. */
 export function certificationBlockers(opts: {
   acknowledged: boolean[];
   signer: SignerDetails;
   signed: boolean;
-  hasFileId: boolean;
+  /** Whether the intake exists on the server yet (its File ID is assigned when it is certified). */
+  hasIntake: boolean;
   isGuest: boolean;
-  /** Labels of the required answers the intake doesn't have yet (missingRequired in readiness.ts). */
-  missingAnswers?: string[];
+  /** The required answers the intake still needs (blockingItems in readiness.ts). */
+  needed?: NeededAnswer[];
 }): string[] {
   // What the intake still needs comes first: no signature can make up for it.
-  const blockers: string[] = (opts.missingAnswers ?? []).map((label) => `Add ${label.toLowerCase()}`);
+  const blockers: string[] = (opts.needed ?? []).map(neededAction);
   if (opts.isGuest) blockers.push("Verify your email");
-  if (!opts.hasFileId) blockers.push("Wait for your intake to finish saving");
+  if (!opts.hasIntake) blockers.push("Wait for your intake to finish saving");
   if (!opts.acknowledged.every(Boolean)) blockers.push("Check every statement");
   if (!opts.signer.name.trim()) blockers.push("Enter your full name");
   if (!opts.signer.title.trim()) blockers.push("Enter your role");

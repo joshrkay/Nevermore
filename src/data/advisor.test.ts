@@ -133,12 +133,13 @@ describe("manuscript storage", () => {
 });
 
 describe("referenceOf", () => {
-  it("uses the certified file id", () => {
-    expect(referenceOf({ session_id: "a1b2c3d4-0000-0000-0000-000000000000", file_id: "EAA-2026-TEST", created_at: "2026-03-01T12:00:00Z" })).toBe("EAA-2026-TEST");
+  it("uses the File ID the database assigned", () => {
+    expect(referenceOf({ file_id: "EAA-2026-0042" })).toBe("EAA-2026-0042");
   });
 
-  it("derives the same id the detail page shows for an intake that isn't certified yet", () => {
-    expect(referenceOf({ session_id: "a1b2c3d4-0000-0000-0000-000000000000", file_id: null, created_at: "2026-03-01T12:00:00Z" })).toBe("EAA-2026-A1B2C3D4");
+  it("has none for an intake that isn't certified yet: the File ID is assigned at certification", () => {
+    expect(referenceOf({ file_id: null })).toBeNull();
+    expect(referenceOf({ file_id: "  " })).toBeNull();
   });
 });
 
@@ -169,8 +170,9 @@ describe("matchesSearch", () => {
     expect(matchesSearch(row, "acme nobody")).toBe(false);
   });
 
-  it("matches a draft by the reference the app derives for it", () => {
-    expect(matchesSearch({ ...row, file_id: null }, "EAA-2026-A1B2C3D4")).toBe(true);
+  it("doesn't match a draft by a File ID, since it has none yet", () => {
+    expect(matchesSearch({ ...row, file_id: null }, "EAA-2026-A1B2C3D4")).toBe(false);
+    expect(matchesSearch({ ...row, file_id: null }, "acme")).toBe(true);
   });
 
   it("copes with missing company and contact", () => {

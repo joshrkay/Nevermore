@@ -65,6 +65,7 @@
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
+\i supabase/migrations/20261104100000_submission_records.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -343,6 +344,8 @@ INSERT INTO matrix VALUES
   ('public.ai_extraction_events',                       '{"advisor":"all","admin":"all"}'),
   -- Reached only through SECURITY DEFINER functions, by nobody directly.
   ('public.outbox_events',                              '{}'),
+  -- The File ID sequence (20261104100000): taken by the certification trigger, read by nobody.
+  ('public.submission_reference_counters',              '{}'),
   ('public.email_delivery_events',                      '{}'),
   ('public.email_suppressions',                         '{}'),
   ('public.ai_request_log',                             '{}'),
@@ -571,6 +574,8 @@ INSERT INTO callable VALUES
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
   ('intake_missing_required(d jsonb)',         'anyone',  NULL, 'pure: required answers missing from the jsonb it is given'),
+  ('intake_missing_required(d jsonb, p jsonb)', 'anyone', NULL, 'pure: the same, plus required answers whose field status is conflicting or incomplete'),
+  ('intake_unsettled_required(p jsonb)',       'anyone',  NULL, 'pure: required answers whose field status is conflicting or incomplete'),
   ('is_prospect_visible_status(s text)',       'anyone',  NULL, 'pure: whether a status name is shared with prospects'),
   ('is_reviewable_field(f text)',              'anyone',  NULL, 'pure: whether a field name can be reviewed'),
   ('ops_clean_code(p_code text)',              'anyone',  NULL, 'pure: cleans a failure code'),

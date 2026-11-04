@@ -19,7 +19,15 @@ CREATE TABLE public.profiles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), use
 CREATE TABLE public.chamber_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL,
   chamber_data jsonb NOT NULL DEFAULT '{}'::jsonb, transcript jsonb NOT NULL DEFAULT '[]'::jsonb,
-  status text NOT NULL DEFAULT 'in_progress', submission jsonb, created_at timestamptz NOT NULL DEFAULT now());
+  status text NOT NULL DEFAULT 'in_progress', submission jsonb, created_at timestamptz NOT NULL DEFAULT now(),
+  -- The intake schema version (20261103091000 and 20261103120100), which the submission record copies.
+  schema_version smallint NOT NULL DEFAULT 2);
+-- Uploaded documents, as far as the submission record (20261104100000) copies them at certification. The
+-- document migrations need storage, which this harness does not model.
+CREATE TABLE public.documents (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL, session_id uuid,
+  file_name text NOT NULL, category text NOT NULL DEFAULT 'other', status text NOT NULL DEFAULT 'uploaded',
+  created_at timestamptz NOT NULL DEFAULT now());
 ALTER TABLE public.chamber_sessions ENABLE ROW LEVEL SECURITY;
 CREATE POLICY own_select ON public.chamber_sessions FOR SELECT TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY own_insert ON public.chamber_sessions FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
@@ -27,6 +35,7 @@ CREATE POLICY own_update ON public.chamber_sessions FOR UPDATE TO authenticated 
 
 \i supabase/migrations/20261020200000_block_guest_submission.sql
 \i supabase/migrations/20261020210000_certification_events.sql
+\i supabase/migrations/20261021090000_chamber_field_provenance.sql
 -- The advisor role objects, copied verbatim from 20261022090000_advisor_operations.sql (lines 17-73). The rest of that
 -- migration needs storage and documents, which this harness does not model; the advisor outbox functions only need these.
 CREATE TYPE public.app_role AS ENUM ('advisor', 'admin');
@@ -92,6 +101,14 @@ $$;
 \i supabase/migrations/20261027090100_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
+-- Versioned, validated writes (what the browser's save and certify go through), the chosen PEO, the readiness
+-- check, and the submission record: the server-assigned File ID, the numbered immutable certification rows and
+-- the repeat-submit guard. With these, a certify PATCH needs the company legal name, states of operation and pay
+-- frequency, as in production.
+\i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
+\i supabase/migrations/20261103100000_chosen_peo.sql
+\i supabase/migrations/20261103110000_certification_readiness.sql
+\i supabase/migrations/20261104100000_submission_records.sql
 
 -- Seed: a verified prospect (with a profile), a guest, and one fixed session per scenario.
 INSERT INTO auth.users VALUES

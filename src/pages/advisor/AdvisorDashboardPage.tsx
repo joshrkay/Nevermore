@@ -205,7 +205,7 @@ const AdvisorDashboardPage = () => {
                           <Link to={`/advisor/submissions/${row.session_id}`} className="font-medium text-foreground hover:text-primary">
                             {row.company_name ?? "Company not provided"}
                           </Link>
-                          <p className="text-xs text-muted-foreground font-mono">{referenceOf(row)}</p>
+                          <p className="text-xs text-muted-foreground font-mono">{referenceOf(row) ?? "No File ID yet"}</p>
                         </TableCell>
                         <TableCell className="text-sm">
                           {row.contact_name ?? <span className="text-muted-foreground">—</span>}

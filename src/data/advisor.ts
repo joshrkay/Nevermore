@@ -1,6 +1,5 @@
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
-import { fileIdForSession } from "./manuscript";
 import { FIELD_KINDS, FIELD_LABELS, formatFieldValue, type FieldKey, type ProvenanceMap } from "./provenance";
 
 // Advisor-side view of an intake: where it is in the pipeline, how complete it is, and the
@@ -82,14 +81,14 @@ export interface QueueRow {
   session_id: string;
   company_name: string | null;
   contact_name: string | null;
-  /** The certified file id; null until the prospect certifies. */
+  /** The File ID, assigned by the database when the prospect first certifies; null until then. */
   file_id: string | null;
   created_at: string;
 }
 
-/** The reference an advisor quotes for an intake: the certified file id, or the one the detail page derives. */
-export function referenceOf(row: Pick<QueueRow, "session_id" | "file_id" | "created_at">): string {
-  return row.file_id ?? fileIdForSession(row.session_id, new Date(row.created_at));
+/** The reference an advisor quotes for an intake: its File ID, assigned by the database at the first certification; null before. */
+export function referenceOf(row: Pick<QueueRow, "file_id">): string | null {
+  return row.file_id?.trim() || null;
 }
 
 /**

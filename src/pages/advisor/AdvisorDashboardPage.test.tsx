@@ -97,7 +97,7 @@ describe("AdvisorDashboardPage", () => {
     expect(within(draft).getByText("Missing required")).toBeInTheDocument();
     expect(within(draft).getByText("Pay frequency, Employee census")).toBeInTheDocument();
     // An intake with no certified file id still shows the reference the detail page will show.
-    expect(within(draft).getByText("EAA-2026-S2")).toBeInTheDocument();
+    expect(within(draft).getByText("No File ID yet")).toBeInTheDocument(); // assigned when the prospect certifies
 
     const beta = screen.getByRole("link", { name: "Beta" }).closest("tr")!;
     expect(within(beta).getByText("Under review")).toBeInTheDocument();

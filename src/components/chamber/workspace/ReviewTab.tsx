@@ -1,9 +1,19 @@
 import type { ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
-import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
+import { coverageTier, eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
-import { fieldOpenItems, formatFieldValue, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
-import { missingRecommendedItems, missingRequired, type ReadinessItem, type ReviewSection } from "@/data/readiness";
+import { FIELD_LABELS, formatFieldValue, type FieldAction, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
+import {
+  blockingItems,
+  openItems,
+  REVIEW_SECTIONS,
+  SECTION_STATUS_LABELS,
+  sectionFields,
+  sectionStatus,
+  type OpenItem,
+  type ReviewSection,
+  type SectionStatus,
+} from "@/data/readiness";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
 import { CheckCircle, AlertTriangle, HelpCircle, FileText } from "lucide-react";
@@ -29,134 +39,120 @@ interface Row {
   field: FieldKey;
   /** Formatted value, or null when nothing has been captured. */
   display: string | null;
-  /** False for composite rows whose display isn't one editable value. */
-  editable?: boolean;
 }
 
 /** A captured value as text, or null when there is nothing to show. 0 and "No" are answers. */
 const shown = (value: unknown): string | null =>
   value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0) ? null : formatFieldValue(value);
 
-const SECTIONS: { key: ReviewSection; title: string }[] = [
-  { key: "company", title: "Company" },
-  { key: "workforce", title: "Workforce" },
-  { key: "locations", title: "Locations" },
-  { key: "payroll", title: "Payroll" },
-  { key: "benefits", title: "Benefits" },
-];
-
-// Every answer the Manuscript draws on, by section, each editable in place.
-function rowsBySection(data: ChamberData): Record<ReviewSection, Row[]> {
-  return {
-    company: [
-      { label: "Company legal name", field: "company_name", display: shown(data.company_name) },
-      { label: "Industry", field: "industry", display: shown(data.industry) },
-      {
-        label: "Entity structure",
-        field: "multiple_entities",
-        display: data.multiple_entities === null ? null : data.multiple_entities ? `Multiple (${data.fein_count ?? "?"} FEINs)` : "Single entity",
-      },
-      { label: "Target start", field: "start_month", display: shown(data.start_month) },
-      {
-        label: "Health coverage today",
-        field: "virgin_medical",
-        display: data.virgin_medical === null ? null : data.virgin_medical ? "None yet: first employer plan" : "Switching existing coverage",
-      },
-    ],
-    workforce: [
-      { label: "Employee count", field: "employee_count", display: shown(data.employee_count) },
-      {
-        label: "Nonexempt / exempt",
-        field: "has_nonexempt",
-        display: data.has_nonexempt !== null ? `${data.nonexempt_count ?? 0} nonexempt · ${data.exempt_count ?? 0} exempt` : null,
-        editable: false,
-      },
-      { label: "1099 contractors", field: "has_1099", display: shown(data.has_1099) },
-      { label: "In-house HR staff", field: "hr_staff_count", display: shown(data.hr_staff_count) },
-      { label: "Employee handbook", field: "has_handbook", display: shown(data.has_handbook) },
-    ],
-    locations: [
-      { label: "HQ state", field: "hq_state", display: shown(data.hq_state) },
-      { label: "States of operation", field: "states", display: shown(data.states) },
-    ],
-    payroll: [
-      { label: "Payroll vendor", field: "payroll_vendor", display: shown(data.payroll_vendor) },
-      { label: "Pay frequency", field: "pay_frequency", display: shown(data.pay_frequency) },
-      { label: "Funding lead time", field: "funding_days", display: data.funding_days !== null ? `${data.funding_days} days` : null },
-      { label: "Accrual method", field: "accrual_method", display: shown(data.accrual_method) },
-      { label: "PTO types", field: "pto_types", display: shown(data.pto_types) },
-    ],
-    benefits: [
-      { label: "Current carrier", field: "current_carrier", display: shown(data.current_carrier) },
-      { label: "Renewal date", field: "renewal_date", display: shown(data.renewal_date) },
-      { label: "Waiting period", field: "benefits_waiting_period", display: shown(data.benefits_waiting_period) },
-      { label: "Rate history", field: "rate_history", display: shown(data.rate_history) },
-      { label: "Ancillary benefits", field: "ancillary_benefits", display: shown(data.ancillary_benefits) },
-      {
-        label: "Retirement plan",
-        field: "has_401k",
-        display:
-          data.has_401k === null
-            ? null
-            : data.has_401k
-              ? `${data.retirement_type || "401(k)"} · ${data.employer_contributes ? "employer contributes" : "no employer match"}`
-              : "No retirement plan",
-      },
-    ],
-  };
+/** How each answer reads in the Review: the schema's label, and a few values said in words. */
+function rowFor(field: Exclude<FieldKey, "census">, data: ChamberData): Row {
+  const value = data[field];
+  let display = shown(value);
+  switch (field) {
+    case "multiple_entities":
+      display = value === null ? null : value ? "Multiple entities" : "Single entity";
+      break;
+    case "virgin_medical":
+      display = value === null ? null : value ? "None yet: first employer plan" : "Switching existing coverage";
+      break;
+    case "funding_days":
+      display = value === null ? null : `${value} day${value === 1 ? "" : "s"}`;
+      break;
+    case "wc_experience_mod":
+      display = value === null ? null : (value as number).toFixed(2);
+      break;
+    case "wc_annual_premium":
+      display = value === null ? null : `$${(value as number).toLocaleString("en-US")}`;
+      break;
+  }
+  return { label: FIELD_LABELS[field], field, display };
 }
 
 const rowId = (field: FieldKey) => `review-field-${field}`;
-const sectionId = (section: ReviewSection) => `review-section-${section}`;
+const sectionId = (section: ReviewSection | "documents") => `review-section-${section}`;
 
-/** Brings an answer into view and puts the keyboard on its Add or Edit button. */
-function jumpTo(item: ReadinessItem) {
-  const target = document.getElementById(item.field ? rowId(item.field) : sectionId(item.section));
-  target?.scrollIntoView?.({ block: "center", behavior: "smooth" });
-  target?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+/** Brings an answer, or a section, into view and puts the keyboard on its first button. */
+function jumpTo(target: { field?: FieldKey; section: ReviewSection | "documents" }) {
+  const element = document.getElementById(target.field && target.field !== "census" ? rowId(target.field) : sectionId(target.section));
+  element?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  element?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
 }
 
-const Section = ({ section, title, children }: { section: ReviewSection; title: string; children: ReactNode }) => (
+const STATUS_STYLES: Record<SectionStatus, string> = {
+  complete: "bg-success/15 text-success",
+  needs_confirmation: "bg-warning/15 text-warning",
+  incomplete: "bg-destructive/15 text-destructive",
+  not_applicable: "bg-muted text-muted-foreground",
+};
+
+const StatusChip = ({ status }: { status: SectionStatus }) => (
+  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium normal-case tracking-normal ${STATUS_STYLES[status]}`}>
+    {SECTION_STATUS_LABELS[status]}
+  </span>
+);
+
+const Section = ({ section, title, status, children }: { section: ReviewSection | "documents"; title: string; status: SectionStatus; children: ReactNode }) => (
   <section id={sectionId(section)} aria-labelledby={`${sectionId(section)}-title`} className="bg-card border border-border rounded-xl p-6 space-y-4">
-    <h3 id={`${sectionId(section)}-title`} className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
-      {title}
+    <h3 className="text-xs font-mono text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+      <span id={`${sectionId(section)}-title`}>{title}</span>
+      <StatusChip status={status} />
     </h3>
     {children}
   </section>
 );
 
+const OpenItemLine = ({ item }: { item: OpenItem }) => (
+  <li className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+    <span className="font-medium">{item.label}</span>
+    <span className="text-muted-foreground text-xs">{item.action}</span>
+    <button type="button" onClick={() => jumpTo(item)} className="text-xs font-medium text-primary underline underline-offset-2">
+      Go to {item.label.toLowerCase()}
+    </button>
+  </li>
+);
+
 const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] }: ReviewTabProps) => {
   const eeCount = headcount(data);
-  const needsReview = fieldOpenItems(provenance);
+  const items = openItems(data, provenance);
+  const required = blockingItems(data, provenance);
+  const worthALook = items.filter((item) => !item.blocking);
   const checks = eligibilityChecks(data);
-  const flaggedEmployees = data.census.filter(e => employeeFlag(e) !== null);
+  const flaggedEmployees = data.census.filter((e) => employeeFlag(e) !== null);
   const uploaded = documents.filter((d) => d.status !== "uploading");
-  const missing = missingRecommended(uploaded);
+  const missingDocs = missingRecommended(uploaded);
   const submitted = submittedCategories(uploaded);
-  const required = missingRequired(data);
-  const recommended = missingRecommendedItems(data);
-  const rows = rowsBySection(data);
+  const statuses = Object.fromEntries(REVIEW_SECTIONS.map((s) => [s.key, sectionStatus(s.key, data, provenance, items)])) as Record<ReviewSection, SectionStatus>;
+  // Documents are never required; the checklist is complete once every recommended kind is here.
+  const documentsStatus: SectionStatus = missingDocs.length === 0 ? "complete" : "incomplete";
+  const censusProvenance = provenance.census;
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
+  const tierCounts = [...data.census.reduce((counts, e) => {
+    const tier = coverageTier(e) ?? "Not provided";
+    return counts.set(tier, (counts.get(tier) ?? 0) + 1);
+  }, new Map<string, number>())];
   const censusStates = [...data.census.reduce((counts, e) => {
     if (e.work_state) counts.set(e.work_state, (counts.get(e.work_state) ?? 0) + 1);
     return counts;
   }, new Map<string, number>())];
 
-  const renderRows = (list: Row[]) => (
+  const renderRows = (section: ReviewSection) => (
     <div className="grid sm:grid-cols-2 gap-4">
-      {list.map((row) => (
-        <div key={row.field} id={rowId(row.field)}>
-          <ProvenanceField
-            label={row.label}
-            field={row.field}
-            display={row.display}
-            raw={data[row.field]}
-            provenance={provenance[row.field]}
-            onAction={onAction}
-            editable={row.editable}
-          />
-        </div>
-      ))}
+      {sectionFields(section)
+        .filter((field): field is Exclude<FieldKey, "census"> => field !== "census")
+        .map((field) => rowFor(field, data))
+        .map((row) => (
+          <div key={row.field} id={rowId(row.field)}>
+            <ProvenanceField
+              label={row.label}
+              field={row.field}
+              display={row.display}
+              raw={data[row.field]}
+              provenance={provenance[row.field]}
+              onAction={onAction}
+            />
+          </div>
+        ))}
     </div>
   );
 
@@ -165,9 +161,10 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
       <div>
         <h2 className="font-display text-2xl font-bold mb-2">Review</h2>
         <p className="text-muted-foreground text-sm">
-          Everything that goes into The Manuscript, by section. Correct anything here and it's saved right away: no need
-          to start the conversation over. <span className="text-primary font-medium">Required</span> answers are needed
-          before you can certify.
+          Everything that goes into The Manuscript, in the same sections. Correct anything here and it's saved right away:
+          no need to start the conversation over. Answers marked <span className="text-primary font-medium">Required</span>{" "}
+          are needed before you can certify; everything else is recommended, and an answer that doesn't apply to you can
+          be marked so.
         </p>
       </div>
 
@@ -178,54 +175,50 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
             Still needed before The Manuscript can be generated: {required.length}
           </p>
           <ul className="space-y-2">
-            {required.map((item) => (
-              <li key={item.key} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
-                <span className="font-medium">{item.label}</span>
-                <span className="text-muted-foreground text-xs">{item.hint}</span>
-                <button type="button" onClick={() => jumpTo(item)} className="text-xs font-medium text-primary underline underline-offset-2">
-                  Go to {item.label.toLowerCase()}
-                </button>
-              </li>
-            ))}
+            {required.map((item) => <OpenItemLine key={item.key} item={item} />)}
           </ul>
         </div>
       ) : (
-        <div role="status" className="bg-card border border-success/40 rounded-xl p-4 text-sm flex items-center gap-2">
+        <div role="status" aria-label="Ready to certify" className="bg-card border border-success/40 rounded-xl p-4 text-sm flex items-center gap-2">
           <CheckCircle className="w-4 h-4 text-success flex-shrink-0" />
           Every required answer is here. You can certify once you've checked the rest.
         </div>
       )}
-      {recommended.length > 0 && (
-        <div className="bg-card border border-border rounded-xl p-4 text-sm space-y-1">
-          <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Recommended</p>
-          {recommended.map((item) => (
-            <p key={item.key}>
-              <span className="font-medium">{item.label}</span>{" "}
-              <span className="text-muted-foreground text-xs">{item.hint}</span>
-            </p>
-          ))}
-        </div>
-      )}
 
-      {/* Inferred, incomplete, and conflicting values */}
-      {needsReview.length > 0 && (
-        <div className="bg-card border border-warning/40 rounded-xl p-6 space-y-4">
-          <p className="text-xs font-mono text-warning uppercase tracking-wider">
-            Needs your review — {needsReview.length} item{needsReview.length === 1 ? "" : "s"}
-          </p>
-          {needsReview.map((item) => (
-            <div key={item.field}>
-              <p className="text-[10px] text-muted-foreground mb-0.5">{item.reason}</p>
-              <ProvenanceField
-                label={item.label}
-                field={item.field}
-                display={shown(data[item.field])}
-                raw={data[item.field]}
-                provenance={provenance[item.field]}
-                onAction={onAction}
-              />
-            </div>
+      {/* One place to see each section's state, and jump to the one that needs work */}
+      <nav aria-label="Sections" className="bg-card border border-border rounded-xl p-4">
+        <ul className="flex flex-wrap gap-2">
+          {REVIEW_SECTIONS.map((s) => (
+            <li key={s.key}>
+              <button
+                type="button"
+                onClick={() => jumpTo({ section: s.key })}
+                className="flex items-center gap-2 text-xs border border-border rounded-full px-3 py-1 hover:bg-muted"
+              >
+                {s.title}
+                <StatusChip status={statuses[s.key]} />
+              </button>
+            </li>
           ))}
+          <li>
+            <button type="button" onClick={() => jumpTo({ section: "documents" })} className="flex items-center gap-2 text-xs border border-border rounded-full px-3 py-1 hover:bg-muted">
+              Documents
+              <StatusChip status={documentsStatus} />
+            </button>
+          </li>
+        </ul>
+      </nav>
+
+      {/* Inferred, incomplete, conflicting and not-yet-known values, and the recommended census */}
+      {worthALook.length > 0 && (
+        <div role="region" aria-label="Needs your review" className="bg-card border border-warning/40 rounded-xl p-6 space-y-3">
+          <p className="text-xs font-mono text-warning uppercase tracking-wider">
+            Needs your review — {worthALook.length} item{worthALook.length === 1 ? "" : "s"}
+          </p>
+          <p className="text-xs text-muted-foreground">None of these stops you certifying, but each makes The Manuscript stronger.</p>
+          <ul className="space-y-2">
+            {worthALook.map((item) => <OpenItemLine key={item.key} item={item} />)}
+          </ul>
         </div>
       )}
 
@@ -252,12 +245,12 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
         )}
       </div>
 
-      {SECTIONS.map(({ key, title }) => (
-        <Section key={key} section={key} title={title}>
-          {renderRows(rows[key])}
+      {REVIEW_SECTIONS.map(({ key, title }) => (
+        <Section key={key} section={key} title={title} status={statuses[key]}>
+          {renderRows(key)}
 
           {key === "workforce" && (
-            <div>
+            <div id={rowId("census")}>
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
                 Employee census
                 <span className="ml-1.5 normal-case tracking-normal font-medium text-muted-foreground">Recommended</span>
@@ -270,7 +263,8 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
                 <>
                   <p className="text-xs text-muted-foreground mb-2">
                     {data.census.length} {data.census.length === 1 ? "person" : "people"} ({eeCount} counted toward headcount) ·{" "}
-                    {totalDependents} dependent{totalDependents === 1 ? "" : "s"}
+                    {totalDependents} dependent{totalDependents === 1 ? "" : "s"} named
+                    {censusProvenance && <CensusSource provenance={censusProvenance} />}
                   </p>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
@@ -280,6 +274,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
                           <th className="pb-2 pr-3">State</th>
                           <th className="pb-2 pr-3">Title</th>
                           <th className="pb-2 pr-3 text-right">Salary</th>
+                          <th className="pb-2 pr-3">Coverage</th>
                           <th className="pb-2 text-center">Type</th>
                         </tr>
                       </thead>
@@ -290,6 +285,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
                             <td className="py-1.5 pr-3 font-mono">{emp.work_state || "—"}</td>
                             <td className="py-1.5 pr-3">{emp.job_title || "—"}</td>
                             <td className="py-1.5 pr-3 text-right font-mono">{censusPay(emp)}</td>
+                            <td className="py-1.5 pr-3 text-muted-foreground">{coverageTier(emp) ?? "—"}</td>
                             <td className="py-1.5 text-center">
                               <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
                                 isAssumed(emp, "classification")
@@ -306,7 +302,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
                     </table>
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-2">
-                    To change the census, upload a corrected file on the Upload tab.
+                    Dependents and coverage: {tierCounts.map(([tier, n]) => `${tier} (${n})`).join(", ")}. To change the census, upload a corrected file on the Upload tab.
                   </p>
                 </>
               )}
@@ -323,10 +319,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
       ))}
 
       {/* Documents — informational only; missing ones never block moving on */}
-      <div className="bg-card border border-border rounded-xl p-6">
-        <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">
-          Documents — {uploaded.length} uploaded
-        </p>
+      <Section section="documents" title={`Documents — ${uploaded.length} uploaded`} status={documentsStatus}>
         {uploaded.length === 0 ? (
           <p className="text-sm text-muted-foreground">No documents uploaded. That's fine — you can still continue.</p>
         ) : (
@@ -351,14 +344,14 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
             <dt className="text-muted-foreground">Submitted:</dt>
             <dd>{submitted.length > 0 ? submitted.map((c) => c.label).join(", ") : "none yet"}</dd>
           </div>
-          {missing.length > 0 && (
+          {missingDocs.length > 0 && (
             <div className="flex gap-2">
               <dt className="text-muted-foreground">Still helpful, if you have them:</dt>
-              <dd>{missing.map((c) => c.label.toLowerCase()).join(", ")}</dd>
+              <dd>{missingDocs.map((c) => c.label.toLowerCase()).join(", ")}</dd>
             </div>
           )}
         </dl>
-      </div>
+      </Section>
 
       {required.length > 0 && (
         <p className="text-xs text-muted-foreground">
@@ -373,6 +366,13 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [] 
       </button>
     </div>
   );
+};
+
+/** Where the census came from and whether it was confirmed, beside the census summary. */
+const CensusSource = ({ provenance }: { provenance: FieldProvenance }) => {
+  const source = provenance.source;
+  const from = source.kind === "document" ? `from ${source.document_name ?? "an uploaded document"}` : source.kind === "transcript" ? "from the conversation" : "entered by you";
+  return <span> · {from}{provenance.status === "confirmed" ? ", confirmed" : provenance.status === "inferred" ? ", please confirm" : ""}</span>;
 };
 
 export default ReviewTab;

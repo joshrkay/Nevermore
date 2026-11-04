@@ -228,7 +228,7 @@ describe("AdvisorSubmissionPage", () => {
       corrections: [{ field: "company_name", label: "Company legal name", prospectValue: "Signed Co", advisorValue: "Signed Co LLC", reason: "Per W-9" }],
     });
     expect(manuscript.signer?.name).toBe("Jo Doe");
-    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "The_Manuscript_EAA-2026-S1-v2_Signed_Co.pdf"));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "The_Manuscript_EAA-2026-S1_Signed_Co_20261001_advisor-v2.pdf"));
   });
 
   it("downloads a stored version through a short-lived link", async () => {
@@ -244,7 +244,7 @@ describe("AdvisorSubmissionPage", () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Download v1" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/signed"));
-    expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "The_Manuscript_EAA-2026-S1-v1_Signed_Co.pdf");
+    expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "The_Manuscript_EAA-2026-S1_Signed_Co_20261001_advisor-v1.pdf");
   });
 
   it("won't generate a Manuscript for an intake that isn't certified", async () => {

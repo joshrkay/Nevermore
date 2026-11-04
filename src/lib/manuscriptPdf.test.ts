@@ -10,17 +10,23 @@ const submission: ChamberSubmission = {
   signer_name: "Jo Doe",
   signer_title: "CEO",
   signed_at: "2026-05-01T12:00:00Z",
+  certified_at: "2026-05-01T12:00:03Z",
   file_id: FILE_ID,
+  version: 1,
+  data_version: 4,
   peo: "Acme PEO",
   consent_version: "v1",
   consent_text: "I certify the answers are accurate.\nBy signing, I consent to this packet being prepared.",
+  documents: [{ id: "d1", file_name: "census.csv", category: "employee_census", status: "extracted" }],
 };
 
-// jsdom's Blob has no arrayBuffer(); read it the old way. latin1 keeps bytes 1:1 so text is greppable.
+// jsdom's Blob has no arrayBuffer(); read it the old way. latin1 keeps bytes 1:1 so text is greppable. The
+// built-in fonts write an em dash and an ellipsis as the Windows-1252 bytes 0x97 and 0x85; read them back as
+// the characters, so expectations can be written as the page shows them.
 const readPdf = (blob: Blob) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
+    reader.onload = () => resolve((reader.result as string).replace(/\x97/g, "—").replace(/\x85/g, "…"));
     reader.onerror = reject;
     reader.readAsBinaryString(blob);
   });
@@ -69,12 +75,53 @@ describe("buildManuscriptPdf", () => {
     expect(text).toContain("not provided for 1 of 1 people on the census");
   });
 
-  it("puts the file id and page numbers in the header and footer of every page", async () => {
+  it("puts the file id, version, company and page numbers in the header and footer of every page", async () => {
     const { text, pageCount } = await render(bigCensus);
     expect(pageCount).toBeGreaterThan(3);
-    expect(occurrences(text, `(File ID ${FILE_ID})`)).toBe(pageCount);
+    expect(occurrences(text, `(File ID ${FILE_ID} · v1 · data version 4)`)).toBe(pageCount);
+    expect(occurrences(text, "(Meridian Creative Group)")).toBeGreaterThanOrEqual(pageCount);
     for (let p = 1; p <= pageCount; p++) expect(text).toContain(`(Page ${p} of ${pageCount})`);
     expect(occurrences(text, "Generated October 20, 2026")).toBe(pageCount);
+  });
+
+  it("shortens a very long company name in the running header instead of letting it collide", async () => {
+    const { text, pageCount } = await render({ ...bigCensus, company_name: "The Extraordinarily Long Company Name Of Meridian Creative Group Holdings International LLC" });
+    expect(pageCount).toBeGreaterThan(3);
+    // The header's copy of the name is cut with an ellipsis, on every page; the reference beside it is whole.
+    expect(occurrences(text, "(The Extraordinarily Long Company Name Of Meridian Creative Group Holdings International LLC)")).toBeLessThan(pageCount);
+    expect(text).toMatch(/\(The Extraordinarily Long Company[^)\n]*…\)/);
+    expect(occurrences(text, `(File ID ${FILE_ID} · v1 · data version 4)`)).toBe(pageCount);
+  });
+
+  it("prints every section of the packet, numbered, in the page's order", async () => {
+    const { text } = await render();
+    for (const heading of [
+      "1 — Company Profile", "2 — Workforce Summary", "3 — Employee Census", "4 — Dependent Summary", "5 — Locations",
+      "6 — Payroll & Time", "7 — Current Benefits", "8 — Workers' Compensation", "9 — Operations & HR", "10 — Documents",
+      "11 — Underwriting Readiness", "12 — Submission Certification",
+    ]) {
+      expect(text).toContain(heading);
+    }
+    expect(text).toContain("Pinnacle Mutual"); // the workers' comp carrier
+    expect(text).toContain("census.csv"); // the document snapshot
+    expect(text).toContain("8810"); // the class code column
+  });
+
+  it("prints a multi-state submission's state breakdown, and an incomplete one without clipping", async () => {
+    const states = ["CA", "TX", "NY", "OH", "WA", "FL", "IL", "PA", "GA", "NC", "AZ", "MA"];
+    const { text } = await render({ ...DEMO_CHAMBER_DATA, states });
+    for (const state of states) expect(text).toContain(`(${state})`);
+    const { text: thin, pageCount } = await render({ ...EMPTY_CHAMBER_DATA, company_name: "Thin Co" }, {}, submission);
+    expect(pageCount).toBeGreaterThanOrEqual(2);
+    expect(thin).toContain("Not provided");
+    expect(thin).toContain("Pay frequency — not provided");
+  });
+
+  it("sets the file's title, subject and creation date", async () => {
+    const { text } = await render();
+    expect(text).toMatch(/\/Title /);
+    expect(text).toMatch(/\/Author \(Edgar Allan Advisory\)/);
+    expect(text).toMatch(/\/CreationDate \(D:20261020/);
   });
 
   it("repeats the census table header after each page break and keeps every row", async () => {
@@ -121,9 +168,16 @@ describe("buildManuscriptPdf", () => {
     expect(text).toContain("Not provided");
   });
 
-  it("names the file after the submission and the company", async () => {
+  it("names the file after the submission, its version, the company and the certified date", async () => {
     const { filename } = await render();
-    expect(filename).toBe(`The_Manuscript_${FILE_ID}_Meridian_Creative_Group.pdf`);
+    expect(filename).toBe(`The_Manuscript_${FILE_ID}_v1_Meridian_Creative_Group_20260501.pdf`);
+  });
+
+  it("names a packet from the same submission the same way wherever it is generated", async () => {
+    const a = await render(DEMO_CHAMBER_DATA, { generatedOn: new Date(2026, 9, 20) });
+    const b = await render(DEMO_CHAMBER_DATA, { generatedOn: new Date(2030, 0, 1) });
+    expect(a.filename).toBe(b.filename);
+    expect(a.filename).not.toContain("2030");
   });
 
   it("labels a sample packet as fictional", async () => {
@@ -141,6 +195,17 @@ describe("pdfSafe", () => {
   it("replaces characters the built-in fonts can't draw rather than printing garbage", () => {
     expect(pdfSafe("Acme 株式会社")).toBe("Acme ????");
     expect(pdfSafe("Łódź")).toBe("Lódz"); // ó is Latin-1 and stays; Ł and ź fold
+  });
+
+  it("lists confirmed facts, the eligibility checks and the open items apart", async () => {
+    const provenance = { company_name: { status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "2026-05-01T00:00:00Z" } };
+    const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: FILE_ID, submission, provenance });
+    const pdf = buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false });
+    const text = await readPdf(pdf.blob);
+    expect(text).toContain("Company legal name — confirmed by the prospect");
+    expect(text).toContain("ELIGIBILITY CHECKS");
+    expect(text).toContain("US headquarters — Passes");
+    expect(text).toContain("OPEN ITEMS");
   });
 
   it("prints an advisor version and its corrections beside the values the prospect certified", async () => {

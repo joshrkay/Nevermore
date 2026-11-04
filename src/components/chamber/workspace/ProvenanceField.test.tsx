@@ -67,10 +67,16 @@ describe("provenance in the workspace", () => {
   it("lists fields needing review and resolves a conflict", () => {
     const conflict = applyExtraction(inferred, { employee_count: 45 }, { source: { kind: "transcript", message_id: "m2" } });
     render(<Harness initial={conflict} tab="review" />);
-    const list = screen.getByText(/Needs your review — 1 item/).parentElement!;
-    expect(within(list).getAllByText("Conflicting answers").length).toBeGreaterThan(0);
-    fireEvent.click(within(list).getByRole("button", { name: "Use 45 for Employee count" }));
-    expect(screen.queryByText(/Needs your review/)).not.toBeInTheDocument();
+    const list = () => screen.getByRole("region", { name: "Needs your review" });
+    expect(list()).toHaveTextContent("Employee count");
+    expect(list()).toHaveTextContent("Two different answers were given. Choose the right one.");
+    fireEvent.click(within(list()).getByRole("button", { name: "Go to employee count" }));
+    // The jump lands on the answer's first control: the first of the two candidates.
+    expect(screen.getByRole("button", { name: "Use 40 for Employee count" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Use 45 for Employee count" }));
+    // Settled: only the recommended census is left in the list.
+    expect(list()).not.toHaveTextContent("Employee count");
+    expect(list()).toHaveTextContent("Employee census");
   });
 
   it("shows a field the prospect doesn't know yet, or that doesn't apply, in place of an answer", () => {
@@ -88,6 +94,26 @@ describe("provenance in the workspace", () => {
         provenance={{ status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: at }} />,
     );
     expect(screen.getByText("Doesn't apply")).toBeInTheDocument();
+  });
+
+  it("offers Doesn't apply on a recommended answer, and Undo once it is marked", () => {
+    let action: unknown;
+    const { unmount } = render(<ProvenanceField label="Experience mod" field="wc_experience_mod" display={null} raw={null} onAction={(a) => { action = a; }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Mark Experience mod as not applicable" }));
+    expect(action).toEqual({ type: "not_applicable", field: "wc_experience_mod" });
+    unmount();
+    render(
+      <ProvenanceField label="Experience mod" field="wc_experience_mod" display={null} raw={null} onAction={(a) => { action = a; }}
+        provenance={{ status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: "2026-11-03T12:00:00.000Z" }} />,
+    );
+    expect(screen.queryByRole("button", { name: "Mark Experience mod as not applicable" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Experience mod applies after all" }));
+    expect(action).toEqual({ type: "applies", field: "wc_experience_mod" });
+  });
+
+  it("never offers Doesn't apply on a required answer", () => {
+    render(<ProvenanceField label="Pay frequency" field="pay_frequency" display={null} raw={null} onAction={() => {}} />);
+    expect(screen.queryByRole("button", { name: /not applicable/ })).not.toBeInTheDocument();
   });
 
   it("takes a fractional experience mod", () => {

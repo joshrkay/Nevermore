@@ -9,7 +9,11 @@ import { manuscriptUrl, saveManuscriptVersion, type ManuscriptVersion, type Subm
 import { formatDateTime } from "./format";
 
 const versionFilename = (detail: SubmissionDetail, version: number) =>
-  manuscriptFilename(`${detail.fileId}-v${version}`, detail.data.company_name);
+  manuscriptFilename(detail.fileId ?? "EAA-UNCERTIFIED", detail.data.company_name, {
+    version: detail.submission?.version ?? null,
+    date: detail.submission?.certified_at ?? detail.submission?.signed_at ?? null,
+    suffix: `advisor-v${version}`,
+  });
 
 /** Download or regenerate the advisor-reviewed Manuscript, one stored version per generation. */
 const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; onGenerated: () => void }) => {
@@ -26,7 +30,7 @@ const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; on
       const version = (latest?.version ?? 0) + 1;
       const packet = applyAdvisorReview(detail.data, detail.provenance, detail.reviews);
       const manuscript = buildManuscript(packet.data, {
-        fileId: detail.fileId,
+        fileId: detail.fileId ?? "EAA-UNCERTIFIED",
         submission: detail.submission,
         provenance: packet.provenance,
         advisor: { version, corrections: packet.corrections, followUps: packet.followUps },

@@ -239,15 +239,18 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(page.getByRole("status").filter({ has: confirmation })).toHaveCSS("opacity", "1");
     await expect(confirmation).toHaveCSS("opacity", "1");
 
-    // Built here rather than with the app's fileIdForSession, so a regression in it is caught. The year
-    // is the one the database recorded the intake starting in (UTC), never the signer's clock.
-    const [{ year }] = await queryDatabase<{ year: string }>(
-      "SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY') AS year FROM chamber_sessions WHERE id = $1",
+    // The database assigns the File ID at the first certification: EAA-<year certified, UTC>-<number from this
+    // year's sequence> (D15). The confirmation shows that one, never one the browser made up.
+    const [{ file_id, year }] = await queryDatabase<{ file_id: string; year: string }>(
+      "SELECT file_id, to_char(now() AT TIME ZONE 'UTC', 'YYYY') AS year FROM chamber_sessions WHERE id = $1",
       [sessionId],
     );
-    const expected = `EAA-${year}-${sessionId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
-    await expect(page.getByText(/^File ID: /)).toHaveText(`File ID: ${expected}`);
-    return expected;
+    expect(file_id).toMatch(new RegExp(`^EAA-${year}-\\d{4,}$`));
+    await expect(page.getByText(/^File ID: /)).toHaveText(`File ID: ${file_id}`);
+    const confirmationCard = page.getByText("Certification recorded").locator("..");
+    await expect(confirmationCard).toContainText("Version 1");
+    await expect(confirmationCard).toContainText(COMPANY_NAME);
+    return file_id;
   });
 
   await test.step("Check what the database recorded", async () => {
@@ -275,11 +278,20 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
       industry_status: "confirmed",
     });
 
-    const certifications = await queryDatabase<{ file_id: string; signer_name: string; superseded_at: Date | null }>(
-      "SELECT file_id, signer_name, superseded_at FROM chamber_certifications WHERE session_id = $1",
+    // One numbered, immutable submission record, holding the answers exactly as certified.
+    const certifications = await queryDatabase<{ file_id: string; signer_name: string; superseded_at: Date | null; version: number; same_data: boolean; same_version: boolean }>(
+      `SELECT c.file_id, c.signer_name, c.superseded_at, c.version,
+              c.chamber_data = s.chamber_data AS same_data,
+              c.data_version = s.data_version AND (s.submission ->> 'data_version')::int = s.data_version AS same_version
+         FROM chamber_certifications c JOIN chamber_sessions s ON s.id = c.session_id WHERE c.session_id = $1`,
       [sessionId],
     );
-    expect(certifications).toEqual([{ file_id: fileId, signer_name: SIGNER.name, superseded_at: null }]);
+    expect(certifications).toEqual([{ file_id: fileId, signer_name: SIGNER.name, superseded_at: null, version: 1, same_data: true, same_version: true }]);
+    const [stamped] = await queryDatabase<{ version: string; file_id: string }>(
+      "SELECT submission ->> 'version' AS version, submission ->> 'file_id' AS file_id FROM chamber_sessions WHERE id = $1",
+      [sessionId],
+    );
+    expect(stamped).toEqual({ version: "1", file_id: fileId });
 
     // Queued by the certification itself, in its transaction: one alert for the advisor, one receipt for the prospect.
     const outbox = await queryDatabase<{ kind: string; payload: Record<string, unknown> }>(
@@ -310,9 +322,11 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     // The link fades in last (see the overlay above); toBeVisible would not notice it stuck at 0.
     await expect(download.locator("..")).toHaveCSS("opacity", "1");
     await download.click();
-    await expect(page).toHaveURL(`/manuscript?session=${sessionId}`);
+    // The Manuscript opens by its File ID, and shows which certification it is.
+    await expect(page).toHaveURL(`/manuscript/${fileId}`);
     await expect(page.getByRole("heading", { name: "THE MANUSCRIPT", exact: true })).toBeVisible();
     await expect(page.getByText(fileId, { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("VERSION", { exact: true }).locator("..")).toContainText("v1");
     await expect(page.getByText(COMPANY_NAME, { exact: true }).first()).toBeVisible();
     await expect(page.getByText(`Signed electronically by ${SIGNER.name}`)).toBeVisible();
     await expect(page.getByText(new RegExp(`^PREPARED FOR\\s*${PEO}$`))).toBeVisible();
@@ -338,9 +352,15 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
       page.getByRole("button", { name: "Download The Manuscript (PDF)" }).first().click(),
     ]);
 
-    const expectedName = `The_Manuscript_${fileId}_Ravenwood_Bindery_LLC.pdf`;
+    // Named after the submission: File ID, certification version, company, and the day it was certified (UTC).
+    const [{ certified_at }] = await queryDatabase<{ certified_at: string }>(
+      "SELECT submission ->> 'certified_at' AS certified_at FROM chamber_sessions WHERE id = $1",
+      [sessionId],
+    );
+    const day = new Date(certified_at).toISOString().slice(0, 10).replace(/-/g, "");
+    const expectedName = `The_Manuscript_${fileId}_v1_Ravenwood_Bindery_LLC_${day}.pdf`;
     expect(download.suggestedFilename()).toBe(expectedName);
-    expect(manuscriptFilename(fileId, COMPANY_NAME)).toBe(expectedName);
+    expect(manuscriptFilename(fileId, COMPANY_NAME, { version: 1, date: certified_at })).toBe(expectedName);
 
     const pdfPath = testInfo.outputPath(download.suggestedFilename());
     await download.saveAs(pdfPath);
@@ -349,6 +369,8 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
 
     const text = pdfText(pdf);
     expect(text).toContain(fileId);
+    expect(text).toContain("data version"); // the certification's version line
+    expect(text).toContain("Submission Certification");
     expect(text).toContain(COMPANY_NAME);
     expect(text).toContain(SIGNER.name);
     expect(text).toContain(PEO);
