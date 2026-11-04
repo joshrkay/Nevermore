@@ -4,7 +4,7 @@ import { categoryInfo } from "./documentCategories";
 import { documentStatusInfo } from "./documentStatus";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
-import { FIELD_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
+import { FIELD_LABELS, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
 import { NO_VERIFIED_FIELDS } from "./requiredItems";
 import { describeOpenItem, openItems } from "./openItems";
 
@@ -293,7 +293,7 @@ function settleVerified(provenance: ProvenanceMap, verified: ReadonlySet<string>
   const shown: ProvenanceMap = { ...provenance };
   for (const field of Object.keys(shown) as (keyof ProvenanceMap)[]) {
     const entry = shown[field];
-    if (entry && verified.has(field) && entry.status !== "confirmed") shown[field] = { ...entry, status: "confirmed", candidates: undefined };
+    if (entry && verified.has(field) && verificationSettles(entry.status)) shown[field] = { ...entry, status: "confirmed", candidates: undefined };
   }
   return shown;
 }

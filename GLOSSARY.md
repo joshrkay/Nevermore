@@ -134,7 +134,7 @@ The prospect said the field doesn't apply to them. Only the prospect can mark it
 _Avoid_: N/A as a value, none, skipped
 
 **Settled**:
-A field is settled when it holds an answer that is not conflicting or incomplete, or is marked unknown or not applicable. Lenore asks again only about fields that are not settled.
+A field is settled when it holds an answer that is not conflicting or incomplete, or is marked unknown or not applicable, or an advisor has verified it. Lenore asks again only about fields that are not settled.
 
 ### Other kinds of status
 
@@ -148,8 +148,12 @@ _Avoid_: status, state, session status
 Where an intake stands in the advisors' work, from draft through submitted, under review, information requested, sent to carrier and quoted, to won, lost or archived.
 _Avoid_: status, intake status, workflow status
 
+**Also heard**:
+An answer Lenore heard for a field from a lower-ranked source than the one kept (a chat answer beside a document's, say). It is shown under the answer to the prospect and to the advisor, never in The Manuscript, and goes when the prospect confirms or edits the field.
+_Avoid_: alternative, rejected value
+
 **Review state**:
-An advisor's verdict on one field: verified, incomplete or needs follow-up. Separate from the field status the prospect sees.
+An advisor's verdict on one field: verified, incomplete or needs follow-up. Separate from the field status the prospect sees, though a verified field reads as settled to the prospect too ("Verified by your advisor").
 _Avoid_: field status, status, advisor status
 
 **Document status**:
