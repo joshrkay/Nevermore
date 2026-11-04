@@ -27,6 +27,7 @@ describe("Terms of Use", () => {
       "Disclaimers",
       "Limitation of liability",
       "Governing law",
+      "Disputes and arbitration",
       "Changes to these terms",
       "Contact",
     ]) {
@@ -58,7 +59,7 @@ describe("Terms of Use", () => {
 
   it("leaves the sections only counsel can write visibly unfinished", () => {
     renderPage();
-    for (const name of ["Disclaimers", "Limitation of liability", "Governing law"]) {
+    for (const name of ["Disclaimers", "Limitation of liability", "Governing law", "Disputes and arbitration"]) {
       expect(screen.getByRole("region", { name })).toHaveTextContent(COUNSEL_PLACEHOLDER);
     }
   });

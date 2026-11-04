@@ -75,6 +75,9 @@ describe("Privacy Policy", () => {
     for (const p of SERVICE_PROVIDERS) {
       expect(within(table).getByRole("rowheader", { name: p.name })).toBeInTheDocument();
     }
+    // Every upload is sent to the malware scanner (document-upload, document-scan), so it is listed even
+    // before D13 names it.
+    expect(within(table).getByRole("rowheader", { name: /malware/i })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "How we use it" })).toHaveTextContent("We don't sell your information");
   });
 
