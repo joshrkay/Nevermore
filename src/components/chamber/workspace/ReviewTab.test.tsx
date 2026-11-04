@@ -132,6 +132,52 @@ describe("ReviewTab needs your review", () => {
   });
 });
 
+describe("ReviewTab census", () => {
+  const at = "2026-11-03T12:00:00Z";
+  const fromFile = (name: string) => ({ kind: "document" as const, document_id: name, document_name: name });
+  const census = [{ ...DEMO_CHAMBER_DATA.census[0], work_state: "OR" }];
+
+  it("lets the prospect confirm a census read from a file, where the census sits", () => {
+    const onAction = vi.fn();
+    render(
+      <ReviewTab data={{ ...DEMO_CHAMBER_DATA, census }} provenance={{ census: { status: "inferred", source: fromFile("roster.xlsx"), updated_at: at } }} onAction={onAction} onProceed={() => {}} />,
+    );
+    const workforce = screen.getByRole("region", { name: /Workforce/ });
+    expect(workforce).toHaveTextContent("Lenore captured this — please confirm");
+    fireEvent.click(screen.getByRole("button", { name: "Go to employee census" }));
+    expect(within(workforce).getByRole("button", { name: "Confirm Employee census" })).toHaveFocus();
+    fireEvent.click(within(workforce).getByRole("button", { name: "Confirm Employee census" }));
+    expect(onAction).toHaveBeenCalledWith({ type: "confirm", field: "census" });
+  });
+
+  it("lets the prospect choose between two rosters without uploading again", () => {
+    const onAction = vi.fn();
+    const other = [...census, { ...DEMO_CHAMBER_DATA.census[1], id: "x" }];
+    render(
+      <ReviewTab
+        data={{ ...DEMO_CHAMBER_DATA, census }}
+        provenance={{
+          census: {
+            status: "conflicting",
+            source: fromFile("roster.xlsx"),
+            updated_at: at,
+            candidates: [{ value: census, source: fromFile("roster.xlsx") }, { value: other, source: fromFile("roster-2.xlsx") }],
+          },
+        }}
+        onAction={onAction}
+        onProceed={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Use 2 entries for Employee census" }));
+    expect(onAction).toHaveBeenCalledWith({ type: "resolve", field: "census", candidate: 1 });
+  });
+
+  it("offers no census controls in the read-only view", () => {
+    render(<ReviewTab data={DEMO_CHAMBER_DATA} provenance={{ census: { status: "inferred", source: fromFile("roster.xlsx"), updated_at: at } }} onProceed={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Confirm Employee census" })).not.toBeInTheDocument();
+  });
+});
+
 describe("ReviewTab sections", () => {
   const complete = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY", "NJ"], pay_frequency: "bi-weekly" };
   const section = (name: string) => screen.getByRole("region", { name });

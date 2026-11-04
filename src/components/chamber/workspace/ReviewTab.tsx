@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { coverageTier, eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
-import { FIELD_LABELS, formatFieldValue, type FieldAction, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
+import { FIELD_LABELS, formatFieldValue, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import {
   openItems,
@@ -78,7 +78,7 @@ const sectionId = (section: ReviewSection | "documents") => `review-section-${se
 
 /** Brings an answer, or a section, into view and puts the keyboard on its first button. */
 function jumpTo(target: { field?: FieldKey; section: ReviewSection | "documents" }) {
-  const element = document.getElementById(target.field && target.field !== "census" ? rowId(target.field) : sectionId(target.section));
+  const element = document.getElementById(target.field ? rowId(target.field) : sectionId(target.section));
   element?.scrollIntoView?.({ block: "center", behavior: "smooth" });
   element?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
 }
@@ -135,7 +135,6 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
   const statuses = Object.fromEntries(REVIEW_SECTIONS.map((s) => [s.key, sectionStatus(s.key, data, provenance, verified, items)])) as Record<ReviewSection, SectionStatus>;
   // Documents are never required; the checklist is complete once every recommended kind is here.
   const documentsStatus: SectionStatus = missingDocs.length === 0 ? "complete" : "incomplete";
-  const censusProvenance = provenance.census;
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
   const tierCounts = [...data.census.reduce((counts, e) => {
     const tier = coverageTier(e) ?? "Not provided";
@@ -261,60 +260,74 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
 
           {key === "workforce" && (
             <div id={rowId("census")}>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-                Employee census
-                <span className="ml-1.5 normal-case tracking-normal font-medium text-muted-foreground">Recommended</span>
-              </p>
               {data.census.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  None yet. Upload one on the Upload tab; you can certify without it.
-                </p>
-              ) : (
                 <>
-                  <p className="text-xs text-muted-foreground mb-2">
-                    {data.census.length} {data.census.length === 1 ? "person" : "people"} ({eeCount} counted toward headcount) ·{" "}
-                    {totalDependents} dependent{totalDependents === 1 ? "" : "s"} named
-                    {censusProvenance && <CensusSource provenance={censusProvenance} />}
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                    Employee census
+                    <span className="ml-1.5 normal-case tracking-normal font-medium text-muted-foreground">Recommended</span>
                   </p>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-border text-muted-foreground text-left">
-                          <th className="pb-2 pr-3">Name</th>
-                          <th className="pb-2 pr-3">State</th>
-                          <th className="pb-2 pr-3">Title</th>
-                          <th className="pb-2 pr-3 text-right">Salary</th>
-                          <th className="pb-2 pr-3">Coverage</th>
-                          <th className="pb-2 text-center">Type</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.census.map((emp) => (
-                          <tr key={emp.id} className="border-b border-border last:border-0">
-                            <td className="py-1.5 pr-3 font-medium">{emp.first_name} {emp.last_name}</td>
-                            <td className="py-1.5 pr-3 font-mono">{emp.work_state || "—"}</td>
-                            <td className="py-1.5 pr-3">{emp.job_title || "—"}</td>
-                            <td className="py-1.5 pr-3 text-right font-mono">{censusPay(emp)}</td>
-                            <td className="py-1.5 pr-3 text-muted-foreground">{coverageTier(emp) ?? "—"}</td>
-                            <td className="py-1.5 text-center">
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                                isAssumed(emp, "classification")
-                                  ? "bg-muted text-muted-foreground"
-                                  : emp.classification === "1099" ? "bg-warning/15 text-warning" : "bg-success/15 text-success"
-                              }`}>{classificationLabel(emp)}</span>
-                              {employeeFlag(emp) && (
-                                <span title={employeeFlag(emp) ?? undefined} className="ml-1 text-[10px] text-warning">⚠</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground mt-2">
-                    Dependents and coverage: {tierCounts.map(([tier, n]) => `${tier} (${n})`).join(", ")}. To change the census, upload a corrected file on the Upload tab.
+                  <p className="text-xs text-muted-foreground">
+                    None yet. Upload one on the Upload tab; you can certify without it.
                   </p>
                 </>
+              ) : (
+                // The census is settled here like any other answer (confirmed, or one roster chosen over another);
+                // its rows are changed by uploading a corrected file.
+                <ProvenanceField
+                  label="Employee census"
+                  field="census"
+                  display={`${data.census.length} ${data.census.length === 1 ? "person" : "people"}`}
+                  raw={data.census}
+                  provenance={provenance.census}
+                  onAction={onAction}
+                  editable={false}
+                  required={false}
+                >
+                  <div className="w-full">
+                    <p className="text-xs text-muted-foreground mb-2">
+                      {data.census.length} {data.census.length === 1 ? "person" : "people"} ({eeCount} counted toward headcount) ·{" "}
+                      {totalDependents} dependent{totalDependents === 1 ? "" : "s"} named · recommended, not required
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-border text-muted-foreground text-left">
+                            <th className="pb-2 pr-3">Name</th>
+                            <th className="pb-2 pr-3">State</th>
+                            <th className="pb-2 pr-3">Title</th>
+                            <th className="pb-2 pr-3 text-right">Salary</th>
+                            <th className="pb-2 pr-3">Coverage</th>
+                            <th className="pb-2 text-center">Type</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.census.map((emp) => (
+                            <tr key={emp.id} className="border-b border-border last:border-0">
+                              <td className="py-1.5 pr-3 font-medium">{emp.first_name} {emp.last_name}</td>
+                              <td className="py-1.5 pr-3 font-mono">{emp.work_state || "—"}</td>
+                              <td className="py-1.5 pr-3">{emp.job_title || "—"}</td>
+                              <td className="py-1.5 pr-3 text-right font-mono">{censusPay(emp)}</td>
+                              <td className="py-1.5 pr-3 text-muted-foreground">{coverageTier(emp) ?? "—"}</td>
+                              <td className="py-1.5 text-center">
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                                  isAssumed(emp, "classification")
+                                    ? "bg-muted text-muted-foreground"
+                                    : emp.classification === "1099" ? "bg-warning/15 text-warning" : "bg-success/15 text-success"
+                                }`}>{classificationLabel(emp)}</span>
+                                {employeeFlag(emp) && (
+                                  <span title={employeeFlag(emp) ?? undefined} className="ml-1 text-[10px] text-warning">⚠</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-2">
+                      Dependents and coverage: {tierCounts.map(([tier, n]) => `${tier} (${n})`).join(", ")}. To change the census, upload a corrected file on the Upload tab.
+                    </p>
+                  </div>
+                </ProvenanceField>
               )}
             </div>
           )}
@@ -376,13 +389,6 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
       </button>
     </div>
   );
-};
-
-/** Where the census came from and whether it was confirmed, beside the census summary. */
-const CensusSource = ({ provenance }: { provenance: FieldProvenance }) => {
-  const source = provenance.source;
-  const from = source.kind === "document" ? `from ${source.document_name ?? "an uploaded document"}` : source.kind === "transcript" ? "from the conversation" : "entered by you";
-  return <span> · {from}{provenance.status === "confirmed" ? ", confirmed" : provenance.status === "inferred" ? ", please confirm" : ""}</span>;
 };
 
 export default ReviewTab;
