@@ -122,7 +122,7 @@ const Detail = ({
       )}
       <div className="mb-6">
         <h1 className="font-display text-3xl font-bold">{detail.data.company_name ?? "Company not provided"}</h1>
-        <p className="text-sm text-muted-foreground font-mono">{detail.fileId}</p>
+        <p className="text-sm text-muted-foreground font-mono">{detail.fileId ?? "File ID assigned when the prospect certifies"}</p>
         <p className="text-sm text-muted-foreground mt-1">
           {detail.certified && sub
             ? `Certified by ${sub.signer_name}${sub.signer_title ? `, ${sub.signer_title}` : ""} · ${formatDateTime(sub.certified_at ?? sub.signed_at)}${sub.peo ? ` · Prepared for ${sub.peo}` : ""}`

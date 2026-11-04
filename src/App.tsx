@@ -59,6 +59,8 @@ const App = () => (
                 <Route path="/terms" element={<TermsPage />} />
                 <Route path="/manuscript" element={<ManuscriptPage />} />
                 <Route path="/manuscript/demo" element={<ManuscriptPage demo />} />
+                {/* A submission by its File ID; row security decides who may read it. */}
+                <Route path="/manuscript/:reference" element={<ManuscriptPage />} />
                 <Route path="/advisor" element={<RequireAdvisor><AdvisorDashboardPage /></RequireAdvisor>} />
                 <Route path="/advisor/submissions/:id" element={<RequireAdvisor><AdvisorSubmissionPage /></RequireAdvisor>} />
                 <Route path="/advisor/outbox" element={<RequireAdvisor><AdvisorOutboxPage /></RequireAdvisor>} />

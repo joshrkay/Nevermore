@@ -9,7 +9,7 @@ There is no Docker or hosted Supabase in the sandbox, so `harness/` stands up th
 
 | Layer | Real or stand-in |
 |---|---|
-| Postgres 16, the real migrations (certification, guest block, outbox, outbox reliability, outbox operations, outbox schedule) | **real** (Supabase's `auth` schema and roles are stubbed in `setup.sql`; the advisor role objects are a verbatim copy of lines 17-73 of the advisor migration, since the rest needs storage and documents) |
+| Postgres 16, the real migrations (certification, guest block, field provenance, outbox, outbox reliability, outbox operations, outbox schedule, email delivery events, intake validation and versioning, chosen PEO, certification readiness, submission records) | **real** (Supabase's `auth` schema and roles are stubbed in `setup.sql`, as are a `documents` table and `schema_version`; the advisor role objects are a verbatim copy of lines 17-73 of the advisor migration, since the rest needs storage and documents) |
 | PostgREST 12.2.3 (so `authenticated` / `anon` / `service_role` table privileges are enforced; function ACLs are not, see Gotchas) | **real** |
 | `supabase/functions/dispatch-outbox/index.ts` under Deno | **real, unmodified** |
 | `supabase/functions/resend-webhook/index.ts` under Deno on :8001 (`webhook.sh`) | **real, unmodified** |
@@ -30,8 +30,10 @@ mkdir -p /tmp/verify-pgrst && cd /tmp/verify-pgrst \
 ```bash
 .claude/skills/verify/harness/up.sh                  # prints: up: pgrst=200 gateway=404 func(GET)=405
 source .claude/skills/verify/harness/lib.sh          # PROSPECT/GUEST/SVC/ANON tokens, sql, invoke, newsession, certify, mode, stats, due, provider
-SID=$(newsession $PROSPECT $U_A '{"company_name":"Acme Co"}')
-certify $PROSPECT $SID '{"company_name":"Acme Co"}' 2026-05-01T12:00:00Z EAA-2026-TEST0001   # PATCH, as the browser's update does: expect 204
+DATA='{"company_name":"Acme Co","states":["NY"],"pay_frequency":"weekly"}'                  # the three required answers, or the database refuses (EA003)
+SID=$(newsession $PROSPECT $U_A "$DATA")
+certify $PROSPECT $SID "$DATA" 2026-05-01T12:00:00Z EAA-2026-CLIENT   # PATCH, as the browser's update does: expect 204. The File ID sent is ignored:
+sql "select file_id, submission->>'version' from chamber_sessions where id='$SID'"           # the database assigned EAA-<year>-0001, version 1
 sql "select kind,status,payload from outbox_events where session_id='$SID'"                  # 2 pending rows
 invoke POST $PROSPECT                                # the browser's nudge: sends and retries only
 invoke POST $SVC                                     # the scheduled run: also reaps lost claims and queues what the trigger missed
@@ -53,8 +55,8 @@ changes one.
 second's does not. `stats` shows `deliveries` (what the provider actually sent) against `requests`. Comparing the two is the only check that housekeeping
 is limited to service-role callers and runs ahead of the claim: `index.ts` is Deno-only, so no unit test sees it.
 
-- Certify, nudge: exactly one advisor alert and one confirmation, no census/payroll values in either. The advisor alert lists Company Legal Name, Primary Signer, Title, Work Email, Phone, Employee Count, HQ State, File ID and Certified (UTC); certify with `"employees":[{"name":"SECRET PERSON","classification":"W2","salary":987654}]` and search `$RUN/resend.jsonl` for both.
-- Re-send the same certify `PATCH` several times (separate requests): certifications grow, queue and emails do not. Edit then re-certify: one new "Updated Intake" (subject `Updated Intake: <company> (<reference>)`; a first alert is `New Intake Certified: ...`).
+- Certify, nudge: exactly one advisor alert and one confirmation, no census/payroll values in either. The advisor alert lists Company Legal Name, Primary Signer, Title, Work Email, Phone, Employee Count, HQ State, File ID and Certified (UTC); certify with `"employees":[{"first_name":"SECRET","last_name":"PERSON","classification":"W2","salary":987654}]` and search `$RUN/resend.jsonl` for both. The File ID in both emails is the one the database assigned (`EAA-<year>-NNNN`), never the one the PATCH carried.
+- Re-send the same certify `PATCH` several times (separate requests): nothing grows (one certification row, version 1, two events, two emails): the database treats the repeat as the certification on record. Edit then re-certify: version 2 under the same File ID, the old row superseded with its own copy of the answers, and one new "Updated Intake" (subject `Updated Intake: <company> (<reference>)`; a first alert is `New Intake Certified: ...`). A certify without the three required answers is 400 `EA003`.
 - Refused callers (no token, anon key, guest, wrong method) leave a due queue untouched; guest certify is refused by the database.
 - Provider 503: logged, `retry_in=60s`, held by backoff; five failures: `OUTBOX_DEAD`. `select public.requeue_outbox_event('<id>')` (from `sql`) retries the
   same frozen email (`msg=frozen`); with `, true` it is rebuilt from the current settings (`msg=fresh`: change `EMAIL_FROM` first and the provider's `from` follows).

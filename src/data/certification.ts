@@ -31,7 +31,8 @@ export function certificationBlockers(opts: {
   acknowledged: boolean[];
   signer: SignerDetails;
   signed: boolean;
-  hasFileId: boolean;
+  /** Whether the intake exists on the server yet (its File ID is assigned when it is certified). */
+  hasIntake: boolean;
   isGuest: boolean;
   /** Labels of the required answers the intake doesn't have yet (missingRequired in readiness.ts). */
   missingAnswers?: string[];
@@ -47,7 +48,7 @@ export function certificationBlockers(opts: {
     ...(opts.conflictingAnswers ?? []).map((label) => `Choose one answer for ${label.toLowerCase()}`),
   ];
   if (opts.isGuest) blockers.push("Verify your email");
-  if (!opts.hasFileId) blockers.push("Wait for your intake to finish saving");
+  if (!opts.hasIntake) blockers.push("Wait for your intake to finish saving");
   if (!opts.acknowledged.every(Boolean)) blockers.push("Check every statement");
   if (!opts.signer.name.trim()) blockers.push("Enter your full name");
   if (!opts.signer.title.trim()) blockers.push("Enter your role");

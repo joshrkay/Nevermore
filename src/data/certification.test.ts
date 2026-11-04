@@ -5,7 +5,7 @@ const ready = {
   acknowledged: [true, true, true],
   signer: { name: "Jo Doe", title: "CEO" },
   signed: true,
-  hasFileId: true,
+  hasIntake: true,
   isGuest: false,
 };
 
@@ -16,7 +16,7 @@ describe("certificationBlockers", () => {
 
   it.each([
     ["a guest", { isGuest: true }, "Verify your email"],
-    ["an unsaved session", { hasFileId: false }, "Wait for your intake to finish saving"],
+    ["an unsaved session", { hasIntake: false }, "Wait for your intake to finish saving"],
     ["an unchecked statement", { acknowledged: [true, false, true] }, "Check every statement"],
     ["a blank name", { signer: { name: "  ", title: "CEO" } }, "Enter your full name"],
     ["a blank role", { signer: { name: "Jo", title: " " } }, "Enter your role"],
