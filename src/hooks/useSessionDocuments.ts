@@ -121,8 +121,11 @@ const fromLoadedRow = (row: Row): SessionDocument => {
   return Number.isFinite(started) && Date.now() - started < STALE_PROCESSING_MS ? doc : { ...doc, status: "failed" };
 };
 
-/** The uploaded documents of one intake. Lists, uploads, and removals are scoped to `sessionId`. */
-export function useSessionDocuments(sessionId: string | null): UseSessionDocumentsReturn {
+/**
+ * The uploaded documents of one intake. Lists, uploads, and removals are scoped to `sessionId`. With
+ * `ensureSession`, an upload before the intake exists creates it first (an upload is a way to start, A-1).
+ */
+export function useSessionDocuments(sessionId: string | null, ensureSession?: () => Promise<string | null>): UseSessionDocumentsReturn {
   const { user } = useAuth();
   const userId = user?.id;
   const [docs, setDocs] = useState<SessionDocument[]>([]);
@@ -131,6 +134,21 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
   // Responses for an intake that's no longer open must not land in this one's list.
   const sessionRef = useRef(sessionId);
   useEffect(() => { sessionRef.current = sessionId; }, [sessionId]);
+  const ensureSessionRef = useRef(ensureSession);
+  ensureSessionRef.current = ensureSession;
+  // The intake whose list has loaded, and uploads waiting for a new intake's list (its load replaces the list).
+  const listedRef = useRef<string | null>(null);
+  const listWaitersRef = useRef<{ sid: string; resolve: () => void }[]>([]);
+  const listLoaded = useCallback((sid: string) => new Promise<void>((resolve) => {
+    if (listedRef.current === sid) return resolve();
+    const waiter = { sid, resolve };
+    listWaitersRef.current.push(waiter);
+    // Never hold an upload for long on a list that doesn't answer.
+    setTimeout(() => {
+      listWaitersRef.current = listWaitersRef.current.filter((w) => w !== waiter);
+      resolve();
+    }, 10_000);
+  }), []);
   // Documents this tab is reading itself; their status comes from extract(), not from re-fetching.
   const activeRef = useRef(new Set<string>());
   const docsRef = useRef(docs);
@@ -158,6 +176,10 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
       if (error) console.error("Failed to load documents:", error.message);
       setDocs(((data ?? []) as Row[]).map(fromLoadedRow));
       setIsLoading(false);
+      listedRef.current = sessionId;
+      const ready = listWaitersRef.current.filter((w) => w.sid === sessionId);
+      listWaitersRef.current = listWaitersRef.current.filter((w) => w.sid !== sessionId);
+      for (const w of ready) w.resolve();
     })();
     return () => { cancelled = true; };
   }, [userId, sessionId]);
@@ -209,8 +231,17 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
   }, [patchDoc]);
 
   const upload = useCallback(async (files: File[]): Promise<UploadOutcome> => {
-    const sid = sessionRef.current;
-    if (!userId || !sid || files.length === 0) return { saved: 0, failed: files.map((f) => f.name), rejected: [] };
+    let sid = sessionRef.current;
+    if (!sid && userId && files.length > 0 && ensureSessionRef.current) {
+      setUploading(true);
+      sid = await ensureSessionRef.current();
+      // The new intake's (empty) list loads once it renders: wait, so that load can't replace these files.
+      if (sid) await listLoaded(sid);
+    }
+    if (!userId || !sid || files.length === 0) {
+      setUploading(false);
+      return { saved: 0, failed: files.map((f) => f.name), rejected: [] };
+    }
     setUploading(true);
 
     // Check every file before storing any, so a refusal is explained before anything moves.
@@ -317,7 +348,7 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
       }
     })();
     return { saved: saved.length, failed, rejected };
-  }, [userId, extract]);
+  }, [userId, extract, listLoaded]);
 
   const remove = useCallback(async (doc: SessionDocument) => {
     if (!userId || !sessionRef.current || !doc.storage_path) return false;

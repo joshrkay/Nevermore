@@ -12,7 +12,7 @@ import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup }
 import { INTAKE_SCHEMA_VERSION, validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
-import { describeMissingKeys } from "@/data/readiness";
+import { describeRequiredKeys } from "@/data/readiness";
 import {
   certificationFromRow,
   fileIdForSession,
@@ -107,6 +107,12 @@ interface UseChamberSessionReturn {
   saveStatus: SaveStatus;
   /** Saves now, or creates the intake again if creating it failed. */
   retrySave: () => void;
+  /**
+   * The intake's id, creating the intake first when the prospect hasn't started one yet. No intake exists until
+   * the prospect does something with it (a message, an answer, a choice or an upload); any change creates it,
+   * and this lets an upload or a message to Lenore wait for its id. Resolves null when it couldn't be created.
+   */
+  ensureIntake: () => Promise<string | null>;
   /** After status "conflict": drops the prospect's unsaved changes and shows what was saved elsewhere. */
   loadLatest: () => void;
   /** After status "conflict": saves the prospect's version over what was saved elsewhere. */
@@ -129,6 +135,12 @@ const CLOSED_INTAKE_CODE = "EA002";
 // Raised when a certification arrives without the answers it requires; DETAIL lists their keys. The
 // Reckoning doesn't send one, so this means the answers changed under it. Nothing was written.
 const NOT_READY_CODE = "EA003";
+// Raised when the prospect already has an open draft and another tab (or an earlier request) tries to start a
+// second one; DETAIL is the open draft's id. Nothing was created.
+const OPEN_DRAFT_CODE = "EA009";
+// Raised when a certification arrives while a required answer holds two competing values; DETAIL lists their
+// keys. The Reckoning doesn't send one, so the provenance changed under it. Nothing was written.
+const CONFLICTING_CODE = "EA008";
 // Archiving an intake that is already archived, or isn't this person's: either way it is out of the Chamber.
 // (PostgREST answers this SQLSTATE with HTTP 404.)
 const NOT_FOUND_CODE = "PT404";
@@ -156,6 +168,7 @@ const withoutCensus = (data: unknown): unknown => {
 export function describeInvalidPath(path: string | null | undefined): string {
   const match = /^([a-z_0-9]+)(?:\[(\d+)\])?(.*)$/.exec(path ?? "");
   const root = match?.[1];
+  if (root === "transcript") return "Your conversation with Lenore";
   if (root === "employees") {
     if (match?.[2] === undefined) return "Your employee census";
     const employee = Number(match[2]) + 1;
@@ -290,6 +303,21 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const forceNewRef = useRef(false);
   // Until the intake row exists nothing can be saved; this says whether creating it failed.
   const createFailedRef = useRef(false);
+  // No row is created until the prospect starts (A-1): this creates it, for the intake now on screen, and is
+  // null while an intake is open or being looked for. Set by the load effect, which owns cancelling it.
+  const createRef = useRef<(() => Promise<void>) | null>(null);
+  const creatingRef = useRef<Promise<string | null> | null>(null);
+  const ensureIntake = useCallback((): Promise<string | null> => {
+    if (sessionIdRef.current) return Promise.resolve(sessionIdRef.current);
+    if (creatingRef.current) return creatingRef.current;
+    const create = createRef.current;
+    if (!create) return Promise.resolve(null);
+    const creating = create()
+      .then(() => sessionIdRef.current)
+      .finally(() => { if (creatingRef.current === creating) creatingRef.current = null; });
+    creatingRef.current = creating;
+    return creating;
+  }, []);
 
   // Keep refs fresh
   useEffect(() => { dataRef.current = chamberData; }, [chamberData]);
@@ -626,15 +654,16 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   }, [enqueue, saveNow, stopTimer]);
   useEffect(() => { flushRef.current = flush; }, [flush]);
 
-  // Debounced save
+  // Debounced save. The prospect's first change creates the intake (its creation saves what's pending).
   const scheduleSave = useCallback(() => {
     dirtyRef.current = true;
+    if (!sessionIdRef.current) void ensureIntake();
     // A conflict, a refused answer or a vanished or closed intake stays on screen until the prospect deals with it.
     if (!blockRef.current) setSaveStatus("saving");
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     // Nothing is sent while in conflict, or once the intake is gone or closed.
     saveTimerRef.current = stopsSaving(blockRef.current) ? null : setTimeout(flush, SAVE_DELAY_MS);
-  }, [flush]);
+  }, [ensureIntake, flush]);
 
   // Don't lose the last few seconds of edits when leaving the page.
   useEffect(() => {
@@ -742,6 +771,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       versionRef.current = null;
       forceNewRef.current = false;
       createFailedRef.current = false;
+      creatingRef.current = null;
       backupRef.current = null;
       setSessionId(null);
       setStartedAt(null);
@@ -779,18 +809,35 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     };
 
     const create = async () => {
+      // What the new row holds: the prospect's first change is already in it.
+      const sent = { data: dataRef.current, provenance: provenanceRef.current, messages: messagesRef.current, peo: chosenPeoRef.current };
       const { data: newSession, error } = await supabase
         .from("chamber_sessions")
         .insert({
           user_id: userId,
-          chamber_data: dataRef.current as unknown as Json,
-          field_provenance: provenanceRef.current as unknown as Json,
-          transcript: messagesRef.current as unknown as Json,
-          chosen_peo: chosenPeoRef.current,
+          chamber_data: sent.data as unknown as Json,
+          field_provenance: sent.provenance as unknown as Json,
+          transcript: sent.messages as unknown as Json,
+          chosen_peo: sent.peo,
         })
         .select("id, data_version, created_at")
         .single();
 
+      if (error?.code === OPEN_DRAFT_CODE && error.details && !cancelled) {
+        // Another tab started this person's intake first. Offer it, as when another tab saved first: load it,
+        // or keep what is on screen by saving it there.
+        const { data: open } = await supabase.from("chamber_sessions").select(ROW_COLUMNS).eq("id", error.details).maybeSingle();
+        if (cancelled) return;
+        if (open && open.status === "in_progress") {
+          createFailedRef.current = false;
+          sessionIdRef.current = open.id;
+          versionRef.current = typeof open.data_version === "number" ? open.data_version : null;
+          setSessionId(open.id);
+          setStartedAt(open.created_at);
+          markConflict(open);
+          return;
+        }
+      }
       if (error || !newSession) {
         console.error("Failed to create session:", error);
         createFailedRef.current = true;
@@ -802,9 +849,16 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         versionRef.current = typeof newSession.data_version === "number" ? newSession.data_version : null;
         setSessionId(newSession.id);
         setStartedAt(newSession.created_at);
-        // Anything captured while the row was being created still needs saving.
-        if (dirtyRef.current) scheduleSave();
-        else setSaveStatus((s) => (s === "idle" ? s : "saved"));
+        // Anything captured while the row was being created still needs saving; what it was created with doesn't.
+        const changedSince = dataRef.current !== sent.data || provenanceRef.current !== sent.provenance
+          || messagesRef.current !== sent.messages || chosenPeoRef.current !== sent.peo;
+        if (dirtyRef.current && changedSince) {
+          scheduleSave();
+        } else {
+          dirtyRef.current = false;
+          stopTimer();
+          setSaveStatus((s) => (s === "idle" ? s : "saved"));
+        }
       }
     };
 
@@ -872,13 +926,25 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           }
         }
       }
-      if (outcome !== "opened") await create();
+      if (outcome !== "opened") {
+        // Nothing is created until the prospect starts: their first message, answer, choice or upload
+        // creates it (ensureIntake). Answers already on screen (a retry after creating failed) create it now.
+        createRef.current = create;
+        if (dirtyRef.current) {
+          setIsLoading(false);
+          await ensureIntake();
+        }
+      }
       if (!cancelled) setIsLoading(false);
     };
 
+    createRef.current = null;
     init();
-    return () => { cancelled = true; };
-  }, [userId, scheduleSave, applyRow, initRun, blankIntake, clearBlock, offerBackup, settleOutcome, stopTimer]);
+    return () => {
+      cancelled = true;
+      if (createRef.current === create) createRef.current = null;
+    };
+  }, [userId, scheduleSave, applyRow, initRun, blankIntake, clearBlock, offerBackup, settleOutcome, stopTimer, markConflict, ensureIntake]);
 
   const startNew = useCallback(() => {
     requestedIdRef.current = null;
@@ -888,6 +954,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     settleOutcome();
     versionRef.current = null;
     sessionIdRef.current = null;
+    creatingRef.current = null;
+    // Nothing is on screen for the old intake any more, and the new one doesn't exist until the prospect starts.
+    setSessionId(null);
+    setStartedAt(null);
     backupRef.current = null;
     setBackupOffer(null);
     setExpired(null);
@@ -1078,11 +1148,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const addMessage = useCallback((msg: ChatMessage) => {
     // Lenore says hello once per intake. A voice session opens with her own greeting; it isn't kept twice.
     if (isGreeting(msg) && messagesRef.current.some(isGreeting)) return;
-    setMessages(prev => {
-      const next = [...prev, msg];
-      messagesRef.current = next;
-      return next;
-    });
+    // Through the ref, as the answers are, so a save (or the intake's creation) started right now holds it.
+    const next = [...messagesRef.current, msg];
+    messagesRef.current = next;
+    setMessages(next);
     scheduleSave();
   }, [scheduleSave]);
 
@@ -1156,8 +1225,12 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       return blockedMessage();
     } else if (error?.code === NOT_READY_CODE) {
       // A definite refusal: nothing changed, and saving goes on as before.
-      const missing = describeMissingKeys(error.details);
+      const missing = describeRequiredKeys(error.details);
       return { message: `Add ${missing.length > 0 ? missing.join(", ").toLowerCase() : "the required answers"} on the Review tab, then certify.` };
+    } else if (error?.code === CONFLICTING_CODE) {
+      // As definite as a missing answer: nothing changed.
+      const conflicting = describeRequiredKeys(error.details);
+      return { message: `Choose one answer for ${conflicting.length > 0 ? conflicting.join(", ").toLowerCase() : "each answer given twice"} on the Review tab, then certify.` };
     } else if (error) {
       // It may have landed anyway; a later write has to be able to tell.
       rememberUnconfirmed(version, { submitted: submission, chamber_data: storedData }, isOwnSubmission);
@@ -1234,6 +1307,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     choosePeo,
     saveStatus,
     retrySave,
+    ensureIntake,
     loadLatest,
     keepMine,
     discardChanges,

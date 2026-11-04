@@ -164,6 +164,11 @@ export interface ExtractionOptions {
   evidence?: Partial<Record<FieldKey, string>>;
   /** Fields the prospect explicitly corrected, which replace rather than conflict. */
   corrections?: FieldKey[];
+  /**
+   * Fields the prospect said they don't know (the model's "unknown", D23, D31). They hold no answer: one is
+   * marked unknown only while it has none, and never over the prospect's own edit or "Doesn't apply".
+   */
+  unknown?: FieldKey[];
   now?: Date;
 }
 
@@ -219,6 +224,18 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
       updated_at,
       candidates: candidates.some((c) => same(c.value, value)) ? candidates : [...candidates, { value, source }],
     };
+  }
+
+  for (const field of opts.unknown ?? []) {
+    if (field in patch) continue; // an answer in the same message wins
+    const prev = provenance[field];
+    if (prev?.source.kind === "prospect_edit" || prev?.status === "not_applicable") continue;
+    // An answer already given stands: "I don't know" about it is for the prospect to settle in Review.
+    if (!isEmpty(data[field])) continue;
+    const quote = opts.evidence?.[field];
+    const source: FieldSource =
+      quote && opts.source.kind === "transcript" ? { ...opts.source, quote: clip(quote) } : opts.source;
+    provenance[field] = { status: "unknown", source, updated_at };
   }
 
   return { data, provenance };
@@ -326,6 +343,12 @@ export function parseExtractedStatuses(raw: unknown): Partial<Record<FieldKey, E
   return out;
 }
 
+/** The fields the model marked "unknown": the prospect said they don't know them. The census is never one. */
+export function parseUnknownFields(raw: unknown): FieldKey[] {
+  if (typeof raw !== "object" || raw === null) return [];
+  return Object.entries(raw).flatMap(([k, v]) => (isFieldKey(k) && k !== "census" && v === "unknown" ? [k] : []));
+}
+
 /** Parses the model's per-field evidence quotes. */
 export function parseEvidence(raw: unknown): Partial<Record<FieldKey, string>> {
   const out: Partial<Record<FieldKey, string>> = {};
@@ -345,12 +368,20 @@ export function parseFieldList(raw: unknown): FieldKey[] {
  * optional field_status, evidence and corrected_fields; the message text is the
  * fallback quote for fields with no evidence of their own.
  */
-export function transcriptExtraction(message: { id: string; text: string }, meta: unknown): ExtractionOptions {
+export function transcriptExtraction(message: { id: string; text: string; spoken?: boolean }, meta: unknown): ExtractionOptions {
   const m = (typeof meta === "object" && meta !== null ? meta : {}) as Record<string, unknown>;
+  const statuses = parseExtractedStatuses(m.field_status);
+  const unknown = parseUnknownFields(m.field_status);
+  // Speech-to-text mishears ("fifteen" as 50), so a spoken answer is at most inferred until the prospect
+  // confirms it in Review or types it (D33).
+  if (message.spoken) {
+    for (const field of Object.keys(statuses) as FieldKey[]) if (statuses[field] === "confirmed") statuses[field] = "inferred";
+  }
   return {
     source: { kind: "transcript", message_id: message.id, quote: clip(message.text.trim()) },
-    statuses: parseExtractedStatuses(m.field_status),
+    statuses,
     evidence: parseEvidence(m.evidence),
     corrections: parseFieldList(m.corrected_fields),
+    unknown,
   };
 }

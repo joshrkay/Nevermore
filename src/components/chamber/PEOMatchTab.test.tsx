@@ -11,6 +11,19 @@ const renderTab = (selectedPeo: string | null = null) => {
 };
 
 describe("PEOMatchTab", () => {
+  it("shows a headcount of 0 as 0, and only a missing one as a dash", () => {
+    const summary = (employee_count: number | null, census = DEMO_CHAMBER_DATA.census) => {
+      const { unmount } = render(<PEOMatchTab data={{ ...DEMO_CHAMBER_DATA, employee_count, census }} selectedPeo={null} onSelect={vi.fn()} onProceed={vi.fn()} />);
+      const value = screen.getByText("Total EEs").parentElement!.textContent;
+      unmount();
+      return value;
+    };
+    expect(summary(0)).toContain("0");
+    expect(summary(0)).not.toContain("—");
+    expect(summary(null, [])).toContain("—");
+    expect(summary(null)).toContain(String(DEMO_CHAMBER_DATA.census.length));
+  });
+
   it("offers every listed PEO alphabetically, with none preselected or ranked above another", () => {
     renderTab();
     const choices = screen.getAllByRole("button", { name: /^Choose / }).map((b) => b.textContent);
