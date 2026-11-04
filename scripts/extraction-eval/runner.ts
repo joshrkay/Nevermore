@@ -63,7 +63,13 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
     // removes sensitive numbers from the recent conversation again (readRecent), Lenore's lines included.
     const body = JSON.parse(JSON.stringify(chatRequestBody(message, state.data, state.provenance, transcript)));
     const recent = body.recent.map((m: { sender: "user" | "lenore"; text: string }) => ({ ...m, text: redactSensitive(m.text) }));
-    const user = buildUserPrompt({ message: body.message, context: body.context, statuses: body.statuses, recent });
+    const user = buildUserPrompt({
+      message: body.message,
+      context: body.context,
+      statuses: body.statuses,
+      recent,
+      census: { rows: body.census.rows, workStates: body.census.work_states },
+    });
 
     const result = await model({ system: SYSTEM_PROMPT, user });
     if (!result.ok) {

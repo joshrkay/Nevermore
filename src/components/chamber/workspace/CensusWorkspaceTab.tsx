@@ -1,13 +1,18 @@
 import type { ChamberData } from "@/data/chamberTypes";
 import { censusAge, censusGaps, censusPay, classificationLabel, isAssumed } from "@/data/census";
 import { motion } from "framer-motion";
+import type { FieldAction, ProvenanceMap } from "@/data/provenance";
+import ProvenanceField from "./ProvenanceField";
 
 interface CensusWorkspaceTabProps {
   data: ChamberData;
   isDemo: boolean;
+  /** The census's field status and source (US-2.2a), shown with Confirm. */
+  provenance?: ProvenanceMap;
+  onAction?: (action: FieldAction) => void;
 }
 
-const CensusWorkspaceTab = ({ data, isDemo }: CensusWorkspaceTabProps) => {
+const CensusWorkspaceTab = ({ data, isDemo, provenance = {}, onAction }: CensusWorkspaceTabProps) => {
   const { census } = data;
   const withGaps = census.filter((e) => censusGaps(e).length > 0).length;
 
@@ -20,10 +25,21 @@ const CensusWorkspaceTab = ({ data, isDemo }: CensusWorkspaceTabProps) => {
 
       {census.length === 0 ? (
         <div className="text-center py-8 text-muted-foreground/50 italic text-sm">
-          Upload a census on the Upload tab, or Lenore will build the roster as you talk...
+          Upload a census on the Upload tab. The roster comes only from a file, so Lenore won't ask for it person by person.
         </div>
       ) : (
         <>
+          {/* Where the roster came from and whether it is confirmed, as for every other answer. */}
+          <ProvenanceField
+            label="Census"
+            field="census"
+            display={`${census.length} ${census.length === 1 ? "person" : "people"}`}
+            raw={census}
+            provenance={provenance.census}
+            onAction={isDemo ? undefined : onAction}
+            editable={false}
+            required={false}
+          />
           {withGaps > 0 && (
             <p className="text-xs text-warning">
               {withGaps} {withGaps === 1 ? "row is" : "rows are"} missing an underwriting detail (age, work state, title or

@@ -13,7 +13,7 @@ import type { ChamberData } from "./chamberTypes";
 import type { FieldKey, ProvenanceMap } from "./provenance";
 
 /** Where an item is answered in the Review step. */
-export type ReviewSection = "company" | "workforce" | "locations" | "payroll" | "benefits";
+export type ReviewSection = "company" | "workforce" | "locations" | "payroll" | "benefits" | "workers_comp" | "operations";
 
 export interface ReadinessItem {
   /** The key the database reports for it. */

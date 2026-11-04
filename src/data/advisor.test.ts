@@ -59,9 +59,9 @@ describe("completenessOf", () => {
     expect(c.detail).toBe("Pay frequency");
   });
 
-  it("needs review while fields are unconfirmed or flagged", () => {
+  it("needs review while items are open or fields flagged", () => {
     const c = completenessOf({ missing_required: [], open_fields: 1, flagged_fields: 2 });
-    expect(c).toMatchObject({ state: "needs_review", detail: "1 unconfirmed, 2 flagged by an advisor" });
+    expect(c).toMatchObject({ state: "needs_review", detail: "1 open item, 2 flagged by an advisor" });
   });
 
   it("is complete otherwise", () => {

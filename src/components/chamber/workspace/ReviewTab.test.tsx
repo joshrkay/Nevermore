@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import type { ProvenanceMap } from "@/data/provenance";
+import { applyFieldAction, FIELD_LABELS, type FieldKey, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import ReviewTab from "./ReviewTab";
+import { REVIEW_FIELDS } from "@/data/reviewFields";
 
 describe("ReviewTab documents", () => {
   it("lists uploaded files with their status and the helpful ones still missing", () => {
@@ -175,7 +177,55 @@ describe("ReviewTab sections", () => {
     expect(section("Payroll")).toHaveTextContent("3 days");
     expect(section("Payroll")).toHaveTextContent("Vacation, Sick");
     expect(section("Benefits")).toHaveTextContent("Aetna");
-    expect(section("Benefits")).toHaveTextContent("No retirement plan");
+    expect(section("Benefits")).toHaveTextContent("Retirement planNo");
+  });
+
+  it("lists every answer in the intake schema, each with its badge, and says how much of each section is settled (D28)", () => {
+    const fields = Object.keys(FIELD_LABELS).filter((f) => f !== "census") as FieldKey[];
+    expect(Object.values(REVIEW_FIELDS).flat().sort()).toEqual([...fields].sort());
+    const inferred: ProvenanceMap = Object.fromEntries(
+      fields.map((f) => [f, { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-04T00:00:00Z" }]),
+    );
+    const data = { ...complete, industry: "Print", employee_count: 3, wc_carrier: "Hartford", has_handbook: true } as typeof complete;
+    render(<ReviewTab data={data} provenance={inferred} onAction={() => {}} onProceed={() => {}} />);
+    for (const name of ["Workers' comp", "Operations & HR"]) expect(section(name)).toBeInTheDocument();
+    for (const f of ["company_name", "industry", "employee_count", "wc_carrier", "has_handbook"] as FieldKey[]) {
+      const row = document.getElementById(`review-field-${f}`)!;
+      expect(row, f).not.toBeNull();
+      expect(within(row).getByText("Lenore captured this — please confirm"), f).toBeInTheDocument();
+    }
+    expect(screen.getByTestId("progress-company")).toHaveTextContent("2 of 5 settled");
+    expect(screen.getByTestId("progress-locations")).toHaveTextContent("1 of 2 settled");
+    expect(screen.getByTestId("progress-workforce")).toHaveTextContent("1 of 7 settled");
+  });
+
+  it("lets the prospect say an unanswered field doesn't apply, which closes it, and take that back", () => {
+    function Harness() {
+      const [state, setState] = useState<IntakeState>({ data: complete, provenance: {} });
+      return (
+        <ReviewTab
+          data={state.data}
+          provenance={state.provenance}
+          onAction={(a) => setState((s) => applyFieldAction(s, a))}
+          onProceed={() => {}}
+        />
+      );
+    }
+    render(<Harness />);
+    // Not offered for an answer certification needs, nor for one already given.
+    expect(screen.queryByRole("button", { name: "Pay frequency doesn't apply" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Company legal name doesn't apply" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("0 of 4 settled");
+
+    fireEvent.click(screen.getByRole("button", { name: "Workers' comp carrier doesn't apply" }));
+    const row = document.getElementById("review-field-wc_carrier")!;
+    expect(within(row).getByText("Doesn't apply")).toBeInTheDocument();
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("1 of 4 settled");
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo: Workers' comp carrier doesn't apply" }));
+    expect(screen.queryByRole("button", { name: "Undo: Workers' comp carrier doesn't apply" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Workers' comp carrier doesn't apply" })).toBeInTheDocument();
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("0 of 4 settled");
   });
 
   it("marks the required answers wherever they sit, and only those", () => {
