@@ -21,8 +21,12 @@ const SECTION_OF_FIELD = new Map<string, ReviewSection>(
   (Object.entries(REVIEW_FIELDS) as [ReviewSection, FieldKey[]][]).flatMap(([section, fields]) => fields.map((field) => [field, section] as const)),
 );
 
-/** The section an open item belongs to. The census sits in Workforce. */
-const sectionOfItem = (item: OpenItem): ReviewSection | undefined => (item.field ? SECTION_OF_FIELD.get(item.field) : item.key === "census" ? "workforce" : undefined);
+/**
+ * The section an open item belongs to. The census sits in Workforce, whether it is listed as the recommended
+ * file still to upload (no field) or by its own status (field `census`, which Review's field list leaves out).
+ */
+const sectionOfItem = (item: OpenItem): ReviewSection | undefined =>
+  item.key === "census" ? "workforce" : item.field ? SECTION_OF_FIELD.get(item.field) : undefined;
 
 /**
  * Not applicable once the prospect marked every answer in the section as not applying; incomplete while any

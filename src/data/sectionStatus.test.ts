@@ -32,6 +32,16 @@ describe("sectionStatus", () => {
     expect(sectionStatus("benefits", complete, { ...confirmed, current_carrier: entry("not_applicable") })).toBe("complete");
   });
 
+  it("counts a census whose own status is open (read from a file, or in conflict) against Workforce", () => {
+    // The census is not one of Review's fields, but its provenance entry lists it by status like any field.
+    const withCensus = { ...complete, census: DEMO_CHAMBER_DATA.census };
+    expect(sectionStatus("workforce", withCensus, { ...confirmed, census: entry("inferred") })).toBe("needs_confirmation");
+    expect(sectionStatus("workforce", withCensus, { ...confirmed, census: entry("conflicting") })).toBe("incomplete");
+    expect(sectionStatus("workforce", withCensus, { ...confirmed, census: entry("confirmed") })).toBe("complete");
+    // And only there.
+    expect(sectionStatus("company", withCensus, { ...confirmed, census: entry("conflicting") })).toBe("complete");
+  });
+
   it("is not applicable once every answer in the section is marked as not applying", () => {
     const allNotApplicable: ProvenanceMap = Object.fromEntries(REVIEW_FIELDS.workers_comp.map((field) => [field, entry("not_applicable")]));
     expect(sectionStatus("workers_comp", complete, allNotApplicable)).toBe("not_applicable");
