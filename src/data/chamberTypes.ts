@@ -48,6 +48,14 @@ export interface ChamberData {
   key_challenges: string | null;
   business_goals: string | null;
 
+  // Workers' comp (intake schema v2)
+  wc_carrier: string | null;
+  wc_renewal_date: string | null;
+  /** Experience modification factor, such as 0.92. */
+  wc_experience_mod: number | null;
+  /** Whole dollars a year. */
+  wc_annual_premium: number | null;
+
   // Employees: the canonical census (see supabase/functions/_shared/census.ts)
   census: CensusEmployee[];
 }
@@ -90,6 +98,10 @@ export const EMPTY_CHAMBER_DATA: ChamberData = {
   hris_system: null,
   key_challenges: null,
   business_goals: null,
+  wc_carrier: null,
+  wc_renewal_date: null,
+  wc_experience_mod: null,
+  wc_annual_premium: null,
   census: [],
 };
 
@@ -132,6 +144,10 @@ export const DEMO_CHAMBER_DATA: ChamberData = {
   hris_system: "Google Sheets",
   key_challenges: "Compliance with CA employment law, managing multi-state payroll",
   business_goals: "Scale to 50 employees, offer competitive benefits to attract talent",
+  wc_carrier: "Pinnacle Mutual",
+  wc_renewal_date: "July 2026",
+  wc_experience_mod: 0.92,
+  wc_annual_premium: 18400,
   census: [
     { id: "6f1c2a40-0001-4c1e-9a7b-3d5e00000001", first_name: "Sarah", last_name: "Chen", dob: "1988-03-15", work_state: "CA", zip_code: "94107", job_title: "Senior Designer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "FAM", class_code: "8810", dependents: [{ first_name: "Michael", last_name: "Chen", dob: "1985-06-12", relationship: "spouse" }, { first_name: "Emma", last_name: "Chen", dob: "2018-03-22", relationship: "child" }] },
     { id: "6f1c2a40-0002-4c1e-9a7b-3d5e00000002", first_name: "Marcus", last_name: "Rivera", dob: "1985-07-22", work_state: "CA", zip_code: "94110", job_title: "Art Director", annual_salary: 125000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810", dependents: [{ first_name: "Ana", last_name: "Rivera", dob: "1987-09-04", relationship: "spouse" }] },

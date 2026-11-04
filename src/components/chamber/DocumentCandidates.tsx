@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { CensusEmployee, ChamberData } from "@/data/chamberTypes";
-import { censusAge, censusGaps, censusPay } from "@/data/census";
+import { censusAge, censusGaps, censusPay, classificationLabel } from "@/data/census";
 import {
   fieldLabel,
   formatValue,
@@ -155,7 +155,7 @@ const CensusPreview = ({ rows }: { rows: CensusEmployee[] }) => {
                 <td className="pr-2">{r.job_title ?? "—"}</td>
                 <td className="pr-2 font-mono text-right">{censusPay(r)}</td>
                 <td className="whitespace-nowrap">
-                  {r.classification === "1099" ? "1099" : "W-2"}
+                  {classificationLabel(r)}
                   {r.employment_type === "part_time" && " PT"}
                 </td>
               </tr>

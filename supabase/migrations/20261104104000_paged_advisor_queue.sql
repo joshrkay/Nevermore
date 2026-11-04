@@ -191,6 +191,11 @@ $$;
 REVOKE ALL ON FUNCTION public.advisor_list_submissions(text, text, integer, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.advisor_list_submissions(text, text, integer, integer) TO authenticated;
 
+-- require_advisor() stayed executable by signed-in callers only because advisor_list_submissions ran as
+-- the caller and called it (20261104093000_security_review_fixes.sql, SR-2). Every caller now runs as its
+-- owner, so nothing legitimate calls it through the API any more.
+REVOKE EXECUTE ON FUNCTION public.require_advisor() FROM authenticated;
+
 -- True when an advisor has supplied this field through a verified correction with a value in it.
 CREATE OR REPLACE FUNCTION public.advisor_supplied(p_session_id uuid, p_field text)
 RETURNS boolean

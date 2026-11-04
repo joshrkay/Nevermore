@@ -1,7 +1,7 @@
 // Pure helpers for scripts/supabase-setup.mjs: parsing, validation, the SQL it runs and how it
 // reads the results. No I/O, so they are unit-tested (scripts/supabase-setup-lib.test.ts).
 
-export const FUNCTIONS = ["chamber-extract", "document-extract", "dispatch-outbox", "resend-webhook"];
+export const FUNCTIONS = ["chamber-extract", "document-extract", "dispatch-outbox", "resend-webhook", "purge-intakes", "ops-monitor"];
 
 /** Secrets the email notifications need. Without them emails wait in the queue; nothing is lost. */
 export const EMAIL_SECRETS = ["RESEND_API_KEY", "EMAIL_FROM", "ADVISORY_NOTIFY_EMAIL", "SUPPORT_EMAIL", "PROSPECT_RESPONSE_TIME"];
@@ -237,18 +237,34 @@ export function vaultSecretSql(serviceRoleKey) {
     "  if exists (select 1 from vault.secrets where name = 'service_role_key') then",
     `    perform vault.update_secret((select id from vault.secrets where name = 'service_role_key'), ${sqlLiteral(serviceRoleKey)});`,
     "  else",
-    `    perform vault.create_secret(${sqlLiteral(serviceRoleKey)}, 'service_role_key', 'Bearer token the dispatch-outbox schedule sends');`,
+    `    perform vault.create_secret(${sqlLiteral(serviceRoleKey)}, 'service_role_key', 'Bearer token the scheduled functions send');`,
     "  end if;",
     "end $$;",
   ].join("\n");
 }
 
-/** Runs dispatch-outbox every minute (docs/NOTIFICATIONS.md). Scheduling the same name again replaces the job. */
-export function cronScheduleSql(projectRef) {
+/**
+ * The edge functions the database calls on a schedule, with the service-role key from Vault. The
+ * migrations schedule each one when pg_cron and pg_net exist as they run (reading the project URL from
+ * Vault); the script schedules them on the project's own URL, which covers a project that only gets the
+ * extensions from this script.
+ * - dispatch-outbox every minute: submission emails, retries and healing (docs/NOTIFICATIONS.md).
+ * - purge-intakes hourly: carries out intake deletions (docs/DATA_HANDLING.md).
+ * - ops-monitor every five minutes: alerts on failures over their thresholds (docs/RUNBOOK.md).
+ */
+export const SCHEDULED_FUNCTIONS = [
+  { fn: "dispatch-outbox", schedule: "* * * * *", status: "schedule", label: "Email schedule", every: "every minute", missing: "not scheduled" },
+  { fn: "purge-intakes", schedule: "23 * * * *", status: "purge_schedule", label: "Deletion schedule", every: "hourly", missing: "not scheduled: requested and retention deletions never run" },
+  { fn: "ops-monitor", schedule: "*/5 * * * *", status: "monitor_schedule", label: "Alert schedule", every: "every five minutes", missing: "not scheduled: failures are recorded but nobody is alerted" },
+];
+
+/** Runs one scheduled function on the project's own URL. Scheduling the same name again replaces the job. */
+export function functionScheduleSql(projectRef, fn, schedule) {
   if (!isProjectRef(projectRef)) throw new Error("invalid project ref");
-  const url = `https://${projectRef}.supabase.co/functions/v1/dispatch-outbox`;
+  if (!/^[a-z][a-z0-9-]*$/.test(fn) || !/^[0-9*/, -]+$/.test(schedule)) throw new Error("invalid schedule");
+  const url = `https://${projectRef}.supabase.co/functions/v1/${fn}`;
   return [
-    "select cron.schedule('dispatch-outbox', '* * * * *', $job$",
+    `select cron.schedule(${sqlLiteral(fn)}, ${sqlLiteral(schedule)}, $job$`,
     "  select net.http_post(",
     `    url := ${sqlLiteral(url)},`,
     "    headers := jsonb_build_object(",
@@ -260,12 +276,24 @@ export function cronScheduleSql(projectRef) {
   ].join("\n");
 }
 
+/** Runs dispatch-outbox every minute (docs/NOTIFICATIONS.md). Scheduling the same name again replaces the job. */
+export function cronScheduleSql(projectRef) {
+  return functionScheduleSql(projectRef, "dispatch-outbox", "* * * * *");
+}
+
 /**
  * Expires idle drafts hourly (A-1.5, migration 20261103090000). The migration schedules it when pg_cron
  * exists as it runs; this covers a project that only gets pg_cron from this script, which runs after
  * the migrations. Scheduling the same name again replaces the job.
  */
 export const EXPIRY_SCHEDULE_SQL = "select cron.schedule('expire-idle-intakes', '17 * * * *', 'select public.expire_idle_intakes();');";
+
+/**
+ * The daily retention job (US-6.1, migration 20261104092000): queues closed drafts for deletion and prunes
+ * operational, email and AI rate-limit records. Scheduled by the migration the same way as draft expiry;
+ * this covers a project that only gets pg_cron from this script.
+ */
+export const RETENTION_SCHEDULE_SQL = "select cron.schedule('run-retention', '41 3 * * *', 'select public.run_retention();');";
 
 /** Grants the advisor role to an existing account, and reports whether that account exists. */
 export function advisorSql(email) {
@@ -290,6 +318,9 @@ export const STATUS_QUERIES = {
   vault_secret: "select count(*)::int as n from vault.secrets where name = 'service_role_key';",
   schedule: "select count(*)::int as n from cron.job where jobname = 'dispatch-outbox' and schedule = '* * * * *';",
   expiry_schedule: "select count(*)::int as n from cron.job where jobname = 'expire-idle-intakes';",
+  purge_schedule: "select count(*)::int as n from cron.job where jobname = 'purge-intakes';",
+  monitor_schedule: "select count(*)::int as n from cron.job where jobname = 'ops-monitor';",
+  retention_schedule: "select count(*)::int as n from cron.job where jobname = 'run-retention';",
   role_grants: "select count(*)::int as n from public.user_roles;",
 };
 
@@ -348,8 +379,12 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
   add("Storage buckets", s.buckets === 2, `${s.buckets ?? "?"} of 2 (documents, manuscripts)`);
   add("pg_cron and pg_net", s.extensions === 2, `${s.extensions ?? "?"} of 2 enabled`);
   add("Service-role key in Vault", s.vault_secret === 1, s.vault_secret === 1 ? "stored" : "missing");
-  add("Email schedule", s.schedule === 1, s.schedule === 1 ? "dispatch-outbox every minute" : "not scheduled");
+  for (const job of SCHEDULED_FUNCTIONS) {
+    const ok = s[job.status] === 1;
+    add(job.label, ok, ok ? `${job.fn} ${job.every}` : job.missing);
+  }
   add("Draft expiry schedule", s.expiry_schedule === 1, s.expiry_schedule === 1 ? "expire-idle-intakes hourly" : "not scheduled: idle drafts never expire");
+  add("Retention schedule", s.retention_schedule === 1, s.retention_schedule === 1 ? "run-retention daily" : "not scheduled: closed drafts are never deleted and old records are never pruned");
 
   const auth = seen.auth;
   add("Guest (anonymous) sign-in", auth?.external?.anonymous_users === true, auth ? `anonymous_users=${auth.external?.anonymous_users}` : "settings unreadable");
@@ -381,6 +416,8 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
     add("Function secrets", missing.length === 0, missing.length === 0 ? "AI key, IP_HASH_SECRET and APP_BASE_URL set" : `missing: ${missing.join(", ")}`);
     const emailMissing = EMAIL_SECRETS.filter((n) => !names.includes(n));
     add("Email secrets", emailMissing.length === 0, emailMissing.length === 0 ? "all set" : `missing: ${emailMissing.join(", ")} (emails wait in the queue)`, false);
+    const alerts = names.includes("ENGINEERING_ALERT_WEBHOOK_URL");
+    add("Engineering alerts", alerts, alerts ? "ENGINEERING_ALERT_WEBHOOK_URL set" : "ENGINEERING_ALERT_WEBHOOK_URL not set: dead emails, failed deletions and failure spikes are only logged", false);
   } else {
     add("Function secrets", false, "could not list secret names");
   }

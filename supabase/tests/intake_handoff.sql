@@ -24,7 +24,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090000_outbox_operations.sql
+\i supabase/migrations/20261027090100_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -33,6 +33,7 @@
 \i supabase/migrations/20261103090000_intake_lifecycle.sql
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
+\i supabase/migrations/20261103110100_document_storage_path.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -92,7 +93,7 @@ DO $$
 DECLARE
   uid uuid := pg_temp.new_user();
   sid uuid;
-  data jsonb := '{"company_name":"Acme"}';
+  data jsonb := '{"company_name":"Acme","states":["NY"],"pay_frequency":"bi-weekly"}';
   v integer;
   row_ record;
   longest text := repeat('P', 80);

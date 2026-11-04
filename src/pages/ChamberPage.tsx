@@ -15,6 +15,7 @@ import BackupNotice from "@/components/chamber/BackupNotice";
 import RecoverIntake from "@/components/chamber/RecoverIntake";
 import StartOverButton from "@/components/chamber/StartOverButton";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
+import LegalLinks from "@/components/LegalLinks";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { createChatMessage } from "@/data/chat";
 import { browserStorageWorks } from "@/data/intakeBackup";
@@ -49,6 +50,7 @@ const ChamberPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
     sessionId,
+    fileId,
     resumeFailed,
     startNew,
     loadFailed,
@@ -113,6 +115,7 @@ const ChamberPage = () => {
 
   const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
     epoch: conversationEpoch,
+    intakeId: sessionId,
     chamberData,
     setChamberData,
     addUserMessage: (text) => {
@@ -244,6 +247,7 @@ const ChamberPage = () => {
           onStartNew={startNew}
           invalidField={invalidField}
         />
+        <LegalLinks compact className="shrink-0" />
       </div>
 
       {backupOffer && <BackupNotice offer={backupOffer} onRestore={restoreBackup} onDiscard={discardBackup} />}
@@ -285,6 +289,7 @@ const ChamberPage = () => {
             data={chamberData}
             isDemo={false}
             sessionId={sessionId}
+            fileId={fileId}
             onSubmit={submit}
             provenance={provenance}
             onFieldAction={handleFieldAction}

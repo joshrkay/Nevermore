@@ -55,7 +55,7 @@ export async function checkAiBudget(req: BudgetRequest): Promise<AllowanceResult
   const ipHashSecret = req.env("IP_HASH_SECRET");
   if (!serviceRoleKey || !ipHashSecret) {
     req.log("AI_CONFIG_MISSING: SUPABASE_SERVICE_ROLE_KEY and IP_HASH_SECRET must both be set");
-    return { allowed: false, status: 503, error: UNAVAILABLE, reason: "config_missing" };
+    return { allowed: false, status: 503, code: "unavailable", error: UNAVAILABLE, reason: "config_missing" };
   }
   const admin = req.createAdmin(serviceRoleKey);
   const limits = readBudgetLimits(req.env);

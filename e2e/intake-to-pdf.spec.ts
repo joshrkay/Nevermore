@@ -6,6 +6,8 @@ import { manuscriptFilename } from "../src/data/manuscript";
 import { DATABASE, GATEWAY_URL, PG } from "./stack/config.mjs";
 import { COMPANY_NAME, INTAKE_EXTRACTION, INTAKE_MESSAGE } from "./stack/intake-script.mjs";
 import { pdfText } from "./support/pdf";
+import { agreeToIntakeConsent } from "./support/consent";
+import { INTAKE_CONSENT_VERSION, intakeConsentText } from "../src/data/intakeConsent";
 
 const PEO = "Justworks";
 const SIGNER = { name: "Edgar Poe", role: "CEO" };
@@ -94,9 +96,22 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
 
   const sessionId = await test.step("Open the Chamber as a guest", async () => {
     await page.goto("/start");
+    // Nothing about the company can be entered until the guest agrees to how it is used (US-6.2).
+    await agreeToIntakeConsent(page);
     // The page redirects to ?session=<id> once the guest's session row exists.
     await expect(page).toHaveURL(SESSION_URL);
     return SESSION_URL.exec(page.url())![1];
+  });
+
+  await test.step("The agreement is recorded with its wording, and the intake points to it", async () => {
+    const rows = await queryDatabase<{ version: string; text: string; linked: boolean; recent: boolean }>(
+      `SELECT c.consent_version AS version, c.consent_text AS text, s.intake_consent_id = c.id AS linked,
+              c.accepted_at > now() - interval '10 minutes' AS recent
+         FROM chamber_sessions s JOIN intake_consents c ON c.user_id = s.user_id
+        WHERE s.id = $1`,
+      [sessionId],
+    );
+    expect(rows).toEqual([{ version: INTAKE_CONSENT_VERSION, text: intakeConsentText(), linked: true, recent: true }]);
   });
 
   await test.step("Tell Lenore about the company", async () => {
@@ -225,8 +240,11 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(confirmation).toHaveCSS("opacity", "1");
 
     // Built here rather than with the app's fileIdForSession, so a regression in it is caught. The year
-    // is the browser's: the app stamps the File ID with the signer's local clock.
-    const year = await page.evaluate(() => new Date().getFullYear());
+    // is the one the database recorded the intake starting in (UTC), never the signer's clock.
+    const [{ year }] = await queryDatabase<{ year: string }>(
+      "SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY') AS year FROM chamber_sessions WHERE id = $1",
+      [sessionId],
+    );
     const expected = `EAA-${year}-${sessionId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
     await expect(page.getByText(/^File ID: /)).toHaveText(`File ID: ${expected}`);
     return expected;

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import type { AdvisorApiError } from "@/lib/advisorApi";
+import { reportOpsEvent } from "@/lib/monitoring";
 
 interface Props {
   error: Error;
@@ -26,6 +27,11 @@ const AdvisorLoadError = ({ error, what, onRetry }: Props) => {
   useEffect(() => {
     if (ended) void signOut("expired");
   }, [ended, signOut]);
+
+  // The database refused an advisor read (42501): the role was revoked, or a page was reached without one.
+  useEffect(() => {
+    if (forbidden) reportOpsEvent("auth_denied", { code: "advisor_forbidden", detail: what });
+  }, [forbidden, what]);
 
   if (ended) {
     return (

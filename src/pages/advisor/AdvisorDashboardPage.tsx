@@ -141,7 +141,7 @@ const AdvisorDashboardPage = () => {
                 type="search"
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
-                placeholder="Company, contact or reference"
+                placeholder="Company, contact or File ID"
                 className="bg-muted border border-border rounded-md pl-9 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground w-64"
               />
             </div>
@@ -208,7 +208,7 @@ const AdvisorDashboardPage = () => {
               No {status ? `${PIPELINE_LABELS[status].toLowerCase()} ` : ""}submissions match “{query.trim()}”.
             </p>
             <p className="text-sm text-muted-foreground mt-1">
-              Search covers company, contact and reference.{" "}
+              Search covers company, contact and File ID.{" "}
               <button onClick={() => { setTyped(""); setParam("q", ""); }} className="text-primary underline">Clear search</button>
             </p>
           </div>

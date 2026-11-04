@@ -5,7 +5,7 @@ import { CheckCircle2, Download, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
-import { fileIdForSession, NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
+import { NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
 import {
   CONSENT_IS_DRAFT,
   CONSENT_SIGNING_STATEMENT,
@@ -14,6 +14,7 @@ import {
   consentStatements,
 } from "@/data/certification";
 import { useAuth } from "@/hooks/useAuth";
+import { missingRequired } from "@/data/readiness";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import VerifyEmailGate from "./VerifyEmailGate";
 
@@ -22,6 +23,8 @@ interface ReckoningTabProps {
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
   sessionId: string | null;
+  /** The intake's File ID, as the session gives it; null while there is no intake. */
+  fileId: string | null;
   /**
    * `signedDataKey` is the answers as signed; the save is refused if they have moved on. Resolves
    * `true` once certified, otherwise `false` or the reason, in words for the prospect.
@@ -29,12 +32,14 @@ interface ReckoningTabProps {
   onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   /** Whether this intake is already certified, or was changed after it was. */
   certification?: CertificationState;
+  /** Opens the Review step, where the missing answers can be added. */
+  onReview?: () => void;
 }
 
 const formatSigned = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
-const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certification = NO_CERTIFICATION }: ReckoningTabProps) => {
+const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
   const peoName = chosenPeo ?? "your PEO";
   const { isAnonymous } = useAuth();
   // A returning signer doesn't retype their name and role to certify again.
@@ -67,14 +72,15 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
     setNeedsRecertify(true);
   }, [dataKey, signedDataKey]);
 
-  const fileId = useMemo(() => (sessionId ? fileIdForSession(sessionId) : null), [sessionId]);
   const signed = signedAt !== null;
+  const missingAnswers = missingRequired(data);
   const blockers = certificationBlockers({
     acknowledged: checks,
     signer: { name: signerName, title: signerTitle },
     signed,
     hasFileId: !!fileId,
     isGuest: isAnonymous,
+    missingAnswers: missingAnswers.map((item) => item.label),
   });
   const allChecked = blockers.length === 0;
   const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";
@@ -145,6 +151,25 @@ const ReckoningTab = ({ data, peoName: chosenPeo, sessionId, onSubmit, certifica
             Confirm what you've shared before The Manuscript is prepared for {peoName}.
           </p>
         </div>
+
+        {/* The Manuscript can't be generated without these; the database refuses the certification too. */}
+        {missingAnswers.length > 0 && !certifiedAndCurrent && (
+          <div role="alert" aria-label="Answers still needed" className="border border-destructive/40 bg-destructive/5 rounded-xl p-4 text-sm space-y-2">
+            <p className="font-medium">Before The Manuscript can be generated, add:</p>
+            <ul className="list-disc pl-5 space-y-0.5">
+              {missingAnswers.map((item) => (
+                <li key={item.key}>
+                  {item.label} <span className="text-muted-foreground text-xs">{item.hint}</span>
+                </li>
+              ))}
+            </ul>
+            {onReview && (
+              <button type="button" onClick={onReview} className="text-sm font-medium text-primary underline underline-offset-2">
+                Go to Review
+              </button>
+            )}
+          </div>
+        )}
 
         {/* What's already on record for this intake */}
         {certification.status === "certified" && !needsRecertify && !peoChanged && !submitted && (

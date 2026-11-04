@@ -127,6 +127,8 @@ export type Database = {
           expires_at: string | null
           field_provenance: Json
           id: string
+          // The agreement (intake_consents) the intake was started under. Set by the database.
+          intake_consent_id: string | null
           // When the prospect last saved anything. Set by the database.
           last_activity_at: string
           // The intake schema version chamber_data follows (supabase/functions/_shared/intakeSchema.ts).
@@ -146,6 +148,7 @@ export type Database = {
           expires_at?: never
           field_provenance?: Json
           id?: string
+          intake_consent_id?: never
           last_activity_at?: never
           schema_version?: never
           status?: string
@@ -162,6 +165,7 @@ export type Database = {
           expires_at?: never
           field_provenance?: Json
           id?: string
+          intake_consent_id?: never
           last_activity_at?: never
           schema_version?: never
           status?: string
@@ -233,6 +237,20 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      intake_consents: {
+        // One per account and consent version (src/data/intakeConsent.ts). Read-only from the browser:
+        // written only through record_intake_consent().
+        Row: {
+          accepted_at: string
+          consent_text: string
+          consent_version: string
+          id: string
+          user_id: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
       }
       manuscript_versions: {
         Row: {
@@ -425,6 +443,11 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: { version: number; storage_path: string; generated_at: string; corrections_applied: number }[]
       }
+      record_intake_consent: {
+        Args: { p_text: string; p_version: string }
+        // When the server received the agreement (the first one, when agreeing again).
+        Returns: string
+      }
       record_manuscript_version: {
         Args: {
           p_certified_at: string | null
@@ -438,6 +461,17 @@ export type Database = {
           p_version: number
         }
         Returns: Database["public"]["Tables"]["manuscript_versions"]["Row"]
+      }
+      report_client_event: {
+        Args: {
+          p_code?: string | null
+          p_detail?: string | null
+          p_kind: string
+          p_route?: string | null
+          p_session_id?: string | null
+        }
+        // False when the report was dropped by a rate cap.
+        Returns: boolean
       }
       review_submission_field: {
         Args: {

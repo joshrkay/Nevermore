@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 // Public-facing copy must stay PEO-neutral: no named PEO implies an affiliation or
@@ -11,10 +11,23 @@ const PUBLIC_COPY_FILES = [
   "src/components/chamber/ReckoningTab.tsx",
   // The emails sent to prospects and advisors are public-facing copy too.
   "supabase/functions/dispatch-outbox/messages.ts",
+  // What a prospect reads and agrees to before the Chamber opens, and the legal pages (US-6.2).
+  "src/components/chamber/IntakeConsentGate.tsx",
+  "src/data/intakeConsent.ts",
+  "src/pages/PrivacyPage.tsx",
+  "src/pages/TermsPage.tsx",
+  "src/components/LegalPageLayout.tsx",
+  "src/data/legal.ts",
+  // PEO Match shows PEO names from the sourced catalog (src/data/peoCatalog.ts), never in its own copy.
+  "src/components/chamber/PEOMatchTab.tsx",
 ];
 
 const NAMED_PEOS = /trinet|justworks|rippling|insperity|totalsource/i;
 const ON_BEHALF = /on my behalf|sent on your behalf|obtain a quote/i;
+// Edgar Allan Advisory is not a PEO, a carrier or an agency, and has no PEO partnership to claim. "For PEO
+// Partners" (the landing section for PEO underwriters) is an audience label, not a claim, so the bare word is
+// not banned.
+const AFFILIATION = /partnered with|partnership with|official partner|preferred partner|authori[sz]ed agent|licensed agent|appointed agent|on behalf of/i;
 
 // Claims the product doesn't keep: it prepares a packet the prospect sends, certifying needs a
 // verified email, and the workspace holds the prospect's own answers from the start.
@@ -49,9 +62,69 @@ describe("public copy", () => {
     expect(readFileSync(file, "utf8")).not.toMatch(NAMED_PEOS);
   });
 
+  it.each(PUBLIC_COPY_FILES)("%s claims no affiliation or agency", (file) => {
+    expect(readFileSync(file, "utf8")).not.toMatch(AFFILIATION);
+  });
+
+  it("states the role disclosure wherever a prospect agrees to or reads how their data is used", () => {
+    for (const file of ["src/data/intakeConsent.ts", "src/pages/PrivacyPage.tsx", "src/pages/TermsPage.tsx"]) {
+      // JSX wraps long sentences across lines.
+      const text = readFileSync(file, "utf8").replace(/\s+/g, " ");
+      expect(text, file).toMatch(/not a PEO, an insurance carrier or an insurance agency/);
+      expect(text, file).toMatch(/doesn't mean it endorses, sponsors or works with us/);
+    }
+  });
+
+  it("makes no claim about the landing page's data that we can't stand behind", () => {
+    const text = readFileSync("src/pages/LandingPage.tsx", "utf8");
+    expect(text).not.toMatch(/not health data/i);
+    expect(text).not.toMatch(/nothing else/i);
+  });
+
   it("never promises to act or send on the prospect's behalf", () => {
     for (const file of ["src/components/chamber/ReckoningTab.tsx", "supabase/functions/dispatch-outbox/messages.ts"]) {
       expect(readFileSync(file, "utf8")).not.toMatch(ON_BEHALF);
     }
+  });
+});
+
+// The Privacy Policy and Terms of Use must be reachable from every page (US-6.2). Every page component
+// renders <LegalLinks> (the legal pages through their shared layout); advisor pages through AdvisorHeader.
+describe("legal links", () => {
+  const pageFiles = readdirSync("src/pages")
+    .filter((f) => f.endsWith(".tsx") && !f.endsWith(".test.tsx"))
+    .map((f) => `src/pages/${f}`);
+  const advisorPages = readdirSync("src/pages/advisor")
+    .filter((f) => f.endsWith(".tsx") && !f.endsWith(".test.tsx"))
+    .map((f) => `src/pages/advisor/${f}`);
+
+  it("finds the pages it checks", () => {
+    expect(pageFiles).toEqual(expect.arrayContaining(["src/pages/LandingPage.tsx", "src/pages/PrivacyPage.tsx", "src/pages/ChamberPage.tsx"]));
+    expect(advisorPages.length).toBeGreaterThan(0);
+  });
+
+  it.each(pageFiles)("%s links to the Privacy Policy and Terms of Use", (file) => {
+    expect(readFileSync(file, "utf8")).toMatch(/<LegalLinks\b|<LegalPageLayout\b/);
+  });
+
+  it.each(advisorPages)("%s shows the advisor header, which carries the legal links", (file) => {
+    expect(readFileSync(file, "utf8")).toMatch(/<AdvisorHeader\b/);
+  });
+
+  it("puts the legal links in the advisor header and the legal pages' layout", () => {
+    expect(readFileSync("src/components/advisor/AdvisorHeader.tsx", "utf8")).toMatch(/<LegalLinks\b/);
+    expect(readFileSync("src/components/LegalPageLayout.tsx", "utf8")).toMatch(/<LegalLinks\b/);
+  });
+
+  it("links the intake consent to both pages", () => {
+    const gate = readFileSync("src/components/chamber/IntakeConsentGate.tsx", "utf8");
+    expect(gate).toMatch(/to="\/privacy"/);
+    expect(gate).toMatch(/to="\/terms"/);
+  });
+
+  it("routes both pages", () => {
+    const app = readFileSync("src/App.tsx", "utf8");
+    expect(app).toMatch(/path="\/privacy"/);
+    expect(app).toMatch(/path="\/terms"/);
   });
 });

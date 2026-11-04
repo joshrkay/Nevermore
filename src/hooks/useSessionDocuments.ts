@@ -5,6 +5,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { guessCategory, type DocumentCategory } from "@/data/documentCategories";
 import { parseExtraction, type CandidateField, type DocumentExtraction } from "@/data/documentCandidates";
 import { inspectUpload, MAX_DOCUMENTS_PER_INTAKE } from "@/lib/uploadCheck";
+import { describeInvokeError, failureKindFromCode, type AiFailureKind } from "@/data/aiFailure";
+import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
 
 export interface SessionDocument {
   id: string;
@@ -19,6 +21,11 @@ export interface SessionDocument {
   created_at: string;
   storage_path: string | null; // null while the upload is in flight
   extraction: DocumentExtraction;
+  /**
+   * Why the last read in this tab didn't go through (a rate limit, the daily cap, a timeout...), from the
+   * function's answer. Not stored: a reload shows the row's own status.
+   */
+  readIssue?: AiFailureKind | null;
 }
 
 /** Why a file wasn't uploaded, before or as it was stored. */
@@ -41,7 +48,10 @@ export interface UseSessionDocumentsReturn {
    * limit), stores the rest with this intake, then has Lenore read each one.
    */
   upload: (files: File[]) => Promise<UploadOutcome>;
-  /** Deletes the record and the stored file. Resolves false if either couldn't be removed. */
+  /**
+   * Deletes the stored file, then the record. Resolves false if either is still there; trying again
+   * finishes the job.
+   */
   remove: (doc: SessionDocument) => Promise<boolean>;
   setCategory: (doc: SessionDocument, category: DocumentCategory) => Promise<boolean>;
   /**
@@ -72,6 +82,30 @@ const fromRow = ({ processing_started_at: _startedAt, ...row }: Row): SessionDoc
   file_sha256: row.file_sha256 ?? null,
   extraction: parseExtraction(row.extraction),
 });
+
+/**
+ * Deletes a stored file. True once it is gone, including when it was already gone; false while it is
+ * still there or that can't be told.
+ */
+async function removeStoredFile(path: string): Promise<boolean> {
+  const { data, error } = await supabase.storage.from(BUCKET).remove([path]);
+  if (error) {
+    console.error("Failed to delete a stored document:", error.message);
+    return false;
+  }
+  if (data.length > 0) return true;
+  // Storage answers success with an empty list whenever it deleted nothing: when the file is already
+  // gone, and also when its policies refused. Only the first counts as removed.
+  try {
+    const { data: stillThere } = await supabase.storage.from(BUCKET).exists(path);
+    if (stillThere) console.error("A stored document was not deleted");
+    return !stillThere;
+  } catch (e) {
+    // exists() throws for anything but "not found" (a network or server error).
+    console.error("Couldn't check whether a stored document was deleted:", e instanceof Error ? e.message : e);
+    return false;
+  }
+}
 
 // A read that has been going longer than this has stopped (the function's own limit is shorter).
 const STALE_PROCESSING_MS = 5 * 60 * 1000;
@@ -150,14 +184,25 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
     activeRef.current.add(doc.id);
     patchDoc(doc.id, { status: "processing" });
     try {
-      const { error } = await supabase.functions.invoke("document-extract", { body: { document_id: doc.id } });
-      if (error) console.error("Document extraction failed:", error.message);
+      const { data: answer, error } = await supabase.functions.invoke("document-extract", { body: { document_id: doc.id } });
+      let readIssue: AiFailureKind | null = null;
+      if (error) {
+        const info = await describeInvokeError(error);
+        readIssue = info.kind;
+        console.warn("Document not read:", info.kind, info.requestId ?? "");
+        // document-extract records every read it answers (ai_extraction_events); this covers it never answering.
+        const unrecorded = unrecordedFunctionFailure("document_read", error, info.requestId);
+        if (unrecorded) reportOpsEvent("upload_failed", { code: unrecorded, detail: errorDetail(error), sessionId: sid });
+      } else if (answer && typeof answer.code === "string") {
+        // The function answered, and the read failed (the model timed out, say): the row says failed, this says why.
+        readIssue = failureKindFromCode(answer.code);
+      }
       // The function records its outcome on the row (or leaves it untouched if it never ran),
       // so the row is the source of truth either way.
       const { data } = await supabase.from("documents").select(COLUMNS).eq("id", doc.id).maybeSingle();
       if (sessionRef.current !== sid) return;
-      if (data) patchDoc(doc.id, fromRow(data as Row));
-      else patchDoc(doc.id, { status: "failed" });
+      if (data) patchDoc(doc.id, { ...fromRow(data as Row), readIssue });
+      else patchDoc(doc.id, { status: "failed", readIssue });
     } finally {
       activeRef.current.delete(doc.id);
     }
@@ -218,6 +263,9 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         .upload(storagePath, file, { contentType });
       if (storageError) {
         console.error("Failed to upload a document:", storageError.message);
+        // The status only: storage's message can quote the path, which carries the file name.
+        const status = (storageError as { statusCode?: string | number }).statusCode;
+        reportOpsEvent("upload_failed", { code: `storage_upload:${status ?? "unknown"}`, sessionId: sid });
         failed.push(file.name);
         dropPending();
         continue;
@@ -247,7 +295,11 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         const code = (dbError as { code?: string } | null)?.code;
         if (code === "23505") rejected.push({ name: file.name, reason: "duplicate" });
         else if (code === "23514") rejected.push({ name: file.name, reason: "limit" });
-        else failed.push(file.name);
+        else {
+          failed.push(file.name);
+          // A closed intake (EA002) refusing a file is the intake's state, not a failure.
+          if (code !== "EA002") reportOpsEvent("upload_failed", { code: `record_insert:${code ?? "unknown"}`, sessionId: sid });
+        }
         dropPending();
         continue;
       }
@@ -268,31 +320,19 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
   }, [userId, extract]);
 
   const remove = useCallback(async (doc: SessionDocument) => {
-    const sid = sessionRef.current;
-    if (!userId || !sid || !doc.storage_path) return false;
-    // Delete the row first, then the file. If the file can't be removed, put the
-    // row back so the document stays listed and the delete can be retried —
-    // never leave a row pointing at a missing file.
+    if (!userId || !sessionRef.current || !doc.storage_path) return false;
+    // The file goes first, then the record. If the record can't be deleted, it stays listed and the
+    // next try finds its file already gone and finishes. The other order could leave a stored file
+    // with no record, which nobody can see or delete: putting the record back can fail too (an
+    // expired intake refuses new rows).
+    if (!(await removeStoredFile(doc.storage_path))) {
+      reportOpsEvent("upload_failed", { code: "storage_remove", sessionId: sessionRef.current });
+      return false;
+    }
     const { error } = await supabase.from("documents").delete().eq("id", doc.id);
-    if (error) return false;
-    const { error: storageError } = await supabase.storage.from(BUCKET).remove([doc.storage_path]);
-    if (storageError) {
-      const { error: restoreError } = await supabase.from("documents").insert({
-        id: doc.id,
-        user_id: userId,
-        session_id: sid,
-        file_name: doc.file_name,
-        file_size: doc.file_size,
-        size_bytes: doc.size_bytes,
-        mime_type: doc.mime_type,
-        file_sha256: doc.file_sha256,
-        category: doc.category,
-        storage_path: doc.storage_path,
-        status: doc.status,
-        extraction: doc.extraction as unknown as Json,
-        created_at: doc.created_at,
-      });
-      if (restoreError) console.error("Failed to restore document row:", restoreError);
+    if (error) {
+      console.error("Failed to delete a document record:", error.message);
+      reportOpsEvent("upload_failed", { code: `record_delete:${(error as { code?: string }).code ?? "unknown"}`, sessionId: sessionRef.current });
       return false;
     }
     setDocs((prev) => prev.filter((d) => d.id !== doc.id));

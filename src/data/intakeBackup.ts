@@ -7,8 +7,8 @@
 // * The employee census is never written here: it holds names, dates of birth and pay. A restore keeps
 //   the census the server has.
 // * Keyed by user and intake, so one person's copy is never offered to someone else on a shared browser.
-// * Read back as untrusted input: a copy that isn't the shape written below, or whose answers break intake
-//   schema v1, is discarded rather than restored.
+// * Read back as untrusted input: a copy that isn't the shape written below, or whose answers break the
+//   intake schema, is discarded rather than restored.
 // * Browser storage can be missing, blocked or full. Every call here then quietly does nothing.
 
 import { validateChamberData } from "./intakeSchema";
@@ -92,7 +92,7 @@ function backupProblem(value: unknown, userId: string, sessionId: string, now: n
   if (now - savedAt > BACKUP_MAX_AGE_MS) return "too old";
   if (!isRecord(value.chamber_data) || !isRecord(value.field_provenance) || !Array.isArray(value.transcript)) return "not the shape written";
   const issues = validateChamberData(value.chamber_data);
-  if (issues.length > 0) return `answers break intake schema v1 at ${issues.map((issue) => issue.path).join(", ")}`;
+  if (issues.length > 0) return `answers break the intake schema at ${issues.map((issue) => issue.path).join(", ")}`;
   return null;
 }
 

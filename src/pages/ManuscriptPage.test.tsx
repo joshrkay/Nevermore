@@ -161,6 +161,21 @@ describe("ManuscriptPage", () => {
     });
   });
 
+  it("shows payroll as its own section, from what was signed", async () => {
+    const signed = { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co", payroll_vendor: "Gusto", pay_frequency: "weekly", funding_days: 2, pto_types: ["Vacation"] };
+    row = {
+      chamber_data: signed,
+      submission: { signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-2026-ABC", chamber_data: signed },
+      status: "submitted",
+      created_at: "2026-05-01T00:00:00Z",
+    };
+    renderAt("/manuscript?session=s1");
+    const heading = await screen.findByRole("heading", { name: "2 — Payroll & Time" });
+    const section = heading.closest("section")!;
+    for (const text of ["Gusto", "weekly", "2 days", "Vacation"]) expect(section).toHaveTextContent(text);
+    expect(screen.getByRole("heading", { name: "3 — Workforce Summary" })).toBeInTheDocument();
+  });
+
   describe("advisor status shared with the prospect", () => {
     const certified = () => ({
       chamber_data: EMPTY_CHAMBER_DATA,

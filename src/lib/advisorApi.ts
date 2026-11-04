@@ -279,7 +279,8 @@ export async function reviewField(
   if (error) fail(error, "Couldn't save the review.");
 }
 
-const SIGNED_URL_SECONDS = 60;
+/** How long a link to a stored file works. src/lib/fileLinks.test.ts holds every link to this. */
+export const SIGNED_URL_SECONDS = 60;
 
 /** A short-lived link to a stored file, issued only if the caller may read it. */
 async function signedUrl(bucket: "documents" | "manuscripts", path: string, download?: string): Promise<string> {
@@ -294,6 +295,12 @@ export const documentUrl = (doc: Pick<UploadedDocument, "storage_path" | "file_n
   signedUrl("documents", doc.storage_path, doc.file_name);
 
 export const manuscriptUrl = (v: ManuscriptVersion, filename: string) => signedUrl("manuscripts", v.storage_path, filename);
+
+/**
+ * The prospect's own final Manuscript (public.prospect_final_manuscript). Storage signs it only for that
+ * intake's owner, and only while it is the latest version built from their current certification.
+ */
+export const finalManuscriptUrl = (storagePath: string, filename: string) => signedUrl("manuscripts", storagePath, filename);
 
 /**
  * Stores a generated Manuscript as the next version of a submission. The database refuses it

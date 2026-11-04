@@ -31,6 +31,8 @@ interface LiveWorkspaceProps {
   data: ChamberData;
   isDemo: boolean;
   sessionId: string | null;
+  /** The intake's File ID, for The Reckoning; null while there is no intake. */
+  fileId?: string | null;
   onSubmit: (submission: ChamberSubmission, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   provenance?: ProvenanceMap;
   /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
@@ -47,6 +49,7 @@ const LiveWorkspace = ({
   data,
   isDemo,
   sessionId,
+  fileId = null,
   onSubmit,
   provenance = {},
   onFieldAction,
@@ -109,7 +112,7 @@ const LiveWorkspace = ({
         {activeTab === "dependents" && <DependentsTab data={data} />}
         {activeTab === "review" && <ReviewTab data={data} provenance={provenance} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} />}
         {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
-        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={chosenPeo} sessionId={sessionId} onSubmit={onSubmit} certification={certification} />}
+        {activeTab === "reckoning" && <ReckoningTab data={data} peoName={chosenPeo} sessionId={sessionId} fileId={fileId} onSubmit={onSubmit} certification={certification} onReview={() => setActiveTab("review")} />}
       </div>
     </div>
   );

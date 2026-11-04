@@ -97,12 +97,12 @@ INSERT INTO public.chamber_sessions (id, user_id) VALUES ('00000000-0000-0000-00
 \i supabase/migrations/20261024100000_advisor_queue.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
 \i supabase/migrations/20261029091000_census_advisor_review.sql
-\i supabase/migrations/20261103110000_pin_reviews_and_manuscripts_to_answers.sql
-\i supabase/migrations/20261104090000_pipeline_follows_the_prospect.sql
-\i supabase/migrations/20261104091000_certified_evidence.sql
-\i supabase/migrations/20261104092000_share_reviewed_manuscript.sql
-\i supabase/migrations/20261104093000_paged_advisor_queue.sql
-\i supabase/migrations/20261104094000_advisor_review_followups.sql
+\i supabase/migrations/20261104100000_pin_reviews_and_manuscripts_to_answers.sql
+\i supabase/migrations/20261104101000_pipeline_follows_the_prospect.sql
+\i supabase/migrations/20261104102000_certified_evidence.sql
+\i supabase/migrations/20261104103000_share_reviewed_manuscript.sql
+\i supabase/migrations/20261104104000_paged_advisor_queue.sql
+\i supabase/migrations/20261104105000_advisor_review_followups.sql
 
 -- Runs `stmt` as `who` and fails the run unless it's refused (permission, row security or a
 -- deliberate check).
@@ -1236,7 +1236,7 @@ BEGIN
 END $$;
 
 -- ====================================================================================
--- Follow-ups (20261104094000): intakes certified before certification rows existed, an intake
+-- Follow-ups (20261104105000): intakes certified before certification rows existed, an intake
 -- created already certified, history read in the order it was written, and Manuscript versions
 -- recorded before certified_at.
 -- ====================================================================================

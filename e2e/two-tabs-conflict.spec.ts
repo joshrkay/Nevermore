@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import pg from "pg";
 import { ANON_KEY, DATABASE, GATEWAY_URL, PG } from "./stack/config.mjs";
+import { agreeToIntakeConsent, agreeToIntakeConsentOverRest } from "./support/consent";
 
 const SESSION_URL = /\/start\?session=([0-9a-f-]{36})$/;
 const FIRST_START = "January 2027";
@@ -40,10 +41,11 @@ const saved = (page: Page) => page.getByRole("status").getByText("Saved", { exac
 
 test("a tab that is behind is told so and cannot overwrite the other tab's save", async ({ context, page }) => {
   await page.goto("/start");
+  await agreeToIntakeConsent(page);
   await expect(page).toHaveURL(SESSION_URL);
   const sessionId = SESSION_URL.exec(page.url())![1];
 
-  // The same browser, so the same guest: two tabs of one prospect.
+  // The same browser, so the same guest (who has agreed already): two tabs of one prospect.
   const stale = await context.newPage();
   await stale.goto(`/start?session=${sessionId}`);
   await expect(stale.getByRole("button", { name: "② Company", exact: true })).toBeVisible();
@@ -85,6 +87,7 @@ async function guestWithSession(request: APIRequestContext) {
   expect(signup).toBeOK();
   const { access_token: token, user } = (await signup.json()) as { access_token: string; user: { id: string } };
   const headers = { apikey: ANON_KEY, Authorization: `Bearer ${token}`, "Content-Type": "application/json", Prefer: "return=representation" };
+  await agreeToIntakeConsentOverRest(request, headers);
 
   const created = await request.post(`${GATEWAY_URL}/rest/v1/chamber_sessions?select=id,data_version`, {
     headers,

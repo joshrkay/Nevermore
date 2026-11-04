@@ -10,6 +10,7 @@ import AuthRedirectGate from "./components/AuthRedirectGate";
 import Navbar from "./components/Navbar";
 import RequireAuth from "./components/RequireAuth";
 import RequireAdvisor from "./components/RequireAdvisor";
+import IntakeConsentGate from "./components/chamber/IntakeConsentGate";
 import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
 import AuthCallbackPage from "./pages/AuthCallbackPage";
@@ -23,6 +24,9 @@ const ManuscriptPage = lazy(() => import("./pages/ManuscriptPage"));
 const AdvisorDashboardPage = lazy(() => import("./pages/advisor/AdvisorDashboardPage"));
 const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissionPage"));
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
+// Read rarely, so kept out of the main bundle too.
+const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
+const TermsPage = lazy(() => import("./pages/TermsPage"));
 
 const queryClient = new QueryClient();
 
@@ -48,8 +52,11 @@ const App = () => (
                 />
                 <Route path="/login" element={<AuthPage />} />
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
-                <Route path="/start" element={<RequireAuth><ChamberPage /></RequireAuth>} />
+                {/* Nothing of the Chamber opens until the account has agreed to how intake information is used. */}
+                <Route path="/start" element={<RequireAuth><IntakeConsentGate><ChamberPage /></IntakeConsentGate></RequireAuth>} />
                 <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
+                <Route path="/privacy" element={<PrivacyPage />} />
+                <Route path="/terms" element={<TermsPage />} />
                 <Route path="/manuscript" element={<ManuscriptPage />} />
                 <Route path="/manuscript/demo" element={<ManuscriptPage demo />} />
                 <Route path="/advisor" element={<RequireAdvisor><AdvisorDashboardPage /></RequireAdvisor>} />

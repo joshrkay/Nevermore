@@ -24,7 +24,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090000_outbox_operations.sql
+\i supabase/migrations/20261027090100_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -126,6 +126,7 @@ CREATE TEMP TABLE before_upgrade AS SELECT id, data_version, updated_at FROM pub
 
 \i supabase/migrations/20261103090000_intake_lifecycle.sql
 \i supabase/migrations/20261103091000_intake_schema_version.sql
+\i supabase/migrations/20261103120100_intake_schema_v2_version.sql
 SET client_min_messages = notice;
 
 -- ---------- what the migration installed, and the upgrade ----------
@@ -172,10 +173,20 @@ BEGIN
     RAISE EXCEPTION 'FAIL: a status outside the set was accepted';
   END IF;
 
-  -- Every session follows intake schema v1, old rows included, and no other version can be stored.
-  IF EXISTS (SELECT 1 FROM public.chamber_sessions WHERE schema_version <> 1) THEN RAISE EXCEPTION 'FAIL: a row is not at schema version 1'; END IF;
-  IF pg_temp.state_of(format('UPDATE public.chamber_sessions SET schema_version = 2 WHERE id = %L', (SELECT id FROM fx WHERE name = 'old_draft'))) <> '23514' THEN
-    RAISE EXCEPTION 'FAIL: schema version 2 was accepted';
+  -- Every session follows intake schema v2 (v1 plus the workers' comp block), old rows included, and no
+  -- other version can be stored. Moving rows to 2 was not a save: before_upgrade is checked below.
+  IF EXISTS (SELECT 1 FROM public.chamber_sessions WHERE schema_version <> 2) THEN RAISE EXCEPTION 'FAIL: a row is not at schema version 2'; END IF;
+  IF (SELECT column_default FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'chamber_sessions' AND column_name = 'schema_version') <> '2' THEN
+    RAISE EXCEPTION 'FAIL: new rows do not default to schema version 2';
+  END IF;
+  IF pg_temp.state_of(format('UPDATE public.chamber_sessions SET schema_version = 1 WHERE id = %L', (SELECT id FROM fx WHERE name = 'old_draft'))) <> '23514' THEN
+    RAISE EXCEPTION 'FAIL: schema version 1 was accepted';
+  END IF;
+  IF pg_temp.state_of(format('UPDATE public.chamber_sessions SET schema_version = 3 WHERE id = %L', (SELECT id FROM fx WHERE name = 'old_draft'))) <> '23514' THEN
+    RAISE EXCEPTION 'FAIL: schema version 3 was accepted';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.chamber_sessions'::regclass AND NOT tgisinternal AND tgenabled = 'D') THEN
+    RAISE EXCEPTION 'FAIL: a chamber_sessions trigger was left disabled';
   END IF;
 
   -- Without pg_cron the schedule is skipped, quietly.

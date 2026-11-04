@@ -17,6 +17,15 @@ export type CompensationType = (typeof COMPENSATION_TYPES)[number];
 export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
 export type WorkerClassification = (typeof CLASSIFICATIONS)[number];
 
+/**
+ * Facts of a row that can be filled in by a default rather than read: a blank classification is
+ * stored as W-2, a blank employment type as full time, and an hourly rate with no hours is turned
+ * into a year's pay at full-time hours. A row lists which of its values came that way in `assumed`,
+ * so nothing downstream presents them as answers. Rows saved before this list existed have none.
+ */
+export const CENSUS_ASSUMABLE = ["classification", "employment_type", "annual_salary"] as const;
+export type CensusAssumable = (typeof CENSUS_ASSUMABLE)[number];
+
 /** The most people an intake holds; the database refuses a longer census. */
 export const MAX_CENSUS_ROWS = 5000;
 /** The most dependents one person holds; the database refuses more. */
@@ -48,6 +57,8 @@ export interface CensusEmployee {
   class_code?: string; // Workers' comp 4-digit code if present
   /** Dependents the prospect named in conversation. Not read from documents. */
   dependents?: CensusDependent[];
+  /** The facts whose values are defaults, not answers (see CENSUS_ASSUMABLE). Absent when none are. */
+  assumed?: CensusAssumable[];
 }
 
 export const COVERAGE_TIER_LABELS: Record<CoverageTier, string> = {
@@ -302,20 +313,30 @@ export function normalizeCensusRow(raw: unknown, now: Date = new Date()): Omit<C
   const classification = normalizeClassification(raw.classification);
   if (classification === null) return null;
 
+  // A row saved earlier keeps the defaults it recorded, as long as the value is still the default.
+  const recorded = new Set(Array.isArray(raw.assumed) ? raw.assumed.filter((a): a is CensusAssumable => (CENSUS_ASSUMABLE as readonly unknown[]).includes(a)) : []);
+  const assumed = new Set<CensusAssumable>();
+
   const hourlyRate = parseMoney(raw.hourly_rate);
-  const employment_type =
-    normalizeEmploymentType(raw.employment_type) ?? employmentTypeFromHours(raw.hours_per_week) ?? "full_time";
+  const statedEmployment = normalizeEmploymentType(raw.employment_type) ?? employmentTypeFromHours(raw.hours_per_week);
+  const employment_type = statedEmployment ?? "full_time";
+  if (statedEmployment === undefined || (recorded.has("employment_type") && employment_type === "full_time")) assumed.add("employment_type");
   let annual_salary = normalizeAnnualSalary(raw.annual_salary ?? raw.salary);
   const compensation_type =
     normalizeCompensationType(raw.compensation_type) ?? (hourlyRate !== undefined && annual_salary === undefined ? "hourly" : "salary");
   if (annual_salary === undefined && hourlyRate !== undefined) {
     // An hourly rate becomes a year's pay at the stated hours, or at full time when unstated.
     const hours = Number(raw.hours_per_week);
-    const yearly = Number.isFinite(hours) && hours > 0 && hours <= 168
+    const statedHours = Number.isFinite(hours) && hours > 0 && hours <= 168;
+    const yearly = statedHours
       ? hourlyRate * hours * 52
       : employment_type === "full_time" ? hourlyRate * HOURS_PER_YEAR_FULL_TIME : undefined;
     annual_salary = yearly === undefined ? undefined : normalizeAnnualSalary(yearly);
+    if (annual_salary !== undefined && !statedHours) assumed.add("annual_salary");
+  } else if (annual_salary !== undefined && recorded.has("annual_salary")) {
+    assumed.add("annual_salary");
   }
+  if (classification === undefined || (recorded.has("classification") && classification === "w2")) assumed.add("classification");
 
   const row: Omit<CensusEmployee, "id"> & { id?: string } = {
     first_name,
@@ -341,6 +362,7 @@ export function normalizeCensusRow(raw: unknown, now: Date = new Date()): Omit<C
   if (classCode) row.class_code = classCode;
   const dependents = normalizeDependents(raw.dependents, now);
   if (dependents.length > 0) row.dependents = dependents;
+  if (assumed.size > 0) row.assumed = CENSUS_ASSUMABLE.filter((a) => assumed.has(a));
   return row;
 }
 
@@ -398,6 +420,14 @@ export function censusRowId(seed: string): string {
 // ---------- Underwriting view ----------
 
 export const isW2 = (e: Pick<CensusEmployee, "classification">) => e.classification === "w2";
+
+/** Whether a row's value for `fact` is a default rather than an answer. */
+export const isAssumed = (e: Pick<CensusEmployee, "assumed">, fact: string): boolean =>
+  (e.assumed as readonly string[] | undefined)?.includes(fact) ?? false;
+
+/** "W-2", "1099", or "Not provided" when the classification is only the default. */
+export const classificationLabel = (e: Pick<CensusEmployee, "classification" | "assumed">): string =>
+  isAssumed(e, "classification") ? "Not provided" : e.classification === "1099" ? "1099" : "W-2";
 
 export type CensusGap = "date of birth or age" | "work state" | "job title" | "annual salary";
 

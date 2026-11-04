@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { selectAdapter } from "../_shared/ai/providers";
 import type { AllowanceResult, Refusal } from "../_shared/ai/allowance";
-import { AiQuotaError, AiUnavailableError, askForCandidates, askWithinBudget, DOCUMENT_MAX_TOKENS, DOCUMENT_TIMEOUT_MS, refusalError, retryLater, type AskDeps } from "./ask";
+import { AiCallError, AiQuotaError, AiUnavailableError, askForCandidates, askWithinBudget, DOCUMENT_MAX_TOKENS, DOCUMENT_TIMEOUT_MS, refusalError, retryLater, type AskDeps } from "./ask";
 import { buildPromptText, DOCUMENT_FIELDS, type TextSection } from "./parse";
 import { REPORT_TOOL, SYSTEM_PROMPT } from "./schema";
 
@@ -107,7 +107,7 @@ describe("askForCandidates: when the provider fails", () => {
   it("treats a persistent provider rate limit like our own: the document stays ready to read later", async () => {
     const t = setup({ responses: [providerError(429), providerError(429)] });
     await expect(askForCandidates(sections, t.deps)).rejects.toBeInstanceOf(AiQuotaError);
-    expect(t.logs).toEqual(["AI_CALL_FAILED request=req-doc provider=lovable kind=rate_limited status=429 attempts=2 latency_ms=0"]);
+    expect(t.logs).toEqual(["AI_CALL_FAILED request=req-doc session=- provider=lovable kind=rate_limited status=429 attempts=2 latency_ms=0"]);
   });
 
   it("fails with a generic error, and neither logs nor throws the provider's body, which can echo the document", async () => {
@@ -117,20 +117,24 @@ describe("askForCandidates: when the provider fails", () => {
     expect(failure).toBeInstanceOf(Error);
     expect(failure).not.toBeInstanceOf(AiQuotaError);
     expect((failure as Error).message).toBe("AI extraction failed");
-    expect(t.logs).toEqual(["AI_CALL_FAILED request=req-doc provider=lovable kind=provider_error status=500 attempts=2 latency_ms=0"]);
+    expect(t.logs).toEqual(["AI_CALL_FAILED request=req-doc session=- provider=lovable kind=provider_error status=500 attempts=2 latency_ms=0"]);
     expect(t.logs.join("\n") + (failure as Error).message).not.toContain(leak);
   });
 
   it("does not retry when the provider's credits are exhausted", async () => {
     const t = setup({ responses: [providerError(402)] });
-    await expect(askForCandidates(sections, t.deps)).rejects.toThrow("AI extraction failed");
+    const failure = await askForCandidates(sections, t.deps).catch((e) => e);
+    expect(failure).toBeInstanceOf(AiCallError);
+    expect(failure.code).toBe("unavailable");
     expect(t.fetchFn).toHaveBeenCalledTimes(1);
     expect(t.logs[0]).toContain("kind=credits");
   });
 
   it("fails when the model's arguments aren't what the tool asked for", async () => {
     const t = setup({ responses: [new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: "[1,2]" } }] } }] }), { status: 200 })] });
-    await expect(askForCandidates(sections, t.deps)).rejects.toThrow("AI extraction failed");
+    const failure = await askForCandidates(sections, t.deps).catch((e) => e);
+    expect(failure).toBeInstanceOf(AiCallError);
+    expect(failure.code).toBe("invalid_response");
     expect(t.logs[0]).toContain("kind=invalid_response");
   });
 
@@ -162,7 +166,8 @@ describe("askForCandidates: when the provider fails", () => {
   });
 });
 
-const refusal = (status: 429 | 503, reason: Refusal["reason"], error = "refused"): Refusal => ({ allowed: false, status, error, reason });
+const refusal = (status: 429 | 503, reason: Refusal["reason"], error = "refused"): Refusal =>
+  ({ allowed: false, status, error, reason, code: status === 429 ? "rate_limited" : reason === "global_ceiling" ? "daily_cap" : "unavailable" });
 
 describe("refusalError", () => {
   it("treats a rate limit as the retry-later case a provider rate limit already is", () => {
@@ -175,6 +180,8 @@ describe("refusalError", () => {
     expect(error).toBeInstanceOf(AiUnavailableError);
     expect(error).not.toBeInstanceOf(AiQuotaError);
     expect(error.message).toBe("Lenore is resting for the day.");
+    expect((error as AiUnavailableError).code).toBe("daily_cap");
+    expect((refusalError(refusal(503, "config_missing")) as AiUnavailableError).code).toBe("unavailable");
     expect(refusalError(refusal(503, "config_missing"))).toBeInstanceOf(AiUnavailableError);
     expect(refusalError(refusal(503, "budget_unavailable"))).toBeInstanceOf(AiUnavailableError);
   });
@@ -182,11 +189,12 @@ describe("refusalError", () => {
 
 describe("retryLater", () => {
   it("answers a rate limit with a 429 so the document can be read again", () => {
-    expect(retryLater(new AiQuotaError())).toEqual({ status: 429, message: "Rate limited, please try again shortly." });
+    expect(retryLater(new AiQuotaError())).toEqual({ status: 429, code: "rate_limited", message: "Rate limited, please try again shortly." });
   });
 
   it("answers an unavailable AI with a 503 and the reason it was given", () => {
-    expect(retryLater(new AiUnavailableError("Lenore is resting for the day."))).toEqual({ status: 503, message: "Lenore is resting for the day." });
+    expect(retryLater(new AiUnavailableError("Lenore is resting for the day.", "daily_cap"))).toEqual({ status: 503, code: "daily_cap", message: "Lenore is resting for the day." });
+    expect(retryLater(new AiUnavailableError("Lenore is unavailable right now."))).toMatchObject({ status: 503, code: "unavailable" });
   });
 
   it("leaves every other error to mark the document failed", () => {

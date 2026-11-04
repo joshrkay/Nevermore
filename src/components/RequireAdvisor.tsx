@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation } from "react-router-dom";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchIsAdvisor } from "@/lib/advisorApi";
+import { reportOpsEvent } from "@/lib/monitoring";
 
 type Access = "checking" | "allowed" | "denied" | "error" | "ended";
 
@@ -23,7 +24,12 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
     let cancelled = false;
     setAccess("checking");
     fetchIsAdvisor()
-      .then((ok) => !cancelled && setAccess(ok ? "allowed" : "denied"))
+      .then((ok) => {
+        if (cancelled) return;
+        setAccess(ok ? "allowed" : "denied");
+        // A signed-in account that isn't an advisor reaching an advisor page.
+        if (!ok) reportOpsEvent("auth_denied", { code: "advisor_route" });
+      })
       .catch((err: { unauthenticated?: boolean }) => {
         if (cancelled) return;
         // The server won't accept this session, so a retry can't help: end it, and the redirect

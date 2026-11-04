@@ -220,3 +220,51 @@ BEGIN
 END $$;
 
 RESET ROLE;
+
+-- ---------- A row points into its own intake's folder (20261103110100_document_storage_path.sql) ----------
+
+-- The rows above use made-up paths; clear them so the migration has nothing to report.
+DELETE FROM public.documents;
+\i supabase/migrations/20261103110100_document_storage_path.sql
+
+SET ROLE authenticated;
+
+DO $$
+DECLARE
+  r ids%ROWTYPE;
+  bad text;
+  n int;
+BEGIN
+  SELECT * INTO r FROM ids;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', r.a)::text, false);
+
+  -- The path the browser uses is accepted.
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path)
+    VALUES (r.a, r.a1, 'census.csv', '1 KB', r.a || '/' || r.a1 || '/0b9f_census.csv');
+
+  -- Another user's file, another of A's own intakes, A's bare folder, a nested folder, a path that
+  -- climbs out, an empty file name, a path that only contains the folder, and no folder at all.
+  FOREACH bad IN ARRAY ARRAY[
+    r.b || '/' || r.b1 || '/victim.csv',
+    r.a || '/' || r.a2 || '/x.csv',
+    r.a || '/x.csv',
+    r.a || '/' || r.a1 || '/sub/x.csv',
+    r.a || '/' || r.a1 || '/..',
+    r.a || '/' || r.a1 || '/',
+    'prefix/' || r.a || '/' || r.a1 || '/x.csv',
+    'p'
+  ] LOOP
+    BEGIN
+      INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path)
+        VALUES (r.a, r.a1, 'x.csv', '1 B', bad);
+      RAISE EXCEPTION 'FAIL: a row pointing at % was accepted', bad;
+    EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  END LOOP;
+
+  SELECT count(*) INTO n FROM public.documents;
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: expected only the well-formed row, found % rows', n; END IF;
+
+  RAISE NOTICE 'session_documents: storage path checks passed';
+END $$;
+
+RESET ROLE;

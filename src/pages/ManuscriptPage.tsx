@@ -12,7 +12,9 @@ import { buildManuscript, fileIdForSession, manuscriptFilename, maskDob, NOT_PRO
 import { describeSource, parseProvenance, STATUS_LABELS, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
+import { finalManuscriptUrl } from "@/lib/advisorApi";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
+import LegalLinks from "@/components/LegalLinks";
 
 const SAMPLE_FILE_ID = "EAA-SAMPLE";
 
@@ -25,7 +27,13 @@ const STATUS_MARKER_CLASS: Record<FieldProvenance["status"], string> = {
   inferred: "bg-warning/15 text-warning",
   incomplete: "bg-warning/15 text-warning",
   conflicting: "bg-destructive/15 text-destructive",
+  unknown: "bg-warning/15 text-warning",
+  not_applicable: "bg-muted text-muted-foreground",
 };
+
+// Unknown and not applicable hold no answer, but say more than "Not provided" does.
+const showsStatus = (value: string, provenance?: FieldProvenance): provenance is FieldProvenance =>
+  Boolean(provenance) && (value !== NOT_PROVIDED || provenance!.status === "unknown" || provenance!.status === "not_applicable");
 
 // Shows whether a value was confirmed or only inferred, and where it came from.
 const DataRow = ({ label, value, provenance }: { label: string; value: string; provenance?: FieldProvenance }) => (
@@ -34,14 +42,14 @@ const DataRow = ({ label, value, provenance }: { label: string; value: string; p
       <span className="text-muted-foreground text-sm">{label}</span>
       <span className="font-mono text-sm text-foreground text-right">
         {value}
-        {provenance && value !== NOT_PROVIDED && (
+        {showsStatus(value, provenance) && (
           <span className={`ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded-full ${STATUS_MARKER_CLASS[provenance.status]}`}>
             {STATUS_LABELS[provenance.status]}
           </span>
         )}
       </span>
     </div>
-    {provenance && value !== NOT_PROVIDED && (
+    {showsStatus(value, provenance) && (
       <p className="text-[11px] text-muted-foreground text-right mt-0.5">{describeSource(provenance.source)}</p>
     )}
   </div>
@@ -179,11 +187,8 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
     setOpeningFinal(true);
     try {
       // A link that works for a minute, issued only to this intake's owner (storage checks it).
-      const { data, error } = await supabase.storage
-        .from("manuscripts")
-        .createSignedUrl(finalVersion.storage_path, 60, { download: manuscriptFilename(`${d.fileId}-v${finalVersion.version}`, d.companyName) });
-      if (error || !data) throw error ?? new Error("No link");
-      window.location.assign(data.signedUrl);
+      const filename = manuscriptFilename(`${d.fileId}-v${finalVersion.version}`, d.companyName);
+      window.location.assign(await finalManuscriptUrl(finalVersion.storage_path, filename));
     } catch (err) {
       console.error("Failed to open the final manuscript:", err);
       toast.error("We couldn't download the final Manuscript. Please try again.");
@@ -210,6 +215,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to="/start" className="text-primary underline hover:text-primary/90">
             Go to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -225,6 +231,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
             Back to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -241,6 +248,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to="/start" className="text-primary underline hover:text-primary/90">
             Go to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -257,6 +265,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
             Back to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -270,6 +279,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to={user ? "/start" : "/login"} className="text-primary underline hover:text-primary/90">
             {user ? "Go to The Chamber" : "Sign in"}
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -366,9 +376,17 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           </div>
         </section>
 
+        {/* Section 2 — Payroll & Time */}
+        <section>
+          <SectionHeader>2 — Payroll &amp; Time</SectionHeader>
+          <div className="bg-card border border-border rounded-xl p-6">
+            {renderRows(d.payrollRows, d.provenance)}
+          </div>
+        </section>
+
         {/* Section 2 — Workforce Summary */}
         <section>
-          <SectionHeader>2 — Workforce Summary</SectionHeader>
+          <SectionHeader>3 — Workforce Summary</SectionHeader>
           <div className="grid md:grid-cols-2 gap-6">
             <div className="bg-card border border-border rounded-xl p-6">
               {renderRows(d.workforceRows, d.provenance)}
@@ -397,7 +415,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 3 — Employee Census */}
         <section>
-          <SectionHeader>3 — Employee Census</SectionHeader>
+          <SectionHeader>4 — Employee Census</SectionHeader>
           {d.census.length === 0 ? (
             <div className="bg-card border border-border rounded-xl p-6 text-sm text-muted-foreground">
               No employee census captured yet.
@@ -440,7 +458,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 4 — Dependent Summary */}
         <section>
-          <SectionHeader>4 — Dependent Summary</SectionHeader>
+          <SectionHeader>5 — Dependent Summary</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6">
             <table className="w-full text-sm">
               <thead><tr className="text-muted-foreground text-left border-b border-border"><th className="pb-2">Tier</th><th className="pb-2 text-right">Employees</th><th className="pb-2 text-right">%</th></tr></thead>
@@ -465,7 +483,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 5 — Benefits */}
         <section>
-          <SectionHeader>5 — Current Benefits</SectionHeader>
+          <SectionHeader>6 — Current Benefits</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6">
             {renderRows(d.benefitsRows, d.provenance)}
           </div>
@@ -473,7 +491,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 6 — Status */}
         <section>
-          <SectionHeader>6 — Underwriting Readiness</SectionHeader>
+          <SectionHeader>7 — Underwriting Readiness</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6 space-y-3">
             <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">Confirmed</p>
             {d.resolved.length === 0 && <p className="text-sm text-muted-foreground">Nothing confirmed yet.</p>}
@@ -573,6 +591,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             <ArrowLeft className="w-5 h-5" /> {isSample ? "Start Yours" : "Back to Review"}
           </Link>
         </div>
+
+        {/* The site's legal links: part of the page, not the packet (the PDF is built separately). */}
+        <LegalLinks className="text-center pb-8" />
       </div>
     </div>
   );

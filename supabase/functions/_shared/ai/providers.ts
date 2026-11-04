@@ -16,6 +16,7 @@ interface AdapterOptions {
 export function createLovableAdapter(opts: AdapterOptions): ProviderAdapter {
   return {
     name: "lovable",
+    model: opts.model,
     buildRequest: ({ system, user }) => ({
       url: "https://ai.gateway.lovable.dev/v1/chat/completions",
       headers: { Authorization: `Bearer ${opts.apiKey}`, "Content-Type": "application/json" },
@@ -44,6 +45,7 @@ const DEFAULT_MAX_TOKENS = 1024;
 export function createAnthropicAdapter(opts: AdapterOptions & { maxTokens?: number }): ProviderAdapter {
   return {
     name: "anthropic",
+    model: opts.model,
     buildRequest: ({ system, user }) => ({
       url: "https://api.anthropic.com/v1/messages",
       headers: { "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
