@@ -193,6 +193,10 @@ export function describeInvalidPath(path: string | null | undefined): string {
 // One answer as a string, to tell whether it is still the one an advisor verified.
 const answerOf = (data: ChamberData, field: string) => JSON.stringify((data as unknown as Record<string, unknown>)[field]);
 
+// One answer of a saved row, exactly as stored.
+const storedAnswer = (stored: unknown, field: string) =>
+  typeof stored === "object" && stored !== null ? (stored as Record<string, unknown>)[field] : undefined;
+
 // jsonb doesn't keep key order, so a saved row can only be compared with what was sent by value.
 function sameJson(a: unknown, b: unknown): boolean {
   if (a === b) return true;
@@ -287,7 +291,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // The fields an advisor verified, each with the answer it covers (as loaded). Kept with the intake they belong
   // to, so another intake on screen never shows them. See readVerified and forgetChangedVerifications.
   const [verified, setVerified] = useState<{ sessionId: string; answers: Record<string, string> } | null>(null);
-  const verifiedReadRef = useRef(0);
+  // The read still on its way (a later read replaces it, which is what supersedes it): the answers it was started
+  // against and the fields that have differed from them since, for good, even if the old answer was written back.
+  const pendingVerifiedRead = useRef<{ loaded: ChamberData; changed: Set<string> } | null>(null);
   // Changes whenever the conversation on screen is replaced by a blank one (start over, another person
   // signing in), so a reply or a voice line meant for the old conversation is never added to the new one.
   const [conversationEpoch, setConversationEpoch] = useState(0);
@@ -433,6 +439,15 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // the next read; and the set is read again whenever a row is loaded (opening the intake, Load latest, Discard),
   // which is also what brings back a verification the server still holds after a local edit is discarded.
   const forgetChangedVerifications = useCallback((next: ChamberData) => {
+    const pending = pendingVerifiedRead.current;
+    if (pending) {
+      const now = next as unknown as Record<string, unknown>;
+      const loaded = pending.loaded as unknown as Record<string, unknown>;
+      for (const field of Object.keys(next)) {
+        // Most answers are the very value that was loaded, so only the others are compared by content.
+        if (now[field] !== loaded[field] && answerOf(next, field) !== answerOf(pending.loaded, field)) pending.changed.add(field);
+      }
+    }
     setVerified((current) => {
       if (!current) return current;
       const kept = Object.entries(current.answers).filter(([field, answer]) => answerOf(next, field) === answer);
@@ -440,18 +455,32 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     });
   }, []);
 
+  // Keeping the prospect's answers over a row another tab saved: a verification survives only where that row still
+  // holds the answer on screen. Where the other tab changed it, the server reset the review, and writing the same
+  // answer back doesn't restore it.
+  const keepVerificationsThatStillHold = useCallback((saved: unknown) => {
+    setVerified((current) => {
+      if (!current) return current;
+      const onScreen = dataRef.current as unknown as Record<string, unknown>;
+      const kept = Object.entries(current.answers).filter(([field]) => sameJson(storedAnswer(saved, field), onScreen[field]));
+      return kept.length === Object.keys(current.answers).length ? current : { ...current, answers: Object.fromEntries(kept) };
+    });
+  }, []);
+
   const readVerified = useCallback((id: string, loaded: ChamberData, stored: unknown) => {
-    const read = ++verifiedReadRef.current;
+    const pending = { loaded, changed: new Set<string>() };
+    pendingVerifiedRead.current = pending;
     void readVerifiedFields(id).then((fields) => {
-      if (read !== verifiedReadRef.current) return; // a later read supersedes this one
+      if (pendingVerifiedRead.current !== pending) return; // a later read supersedes this one
+      pendingVerifiedRead.current = null;
       if (fields === null) return; // couldn't be read: keep what is known rather than show nothing as verified
-      const storedAnswer = (field: string) => (typeof stored === "object" && stored !== null ? (stored as Record<string, unknown>)[field] : undefined);
       const covered = [...fields].filter((field) =>
         // The saved answer must be the loaded one: the first save writes the cleaned form of an older row (a roster
         // without ids, a headcount saved as text, one keyed `employees`), and the server resets that review.
-        sameJson(storedAnswer(field), (loaded as unknown as Record<string, unknown>)[field])
-        // And nothing may have changed it while the read was on its way.
-        && answerOf(dataRef.current, field) === answerOf(loaded, field));
+        sameJson(storedAnswer(stored, field), (loaded as unknown as Record<string, unknown>)[field])
+        // And nothing may have changed it while the read was on its way, even if it was changed back: the server
+        // reset that review at the first change.
+        && !pending.changed.has(field));
       setVerified({ sessionId: id, answers: Object.fromEntries(covered.map((field) => [field, answerOf(loaded, field)])) });
     });
   }, []);
@@ -1102,6 +1131,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     if (!row) return;
     // Save over what the other tab saved. If it has moved on again meanwhile, this conflicts again.
     versionRef.current = row.data_version;
+    keepVerificationsThatStillHold(row.chamber_data);
     settleOutcome();
     // The other tab may have withdrawn the certification, and saving different answers over a certified row
     // withdraws it too, so show what the server will hold once this save lands.
@@ -1112,7 +1142,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     dirtyRef.current = true;
     report("saving");
     void flush();
-  }, [clearBlock, flush, report, settleOutcome]);
+  }, [clearBlock, flush, keepVerificationsThatStillHold, report, settleOutcome]);
 
   const discardChanges = useCallback(() => {
     stopTimer();

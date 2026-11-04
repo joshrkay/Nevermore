@@ -11,7 +11,8 @@ import { parseChamberData } from "@/data/chamberValidation";
 import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
 import { describeSource, parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
-import { fetchVerifiedFields } from "@/lib/verifiedFields";
+import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
+import { readVerifiedFields } from "@/lib/verifiedFields";
 import { downloadBlob } from "@/lib/downloadFile";
 import { finalManuscriptUrl } from "@/lib/advisorApi";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
@@ -168,8 +169,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           setState({ kind: "recertify", sessionId: data.id });
           return;
         }
-        // What an advisor has verified since is settled, so it is no open item (never an error if unreadable).
-        const verified = await fetchVerifiedFields(data.id);
+        // What an advisor has verified since is settled, so it is no open item. When it can't be read, nothing is
+        // taken as verified: a field only stays on the prospect's list a little longer.
+        const verified = (await readVerifiedFields(data.id)) ?? NO_VERIFIED_FIELDS;
         if (cancelled) return;
         setState({
           kind: "ready",
