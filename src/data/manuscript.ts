@@ -2,8 +2,9 @@ import type { ChamberData } from "./chamberTypes";
 import { classificationLabel, COVERAGE_TIER_LABELS, isAssumed, isW2, type CensusEmployee } from "./census";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
-import { fieldOpenItems, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
-import { NO_VERIFIED_FIELDS, requiredItems } from "./requiredItems";
+import { type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
+import { NO_VERIFIED_FIELDS } from "./requiredItems";
+import { describeOpenItem, openItems } from "./openItems";
 
 /** Signed attestation stored on chamber_sessions.submission. */
 export interface ChamberSubmission {
@@ -384,12 +385,12 @@ export function buildManuscript(
   if (unknownTier > 0) unstatedItems.push(`Coverage tier — not provided for ${counted(unknownTier, w2.length, "employees")}`);
 
   const checks = eligibilityChecks(data);
+  // The intake's open items, the one list Review and the advisor queue use too (src/data/openItems.ts): the answers
+  // certification requires (always present on a certified packet), the census, then fields by status, less any an
+  // advisor verified.
   const provenance = opts.provenance ?? {};
   const verified = opts.verified ?? NO_VERIFIED_FIELDS;
-  // The answers certification requires (always present on a certified packet), then the recommended
-  // census: readiness's items, as requiredItems reads them.
-  const missingCore = requiredItems(data, provenance, verified).flatMap((i) => (i.state === "missing" ? [`${i.label} — not provided`] : []));
-  const fieldItems = fieldOpenItems(provenance, verified).map((i) => `${i.label} — ${i.reason.toLowerCase()}`);
+  const intakeItems = openItems(data, provenance, verified).map(describeOpenItem);
   const flags = data.census.flatMap((e) => {
     const flag = employeeFlag(e);
     return flag ? [`${e.first_name} ${e.last_name}: ${flag}`] : [];
@@ -458,9 +459,8 @@ export function buildManuscript(
     ],
     resolved: checks.filter((c) => c.status === "pass").map((c) => c.label),
     open: [
-      ...missingCore,
+      ...intakeItems,
       ...unstatedItems,
-      ...fieldItems,
       ...checks.filter((c) => c.status === "fail").map((c) => `${c.label} — not met`),
       ...checks.filter((c) => c.status === "unknown").map((c) => `${c.label} — not yet verified`),
       ...flags,

@@ -14,12 +14,12 @@ import { recordAiEvent, type AiEvent, type EventWriter } from "../_shared/ai/eve
 import { callModel, failureLogLine, failureResponse, unexpectedErrorLine } from "../_shared/ai/model.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
 import { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES } from "../_shared/chatContext.ts";
-import { FIELD_STATUSES as CONTEXT_STATUSES } from "../_shared/followUp.ts";
+import { FIELD_STATUSES as CONTEXT_STATUSES, type CensusSummary } from "../_shared/followUp.ts";
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactSensitive } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
-import { buildUserPrompt, NEXT_FIELDS, serializeTurn } from "./prompt.ts";
-import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
+import { buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn } from "./prompt.ts";
+import { CHAT_MAX_TOKENS, EXTRACT_TOOL, FIELD_QUESTION, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -49,6 +49,15 @@ function readRecent(raw: unknown): { ok: true; messages: { sender: "user" | "len
     messages.push({ sender: m.sender, text: redactSensitive(m.text) });
   }
   return { ok: true, messages };
+}
+
+/** What the browser says of the census (never its rows), or why it isn't acceptable. */
+function readCensus(raw: unknown): { ok: true; census: CensusSummary } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true, census: { rows: 0, workStates: false } };
+  if (!isObject(raw) || !Number.isInteger(raw.rows) || (raw.rows as number) < 0 || (raw.rows as number) > 5000 || typeof raw.work_states !== "boolean") {
+    return { ok: false, message: "census must be { rows, work_states }" };
+  }
+  return { ok: true, census: { rows: raw.rows as number, workStates: raw.work_states } };
 }
 
 /** Each field's status as sent, or why it isn't acceptable: known fields, known statuses. */
@@ -151,7 +160,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     } catch {
       return await fail(aiError("bad_request", { message: "The request body must be JSON." }));
     }
-    const { message, context, statuses: rawStatuses, recent: rawRecent, session_id: sessionId } = isObject(body) ? body : ({} as Record<string, unknown>);
+    const { message, context, statuses: rawStatuses, recent: rawRecent, census: rawCensus, session_id: sessionId } = isObject(body) ? body : ({} as Record<string, unknown>);
     if (typeof message !== "string" || !message.trim()) {
       return await fail(aiError("bad_request", { message: "message is required" }));
     }
@@ -165,8 +174,10 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (!statuses.ok) return await fail(aiError("bad_request", { message: statuses.message }));
     const recent = readRecent(rawRecent);
     if (!recent.ok) return await fail(aiError("bad_request", { message: recent.message }));
+    const census = readCensus(rawCensus);
+    if (!census.ok) return await fail(aiError("bad_request", { message: census.message }));
     // The same serialisation is measured here and sent to the model (prompt.ts, shared with the eval).
-    const turn = { context, statuses: statuses.statuses, recent: recent.messages };
+    const turn = { context, statuses: statuses.statuses, recent: recent.messages, census: census.census };
     const { contextJson, statusesJson, recentJson } = serializeTurn(turn);
     if (contextJson.length + statusesJson.length + recentJson.length > MAX_CONTEXT_CHARS) {
       return await fail(aiError("bad_request", { status: 413, message: "context too large" }));
@@ -208,6 +219,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (!budget.allowed) return await fail(aiError(budget.code, { status: budget.status, message: budget.error }));
 
     // 5. Ask the model, with the user turn built as the extraction eval builds it (prompt.ts).
+    const unsettled = unsettledForTurn(turn);
     const result = await callModel(
       chosen.adapter,
       { system: SYSTEM_PROMPT, user: buildUserPrompt({ message, ...turn }) },
@@ -226,6 +238,12 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     }
 
     const shaped = shapeExtraction(result.args);
+    // No reply of the model's own: ask about the next field this message didn't settle, or wrap up (US-2.3a).
+    if (!shaped.reply) {
+      const answered = new Set([...Object.keys(shaped.extracted), ...Object.keys(shaped.field_status)]);
+      const ask = unsettled.find((f) => !answered.has(f.key));
+      shaped.reply = ask ? `Thank you, I've noted that. ${FIELD_QUESTION[ask.key]}` : "Thank you. That is everything I need: you can review your intake on the Review tab.";
+    }
     event.fields = Object.keys(shaped.extracted);
     event.refusedPaths = shaped.rejected.map((issue) => issue.path);
     // Paths only: the refused values are the prospect's words.

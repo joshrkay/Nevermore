@@ -107,7 +107,9 @@ describe("runFixture", () => {
         ],
       }),
     );
-    expect(model.requests[1].user).not.toContain("census");
+    // The roster never leaves the browser: the answers carry no census, and the prompt says only that none is uploaded.
+    expect(model.requests[1].user).not.toContain('"census"');
+    expect(model.requests[1].user).toContain("Employee census: not uploaded");
     expect(run.error).toBeNull();
   });
 

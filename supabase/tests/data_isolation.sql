@@ -78,6 +78,7 @@
 \i supabase/migrations/20261104116000_intake_deletion_removes_document_history.sql
 \i supabase/migrations/20261104117000_certification_snapshots.sql
 \i supabase/migrations/20261104117100_alert_headcount_census.sql
+\i supabase/migrations/20261104118000_open_items.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
