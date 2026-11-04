@@ -208,8 +208,15 @@ they always ran in:
 
 | Was | Now |
 | --- | --- |
-| `20261027090000_outbox_operations.sql` | `20261027090001_outbox_operations.sql` |
-| `20261103110000_document_storage_path.sql` | `20261103110001_document_storage_path.sql` |
+| `20261027090000_outbox_operations.sql` | `20261027090100_outbox_operations.sql` |
+| `20261103110000_document_storage_path.sql` | `20261103110100_document_storage_path.sql` |
+
+Two fixes landed at once and briefly left a second copy of each renumbered file, as `20261027090001` and
+`20261103110001`; those copies were removed (applying `outbox_operations` twice fails on the column its first run adds).
+A project that recorded either number has run that file: record the kept number as applied and drop the
+stray one before pushing, for example
+`supabase migration repair --status applied 20261027090100 --linked` then
+`supabase migration repair --status reverted 20261027090001 --linked`, and likewise for `20261103110001`.
 
 A project pushed with the old names has the first file of each pair recorded under the shared number and
 the second never applied, along with everything after it. Before pushing again, list what is recorded:
@@ -218,7 +225,7 @@ the second never applied, along with everything after it. Before pushing again, 
 supabase migration list --linked
 ```
 
-- `20261027090001` and `20261103110001` show as not applied, and the project was only ever updated with
+- `20261027090100` and `20261103110100` show as not applied, and the project was only ever updated with
   `supabase db push` (this script): push. They run now, followed by everything the failed push left out.
 - Either was applied some other way (the SQL editor, for example): neither is safe to run twice, so mark
   it applied before pushing. `outbox_operations` ran if the index `public.outbox_events_status_created_idx`
@@ -226,8 +233,8 @@ supabase migration list --linked
   on `public.documents` checks `storage_path`.
 
   ```sh
-  supabase migration repair --status applied 20261027090001 --linked
-  supabase migration repair --status applied 20261103110001 --linked
+  supabase migration repair --status applied 20261027090100 --linked
+  supabase migration repair --status applied 20261103110100 --linked
   ```
 
 ## If a step fails
