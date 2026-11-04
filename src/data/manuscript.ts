@@ -3,6 +3,7 @@ import { classificationLabel, COVERAGE_TIER_LABELS, isAssumed, isW2, type Census
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
 import { verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
+import { isRequiredField } from "./readiness";
 import { NO_VERIFIED_FIELDS } from "./requiredItems";
 import { describeOpenItem, openItems } from "./openItems";
 
@@ -268,16 +269,18 @@ const counted = (n: number, of: number, what: string) => `${n} of ${of} ${what}`
 export type ManuscriptRow = [label: string, value: string, field?: FieldKey, alsoFrom?: readonly FieldKey[]];
 
 /**
- * The provenance the Manuscript shows: a field an advisor verified is settled, so it reads as confirmed
- * with no rival answers (as the advisor's packet shows it, applyAdvisorReview) rather than keeping a
- * "Conflicting" chip or an "unresolved" marker that points to an open item the list no longer has.
+ * The provenance the Manuscript shows: an answer an advisor verified that still needed the prospect reads as
+ * confirmed with no rival answers, rather than keeping a "Conflicting" chip or an "unresolved" marker that
+ * points to an open item the list no longer has (`verificationSettles` says which). A required answer in
+ * conflict stays one, as in Review, and unknown or not applicable fields keep their status; the advisor's own
+ * packet (`applyAdvisorReview`) settles every status.
  */
 function settleVerified(provenance: ProvenanceMap, verified: ReadonlySet<string>): ProvenanceMap {
   if (verified.size === 0) return provenance;
   const shown: ProvenanceMap = { ...provenance };
   for (const field of Object.keys(shown) as (keyof ProvenanceMap)[]) {
     const entry = shown[field];
-    if (entry && verified.has(field) && verificationSettles(entry.status)) shown[field] = { ...entry, status: "confirmed", candidates: undefined };
+    if (entry && verified.has(field) && verificationSettles(entry.status, isRequiredField(field))) shown[field] = { ...entry, status: "confirmed", candidates: undefined };
   }
   return shown;
 }

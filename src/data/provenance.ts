@@ -208,18 +208,22 @@ export function parseProvenance(raw: unknown): ProvenanceMap {
 /**
  * Whether an advisor's verification settles an answer in this status for what the prospect and the Manuscript
  * show: one that still needs the prospect (inferred, incomplete, in conflict). A confirmed answer is already
- * settled, and unknown or not applicable hold no answer. The open-items list, the required-items rule and the
- * advisor's packet settle every status instead, since none of them shows a badge for it.
+ * settled, and unknown or not applicable hold no answer, so they keep their status. A REQUIRED answer in conflict
+ * is never settled this way: certification (D26, EA008) reads the field's status, not the advisor's review, so
+ * it still blocks and the prospect still has to choose one answer. The open-items list, the required-items rule
+ * and the advisor's own packet (`applyAdvisorReview`) settle every status instead.
  */
-export const verificationSettles = (status: FieldStatus | undefined): boolean =>
-  status === "inferred" || status === "incomplete" || status === "conflicting";
+export const verificationSettles = (status: FieldStatus | undefined, required = false): boolean =>
+  status === "inferred" || status === "incomplete" || (status === "conflicting" && !required);
 
 /**
- * The also-heard notes worth showing: those that aren't already one of a conflict's rival answers, which the
- * prospect and the advisor see in the candidate list.
+ * The also-heard notes worth showing: those that aren't already one of a conflict's rival answers, when those
+ * are listed beside them. `candidatesShown` is false where the rival answers are hidden (a conflict an advisor
+ * verified), so a note repeating one still has somewhere to be seen.
  */
-export function visibleAlsoHeard(entry: FieldProvenance): FieldCandidate[] {
-  return (entry.also_heard ?? []).filter((heard) => !entry.candidates?.some((c) => same(c.value, heard.value)));
+export function visibleAlsoHeard(entry: FieldProvenance, candidatesShown = true): FieldCandidate[] {
+  const notes = entry.also_heard ?? [];
+  return candidatesShown ? notes.filter((heard) => !entry.candidates?.some((c) => same(c.value, heard.value))) : notes;
 }
 
 // ---------- Merging extractions ----------

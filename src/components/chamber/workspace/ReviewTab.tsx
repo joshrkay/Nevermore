@@ -71,9 +71,10 @@ function rowsBySection(data: ChamberData): Record<ReviewSection, Row[]> {
 }
 
 /** How many of a section's answers are settled (an answer, or "Doesn't apply" or "Not known yet"), of how many. */
-function sectionProgress(section: ReviewSection, data: ChamberData, provenance: ProvenanceMap): { settled: number; total: number } {
+function sectionProgress(section: ReviewSection, data: ChamberData, provenance: ProvenanceMap, verified: ReadonlySet<string>): { settled: number; total: number } {
   const fields = REVIEW_FIELDS[section];
-  const settled = fields.filter((f) => isSettled(data[f], provenance[f]?.status)).length;
+  // An answer an advisor verified is settled whatever its status, as everywhere else.
+  const settled = fields.filter((f) => verified.has(f) || isSettled(data[f], provenance[f]?.status)).length;
   // The census counts in Workforce, settled once one is uploaded.
   return section === "workforce"
     ? { settled: settled + (data.census.length > 0 ? 1 : 0), total: fields.length + 1 }
@@ -268,7 +269,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
       </div>
 
       {SECTIONS.map(({ key, title }) => (
-        <Section key={key} section={key} title={title} progress={sectionProgress(key, data, provenance)}>
+        <Section key={key} section={key} title={title} progress={sectionProgress(key, data, provenance, verified)}>
           {renderRows(rows[key])}
 
           {key === "workforce" && (

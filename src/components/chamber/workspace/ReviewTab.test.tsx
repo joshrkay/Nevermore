@@ -180,6 +180,19 @@ describe("ReviewTab sections", () => {
     expect(section("Benefits")).toHaveTextContent("Retirement planNo");
   });
 
+  it("counts an answer an advisor verified as settled in its section's progress", () => {
+    const incomplete: ProvenanceMap = {
+      pay_frequency: { status: "incomplete", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-04T00:00:00Z" },
+    };
+    const settledInPayroll = (verified: string[]) => {
+      const { unmount } = render(<ReviewTab data={complete} provenance={incomplete} verified={new Set(verified)} onAction={() => {}} onProceed={() => {}} />);
+      const settled = Number(/^(\d+) of/.exec(screen.getByTestId("progress-payroll").textContent ?? "")?.[1]);
+      unmount();
+      return settled;
+    };
+    expect(settledInPayroll(["pay_frequency"])).toBe(settledInPayroll([]) + 1);
+  });
+
   it("lists every answer in the intake schema, each with its badge, and says how much of each section is settled (D28)", () => {
     const fields = Object.keys(FIELD_LABELS).filter((f) => f !== "census") as FieldKey[];
     expect(Object.values(REVIEW_FIELDS).flat().sort()).toEqual([...fields].sort());

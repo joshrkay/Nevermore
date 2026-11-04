@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database, Json } from "@/integrations/supabase/types";
 import { useAuth } from "@/hooks/useAuth";
@@ -92,8 +92,8 @@ interface UseChamberSessionReturn {
   /** Status and source of each captured field. */
   provenance: ProvenanceMap;
   /**
-   * The fields an advisor verified on this intake, read once when it is opened. Settled whatever their
-   * status; empty for a new intake, or when they couldn't be read.
+   * The fields an advisor verified on this intake whose answer is still the one they saw, read whenever a row
+   * is loaded. Settled whatever their status; empty for a new intake, or when they couldn't be read.
    */
   verifiedFields: ReadonlySet<string>;
   messages: ChatMessage[];
@@ -184,6 +184,9 @@ export function describeInvalidPath(path: string | null | undefined): string {
   return root && root in FIELD_LABELS ? FIELD_LABELS[root as keyof typeof FIELD_LABELS] : "Some of your answers";
 }
 
+// One answer as a string, to tell whether it is still the one an advisor verified.
+const answerOf = (data: ChamberData, field: string) => JSON.stringify((data as unknown as Record<string, unknown>)[field]);
+
 // jsonb doesn't keep key order, so a saved row can only be compared with what was sent by value.
 function sameJson(a: unknown, b: unknown): boolean {
   if (a === b) return true;
@@ -268,8 +271,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [expired, setExpired] = useState<{ at: string | null } | null>(null);
   const [backupOffer, setBackupOffer] = useState<BackupOffer | null>(null);
   const [restoredThrough, setRestoredThrough] = useState<string | null>(null);
-  // Kept with the intake they belong to, so another intake on screen never shows them.
-  const [verified, setVerified] = useState<{ sessionId: string; fields: ReadonlySet<string> } | null>(null);
+  // The fields an advisor had verified when a row was loaded, with each one's answer as loaded. Kept with the
+  // intake they belong to, so another intake on screen never shows them.
+  const [verified, setVerified] = useState<{ sessionId: string; fields: ReadonlySet<string>; answers: Record<string, string> } | null>(null);
+  const verifiedReadRef = useRef(0);
   // Changes whenever the conversation on screen is replaced by a blank one (start over, another person
   // signing in), so a reply or a voice line meant for the old conversation is never added to the new one.
   const [conversationEpoch, setConversationEpoch] = useState(0);
@@ -409,6 +414,23 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     unconfirmedRef.current = current;
   }, []);
 
+  // An advisor's verification covers the answer the advisor saw, and the server resets it when that answer
+  // changes (chamber_sessions_reset_changed_reviews). So the set is read whenever a row is loaded and tied to the
+  // answers as loaded: a field shows as verified only while its answer on screen is still that one (see
+  // `verifiedFields` below). That covers an edit made before the read lands, another tab's change brought in by
+  // Load latest, and a discarded local edit whose verification the server still holds.
+  const readVerified = useCallback((id: string, loaded: ChamberData, stored: unknown) => {
+    const read = ++verifiedReadRef.current;
+    void fetchVerifiedFields(id).then((fields) => {
+      if (read !== verifiedReadRef.current) return; // a later read supersedes this one
+      // A roster saved before the census contract is keyed `employees`. The browser never writes that key back,
+      // so the first save of any edit drops it and the server resets that review: don't show it as verified.
+      const legacyRoster = typeof stored === "object" && stored !== null && "employees" in stored && !("census" in stored);
+      const covered = [...fields].filter((field) => !(legacyRoster && field === "census"));
+      setVerified({ sessionId: id, fields: new Set(covered), answers: Object.fromEntries(covered.map((field) => [field, answerOf(loaded, field)])) });
+    });
+  }, []);
+
   // Shows a loaded row exactly as the server has it. Never put the raw row in state: loading
   // rebuilds the answers in a stable key order, which the signature check depends on.
   const applyRow = useCallback((row: ServerRow) => {
@@ -422,6 +444,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     const loadedMessages = dedupeGreetings(parseTranscript(row.transcript));
     dataRef.current = loadedData;
     setChamberDataRaw(loadedData);
+    readVerified(row.id, loadedData, row.chamber_data);
     const loadedProvenance = parseProvenance(row.field_provenance);
     provenanceRef.current = loadedProvenance;
     setProvenanceRaw(loadedProvenance);
@@ -445,7 +468,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     sessionIdRef.current = row.id;
     setSessionId(row.id);
     setStartedAt(row.created_at);
-  }, [settleOutcome]);
+  }, [readVerified, settleOutcome]);
 
   const adoptVersion = useCallback((sid: string, version: unknown) => {
     if (sessionIdRef.current === sid) versionRef.current = typeof version === "number" ? version : null;
@@ -814,9 +837,6 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       const loaded = messagesRef.current;
       setRestoredThrough(loaded.some((m) => m.sender === "user") ? loaded[loaded.length - 1].id : null);
       offerBackup(data);
-      void fetchVerifiedFields(data.id).then((fields) => {
-        if (!cancelled) setVerified({ sessionId: data.id, fields });
-      });
       return "opened";
     };
 
@@ -1110,27 +1130,14 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     }
   }, []);
 
-  // The server resets an advisor's verification when the answer it covered changes
-  // (chamber_sessions_reset_changed_reviews), but the browser reads the set once, so it drops those fields
-  // itself: a changed answer never keeps a "Verified by your advisor" badge for what the advisor didn't see.
-  const forgetChangedVerifications = useCallback((prev: ChamberData, next: ChamberData) => {
-    setVerified((current) => {
-      if (!current) return current;
-      const answer = (data: ChamberData, field: string) => JSON.stringify((data as unknown as Record<string, unknown>)[field]);
-      const kept = [...current.fields].filter((field) => answer(prev, field) === answer(next, field));
-      return kept.length === current.fields.size ? current : { ...current, fields: new Set(kept) };
-    });
-  }, []);
-
   const setChamberData = useCallback((updater: ChamberData | ((prev: ChamberData) => ChamberData)) => {
     const prev = dataRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     dataRef.current = next;
     setChamberDataRaw(next);
-    forgetChangedVerifications(prev, next);
     withdrawIfChanged(prev, next);
     scheduleSave();
-  }, [forgetChangedVerifications, scheduleSave, withdrawIfChanged]);
+  }, [scheduleSave, withdrawIfChanged]);
 
   const updateIntake = useCallback((updater: (prev: IntakeState) => IntakeState) => {
     // Read and write through the refs so data and provenance never come from different renders.
@@ -1140,10 +1147,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     provenanceRef.current = next.provenance;
     setChamberDataRaw(next.data);
     setProvenanceRaw(next.provenance);
-    forgetChangedVerifications(prev, next.data);
     withdrawIfChanged(prev, next.data);
     scheduleSave();
-  }, [forgetChangedVerifications, scheduleSave, withdrawIfChanged]);
+  }, [scheduleSave, withdrawIfChanged]);
 
   const restoreBackup = useCallback(() => {
     const backup = backupRef.current;
@@ -1305,6 +1311,13 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         ? fileIdForSession(sessionId, new Date(startedAt))
         : null;
 
+  // The fields an advisor verified whose answer is still the one they saw. Derived from what is on screen, so an
+  // edit, another tab's change or a discarded edit moves it without a separate write path (see readVerified).
+  const verifiedFields = useMemo(() => {
+    if (!verified || verified.sessionId !== sessionId) return NO_VERIFIED_FIELDS;
+    return new Set([...verified.fields].filter((field) => answerOf(chamberData, field) === verified.answers[field]));
+  }, [verified, sessionId, chamberData]);
+
   return {
     sessionId,
     fileId,
@@ -1321,7 +1334,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     conversationEpoch,
     chamberData,
     provenance,
-    verifiedFields: verified && verified.sessionId === sessionId ? verified.fields : NO_VERIFIED_FIELDS,
+    verifiedFields,
     messages,
     isLoading,
     setChamberData,
