@@ -2,6 +2,8 @@
 // browser builds the context with chatContext, and chamber-extract refuses one past these limits. No imports,
 // so it runs under Deno and Vitest alike.
 
+/** The prospect's new message, typed or spoken. A longer one is refused; the browser cuts a spoken one to fit. */
+export const MAX_CHAT_MESSAGE_CHARS = 2000;
 /** The answers, their field statuses and the recent conversation together, as JSON. */
 export const MAX_CONTEXT_CHARS = 20000;
 /** How many earlier messages a call carries, and how long each may be. */

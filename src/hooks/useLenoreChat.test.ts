@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { FunctionsFetchError, FunctionsHttpError } from "@supabase/supabase-js";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import type { ChatMessage } from "@/data/chat";
 
 const invoke = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { functions: { invoke: (...args: unknown[]) => invoke(...args) } } }));
@@ -333,5 +334,173 @@ describe("useLenoreChat when the conversation is replaced", () => {
     rerender({ epoch: 0 });
     await act(async () => { await result.current.send("Hi"); });
     expect(addLenoreMessage).toHaveBeenCalledWith("Noted.");
+  });
+});
+
+// Something the prospect said in a voice call (US-2.3b, ADR 0001): the same call as a typed message, but Lenore has
+// already answered aloud, so no reply is added and the orb is the call's.
+describe("useLenoreChat: spoken messages", () => {
+  beforeEach(() => { invoke.mockReset(); });
+
+  const spokenMessage = (id: string, text: string) => ({ id, text });
+  const mount = (opts: { readIntake?: Parameters<typeof useLenoreChat>[0]["readIntake"] } = {}) => {
+    const addUserMessage = vi.fn((text: string) => ({ id: "typed", text }));
+    const addLenoreMessage = vi.fn();
+    const onExtracted = vi.fn();
+    const onOrbStateChange = vi.fn();
+    const hook = renderHook(({ epoch }) =>
+      useLenoreChat({
+        epoch, intakeId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", chamberData: { ...EMPTY_CHAMBER_DATA, company_name: "Acme" },
+        readIntake: opts.readIntake, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted,
+      }), { initialProps: { epoch: 0 } });
+    return { ...hook, addUserMessage, addLenoreMessage, onExtracted, onOrbStateChange };
+  };
+
+  it("takes its answers through chamber-extract like a typed message's, citing it as spoken, and adds no reply", async () => {
+    const response = { extracted: { employee_count: 15 }, field_status: { employee_count: "confirmed" }, reply: "Fifteen. And which states?" };
+    invoke.mockResolvedValue({ data: response, error: null });
+    const { result, addUserMessage, addLenoreMessage, onExtracted, onOrbStateChange } = mount();
+    let worked = false;
+    await act(async () => { worked = await result.current.extractSpoken(spokenMessage("v1", "about fifteen people")); });
+
+    expect(worked).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("chamber-extract", expect.objectContaining({ body: expect.objectContaining({ message: "about fifteen people", session_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }) }));
+    expect(invoke.mock.calls[0][1].body.context.company_name).toBe("Acme");
+    // The request is the typed one: nothing in it says spoken. The browser caps the status when it merges (D33).
+    expect(invoke.mock.calls[0][1].body).not.toHaveProperty("spoken");
+    expect(onExtracted).toHaveBeenCalledWith({ employee_count: 15 }, response, { id: "v1", text: "about fifteen people", spoken: true });
+    // The voice hook already recorded the message, and Lenore answered aloud.
+    expect(addUserMessage).not.toHaveBeenCalled();
+    expect(addLenoreMessage).not.toHaveBeenCalled();
+    expect(onOrbStateChange).not.toHaveBeenCalled();
+    expect(result.current.failure).toBeNull();
+  });
+
+  it("removes a Social Security number before the message is sent", async () => {
+    invoke.mockResolvedValue({ data: { extracted: {} }, error: null });
+    const { result } = mount();
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v1", "it's 123-45-6789")); });
+    expect(invoke.mock.calls[0][1].body.message).toBe("it's [redacted]");
+  });
+
+  it("cuts a long spoken message to what the function takes, so it isn't refused", async () => {
+    invoke.mockResolvedValue({ data: { extracted: {} }, error: null });
+    const { result, onExtracted } = mount();
+    const long = `${"a".repeat(1999)}😀 and more`;
+    invoke.mockResolvedValue({ data: { extracted: { company_name: "A" } }, error: null });
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v1", long)); });
+    expect(invoke.mock.calls[0][1].body.message).toBe("a".repeat(1999));
+    // The answers still cite the whole message, as the transcript keeps it.
+    expect(onExtracted.mock.calls[0][2]).toEqual({ id: "v1", text: long, spoken: true });
+  });
+
+  it("asks about spoken messages one at a time, in the order they were said, each with what the one before captured", async () => {
+    const intake = { data: { ...EMPTY_CHAMBER_DATA }, provenance: {}, messages: [] as ChatMessage[] };
+    const resolvers: ((v: unknown) => void)[] = [];
+    invoke.mockImplementation(() => new Promise((r) => resolvers.push(r)));
+    const { result, onExtracted } = mount({ readIntake: () => intake });
+    // The Chamber merges at once (useChamberSession's updateIntake), before the screen catches up.
+    onExtracted.mockImplementation((extracted: Record<string, unknown>) => { intake.data = { ...intake.data, ...extracted }; });
+    let first!: Promise<boolean>, second!: Promise<boolean>;
+    act(() => {
+      first = result.current.extractSpoken(spokenMessage("v1", "We're Acme."));
+      second = result.current.extractSpoken(spokenMessage("v2", "Weekly."));
+    });
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    expect(invoke.mock.calls[0][1].body.message).toBe("We're Acme.");
+    await act(async () => { resolvers[0]({ data: { extracted: { company_name: "Acme" } }, error: null }); await first; });
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+    expect(invoke.mock.calls[1][1].body).toMatchObject({ message: "Weekly.", context: { company_name: "Acme" } });
+    await act(async () => { resolvers[1]({ data: { extracted: { pay_frequency: "weekly" } }, error: null }); await second; });
+    expect(onExtracted.mock.calls.map(([, , m]) => m.id)).toEqual(["v1", "v2"]);
+  });
+
+  it("says its answers weren't noted when the call fails, and Try again reads it again without a reply", async () => {
+    invoke
+      .mockResolvedValueOnce({ data: null, error: httpError(429, { code: "rate_limited", request_id: "req-1" }) })
+      .mockResolvedValueOnce({ data: { extracted: { employee_count: 15 }, reply: "Fifteen." }, error: null });
+    const { result, addLenoreMessage, onExtracted } = mount();
+    let worked = true;
+    await act(async () => { worked = await result.current.extractSpoken(spokenMessage("v1", "fifteen people")); });
+    expect(worked).toBe(false);
+    expect(result.current.failure).toEqual({ text: "fifteen people", kind: "rate_limited", requestId: "req-1", spoken: true });
+
+    await act(async () => { await result.current.retry(); });
+    expect(invoke.mock.calls[1][1].body.message).toBe("fifteen people");
+    expect(onExtracted).toHaveBeenCalledWith({ employee_count: 15 }, expect.anything(), { id: "v1", text: "fifteen people", spoken: true });
+    expect(addLenoreMessage).not.toHaveBeenCalled();
+    expect(result.current.failure).toBeNull();
+  });
+
+  it("keeps a spoken message's failure up when a later one works, since its answers still weren't noted", async () => {
+    invoke
+      .mockResolvedValueOnce({ data: null, error: httpError(502, { code: "provider_error" }) })
+      .mockResolvedValueOnce({ data: { extracted: { pay_frequency: "weekly" } }, error: null })
+      .mockResolvedValueOnce({ data: { extracted: { employee_count: 15 } }, error: null });
+    const { result } = mount();
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v1", "fifteen people")); });
+    await act(async () => { await result.current.extractSpoken(spokenMessage("v2", "weekly")); });
+    expect(result.current.failure).toMatchObject({ text: "fifteen people", spoken: true });
+    await act(async () => { await result.current.retry(); });
+    expect(invoke.mock.calls[2][1].body.message).toBe("fifteen people");
+    expect(result.current.failure).toBeNull();
+  });
+
+  it("counts as in flight, alongside a typed message, until both are answered", async () => {
+    const answer: Record<string, (v: unknown) => void> = {};
+    invoke.mockImplementation((_name: string, opts: { body: { message: string } }) => new Promise((r) => { answer[opts.body.message] = r; }));
+    const { result } = mount();
+    let spoken!: Promise<boolean>, typed!: Promise<void>;
+    act(() => { spoken = result.current.extractSpoken(spokenMessage("v1", "We're Acme.")); });
+    act(() => { typed = result.current.send("And we pay weekly."); });
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+    expect(result.current.pending).toBe(true);
+    await act(async () => { answer["We're Acme."]({ data: { extracted: {} }, error: null }); await spoken; });
+    expect(result.current.pending).toBe(true);
+    await act(async () => { answer["And we pay weekly."]({ data: { reply: "Weekly." }, error: null }); await typed; });
+    expect(result.current.pending).toBe(false);
+  });
+
+  it("never asks about a spoken message still waiting its turn when the conversation is replaced", async () => {
+    let answer!: (v: unknown) => void;
+    invoke.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    const { result, rerender, onExtracted } = mount();
+    let first!: Promise<boolean>, second!: Promise<boolean>;
+    act(() => {
+      first = result.current.extractSpoken(spokenMessage("v1", "We're Acme."));
+      second = result.current.extractSpoken(spokenMessage("v2", "Weekly."));
+    });
+    // The first is being read; the second waits its turn.
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    rerender({ epoch: 1 });
+    await act(async () => { answer({ data: { extracted: { company_name: "Acme" } }, error: null }); await first; await second; });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(onExtracted).not.toHaveBeenCalled();
+    expect(result.current.failure).toBeNull();
+  });
+});
+
+describe("useLenoreChat reading the intake as it stands", () => {
+  beforeEach(() => { invoke.mockReset(); });
+
+  it("builds a typed message's call from readIntake when it is given, not from the last render", async () => {
+    invoke.mockResolvedValue({ data: { reply: "ok" }, error: null });
+    const readIntake = () => ({
+      data: { ...EMPTY_CHAMBER_DATA, company_name: "Acme Holdings" },
+      provenance: { company_name: { status: "inferred" as const, source: { kind: "transcript" as const, message_id: "v1" }, updated_at: "2026-11-04T00:00:00Z" } },
+      messages: [{ id: "v1", sender: "user" as const, text: "Acme Holdings", timestamp: "", spoken: true as const }],
+    });
+    const { result } = renderHook(() =>
+      useLenoreChat({
+        chamberData: EMPTY_CHAMBER_DATA, readIntake,
+        addUserMessage: vi.fn(() => ({ id: "m2", text: "hello" })), addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted: vi.fn(),
+      }),
+    );
+    await act(async () => { await result.current.send("hello"); });
+    expect(invoke.mock.calls[0][1].body).toMatchObject({
+      context: { company_name: "Acme Holdings" },
+      statuses: { company_name: "inferred" },
+      recent: [{ sender: "user", text: "Acme Holdings" }],
+    });
   });
 });

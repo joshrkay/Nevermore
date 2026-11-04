@@ -3,7 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { describeInvokeError, type AiFailureKind } from "@/data/aiFailure";
 import type { ChamberData } from "@/data/chamberTypes";
 import { CHAT_FALLBACK_REPLY, chatRequestBody, type ChatMessage } from "@/data/chat";
-import type { ProvenanceMap } from "@/data/provenance";
+import type { IntakeState, ProvenanceMap } from "@/data/provenance";
+import { MAX_CHAT_MESSAGE_CHARS } from "../../supabase/functions/_shared/chatContext.ts";
 import { redactSensitive } from "@/data/sensitive";
 import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
@@ -15,7 +16,20 @@ export interface ChatFailure {
   kind: AiFailureKind;
   /** The function's request id, which finds the call's extraction event. */
   requestId?: string;
+  /**
+   * The message was said aloud in a voice call (US-2.3b). Lenore already answered it aloud, so the notice says only
+   * that its answers weren't noted, and "Try again" reads it again without a reply.
+   */
+  spoken?: true;
 }
+
+/** A message Lenore is asked about: its recorded id and text, and whether it was said aloud. */
+type AskedMessage = { id: string; text: string; spoken?: boolean };
+
+// The function refuses a longer message. A typed one can't be longer (the input stops at it); a long spoken one is
+// cut to fit, and the transcript keeps all of it. A cut between the halves of an emoji would leave a lone surrogate.
+const fitMessage = (text: string) =>
+  text.length > MAX_CHAT_MESSAGE_CHARS ? text.slice(0, MAX_CHAT_MESSAGE_CHARS).replace(/[\uD800-\uDBFF]$/, "") : text;
 
 /**
  * How long the browser waits for Lenore before offering "Try again" (US-2.4a). Longer than the
@@ -36,6 +50,12 @@ interface UseLenoreChatOptions {
   provenance?: ProvenanceMap;
   /** The conversation so far: the last few messages go with each call, so a short answer can be placed (D22). */
   messages?: readonly ChatMessage[];
+  /**
+   * The answers, their provenance and the conversation as they stand right now (useChamberSession's `readIntake`),
+   * read when each call is built. Spoken messages are asked about one after another, and the next is built before the
+   * screen has caught up with the answers the last one brought; without this, the values passed in are used.
+   */
+  readIntake?: () => IntakeState & { messages: readonly ChatMessage[] };
   /** Records the prospect's message and returns it, so extracted values can point back to it. */
   addUserMessage: (text: string) => { id: string; text: string };
   addLenoreMessage: (text: string) => void;
@@ -44,7 +64,7 @@ interface UseLenoreChatOptions {
    * Merges what Lenore extracted from a message (with her full response, for field status and
    * evidence). The hook never merges on its own, so every value goes through provenance.
    */
-  onExtracted: (extracted: Partial<ChamberData>, response: unknown, message: { id: string; text: string }) => void;
+  onExtracted: (extracted: Partial<ChamberData>, response: unknown, message: { id: string; text: string; spoken?: boolean }) => void;
   /**
    * Which conversation this is (useChamberSession's `conversationEpoch`). When it changes, an answer still
    * on its way belongs to the old conversation: it is dropped, and so is a failure notice about it.
@@ -56,22 +76,29 @@ interface UseLenoreChatOptions {
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
  */
-export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance, messages, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
+export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance, messages, readIntake, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
   const [failure, setFailure] = useState<ChatFailure | null>(null);
-  const [pending, setPending] = useState(false);
+  // How many calls are out: typed and spoken ones can overlap.
+  const [inFlight, setInFlight] = useState(0);
+  const pending = inFlight > 0;
   const dataRef = useRef(chamberData);
   dataRef.current = chamberData;
   const provenanceRef = useRef(provenance);
   provenanceRef.current = provenance;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+  const readIntakeRef = useRef(readIntake);
+  readIntakeRef.current = readIntake;
   const intakeIdRef = useRef(intakeId);
   intakeIdRef.current = intakeId;
   const ensureIntakeRef = useRef(ensureIntake);
   ensureIntakeRef.current = ensureIntake;
   // The recorded message behind the current failure, so a retry still cites it. Each request
   // otherwise carries its own message, so overlapping sends can't be attributed to each other.
-  const failedMessageRef = useRef<{ id: string; text: string } | null>(null);
+  const failedMessageRef = useRef<AskedMessage | null>(null);
+  // Spoken messages are asked about in the order they were said, one at a time, so each call carries what the one
+  // before it captured.
+  const spokenQueue = useRef<Promise<unknown>>(Promise.resolve());
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (idleTimer.current) clearTimeout(idleTimer.current); }, []);
   const epochRef = useRef(epoch);
@@ -83,11 +110,14 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
     setFailure(null);
   }, [epoch]);
 
-  const ask = useCallback(async (text: string, message: { id: string; text: string }): Promise<boolean> => {
+  const ask = useCallback(async (text: string, message: AskedMessage): Promise<boolean> => {
     const askedIn = epochRef.current;
     const replaced = () => !Object.is(epochRef.current, askedIn);
-    setPending(true);
-    onOrbStateChange("thinking");
+    // A spoken message was answered aloud already: the voice call keeps the orb, and no reply is added.
+    const spoken = message.spoken === true;
+    const orb = (state: OrbState) => { if (!spoken) onOrbStateChange(state); };
+    setInFlight((n) => n + 1);
+    orb("thinking");
     // The browser's own limit, so a request that never answers ends in "Try again" rather than waiting forever.
     const controller = new AbortController();
     let timedOut = false;
@@ -96,27 +126,43 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       controller.abort();
     }, CHAT_TIMEOUT_MS);
     try {
-      // The answers without the roster, their field statuses and the recent conversation (chatRequestBody).
-      const body: Record<string, unknown> = { ...chatRequestBody({ id: message.id, text }, dataRef.current, provenanceRef.current, messagesRef.current ?? []) };
+      // The answers without the roster, their field statuses and the recent conversation (chatRequestBody), as they
+      // stand now.
+      const latest = readIntakeRef.current?.();
+      const body: Record<string, unknown> = {
+        ...chatRequestBody(
+          { id: message.id, text },
+          latest?.data ?? dataRef.current,
+          latest ? latest.provenance : provenanceRef.current,
+          latest?.messages ?? messagesRef.current ?? [],
+        ),
+      };
       const sessionId = intakeIdRef.current ?? (ensureIntakeRef.current ? await ensureIntakeRef.current() : null);
       if (sessionId) body.session_id = sessionId;
       const { data, error } = await supabase.functions.invoke("chamber-extract", { body, signal: controller.signal });
       // The conversation was replaced while Lenore was answering: her answer belongs to the old one.
       if (replaced()) {
-        onOrbStateChange("idle");
+        orb("idle");
         return false;
       }
       if (error) throw error;
 
       if (data?.extracted) onExtracted(data.extracted, data, message);
-      const reply = (typeof data?.reply === "string" && data.reply.trim()) || CHAT_FALLBACK_REPLY;
-      onOrbStateChange("speaking");
-      addLenoreMessage(reply);
-      idleTimer.current = setTimeout(() => onOrbStateChange("idle"), 2000);
-      setFailure(null);
+      if (!spoken) {
+        const reply = (typeof data?.reply === "string" && data.reply.trim()) || CHAT_FALLBACK_REPLY;
+        onOrbStateChange("speaking");
+        addLenoreMessage(reply);
+        idleTimer.current = setTimeout(() => onOrbStateChange("idle"), 2000);
+      }
+      // The notice is about this message (a retry that worked), or nothing is waiting on it. A failure about another
+      // message stays up: a later spoken message doesn't make an earlier one's answers noted.
+      if (!failedMessageRef.current || failedMessageRef.current.id === message.id) {
+        failedMessageRef.current = null;
+        setFailure(null);
+      }
       return true;
     } catch (err) {
-      onOrbStateChange("idle");
+      orb("idle");
       if (replaced()) return false;
       const info = timedOut ? { kind: "timeout" as const } : await describeInvokeError(err);
       if (replaced()) return false;
@@ -124,29 +170,55 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       const unrecorded = timedOut ? "chat_timeout" : unrecordedFunctionFailure("chat", err, info.requestId);
       if (unrecorded) reportOpsEvent("ai_failed", { code: unrecorded, detail: errorDetail(err) });
       failedMessageRef.current = message;
-      setFailure({ text, ...info });
+      setFailure({ text, ...info, ...(spoken ? { spoken: true as const } : {}) });
       return false;
     } finally {
       clearTimeout(timer);
-      setPending(false);
+      setInFlight((n) => n - 1);
     }
   }, [addLenoreMessage, onOrbStateChange, onExtracted]);
 
+  /**
+   * Asks about a spoken message once those said before it have been asked about. One queued in a conversation that
+   * has since been replaced is never asked about: it belongs to the old one.
+   */
+  const askSpoken = useCallback((text: string, message: AskedMessage): Promise<boolean> => {
+    const queuedIn = epochRef.current;
+    const turn = spokenQueue.current.then(() => (Object.is(epochRef.current, queuedIn) ? ask(text, message) : false));
+    spokenQueue.current = turn.catch(() => undefined);
+    return turn;
+  }, [ask]);
+
   const send = useCallback(async (text: string) => {
+    // Something new: the notice about an earlier message goes, as "Continue manually" would.
+    failedMessageRef.current = null;
     setFailure(null);
     // The model and the transcript only ever see the message with sensitive numbers removed.
     const clean = redactSensitive(text);
     await ask(clean, addUserMessage(clean));
   }, [addUserMessage, ask]);
 
+  /**
+   * Takes the answers from something the prospect said in a voice call (US-2.3b, ADR 0001), through the same function
+   * as a typed message. The message is already in the transcript (useLenoreVoice records it), and Lenore answered it
+   * aloud, so no reply is added. Its answers are merged by onExtracted with the message, which says it was spoken, so
+   * none is stored as confirmed (D33). Resolves when it is done, whether or not it worked.
+   */
+  const extractSpoken = useCallback(
+    (message: { id: string; text: string }): Promise<boolean> =>
+      askSpoken(fitMessage(redactSensitive(message.text)), { id: message.id, text: message.text, spoken: true }),
+    [askSpoken],
+  );
+
   /** Resends the message that failed, without adding it to the conversation a second time. */
   const retry = useCallback(async () => {
-    if (!failure || !failedMessageRef.current) return;
-    await ask(failure.text, failedMessageRef.current);
-  }, [ask, failure]);
+    const message = failedMessageRef.current;
+    if (!failure || !message) return;
+    await (message.spoken ? askSpoken(failure.text, message) : ask(failure.text, message));
+  }, [ask, askSpoken, failure]);
 
   /** "Continue manually": drop the notice and let the prospect fill in the workspace themselves. */
   const dismissFailure = useCallback(() => setFailure(null), []);
 
-  return { send, retry, dismissFailure, failure, pending };
+  return { send, extractSpoken, retry, dismissFailure, failure, pending };
 }
