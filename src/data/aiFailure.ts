@@ -70,6 +70,20 @@ export const CHAT_FAILURE_MESSAGES: Record<AiFailureKind, string> = {
   failed: "Lenore couldn't respond. Your message is saved.",
 };
 
+/**
+ * What the chat says when something the prospect said in a voice call couldn't be noted (US-2.3b). Lenore already
+ * answered aloud, so it says her answers weren't taken from it, not that she couldn't respond. What they said is
+ * always in the transcript.
+ */
+export const SPOKEN_FAILURE_MESSAGES: Record<AiFailureKind, string> = {
+  rate_limited: "Lenore heard you, but she's taking in a lot at once and couldn't note that answer. It's in the transcript: give her a minute, then try again.",
+  daily_cap: "Lenore heard you, but she can't note answers for the rest of the day. What you said is in the transcript, and you can keep filling in the workspace yourself.",
+  timeout: "Lenore heard you, but took too long noting that answer. It's in the transcript.",
+  unavailable: "Lenore heard you, but she can't note answers right now. What you said is in the transcript, and you can keep filling in the workspace yourself.",
+  unreachable: "Lenore heard you, but couldn't be reached to note that answer. It's in the transcript.",
+  failed: "Lenore heard you, but couldn't note that answer. It's in the transcript.",
+};
+
 /** What the Upload tab says when a document wasn't read this time. The file itself is always kept. */
 export const DOCUMENT_FAILURE_MESSAGES: Record<AiFailureKind, string> = {
   rate_limited: "Lenore is reading a lot at once. Give her a minute, then try again.",

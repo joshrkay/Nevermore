@@ -23,6 +23,22 @@ describe("chatContext (D22)", () => {
     expect(built.recent).toEqual([{ sender: "lenore", text: "Does anyone work in California?" }]);
   });
 
+  it("carries only what came before the message being sent, never a line said after it (a spoken message read late, US-2.3b)", () => {
+    const built = chatContext({}, {}, [
+      msg("m1", "user", "We're Acme."),
+      msg("m2", "lenore", "Do you work with any 1099 contractors?"),
+      msg("m3", "user", "Yes."),
+      msg("m4", "lenore", "Do any of them work in California?"),
+      msg("m5", "user", "No."),
+    ], "m3");
+    expect(built.recent).toEqual([
+      { sender: "user", text: "We're Acme." },
+      { sender: "lenore", text: "Do you work with any 1099 contractors?" },
+    ]);
+    // A message that isn't in the transcript leaves the whole of it.
+    expect(chatContext({}, {}, [msg("m1", "user", "We're Acme.")], "elsewhere").recent).toHaveLength(1);
+  });
+
   it("cuts a long message and drops the oldest until everything fits", () => {
     const long = "x".repeat(MAX_RECENT_CHARS + 50);
     const one = chatContext({}, {}, [msg("m1", "user", long)]);

@@ -32,6 +32,7 @@ const session = {
   certification: { status: "none" as string },
   updateIntake: vi.fn(),
   addMessage: vi.fn(),
+  readIntake: vi.fn(),
   conversationEpoch: {} as object,
   verifiedFields: new Set<string>() as ReadonlySet<string>,
   chamberData: { ...EMPTY_CHAMBER_DATA } as ChamberData,
@@ -41,10 +42,11 @@ const session = {
 // What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
 const hooks = {
   workspace: null as null | { verified?: ReadonlySet<string> },
-  voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
+  voice: null as null | { onSpokenMessage: (message: ChatMessage) => unknown; context: string },
   chat: null as null | {
-    onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string }) => void;
+    onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string; spoken?: boolean }) => void;
     onOrbStateChange: (state: OrbState) => void;
+    readIntake?: unknown;
   },
   orb: null as null | { orbState: OrbState; voice: VoiceState; onTypeInstead: () => void },
 };
@@ -94,14 +96,16 @@ vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
     return null;
   },
 }));
+const extractSpoken = vi.fn();
 vi.mock("@/hooks/useLenoreChat", () => ({
   useLenoreChat: (options: typeof hooks.chat) => {
     hooks.chat = options;
-    return { send: vi.fn(), retry: vi.fn(), dismissFailure: vi.fn(), failure: null, pending: false };
+    return { send: vi.fn(), extractSpoken, retry: vi.fn(), dismissFailure: vi.fn(), failure: null, pending: false };
   },
 }));
 
 const { default: ChamberPage } = await import("./ChamberPage");
+const { voiceContextUpdate } = await import("@/data/voiceAgent");
 
 const renderPage = () => render(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
 const lenore = (id: string, text: string): ChatMessage => ({ id, sender: "lenore", text, timestamp: "" });
@@ -272,24 +276,25 @@ describe("ChamberPage", () => {
   describe("merging what Lenore extracted", () => {
     const EMPTY: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
     const applied = () => (session.updateIntake.mock.calls[0][0] as (prev: IntakeState) => IntakeState)(EMPTY);
-    const spoken: ChatMessage = { id: "v1", sender: "user", text: "We're about 40 people", timestamp: "" };
+    const spoken: ChatMessage = { id: "v1", sender: "user", text: "We're about 40 people", timestamp: "", spoken: true };
 
-    it("merges a voice extraction with its provenance, citing the prospect's message", () => {
+    it("sends what the prospect says in a voice call through chat's extraction, the same call as a typed message (US-2.3b)", () => {
       renderPage();
-      hooks.voice!.onExtract({ employee_count: 40, field_status: { employee_count: "confirmed" } }, spoken);
+      expect(hooks.voice!.onSpokenMessage).toBe(extractSpoken);
+      // Calls are built from the intake as it stands, so spoken messages read one after another see each other's answers.
+      expect(hooks.chat!.readIntake).toBe(session.readIntake);
+    });
+
+    it("merges a spoken message's answers as inferred at most, citing it, so they wait for the prospect to confirm (D33)", () => {
+      renderPage();
+      hooks.chat!.onExtracted({ employee_count: 40 }, { field_status: { employee_count: "confirmed" }, prompt_version: 4 }, { ...spoken, spoken: true });
       expect(session.updateIntake).toHaveBeenCalledTimes(1);
       const next = applied();
       expect(next.data.employee_count).toBe(40);
       expect(next.provenance.employee_count).toMatchObject({
-        status: "confirmed",
-        source: { kind: "transcript", message_id: "v1", quote: "We're about 40 people" },
+        status: "inferred",
+        source: { kind: "transcript", message_id: "v1", quote: "We're about 40 people", prompt_version: 4 },
       });
-    });
-
-    it("drops a voice extraction with no prospect message to cite, rather than merging it untracked", () => {
-      renderPage();
-      hooks.voice!.onExtract({ employee_count: 40 }, null);
-      expect(session.updateIntake).not.toHaveBeenCalled();
     });
 
     it("merges a chat extraction with its provenance", () => {
@@ -343,6 +348,18 @@ describe("ChamberPage", () => {
       renderPage();
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
       expect(session.retrySave).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("what Lenore's voice is told", () => {
+    it("is the intake update for the answers on screen, by label only (D24)", () => {
+      session.chamberData = { ...EMPTY_CHAMBER_DATA, company_name: "Quill & Ink Bindery" };
+      session.provenance = {};
+      renderPage();
+      expect(hooks.voice!.context).toBe(voiceContextUpdate(session.chamberData, session.provenance));
+      expect(hooks.voice!.context).toContain("Company legal name");
+      expect(hooks.voice!.context).not.toContain("Quill");
+      session.chamberData = { ...EMPTY_CHAMBER_DATA };
     });
   });
 

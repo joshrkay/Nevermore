@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import ChatFailureNotice from "./ChatFailureNotice";
-import { CHAT_FAILURE_MESSAGES, type AiFailureKind } from "@/data/aiFailure";
+import { CHAT_FAILURE_MESSAGES, retryCanClear, SPOKEN_FAILURE_MESSAGES, type AiFailureKind } from "@/data/aiFailure";
 
 describe("ChatFailureNotice", () => {
   it("says something different for each reason, all of them different", () => {
@@ -36,5 +36,32 @@ describe("ChatFailureNotice", () => {
     for (const kind of ["daily_cap", "timeout", "unavailable", "unreachable", "failed"] as const) {
       expect(CHAT_FAILURE_MESSAGES[kind]).toMatch(/message is saved/);
     }
+  });
+
+  // Something said in a voice call (US-2.3b): Lenore already answered aloud, so the words are about noting it.
+  describe("for something said in a voice call", () => {
+    const KINDS = Object.keys(CHAT_FAILURE_MESSAGES) as AiFailureKind[];
+
+    it("has its own words for every reason, all different, none saying Lenore couldn't respond", () => {
+      expect(Object.keys(SPOKEN_FAILURE_MESSAGES).sort()).toEqual([...KINDS].sort());
+      expect(new Set(Object.values(SPOKEN_FAILURE_MESSAGES)).size).toBe(KINDS.length);
+      for (const kind of KINDS) {
+        expect(SPOKEN_FAILURE_MESSAGES[kind]).toMatch(/^Lenore heard you/);
+        expect(SPOKEN_FAILURE_MESSAGES[kind]).toMatch(/in the transcript/);
+        expect(SPOKEN_FAILURE_MESSAGES[kind]).not.toMatch(/couldn't respond|writing faster/);
+      }
+    });
+
+    it.each(KINDS)("%s: shows the spoken words, and offers Try again exactly when the typed notice does", (kind) => {
+      render(<ChatFailureNotice failure={{ text: "fifteen people", kind, spoken: true }} pending={false} onRetry={vi.fn()} onDismiss={vi.fn()} />);
+      expect(screen.getByRole("alert")).toHaveTextContent(SPOKEN_FAILURE_MESSAGES[kind]);
+      expect(screen.getByRole("alert")).not.toHaveTextContent(CHAT_FAILURE_MESSAGES[kind]);
+      expect(screen.queryByRole("button", { name: /Try again/ }) !== null).toBe(retryCanClear(kind));
+      expect(screen.getByRole("button", { name: "Continue manually" })).toBeInTheDocument();
+      if (!retryCanClear(kind)) {
+        expect(SPOKEN_FAILURE_MESSAGES[kind]).not.toMatch(/try again/i);
+        expect(SPOKEN_FAILURE_MESSAGES[kind]).toMatch(/keep filling in the workspace yourself/);
+      }
+    });
   });
 });
