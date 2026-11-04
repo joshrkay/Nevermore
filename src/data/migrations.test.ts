@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 // `supabase db push` records each migration by the number before its first underscore. When two files
@@ -16,5 +16,18 @@ describe("migration files", () => {
     const byVersion = new Map<string, string[]>();
     for (const f of files) byVersion.set(f.slice(0, 14), [...(byVersion.get(f.slice(0, 14)) ?? []), f]);
     expect([...byVersion.values()].filter((names) => names.length > 1)).toEqual([]);
+  });
+
+  // Two branches that renumber the same file to different versions merge into two copies of it, and
+  // `db push` then runs that migration twice ("column ... already exists"). A repeated name or a repeated
+  // body is such a copy.
+  it("hold each migration once", () => {
+    const groups = new Map<string, string[]>();
+    for (const f of files) {
+      for (const key of [`name ${f.slice(15)}`, `sql ${readFileSync(`supabase/migrations/${f}`, "utf8")}`]) {
+        groups.set(key, [...(groups.get(key) ?? []), f]);
+      }
+    }
+    expect([...groups.values()].filter((names) => names.length > 1)).toEqual([]);
   });
 });

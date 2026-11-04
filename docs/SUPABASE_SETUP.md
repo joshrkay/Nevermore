@@ -176,6 +176,21 @@ supabase migration list --linked
   supabase migration repair --status applied 20261103110001 --linked
   ```
 
+For a few minutes on 2026-11-03 `main` held each of the two files twice, also as
+`20261027090100_outbox_operations.sql` and `20261103110100_document_storage_path.sql`, and a push from then
+applied `20261027090001`, then stopped on the second copy (`column "claimed_at" of relation "outbox_events"
+already exists`). Those copies are gone: push again and it carries on. Only a project pushed with the copies
+and not the originals (from the branch that added them) has `20261027090100` or `20261103110100` in
+`supabase migration list --linked`. Record it under the number that stays, then push:
+
+```sh
+supabase migration repair --status reverted 20261027090100 --linked
+supabase migration repair --status applied 20261027090001 --linked
+```
+
+and the same for `20261103110100` and `20261103110001`. `src/data/migrations.test.ts` also fails when a
+migration is in the folder twice, under one name or with the same SQL.
+
 ## If a step fails
 
 - **`supabase link` or `db push`:** usually the database password. A failed `db push` stops
@@ -184,7 +199,7 @@ supabase migration list --linked
   two migration files share a version, the number before the first `_`. The CLI records a migration
   by that number, so the second file is never applied. Give it a later, unused version that keeps its
   place in the order, then run the script again: what was applied stays applied and the rest goes in.
-  `scripts/migrations.test.ts` fails on a shared version, so `npm test` catches one before it merges.
+  `src/data/migrations.test.ts` fails on a shared version, so `npm test` catches one before it merges.
 - **Deploying a function asks for Docker:** recent CLIs bundle on Supabase's side; update the CLI,
   or run `supabase functions deploy <name> --use-api --project-ref <ref>` and rerun the script.
 - **"Reading the auth settings failed":** the script stops rather than guess, because a patch built
