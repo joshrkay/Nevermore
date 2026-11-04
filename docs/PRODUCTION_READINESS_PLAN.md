@@ -1072,7 +1072,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 #### H-2.1 Privacy policy and terms pages
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** Highest · **Owner:** LEGAL + FE · **Depends:** D10 · **Milestone:** M2
 - **Built (US-6.2):** `/privacy` and `/terms` (`PrivacyPage.tsx`, `TermsPage.tsx`, `src/data/legal.ts`). The Privacy Policy renders the data classes and the retention rules from `dataPolicy.ts`, names the service providers, and says how to ask for deletion. Both show "Draft, pending legal review" while `LEGAL_COPY_APPROVED` is false. `LegalLinks` is on every page (landing footer, sign-in, Chamber top bar, consent gate, Manuscript page, profile, not found, auth callback, advisor header); `copy.guard.test.ts` fails if a page file doesn't render it. `docs/LEGAL_REVIEW.md` is the review and approval record.
-- **Remaining:** LEGAL review and approval (D10), the privacy-request contact address, and the Terms' bracketed sections (liability, governing law, disclaimers).
+- **Remaining:** LEGAL review and approval (D10), the privacy-request contact address, the AI provider (D11) and malware scanner (D13) named in the provider list, and the Terms' bracketed sections (disclaimers, liability, governing law, disputes and arbitration).
 
 #### H-2.2 Intake consent gate
 - **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** FE · **Depends:** A-1.2, D3 · **Milestone:** M1

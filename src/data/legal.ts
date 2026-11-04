@@ -71,6 +71,11 @@ export const SERVICE_PROVIDERS: ServiceProvider[] = [
     handles: "Each message you send Lenore with the answers captured so far, and the text of documents you ask it to read. The provider has not been chosen yet; it will be named here before launch.",
   },
   {
+    name: "A malware-scanning service",
+    role: "Checking every uploaded file for viruses and other malware before anyone can open it",
+    handles: "Each file you upload, in full, while it is checked. The service has not been chosen yet; it will be named here before launch.",
+  },
+  {
     name: "ElevenLabs",
     role: "Voice conversations with Lenore (an optional beta)",
     handles: "What you say and hear when you choose to talk rather than type. Not used if you type.",
