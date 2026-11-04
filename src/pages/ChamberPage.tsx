@@ -9,6 +9,7 @@ import { useChamberSession } from "@/hooks/useChamberSession";
 import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import TranscriptPanel from "@/components/chamber/TranscriptPanel";
+import MobileTranscript from "@/components/chamber/MobileTranscript";
 import ChatFailureNotice from "@/components/chamber/ChatFailureNotice";
 import SaveStatus from "@/components/chamber/SaveStatus";
 import BackupNotice from "@/components/chamber/BackupNotice";
@@ -112,7 +113,7 @@ const ChamberPage = () => {
     setLastSpokenText(spokenLine(text));
   }, [addMessage]);
 
-  const { startVoice, isConnected, hasAgentId } = useLenoreVoice({
+  const { startVoice, isConnected, isConnecting, failure: voiceFailure, dismissFailure: dismissVoiceFailure, voiceAvailable } = useLenoreVoice({
     epoch: conversationEpoch,
     onOrbStateChange: setOrbState,
     onNewMessage: addMessage,
@@ -189,6 +190,12 @@ const ChamberPage = () => {
   );
 
   const handleTypeInstead = () => {
+    chatInputRef.current?.focus();
+  };
+
+  // After a voice failure (US-2.3c): the message goes, and the text input takes the keyboard.
+  const continueInText = () => {
+    dismissVoiceFailure();
     chatInputRef.current?.focus();
   };
 
@@ -320,8 +327,11 @@ const ChamberPage = () => {
         lastSpokenText={lastSpokenText}
         onStartVoice={startVoice}
         onTypeInstead={handleTypeInstead}
-        hasAgentId={hasAgentId}
+        voiceAvailable={voiceAvailable}
         isVoiceConnected={isConnected}
+        isConnecting={isConnecting}
+        failure={voiceFailure}
+        onContinueInText={continueInText}
       />
 
       {/* Transcript & Workspace */}
@@ -363,20 +373,30 @@ const ChamberPage = () => {
       {isMobile && (
         <div className="fixed bottom-0 left-0 right-0 p-3 bg-card border-t border-border z-30">
           {failureNotice}
-          <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
-            <input
-              ref={chatInputRef}
-              type="text"
-              placeholder="Message Lenore..."
-              maxLength={2000}
-              className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
-                  handleSendMessage((e.target as HTMLInputElement).value.trim());
-                  (e.target as HTMLInputElement).value = "";
-                }
-              }}
+          <div className="flex items-center gap-2">
+            {/* The whole conversation, which the side panel shows on a wider screen (US-2.3c). */}
+            <MobileTranscript
+              messages={messages}
+              onSendMessage={handleSendMessage}
+              notice={failureNotice}
+              restoredThrough={restoredThrough}
             />
+            <div className="flex flex-1 items-center gap-2 bg-muted rounded-lg px-3 py-2">
+              <input
+                ref={chatInputRef}
+                type="text"
+                placeholder="Message Lenore..."
+                aria-label="Message Lenore"
+                maxLength={2000}
+                className="flex-1 min-w-0 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
+                    handleSendMessage((e.target as HTMLInputElement).value.trim());
+                    (e.target as HTMLInputElement).value = "";
+                  }
+                }}
+              />
+            </div>
           </div>
         </div>
       )}

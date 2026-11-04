@@ -153,6 +153,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-11-04 | C-2, C-3 and D-1 to D-3 (Epics C and D). The database assigns the File ID (`EAA-YYYY-NNNN`, D15 decided) and numbers each certification as an immutable submission with its own copy of the answers, field statuses, chosen PEO, documents and versions; a repeated submit records nothing; the Reckoning reads the File ID and version back, refuses a second click while saving and keeps the signature after a failed save. The Manuscript opens by File ID (`/manuscript/<File ID>`), maps every intake field in Review's sections, is deterministic, resolves only confirmed facts, and the PDF carries the company, File ID, version and generated date on every page with a fixed file name. Migration `20261104120000_submission_records.sql`, to deploy before the front end. See C-2.1 to D-3.2. |
 | 2026-11-04 | Merged main into Epics C and D. `submission_records` is `20261104120000`, after main's advisor-review and snapshot migrations, which it builds on (`chamber_certifications` already holds the answers and field statuses from `20261104117000`; the certified document list is `20261104112000`'s); main's `20261104103000_required_items`, `20261027090001_outbox_operations` and `20261103110001_document_storage_path` names stand. Review, the open-items list, "Doesn't apply" and the single blocking list are US-2.2a's and B-2's, and the Manuscript's sections follow Review's (`reviewFields.ts`). A required answer in conflict blocks certification whoever verified it (the gate reads field statuses, D26). |
 | 2026-11-04 | US-2.3d: the Upload tab offers a census template, a CSV whose 12 headers are the census row's own keys (`first_name` to `class_code`), with no SSN or bank column, and says what goes in each column. A filled-in template reads with every column matched and no notes. Lenore points to it whenever the roster comes up (prompt version 5), and Your Team, Review and the Reckoning mention it. The extraction eval also scores Lenore's replies (reply checks), with two fixtures for the template rule. No migration; deploy `chamber-extract` with the front end. See US-2.3d. |
+| 2026-11-04 | US-2.3c: voice is offered only when an agent is configured (no setup modal; the steps are in the README), connecting gives up after 15 seconds, and a blocked or missing microphone, a failed or timed-out connection and a dropped call each say what happened with "Continue in text". On a phone, a Conversation button opens the whole transcript. Also closes I-5.3. No migration. See US-2.3c. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -679,7 +680,14 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Tests:** hook tests with a fake conversation, and a merge test for the spoken cap.
 
 ##### US-2.3c Voice failure states and the mobile transcript
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** none · **Milestone:** M1
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** none · **Milestone:** M1
+- **Built (2026-11-04):**
+  - **No voice without an agent.** Without `VITE_ELEVENLABS_AGENT_ID`, the orb offers no "Speak with Lenore", the orb isn't clickable, and the remaining button reads "Message Lenore". The modal with setup steps is gone; they are in the README (Voice).
+  - **Connecting.** `useLenoreVoice` keeps one phase (idle, connecting, connected). A click while connecting starts nothing, and the button reads "Connecting..." and is disabled. After 15 seconds (`VOICE_CONNECT_TIMEOUT_MS`) the attempt is given up, the orb stops spinning, and a session that opens late is ended rather than taken for a call.
+  - **Failures, in words.** `src/data/voiceFailure.ts`: a microphone the browser blocked (the Permissions API, or `NotAllowedError` from the start), one it couldn't find or open (`NotFoundError`, `NotReadableError`), a connection that failed, one that timed out, and a call that dropped (a disconnect the SDK reports as an error, during a call). Each shows its message under the orb with "Continue in text", which puts it away and focuses the text input; calling again clears it too. A call the prospect ends, one Lenore ends, and one ended by Start over are not failures. When two reasons arrive for one attempt (the socket's close and the start's error), the more specific one is kept.
+  - **The phone transcript.** On a phone, the bottom bar has a "Conversation" button that opens the whole transcript in a sheet (`MobileTranscript`), with the same input and failure notice as the side panel. Before, a phone showed only the line under the orb, cut at 120 characters.
+  - **Tests.** `useLenoreVoice.test.ts` (no agent, a second click, the 15-second timeout and a late session, a blocked microphone by the Permissions API and by each start error, the more specific reason kept, a failed connection, a dropped call, calls ended by the prospect, by Lenore and by Start over, dismissing), `VoiceOrb.test.tsx` (no voice and no setup text, connecting, each failure's message with Continue in text), `MobileTranscript.test.tsx` (a 280-character reply in full, writing from the sheet) and `ChamberPage.test.tsx` (Continue in text focuses the input; the Conversation button on a phone only).
+- **Notes:** Checked in a browser at 390 px with a stand-in page, not against a real ElevenLabs agent or microphone: how each browser reports a refused microphone is I-5.1's hosted check. The voice agent's prompt still lives in ElevenLabs (2.3b).
 - **Scope:**
   - "Speak with Lenore" is hidden when voice isn't configured, so no setup instructions reach prospects.
   - Connecting times out after 15 seconds.
@@ -1174,12 +1182,12 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 #### I-5.2 Voice fallback and browser support matrix
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** Medium · **Owner:** PM + FE · **Depends:** I-5.1 · **Milestone:** M3
 - **Built:** Voice never auto-starts, text input is always present, and voice is behind `VITE_ELEVENLABS_AGENT_ID`.
-- **Remaining:** No browser-support detection or definition and no microphone help text. A missing agent id opens a developer-facing modal.
+- **Remaining:** No browser-support detection or definition. Since US-2.3c (2026-11-04) a missing agent id offers text only, with no developer-facing modal, and a blocked microphone says how to allow it.
 
 #### I-5.3 Voice failure UX
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** FE · **Depends:** I-5.1 · **Milestone:** M3
-- **Built:** Permission denied, start failure, `onError` and disconnect only call `console.error` and set the orb to idle (`useLenoreVoice.ts`).
-- **Remaining:** No user-facing messages. Text chat is merely unaffected.
+- **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** FE · **Depends:** I-5.1 · **Milestone:** M3
+- **Built (2026-11-04, by US-2.3c):** A blocked microphone, a missing one, a failed connection, a connection that timed out and a call that dropped each show their own message with "Continue in text", and text stays usable throughout (`src/data/voiceFailure.ts`, `useLenoreVoice.ts`, `VoiceOrb.tsx`). Each failure is simulated in `useLenoreVoice.test.ts` and `VoiceOrb.test.tsx`.
+- **Notes:** The hosted check with a real microphone on each browser is I-5.1's.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Explain permission-denied, device-unavailable, connection-failed, and mid-call disconnect. Keep the text chat fully usable in each case.
   - **AC:**
@@ -1405,7 +1413,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | I-4.4 | CI pipeline that gates releases | S | Highest | M1 | PARTIAL |
 | I-5.1 | Voice reliability diagnosis and state machine | M | Medium | M3 | NOT STARTED |
 | I-5.2 | Voice fallback and browser support matrix | S | Medium | M3 | PARTIAL |
-| I-5.3 | Voice failure UX | S | Medium | M3 | NOT STARTED |
+| I-5.3 | Voice failure UX | S | Medium | M3 | DONE |
 | J-1.1 | Environment separation | M | Highest | M1 | NOT VERIFIABLE |
 | J-1.2 | Production domain, HTTPS, canonical URL, and sender domain | S | High | M3 | NOT STARTED |
 | J-2.1 | Funnel analytics events | M | Medium | M3 | NOT STARTED |

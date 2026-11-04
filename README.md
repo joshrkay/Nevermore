@@ -12,6 +12,10 @@ npm run dev
 
 Only publishable values go in `.env`; it is git-ignored. Secrets (AI provider key, service-role key) live in Supabase function secrets, never in `VITE_*` variables.
 
+### Voice (optional)
+
+Talking to Lenore is off unless `VITE_ELEVENLABS_AGENT_ID` is set: without it the Chamber offers text only, and prospects see no voice button and no setup steps. To turn it on, create a Conversational AI agent at elevenlabs.io (its prompt lives there for now; decision D24 moves it into this repo with US-2.3b), and put the agent's id in `VITE_ELEVENLABS_AGENT_ID` for the build. A call that can't connect within 15 seconds, a blocked or missing microphone and a dropped call each tell the prospect what happened and offer "Continue in text" (`src/data/voiceFailure.ts`).
+
 ## Checks
 
 ```sh

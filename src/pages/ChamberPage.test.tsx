@@ -42,7 +42,9 @@ const hooks = {
   voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
   chat: null as null | { onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string }) => void },
 };
-const voice = { isConnected: false };
+const voice = { isConnected: false, failure: null as string | null, dismissFailure: vi.fn() };
+// Phone or wider screen (useIsMobile).
+const layout = { mobile: false };
 const auth = {
   isAnonymous: true,
   requestSignInCode: vi.fn(async () => ({ error: null, noAccount: false })),
@@ -58,12 +60,27 @@ vi.mock("@/data/intakeBackup", () => ({ browserStorageWorks: () => storageWorks 
 vi.mock("@/hooks/useLenoreVoice", () => ({
   useLenoreVoice: (options: typeof hooks.voice) => {
     hooks.voice = options;
-    return { startVoice: vi.fn(), isConnected: voice.isConnected, hasAgentId: false };
+    return {
+      startVoice: vi.fn(),
+      isConnected: voice.isConnected,
+      isConnecting: false,
+      failure: voice.failure,
+      dismissFailure: voice.dismissFailure,
+      voiceAvailable: false,
+    };
   },
 }));
-vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
-// The orb only shows what Lenore last said; the workspace panes are not what these tests are about.
-vi.mock("@/components/chamber/VoiceOrb", () => ({ default: ({ lastSpokenText }: { lastSpokenText: string }) => <p data-testid="orb">{lastSpokenText}</p> }));
+vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => layout.mobile }));
+// The orb shows what Lenore last said and, after a voice failure, the way on in text; the workspace panes are not what
+// these tests are about.
+vi.mock("@/components/chamber/VoiceOrb", () => ({
+  default: ({ lastSpokenText, failure, onContinueInText }: { lastSpokenText: string; failure?: string | null; onContinueInText?: () => void }) => (
+    <>
+      <p data-testid="orb">{lastSpokenText}</p>
+      {failure && <button onClick={onContinueInText}>Continue in text</button>}
+    </>
+  ),
+}));
 vi.mock("@/components/chamber/TranscriptPanel", () => ({ default: () => null }));
 vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
   default: (props: typeof hooks.workspace) => {
@@ -99,6 +116,9 @@ describe("ChamberPage", () => {
     session.startOver.mockReset().mockResolvedValue(true);
     auth.isAnonymous = true;
     storageWorks = true;
+    layout.mobile = false;
+    voice.failure = null;
+    voice.dismissFailure.mockClear();
     for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges, session.restoreBackup, session.discardBackup, session.updateIntake]) {
       fn.mockClear();
     }
@@ -234,6 +254,26 @@ describe("ChamberPage", () => {
     session.verifiedFields = new Set(["company_name"]);
     renderPage();
     expect(hooks.workspace?.verified).toBe(session.verifiedFields);
+  });
+
+  // US-2.3c
+  it("after a voice failure, Continue in text puts the message away and gives the text input the keyboard", () => {
+    layout.mobile = true;
+    voice.failure = "dropped";
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Continue in text" }));
+    expect(voice.dismissFailure).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Message Lenore" }));
+  });
+
+  it("on a phone, offers the whole conversation from the bottom bar; a wider screen shows it beside the workspace", () => {
+    layout.mobile = true;
+    const { unmount } = renderPage();
+    expect(screen.getByRole("button", { name: "Conversation" })).toBeInTheDocument();
+    unmount();
+    layout.mobile = false;
+    renderPage();
+    expect(screen.queryByRole("button", { name: "Conversation" })).not.toBeInTheDocument();
   });
 
   it("shows Lenore's latest line under the orb, not a second hello", () => {
