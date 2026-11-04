@@ -16,8 +16,7 @@ import {
   consentStatements,
 } from "@/data/certification";
 import { useAuth } from "@/hooks/useAuth";
-import { conflictingRequired, missingRequired } from "@/data/readiness";
-import type { ProvenanceMap } from "@/data/provenance";
+import { missingRequired } from "@/data/readiness";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import VerifyEmailGate from "./VerifyEmailGate";
 
@@ -48,7 +47,7 @@ const formatSigned = (iso: string) =>
 
 const NO_PROVENANCE: ProvenanceMap = {};
 
-const ReckoningTab = ({ data, provenance = NO_PROVENANCE, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
+const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED_FIELDS, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
   const peoName = chosenPeo ?? "your PEO";
   const { isAnonymous } = useAuth();
   // A returning signer doesn't retype their name and role to certify again.
@@ -83,7 +82,12 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, peoName: chosenPeo, se
 
   const signed = signedAt !== null;
   const missingAnswers = missingRequired(data);
-  const conflictingAnswers = conflictingRequired(provenance);
+  // B-2.2's items decide which required answers are in conflict (a settled census settles states, an advisor's
+  // verification settles a field); the database asks the same rule (EA008).
+  const items = requiredItems(data, provenance, verified);
+  const conflictingAnswers = items
+    .filter((i) => i.required && i.state === "conflicting")
+    .map((i) => ({ key: i.item, label: i.viaCensus ? "Employee census" : i.label }));
   const blockers = certificationBlockers({
     acknowledged: checks,
     signer: { name: signerName, title: signerTitle },
@@ -91,7 +95,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, peoName: chosenPeo, se
     hasFileId: !!fileId,
     isGuest: isAnonymous,
     missingAnswers: missingAnswers.map((item) => item.label),
-    conflictingAnswers: conflictingAnswers.map((item) => item.label),
+    requiredItems: items,
   });
   const allChecked = blockers.length === 0;
   const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";

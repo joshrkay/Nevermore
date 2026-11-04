@@ -585,7 +585,7 @@ describe("useChamberSession", () => {
 
     it("has none for a new intake, without asking", async () => {
       const { result } = renderHook(() => useChamberSession());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      await startIntake(result);
       expect(result.current.verifiedFields.size).toBe(0);
       expect(rpcCalls).toEqual([]);
     });
@@ -608,7 +608,10 @@ describe("useChamberSession", () => {
       const { result } = renderHook(() => useChamberSession("s7"));
       await waitFor(() => expect(result.current.verifiedFields.has("company_name")).toBe(true));
       act(() => result.current.startNew());
-      await waitFor(() => expect(result.current.sessionId).toBe("s1"));
+      // A blank intake, with none, before and after the prospect starts it.
+      await waitFor(() => expect(result.current.sessionId).toBeNull());
+      expect(result.current.verifiedFields.size).toBe(0);
+      await startIntake(result);
       expect(result.current.verifiedFields.size).toBe(0);
     });
   });

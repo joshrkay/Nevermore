@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh required_items
--- Required items and verified fields (B-2.2, 20261104100000_required_items.sql): intake_required_items
+-- Required items and verified fields (B-2.2, 20261104100100_required_items.sql): intake_required_items
 -- against the cases src/data/requiredItems.test.ts runs through the browser's copy of the rule, provenance
 -- read as the browser reads it, the advisor queue's missing_required read from the rule (same arguments
 -- and columns as before), and session_verified_fields:
@@ -43,7 +43,7 @@ SELECT pg_get_function_identity_arguments(p.oid) AS args, pg_get_function_result
        p.prosecdef, p.provolatile, p.proconfig, p.proacl
 FROM pg_proc p WHERE p.oid = 'public.advisor_list_submissions(text)'::regprocedure;
 
-\i supabase/migrations/20261104100000_required_items.sql
+\i supabase/migrations/20261104100100_required_items.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

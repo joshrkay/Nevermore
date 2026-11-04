@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "./chamberTypes";
 import type { CensusEmployee } from "./census";
-import type { FieldProvenance, FieldStatus, ProvenanceMap } from "./provenance";
 import { CERTIFICATION_REQUIRED } from "./followUp";
-import { conflictingRequired, describeRequiredKeys, isRequiredField, missingRecommendedItems, missingRequired, REQUIRED_ITEMS } from "./readiness";
+import { describeRequiredKeys, isRequiredField, missingRecommendedItems, missingRequired, REQUIRED_ITEMS } from "./readiness";
 
 const intake = (over: Partial<ChamberData> = {}): ChamberData => ({ ...EMPTY_CHAMBER_DATA, ...over });
 const complete = intake({ company_name: "Acme", states: ["NY"], pay_frequency: "bi-weekly" });
@@ -58,31 +57,10 @@ describe("isRequiredField", () => {
   });
 });
 
-const prov = (status: FieldStatus): FieldProvenance => ({ status, source: { kind: "prospect_edit" }, updated_at: "2026-11-01T12:00:00Z" });
 
 describe("the answers certification needs", () => {
   it("are the ones Lenore's readiness counts (supabase/functions/_shared/followUp.ts)", () => {
     expect(REQUIRED_ITEMS.map((item) => item.key)).toEqual([...CERTIFICATION_REQUIRED]);
-  });
-});
-
-describe("conflictingRequired", () => {
-  it("lists the required answers in conflict, in the order they are shown", () => {
-    const provenance: ProvenanceMap = { pay_frequency: prov("conflicting"), company_name: prov("conflicting"), states: prov("confirmed") };
-    expect(conflictingRequired(provenance).map((item) => item.key)).toEqual(["company_name", "pay_frequency"]);
-  });
-
-  it("ignores a conflict on a recommended field, and every other status", () => {
-    expect(conflictingRequired({ industry: prov("conflicting"), employee_count: prov("conflicting") })).toEqual([]);
-    for (const status of ["confirmed", "inferred", "incomplete", "unknown", "not_applicable"] as FieldStatus[]) {
-      expect(conflictingRequired({ company_name: prov(status), states: prov(status), pay_frequency: prov(status) })).toEqual([]);
-    }
-    expect(conflictingRequired({})).toEqual([]);
-  });
-
-  it("covers exactly the required fields", () => {
-    const all = Object.fromEntries(REQUIRED_ITEMS.flatMap((item) => (item.field ? [[item.field, prov("conflicting")]] : [])));
-    expect(conflictingRequired(all).map((item) => item.key)).toEqual(REQUIRED_ITEMS.map((item) => item.key));
   });
 });
 

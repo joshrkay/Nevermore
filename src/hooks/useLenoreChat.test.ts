@@ -78,7 +78,7 @@ describe("useLenoreChat", () => {
           { id: "m2", sender: "system", text: "Voice call started", timestamp: "" },
           { id: "m3", sender: "user", text: "Yes", timestamp: "" },
         ],
-        setChamberData: vi.fn(), addUserMessage: vi.fn(() => sent), addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(),
+        addUserMessage: vi.fn(() => sent), addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted: vi.fn(),
       }),
     );
     await act(async () => { await result.current.send("Yes"); });
@@ -93,7 +93,7 @@ describe("useLenoreChat", () => {
     invoke.mockResolvedValue({ data: { extracted: {}, reply: "ok" }, error: null });
     const ensureIntake = vi.fn(async () => "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
     const { result } = renderHook(() =>
-      useLenoreChat({ intakeId: null, ensureIntake, chamberData: EMPTY_CHAMBER_DATA, setChamberData: vi.fn(), addUserMessage: vi.fn(), addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn() }),
+      useLenoreChat({ intakeId: null, ensureIntake, chamberData: EMPTY_CHAMBER_DATA, addUserMessage: vi.fn((text: string) => ({ id: "m1", text })), addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted: vi.fn() }),
     );
     await act(async () => { await result.current.send("We are Acme"); });
     expect(ensureIntake).toHaveBeenCalledTimes(1);

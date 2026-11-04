@@ -10,7 +10,7 @@
 // until the prospect picks one (B-2, decision D26; public.intake_conflicting_required, migration
 // 20261104100000_certification_conflicts.sql). A conflict on any other field is an open item, never a blocker.
 import type { ChamberData } from "./chamberTypes";
-import type { FieldKey, ProvenanceMap } from "./provenance";
+import type { FieldKey } from "./provenance";
 
 /** Where an item is answered in the Review step. */
 export type ReviewSection = "company" | "workforce" | "locations" | "payroll" | "benefits";
@@ -77,13 +77,6 @@ const REQUIRED_FIELDS: ReadonlySet<FieldKey> = new Set(REQUIRED_ITEMS.flatMap((i
 
 /** Whether a field has to be answered before the intake can be certified. */
 export const isRequiredField = (field: FieldKey): boolean => REQUIRED_FIELDS.has(field);
-
-/**
- * The required answers the prospect gave two different values for, in the order they are shown. Each
- * blocks certification until one value is chosen in Review.
- */
-export const conflictingRequired = (provenance: ProvenanceMap): ReadinessItem[] =>
-  REQUIRED_ITEMS.filter((item) => item.field !== undefined && provenance[item.field]?.status === "conflicting");
 
 /**
  * The labels for the keys the database names when it refuses an unready certification: the missing answers

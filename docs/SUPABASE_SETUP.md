@@ -237,17 +237,28 @@ supabase migration list --linked
   supabase migration repair --status applied 20261103110100 --linked
   ```
 
-For a few minutes on 2026-11-03 `main` held each of the two files twice, also as
-`20261027090100_outbox_operations.sql` and `20261103110100_document_storage_path.sql`, and a push from then
-applied `20261027090001`, then stopped on the second copy (`column "claimed_at" of relation "outbox_events"
-already exists`). Those copies are gone: push again and it carries on. Only a project pushed with the copies
-and not the originals (from the branch that added them) has `20261027090100` or `20261103110100` in
-`supabase migration list --linked`. Record it under the number that stays, then push:
+For a few minutes on 2026-11-03 `main` held each of the two files twice, as `20261027090001` and
+`20261027090100` (and `20261103110001` and `20261103110100`), and a push from then applied `20261027090001`,
+then stopped on the second copy (`column "claimed_at" of relation "outbox_events" already exists`). Two
+branches then each removed a different copy, and on 2026-11-04 the merge of both left `main` with neither file
+at all, so a push from then built a database with no outbox claim columns and no storage-path policy. Both files
+are back as `20261027090100_outbox_operations.sql` and `20261103110100_document_storage_path.sql`, the numbers
+above. A project that recorded `20261027090001` or `20261103110001` has run that file: record the kept number
+instead, then push:
 
 ```sh
-supabase migration repair --status reverted 20261027090100 --linked
-supabase migration repair --status applied 20261027090001 --linked
+supabase migration repair --status applied 20261027090100 --linked
+supabase migration repair --status reverted 20261027090001 --linked
+supabase migration repair --status applied 20261103110100 --linked
+supabase migration repair --status reverted 20261103110001 --linked
 ```
+
+On 2026-11-04 two more files shared a number, `20261104100000`: `certification_conflicts` (merged first) and
+`required_items`. `required_items` is now `20261104100100`; the order they run in is unchanged. A push from
+then applied `certification_conflicts` and stopped. Push again: `required_items` runs, then everything after it.
+No repair is needed even for a project that recorded `20261104100000` for `required_items` instead: it is all
+`CREATE OR REPLACE`, so running it again is safe, and `20261104103000_certification_gate_items.sql` redefines the
+certification check that `certification_conflicts` held, so the result is the same either way.
 
 and the same for `20261103110100` and `20261103110001`. `src/data/migrations.test.ts` also fails when a
 migration is in the folder twice, under one name or with the same SQL.

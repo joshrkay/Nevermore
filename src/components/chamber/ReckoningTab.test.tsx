@@ -494,17 +494,26 @@ describe("ReckoningTab required answers", () => {
     signAndTry();
     expect(submitButton()).toBeDisabled();
     expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for company legal name");
+    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Resolve the conflicting answers for Company legal name");
   });
 
   it("names missing answers and conflicts together", () => {
     render(
       <MemoryRouter>
-        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} provenance={{ states: conflict }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+        <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} provenance={{ company_name: conflict }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
       </MemoryRouter>,
     );
     const callout = screen.getByRole("alert", { name: "Answers still needed" });
-    expect(callout).toHaveTextContent(/add:.*Pay frequency.*And choose one answer for:.*States of operation/);
+    expect(callout).toHaveTextContent(/add:.*Pay frequency.*And choose one answer for:.*Company legal name/);
+  });
+
+  it("doesn't count a states conflict the census settles (B-2.2): its work states answer the question", () => {
+    render(
+      <MemoryRouter>
+        <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={{ states: conflict }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("alert", { name: "Answers still needed" })).not.toBeInTheDocument();
   });
 
   it("lets a settled conflict be certified", () => {

@@ -24,6 +24,7 @@ import { AI_ERROR_CODES } from "../../supabase/functions/_shared/ai/errors";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
+import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
 
@@ -149,11 +150,6 @@ describe("server and client intake rules agree", () => {
   it("requires the same answers before certifying", () => {
     const keys = [...blocks("required_items").join("\n").matchAll(/THEN '(\w+)' END/g)].map((m) => m[1]);
     expect(keys).toEqual(REQUIRED_ITEMS.map((item) => item.key));
-  });
-
-  it("blocks certification on a conflict in the same required fields", () => {
-    const keys = quoted(blocks("required_conflict_fields").join("\n"));
-    expect(keys).toEqual(REQUIRED_ITEMS.flatMap((item) => (item.field ? [item.field] : [])));
   });
 
   it("holds transcript messages to the same senders and lengths", () => {

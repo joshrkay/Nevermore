@@ -43,8 +43,10 @@
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
 \i supabase/migrations/20261104100000_certification_conflicts.sql
+\i supabase/migrations/20261104100100_required_items.sql
 \i supabase/migrations/20261104101000_transcript_validation.sql
 \i supabase/migrations/20261104102000_one_open_draft.sql
+\i supabase/migrations/20261104103000_certification_gate_items.sql
 SET client_min_messages = notice;
 
 CREATE FUNCTION pg_temp.as_user(uid uuid) RETURNS void LANGUAGE plpgsql AS $$

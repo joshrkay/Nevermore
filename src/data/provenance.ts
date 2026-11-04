@@ -521,8 +521,10 @@ export function transcriptExtraction(message: { id: string; text: string; spoken
   if (message.spoken) {
     for (const field of Object.keys(statuses) as FieldKey[]) if (statuses[field] === "confirmed") statuses[field] = "inferred";
   }
+  // The contract the answer came from (B-1.4), stored with each value it gave.
+  const version = typeof m.prompt_version === "number" && Number.isInteger(m.prompt_version) && m.prompt_version > 0 ? m.prompt_version : undefined;
   return {
-    source: { kind: "transcript", message_id: message.id, quote: clip(message.text.trim()) },
+    source: { kind: "transcript", message_id: message.id, quote: clip(message.text.trim()), ...(version !== undefined ? { prompt_version: version } : {}) },
     statuses,
     evidence: parseEvidence(m.evidence),
     corrections: parseFieldList(m.corrected_fields),

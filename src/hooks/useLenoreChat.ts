@@ -38,9 +38,8 @@ interface UseLenoreChatOptions {
   provenance?: ProvenanceMap;
   /** The conversation so far: the last few messages go with each call, so a short answer can be placed (D22). */
   messages?: readonly ChatMessage[];
-  setChamberData: (updater: (prev: ChamberData) => ChamberData) => void;
   /** May return the stored message so extracted values can point back to it. */
-  addUserMessage: (text: string) => { id: string; text: string } | void;
+  addUserMessage: (text: string) => { id: string; text: string };
   addLenoreMessage: (text: string) => void;
   onOrbStateChange: (state: OrbState) => void;
   /**
@@ -63,7 +62,7 @@ const FALLBACK_REPLY = "Thank you, I've noted that.";
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
  */
-export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance, messages, setChamberData, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
+export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance, messages, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
   const [failure, setFailure] = useState<ChatFailure | null>(null);
   const [pending, setPending] = useState(false);
   const dataRef = useRef(chamberData);
@@ -109,7 +108,7 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       const census = censusSummary(dataRef.current);
       const body: Record<string, unknown> = {
         message: text,
-        ...chatContext(answers, statuses, messagesRef.current ?? [], message?.id),
+        ...chatContext(answers, statuses, messagesRef.current ?? [], message.id),
         census: { rows: census.rows, work_states: census.workStates },
       };
       const sessionId = intakeIdRef.current ?? (ensureIntakeRef.current ? await ensureIntakeRef.current() : null);

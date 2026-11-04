@@ -24,7 +24,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090001_outbox_operations.sql
+\i supabase/migrations/20261027090100_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -35,7 +35,7 @@
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
 -- The gate as it runs: 20261104100000 redefines intake_missing_required on the one presence rule.
-\i supabase/migrations/20261104100000_required_items.sql
+\i supabase/migrations/20261104100100_required_items.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

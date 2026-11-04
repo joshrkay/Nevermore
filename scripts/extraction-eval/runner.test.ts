@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { chatContext } from "@/data/chat";
 import type { ModelRequest, ModelResult } from "../../supabase/functions/_shared/ai/model";
-import { buildUserPrompt, serializeContext } from "../../supabase/functions/chamber-extract/prompt";
+import { buildUserPrompt, turnFromBody } from "../../supabase/functions/chamber-extract/prompt";
 import { CHAT_MAX_TOKENS, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema";
 import { FIXTURES, type Fixture } from "./fixtures";
 import { connectProvider, main, runFixture, runFixtures, type Connection, type MainDeps, type ModelCall } from "./runner";
@@ -89,11 +89,16 @@ describe("runFixture", () => {
     const model = stubModel();
     const run = await runFixture(fixture("contradiction"), model.call);
     expect(model.requests).toHaveLength(2);
-    const prompt = (message: string, data: typeof EMPTY_CHAMBER_DATA) => buildUserPrompt(message, serializeContext(chatContext(data)));
-    expect(model.requests[0]).toEqual({ system: SYSTEM_PROMPT, user: prompt("We have 40 employees.", EMPTY_CHAMBER_DATA) });
-    const afterFirst = { ...EMPTY_CHAMBER_DATA, employee_count: 40 };
-    expect(model.requests[1].user).toBe(prompt("Payroll is getting harder to manage with 55 employees.", afterFirst));
-    expect(model.requests[1].user).not.toContain("census");
+    // The first turn: nothing captured, no history, no census.
+    const first = buildUserPrompt(turnFromBody({ message: "We have 40 employees.", context: chatContext(EMPTY_CHAMBER_DATA), statuses: {}, recent: [], census: { rows: 0, work_states: false } }));
+    expect(model.requests[0]).toEqual({ system: SYSTEM_PROMPT, user: first });
+    // The second carries what the first captured, its status, and the conversation so far, but never the roster.
+    const second = model.requests[1].user;
+    expect(second).toContain('"employee_count":40');
+    expect(second).toMatch(/Field statuses: \{[^}]*"employee_count":"\w+"/);
+    expect(second).toContain('{"sender":"user","text":"We have 40 employees."}');
+    expect(second).toContain('{"sender":"lenore","text":"Noted."}');
+    expect(second).not.toMatch(/"census"/);
     expect(run.error).toBeNull();
   });
 

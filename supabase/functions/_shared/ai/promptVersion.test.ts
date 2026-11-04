@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildUserPrompt, serializeContext } from "../../chamber-extract/prompt";
+import { buildUserPrompt, simpleTurn } from "../../chamber-extract/prompt";
 import * as chat from "../../chamber-extract/schema";
 import * as documents from "../../document-extract/schema";
 
@@ -10,16 +10,20 @@ import * as documents from "../../document-extract/schema";
 const fingerprint = (prompt: string, tool: unknown) => createHash("sha256").update(`${prompt}\n${JSON.stringify(tool)}`).digest("hex");
 
 const KNOWN = {
-  "chamber-extract": { 1: "89db609d8c6914c5db41973ad37c4869602bb24d1c3facfce87e81cd84ed5231", 2: "df5be12a55b4b2732660a15192245b18ca8d663a4cc58acbac0486bb6073e75d", 3: "e4058341346f016579ef6241be045dc8d9d93176062a215f6344164e8513d0f0" } as Record<number, string>,
+  "chamber-extract": { 1: "89db609d8c6914c5db41973ad37c4869602bb24d1c3facfce87e81cd84ed5231", 2: "df5be12a55b4b2732660a15192245b18ca8d663a4cc58acbac0486bb6073e75d", 3: "e4058341346f016579ef6241be045dc8d9d93176062a215f6344164e8513d0f0", 4: "e16aed3447d5c04d19433cf47296fe43c90736ccc1731c8c57e5061ef644e5a7" } as Record<number, string>,
   "document-extract": { 1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526" } as Record<number, string>,
 };
 
 // chamber-extract's user turn (prompt.ts, shared with the extraction eval) is part of its contract too
 // (B-1.4), so its wording, rendered for fixed inputs with and without context, is fingerprinted per version.
-const USER_TURNS = [buildUserPrompt("<message>", ""), buildUserPrompt("<message>", serializeContext({ company_name: "<value>" }))];
+const USER_TURNS = [buildUserPrompt(simpleTurn("<message>")), buildUserPrompt(simpleTurn("<message>", { company_name: "<value>" }))];
 const USER_TURN_KNOWN: Record<number, string> = {
   1: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
   2: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
+  // Version 4 (the merge of US-2.1b/US-2.3a with B-1.1/B-1.4): answers, statuses, what is unsettled, readiness,
+  // the census and the recent conversation. Versions 2 and 3 were numbered on two branches at once; 4 is the one
+  // both now send.
+  4: "3d898fc1e06c861bf38aed47cff655192652f015cc7a2a210e8a3902faef7fb5",
 };
 
 describe("prompt versions", () => {
