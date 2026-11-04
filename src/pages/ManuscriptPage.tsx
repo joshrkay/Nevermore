@@ -14,6 +14,7 @@ import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { fetchVerifiedFields } from "@/lib/verifiedFields";
 import { downloadBlob } from "@/lib/downloadFile";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
+import LegalLinks from "@/components/LegalLinks";
 
 const SAMPLE_FILE_ID = "EAA-SAMPLE";
 
@@ -26,6 +27,8 @@ const STATUS_MARKER_CLASS: Record<FieldProvenance["status"], string> = {
   inferred: "bg-warning/15 text-warning",
   incomplete: "bg-warning/15 text-warning",
   conflicting: "bg-destructive/15 text-destructive",
+  unknown: "bg-warning/15 text-warning",
+  not_applicable: "bg-muted text-muted-foreground",
 };
 
 // Shows whether a value was confirmed or only inferred, and where it came from. A conflict always shows,
@@ -183,6 +186,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to="/start" className="text-primary underline hover:text-primary/90">
             Go to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -198,6 +202,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
             Back to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -214,6 +219,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to="/start" className="text-primary underline hover:text-primary/90">
             Go to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -230,6 +236,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to={`/start?session=${sessionId}`} className="text-primary underline hover:text-primary/90">
             Back to The Chamber
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -243,6 +250,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <Link to={user ? "/start" : "/login"} className="text-primary underline hover:text-primary/90">
             {user ? "Go to The Chamber" : "Sign in"}
           </Link>
+          <LegalLinks className="mt-8" />
         </div>
       </div>
     );
@@ -516,6 +524,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             <ArrowLeft className="w-5 h-5" /> {isSample ? "Start Yours" : "Back to Review"}
           </Link>
         </div>
+
+        {/* The site's legal links: part of the page, not the packet (the PDF is built separately). */}
+        <LegalLinks className="text-center pb-8" />
       </div>
     </div>
   );

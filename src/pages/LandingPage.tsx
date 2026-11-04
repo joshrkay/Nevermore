@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { RavenIcon } from "@/components/RavenLogo";
+import LegalLinks from "@/components/LegalLinks";
 
 const fadeUp = (delay: number) => ({
   initial: { opacity: 0, y: 24 },
@@ -214,10 +215,19 @@ const LandingPage = () => {
           <motion.div {...sectionFade} className="bg-card border border-border rounded-xl p-8">
             <h3 className="font-display text-lg font-bold mb-3">About your information</h3>
             <p className="text-muted-foreground text-sm leading-relaxed">
-              What Lenore collects — company info, headcount, job titles, payroll,
-              workers' comp history — is standard employer HR data. The same information
-              you'd share with any broker or HR advisor. It's not health data until it
-              goes to a carrier. We use it to build your submission and nothing else.
+              Lenore asks for company details and employee information: the census, payroll,
+              benefits and workers' comp history. It's used to prepare your packet and for our
+              advisors to review it with you. An AI assistant reads what you share so it can fill
+              in your answers, and you confirm every one before you certify. Files stay in private
+              storage, drafts you don't certify are deleted on a schedule, and we don't sell your
+              information.
+            </p>
+            <p className="text-muted-foreground text-sm leading-relaxed mt-3">
+              What we collect, who handles it and how long it's kept are set out in our{" "}
+              <Link to="/privacy" className="underline underline-offset-2 hover:text-foreground">
+                Privacy Policy
+              </Link>
+              .
             </p>
           </motion.div>
         </div>
@@ -256,7 +266,7 @@ const LandingPage = () => {
               <a href="#peo-partners" className="whitespace-nowrap hover:text-foreground transition-colors">For PEO Partners</a>
               <Link to="/start" className="whitespace-nowrap hover:text-foreground transition-colors">Start Your Intake</Link>
             </div>
-            <p className="text-xs text-muted-foreground mt-4">© Edgar Allan Advisory.</p>
+            <LegalLinks copyright className="mt-4" />
           </div>
         </div>
       </footer>

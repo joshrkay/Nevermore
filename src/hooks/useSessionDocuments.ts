@@ -5,6 +5,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { guessCategory, type DocumentCategory } from "@/data/documentCategories";
 import { parseExtraction, type CandidateField, type DocumentExtraction } from "@/data/documentCandidates";
 import { inspectUpload, MAX_DOCUMENTS_PER_INTAKE } from "@/lib/uploadCheck";
+import { describeInvokeError, failureKindFromCode, type AiFailureKind } from "@/data/aiFailure";
+import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
 
 export interface SessionDocument {
   id: string;
@@ -19,6 +21,11 @@ export interface SessionDocument {
   created_at: string;
   storage_path: string | null; // null while the upload is in flight
   extraction: DocumentExtraction;
+  /**
+   * Why the last read in this tab didn't go through (a rate limit, the daily cap, a timeout...), from the
+   * function's answer. Not stored: a reload shows the row's own status.
+   */
+  readIssue?: AiFailureKind | null;
 }
 
 /** Why a file wasn't uploaded, before or as it was stored. */
@@ -177,14 +184,25 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
     activeRef.current.add(doc.id);
     patchDoc(doc.id, { status: "processing" });
     try {
-      const { error } = await supabase.functions.invoke("document-extract", { body: { document_id: doc.id } });
-      if (error) console.error("Document extraction failed:", error.message);
+      const { data: answer, error } = await supabase.functions.invoke("document-extract", { body: { document_id: doc.id } });
+      let readIssue: AiFailureKind | null = null;
+      if (error) {
+        const info = await describeInvokeError(error);
+        readIssue = info.kind;
+        console.warn("Document not read:", info.kind, info.requestId ?? "");
+        // document-extract records every read it answers (ai_extraction_events); this covers it never answering.
+        const unrecorded = unrecordedFunctionFailure("document_read", error, info.requestId);
+        if (unrecorded) reportOpsEvent("upload_failed", { code: unrecorded, detail: errorDetail(error), sessionId: sid });
+      } else if (answer && typeof answer.code === "string") {
+        // The function answered, and the read failed (the model timed out, say): the row says failed, this says why.
+        readIssue = failureKindFromCode(answer.code);
+      }
       // The function records its outcome on the row (or leaves it untouched if it never ran),
       // so the row is the source of truth either way.
       const { data } = await supabase.from("documents").select(COLUMNS).eq("id", doc.id).maybeSingle();
       if (sessionRef.current !== sid) return;
-      if (data) patchDoc(doc.id, fromRow(data as Row));
-      else patchDoc(doc.id, { status: "failed" });
+      if (data) patchDoc(doc.id, { ...fromRow(data as Row), readIssue });
+      else patchDoc(doc.id, { status: "failed", readIssue });
     } finally {
       activeRef.current.delete(doc.id);
     }
@@ -245,6 +263,9 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         .upload(storagePath, file, { contentType });
       if (storageError) {
         console.error("Failed to upload a document:", storageError.message);
+        // The status only: storage's message can quote the path, which carries the file name.
+        const status = (storageError as { statusCode?: string | number }).statusCode;
+        reportOpsEvent("upload_failed", { code: `storage_upload:${status ?? "unknown"}`, sessionId: sid });
         failed.push(file.name);
         dropPending();
         continue;
@@ -274,7 +295,11 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
         const code = (dbError as { code?: string } | null)?.code;
         if (code === "23505") rejected.push({ name: file.name, reason: "duplicate" });
         else if (code === "23514") rejected.push({ name: file.name, reason: "limit" });
-        else failed.push(file.name);
+        else {
+          failed.push(file.name);
+          // A closed intake (EA002) refusing a file is the intake's state, not a failure.
+          if (code !== "EA002") reportOpsEvent("upload_failed", { code: `record_insert:${code ?? "unknown"}`, sessionId: sid });
+        }
         dropPending();
         continue;
       }
@@ -300,10 +325,14 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
     // next try finds its file already gone and finishes. The other order could leave a stored file
     // with no record, which nobody can see or delete: putting the record back can fail too (an
     // expired intake refuses new rows).
-    if (!(await removeStoredFile(doc.storage_path))) return false;
+    if (!(await removeStoredFile(doc.storage_path))) {
+      reportOpsEvent("upload_failed", { code: "storage_remove", sessionId: sessionRef.current });
+      return false;
+    }
     const { error } = await supabase.from("documents").delete().eq("id", doc.id);
     if (error) {
       console.error("Failed to delete a document record:", error.message);
+      reportOpsEvent("upload_failed", { code: `record_delete:${(error as { code?: string }).code ?? "unknown"}`, sessionId: sessionRef.current });
       return false;
     }
     setDocs((prev) => prev.filter((d) => d.id !== doc.id));

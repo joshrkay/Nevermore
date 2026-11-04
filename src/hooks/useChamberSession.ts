@@ -9,7 +9,7 @@ import { dedupeGreetings, isGreeting, openingMessage, parseTranscript } from "@/
 import { parseChamberData } from "@/data/chamberValidation";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup } from "@/data/intakeBackup";
-import { validateChamberData } from "@/data/intakeSchema";
+import { INTAKE_SCHEMA_VERSION, validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
 import { describeMissingKeys } from "@/data/readiness";
@@ -384,11 +384,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // Shows a loaded row exactly as the server has it. Never put the raw row in state: loading
   // rebuilds the answers in a stable key order, which the signature check depends on.
   const applyRow = useCallback((row: ServerRow) => {
-    // Checked against intake schema v1 as it comes in. Rows saved by earlier versions stay editable (the
+    // Checked against the intake schema as it comes in. Rows saved by earlier versions stay editable (the
     // sanitiser below still loads them), so a mismatch is reported, by path only, rather than refused.
     const issues = validateChamberData(row.chamber_data);
     if (issues.length > 0) {
-      console.warn("Saved answers don't match intake schema v1; loading what is valid:", issues.map((issue) => `${issue.path} ${issue.reason}`));
+      console.warn(`Saved answers don't match intake schema v${INTAKE_SCHEMA_VERSION}; loading what is valid:`, issues.map((issue) => `${issue.path} ${issue.reason}`));
     }
     const loadedData = parseChamberData(row.chamber_data);
     const loadedMessages = dedupeGreetings(parseTranscript(row.transcript));

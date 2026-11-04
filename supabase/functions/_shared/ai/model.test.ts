@@ -4,6 +4,7 @@ import { callModel, failureLogLine, failureResponse, unexpectedErrorLine, type M
 // A stand-in provider: the adapter contract is what callModel depends on.
 const adapter: ProviderAdapter = {
   name: "fake",
+  model: "fake-model-1",
   buildRequest: ({ system, user }) => ({
     url: "https://provider.test/v1",
     headers: { "content-type": "application/json" },
@@ -123,15 +124,16 @@ describe("callModel timeout", () => {
 
 describe("failureResponse", () => {
   it.each([
-    ["timeout", 504, /taking too long/i],
-    ["rate_limited", 429, /rate limited/i],
-    ["credits", 503, /unavailable/i],
-    ["provider_error", 502, /couldn't respond/i],
-    ["invalid_response", 502, /couldn't respond/i],
-    ["network", 502, /couldn't respond/i],
-  ] as const)("maps %s to %i with a calm message", (kind, status, message) => {
+    ["timeout", 504, "timeout", /taking too long/i],
+    ["rate_limited", 429, "rate_limited", /rate limited/i],
+    ["credits", 503, "unavailable", /unavailable/i],
+    ["provider_error", 502, "provider_error", /couldn't respond/i],
+    ["invalid_response", 502, "invalid_response", /didn't come through/i],
+    ["network", 502, "provider_error", /couldn't respond/i],
+  ] as const)("maps %s to %i, code %s, with a calm message", (kind, status, code, message) => {
     const r = failureResponse(kind);
     expect(r.status).toBe(status);
+    expect(r.code).toBe(code);
     expect(r.message).toMatch(message);
   });
 
@@ -143,10 +145,11 @@ describe("failureResponse", () => {
 describe("failureLogLine", () => {
   const failed: Extract<ModelResult, { ok: false }> = { ok: false, kind: "provider_error", httpStatus: 503, attempts: 2, latencyMs: 1234 };
 
-  it("is a single line of fixed fields", () => {
+  it("is a single line of fixed fields, naming the intake when there is one", () => {
     expect(failureLogLine({ requestId: "req-1", provider: "anthropic", result: failed })).toBe(
-      "AI_CALL_FAILED request=req-1 provider=anthropic kind=provider_error status=503 attempts=2 latency_ms=1234",
+      "AI_CALL_FAILED request=req-1 session=- provider=anthropic kind=provider_error status=503 attempts=2 latency_ms=1234",
     );
+    expect(failureLogLine({ requestId: "req-1", provider: "anthropic", result: failed, sessionId: "s-9" })).toContain(" session=s-9 ");
   });
 
   it("shows a dash when there was no HTTP status", () => {

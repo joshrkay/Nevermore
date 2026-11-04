@@ -4,6 +4,7 @@ import { useState } from "react";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { applyExtraction, applyFieldAction, type IntakeState } from "@/data/provenance";
 import CompanyTab from "./CompanyTab";
+import ProvenanceField from "./ProvenanceField";
 import ReviewTab from "./ReviewTab";
 
 const inferred = applyExtraction(
@@ -72,6 +73,34 @@ describe("provenance in the workspace", () => {
     expect(within(list).getAllByText("Conflicting answers").length).toBeGreaterThan(0);
     fireEvent.click(within(list).getByRole("button", { name: "Use 45 for Employee count" }));
     expect(screen.queryByText(/Needs your review/)).not.toBeInTheDocument();
+  });
+
+  it("shows a field the prospect doesn't know yet, or that doesn't apply, in place of an answer", () => {
+    const at = "2026-11-03T12:00:00.000Z";
+    const { unmount } = render(
+      <ProvenanceField label="Experience mod" field="wc_experience_mod" display={null} raw={null} onAction={() => {}}
+        provenance={{ status: "unknown", source: { kind: "transcript", message_id: "m1" }, updated_at: at }} />,
+    );
+    expect(screen.getByText("Not known yet")).toBeInTheDocument();
+    expect(screen.queryByText(/Lenore will fill this in/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm Experience mod" })).not.toBeInTheDocument();
+    unmount();
+    render(
+      <ProvenanceField label="Experience mod" field="wc_experience_mod" display={null} raw={null} onAction={() => {}}
+        provenance={{ status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: at }} />,
+    );
+    expect(screen.getByText("Doesn't apply")).toBeInTheDocument();
+  });
+
+  it("takes a fractional experience mod", () => {
+    let action: unknown;
+    render(<ProvenanceField label="Experience mod" field="wc_experience_mod" display={null} raw={null} onAction={(a) => { action = a; }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add Experience mod" }));
+    const input = screen.getByLabelText("Experience mod");
+    expect(input).toHaveAttribute("step", "0.01");
+    fireEvent.change(input, { target: { value: "0.92" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(action).toEqual({ type: "edit", field: "wc_experience_mod", value: "0.92" });
   });
 
   it("is read-only without an action handler", () => {

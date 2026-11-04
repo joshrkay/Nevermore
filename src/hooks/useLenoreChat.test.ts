@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { FunctionsHttpError } from "@supabase/supabase-js";
+import { FunctionsFetchError, FunctionsHttpError } from "@supabase/supabase-js";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 
 const invoke = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { functions: { invoke: (...args: unknown[]) => invoke(...args) } } }));
 
-const { useLenoreChat } = await import("./useLenoreChat");
+const { CHAT_TIMEOUT_MS, useLenoreChat } = await import("./useLenoreChat");
 
-const httpError = (status: number) => new FunctionsHttpError(new Response("{}", { status }));
+const httpError = (status: number, body: Record<string, unknown> = {}) =>
+  new FunctionsHttpError(new Response(JSON.stringify(body), { status, headers: { "X-Request-Id": "req-from-header" } }));
 
 const setup = () => {
   const addUserMessage = vi.fn((text: string) => ({ id: "m1", text }));
@@ -64,6 +65,67 @@ describe("useLenoreChat", () => {
     expect(body.context).not.toHaveProperty("census");
   });
 
+  it("names the intake the message belongs to, so the function can check it and record it", async () => {
+    invoke.mockResolvedValue({ data: { extracted: {}, reply: "ok" }, error: null });
+    const withIntake = setup("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    await act(async () => { await withIntake.result.current.send("hello"); });
+    expect(invoke.mock.calls[0][1].body.session_id).toBe("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    expect(invoke.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    const without = setup(null);
+    await act(async () => { await without.result.current.send("hello"); });
+    expect(invoke.mock.calls[1][1].body).not.toHaveProperty("session_id");
+  });
+
+  it.each([
+    [429, "rate_limited", "rate_limited"],
+    [503, "daily_cap", "daily_cap"],
+    [504, "timeout", "timeout"],
+    [503, "unavailable", "unavailable"],
+    [502, "provider_error", "unavailable"],
+    [502, "invalid_response", "failed"],
+    [500, "internal", "failed"],
+  ] as const)("tells a %i %s apart from other failures, as %s, and keeps the request id", async (status, code, kind) => {
+    invoke.mockResolvedValue({ data: null, error: httpError(status, { error: "x", code, request_id: "req-1" }) });
+    const { result } = setup();
+    await act(async () => { await result.current.send("hi"); });
+    expect(result.current.failure).toEqual({ text: "hi", kind, requestId: "req-1" });
+  });
+
+  it("falls back to the response header for the request id", async () => {
+    invoke.mockResolvedValue({ data: null, error: httpError(502, { code: "provider_error" }) });
+    const { result } = setup();
+    await act(async () => { await result.current.send("hi"); });
+    expect(result.current.failure?.requestId).toBe("req-from-header");
+  });
+
+  it("calls a request that couldn't reach Lenore at all unavailable", async () => {
+    invoke.mockResolvedValue({ data: null, error: new FunctionsFetchError(new TypeError("Failed to fetch")) });
+    const { result } = setup();
+    await act(async () => { await result.current.send("hi"); });
+    expect(result.current.failure).toEqual({ text: "hi", kind: "unavailable" });
+  });
+
+  it(`gives up after ${CHAT_TIMEOUT_MS / 1000} seconds with no answer, keeps the message and offers to try again`, async () => {
+    vi.useFakeTimers();
+    try {
+      // A request that only ends when the browser aborts it, as supabase-js reports an aborted fetch.
+      invoke.mockImplementation((_name: string, opts: { signal: AbortSignal }) =>
+        new Promise((resolve) => opts.signal.addEventListener("abort", () => resolve({ data: null, error: new FunctionsFetchError(new Error("aborted")) }))));
+      const { result, onOrbStateChange } = setup();
+      let sent!: Promise<void>;
+      act(() => { sent = result.current.send("are you there?"); });
+      expect(result.current.pending).toBe(true);
+      await act(async () => { await vi.advanceTimersByTimeAsync(CHAT_TIMEOUT_MS - 1); });
+      expect(result.current.failure).toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); await sent; });
+      expect(result.current.failure).toEqual({ text: "are you there?", kind: "timeout" });
+      expect(result.current.pending).toBe(false);
+      expect(onOrbStateChange).toHaveBeenLastCalledWith("idle");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("says it couldn't respond, instead of pretending it understood, and keeps the message", async () => {
     invoke.mockResolvedValue({ data: null, error: httpError(502) });
     const { result, addUserMessage, addLenoreMessage, onOrbStateChange } = setup();
@@ -71,7 +133,7 @@ describe("useLenoreChat", () => {
 
     expect(addUserMessage).toHaveBeenCalledTimes(1);
     expect(addLenoreMessage).not.toHaveBeenCalled();
-    expect(result.current.failure).toEqual({ text: "We have 12 staff", kind: "failed" });
+    expect(result.current.failure).toMatchObject({ text: "We have 12 staff", kind: "failed" });
     expect(onOrbStateChange).toHaveBeenLastCalledWith("idle");
   });
 
@@ -108,7 +170,7 @@ describe("useLenoreChat", () => {
     const { result } = setup();
     await act(async () => { await result.current.send("x"); });
     await act(async () => { await result.current.retry(); });
-    expect(result.current.failure).toEqual({ text: "x", kind: "failed" });
+    expect(result.current.failure).toMatchObject({ text: "x", kind: "failed" });
   });
 
   it("lets the prospect carry on by hand, clearing the notice", async () => {

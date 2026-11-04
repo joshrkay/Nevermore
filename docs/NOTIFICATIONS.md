@@ -148,7 +148,7 @@ stops with `canceling statement due to lock timeout`, a long transaction was hol
 again once that has finished. Applied statement by statement instead, a failure part-way leaves the
 earlier changes in place and a rerun then fails on them.
 
-Then apply `supabase/migrations/20261027090000_outbox_operations.sql`, again before deploying the function (it calls `note_outbox_config_problem`). Either order is safe, because nothing in it blocks sending. The new function against the old schema logs `OUTBOX_NOTE_ERROR` with `PGRST202` each scheduled run and otherwise works, so no waiting event is told why it is blocked until the migration lands. The old function against the new schema works too, with the 10 minute claim lease. The migration renames the status `sending` to `claimed` (existing in-flight rows are converted), adds `claimed_at`, the requeue audit columns, and the advisor functions. Apply it as one transaction, like the reliability one; it also gives up after 3 seconds waiting for a table lock.
+Then apply `supabase/migrations/20261027090100_outbox_operations.sql`, again before deploying the function (it calls `note_outbox_config_problem`). Either order is safe, because nothing in it blocks sending. The new function against the old schema logs `OUTBOX_NOTE_ERROR` with `PGRST202` each scheduled run and otherwise works, so no waiting event is told why it is blocked until the migration lands. The old function against the new schema works too, with the 10 minute claim lease. The migration renames the status `sending` to `claimed` (existing in-flight rows are converted), adds `claimed_at`, the requeue audit columns, and the advisor functions. Apply it as one transaction, like the reliability one; it also gives up after 3 seconds waiting for a table lock.
 
 Then apply `supabase/migrations/20261028090000_email_delivery_events.sql` (bounces and suppression), before deploying `resend-webhook`. It replaces `claim_outbox_events` (which now holds back suppressed addresses), adds the `suppressed` status and the two tables, and replaces the two advisor outbox functions so they know the new status. `resend-webhook` deployed first answers 500 to every delivery until the migration lands, which makes the provider retry, so nothing is lost either way.
 
@@ -267,7 +267,7 @@ Resend tells the product what became of a message by webhook. The `resend-webhoo
 - **A bounce flags the submission.** `advisor_email_problems()` lists the submissions whose confirmation bounced, was reported as spam, or is blocked by the provider; the advisor queue shows an "Email bounced" / "Reported as spam" badge and the submission page a banner saying to reach the prospect another way. It is read beside the queue, so a failure of that check never takes the queue down.
 - **The advisory team is never suppressed.** `ADVISORY_NOTIFY_EMAIL` is protected, and so is any message the queue shows was sent to the team. A bounce on one is recorded as `protected` and logged as `WEBHOOK_ADVISOR_BOUNCE`.
 - **Only what was emailed is suppressed.** Resend reports every recipient of a message; for a confirmation (one recipient) only the address the queue sent it to is suppressed. A message that is not in the queue at all (the sign-in codes go through the same Resend account) concerns the recipients as reported: those addresses are suppressed here, which only matters to the confirmations.
-- **What is kept.** The event's type, the provider's message id, the recipients, the bounce type and the provider's explanation with addresses and key-like strings replaced, capped at 200 characters. The subject, sender, body and tags the provider sends are never read. Both tables hold email addresses: fold them into the retention rule (D4). Deleting rows is safe.
+- **What is kept.** The event's type, the provider's message id, the recipients, the bounce type and the provider's explanation with addresses and key-like strings replaced, capped at 200 characters. The subject, sender, body and tags the provider sends are never read. Both tables hold email addresses. Delivery events are pruned after 365 days by the daily retention job (`public.run_retention()`); a suppression keeps its address until it is removed by hand, so a bounced address is never mailed again (`docs/DATA_HANDLING.md`). Deleting rows is safe.
 
 ```sql
 -- Who is suppressed, and why
@@ -389,7 +389,7 @@ included.
 - [ ] Supabase Auth "Confirm email" is on.
 - [ ] The migration `20261026090000_outbox_reliability.sql` was applied before the function was deployed.
 - [ ] The schedule above is running (`select jobname, schedule from cron.job;`, and both Vault secrets exist): it sends retries, queues what the trigger missed and reaps lost claims.
-- [ ] The migration `20261027090000_outbox_operations.sql` was applied, and `ENGINEERING_ALERT_WEBHOOK_URL` points at a channel someone watches (kill the provider key in a test project and check the push arrives).
+- [ ] The migration `20261027090100_outbox_operations.sql` was applied, and `ENGINEERING_ALERT_WEBHOOK_URL` points at a channel someone watches (kill the provider key in a test project and check the push arrives).
 - [ ] An advisor has opened `/advisor/outbox` and retried a dead test event.
 - [ ] The Resend webhook exists, points at `resend-webhook`, and `RESEND_WEBHOOK_SECRET` is set. Send a test confirmation to one of Resend's test addresses that simulates a bounce (their docs list them; this was not checked from the build environment, which cannot reach resend.com) and check that the address appears in `email_suppressions`, the submission shows "Email bounced" in the advisor queue, and a second confirmation to it is held back (`suppressed`).
 - [ ] The unqueued-certifications query above returns no rows.
@@ -409,7 +409,7 @@ included.
 - Certifications from before the outbox existed were not queued; nothing is back-filled. Queue one on
   purpose with the recipe above.
 - Queue rows keep the recipient's address after sending, and a dead event keeps its whole frozen
-  email. Fold them into the retention rule (D4). Deleting them is safe.
+  email, for as long as their intake is kept: they are deleted with it (`docs/DATA_HANDLING.md`).
 
 ## Tests
 

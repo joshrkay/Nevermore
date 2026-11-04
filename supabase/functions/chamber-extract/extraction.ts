@@ -1,5 +1,5 @@
 // Turns the model's tool arguments into the response the browser reads. Only known fields get
-// through, each one only if it is valid under the intake schema (v1, _shared/intakeSchema.ts) exactly as
+// through, each one only if it is valid under the intake schema (_shared/intakeSchema.ts) exactly as
 // the model sent it, and a status, evidence quote or correction survives only for a field that was
 // extracted. No Deno or network imports, so it is unit-tested with the frontend suite.
 

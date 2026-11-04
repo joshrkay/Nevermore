@@ -120,7 +120,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | Two rapid loads or two tabs can still create two sessions (a bare `/start` resumes the latest open one). Orphan drafts now expire after 30 days idle (A-1.5). | `useChamberSession.ts` | A-1.3 |
 | The advisor queue has no `LIMIT` and the page loads every row. | `20261024100000_advisor_queue.sql` | F-2.1 |
 | The opening message tells the prospect the workspace is 'a demonstration'. | `useChamberSession.ts` | A-2.3 |
-| Public copy contradicts the role disclosure: 'No account required' while certification needs a verified email, 'Get Your Quote', and `SUBMITTED TO <PEO>` on the Manuscript. | `LandingPage.tsx`, `index.html`, `ManuscriptPage.tsx` | H-2.3 |
+| Public copy contradicted the role disclosure ('No account required', 'Get Your Quote', `SUBMITTED TO <PEO>`). **Fixed** and guarded by `copy.guard.test.ts`, which now also bans affiliation claims; the landing page's 'not health data' and 'nothing else' claims are gone (US-6.2). The Manuscript's HIPAA statement and preview-domain 'Prepared by' line are left for counsel. | `LandingPage.tsx`, `index.html`, `ManuscriptPage.tsx`, `manuscriptPdf.ts` | H-2.3 |
 | `html2canvas` is a direct dependency that no source file imports. | `package.json` | D-3.1 |
 
 ### 1.4 What landed since v1.0
@@ -131,10 +131,12 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-10-21 | Vercel configuration. Epic E document handling finished. Advisor session states, the access matrix and the searchable queue. CI for lint, tests, build and SQL tests. Advisor and prospect notifications on submission. Re-certification when a different PEO is chosen. A verify skill that drives the app against a local stand-in. |
 | 2026-10-22 | Supabase URL and key read from Vercel's integration variables. Outbox hardening: queueing faults heal and sends are frozen so a sender change cannot duplicate. |
 | 2026-10-29 | Epic E census ingestion (branch `claude/adoring-dijkstra-2fcocb`, not yet merged): the roster is `chamber_data.census` with the spec's `CensusEmployee` row, and older `employees` data is read as it; `document-extract` matches census columns by header, reads `.docx`, never reads or keeps SSN or bank details; upload checks by contents with a SHA-256 and duplicate refusal; category names and per-intake limits in the database; a review step that shows census rows and settles differences in a dialog. Deploy order: the migrations (including `20261029092000`, which teaches the A-2.2 intake validator the `census` key and still accepts `employees`), then `document-extract` (it imports `_shared`), then the front end. See `docs/intake-schema.md`. |
+| 2026-11-03 | Migration versions made unique: `outbox_operations` is now `20261027090100` and `document_storage_path` `20261103110100` (a second copy of each, numbered `…090001` and `…110001` by a parallel fix, was removed), each the second of a pair that shared a number, which `supabase db push` can't apply. CI fails on a duplicate (`src/data/migrations.test.ts`). An existing project: see `docs/SUPABASE_SETUP.md`, Migration versions. |
 | 2026-11-03 | US-1.4, real data in the Manuscript: a payroll section, and no invented values (census defaults are recorded in a row's `assumed` list and shown as not provided; no made-up coverage tiers or dependent counts). No migration. See D-1.2 and `docs/intake-schema.md`. |
 | 2026-11-03 | US-1.3, the hand-off to The Reckoning: the chosen PEO is saved with the intake (`chamber_sessions.chosen_peo`, migration `20261103100000`, deploy it before the front end), and the Manuscript page says when an intake has expired instead of calling it unsigned. See A-1.3. |
-| 2026-11-03 | Document fixes from the US-3 review: a new document row must point into its own intake's folder (migration `20261103110000`, which only changes a policy and can deploy before or after the front end), and removing a document deletes the stored file before its row and treats storage's empty answer as "not deleted" unless the file is gone. See E-1.2 and E-1.3. |
+| 2026-11-03 | Document fixes from the US-3 review: a new document row must point into its own intake's folder (migration `20261103110100`, which only changes a policy and can deploy before or after the front end), and removing a document deletes the stored file before its row and treats storage's empty answer as "not deleted" unless the file is gone. See E-1.2 and E-1.3. |
 | 2026-11-03 | Epic G closed (US-5.1 to US-5.3). D6 decided: the Advisor Console is the operating workflow, mapped in `docs/ADVISOR_CONSOLE.md`; G-3.2 and G-3.3 superseded. The File ID keeps the year its intake started (UTC) instead of the signer's current year. Both emails and the queue search call it the File ID. The confirmation's consent stance is written down in `docs/NOTIFICATIONS.md`. Terms are in a new `GLOSSARY.md`. |
+| 2026-11-04 | US-6.1 to US-6.4 (Epic H). Classification and retention (`docs/DATA_HANDLING.md`, `src/data/dataPolicy.ts`) with a daily retention job and a deletion process that removes stored files, then rows (`purge-intakes`); the Privacy Policy, Terms of Use, legal links on every page and an intake consent gate the database enforces; an isolation test over every migration with a findings register (`docs/SECURITY_REVIEW.md`) and a fix migration; failure monitoring with threshold alerts (`ops-monitor`) and `docs/RUNBOOK.md`. Deploy order: migrations `20261104090000` to `20261104093000`, then the `purge-intakes` and `ops-monitor` functions and the updated `chamber-extract` and `document-extract` (they import `_shared`), then the front end, close behind the consent migration. See H-1 to H-4. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -148,10 +150,10 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | B AI extraction | 4 | 4 | 0 | 1 | 0 | 9 |
 | C Review, certify, submit | 2 | 7 | 0 | 1 | 0 | 10 |
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
-| E Documents | 5 | 1 | 3 | 2 | 0 | 11 |
+| E Documents | 6 | 1 | 3 | 1 | 0 | 11 |
 | F Advisor | 4 | 6 | 1 | 0 | 0 | 11 |
 | G Communications | 6 | 0 | 2 | 0 | 0 | 8 |
-| H Security, privacy, legal | 1 | 4 | 0 | 5 | 2 | 12 |
+| H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
 | **Total** | **32** | **41** | **12** | **15** | **6** | **106** |
@@ -187,13 +189,30 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | D7 | Email provider and sender domain | **Decided in code:** Resend, the only adapter. `EMAIL_FROM` has no default and must be on a verified domain. The domain is not named and the verification checklist item is unchecked. | OPS | G-2.1 launch, J-1.2 |
 | D8 | Is voice launch-critical? | **Recommended default stands:** an opt-in beta behind a flag, with text always available. | PM | I-5.x scope |
 | D9 | Carrier or PEO routing | **Unchanged:** out of scope for M1 to M3. The product tells prospects they send the packet themselves. | PM | none |
-| D10 | Legal reviewer for policy, terms and disclosures | **Not recorded in the repo.** | LEGAL | H-2.1, H-2.3 |
+| D10 | Legal reviewer for policy, terms and disclosures | **Not recorded in the repo.** `docs/LEGAL_REVIEW.md` is the record to fill in: what to review, the questions for counsel, and how approval is made live. | LEGAL | H-2.1, H-2.3 |
 | D11 | AI provider for Lenore and document extraction | **Partly decided:** the adapter supports Lovable (default) and Anthropic, and neither is chosen. Both AI functions use the one adapter, so a single `AI_PROVIDER` secret switches them. Voice uses ElevenLabs. No data-processing terms are recorded. | PM + BE | F-0.2, E-3.1 |
 | D12 | PDF rendering approach | **Decided and implemented:** browser jsPDF with vector text, lazy-loaded. Server-side rendering has not been revisited. | BE + FE | none |
 | D13 | Malware-scanning provider for uploads | **Open.** | OPS | E-4.3 |
 | D14 | **New.** Intake access model: keep Supabase Auth with owner RLS, or move to continuation tokens (v1.0 D1)? | **Recommended: keep as built.** It isolates sessions today and is covered by SQL tests. Drop the token stories (A-1.6), amend the envelope AC in A-2.1, and close the gaps it leaves: a return path for upgraded guests, and database validation with a version check (A-2.2). | PM + BE | A-1.3, A-2.1, H-3.3 |
 | D15 | **New.** Reference format and assignment | **Recommended:** server-assigned `EAA-YYYY-NNNN` from a per-year sequence, recorded with the certification and unique. Today it is `EAA-<year>-<8 hex of the session id>` built in the browser. The year is the one the intake started in (UTC), as the database's fallback has it, so an intake keeps one File ID for good; it used to be the signer's current local year, which gave an intake certified across New Year two File IDs. A File ID already recorded on a certification, even a withdrawn one, is kept as it is, so no File ID already issued changes. The database still does not check the File ID a certification carries. | PM + BE | C-3.1, D-3.2 |
 | D16 | **New.** Advisor visibility: does every advisor see every intake? | **As built: yes**, with no assignment. **Recommended:** keep for a pilot with a small named advisory team and revisit before M3. | PM | F-2.1 |
+| D17 | **New (US-2.1).** What does "required for submission" do? | **Decided 2026-11-03:** a per-field required flag in the intake schema, report-only. Lenore asks about required fields first, and the open items and the completion state use it. Certification does not check it; the gate stays in C-1.3. Until then a prospect can still sign with a required field missing. | PM | US-2.1, US-2.3, C-1.3 |
+| D18 | **New (US-2.1).** Workers' comp and locations in the schema | **Decided 2026-11-03:** add four flat fields for workers' comp: current carrier, policy renewal date, experience mod, and annual premium. Each needs a migration first. No locations structure: locations stay derived from `hq_state`, `states` and the census rows' `work_state` and `zip_code`. | PM | US-2.1, D-1.3 |
+| D19 | **New (US-2.1, US-2.3).** How voice answers are extracted | **Decided 2026-11-03:** each finished prospect utterance in a voice call goes through `chamber-extract`, the same contract as typed chat, and `<extract>` tags are ignored. There is one extraction contract, versioned in the repo. Each utterance makes one AI call, counted against the same quotas. Recorded in `docs/adr/0001-voice-answers-use-the-text-extraction-contract.md`. Consequence: `chamber-extract` must cover every flat field voice used to write. The roster and dependents lose their only conversational writer (see round 2). | PM + BE | US-2.1, US-2.3, US-2.4 |
+| D20 | **New (US-2.4).** Where extraction outcomes are recorded | **Decided 2026-11-03:** an extraction events table with one row per AI call. Each row holds the session id, request id, function, outcome, error kind, refused field paths, prompt and contract version, model and latency. It stores no prospect content and old rows are pruned. Both AI functions receive the session id, and the request id is returned to the browser. This also records the prompt version for B-1.4. | BE | US-2.4, B-1.4 |
+| D21 | **New (US-2.1).** How the roster and dependents are provided after D19 | **Decided 2026-11-03:** the roster comes only from an uploaded file. A downloadable CSV census template gives one row per employee, with a coverage-tier column, and Lenore points prospects to it. Named dependents are not captured: tiers come from the file's coverage tier, and the `dependents` array stays in the schema with no writer. The Census tab stays read-only. Known gap: a prospect on a phone with no spreadsheet can't supply a roster, so it stays an open item. | PM | US-2.1, US-2.3, D-1.2 |
+| D22 | **New (US-2.3).** What each `chamber-extract` call includes | **Decided 2026-11-03:** the new message, the captured values, each field's status, the missing list, and the last ~10 transcript messages. SSNs and bank numbers are redacted with `redactSensitive`, and everything stays inside the 20,000-character context cap. The census is still left out. | PM + BE | US-2.3 |
+| D23 | **New (US-2.1, US-2.2).** Recording "doesn't know" and "doesn't apply" | **Decided 2026-11-03:** two new provenance statuses. `unknown`: the prospect doesn't know yet, so Lenore stops asking and the field stays an open item ("Prospect to provide"). `not_applicable`: the field is closed and its open item clears. Neither stores a value. | PM | US-2.1, US-2.2, US-2.3 |
+| D24 | **New (US-2.3).** How voice Lenore knows what to ask | **Decided 2026-11-03:** after each extraction the browser sends the ElevenLabs agent a contextual update (`sendContextualUpdate`) naming, by label only, the next missing fields and the ones already settled. The agent's prompt moves into the repo with a version number. | PM + BE | US-2.3 |
+| D25 | **New (US-2.1, US-2.3).** Field tiers | **Decided 2026-11-03:** required stays the core four: company legal name, states of operation, pay frequency and a non-empty census. Every other field gets a rank in a "recommended" tier, which Lenore asks about after the required fields. The draft ranking, for PM to edit: employee count, industry, HQ state, current medical carrier, medical renewal date, payroll vendor, WC carrier, WC renewal date, WC experience mod, WC annual premium, then the rest in schema order. | PM | US-2.1, US-2.3 |
+| D26 | **New (US-2.3).** When an intake is ready to certify | **Decided 2026-11-03:** an intake is *ready to certify* (not "ready for review", which collides with the advisor's "Under review"; see `GLOSSARY.md`) when every required field holds a value that is not `conflicting` or `incomplete`, or is marked `unknown` or `not_applicable`. Inferred values count. Inferred and unknown fields remain open items. | PM | US-2.3, C-1.3 |
+| D27 | **New (US-2.3).** Where readiness lives | **Decided 2026-11-03:** derived, not stored. One shared function, used by the Chamber and by `chamber-extract`, computes it from `chamber_data` and `field_provenance`. The Chamber shows that the intake is ready to certify (prospect-facing copy may say "Ready for your review"), and Lenore says so by pointing to Review. Advisors can't filter drafts by readiness. This replaces B-1.3's server-set `ready_for_review`. | PM + BE | US-2.3, B-1.3 |
+| D28 | **New (US-2.2).** Where prospects see every field | **Decided 2026-11-03:** the Review tab lists every captured field, grouped by section, each with its status badge and Confirm/Edit, not only the open ones. Workspace tabs are unchanged. | PM + FE | US-2.2, B-2.1 |
+| D29 | **New (US-2.3).** What Lenore does once the intake is ready | **Decided 2026-11-03:** she says once that it is ready and the prospect can review now. She then carries on with the recommended tier until it is settled, then wraps up for good. Review is always open. Nothing extra is stored. | PM | US-2.3 |
+| D30 | **New (US-2.1).** Manuscript coverage | **Decided 2026-11-03:** every schema field is mapped. A workers' comp section holds the D18 block and the census class codes. An "Operations & HR" section holds the 13 fields not mapped today. Census rows keep `class_code` and `zip_code`. A test fails when a schema field is neither mapped nor listed as deliberately excluded with a reason. | PM + FE | US-2.1, D-1.2, D-1.3 |
+| D31 | **New (US-2.2).** Who sets `unknown` and `not_applicable` | **Decided 2026-11-03:** the model may set `unknown`, with an evidence quote, when the prospect says they don't know. Only the prospect sets `not_applicable`, with a "Doesn't apply" control in Review. When the prospect says a field doesn't apply, Lenore points them to that control. | PM | US-2.2, US-2.3 |
+| D32 | **New.** How US-2.1 to US-2.4 are split | **Decided 2026-11-03:** US-2.1 to US-2.4 stay as parent stories, and the work ships as nine S or M child stories, each releasable alone with its migration first. In deploy order: 2.1a schema metadata, the WC block and the new statuses (M); 2.4a extraction events, session and request ids, error codes and the client timeout (M); 2.1b the extraction contract and Lenore's context (M); 2.3a the follow-up policy, readiness, wrap-up and golden transcripts (M); 2.2a Review lists every field, with "Doesn't apply" and one open-items list (M); 2.3b voice through `chamber-extract` with live context (M); 2.3c voice failure states and the mobile transcript (S); 2.1c Manuscript coverage (M); 2.3d the census template (S). | PM | US-2.1 to US-2.4 |
+| D33 | **New (US-2.2).** What field status a spoken answer can have | **Decided 2026-11-03:** an extraction from a voice utterance can be `inferred`, `incomplete` or `unknown`, never `confirmed`. Speech-to-text mishears: "fifteen" stored as a confirmed 50 would change PEO eligibility and never show as an open item. A spoken answer shows as "Please confirm" until the prospect confirms it in Review or types it. Transcript messages record whether they were spoken. Vocabulary for this and D26 is in `GLOSSARY.md`. | PM | US-2.2, US-2.3 |
 
 ---
 
@@ -308,6 +327,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 *As built:* Provenance, conflict handling, confirm-or-edit controls and failure states are built. The extraction function loads and is tested. Prompt versioning and a live extraction eval are built and wait on a first recorded baseline, and the follow-up policy is not started.
 
+*Re-scoped (2026-11-03):* the remaining work in this epic is planned as US-2.1 to US-2.4 and their nine child stories, under "US-2.1 to US-2.4" at the end of this epic (decisions D17 to D33). Vocabulary follows `GLOSSARY.md`.
+
 #### B-1.1 Extraction response contract and parser
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-2.1 · **Milestone:** M1
 - **Built:** `chamber-extract` keeps only 17 allow-listed fields with a per-field `field_status` and `evidence` (up to 200 characters) and returns `{extracted, field_status, evidence, corrected_fields, reply, rejected}` (plus `prompt_version`, B-1.4); the shaping is in `extraction.ts` and the tool schema now asks the model for all of it. The client's `sanitizeChamberPatch` validates. An empty extraction yields a fallback reply.
@@ -395,6 +416,213 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-3.1 · **Milestone:** M1
 - **Built:** `failureLogLine` and `unexpectedErrorLine` emit only fixed fields (request id, provider, kind, status, attempts, latency), and the handler uses them: the raw provider body is no longer logged. Tests assert that a provider body and an unexpected error's message appear in neither the logs nor the response.
 - **Remaining:** No session id is logged or sent, so a failure cannot be found by session.
+
+#### US-2.1 to US-2.4: re-scoped (D17 to D33)
+
+Four parent stories, delivered as nine child stories. Each child ships alone, migration first, in the order below (D32). They absorb what is left of B-1.1, B-1.3, B-1.4, B-2.2, B-3.1 and B-3.3, the workers' comp part of D-1.3, and A-2.1's notes on required fields and workers' comp. Terms are defined in `GLOSSARY.md`.
+
+**Parents and their acceptance criteria** (as written by the product team):
+
+- **US-2.1 Structured intake schema and extraction contract.** A documented schema covers company, locations, census, dependents, benefits, payroll, workers' comp and open items. Each field has a type, a validation rule and a required status. Extraction outputs are validated before being saved. Unknown, low-confidence or contradictory information is identified rather than overwritten. The Manuscript mapper consumes the same schema. *Children:* 2.1a, 2.1b, 2.1c.
+- **US-2.2 Confidence and source tracking.** Extracted fields keep a field source. Fields carry a field status. Review clearly tells inferred answers from confirmed ones. The prospect's own edits beat AI answers. Inferred and conflicting fields appear as open items. *Children:* 2.1a (statuses), 2.2a.
+- **US-2.3 Lenore's discovery prompts and fallback.** Lenore asks targeted questions about missing high-priority fields. She does not re-ask settled fields. Text stays fully usable without voice. A voice failure falls back clearly to text. A defined completion state (*ready to certify*) shows when there is enough for review. *Children:* 2.3a, 2.3b, 2.3c, 2.3d.
+- **US-2.4 AI safety, error handling and observability.** AI failures show a friendly retry state. An invalid extraction never corrupts the intake. Logs capture failures and validation errors without unnecessary sensitive content. Failed extractions can be found by intake. Rate limits and timeouts are defined and tested. *Children:* 2.4a, plus the golden transcripts in 2.3a.
+
+##### US-2.1a Intake schema v2: field metadata, the workers' comp block, and two new field statuses
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE + FE · **Depends:** none · **Milestone:** M1
+- **Built:**
+  - **Migrations.** `20261103120000_intake_schema_v2_workers_comp.sql` adds the four keys and two kinds to `chamber_data_field_kind` and `chamber_data_error`:
+    - `experience_mod`: a JSON number from 0 to 10.
+    - `dollars`: whole dollars from 0 to 100,000,000.
+  - **Version move.** `20261103120100_intake_schema_v2_version.sql` moves every row to `schema_version` 2 with the table's triggers off, so it is not a save. It sets the default to 2 and refuses any other value.
+  - **Schema module.** `supabase/functions/_shared/intakeSchema.ts` holds `INTAKE_SCHEMA_V2`, published as `docs/intake-schema.v2.json`:
+    - Each property's `x-intake` gives its label, section, required flag and rank.
+    - `INTAKE_FIELDS` lists the fields in rank order, and `REQUIRED_FIELDS` names the core four.
+    - `FIELD_LABELS` now comes from the schema.
+  - **Statuses.** `provenance.ts` adds `unknown` (open item "Prospect to provide") and `not_applicable` (closed, and never changed by an extraction or document candidate). The workspace and the Manuscript show both as badges in place of an answer.
+  - **Client.** The sanitiser reads "$18,400" and "0.92", and the edit control takes a decimal mod.
+  - **Docs.** `docs/intake-schema.md` has the field table by section, generated from the schema.
+  - **Tests:**
+    - SQL: 10 new rejection cases and the version move in `intake_lifecycle.sql`.
+    - `intakeSchema.test.ts`: v2 is a superset of `docs/intake-schema.v1.json`, plus metadata and ranking checks.
+    - `intakeSchemaDoc.test.ts`: the doc's field table matches the schema.
+    - `schemaSync.test.ts`: now reads each `sync:` block from the latest migration that defines its function. Before, a block was keyed by name only, so replacing one function would have stopped the test from checking another function's `caps`.
+    - Provenance and component tests for both statuses.
+- **Notes:**
+  - **Writers today.** Nothing writes `unknown` until 2.1b (the model) and nothing writes `not_applicable` until 2.2a (the "Doesn't apply" control). Only voice `<extract>` writes the workers' comp fields until 2.1b, and they have no workspace home until 2.2a.
+  - **Advisor queue.** Its open-field count still counts only inferred, incomplete and conflicting fields. 2.2a brings it in line with the open items.
+  - **Deploy order:** the two migrations, then the front end. A tab still running the old bundle reads a row holding workers' comp answers without them, and its next save drops them, so prospects with an intake open should reload after the deploy (as in A-2.2).
+- **Scope:**
+  - Intake schema v2 is v1 plus four workers' comp fields (D18):
+    - `wc_carrier`: text.
+    - `wc_renewal_date`: free text, like the other dates.
+    - `wc_experience_mod`: a number from 0 to 10.
+    - `wc_annual_premium`: whole dollars from 0 to 100,000,000.
+  - Each top-level field carries its label, section, whether it is required, and its rank in the published schema (D17, D25):
+    - Sections: company, locations, census, benefits, payroll, workers' comp and operations. Dependents sit inside each employee in the census.
+    - The required fields rank first.
+  - Migration first: the database accepts the four keys and their two new kinds, and every intake records schema version 2.
+  - Field statuses gain `unknown` and `not_applicable` (D23), with labels and badges. Neither stores an answer. `unknown` is an open item ("Prospect to provide"), and `not_applicable` closes one.
+  - `docs/intake-schema.md` lists every field by section with its kind, rule, required flag and rank.
+- **AC:**
+  - `docs/intake-schema.v2.json` gives every field a type, a rule, a label, a section, a required flag and a rank. Every required field ranks before every recommended field.
+  - v2 only adds to v1: every v1 property and definition is unchanged.
+  - The database accepts each workers' comp answer within its rule. It refuses one outside its rule with `EA001` and the field's path. Every intake records schema version 2.
+  - A stored `unknown` or `not_applicable` survives a reload. `unknown` is listed as an open item, and `not_applicable` is not.
+  - An extracted answer replaces `unknown`. No extraction or document candidate changes a field the prospect marked `not_applicable`.
+- **Tests:**
+  - SQL: rejection cases for each new kind and the version check.
+  - The sync test: covers the new kinds and caps, reading each `sync:` block from the latest migration that defines its function.
+  - Schema tests: metadata, ranking, and v2 being a superset of v1.
+  - Provenance tests: both new statuses.
+  - A test that holds the field table in `docs/intake-schema.md` to the schema.
+
+##### US-2.4a Extraction events, intake id, error codes and a browser timeout
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE + FE · **Depends:** none · **Milestone:** M1
+- **Built:**
+  - **Events table.** Migration `20261103120200_ai_extraction_events.sql` adds `ai_extraction_events`:
+    - Checks refuse anything in `fields` and `refused_paths` that isn't a field name or a schema path, so no prospect words can be stored.
+    - Advisors read events, and clients can't write them.
+    - `prune_ai_extraction_events()` runs daily under pg_cron, with 90-day retention.
+  - **Shared modules.** `_shared/ai/errors.ts` holds the codes, `_shared/ai/events.ts` the recorder, and each function's `PROMPT_VERSION` has a fingerprint test.
+  - **`chamber-extract`:**
+    - It checks the request before any quota is spent.
+    - It takes an optional `session_id` and refuses an intake that isn't the caller's, even for an advisor.
+    - An answer without the tool call is `invalid_response`.
+  - **`document-extract`.** Moved into a testable `handler.ts`, with the same codes and events. Its logs name an error's class only.
+  - **Browser.**
+    - The chat sends the intake id and gives up after 45 seconds. Each code gets its own message.
+    - The Upload tab says why the last read didn't go through.
+  - **Runbook.** `docs/AI_OPERATIONS.md` lists the codes, limits, event columns, queries and log lines.
+  - **Tests:**
+    - Handler tests per code for both functions.
+    - SQL tests: `ai_extraction_events.sql` (content checks, access, cascade, pruning), plus per-user quota cases in `ai_abuse_limits.sql`.
+    - Chat hook tests for each code and the timeout.
+    - The e2e chat writes a real event.
+- **Notes:**
+  - **Codes.** `provider_unavailable` from the scope above became two codes: `unavailable` (not set up, budget unreadable, provider can't pay) and `provider_error`. The prospect sees the same words for both.
+  - **Optional intake id.** `session_id` is optional for now, so a tab running the previous front end keeps working. Make it required once old bundles are gone.
+  - **Document reads have no browser timeout.** A read can take two 30-second attempts. A read left `processing` still shows as failed after 5 minutes, as before.
+  - **Reading events.** Events are read in SQL only; the advisor screens don't show them yet.
+  - **Deploy order:** the migration, then both functions, then the front end. A function deployed before the migration logs `AI_EVENT_NOT_RECORDED` and otherwise works.
+- **Scope:**
+  - An extraction events table (D20).
+  - Both AI functions receive the intake id and check the caller owns the intake. Each call writes one event:
+    - the request id, the function and the outcome;
+    - the error kind and the refused field paths;
+    - the prompt and contract version, the provider, the model and the latency.
+  - Events hold no prospect words. Advisors can read them, and they are pruned after 90 days.
+  - Error responses carry a code: `rate_limited`, `daily_cap`, `provider_unavailable`, `timeout`, `invalid_response` or `bad_request`. The request id is returned to the browser.
+  - The browser shows a different message for each code, gives up after 45 seconds, and treats a model reply with no tool call as `invalid_response`.
+  - Quota is spent only after a request passes validation.
+  - `document-extract` logs only the error class, and records why a read failed.
+- **AC:**
+  - Every call to either AI function leaves one event, findable by intake id or request id, with no prospect words in it.
+  - A daily cap, a rate limit, a provider outage and a timeout each show a different message, with Try again.
+  - A request with no answer after 45 seconds ends in the retry state.
+  - A malformed or oversized request spends no quota.
+- **Tests:**
+  - Handler tests for each code, for both functions.
+  - SQL tests: event access, pruning, and the per-user quota (untested today).
+  - Browser tests: each message and the timeout.
+
+##### US-2.1b The extraction contract and Lenore's context
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** 2.1a, 2.4a · **Milestone:** M1
+- **Scope:**
+  - `chamber-extract` extracts every top-level field of schema v2 except the census. Each answer has a field status (`confirmed`, `inferred`, `incomplete` or `unknown`; never `conflicting` or `not_applicable`, D31) and an evidence quote. Each answer is checked against schema v2, and refused paths go into the event.
+  - Each call carries (D22):
+    - the captured answers and their field statuses;
+    - the unsettled fields by rank;
+    - the last ~10 transcript messages, redacted, inside the 20,000-character cap.
+    The function checks the shape and size of all of it.
+  - The prompt and tool schema carry a version, recorded on each event.
+- **AC:**
+  - Any top-level field except the census can be answered in chat. It is captured with its field status and evidence quote.
+  - A one-word answer ("Yes") to Lenore's yes-or-no question is captured against the field she asked about.
+  - An answer that breaks schema v2 is not applied, and its path is in the event.
+  - "I don't know" about a field records it as `unknown`, with no answer.
+- **Tests:** contract tests per kind, context-size tests, and the golden transcripts shared with 2.3a.
+
+##### US-2.3a Follow-up policy, ready to certify, wrap-up and golden transcripts
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** 2.1b · **Milestone:** M1
+- **Scope:**
+  - One shared function returns two things from the answers and field statuses (D26, D27): the unsettled fields by rank, and whether the intake is ready to certify.
+  - The prompt names the next few unsettled fields, and Lenore asks about one at a time.
+  - When the intake first becomes ready to certify, she says so once and points to Review. She then carries on with recommended fields, and wraps up when none are left (D29).
+  - For the census she points to the upload and the template (2.3d).
+  - The Chamber shows "Ready for your review" while the intake is ready to certify.
+  - About ten golden transcripts run in CI against a stubbed model.
+- **AC:**
+  - The prompt never names a settled field, and names unsettled fields in rank order.
+  - An intake is ready to certify exactly when every required field is settled. A conflicting required field keeps it not ready.
+  - Lenore announces readiness once per intake.
+  - The canned "Could you tell me more about your team?" reply is gone.
+- **Tests:** unit tests for the shared function, and golden transcripts covering the field order, a conflict, unknown answers and the wrap-up.
+
+##### US-2.2a Review lists every field, "Doesn't apply", and one open-items list
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** FE + BE · **Depends:** 2.1a · **Milestone:** M1
+- **Scope:**
+  - Review lists every field by section, each with its badge and Confirm/Edit (D28).
+  - "Doesn't apply" marks a field `not_applicable` as a prospect action, and can be undone (D31).
+  - Open items, as the glossary defines them, are computed by one function, used by Review, the Manuscript and the advisor queue. The advisor queue's SQL copy is held to it by a sync test.
+  - The Census tab shows the census's field status and source.
+- **AC:**
+  - Every schema field appears in Review with its badge.
+  - Review, the Manuscript and the advisor queue list the same open items for the same intake.
+  - "Doesn't apply" removes the open item, and no extraction undoes it.
+  - A recommended field with no answer is not an open item.
+- **Tests:** component tests, open-items unit tests, and the advisor-queue sync test.
+
+##### US-2.3b Voice answers through `chamber-extract`, with live context
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** FE + BE · **Depends:** 2.1b, 2.3a · **Milestone:** M2
+- **Scope:**
+  - Each finished prospect utterance in a call goes to `chamber-extract`, marked as spoken (ADR 0001, D19). Agent `<extract>` tags are stripped and ignored, and the direct merge with no transcript message is removed.
+  - A spoken answer is stored as `inferred` at most (D33).
+  - After each extraction the agent receives the next unsettled fields and the settled ones, by label only (D24).
+  - The agent's prompt lives in the repo with a version.
+- **AC:**
+  - A voice answer is checked against schema v2 and records the utterance it came from.
+  - No spoken answer is stored as `confirmed` until the prospect confirms it.
+  - An `<extract>` tag in an agent reply changes nothing.
+  - The agent is told the next fields after every extraction.
+- **Tests:** hook tests with a fake conversation, and a merge test for the spoken cap.
+
+##### US-2.3c Voice failure states and the mobile transcript
+- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** FE · **Depends:** none · **Milestone:** M1
+- **Scope:**
+  - "Speak with Lenore" is hidden when voice isn't configured, so no setup instructions reach prospects.
+  - Connecting times out after 15 seconds.
+  - A denied microphone, a failed connection and a dropped call each get their own message, with "Continue in text", which focuses the text input.
+  - A second click while connecting starts nothing.
+  - On a phone, the full transcript is readable.
+- **AC:**
+  - Every voice failure shows a message and leaves text usable, and nothing spins longer than 15 seconds.
+  - Prospects never see setup instructions.
+  - On a phone, every Lenore reply can be read in full.
+- **Tests:** hook tests for each failure and the timeout, and a component test for the mobile transcript.
+
+##### US-2.1c Manuscript coverage
+- **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** FE · **Depends:** 2.1a · **Milestone:** M1
+- **Scope:**
+  - A workers' comp section with the four fields and the census class codes.
+  - An "Operations & HR" section with the 13 fields not mapped today (D30).
+  - Census rows keep their class code and ZIP.
+  - The page and the PDF show the same sections.
+- **AC:**
+  - Every schema field appears in the Manuscript, or is listed as deliberately excluded with a reason.
+  - The workers' comp section shows the four fields and the class codes.
+- **Tests:** mapper tests, a coverage test that fails on an unmapped field, and a PDF test.
+
+##### US-2.3d Census template
+- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** FE + PM · **Depends:** none · **Milestone:** M1
+- **Scope:**
+  - The Upload tab offers a CSV template (D21). It has one row per employee and the columns `document-extract` reads:
+    - first and last name, date of birth, work state and ZIP;
+    - job title, annual salary, compensation type and employment type;
+    - classification, coverage tier and class code.
+  - It has no SSN or bank columns. Lenore points to it (with 2.3a).
+- **AC:** a filled-in template uploads and reads with every column matched and no skipped-column notes.
+- **Tests:** a `parse.ts` test reads the template's header with every column matched.
 
 ---
 
@@ -560,7 +788,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### E-1.3 Document access isolation
 - **Status:** **SUPERSEDED** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** E-1.1 · **Milestone:** M1
-- **Built:** No tokens. The storage select policy needs the folder to equal `auth.uid()` and an owned intake. Only advisors get signed URLs (`SIGNED_URL_SECONDS = 60`). Prospects have no download UI. Cross-user reads are denied in `session_documents.sql`. A new row's `storage_path` must be `{user_id}/{session_id}/{file}` (migration `20261103110000`), so a prospect can't add a row that points at another user's file for an advisor to open; also in `session_documents.sql`.
+- **Built:** No tokens. The storage select policy needs the folder to equal `auth.uid()` and an owned intake. Only advisors get signed URLs (`SIGNED_URL_SECONDS = 60`). Prospects have no download UI. Cross-user reads are denied in `session_documents.sql`. A new row's `storage_path` must be `{user_id}/{session_id}/{file}` (migration `20261103110100`), so a prospect can't add a row that points at another user's file for an advisor to open; also in `session_documents.sql`.
 - **Remaining:** The URL lifetime is 60 seconds, not 5 minutes (shorter is stricter: amend the AC). No test covers signed-URL issuance or expiry, only row visibility.
 
 #### E-2.1 Document categories and guidance
@@ -593,16 +821,9 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Remaining:** The bucket limits are applied only where the storage schema has those columns, and the SQL tests' storage stand-in has them but real Supabase Storage was not exercised, so confirm they took effect on the project. Storage checks the declared type, not the bytes: a renamed file sent straight to the API is stored and later marked `unsupported`. `file_name` is stored raw. No test for `Content-Disposition`. The 20 MB upload cap is above the 10 MB the plan names and the 10 MB `document-extract` reads.
 
 #### E-4.2 Document retention and deletion
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** E-1.1, H-1.2 · **Milestone:** M2
-- **Built:** No purge job, schedule or `expires_at` exists.
-- **Remaining:** A foreign-key cascade does not remove storage objects, so the purge must delete them explicitly.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Apply the D4 retention rule to documents. Expired or abandoned documents are deleted along with their storage objects. The deletion writes an audit row.
-  - **AC:**
-    - Expired draft documents are removed from the database and storage.
-    - Submitted-session documents follow the submitted retention rule.
-    - Each deletion writes an audit row.
-  - **Tests:** Run the purge against fixtures and confirm removal from both locations.
+- **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** E-1.1, H-1.2 · **Milestone:** M2
+- **Built (US-6.1, with H-1.2):** A closed draft's documents are deleted 30 days after it closed, stored files through the Storage API first, then the rows (`purge-intakes`, `complete_intake_deletion`, which refuses while any file remains). Documents of a submitted record follow the submitted-record rule (reviewed after 3 years, deleted by request). Every deletion is recorded in `intake_deletions` with the files and rows removed. Tests: `supabase/tests/data_retention.sql` and `purge-intakes/handler.test.ts`.
+- **Notes:** Since US-6.3 (SR-5) a prospect can only change a document's row while its intake is open; removing one from an expired draft is still allowed.
 
 #### E-4.3 Malware scanning
 - **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** OPS · **Depends:** D13, E-1.1 · **Milestone:** M2
@@ -724,103 +945,67 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 ### Epic H: Security, Privacy, and Legal Readiness
 
-*As built:* Authorization tests are strong. Retention, deletion, privacy and terms pages, consent gate, alerting and the runbook are not started.
+*As built (after US-6.1 to US-6.4):* Classification and retention are documented and enforced, deletion removes rows and stored files, the privacy and terms pages and the intake consent gate exist (copy pending LEGAL), every table and function is covered by an isolation catalogue, and failures are recorded and alerted with a runbook behind them. What remains is mostly outside the repository: LEGAL approval, filling in contacts, configuring the alert channel, and the first restore drill.
 
 #### H-1.1 Data classification and retention matrix
-- **Status:** **NOT VERIFIABLE** · **Size:** S · **Priority:** Highest · **Owner:** LEGAL + PM · **Depends:** D4 · **Milestone:** M2
-- **Built:** No matrix exists. `docs/NOTIFICATIONS.md` notes that outbox rows keep recipient addresses and should be folded into D4.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Document each data class (contact, business, census, dependent, benefits, payroll, workers' comp, documents, transcripts, PDFs, audit records) with retention and deletion rules.
-  - **AC:**
-    - Every stored data class has a rule.
-    - The matrix is approved by LEGAL.
-  - **Tests:** Checklist review against the schema.
+- **Status:** **PARTIAL** · **Size:** S · **Priority:** Highest · **Owner:** LEGAL + PM · **Depends:** D4 · **Milestone:** M2
+- **Built (US-6.1):** `docs/DATA_HANDLING.md`: four sensitivity levels (Restricted, Confidential, Internal, Public) with handling rules; fifteen data classes (contact, company, census, payroll, benefits, workers' comp, documents, transcripts, Manuscript PDFs, certification and consent, advisor work, notifications, accounts, audit, operational), each with where it is stored, its retention and its deletion rule; the advisory team's responsibilities. `src/data/dataPolicy.ts` is the same policy in code, and the Privacy page renders it. `src/data/dataPolicy.test.ts` checks every table and bucket the migrations create belongs to a class, so a new table fails CI until it is classified. `schemaSync.test.ts` keeps the windows equal to the database's.
+- **Remaining:** LEGAL's approval of the matrix and windows (D4; `docs/LEGAL_REVIEW.md`). Until then they are recommended defaults, enforced as written.
 
 #### H-1.2 Automated retention enforcement
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** H-1.1, A-1.5 · **Milestone:** M2
-- **Built:** Only `ai_request_log` and `ai_ip_log` rows older than a day are pruned, inline.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Scheduled job that applies the matrix to sessions, transcripts, documents, and generated PDFs. Writes an audit row per deletion.
-  - **AC:**
-    - Expired records and objects are removed.
-    - Submitted records are not removed by the draft rule.
-    - Every deletion is audited.
-  - **Tests:** Fixture run confirms each class.
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** H-1.1, A-1.5 · **Milestone:** M2
+- **Built (US-6.1):** Migration `20261104092000_data_retention_and_deletion.sql`. `run_retention()` runs daily (`run-retention`, pg_cron): it queues a deletion for every closed draft (expired, archived, revoked, never certified) 30 days after it closed (`closed_draft_retention()`), and prunes operational events (90 days), email delivery events (365 days) and the AI rate-limit logs (1 day, which until now were pruned only for a caller on their next call, so idle accounts' rows were kept for good). The `purge-intakes` edge function (hourly) carries each deletion out: stored files through the Storage API, then every row in one transaction (`complete_intake_deletion`, which refuses while any file remains). Each deletion is recorded in `intake_deletions` with counts per table; a deletion out of attempts alerts (H-4.1). Submitted records are never touched by the draft rule: after 3 years (`submitted_record_retention()`) `retention_review_due()` lists them for an admin. Tests: `supabase/tests/data_retention.sql`, `supabase/functions/purge-intakes/handler.test.ts`.
+- **Notes:** Needs `purge-intakes` deployed and Vault's `project_url` and `service_role_key` set (`docs/SUPABASE_SETUP.md`). Not exercised against real Supabase Storage. A database restore can bring deleted intakes back; `docs/RUNBOOK.md` ("After a restore") says how to delete them again.
 
 #### H-1.3 Deletion request workflow
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** FS · **Depends:** H-1.2, F-1.2 · **Milestone:** M2
-- **Built:** No delete function exists: nobody, admin included, can delete an intake (tested). Foreign-key cascades from `chamber_sessions` reach documents, certifications, workflow, notes, reviews and the outbox, but not storage objects. Status history, audit rows and `manuscript_versions` have no foreign key on purpose.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Admin deletes a submission, which cascades to its rows and files. The action is logged.
-  - **AC:**
-    - After deletion, no row or file for the submission remains.
-    - The audit log records the action and the admin.
-  - **Tests:** Delete a submission with documents and confirm full removal.
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** FS · **Depends:** H-1.2, F-1.2 · **Milestone:** M2
+- **Built (US-6.1):** `request_intake_deletion(session, reason)` (admins only, any intake, idempotent while one is open) queues the same deletion H-1.2 runs, recording who asked and why; `retry_intake_deletion` re-queues a failed one. The append-only audit tables (status history, review events, notes, lifecycle events, Manuscript versions) refuse every change except this deletion of the one intake it names. `docs/DATA_HANDLING.md` has the request, verification, account-deletion and review steps.
+- **Notes:** No screen: an admin's token through the API, or the SQL editor. Deleting the account itself (Supabase Auth, profile, consents) is a documented manual step.
 
 #### H-2.1 Privacy policy and terms pages
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Highest · **Owner:** LEGAL + FE · **Depends:** D10 · **Milestone:** M2
-- **Built:** No privacy or terms routes exist, and the landing footer does not link to either.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Publish privacy policy and terms from the site footer. Copy is approved by LEGAL.
-  - **AC:**
-    - Both pages are reachable from every page.
-    - Copy is marked approved by LEGAL before publication.
-  - **Tests:** Link check on all routes.
+- **Status:** **PARTIAL** · **Size:** S · **Priority:** Highest · **Owner:** LEGAL + FE · **Depends:** D10 · **Milestone:** M2
+- **Built (US-6.2):** `/privacy` and `/terms` (`PrivacyPage.tsx`, `TermsPage.tsx`, `src/data/legal.ts`). The Privacy Policy renders the data classes and the retention rules from `dataPolicy.ts`, names the service providers, and says how to ask for deletion. Both show "Draft, pending legal review" while `LEGAL_COPY_APPROVED` is false. `LegalLinks` is on every page (landing footer, sign-in, Chamber top bar, consent gate, Manuscript page, profile, not found, auth callback, advisor header); `copy.guard.test.ts` fails if a page file doesn't render it. `docs/LEGAL_REVIEW.md` is the review and approval record.
+- **Remaining:** LEGAL review and approval (D10), the privacy-request contact address, and the Terms' bracketed sections (liability, governing law, disclaimers).
 
 #### H-2.2 Intake consent gate
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Highest · **Owner:** FE · **Depends:** A-1.2, D3 · **Milestone:** M1
-- **Built:** Consent exists only at certification. No control gates the intake fields.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Consent checkbox before the first sensitive field. Store the consent version and timestamp on the session.
-  - **AC:**
-    - Sensitive fields are disabled until consent is recorded.
-    - The consent record stores the version.
-  - **Tests:** Attempt a sensitive field without consent. Confirm consent record.
+- **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** FE · **Depends:** A-1.2, D3 · **Milestone:** M1
+- **Built (US-6.2):** `IntakeConsentGate` wraps `/start`: nothing of the Chamber renders, so nothing can be typed, said or uploaded, until the account agrees to `src/data/intakeConsent.ts` (who Edgar Allan Advisory is and isn't, what is collected, how it's used and kept). Migration `20261104090000_intake_consent.sql`: `record_intake_consent` stores the wording, the version and the server's time in `intake_consents`; the database refuses a new intake or document from the browser without an agreement to the version in force (`EA004`), and a new intake records which agreement it was started under (`intake_consent_id`). Tests: `supabase/tests/intake_consent.sql`, `IntakeConsentGate.test.tsx`; the e2e specs agree and `intake-to-pdf.spec.ts` checks the record.
+- **Notes:** The wording is a draft marked as such until LEGAL approves it (D3). Saves to intakes started before this change aren't refused (open tabs keep working); the gate asks for consent before any intake opens. Deploy the migration and the front end close together.
 
 #### H-2.3 Role-disclosure copy audit
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** LEGAL + PM · **Depends:** H-2.1 · **Milestone:** M2
-- **Built:** `copy.guard.test.ts` bans named PEOs and phrases like 'on my behalf' in five files. Consent line 3 says Edgar Allan Advisory does not submit.
-- **Remaining:** No LEGAL or PM audit record. Residual copy that implies affiliation or contradicts the consent: the Manuscript's `SUBMITTED TO <PEO>` and 'Certified Submission' (page and PDF); 'Get Your Quote' on the landing page; 'AI-native PEO brokerage' in `index.html`; and 'No account required' while certification needs a verified email.
+- **Built:** `copy.guard.test.ts` covers the landing page, Chamber, Reckoning, consent gate, PEO Match, Privacy and Terms pages and the emails: no named PEOs, no "on my behalf", no quote or submission promises, and (new) no affiliation or agency claims ("partnered with", "authorized agent", "on behalf of", …). The consent, Privacy and Terms state the role disclosure word for word (not a PEO, carrier or insurance agency; naming a PEO isn't endorsement). The landing page's "not health data" and "nothing else" claims are gone.
+- **Remaining:** LEGAL's audit record (`docs/LEGAL_REVIEW.md`), including whether any compensation arrangement with a PEO must be disclosed. Residual copy for counsel: the Manuscript's HIPAA statement and its preview-domain "Prepared by" line.
 
 #### H-3.1 Guest isolation tests
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-1.2, E-1.3 · **Milestone:** M2
-- **Built:** `session_documents.sql` covers cross-user read, insert, object store, move, update and delete. The access matrix covers signed-out, guest, other prospect and advisor-as-guest.
-- **Remaining:** Not tested: a cross-user download or signed URL, and expired or revoked sessions. The SQL tests run on stubbed `auth` and `storage` schemas, not the real Supabase APIs.
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-1.2, E-1.3 · **Milestone:** M2
+- **Built (US-6.3):** `supabase/tests/data_isolation.sql` loads every migration and checks guests and prospects against each other's intakes in every status (rows, transcript, provenance, documents, files in both buckets, certifications, consents), including archived, revoked and expired intakes, a known intake id with someone else's token or none, and storage `SELECT` (which is what signing a link checks). `e2e/data-isolation.spec.ts` repeats the core of it over HTTP through the gateway.
+- **Notes:** The SQL runs on mirrored `auth` and `storage` schemas and the HTTP spec on a stand-in gateway, not real Supabase (finding SR-9, accepted; launch checks in `docs/SECURITY_REVIEW.md`).
 
 #### H-3.2 Prospect versus advisor permission tests
 - **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** F-1.2, F-2.1 · **Milestone:** M2
-- **Built:** `advisor_operations.sql` has 7 callers by 13 sources with exact row counts, function refusals, write denials, and a catalogue check that every public table has row security. The `sql-tests` CI job runs it. The outbox is covered separately.
-- **Notes:** The catalogue covers only what that file loads. Advisors see all intakes. No HTTP-level test.
+- **Built:** `advisor_operations.sql` has 7 callers by 13 sources with exact row counts, function refusals, write denials, and a catalogue check that every public table has row security. US-6.3 added `data_isolation.sql`: 25 tables and buckets by 9 callers with exact counts over every migration; every advisor, admin and service-only function by caller; advisors refused monitoring data, the AI rate-limit tables, other users' roles, deletions and every write to prospect data; and catalogue checks that fail when a table isn't in the matrix, a function callable by the API roles isn't on the reviewed allowlist, or a bucket is public.
+- **Notes:** Advisors see all intakes (D16, finding SR-7, accepted for the pilot).
 
 #### H-3.3 Signed URL and fragment-token tests
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** D-2.1, E-1.3 · **Milestone:** M2
-- *Revised scope, AC and tests:*
-  - **Scope:** Test that advisor signed URLs expire (60 seconds) and that no credential appears in a URL or log. The fragment-token tests no longer apply (D14). The session id in `?session=` is not a credential, so add a test that it grants nothing without the owner's JWT.
-  - **AC:**
-    - An expired signed URL is denied.
-    - A request with a valid session id and no matching JWT returns no data.
-    - Function logs contain no signed URL or token for a known test value.
-  - **Tests:** Expiry test, session-id-without-JWT test, log scan.
+- **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** D-2.1, E-1.3 · **Milestone:** M2
+- **Built (US-6.3):** A known session id grants nothing without the owner's token (`data_isolation.sql`, `e2e/data-isolation.spec.ts`). `src/lib/fileLinks.test.ts`: every signed link goes through one helper with a 60-second expiry, nothing calls `getPublicUrl`, no link is stored, put in a URL or logged, edge functions never sign links, and no migration makes a bucket public. Monitoring redacts links from anything it records (`ops_redact`).
+- **Remaining:** That an expired link is refused is Supabase Storage's to enforce and isn't in the test stack (SR-10): the manual launch check in `docs/SECURITY_REVIEW.md` covers it.
 
 #### H-4.1 Alerts for failed uploads, submits, AI calls, and auth
-- **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** OPS · **Depends:** G-1.1, B-3.3 · **Milestone:** M2
-- **Built:** `dispatch-outbox` emits alert-grade log lines (`OUTBOX_DEAD`, `OUTBOX_ENQUEUE_FAILED`, `OUTBOX_RECONCILE_ERROR`, `OUTBOX_REAP_ERROR`), and pushes each dead event to `ENGINEERING_ALERT_WEBHOOK_URL` (ids and failure kind only) when it is set. `.claude/skills/verify` forces failures locally.
-- **Remaining:** No alert channel is configured for any category (the outbox's webhook is code, not a configured destination). No upload, AI or auth alerting; `document-extract` only calls `console.error`. The `docs/NOTIFICATIONS.md` checklist item is unchecked.
+- **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** OPS · **Depends:** G-1.1, B-3.3 · **Milestone:** M2
+- **Built (US-6.4):** Migration `20261104091000_ops_monitoring.sql`: `ops_events` records application errors, failed uploads, AI failures, authorization failures and failed deletions, with a code and a redacted detail, never contents. The browser reports through `report_client_event` (`src/lib/monitoring.ts`: the error boundary, uncaught errors, upload and document-read failures, chat that never answered, advisor denials), capped per account and overall. AI failures are counted from `ai_extraction_events`, the record of every AI call (US-2.4a), so the AI functions don't report them twice; the browser adds only calls that never reached them. `ops_alert_rules()` sets a threshold per kind; the `ops-monitor` edge function (every five minutes) raises each at most once per cooldown and posts to `ENGINEERING_ALERT_WEBHOOK_URL`. Admins read `admin_ops_summary`. Tests: `supabase/tests/ops_monitoring.sql`, `src/lib/monitoring.test.ts`, `ops-monitor/handler.test.ts`.
+- **Notes:** Before launch, set `ENGINEERING_ALERT_WEBHOOK_URL` to a watched channel and send the test event (`docs/RUNBOOK.md`). Refusals that never reach the browser or a function (direct API 401/403, failed sign-ins) are in Supabase's logs only; the runbook says where to look. Browser reports can be forged to raise false alerts (SR-11, accepted, capped). No external uptime check.
 
 #### H-4.2 Incident runbook and escalation contacts
 - **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** OPS · **Depends:** H-4.1 · **Milestone:** M2
-- **Built:** `docs/NOTIFICATIONS.md` 'Operating' has a log-line-to-action table and recovery SQL.
-- **Remaining:** No `docs/RUNBOOK.md`: escalation contacts, rollback steps, and sections for uploads, AI and auth are missing.
+- **Built (US-6.4):** `docs/RUNBOOK.md`: escalation contacts, what is monitored and how alerts arrive, severity levels with response times, response steps and an incident log template, playbooks (application errors, uploads, AI, authorization, deletions, notifications, suspected data exposure, leaked secrets), backup and recovery expectations, and the quarterly production access review with its record. `schemaSync.test.ts` keeps its alert table equal to `ops_alert_rules()`.
+- **Remaining:** Names and numbers in the contacts table (no people are invented in the repo).
 
 #### H-4.3 Backup and restore verification
 - **Status:** **NOT VERIFIABLE** · **Size:** S · **Priority:** High · **Owner:** OPS · **Depends:** J-1.1 · **Milestone:** M2
-- **Built:** No backup or restore document or drill record exists.
-- **Remaining:** Depends on J-1.1.
-- *Scope, AC and tests (from v1.0):*
-  - **Scope:** Document backup frequency and perform one restore drill on staging.
-  - **AC:**
-    - A restore from backup succeeds on staging and is recorded.
-  - **Tests:** Restore drill record.
+- **Built:** `docs/RUNBOOK.md` "Backup and recovery": what is backed up and what isn't (stored files are not in database backups), recovery point and time expectations, the quarterly restore drill and its record, and what to do after a restore (re-delete intakes deleted since the backup).
+- **Remaining:** Confirm the production plan's backups and PITR, and run and record the first drill on staging (J-1.1).
 
 ---
 
@@ -1023,10 +1208,10 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 |---|---|
 | All M2 stories are done. | **Not met.** 13 of 39 are DONE or SUPERSEDED. |
 | Advisors can review, manage status, and see notifications. | **Largely met in code:** queue, detail, field review, notes, status history, versioned Manuscripts, alert emails. Email needs secrets, a verified sender and the schedule. |
-| Retention and deletion run on schedule. | **Partly met.** Uncertified drafts expire hourly through pg_cron (A-1.5). Nothing is purged or deleted on a schedule yet (H-1.2, H-1.3, E-4.2). |
-| Privacy policy and terms are approved by LEGAL. | **Not met.** No pages exist (H-2.1). |
-| Authorization, upload, and isolation tests pass in CI. | **Authorization and isolation met** in the SQL tests. **Upload not met:** server-side limits, cross-user download and signed-URL expiry are untested (E-4.1, H-3.1, H-3.3). |
-| Runbook, alerts, and backup drill are complete. | **Not met.** A log-line table exists for the outbox only (H-4.1 to H-4.3). |
+| Retention and deletion run on schedule. | **Met in the repository.** Drafts expire hourly (A-1.5); `run-retention` queues closed drafts for deletion and prunes logs daily, and `purge-intakes` deletes files and rows hourly (H-1.2, H-1.3, E-4.2). Needs the functions deployed and Vault's secrets set on the project. |
+| Privacy policy and terms are approved by LEGAL. | **Not met.** The pages and the intake consent exist as marked drafts; LEGAL's approval is recorded in `docs/LEGAL_REVIEW.md` (H-2.1, H-2.2, D10). |
+| Authorization, upload, and isolation tests pass in CI. | **Authorization and isolation met** (`data_isolation.sql` over every migration, `e2e/data-isolation.spec.ts`, cross-user storage reads included). **Upload partly met:** only the browser checks file contents (E-4.1), and signed-link expiry is a manual launch check (H-3.3, SR-10). |
+| Runbook, alerts, and backup drill are complete. | **Partly met.** `docs/RUNBOOK.md` and alerting for every failure kind exist (H-4.1, H-4.2). Escalation names, the alert channel and the first restore drill (H-4.3) are still to do. |
 
 ### Milestone 3: Public Launch
 
@@ -1096,7 +1281,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | E-3.2 | Candidate review and merge policy | M | High | M2 | SUPERSEDED |
 | E-3.3 | Unsupported, encrypted, and unreadable file messages | S | High | M2 | DONE |
 | E-4.1 | Upload validation before storage (interim controls) | S | Highest | M1 | PARTIAL |
-| E-4.2 | Document retention and deletion | M | High | M2 | NOT STARTED |
+| E-4.2 | Document retention and deletion | M | High | M2 | DONE |
 | E-4.3 | Malware scanning | S | High | M2 | NOT STARTED |
 | F-1.1 | Role model | M | High | M2 | DONE |
 | F-1.2 | Advisor routes and backend enforcement | M | High | M2 | DONE |
@@ -1117,16 +1302,16 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | G-3.1 | CRM selection and field-mapping specification | S | Medium | M3 | DONE |
 | G-3.2 | CRM sync worker | M | Medium | M3 | SUPERSEDED |
 | G-3.3 | Sync failure visibility and retry | S | Medium | M3 | SUPERSEDED |
-| H-1.1 | Data classification and retention matrix | S | Highest | M2 | NOT VERIFIABLE |
-| H-1.2 | Automated retention enforcement | M | Highest | M2 | NOT STARTED |
-| H-1.3 | Deletion request workflow | S | High | M2 | NOT STARTED |
-| H-2.1 | Privacy policy and terms pages | S | Highest | M2 | NOT STARTED |
-| H-2.2 | Intake consent gate | S | Highest | M1 | NOT STARTED |
+| H-1.1 | Data classification and retention matrix | S | Highest | M2 | PARTIAL |
+| H-1.2 | Automated retention enforcement | M | Highest | M2 | DONE |
+| H-1.3 | Deletion request workflow | S | High | M2 | DONE |
+| H-2.1 | Privacy policy and terms pages | S | Highest | M2 | PARTIAL |
+| H-2.2 | Intake consent gate | S | Highest | M1 | DONE |
 | H-2.3 | Role-disclosure copy audit | S | High | M2 | PARTIAL |
-| H-3.1 | Guest isolation tests | M | Highest | M2 | PARTIAL |
+| H-3.1 | Guest isolation tests | M | Highest | M2 | DONE |
 | H-3.2 | Prospect versus advisor permission tests | M | Highest | M2 | DONE |
-| H-3.3 | Signed URL and fragment-token tests | S | High | M2 | NOT STARTED |
-| H-4.1 | Alerts for failed uploads, submits, AI calls, and auth | M | High | M2 | PARTIAL |
+| H-3.3 | Signed URL and fragment-token tests | S | High | M2 | PARTIAL |
+| H-4.1 | Alerts for failed uploads, submits, AI calls, and auth | M | High | M2 | DONE |
 | H-4.2 | Incident runbook and escalation contacts | S | High | M2 | PARTIAL |
 | H-4.3 | Backup and restore verification | S | High | M2 | NOT VERIFIABLE |
 | I-1.1 | Responsive Chamber layout | M | High | M2 | PARTIAL |

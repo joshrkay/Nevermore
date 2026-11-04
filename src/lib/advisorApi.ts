@@ -224,7 +224,8 @@ export async function reviewField(
   if (error) fail(error, "Couldn't save the review.");
 }
 
-const SIGNED_URL_SECONDS = 60;
+/** How long a link to a stored file works. src/lib/fileLinks.test.ts holds every link to this. */
+export const SIGNED_URL_SECONDS = 60;
 
 /** A short-lived link to a stored file, issued only if the caller may read it. */
 async function signedUrl(bucket: "documents" | "manuscripts", path: string, download?: string): Promise<string> {

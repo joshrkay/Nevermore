@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Sets up a Supabase project for this app and checks the result: migrations, function secrets, the
-// three edge functions, auth settings, the email schedule and (later) advisor roles. Every step can be
+// edge functions, auth settings, the schedules and (later) advisor roles. Every step can be
 // run again. Keys stay on this machine: the script reads them from the Supabase API and the secrets
 // file and never prints them. See docs/SUPABASE_SETUP.md.
 //
@@ -17,9 +17,9 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  advisorSql, authConfigPatch, checkSecrets, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, EXTENSIONS_SQL, FUNCTIONS,
-  interpretChecks, isProjectRef, parseEnvFile, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete,
-  STATUS_QUERIES, vaultSecretSql,
+  advisorSql, authConfigPatch, checkSecrets, envFileLine, EXPIRY_SCHEDULE_SQL, EXTENSIONS_SQL, FUNCTIONS, functionScheduleSql,
+  interpretChecks, isProjectRef, parseEnvFile, publicKeyFrom, RETENTION_SCHEDULE_SQL, rowsFrom, SCHEDULED_FUNCTIONS, serviceRoleKeyFrom,
+  setupComplete, STATUS_QUERIES, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -172,19 +172,23 @@ async function setup(call, ref, secretsFile, env) {
     if (!cliInteractive(["functions", "deploy", fn, "--project-ref", ref])) fail(`Deploying ${fn} failed. If the CLI asked for Docker, update it or run \`supabase functions deploy ${fn} --use-api --project-ref ${ref}\`, then run this again.`);
   }
 
-  step("Schedules: pg_cron, pg_net, the service-role key in Vault, dispatch-outbox every minute and draft expiry hourly");
+  step("Schedules: pg_cron, pg_net, the service-role key in Vault, dispatch-outbox every minute, purge-intakes hourly, ops-monitor every five minutes, draft expiry hourly and retention daily");
   const ext = await runSql(call, ref, EXTENSIONS_SQL);
   if (!ext.ok) fail(`Enabling pg_cron and pg_net failed (${ext.status}): ${ext.message}`);
   const keys = await apiKeys(call, ref);
   const serviceRoleKey = serviceRoleKeyFrom(keys);
-  if (!serviceRoleKey) fail("Couldn't read the project's legacy service_role key. If legacy API keys are disabled (Project Settings → API Keys), re-enable them: dispatch-outbox authenticates the schedule with it.");
+  if (!serviceRoleKey) fail("Couldn't read the project's legacy service_role key. If legacy API keys are disabled (Project Settings → API Keys), re-enable them: the scheduled functions (dispatch-outbox, purge-intakes, ops-monitor) authenticate the schedule with it.");
   // The statement embeds the key, so its error text is not printed.
   const vault = await runSql(call, ref, vaultSecretSql(serviceRoleKey));
   if (!vault.ok) fail(`Storing the service-role key in Vault failed (${vault.status}).`);
-  const cron = await runSql(call, ref, cronScheduleSql(ref));
-  if (!cron.ok) fail(`Scheduling dispatch-outbox failed (${cron.status}): ${cron.message}`);
+  for (const job of SCHEDULED_FUNCTIONS) {
+    const cron = await runSql(call, ref, functionScheduleSql(ref, job.fn, job.schedule));
+    if (!cron.ok) fail(`Scheduling ${job.fn} failed (${cron.status}): ${cron.message}`);
+  }
   const expiry = await runSql(call, ref, EXPIRY_SCHEDULE_SQL);
   if (!expiry.ok) fail(`Scheduling expire-idle-intakes failed (${expiry.status}): ${expiry.message}`);
+  const retention = await runSql(call, ref, RETENTION_SCHEDULE_SQL);
+  if (!retention.ok) fail(`Scheduling run-retention failed (${retention.status}): ${retention.message}`);
   say("  Scheduled.");
 }
 
@@ -289,7 +293,7 @@ async function main() {
     if (!cliCapture(["--version"])) { console.error(`The Supabase CLI isn't installed (\`${SUPABASE_BIN} --version\` failed). See docs/SUPABASE_SETUP.md.`); return 2; }
 
     if (!opts.yes) {
-      say(`\nThis applies migrations, sets secrets, deploys ${FUNCTIONS.join(", ")}, changes auth settings and schedules email delivery on ${ref}.`);
+      say(`\nThis applies migrations, sets secrets, deploys ${FUNCTIONS.join(", ")}, changes auth settings and schedules email delivery, deletions, retention and alerts on ${ref}.`);
       const rl = createInterface({ input: process.stdin, output: process.stdout });
       const answer = (await rl.question(`Type the project ref to continue: `)).trim();
       rl.close();

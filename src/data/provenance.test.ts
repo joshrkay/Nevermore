@@ -5,6 +5,7 @@ import {
   applyChosenValue,
   applyExtraction,
   applyFieldAction,
+  FIELD_LABELS,
   fieldOpenItems,
   parseEvidence,
   parseExtractedStatuses,
@@ -471,6 +472,75 @@ describe("fieldOpenItems", () => {
       { field: "industry", label: "Industry", reason: "Please confirm" },
     ]);
     expect(fieldOpenItems(state.provenance, new Set(["employee_count", "industry"]))).toEqual([]);
+  });
+});
+
+// D23 and D31: neither status holds an answer; only the prospect marks a field not applicable.
+describe("unknown and not applicable", () => {
+  const unknown = (field: "wc_experience_mod" | "pay_frequency"): IntakeState => ({
+    data: EMPTY_CHAMBER_DATA,
+    provenance: { [field]: { status: "unknown", source: msg("m1"), updated_at: NOW.toISOString() } },
+  });
+  const notApplicable: IntakeState = {
+    data: EMPTY_CHAMBER_DATA,
+    provenance: { wc_experience_mod: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: NOW.toISOString() } },
+  };
+
+  it("survives being stored and loaded", () => {
+    const stored = JSON.parse(JSON.stringify({ ...unknown("pay_frequency").provenance, ...notApplicable.provenance }));
+    expect(parseProvenance(stored)).toEqual(stored);
+  });
+
+  it("lists unknown as an open item the prospect owes, and not applicable as closed", () => {
+    expect(fieldOpenItems(unknown("pay_frequency").provenance)).toEqual([
+      { field: "pay_frequency", label: "Pay frequency", reason: "Prospect to provide" },
+    ]);
+    expect(fieldOpenItems(notApplicable.provenance)).toEqual([]);
+  });
+
+  it("lists open items with unknown after incomplete and before inferred", () => {
+    let state = applyExtraction(EMPTY, { states: ["CA"], industry: "Retail" }, { source: msg("m1"), statuses: { states: "incomplete" } });
+    state = { ...state, provenance: { ...state.provenance, ...unknown("pay_frequency").provenance } };
+    expect(fieldOpenItems(state.provenance).map((i) => i.reason)).toEqual(["Incomplete", "Prospect to provide", "Please confirm"]);
+  });
+
+  it("lets an answer replace unknown", () => {
+    const next = applyExtraction(unknown("wc_experience_mod"), { wc_experience_mod: 0.92 }, { source: msg("m2"), now: NOW });
+    expect(next.data.wc_experience_mod).toBe(0.92);
+    expect(next.provenance.wc_experience_mod).toEqual({ status: "inferred", source: msg("m2"), updated_at: NOW.toISOString() });
+  });
+
+  it("never lets an extraction or a document candidate change a field marked not applicable", () => {
+    const fromChat = applyExtraction(notApplicable, { wc_experience_mod: 0.92 }, { source: msg("m2"), statuses: { wc_experience_mod: "confirmed" } });
+    const fromDocument = applyExtraction(notApplicable, { wc_experience_mod: 0.92 }, {
+      source: { kind: "document", document_id: "d1", document_name: "dec-page.pdf" },
+      statuses: { wc_experience_mod: "confirmed" },
+      corrections: ["wc_experience_mod"],
+    });
+    expect(fromChat).toEqual(notApplicable);
+    expect(fromDocument).toEqual(notApplicable);
+    // The database doesn't check provenance, so the status alone must hold, whatever source it records.
+    const misrecorded: IntakeState = {
+      data: EMPTY_CHAMBER_DATA,
+      provenance: { wc_experience_mod: { status: "not_applicable", source: msg("m1"), updated_at: NOW.toISOString() } },
+    };
+    expect(applyExtraction(misrecorded, { wc_experience_mod: 0.92 }, { source: msg("m2") })).toEqual(misrecorded);
+  });
+
+  it("holds nothing to confirm, but lets the prospect give an answer after all", () => {
+    expect(applyFieldAction(unknown("pay_frequency"), { type: "confirm", field: "pay_frequency" })).toEqual(unknown("pay_frequency"));
+    expect(applyFieldAction(notApplicable, { type: "confirm", field: "wc_experience_mod" })).toEqual(notApplicable);
+    const answered = applyFieldAction(notApplicable, { type: "edit", field: "wc_experience_mod", value: "0.85" }, NOW);
+    expect(answered.data.wc_experience_mod).toBe(0.85);
+    expect(answered.provenance.wc_experience_mod).toEqual({ status: "confirmed", source: { kind: "prospect_edit" }, updated_at: NOW.toISOString() });
+  });
+});
+
+describe("FIELD_LABELS", () => {
+  it("labels every field as the schema does, in the schema's order rather than rank order", () => {
+    expect(Object.keys(FIELD_LABELS)).toEqual(Object.keys(EMPTY_CHAMBER_DATA));
+    expect(FIELD_LABELS.company_name).toBe("Company legal name");
+    expect(FIELD_LABELS.wc_experience_mod).toBe("Experience mod");
   });
 });
 

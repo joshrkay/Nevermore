@@ -38,6 +38,10 @@ const perField = (schema: unknown) => ({
   additionalProperties: false,
 });
 
+// Recorded on every extraction event. Raise it with any change to SYSTEM_PROMPT or EXTRACT_TOOL: promptVersion.test.ts
+// fails until you do, so an event always says which prompt produced it.
+export const PROMPT_VERSION = 1;
+
 export const SYSTEM_PROMPT = `You are a data extraction assistant for an HR/PEO underwriting system.
 Given a user message from a business discovery conversation, extract any structured data fields you can identify.
 
