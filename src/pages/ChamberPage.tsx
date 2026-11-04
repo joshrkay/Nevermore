@@ -18,6 +18,7 @@ import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import LegalLinks from "@/components/LegalLinks";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { createChatMessage } from "@/data/chat";
+import { isReadyToCertify, READY_MESSAGE, shouldAnnounceReady } from "@/data/followUp";
 import { browserStorageWorks } from "@/data/intakeBackup";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
 import { mergeChamberData } from "@/data/chamberValidation";
@@ -156,6 +157,22 @@ const ChamberPage = () => {
       updateIntake((prev) => applyExtraction(prev, extracted, transcriptExtraction(message, response))),
   });
 
+  // Lenore says once, when the intake first becomes ready to certify, that it is (US-2.3a, D29), after her own
+  // answer to the message that made it so. An intake that was ready when it opened is left alone.
+  const ready = isReadyToCertify(chamberData, provenance);
+  const readyBeforeRef = useRef<{ epoch: number; ready: boolean } | null>(null);
+  useEffect(() => {
+    if (sessionLoading) return;
+    const before = readyBeforeRef.current;
+    if (!before || before.epoch !== conversationEpoch) {
+      readyBeforeRef.current = { epoch: conversationEpoch, ready };
+      return;
+    }
+    if (pending) return;
+    readyBeforeRef.current = { epoch: conversationEpoch, ready };
+    if (shouldAnnounceReady(before.ready, ready, pending, messages)) addLenoreMessage(READY_MESSAGE);
+  }, [ready, pending, sessionLoading, conversationEpoch, messages, addLenoreMessage]);
+
   // "Continue manually": the prospect fills the intake in themselves, in Review, where every answer can be added.
   const [reviewRequest, setReviewRequest] = useState(0);
   const continueManually = useCallback(() => {
@@ -272,6 +289,11 @@ const ChamberPage = () => {
           </Dialog>
         )}
         {sessionId && <StartOverButton onStartOver={startOver} certifiedBefore={certification.status !== "none"} />}
+        {ready && certification.status !== "certified" && (
+          <span role="status" className="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success">
+            Ready for your review
+          </span>
+        )}
         <SaveStatus
           status={saveStatus}
           onRetry={retrySave}

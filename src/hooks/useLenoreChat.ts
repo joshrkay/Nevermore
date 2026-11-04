@@ -7,6 +7,7 @@ import type { ChatMessage } from "@/data/chat";
 import type { ProvenanceMap } from "@/data/provenance";
 import { redactSensitive } from "@/data/sensitive";
 import { chatContext } from "../../supabase/functions/_shared/chatContext.ts";
+import { censusSummary } from "@/data/followUp";
 import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 
@@ -55,7 +56,9 @@ interface UseLenoreChatOptions {
   epoch?: unknown;
 }
 
-const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?";
+// chamber-extract always replies (when the model doesn't, it asks about the next unsettled field). This covers a
+// function from before it did.
+const FALLBACK_REPLY = "Thank you, I've noted that.";
 
 /**
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
@@ -104,7 +107,12 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       // The roster isn't extracted from chat and holds personal details, so leave it out of the context.
       const { census: _census, ...answers } = dataRef.current;
       const statuses = Object.fromEntries(Object.entries(provenanceRef.current ?? {}).flatMap(([field, p]) => (p ? [[field, p.status]] : [])));
-      const body: Record<string, unknown> = { message: text, ...chatContext(answers, statuses, messagesRef.current ?? [], message?.id) };
+      const census = censusSummary(dataRef.current);
+      const body: Record<string, unknown> = {
+        message: text,
+        ...chatContext(answers, statuses, messagesRef.current ?? [], message?.id),
+        census: { rows: census.rows, work_states: census.workStates },
+      };
       const sessionId = intakeIdRef.current ?? (ensureIntakeRef.current ? await ensureIntakeRef.current() : null);
       if (sessionId) body.session_id = sessionId;
       const { data, error } = await supabase.functions.invoke("chamber-extract", { body, signal: controller.signal });

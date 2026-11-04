@@ -142,6 +142,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-11-04 | Review copy and failure states: 'Lenore captured this — please confirm', 'Confirmed by you' for the prospect's own confirmations, a headcount of 0 shown as 0 on PEO Match, and 'Continue manually' opening Review (B-2.1, B-3.2). No migration. |
 | 2026-11-04 | An intake is created on the prospect's first change, not when the Chamber opens, and a person has one open draft at a time (A-1): migration `20261104102000_one_open_draft.sql` (`EA009`, either deploy order), `ensureIntake` for chat and uploads, and the address cleared after Start over. See A-1.3 and `docs/intake-schema.md`, When an intake is created. |
 | 2026-11-04 | US-2.1b, the extraction contract: chat extracts every field but the census, with `unknown` for what the prospect doesn't know, and each call carries the field statuses and the last 10 messages; prompt version 2. No migration; deploy `chamber-extract` with the front end (an old bundle's requests still work). See US-2.1b and `docs/intake-schema.md`, Extraction contract. |
+| 2026-11-04 | US-2.3a: Lenore asks about the next unsettled field, one at a time, wraps up when none is left, and says once when the intake is ready to certify ("Ready for your review" in the header); one shared readiness rule; ten golden transcripts; prompt version 3. No migration. See US-2.3a and `GLOSSARY.md`, Ready to certify. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -346,8 +347,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Remaining:** All three ACs hold in intent. Not met: the full precedence ladder (document, then transcript, then system; AI against AI keeps the first value and flags a conflict) and server-side enforcement, since a client can write any value. The database now checks the shape of every answer (A-2.2) but still not provenance or precedence, so the ladder stays in the client.
 
 #### B-1.3 Lenore follow-up policy and completion state
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** B-1.2, D2 · **Milestone:** M1
-- **Built:** The prompt has no missing-field list, no 'ask one item' rule and no 'do not re-ask' rule. Nothing sets `ready_for_review`.
+- **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** B-1.2, D2 · **Milestone:** M1
+- **Built:** By US-2.1b and US-2.3a (2026-11-04): the prompt names the unsettled fields by rank, Lenore asks one at a time and never a settled one, and "ready to certify" is derived by one shared rule rather than set as `ready_for_review` (D27).
 - **Remaining:** Needs D2 first.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Compute the list of missing required fields and conflicts on the server. Pass the top priority items into the prompt. Lenore asks about one missing item per turn and does not re-ask a confirmed field. The session becomes `ready_for_review` when every required field is confirmed or marked not applicable and no conflicts remain.
@@ -358,8 +359,8 @@ Status is the state of each decision in the code today. Engineering proceeds on 
   - **Tests:** Scripted transcript fills required fields in order and reaches `ready_for_review`. Scripted transcript with a conflict stays out of `ready_for_review`.
 
 #### B-1.4 Prompt versioning and golden-transcript fixtures
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-1.1 · **Milestone:** M1
-- **Built:** No prompt version is recorded and there are no golden transcripts.
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-1.1 · **Milestone:** M1
+- **Built:** Every extraction event records the prompt and contract version (US-2.4a), and a fingerprint test fails until the version is raised. Ten golden transcripts run in CI against a stubbed model (US-2.3a, `supabase/functions/chamber-extract/golden.test.ts`).
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Store the prompt version on every extraction. Create 10 golden transcripts with expected extractions and run them in CI with a stubbed model.
   - **AC:**
@@ -525,7 +526,14 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Tests:** contract tests per kind, context-size tests, and the golden transcripts shared with 2.3a.
 
 ##### US-2.3a Follow-up policy, ready to certify, wrap-up and golden transcripts
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** 2.1b · **Milestone:** M1
+- **Status:** **DONE** · **Size:** M · **Priority:** Highest · **Owner:** BE + PM · **Depends:** 2.1b · **Milestone:** M1
+- **Built (2026-11-04):**
+  - **One rule (D26, D27).** `supabase/functions/_shared/followUp.ts`: `unsettledFields` (by rank) and `readyToCertify`, used by `chamber-extract` and, through `src/data/followUp.ts`, by the Chamber. Ready means the three answers certification requires (D2) each hold an answer that isn't in conflict or incomplete; inferred counts, states count from the census's work states, and "unknown" or "doesn't apply" can't stand in for a required answer (certification needs it). That is stricter than D26's wording, which would count "unknown" as settled; certification would then refuse an intake Lenore called ready. `readiness.test.ts` holds the required list to `REQUIRED_ITEMS`.
+  - **The prompt (version 3).** It names the first eight unsettled fields, whether the intake is ready, and whether a census is uploaded (a count, never rows). Lenore asks about one field at a time, the first the message didn't answer, never a settled one; accepts "don't know" and moves on; invites a census upload once the required answers are in; wraps up when nothing is left; and never claims readiness herself.
+  - **No canned reply.** When the model gives no reply, the function asks the next unsettled field's question (`FIELD_QUESTION`), or wraps up. "Could you tell me more about your team?" is gone; the browser's fallback for an older function is a plain acknowledgement.
+  - **Ready, once (D29).** When the intake first becomes ready in a visit, after Lenore's own answer, the Chamber adds her fixed `READY_MESSAGE`, recognised by its words so it is said once per intake and nothing new is stored. An intake that was ready when it opened gets no announcement. The header shows "Ready for your review" while it is ready and uncertified.
+  - **Golden transcripts.** `supabase/functions/chamber-extract/golden.test.ts`: ten conversations through the real request building, the real `chamber-extract` handler with the model stubbed, and the real merge: the required order and one announcement, a one-word yes, a conflict that blocks until chosen, a correction, "don't know", an incomplete answer, the fallback question, a refused answer, census work states and the wrap-up. Every turn checks that the prompt names no settled field and keeps rank order (a mutation that names settled fields fails them).
+- **Notes:** The census template Lenore would point to is 2.3d. Voice doesn't get the context yet (2.3b). The golden transcripts hold our side to the contract; how a real model follows the prompt is checked only by a live exchange, which hasn't been done.
 - **Scope:**
   - One shared function returns two things from the answers and field statuses (D26, D27): the unsettled fields by rank, and whether the intake is ready to certify.
   - The prompt names the next few unsettled fields, and Lenore asks about one at a time.

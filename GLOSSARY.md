@@ -44,7 +44,7 @@ _Avoid_: census row, worker, member
 A spouse, domestic partner, child or other person covered through an employee in the census.
 
 **Required field**:
-A field an intake needs before it is ready to certify: company legal name, states of operation, pay frequency and the census.
+A field an intake needs before it can be certified: company legal name, states of operation and pay frequency (D2). The census is recommended: it can only come from an upload, so it never blocks, though Lenore points to the Upload tab for it. (The intake schema's `x-intake.required` still marks the census, for Lenore's ask order.)
 _Avoid_: core item, required for submission, mandatory field
 
 **Recommended field**:
@@ -52,7 +52,7 @@ A field that is not required but strengthens the Manuscript. Each has a rank, an
 _Avoid_: optional field, nice-to-have, priority field
 
 **Ready to certify**:
-An intake is ready to certify when every required field is settled. Lenore says so once and keeps going with recommended fields; the prospect can certify before or after.
+An intake is ready to certify when every required field holds an answer that isn't in conflict or incomplete (an inferred answer counts; states also count from the census's work states). "Not known yet" or "Doesn't apply" can't stand in for a required answer, because certification needs the answer itself. Lenore says so once and keeps going with recommended fields; the prospect can certify before or after. One rule, `readyToCertify` in `supabase/functions/_shared/followUp.ts`, used by the Chamber and by `chamber-extract`.
 _Avoid_: ready for review, complete, done, discovery complete
 
 **Open item**:
