@@ -23,6 +23,7 @@ import { INTAKE_CONSENT_VERSION } from "@/data/intakeConsent";
 import { AI_ERROR_CODES } from "../../supabase/functions/_shared/ai/errors";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
+import { isFileId } from "@/data/manuscript";
 import { OPEN_ITEM_STATUSES } from "@/data/openItems";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
@@ -166,6 +167,14 @@ describe("server and client intake rules agree", () => {
     expect(limit("timestamp")).toBe(MAX_TIMESTAMP_CHARS);
     const senders = /NOT IN \(([^)]*)\)/.exec(sql)?.[1] ?? "";
     expect(quoted(senders)).toEqual([...TRANSCRIPT_SENDERS]);
+  });
+
+  // The File ID the database assigns (D15) is one the Manuscript route accepts.
+  it("assigns File IDs in the form the Manuscript route accepts", () => {
+    const sql = blocks("reference_format").join("\n");
+    expect(sql).toMatch(/format\('EAA-%s-%s', p_year, lpad\(n::text, greatest\(4, length\(n::text\)\), '0'\)\)/);
+    expect(isFileId("EAA-2026-0001")).toBe(true);
+    expect(isFileId("EAA-2026-12345")).toBe(true);
   });
 
   it("counts the same open items in the advisor queue as Review and The Manuscript list (US-2.2a)", () => {

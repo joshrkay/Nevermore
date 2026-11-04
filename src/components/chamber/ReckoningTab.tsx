@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { RavenIcon } from "../RavenLogo";
-import { CheckCircle2, Download, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
 import { certificationBlockingItems, NO_VERIFIED_FIELDS } from "@/data/requiredItems";
-import { NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
+import { manuscriptPath, NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
 import {
   CONSENT_IS_DRAFT,
   CONSENT_SIGNING_STATEMENT,
@@ -28,7 +28,7 @@ interface ReckoningTabProps {
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
   sessionId: string | null;
-  /** The intake's File ID, as the session gives it; null while there is no intake. */
+  /** The intake's File ID, assigned by the database at its first certification; null until then. */
   fileId: string | null;
   /**
    * `signedDataKey` is the answers as signed; the save is refused if they have moved on. Resolves
@@ -43,6 +43,8 @@ interface ReckoningTabProps {
 
 const formatSigned = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+
+const GENERIC_FAILURE = "We couldn't save your submission. Please try again.";
 
 const NO_PROVENANCE: ProvenanceMap = {};
 
@@ -59,7 +61,11 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
   const [signedDataKey, setSignedDataKey] = useState<string | null>(null);
   const [needsRecertify, setNeedsRecertify] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Why the last attempt didn't go through, kept on screen until the next attempt or a change.
+  const [failure, setFailure] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<{ name: string; title: string; at: Date } | null>(null);
+  // A second click while the first is still saving must not send a second certification.
+  const submittingRef = useRef(false);
 
   const attestations = consentStatements(chosenPeo);
   const dataKey = useMemo(() => JSON.stringify(data), [data]);
@@ -76,6 +82,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
     setSignedDataKey(null);
     setChecks([false, false, false]);
     setSubmitted(null);
+    setFailure(null);
     setNeedsRecertify(true);
   }, [dataKey, signedDataKey]);
 
@@ -96,13 +103,14 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
     acknowledged: checks,
     signer: { name: signerName, title: signerTitle },
     signed,
-    hasFileId: !!fileId,
+    hasIntake: !!sessionId,
     isGuest: isAnonymous,
     missingAnswers: missingAnswers.map((item) => item.label),
     conflictingAnswers: conflictingAnswers.map((item) => item.label),
   });
   const allChecked = blockers.length === 0;
-  const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";
+  const recordedFileId = fileId ?? (certification.status === "none" ? null : certification.submission.file_id) ?? null;
+  const manuscriptUrl = manuscriptPath(recordedFileId, sessionId);
   // A certification that still covers these answers is final: offering the form again would let a
   // second signature replace it (and move the intake in the advisor queue) with nothing new certified.
   // The Manuscript names the PEO stored in the certification, and choosing a different PEO leaves the
@@ -128,16 +136,21 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
     setSignedAt(new Date());
     setSignedDataKey(dataKey);
     setNeedsRecertify(false);
+    setFailure(null);
   };
 
   const handleSubmit = async () => {
-    if (!allChecked || !fileId || !signedAt || signedDataKey !== dataKey) return;
+    if (!allChecked || !signedAt || signedDataKey !== dataKey || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
+    setFailure(null);
     const submission: ChamberSubmission = {
       signer_name: signerName.trim(),
       signer_title: signerTitle.trim(),
       signed_at: signedAt.toISOString(),
-      file_id: fileId,
+      // The database assigns the File ID at the first certification and keeps it; what is sent here is
+      // the one already on record, or nothing.
+      file_id: recordedFileId ?? "",
       consent_text_version: CONSENT_TEXT_VERSION,
       // Same version under the name the database's certification check reads.
       consent_version: CONSENT_TEXT_VERSION,
@@ -145,8 +158,16 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
       ...(chosenPeo ? { peo: chosenPeo } : {}),
     };
     const signedKey = dataKey;
-    const result = await onSubmit(submission, signedKey);
-    setSubmitting(false);
+    let result: boolean | SubmitFailure;
+    try {
+      result = await onSubmit(submission, signedKey);
+    } catch (error) {
+      console.error("Failed to submit session:", error);
+      result = false;
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
     // The answers can change while the save is pending. The effect above has then already voided
     // the signature, so don't report a certification of answers that were not signed.
     if (dataKeyRef.current !== signedKey) {
@@ -157,7 +178,9 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
       setSubmitted({ name: signerName.trim(), title: signerTitle.trim(), at: signedAt });
       toast.success("Your certification was recorded and your submission is saved.");
     } else {
-      toast.error(typeof result === "object" ? result.message : "We couldn't save your submission. Please try again.");
+      const message = typeof result === "object" ? result.message : GENERIC_FAILURE;
+      setFailure(message);
+      toast.error(message);
     }
   };
 
@@ -212,7 +235,8 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
         {certification.status === "certified" && !needsRecertify && !peoChanged && !submitted && (
           <div role="status" className="border border-success/40 bg-success/5 rounded-xl p-4 text-sm">
             Certified by {certification.submission.signer_name}, {certification.submission.signer_title}, on{" "}
-            {formatSigned(certification.submission.signed_at)}. File ID: {certification.submission.file_id}.{" "}
+            {formatSigned(certification.submission.signed_at)}. File ID: {certification.submission.file_id}
+            {certification.submission.version ? ` (version ${certification.submission.version})` : ""}.{" "}
             <Link to={manuscriptUrl} className="underline">View The Manuscript</Link>
           </div>
         )}
@@ -225,7 +249,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
         {certification.status === "stale" && !needsRecertify && !submitted && (
           <div role="status" className="border border-primary/40 bg-primary/5 rounded-xl p-4 text-sm">
             Your answers changed after you certified on {formatSigned(certification.submission.signed_at)}. Review them,
-            then certify again.
+            then certify again. Your File ID stays {certification.submission.file_id}.
           </div>
         )}
 
@@ -318,6 +342,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
                 onClick={() => {
                   setSignedAt(null);
                   setSignedDataKey(null);
+                  setFailure(null);
                 }}
                 className="text-xs text-muted-foreground underline hover:text-foreground"
               >
@@ -326,6 +351,17 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
             </div>
           )}
         </div>
+
+        {/* A failed save keeps the signature and the form: nothing was recorded, and the same click tries again. */}
+        {failure && !submitting && (
+          <div role="alert" aria-label="Submission not saved" className="border border-destructive/40 bg-destructive/5 rounded-xl p-4 text-sm flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" aria-hidden="true" />
+            <div>
+              <p className="font-medium">Your submission wasn't saved.</p>
+              <p className="text-muted-foreground">{failure} Nothing has been recorded; your signature is still here.</p>
+            </div>
+          </div>
+        )}
 
         <button
           onClick={handleSubmit}
@@ -336,7 +372,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
               : "bg-muted text-muted-foreground cursor-not-allowed"
           }`}
         >
-          {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate The Manuscript →"}
+          {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : failure ? "Try again: Generate The Manuscript →" : "Generate The Manuscript →"}
         </button>
         {blockers.length > 0 && (
           <p className="text-xs text-muted-foreground -mt-4" data-testid="certification-blockers">
@@ -393,11 +429,15 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
                 <p className="flex items-center gap-2 font-medium text-foreground">
                   <CheckCircle2 className="w-4 h-4 text-primary" /> Certification recorded
                 </p>
+                <p className="text-muted-foreground">{data.company_name ?? "Company name not provided"}</p>
                 <p className="text-muted-foreground">
                   Certified by {submitted.name}, {submitted.title}
                 </p>
                 <p className="text-muted-foreground">{submitted.at.toLocaleString()}</p>
-                <p className="text-muted-foreground font-mono">File ID: {fileId}</p>
+                <p className="text-muted-foreground font-mono">File ID: {recordedFileId ?? "being assigned"}</p>
+                {certification.status === "certified" && certification.submission.version && (
+                  <p className="text-muted-foreground font-mono">Version {certification.submission.version}</p>
+                )}
                 <p className="text-muted-foreground text-xs pt-2">
                   If you change any of your information later, you'll need to certify it again.
                 </p>

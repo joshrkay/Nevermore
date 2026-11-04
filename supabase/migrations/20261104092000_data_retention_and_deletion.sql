@@ -385,7 +385,7 @@ GRANT EXECUTE ON FUNCTION public.claim_intake_deletions(integer, integer) TO ser
 -- The intake's files that are still stored: everything in the documents bucket under its owner's folder
 -- for it ({user_id}/{session_id}/...), and every generated Manuscript under {session_id}/ in the
 -- manuscripts bucket. A document row that points anywhere else (only rows from before
--- 20261103110100_document_storage_path can) is not followed: that file may be someone else's.
+-- 20261103110001_document_storage_path can) is not followed: that file may be someone else's.
 CREATE OR REPLACE FUNCTION public.intake_stored_files(p_session_id uuid, p_user_id uuid)
 RETURNS TABLE (bucket text, name text)
 LANGUAGE sql

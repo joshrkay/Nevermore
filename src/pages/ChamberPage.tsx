@@ -67,6 +67,7 @@ const ChamberPage = () => {
     verifiedFields,
     messages,
     isLoading: sessionLoading,
+    setChamberData,
     updateIntake,
     addMessage,
     ensureIntake,

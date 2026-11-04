@@ -6,6 +6,7 @@ import { FIELD_LABELS, formatFieldValue, type FieldAction, type FieldKey, type P
 import { isSettled } from "@/data/followUp";
 import { openItems } from "@/data/openItems";
 import { REVIEW_FIELDS } from "@/data/reviewFields";
+import { SECTION_STATUS_LABELS, sectionStatus, type SectionStatus } from "@/data/sectionStatus";
 import { missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
 import { certificationBlockingItems, NO_VERIFIED_FIELDS, requiredItems, type RequiredItem } from "@/data/requiredItems";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
@@ -105,15 +106,31 @@ const stillNeededNote = (item: RequiredItem): string =>
       ? "The census's answers conflict, and it gives your states. Choose which is right."
       : "You've given two different answers. Choose the right one.";
 
-const Section = ({ section, title, progress, children }: { section: ReviewSection; title: string; progress: { settled: number; total: number }; children: ReactNode }) => (
+const STATUS_STYLES: Record<SectionStatus, string> = {
+  complete: "bg-success/15 text-success",
+  needs_confirmation: "bg-warning/15 text-warning",
+  incomplete: "bg-destructive/15 text-destructive",
+  not_applicable: "bg-muted text-muted-foreground",
+};
+
+const StatusChip = ({ status, section }: { status: SectionStatus; section: ReviewSection }) => (
+  <span data-testid={`status-${section}`} className={`text-[10px] px-2 py-0.5 rounded-full font-medium normal-case tracking-normal ${STATUS_STYLES[status]}`}>
+    {SECTION_STATUS_LABELS[status]}
+  </span>
+);
+
+const Section = ({ section, title, progress, status, children }: { section: ReviewSection; title: string; progress: { settled: number; total: number }; status: SectionStatus; children: ReactNode }) => (
   <section id={sectionId(section)} aria-labelledby={`${sectionId(section)}-title`} className="bg-card border border-border rounded-xl p-6 space-y-4">
     <div className="flex items-baseline justify-between gap-2">
       <h3 id={`${sectionId(section)}-title`} className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
         {title}
       </h3>
-      <p className="text-[10px] text-muted-foreground" data-testid={`progress-${section}`}>
-        {progress.settled === progress.total ? "Complete" : `${progress.settled} of ${progress.total} settled`}
-      </p>
+      <div className="flex items-center gap-2">
+        <StatusChip status={status} section={section} />
+        <p className="text-[10px] text-muted-foreground" data-testid={`progress-${section}`}>
+          {progress.settled === progress.total ? "Complete" : `${progress.settled} of ${progress.total} settled`}
+        </p>
+      </div>
     </div>
     {children}
   </section>
@@ -150,6 +167,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
   const submitted = submittedCategories(uploaded);
   const recommended = missingRecommendedItems(data).filter((item) => open.some((o) => o.key === item.key));
   const rows = rowsBySection(data);
+  const statuses = Object.fromEntries(SECTIONS.map(({ key }) => [key, sectionStatus(key, data, provenance, verified, open)])) as Record<ReviewSection, SectionStatus>;
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
   const censusStates = [...data.census.reduce((counts, e) => {
     if (e.work_state) counts.set(e.work_state, (counts.get(e.work_state) ?? 0) + 1);
@@ -245,6 +263,24 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
         </div>
       )}
 
+      {/* Where each section stands, and a way to the one that needs work (C-1) */}
+      <nav aria-label="Sections" className="bg-card border border-border rounded-xl p-4">
+        <ul className="flex flex-wrap gap-2">
+          {SECTIONS.map(({ key, title }) => (
+            <li key={key}>
+              <button
+                type="button"
+                onClick={() => jumpTo({ section: key })}
+                className="flex items-center gap-2 text-xs border border-border rounded-full px-3 py-1 hover:bg-muted"
+              >
+                {title}
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[statuses[key]]}`}>{SECTION_STATUS_LABELS[statuses[key]]}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
       {/* Eligibility check */}
       <div className="bg-card border border-border rounded-xl p-6 space-y-3">
         <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">Eligibility Check</p>
@@ -269,7 +305,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
       </div>
 
       {SECTIONS.map(({ key, title }) => (
-        <Section key={key} section={key} title={title} progress={sectionProgress(key, data, provenance, verified)}>
+        <Section key={key} section={key} title={title} progress={sectionProgress(key, data, provenance, verified)} status={statuses[key]}>
           {renderRows(rows[key])}
 
           {key === "workforce" && (
