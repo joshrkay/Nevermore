@@ -1,9 +1,27 @@
+import { Blob as NodeBlob } from "node:buffer";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const rpc = vi.fn();
-vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...args: unknown[]) => rpc(...args) } }));
+const upload = vi.fn();
+const remove = vi.fn();
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: {
+    rpc: (...args: unknown[]) => rpc(...args),
+    storage: { from: () => ({ upload: (...a: unknown[]) => upload(...a), remove: (...a: unknown[]) => remove(...a) }) },
+  },
+}));
 
-const { AdvisorApiError, fetchIsAdvisor, listEmailProblems, listOutboxEvents, listSubmissions, outboxSummary, requeueOutboxEvent } = await import("./advisorApi");
+const {
+  AdvisorApiError,
+  fetchIsAdvisor,
+  listEmailProblems,
+  listOutboxEvents,
+  listSubmissions,
+  outboxSummary,
+  requeueOutboxEvent,
+  reviewField,
+  saveManuscriptVersion,
+} = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
 const caught = async (run: () => Promise<unknown>) => {
@@ -143,5 +161,90 @@ describe("email problems API", () => {
     const err = await caught(() => listEmailProblems());
     expect(err.forbidden).toBe(true);
     expect(err.message).toBe("You don't have advisor access.");
+  });
+});
+
+describe("reviews name the answer they were made on", () => {
+  beforeEach(() => rpc.mockReset().mockResolvedValue({ data: {}, error: null }));
+
+  it("sends the stored answer the advisor saw", async () => {
+    await reviewField("s1", "states", "verified", { kind: "keep" }, "", ["CA", "NY"]);
+    expect(rpc).toHaveBeenCalledWith("review_submission_field", {
+      p_session_id: "s1",
+      p_field: "states",
+      p_review_state: "verified",
+      p_correction: "keep",
+      p_value: null,
+      p_reason: null,
+      p_answer: { value: ["CA", "NY"] },
+    });
+  });
+
+  it("tells a missing answer from a null one", async () => {
+    await reviewField("s1", "industry", "follow_up", { kind: "keep" }, "", undefined);
+    expect(rpc.mock.calls[0][1].p_answer).toEqual({});
+    await reviewField("s1", "industry", "follow_up", { kind: "keep" }, "", null);
+    expect(rpc.mock.calls[1][1].p_answer).toEqual({ value: null });
+  });
+
+  it("passes on the database's refusal of a stale review with its code, so the page can reload", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "The prospect changed this answer after the page was loaded; review the current answer", code: "PT409" } });
+    const err = await caught(() => reviewField("s1", "company_name", "verified", { kind: "keep" }, "", "Acme"));
+    expect(err.code).toBe("PT409");
+    expect(err.message).toMatch(/changed this answer/);
+  });
+});
+
+describe("a Manuscript version names the certification it was built from", () => {
+  const opts = {
+    sessionId: "s1",
+    version: 2,
+    // jsdom's Blob can't be read back; Node's can, as a browser's can.
+    pdf: new NodeBlob(["%PDF-1.4"]) as unknown as Blob,
+    reviewEventId: 9,
+    correctionsApplied: 1,
+    sensitiveRevealed: false,
+    certifiedDataHash: "c".repeat(64),
+    certifiedAt: "2026-10-01T12:00:05.123456+00:00",
+  };
+  beforeEach(() => {
+    rpc.mockReset();
+    upload.mockReset().mockResolvedValue({ data: {}, error: null });
+    remove.mockReset().mockResolvedValue({ data: [], error: null });
+  });
+
+  it("sends the certification's hash and time with the version", async () => {
+    rpc.mockResolvedValue({ data: { id: "v2" }, error: null });
+    await saveManuscriptVersion(opts);
+    const [fn, args] = rpc.mock.calls[0];
+    expect(fn).toBe("record_manuscript_version");
+    expect(args).toMatchObject({
+      p_session_id: "s1",
+      p_version: 2,
+      p_review_event_id: 9,
+      p_certified_data_hash: "c".repeat(64),
+      p_certified_at: "2026-10-01T12:00:05.123456+00:00",
+    });
+    expect(args.p_storage_path).toMatch(/^s1\/v2-/);
+    expect(args.p_pdf_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("sends null, not nothing, for a certification from before the database stamped one", async () => {
+    rpc.mockResolvedValue({ data: { id: "v2" }, error: null });
+    await saveManuscriptVersion({ ...opts, certifiedDataHash: null, certifiedAt: null });
+    const args = rpc.mock.calls[0][1];
+    expect(args).toHaveProperty("p_certified_data_hash", null);
+    expect(args).toHaveProperty("p_certified_at", null);
+  });
+
+  it("removes the uploaded file when the database refuses the version, and reports the refusal's code", async () => {
+    rpc.mockResolvedValue({
+      data: null,
+      error: { message: "The prospect certified their intake again while this Manuscript was being generated; generate it again", code: "PT409" },
+    });
+    const err = await caught(() => saveManuscriptVersion(opts));
+    expect(err.code).toBe("PT409");
+    expect(remove).toHaveBeenCalledWith([upload.mock.calls[0][0]]);
   });
 });

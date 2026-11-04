@@ -17,6 +17,10 @@ const stateLabel = (s: string | null) => (s && s in REVIEW_LABELS ? REVIEW_LABEL
 /** One line per recorded review change. */
 export function describeReviewEvent(e: ReviewEvent): string {
   const field = FIELD_LABELS[e.field as FieldKey] ?? e.field;
+  if (e.cause === "answer_changed") {
+    return `changed ${field} from ${formatFieldValue(e.answer_from)} to ${formatFieldValue(e.answer_to)}, so its review was reset` +
+      (e.from_state ? ` (was ${stateLabel(e.from_state)})` : "");
+  }
   const parts: string[] = [];
   if (e.correction_changed) {
     if (!e.has_correction) parts.push(`removed the correction to ${field} (was ${formatFieldValue(e.from_value)})`);

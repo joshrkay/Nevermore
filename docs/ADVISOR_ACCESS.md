@@ -46,6 +46,14 @@ a sign-out the app asked for is remembered until the event arrives.
 - Read every intake, certification, profile and uploaded document. They cannot change a
   prospect's answers; corrections are stored in `advisor_field_reviews` beside them, and every
   review change is appended to `advisor_review_events`.
+- A review belongs to the answer it was made on. `review_submission_field()` takes the answer the
+  advisor's page shows and refuses (`PT409`, HTTP 409) if the intake now says something else; the page then
+  reloads. When the prospect changes a reviewed answer (editing after certifying, or certifying
+  different answers), a trigger resets that field's review to unreviewed, keeps any correction as an
+  unapproved proposal, marks the field "the prospect changed this answer (it was …)" until an advisor
+  reviews it again, and appends an `answer_changed` event naming the prospect and both answers. Reviews
+  of unchanged answers are kept. Reviews recorded before migration `20261103110000` weren't checked
+  against the answer they were made on.
 - Change the pipeline status only through `set_submission_status()`, which appends to
   `submission_status_history` (who, when, from, to, note).
 - Add internal notes (`advisor_notes`); notes can't be edited or deleted and prospects can't read them.
@@ -58,8 +66,11 @@ a sign-out the app asked for is remembered until the event arrives.
   documents, and the revocation is recorded with the reason. See `docs/intake-schema.md` →
   "Session lifecycle".
 - Generate Manuscript versions into the private `manuscripts` bucket. A version is recorded only
-  for a certified intake, against the latest review state; recorded files can't be overwritten
-  or deleted. Prospects can't list or download stored versions.
+  for a certified intake, against the latest review state and the certification it was built from:
+  `record_manuscript_version()` requires the certification's `data_sha256` and `certified_at` as the
+  page loaded them, and refuses (`PT409`) if the prospect has certified again since, so a version never
+  claims a certification its PDF doesn't show. Recorded files can't be overwritten or deleted.
+  Prospects can't list or download stored versions.
 
 ## The submission queue (`/advisor`)
 

@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { Manuscript } from "@/data/manuscript";
 import type { SubmissionDetail } from "@/lib/advisorApi";
+import { toast } from "sonner";
 
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
@@ -38,6 +39,8 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   createdAt: "2026-10-01T00:00:00Z",
   updatedAt: "2026-10-01T00:00:00Z",
   data: signedData,
+  // As stored: only what the prospect gave, before the browser fills in empty fields.
+  storedAnswers: { company_name: "Signed Co", employee_count: 12, pay_frequency: "Bi-weekly" },
   provenance: {
     employee_count: {
       status: "inferred",
@@ -51,6 +54,7 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
     signer_title: "CEO",
     signed_at: "2026-10-01T12:00:00Z",
     certified_at: "2026-10-01T12:00:05Z",
+    data_sha256: "c".repeat(64),
     file_id: "EAA-2026-S1",
     chamber_data: signedData,
   },
@@ -86,6 +90,7 @@ const renderPage = () =>
 describe("AdvisorSubmissionPage", () => {
   beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset();
+    vi.mocked(toast.error).mockReset();
     downloadBlob.mockReset();
     buildManuscriptPdf.mockClear();
     api.loadSubmission.mockResolvedValue(detail());
@@ -138,7 +143,8 @@ describe("AdvisorSubmissionPage", () => {
     const row = await screen.findByTestId("field-employee_count");
     api.reviewField.mockResolvedValue(undefined);
     fireEvent.click(within(row).getByRole("button", { name: "Verified" }));
-    await waitFor(() => expect(api.reviewField).toHaveBeenCalledWith("s1", "employee_count", "verified", { kind: "keep" }, ""));
+    // The review names the stored answer the advisor was looking at.
+    await waitFor(() => expect(api.reviewField).toHaveBeenCalledWith("s1", "employee_count", "verified", { kind: "keep" }, "", 12));
 
     fireEvent.click(within(row).getByRole("button", { name: "Correct" }));
     fireEvent.change(within(row).getByLabelText("Corrected value"), { target: { value: "lots" } });
@@ -149,8 +155,69 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.change(within(row).getByLabelText("Corrected value"), { target: { value: "14" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save correction" }));
     await waitFor(() =>
-      expect(api.reviewField).toHaveBeenLastCalledWith("s1", "employee_count", "follow_up", { kind: "set", value: 14 }, "Payroll register"),
+      expect(api.reviewField).toHaveBeenLastCalledWith("s1", "employee_count", "follow_up", { kind: "set", value: 14 }, "Payroll register", 12),
     );
+  });
+
+  it("names a missing answer as missing, not as the empty value the page shows", async () => {
+    renderPage();
+    const row = await screen.findByTestId("field-hris_system");
+    api.reviewField.mockResolvedValue(undefined);
+    fireEvent.click(within(row).getByRole("button", { name: "Needs follow-up" }));
+    await waitFor(() => expect(api.reviewField).toHaveBeenCalledWith("s1", "hris_system", "follow_up", { kind: "keep" }, "", undefined));
+  });
+
+  it("reloads when the database refuses a review because the prospect changed the answer since the page loaded", async () => {
+    renderPage();
+    const row = await screen.findByTestId("field-employee_count");
+    api.reviewField.mockRejectedValue(
+      Object.assign(new Error("The prospect changed this answer after the page was loaded; review the current answer"), { code: "PT409" }),
+    );
+    fireEvent.click(within(row).getByRole("button", { name: "Verified" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/changed this answer/)));
+    await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+  });
+
+  it("doesn't reload for a review refused for any other reason", async () => {
+    renderPage();
+    const row = await screen.findByTestId("field-employee_count");
+    api.reviewField.mockRejectedValue(Object.assign(new Error("Network request failed"), { code: undefined }));
+    fireEvent.click(within(row).getByRole("button", { name: "Verified" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Network request failed"));
+    expect(api.loadSubmission).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows that the prospect changed a reviewed answer: on the field, in the audit trail and beside the Manuscript", async () => {
+    api.loadSubmission.mockResolvedValue(
+      detail({
+        reviews: {
+          company_name: {
+            field: "company_name", review_state: null, has_correction: true, corrected_value: "Old Co LLC",
+            reason: "Per W-9", updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z",
+            answer_changed_at: "2026-10-03T00:00:00Z", answer_changed_from: "Old Co",
+          },
+        },
+        reviewEvents: [
+          {
+            id: 10, session_id: "s1", field: "company_name", from_state: "verified", to_state: null, correction_changed: false,
+            from_value: "Old Co LLC", to_value: "Old Co LLC", had_correction: true, has_correction: true, reason: null,
+            actor_id: "prospect-1", actor_email: "p@example.com", created_at: "2026-10-03T00:00:00Z",
+            cause: "answer_changed", answer_from: "Old Co", answer_to: "Signed Co",
+          },
+        ],
+      }),
+    );
+    renderPage();
+    const row = await screen.findByTestId("field-company_name");
+    expect(within(row).getByText(/The prospect changed this answer after it was reviewed/)).toHaveTextContent("(it was Old Co)");
+    // The correction made against the old answer stays, but isn't applied until someone verifies it again.
+    expect(within(row).getByText("Not used until verified")).toBeInTheDocument();
+    const audit = screen.getByRole("heading", { name: "Review audit trail" }).closest("section")!;
+    expect(within(audit).getByText("Prospect")).toBeInTheDocument();
+    expect(
+      within(audit).getByText(/changed Company legal name from Old Co to Signed Co, so its review was reset \(was Verified\)/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/The prospect changed 1 answer after it was reviewed, so its review was reset/)).toBeInTheDocument();
   });
 
   it("shows a pending correction as not yet used, and the review audit trail", async () => {
@@ -167,6 +234,7 @@ describe("AdvisorSubmissionPage", () => {
             id: 7, session_id: "s1", field: "employee_count", from_state: null, to_state: "follow_up", correction_changed: true,
             from_value: null, to_value: 14, had_correction: false, has_correction: true, reason: "Payroll register",
             actor_id: "a1", actor_email: "adv@example.com", created_at: "2026-10-02T00:00:00Z",
+            cause: "advisor", answer_from: null, answer_to: null,
           },
         ],
       }),
@@ -195,6 +263,7 @@ describe("AdvisorSubmissionPage", () => {
             id: 9, session_id: "s1", field: "company_name", from_state: null, to_state: "verified", correction_changed: true,
             from_value: null, to_value: "Signed Co LLC", had_correction: false, has_correction: true, reason: "Per W-9",
             actor_id: "a1", actor_email: "adv@example.com", created_at: "2026-10-02T00:00:00Z",
+            cause: "advisor", answer_from: null, answer_to: null,
           },
         ],
         versions: [
@@ -219,6 +288,9 @@ describe("AdvisorSubmissionPage", () => {
       reviewEventId: 9,
       correctionsApplied: 1,
       sensitiveRevealed: true,
+      // The certification the PDF is built from, so the database can refuse it if the prospect certified again.
+      certifiedDataHash: "c".repeat(64),
+      certifiedAt: "2026-10-01T12:00:05Z",
     });
     const [manuscript, opts] = buildManuscriptPdf.mock.calls[0] as unknown as [Manuscript, { revealSensitive: boolean }];
     expect(opts.revealSensitive).toBe(true);
@@ -229,6 +301,22 @@ describe("AdvisorSubmissionPage", () => {
     });
     expect(manuscript.signer?.name).toBe("Jo Doe");
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "The_Manuscript_EAA-2026-S1-v2_Signed_Co.pdf"));
+  });
+
+  it("reloads, and keeps no file, when the prospect certified again while the Manuscript was being generated", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    api.saveManuscriptVersion.mockRejectedValue(
+      Object.assign(new Error("The prospect certified their intake again while this Manuscript was being generated; generate it again"), {
+        code: "PT409",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Generate Manuscript/ }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/certified their intake again.*The page now shows the latest answers/)),
+    );
+    await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+    expect(downloadBlob).not.toHaveBeenCalled();
   });
 
   it("downloads a stored version through a short-lived link", async () => {

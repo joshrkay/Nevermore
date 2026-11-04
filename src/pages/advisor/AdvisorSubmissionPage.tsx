@@ -137,6 +137,7 @@ const Detail = ({
           <FieldReviewPanel
             sessionId={detail.id}
             data={detail.data}
+            storedAnswers={detail.storedAnswers}
             provenance={detail.provenance}
             reviews={detail.reviews}
             messageIds={messageIds}
@@ -155,10 +156,10 @@ const Detail = ({
             history={detail.history}
             onChanged={reload}
           />
-          <ManuscriptPanel detail={detail} onGenerated={reload} />
+          <ManuscriptPanel detail={detail} onChanged={reload} />
           <DocumentsPanel documents={detail.documents} />
           <NotesPanel sessionId={detail.id} notes={detail.notes} onAdded={reload} />
-          <AuditTrail events={detail.reviewEvents} />
+          <AuditTrail events={detail.reviewEvents} prospectUserId={detail.userId} />
         </div>
       </div>
     </>

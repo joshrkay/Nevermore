@@ -97,6 +97,7 @@ INSERT INTO public.chamber_sessions (id, user_id) VALUES ('00000000-0000-0000-00
 \i supabase/migrations/20261024100000_advisor_queue.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
 \i supabase/migrations/20261029091000_census_advisor_review.sql
+\i supabase/migrations/20261103110000_pin_reviews_and_manuscripts_to_answers.sql
 
 -- Runs `stmt` as `who` and fails the run unless it's refused (permission, row security or a
 -- deliberate check).
@@ -107,6 +108,16 @@ BEGIN
 EXCEPTION
   WHEN insufficient_privilege OR check_violation OR invalid_parameter_value OR serialization_failure
     OR no_data_found THEN NULL;
+END $$;
+
+-- Runs `stmt` and fails the run unless it's refused as a conflict: PT409, the "this changed since the
+-- page loaded" refusal PostgREST answers as HTTP 409. (Not 40001: PostgREST retries that, forever.)
+CREATE FUNCTION pg_temp.must_conflict(stmt text, label text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE stmt;
+  RAISE EXCEPTION 'FAIL: % was allowed', label;
+EXCEPTION
+  WHEN SQLSTATE 'PT409' THEN NULL;
 END $$;
 
 CREATE FUNCTION pg_temp.as_user(uid uuid, email text DEFAULT NULL, guest boolean DEFAULT false) RETURNS void
@@ -138,6 +149,10 @@ DECLARE
   s text;
   r record;
   latest bigint;
+  cert_hash text;
+  cert_at timestamptz;
+  old_hash text;
+  old_at timestamptz;
 BEGIN
   INSERT INTO auth.users (id) VALUES (advisor), (admin_user), (prospect), (other);
   INSERT INTO public.user_roles (user_id, role) VALUES (advisor, 'advisor'), (admin_user, 'admin');
@@ -190,7 +205,7 @@ BEGIN
   PERFORM pg_temp.must_refuse(format('SELECT public.review_submission_field(%L, ''company_name'', ''verified'')', sid), 'prospect reviewing a field');
   PERFORM pg_temp.must_refuse(format('INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES (%L, %L, ''hi'')', sid, prospect), 'prospect adding a note');
   PERFORM pg_temp.must_refuse(format('INSERT INTO public.submission_workflow (session_id, status) VALUES (%L, ''won'') ON CONFLICT (session_id) DO UPDATE SET status = ''won''', sid), 'prospect writing the pipeline');
-  PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), 0, 0, false)', sid, sid || '/x.pdf'), 'prospect recording a manuscript');
+  PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), 0, 0, false, NULL, NULL)', sid, sid || '/x.pdf'), 'prospect recording a manuscript');
   PERFORM pg_temp.must_refuse(format('INSERT INTO storage.objects (bucket_id, name) VALUES (''manuscripts'', %L)', sid || '/x.pdf'), 'prospect storing a manuscript');
   IF public.prospect_submission_status(other_sid) IS NOT NULL THEN RAISE EXCEPTION 'FAIL: prospect sees another intake''s status'; END IF;
 
@@ -292,22 +307,30 @@ BEGIN
 
   -- ---------- Manuscript versions ----------
   SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = sid;
-  PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), %s, 1, false)', sid, sid || '/v1.pdf', latest), 'recording a file that was never uploaded');
+  -- The certification the advisor's page loaded, which the PDF is built from.
+  SELECT submission ->> 'data_sha256', (submission ->> 'certified_at')::timestamptz INTO cert_hash, cert_at
+  FROM public.chamber_sessions WHERE id = sid;
+  IF cert_hash IS NULL OR cert_at IS NULL THEN RAISE EXCEPTION 'FAIL: the certification was not stamped'; END IF;
+  PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), %s, 1, false, %L, %L)', sid, sid || '/v1.pdf', latest, cert_hash, cert_at), 'recording a file that was never uploaded');
   INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', sid || '/v1.pdf');
   INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', other_sid || '/v1.pdf');
-  PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), %s, 1, false)', sid, other_sid || '/v1.pdf', latest), 'a file stored under another submission');
-  PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), %s, 1, false)', other_sid, other_sid || '/v1.pdf', 0), 'an uncertified intake');
-  PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), %s, 1, false)', sid, sid || '/v1.pdf', latest - 1), 'a packet built before the latest review');
-  PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 2, %L, repeat(''a'', 64), %s, 1, false)', sid, sid || '/v1.pdf', latest), 'skipping a version number');
-  PERFORM public.record_manuscript_version(sid, 1, sid || '/v1.pdf', repeat('a', 64), latest, 1, false);
+  PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), %s, 1, false, %L, %L)', sid, other_sid || '/v1.pdf', latest, cert_hash, cert_at), 'a file stored under another submission');
+  PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), %s, 1, false, NULL, NULL)', other_sid, other_sid || '/v1.pdf', 0), 'an uncertified intake');
+  PERFORM pg_temp.must_conflict(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), %s, 1, false, %L, %L)', sid, sid || '/v1.pdf', latest - 1, cert_hash, cert_at), 'a packet built before the latest review');
+  PERFORM pg_temp.must_conflict(format('SELECT public.record_manuscript_version(%L, 2, %L, repeat(''a'', 64), %s, 1, false, %L, %L)', sid, sid || '/v1.pdf', latest, cert_hash, cert_at), 'skipping a version number');
+  PERFORM pg_temp.must_conflict(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), %s, 1, false, %L, %L)', sid, sid || '/v1.pdf', latest, repeat('f', 64), cert_at), 'a packet built from other certified data');
+  PERFORM pg_temp.must_conflict(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), %s, 1, false, %L, %L)', sid, sid || '/v1.pdf', latest, cert_hash, cert_at - interval '1 second'), 'a packet built from an earlier certification');
+  PERFORM pg_temp.must_conflict(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''a'', 64), %s, 1, false, NULL, NULL)', sid, sid || '/v1.pdf', latest), 'a packet that doesn''t say what it was built from');
+  PERFORM public.record_manuscript_version(sid, 1, sid || '/v1.pdf', repeat('a', 64), latest, 1, false, cert_hash, cert_at);
   SELECT * INTO r FROM public.manuscript_versions WHERE session_id = sid;
   IF r.version <> 1 OR r.file_id <> 'EAA-2026-TEST' OR r.certified_data_hash IS NULL OR r.review_event_id <> latest
      OR r.generated_by <> advisor OR r.corrections_applied <> 1 THEN
     RAISE EXCEPTION 'FAIL: version row was %', r;
   END IF;
-  PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''b'', 64), %s, 1, false)', sid, sid || '/v1.pdf', latest), 'reusing a version number');
+  IF r.certified_data_hash <> cert_hash THEN RAISE EXCEPTION 'FAIL: version pinned to %, not the certification it was built from', r.certified_data_hash; END IF;
+  PERFORM pg_temp.must_conflict(format('SELECT public.record_manuscript_version(%L, 1, %L, repeat(''b'', 64), %s, 1, false, %L, %L)', sid, sid || '/v1.pdf', latest, cert_hash, cert_at), 'reusing a version number');
   INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', sid || '/v2.pdf');
-  PERFORM public.record_manuscript_version(sid, 2, sid || '/v2.pdf', repeat('b', 64), latest, 1, true);
+  PERFORM public.record_manuscript_version(sid, 2, sid || '/v2.pdf', repeat('b', 64), latest, 1, true, cert_hash, cert_at);
   PERFORM pg_temp.must_refuse(format('UPDATE public.manuscript_versions SET version = 9 WHERE session_id = %L', sid), 'changing a version');
   -- A recorded file can't be removed; an unrecorded upload can.
   DELETE FROM storage.objects WHERE bucket_id = 'manuscripts' AND name = sid || '/v1.pdf';
@@ -320,6 +343,76 @@ BEGIN
   PERFORM pg_temp.as_user(prospect, 'p@example.com');
   SELECT count(*) INTO n FROM storage.objects WHERE bucket_id = 'manuscripts';
   IF n <> 0 THEN RAISE EXCEPTION 'FAIL: prospect can list % stored manuscripts', n; END IF;
+
+
+  -- ---------- A review and a Manuscript belong to the answers they were made from ----------
+  -- State here: company_name verified with a correction, employees marked incomplete, census
+  -- marked for follow-up; v1 and v2 built from the certification of `data`.
+  -- An advisor's review names the answer they were looking at; a stale page is refused.
+  PERFORM pg_temp.as_user(advisor, 'adv@example.com');
+  PERFORM pg_temp.must_conflict(format('SELECT public.review_submission_field(%L, ''pay_frequency'', ''verified'', ''keep'', NULL, NULL, %L)', sid, '{"value":"Weekly"}'), 'reviewing an answer the intake no longer gives');
+  PERFORM pg_temp.must_refuse(format('SELECT public.review_submission_field(%L, ''pay_frequency'', ''verified'', ''keep'', NULL, NULL, %L)', sid, '"Bi-weekly"'), 'an answer not given as {"value": ...}');
+  PERFORM public.review_submission_field(sid, 'pay_frequency', 'verified', 'keep', NULL, NULL, '{"value":"Bi-weekly"}');
+  PERFORM pg_temp.must_conflict(format('SELECT public.review_submission_field(%L, ''industry'', ''follow_up'', ''keep'', NULL, NULL, %L)', sid, '{"value":"Retail"}'), 'reviewing an answer that was never given');
+  PERFORM public.review_submission_field(sid, 'industry', 'follow_up', 'keep', NULL, NULL, '{}');
+
+  -- The prospect changes their company name, which withdraws the certification, and certifies again.
+  PERFORM pg_temp.as_user(prospect, 'p@example.com');
+  UPDATE public.chamber_sessions SET chamber_data = edited WHERE id = sid;
+  RESET ROLE;
+  SELECT * INTO r FROM public.advisor_field_reviews WHERE session_id = sid AND field = 'company_name';
+  IF r.review_state IS NOT NULL OR NOT r.has_correction OR r.corrected_value <> '"Acme Holdings LLC"'
+     OR r.answer_changed_at IS NULL OR r.answer_changed_from <> '"Acme"' THEN
+    RAISE EXCEPTION 'FAIL: a review of a changed answer was left as %', r;
+  END IF;
+  IF (SELECT review_state FROM public.advisor_field_reviews WHERE session_id = sid AND field = 'employees') IS DISTINCT FROM 'incomplete'
+     OR (SELECT review_state FROM public.advisor_field_reviews WHERE session_id = sid AND field = 'census') IS DISTINCT FROM 'follow_up'
+     OR (SELECT review_state FROM public.advisor_field_reviews WHERE session_id = sid AND field = 'pay_frequency') IS DISTINCT FROM 'verified'
+     OR (SELECT answer_changed_at FROM public.advisor_field_reviews WHERE session_id = sid AND field = 'pay_frequency') IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: reviews of unchanged answers were reset';
+  END IF;
+  SELECT * INTO r FROM public.advisor_review_events WHERE session_id = sid ORDER BY id DESC LIMIT 1;
+  IF r.cause <> 'answer_changed' OR r.field <> 'company_name' OR r.from_state <> 'verified' OR r.to_state IS NOT NULL
+     OR r.answer_from <> '"Acme"' OR r.answer_to <> '"Acme Inc"' OR r.actor_id <> prospect OR r.correction_changed THEN
+    RAISE EXCEPTION 'FAIL: the reset was recorded as %', r;
+  END IF;
+  SELECT count(*) INTO n FROM public.advisor_review_events WHERE session_id = sid;
+  old_hash := cert_hash;
+  old_at := cert_at;
+
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.as_user(prospect, 'p@example.com');
+  UPDATE public.chamber_sessions
+  SET status = 'submitted', submission = cert || jsonb_build_object('chamber_data', edited, 'signed_at', '2026-05-02T12:00:00Z')
+  WHERE id = sid;
+  RESET ROLE;
+  IF (SELECT count(*) FROM public.advisor_review_events WHERE session_id = sid) <> n THEN
+    RAISE EXCEPTION 'FAIL: certifying the answers the advisor already sees reset a review';
+  END IF;
+
+  -- A Manuscript built from the page loaded before the re-certification is refused, even with the
+  -- current review event; one built from the new certification is recorded against it.
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.as_user(advisor, 'adv@example.com');
+  SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = sid;
+  SELECT submission ->> 'data_sha256', (submission ->> 'certified_at')::timestamptz INTO cert_hash, cert_at
+  FROM public.chamber_sessions WHERE id = sid;
+  IF cert_hash = old_hash THEN RAISE EXCEPTION 'FAIL: changed answers kept the same data hash'; END IF;
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', sid || '/v3.pdf');
+  PERFORM pg_temp.must_conflict(format('SELECT public.record_manuscript_version(%L, 3, %L, repeat(''c'', 64), %s, 0, false, %L, %L)', sid, sid || '/v3.pdf', latest, old_hash, old_at), 'a packet built from a superseded certification');
+  PERFORM public.record_manuscript_version(sid, 3, sid || '/v3.pdf', repeat('c', 64), latest, 0, false, cert_hash, cert_at);
+  SELECT * INTO r FROM public.manuscript_versions WHERE session_id = sid AND version = 3;
+  IF r.certified_data_hash <> cert_hash OR r.certified_signed_at <> '2026-05-02T12:00:00Z'::timestamptz THEN
+    RAISE EXCEPTION 'FAIL: v3 was recorded as %', r;
+  END IF;
+
+  -- Reviewing the new answer clears the mark; the old answer can't be reviewed any more.
+  PERFORM pg_temp.must_conflict(format('SELECT public.review_submission_field(%L, ''company_name'', ''verified'', ''keep'', NULL, NULL, %L)', sid, '{"value":"Acme"}'), 'verifying the answer the prospect replaced');
+  PERFORM public.review_submission_field(sid, 'company_name', 'verified', 'keep', NULL, NULL, '{"value":"Acme Inc"}');
+  SELECT * INTO r FROM public.advisor_field_reviews WHERE session_id = sid AND field = 'company_name';
+  IF r.review_state <> 'verified' OR r.answer_changed_at IS NOT NULL OR r.answer_changed_from IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: reviewing the new answer left %', r;
+  END IF;
 
   -- ---------- Withdrawn certification returns an unclaimed submission to draft ----------
   PERFORM pg_temp.as_user(other, 'o@example.com');
@@ -397,6 +490,8 @@ DECLARE
   g uuid := gen_random_uuid();
   sid_a uuid;
   sid_b uuid;
+  cert_hash text;
+  cert_at timestamptz;
   data jsonb := '{"company_name":"Acme","states":["CA","tx"],"pay_frequency":"Bi-weekly","employee_count":2,"employees":[{"first_name":"A","state":"CA"},{"first_name":"B","state":"NY"}]}';
   cert jsonb;
   latest bigint;
@@ -459,7 +554,9 @@ BEGIN
   PERFORM public.review_submission_field(sid_a, 'company_name', 'verified');
   SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = sid_a;
   INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', sid_a || '/v1.pdf');
-  PERFORM public.record_manuscript_version(sid_a, 1, sid_a || '/v1.pdf', repeat('c', 64), latest, 0, false);
+  SELECT submission ->> 'data_sha256', (submission ->> 'certified_at')::timestamptz INTO cert_hash, cert_at
+  FROM public.chamber_sessions WHERE id = sid_a;
+  PERFORM public.record_manuscript_version(sid_a, 1, sid_a || '/v1.pdf', repeat('c', 64), latest, 0, false, cert_hash, cert_at);
 
   -- Stored files live at {user_id}/{session_id}/{file}: the folder and the intake must both be the
   -- reader's. The third file sits in B's folder under A's intake, so neither prospect may read it.
@@ -498,7 +595,7 @@ BEGIN
     PERFORM pg_temp.must_refuse('SELECT * FROM public.advisor_list_submissions()', who || ' listing submissions');
     PERFORM pg_temp.must_refuse(format('SELECT public.set_submission_status(%L, ''won'')', sid_a), who || ' setting a status');
     PERFORM pg_temp.must_refuse(format('SELECT public.review_submission_field(%L, ''company_name'', ''verified'')', sid_a), who || ' reviewing a field');
-    PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 2, %L, repeat(''d'', 64), %s, 0, false)', sid_a, sid_a || '/v1.pdf', latest), who || ' recording a manuscript');
+    PERFORM pg_temp.must_refuse(format('SELECT public.record_manuscript_version(%L, 2, %L, repeat(''d'', 64), %s, 0, false, %L, %L)', sid_a, sid_a || '/v1.pdf', latest, cert_hash, cert_at), who || ' recording a manuscript');
     IF public.is_advisor() THEN RAISE EXCEPTION 'FAIL: % counts as an advisor', who; END IF;
   END LOOP;
   -- Another prospect's status is not theirs to read, and a signed-out caller can't ask.
@@ -556,6 +653,20 @@ BEGIN
     END IF;
   END LOOP;
   IF n <> 4 THEN RAISE EXCEPTION 'FAIL: expected 4 advisor functions, found %', n; END IF;
+  -- PostgREST retries a transaction that fails with 40001 or 40P01, so a function that refuses with
+  -- either hangs the request instead of answering. Refuse a stale change with PT409 (HTTP 409).
+  SELECT string_agg(p.proname, ', ') INTO s FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+   WHERE ns.nspname = 'public' AND p.prosrc ~* $re$errcode\s*=\s*'40(001|P01)'$re$;
+  IF s IS NOT NULL THEN RAISE EXCEPTION 'FAIL: % refuse(s) with a SQLSTATE PostgREST retries; use PT409', s; END IF;
+  -- Internal helpers run only inside the advisor functions and triggers.
+  FOR rec IN
+    SELECT p.oid, p.proname FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+     WHERE ns.nspname = 'public' AND p.proname IN ('advisor_visible_answers', 'reset_reviews_on_answer_change')
+  LOOP
+    IF has_function_privilege('anon', rec.oid, 'EXECUTE') OR has_function_privilege('authenticated', rec.oid, 'EXECUTE') THEN
+      RAISE EXCEPTION 'FAIL: API callers can execute %', rec.proname;
+    END IF;
+  END LOOP;
 
   RAISE NOTICE 'advisor access matrix: all cases passed';
 END $$;

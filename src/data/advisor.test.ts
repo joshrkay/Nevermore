@@ -6,6 +6,7 @@ import {
   applyAdvisorReview,
   completenessOf,
   formatStates,
+  isStaleRefusal,
   manuscriptStoragePath,
   matchesSearch,
   parseCorrection,
@@ -199,5 +200,17 @@ describe("formatStates", () => {
 
   it("summarises a long one", () => {
     expect(formatStates(["AZ", "CA", "CO", "FL", "NY", "TX", "WA"])).toBe("AZ, CA, CO, FL +3 more");
+  });
+});
+
+describe("isStaleRefusal", () => {
+  it("is the database's refusal of a change based on answers, a review or a version that moved on", () => {
+    expect(isStaleRefusal({ code: "PT409", message: "The prospect certified their intake again" })).toBe(true);
+  });
+
+  it("is nothing else", () => {
+    for (const err of [{ code: "42501" }, { code: "P0002" }, new Error("Network request failed"), null, undefined, "PT409"]) {
+      expect(isStaleRefusal(err)).toBe(false);
+    }
   });
 });

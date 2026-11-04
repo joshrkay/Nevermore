@@ -129,7 +129,21 @@ export interface FieldReview {
   reason: string | null;
   updated_by_email: string | null;
   updated_at: string;
+  /**
+   * Set when the prospect changed this answer after it was reviewed: the database then resets the
+   * review (a correction stays, unapproved) until an advisor reviews the new answer.
+   */
+  answer_changed_at?: string | null;
+  /** The answer as it was when it was reviewed. */
+  answer_changed_from?: unknown;
 }
+
+/**
+ * The database refused a change because what it was based on changed after the page loaded: the
+ * prospect changed the answer or certified again, the review changed, or another version was
+ * generated. Reloading shows the current state. The code is PostgREST's custom HTTP 409 (PT409).
+ */
+export const isStaleRefusal = (err: unknown): boolean => (err as { code?: unknown } | null)?.code === "PT409";
 
 export type ReviewMap = Partial<Record<FieldKey, FieldReview>>;
 

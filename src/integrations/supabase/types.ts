@@ -16,6 +16,8 @@ export type Database = {
     Tables: {
       advisor_field_reviews: {
         Row: {
+          answer_changed_at: string | null
+          answer_changed_from: Json | null
           corrected_value: Json | null
           field: string
           has_correction: boolean
@@ -55,7 +57,10 @@ export type Database = {
       advisor_review_events: {
         Row: {
           actor_email: string | null
-          actor_id: string
+          actor_id: string | null
+          answer_from: Json | null
+          answer_to: Json | null
+          cause: string
           correction_changed: boolean
           created_at: string
           field: string
@@ -397,6 +402,8 @@ export type Database = {
       }
       record_manuscript_version: {
         Args: {
+          p_certified_at: string | null
+          p_certified_data_hash: string | null
           p_corrections_applied: number
           p_pdf_sha256: string
           p_review_event_id: number
@@ -409,6 +416,7 @@ export type Database = {
       }
       review_submission_field: {
         Args: {
+          p_answer?: Json | null
           p_correction?: string
           p_field: string
           p_reason?: string | null

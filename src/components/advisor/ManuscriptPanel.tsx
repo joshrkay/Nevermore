@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { applyAdvisorReview } from "@/data/advisor";
+import { applyAdvisorReview, isStaleRefusal } from "@/data/advisor";
 import { buildManuscript, manuscriptFilename } from "@/data/manuscript";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
@@ -11,14 +11,19 @@ import { formatDateTime } from "./format";
 const versionFilename = (detail: SubmissionDetail, version: number) =>
   manuscriptFilename(`${detail.fileId}-v${version}`, detail.data.company_name);
 
-/** Download or regenerate the advisor-reviewed Manuscript, one stored version per generation. */
-const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; onGenerated: () => void }) => {
+/**
+ * Download or regenerate the advisor-reviewed Manuscript, one stored version per generation. Each
+ * version names the certification and review state it was built from; `onChanged` reloads the
+ * submission after a version is stored, or when the database refuses one because either has moved on.
+ */
+const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onChanged: () => void }) => {
   const [revealSensitive, setRevealSensitive] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [opening, setOpening] = useState<string | null>(null);
   const latestEventId = detail.reviewEvents[0]?.id ?? 0;
   const latest = detail.versions[0];
   const pending = Object.values(detail.reviews).filter((r) => r?.has_correction && r.review_state !== "verified").length;
+  const answersChanged = Object.values(detail.reviews).filter((r) => r?.answer_changed_at).length;
 
   const generate = async () => {
     setGenerating(true);
@@ -39,13 +44,21 @@ const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; on
         reviewEventId: latestEventId,
         correctionsApplied: packet.corrections.length,
         sensitiveRevealed: revealSensitive,
+        certifiedDataHash: detail.submission?.data_sha256 ?? null,
+        certifiedAt: detail.submission?.certified_at ?? null,
       });
       downloadBlob(pdf.blob, versionFilename(detail, version));
       toast.success(`Manuscript v${version} saved.`);
-      onGenerated();
+      onChanged();
     } catch (err) {
       console.error("Failed to generate manuscript:", err);
-      toast.error((err as Error).message || "We couldn't generate the Manuscript.");
+      if (isStaleRefusal(err)) {
+        // Built from answers or a review that are no longer current: show the current ones.
+        toast.error(`${(err as Error).message}. The page now shows the latest answers and review.`);
+        onChanged();
+      } else {
+        toast.error((err as Error).message || "We couldn't generate the Manuscript.");
+      }
     } finally {
       setGenerating(false);
     }
@@ -77,6 +90,13 @@ const ManuscriptPanel = ({ detail, onGenerated }: { detail: SubmissionDetail; on
           {latest && latest.review_event_id !== latestEventId && (
             <p className="text-xs text-warning" role="status">
               The review has changed since v{latest.version}. Generate a new version to include it.
+            </p>
+          )}
+          {answersChanged > 0 && (
+            <p className="text-xs text-warning" role="status">
+              {answersChanged === 1
+                ? "The prospect changed 1 answer after it was reviewed, so its review was reset. Review it again before generating."
+                : `The prospect changed ${answersChanged} answers after they were reviewed, so their reviews were reset. Review them again before generating.`}
             </p>
           )}
           {pending > 0 && (
