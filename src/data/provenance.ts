@@ -205,6 +205,23 @@ export function parseProvenance(raw: unknown): ProvenanceMap {
   return map;
 }
 
+/**
+ * Whether an advisor's verification settles an answer in this status for what the prospect and the Manuscript
+ * show: one that still needs the prospect (inferred, incomplete, in conflict). A confirmed answer is already
+ * settled, and unknown or not applicable hold no answer. The open-items list, the required-items rule and the
+ * advisor's packet settle every status instead, since none of them shows a badge for it.
+ */
+export const verificationSettles = (status: FieldStatus | undefined): boolean =>
+  status === "inferred" || status === "incomplete" || status === "conflicting";
+
+/**
+ * The also-heard notes worth showing: those that aren't already one of a conflict's rival answers, which the
+ * prospect and the advisor see in the candidate list.
+ */
+export function visibleAlsoHeard(entry: FieldProvenance): FieldCandidate[] {
+  return (entry.also_heard ?? []).filter((heard) => !entry.candidates?.some((c) => same(c.value, heard.value)));
+}
+
 // ---------- Merging extractions ----------
 
 // Which source stands when two disagree: the prospect's own answer, then a document they applied,

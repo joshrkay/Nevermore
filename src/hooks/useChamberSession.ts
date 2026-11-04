@@ -17,7 +17,6 @@ import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { fetchVerifiedFields } from "@/lib/verifiedFields";
 import {
   certificationFromRow,
-  fileIdForSession,
   NO_CERTIFICATION,
   type CertificationState,
   type ChamberSubmission,
@@ -39,7 +38,7 @@ export interface SubmitFailure {
 type ServerRow = Pick<
   Database["public"]["Tables"]["chamber_sessions"]["Row"],
   | "id" | "data_version" | "status" | "chamber_data" | "field_provenance" | "transcript" | "submission" | "expires_at"
-  | "chosen_peo" | "created_at"
+  | "chosen_peo" | "created_at" | "file_id"
 >;
 
 /** Answers kept in this browser that never reached the server, offered back when the intake is opened. */
@@ -52,7 +51,10 @@ export interface BackupOffer {
 
 interface UseChamberSessionReturn {
   sessionId: string | null;
-  /** The intake's File ID, fixed by when the server created it; null while there is no intake. */
+  /**
+   * The intake's File ID, assigned by the database the first time it is certified and kept for good; null
+   * until then (and while there is no intake).
+   */
   fileId: string | null;
   /** True when a requested session couldn't be opened; no replacement is created until startNew(). */
   resumeFailed: boolean;
@@ -152,7 +154,10 @@ const CONFLICTING_CODE = "EA008";
 // (PostgREST answers this SQLSTATE with HTTP 404.)
 const NOT_FOUND_CODE = "PT404";
 const ROW_COLUMNS =
-  "id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo, created_at";
+  "id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo, created_at, file_id";
+// What a certification reads back: the submission as the database stamped it (its File ID, version and
+// documents), and the intake's File ID.
+const CERTIFIED_COLUMNS = "id, data_version, status, submission, file_id";
 
 const CONFLICT_MESSAGE = "This intake changed elsewhere. Reload the latest and certify again.";
 const MISSING_MESSAGE = "This intake can no longer be saved. Start a new intake to keep your answers.";
@@ -204,14 +209,21 @@ const matchesSave = (stored: { chamber_data: unknown; field_provenance: unknown;
   sameJson(row.transcript, stored.transcript) &&
   (row.chosen_peo ?? null) === (stored.chosen_peo ?? null);
 
-// Whether a saved row is the result of certifying `submission` over `signedData` (as stored).
+// Whether a saved row is the result of certifying `submission` over `signedData` (as stored). The File ID is
+// not compared: the database assigns it, replacing whatever was sent.
 const matchesSubmission = (submission: ChamberSubmission, signedData: unknown) => (row: ServerRow) => {
   const saved = row.submission as Partial<ChamberSubmission> | null;
   return row.status === "submitted" &&
     saved?.signer_name === submission.signer_name &&
     saved?.signed_at === submission.signed_at &&
-    saved?.file_id === submission.file_id &&
     sameJson(row.chamber_data, signedData);
+};
+
+/** The File ID a row carries: the intake's own, or the one its certification recorded. */
+const fileIdOf = (row: Pick<ServerRow, "file_id" | "submission">): string | null => {
+  const recorded = (row.submission as Partial<ChamberSubmission> | null)?.file_id;
+  const own = typeof row.file_id === "string" ? row.file_id.trim() : "";
+  return own || (typeof recorded === "string" && recorded.trim() ? recorded : null);
 };
 
 // A write that failed with an error may still have landed. Remember what it sent, so the row it
@@ -252,8 +264,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   // Depend on the id, not the object: token refreshes hand out a new User object.
   const userId = user?.id;
   const [sessionId, setSessionId] = useState<string | null>(null);
-  // When the server created the intake: the File ID's year comes from it, never from today.
-  const [startedAt, setStartedAt] = useState<string | null>(null);
+  // The File ID the database assigned to this intake, once it has one.
+  const [fileId, setFileId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [resumeFailed, setResumeFailed] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -444,7 +456,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     settleOutcome();
     sessionIdRef.current = row.id;
     setSessionId(row.id);
-    setStartedAt(row.created_at);
+    setFileId(fileIdOf(row));
   }, [settleOutcome]);
 
   const adoptVersion = useCallback((sid: string, version: unknown) => {
@@ -783,7 +795,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       creatingRef.current = null;
       backupRef.current = null;
       setSessionId(null);
-      setStartedAt(null);
+      setFileId(null);
       setBackupOffer(null);
       setExpired(null);
       setRestoredThrough(null);
@@ -832,7 +844,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           transcript: sent.messages as unknown as Json,
           chosen_peo: sent.peo,
         })
-        .select("id, data_version, created_at")
+        .select("id, data_version, file_id")
         .single();
 
       if (error?.code === OPEN_DRAFT_CODE && error.details && !cancelled) {
@@ -845,7 +857,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           sessionIdRef.current = open.id;
           versionRef.current = typeof open.data_version === "number" ? open.data_version : null;
           setSessionId(open.id);
-          setStartedAt(open.created_at);
+          setFileId(fileIdOf(open));
           markConflict(open);
           return;
         }
@@ -860,7 +872,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         sessionIdRef.current = newSession.id;
         versionRef.current = typeof newSession.data_version === "number" ? newSession.data_version : null;
         setSessionId(newSession.id);
-        setStartedAt(newSession.created_at);
+        setFileId(typeof newSession.file_id === "string" ? newSession.file_id : null);
         // Anything captured while the row was being created still needs saving; what it was created with doesn't.
         const changedSince = dataRef.current !== sent.data || provenanceRef.current !== sent.provenance
           || messagesRef.current !== sent.messages || chosenPeoRef.current !== sent.peo;
@@ -969,7 +981,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     creatingRef.current = null;
     // Nothing is on screen for the old intake any more, and the new one doesn't exist until the prospect starts.
     setSessionId(null);
-    setStartedAt(null);
+    setFileId(null);
     backupRef.current = null;
     setBackupOffer(null);
     setExpired(null);
@@ -1110,14 +1122,27 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     }
   }, []);
 
+  // The server resets an advisor's verification when the answer it covered changes
+  // (chamber_sessions_reset_changed_reviews), but the browser reads the set once, so it drops those fields
+  // itself: a changed answer never keeps a "Verified by your advisor" badge for what the advisor didn't see.
+  const forgetChangedVerifications = useCallback((prev: ChamberData, next: ChamberData) => {
+    setVerified((current) => {
+      if (!current) return current;
+      const answer = (data: ChamberData, field: string) => JSON.stringify((data as unknown as Record<string, unknown>)[field]);
+      const kept = [...current.fields].filter((field) => answer(prev, field) === answer(next, field));
+      return kept.length === current.fields.size ? current : { ...current, fields: new Set(kept) };
+    });
+  }, []);
+
   const setChamberData = useCallback((updater: ChamberData | ((prev: ChamberData) => ChamberData)) => {
     const prev = dataRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     dataRef.current = next;
     setChamberDataRaw(next);
+    forgetChangedVerifications(prev, next);
     withdrawIfChanged(prev, next);
     scheduleSave();
-  }, [scheduleSave, withdrawIfChanged]);
+  }, [forgetChangedVerifications, scheduleSave, withdrawIfChanged]);
 
   const updateIntake = useCallback((updater: (prev: IntakeState) => IntakeState) => {
     // Read and write through the refs so data and provenance never come from different renders.
@@ -1127,9 +1152,10 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     provenanceRef.current = next.provenance;
     setChamberDataRaw(next.data);
     setProvenanceRaw(next.provenance);
+    forgetChangedVerifications(prev, next.data);
     withdrawIfChanged(prev, next.data);
     scheduleSave();
-  }, [scheduleSave, withdrawIfChanged]);
+  }, [forgetChangedVerifications, scheduleSave, withdrawIfChanged]);
 
   const restoreBackup = useCallback(() => {
     const backup = backupRef.current;
@@ -1196,7 +1222,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     const isOwnSubmission = matchesSubmission(submission, storedData);
     savingRef.current = true;
     let outcome: Reconciled | null = null;
-    let updated: { data_version: number; status: string }[] | null = null;
+    let updated: { data_version: number; status: string; submission?: unknown; file_id?: string | null }[] | null = null;
     let error: (Error & { code?: string; details?: string | null }) | null = null;
     try {
       try {
@@ -1211,7 +1237,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           })
           .eq("id", sid)
           .eq("data_version", version)
-          .select("id, data_version, status") as unknown as { data: typeof updated; error: typeof error });
+          .select(CERTIFIED_COLUMNS) as unknown as { data: typeof updated; error: typeof error });
       } catch (thrown) {
         error = thrown as typeof error;
       }
@@ -1228,6 +1254,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         return false;
       }
       adoptVersion(sid, updated[0].data_version);
+      // The database stamps the File ID, the version and the documents onto the submission: show its copy.
+      const stamped = certificationFromRow(updated[0].status, updated[0].submission);
+      if (stamped.status === "certified") certifiedSubmission = stamped.submission as typeof certifiedSubmission;
+      const assigned = fileIdOf({ file_id: updated[0].file_id ?? null, submission: (updated[0].submission ?? null) as Json | null });
+      if (assigned && mountedRef.current) setFileId(assigned);
     } else if (error?.code === INVALID_DATA_CODE) {
       markInvalid(error);
       return blockedMessage();
@@ -1251,12 +1282,12 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       return false;
     } else if (outcome?.kind === "own" || outcome?.kind === "earlier") {
       adoptVersion(sid, outcome.row.data_version);
-      if (outcome.kind === "earlier") {
-        // A certification from before a lost response is the one on record; show it, not the one just signed.
-        const recorded = certificationFromRow(outcome.row.status, outcome.row.submission);
-        if (recorded.status !== "certified") return false; // not a certification: certifying again, from the new version, works
-        certifiedSubmission = recorded.submission as typeof certifiedSubmission;
-      }
+      // The certification on record, as the database stamped it: for a lost response, that is the one to show.
+      const recorded = certificationFromRow(outcome.row.status, outcome.row.submission);
+      if (outcome.kind === "earlier" && recorded.status !== "certified") return false; // not a certification: certifying again, from the new version, works
+      if (recorded.status === "certified") certifiedSubmission = recorded.submission as typeof certifiedSubmission;
+      const assigned = fileIdOf(outcome.row);
+      if (assigned && mountedRef.current) setFileId(assigned);
     } else if (outcome?.kind === "conflict") {
       markConflict(outcome.row);
       return blockedMessage();
@@ -1279,21 +1310,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     return true;
   }), [adoptVersion, blockedMessage, enqueue, markConflict, markExpired, markInvalid, markMissing, reconcile, rememberUnconfirmed, saveNow]);
 
-  // A File ID already recorded on a certification (even a withdrawn one) stays the intake's, as the
-  // advisor views and the Manuscript read it: intakes certified before the start-year rule may carry
-  // another year. Only an intake with none recorded gets one made from when it started.
-  const recorded = certification.status === "none" ? null : certification.submission.file_id;
-  const fileId = !sessionId
-    ? null
-    : typeof recorded === "string" && recorded.trim()
-      ? recorded
-      : startedAt
-        ? fileIdForSession(sessionId, new Date(startedAt))
-        : null;
-
   return {
     sessionId,
-    fileId,
+    fileId: sessionId ? fileId : null,
     resumeFailed,
     startNew,
     loadFailed,

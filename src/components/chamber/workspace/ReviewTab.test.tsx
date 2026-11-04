@@ -313,3 +313,35 @@ describe("ReviewTab sections", () => {
     expect(screen.queryByRole("button", { name: /^Add / })).not.toBeInTheDocument();
   });
 });
+
+describe("ReviewTab section status and nav (C-1)", () => {
+  const complete = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY"], pay_frequency: "bi-weekly" };
+  const at = "2026-11-04T00:00:00Z";
+  const inferred = { status: "inferred" as const, source: { kind: "transcript" as const, message_id: "m1" }, updated_at: at };
+
+  it("says where each section stands, in words, beside how much of it is settled", () => {
+    render(<ReviewTab data={{ ...complete, industry: "Retail", census: DEMO_CHAMBER_DATA.census }} provenance={{ industry: inferred }} onProceed={() => {}} />);
+    expect(screen.getByTestId("status-company")).toHaveTextContent("Needs confirmation");
+    expect(screen.getByTestId("status-workforce")).toHaveTextContent("Complete");
+    expect(screen.getByTestId("status-benefits")).toHaveTextContent("Complete");
+    render(<ReviewTab data={EMPTY_CHAMBER_DATA} onProceed={() => {}} />);
+    expect(screen.getAllByTestId("status-company").some((chip) => chip.textContent === "Incomplete")).toBe(true);
+  });
+
+  it("lets the prospect jump to a section from the list of sections", () => {
+    render(<ReviewTab data={EMPTY_CHAMBER_DATA} provenance={{}} onAction={() => {}} onProceed={() => {}} />);
+    const nav = screen.getByRole("navigation", { name: "Sections" });
+    fireEvent.click(within(nav).getByRole("button", { name: /Payroll/ }));
+    expect(document.activeElement?.closest("#review-section-payroll")).not.toBeNull();
+    // Pay frequency is a required answer, so Payroll is incomplete; an empty recommended section owes nothing.
+    expect(within(nav).getByRole("button", { name: /Payroll/ })).toHaveTextContent("Incomplete");
+    expect(within(nav).getByRole("button", { name: /Workers' comp/ })).toHaveTextContent("Complete");
+  });
+
+  it("calls a section not applicable once every answer in it is marked so", () => {
+    const na = { status: "not_applicable" as const, source: { kind: "prospect_edit" as const }, updated_at: at };
+    const provenance = { wc_carrier: na, wc_renewal_date: na, wc_experience_mod: na, wc_annual_premium: na };
+    render(<ReviewTab data={complete} provenance={provenance} onProceed={() => {}} />);
+    expect(screen.getByTestId("status-workers_comp")).toHaveTextContent("Not applicable");
+  });
+});
