@@ -97,6 +97,10 @@ a sign-out the app asked for is remembered until the event arrives.
 - "Certified at least once" (which unlocks every move but archiving, and decides whether a certification is the
   intake's first) means a certification row or a history row that reached `submitted`, so intakes
   certified before certification rows existed count (migration `20261104115000`).
+- Mark a submission as **Needs advisor action**, with an optional note (500 characters), and clear it
+  again, only through `set_submission_needs_action()` (migration `20261104132000`). Each change is a
+  row in `submission_status_history` at the current stage, with who and the note. It stays through
+  stage changes, and the prospect never sees it.
 - Add internal notes (`advisor_notes`); notes can't be edited or deleted and prospects can't read them.
 - Read `intake_lifecycle_events`: every draft that expired, was archived by its prospect ("Start
   over") or was revoked, with who and why. The queue lists those intakes with their intake status
@@ -133,11 +137,13 @@ content; those are on the detail page, behind the same checks.
 
 - **Order**: certified submissions first, newest certification first; intakes not (or no longer)
   certified follow, most recently active first; session id breaks ties so the order never shuffles.
-- **Status filter**, **search** (company, contact, File ID; every word must match, any case) and
-  **paging** (25 a page, with the total) all run in the database; the function reads as its owner
-  after its advisor check, so a large table doesn't run the row-security check per row. Search starts
-  once typing pauses. All three live in the URL (`?status=`, `?q=`, `?page=`); changing the filter
-  or the search returns to the first page.
+- **Status filter**, **Needs advisor action only**, **search** (company, contact, File ID; every word
+  must match, any case) and **paging** (25 a page, with the total) all run in the database; the
+  function reads as its owner after its advisor check, so a large table doesn't run the row-security
+  check per row. Search starts once typing pauses. All four live in the URL (`?status=`, `?action=1`,
+  `?q=`, `?page=`); changing a filter or the search returns to the first page.
+- A submission marked **Needs advisor action** carries that badge and the advisor's note under its
+  status.
 - **Completeness** describes what the advisor reviews: a certified intake is described from its
   certified copy, a required item supplied by a verified advisor correction isn't missing, and only
   fields an advisor can review count as unconfirmed (migration `20261104114000`).

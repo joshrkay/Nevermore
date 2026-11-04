@@ -351,12 +351,17 @@ export type Database = {
       }
       submission_workflow: {
         Row: {
+          needs_action: boolean
+          needs_action_at: string | null
+          needs_action_by: string | null
+          needs_action_by_email: string | null
+          needs_action_note: string | null
           session_id: string
           status: string
           updated_at: string
           updated_by: string | null
         }
-        // Changed only through set_submission_status().
+        // Changed only through set_submission_status() and set_submission_needs_action().
         Insert: never
         Update: never
         Relationships: []
@@ -408,7 +413,7 @@ export type Database = {
         }[]
       }
       advisor_list_submissions: {
-        Args: { p_status?: string | null; p_search?: string | null; p_limit?: number | null; p_offset?: number }
+        Args: { p_status?: string | null; p_search?: string | null; p_limit?: number | null; p_offset?: number; p_needs_action?: boolean | null }
         Returns: {
           company_name: string | null
           contact_name: string | null
@@ -418,6 +423,8 @@ export type Database = {
           flagged_fields: number
           intake_status: string
           missing_required: string[]
+          needs_action: boolean
+          needs_action_note: string | null
           open_fields: number
           pipeline_status: string
           session_id: string
@@ -522,6 +529,10 @@ export type Database = {
       session_verified_fields: {
         Args: { p_session_id: string }
         Returns: string[]
+      }
+      set_submission_needs_action: {
+        Args: { p_needs_action: boolean; p_note?: string | null; p_session_id: string }
+        Returns: Database["public"]["Tables"]["submission_workflow"]["Row"]
       }
       set_submission_status: {
         Args: { p_note?: string | null; p_session_id: string; p_status: string }

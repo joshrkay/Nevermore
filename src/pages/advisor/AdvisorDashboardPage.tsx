@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Inbox, Loader2, RefreshCw, Search, SearchX } from "lucide-react";
+import { BellRing, ChevronLeft, ChevronRight, Inbox, Loader2, RefreshCw, Search, SearchX } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   completenessOf,
   formatStates,
   isPipelineStatus,
+  NEEDS_ACTION_LABEL,
   PIPELINE_LABELS,
   PIPELINE_STATUSES,
   referenceOf,
@@ -48,6 +49,8 @@ const AdvisorDashboardPage = () => {
   const param = searchParams.get("status");
   const status: PipelineStatus | null = isPipelineStatus(param) ? param : null;
   const query = searchParams.get("q") ?? "";
+  // Only the submissions an advisor marked as needing advisor action (F-4.3).
+  const needsAction = searchParams.get("action") === "1";
   const pageParam = Number(searchParams.get("page"));
   const page = Number.isInteger(pageParam) && pageParam > 1 ? pageParam : 1;
   // What's typed; the URL (and the search) follow it after a pause.
@@ -69,18 +72,18 @@ const AdvisorDashboardPage = () => {
   useEffect(() => {
     let cancelled = false;
     setLoad({ kind: "loading" });
-    listSubmissions({ status, search: query, page })
+    listSubmissions({ status, search: query, page, needsAction })
       .then((result) => !cancelled && setLoad({ kind: "ready", ...result }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => { cancelled = true; };
-  }, [status, query, page, attempt]);
+  }, [status, query, page, needsAction, attempt]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
-  // Filter, search and page live in the URL, so a refresh or a shared link shows the same queue.
-  // Changing the filter or the search starts again from the first page.
+  // Filters, search and page live in the URL, so a refresh or a shared link shows the same queue.
+  // Changing a filter or the search starts again from the first page.
   const setParams = useCallback(
-    (changes: Partial<Record<"status" | "q" | "page", string>>) => {
+    (changes: Partial<Record<"status" | "q" | "page" | "action", string>>) => {
       setSearchParams(
         (current) => {
           const next = new URLSearchParams(current);
@@ -97,7 +100,7 @@ const AdvisorDashboardPage = () => {
     },
     [setSearchParams],
   );
-  const setParam = (key: "status" | "q", value: string) => setParams({ [key]: value });
+  const setParam = (key: "status" | "q" | "action", value: string) => setParams({ [key]: value });
 
   // Follow the URL when it changes from outside (Back, a shared link), but not when it only caught up
   // with what's being typed: that would drop a space typed just before a pause.
@@ -111,6 +114,8 @@ const AdvisorDashboardPage = () => {
   const rows = load.kind === "ready" ? load.rows : [];
   const total = load.kind === "ready" ? load.total : 0;
   const searching = query.trim() !== "";
+  // How the filters read in an empty or no-match message: "under review submissions that need advisor action".
+  const filtered = `${status ? `${PIPELINE_LABELS[status].toLowerCase()} ` : ""}submissions${needsAction ? " that need advisor action" : ""}`;
   const firstShown = (page - 1) * QUEUE_PAGE_SIZE + 1;
   const lastShown = firstShown + rows.length - 1;
   const hasNext = lastShown < total;
@@ -157,6 +162,15 @@ const AdvisorDashboardPage = () => {
                 <option key={s} value={s}>{PIPELINE_LABELS[s]}</option>
               ))}
             </select>
+            <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                checked={needsAction}
+                onChange={(e) => setParam("action", e.target.checked ? "1" : "")}
+                className="accent-warning"
+              />
+              {NEEDS_ACTION_LABEL} only
+            </label>
             <button
               onClick={retry}
               disabled={load.kind === "loading"}
@@ -189,10 +203,16 @@ const AdvisorDashboardPage = () => {
           <div className="border border-dashed border-border rounded-xl p-12 text-center">
             <Inbox className="w-8 h-8 text-muted-foreground mx-auto mb-3" aria-hidden="true" />
             <p className="font-medium">
-              {status ? `No submissions are ${PIPELINE_LABELS[status].toLowerCase()}.` : "No submissions yet."}
+              {needsAction
+                ? `No ${filtered}.`
+                : status
+                  ? `No submissions are ${PIPELINE_LABELS[status].toLowerCase()}.`
+                  : "No submissions yet."}
             </p>
             <p className="text-sm text-muted-foreground mt-1">
-              {status ? (
+              {needsAction ? (
+                <button onClick={() => setParams({ status: "", action: "" })} className="text-primary underline">Show all submissions</button>
+              ) : status ? (
                 <button onClick={() => setParam("status", "")} className="text-primary underline">Show all statuses</button>
               ) : (
                 "Intakes appear here as soon as a prospect starts one."
@@ -205,7 +225,7 @@ const AdvisorDashboardPage = () => {
           <div className="border border-dashed border-border rounded-xl p-12 text-center">
             <SearchX className="w-8 h-8 text-muted-foreground mx-auto mb-3" aria-hidden="true" />
             <p className="font-medium">
-              No {status ? `${PIPELINE_LABELS[status].toLowerCase()} ` : ""}submissions match “{query.trim()}”.
+              No {filtered} match “{query.trim()}”.
             </p>
             <p className="text-sm text-muted-foreground mt-1">
               Search covers company, contact and File ID.{" "}
@@ -280,6 +300,18 @@ const AdvisorDashboardPage = () => {
                         </TableCell>
                         <TableCell>
                           <PipelineBadge status={isPipelineStatus(row.pipeline_status) ? row.pipeline_status : "draft"} />
+                          {row.needs_action && (
+                            <div className="mt-1 max-w-[14rem]" data-testid={`needs-action-${row.session_id}`}>
+                              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-warning/15 text-warning whitespace-nowrap">
+                                <BellRing className="w-3 h-3" aria-hidden="true" /> {NEEDS_ACTION_LABEL}
+                              </span>
+                              {row.needs_action_note && (
+                                <p className="text-xs text-muted-foreground mt-1 truncate" title={row.needs_action_note}>
+                                  {row.needs_action_note}
+                                </p>
+                              )}
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell>
                           <span className={`text-xs px-2 py-0.5 rounded-full ${COMPLETENESS_CLASS[completeness.state]}`}>

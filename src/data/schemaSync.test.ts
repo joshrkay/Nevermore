@@ -25,7 +25,7 @@ import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
 import { isFileId } from "@/data/manuscript";
 import { OPEN_ITEM_STATUSES } from "@/data/openItems";
-import { PIPELINE_STATUSES, PIPELINE_TRANSITIONS } from "@/data/advisor";
+import { NEEDS_ACTION_NOTE_MAX, PIPELINE_STATUSES, PIPELINE_TRANSITIONS } from "@/data/advisor";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
@@ -180,6 +180,11 @@ describe("server and client intake rules agree", () => {
 
   it("counts the same open items in the advisor queue as Review and The Manuscript list (US-2.2a)", () => {
     expect(quoted(blocks("open_item_statuses").join("\n"))).toEqual([...OPEN_ITEM_STATUSES]);
+  });
+
+  it("caps a needs-advisor-action note as the database does (F-4.3)", () => {
+    const [sql] = blocks("needs_action_note_length");
+    expect(/BETWEEN\s+(\d+)\s+AND\s+(\d+)/.exec(sql)?.slice(1).map(Number)).toEqual([1, NEEDS_ACTION_NOTE_MAX]);
   });
 
   it("lets advisors review every answer of the intake schema", () => {

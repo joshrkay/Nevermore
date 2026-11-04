@@ -36,6 +36,7 @@ const {
   requeueOutboxEvent,
   reviewField,
   saveManuscriptVersion,
+  setNeedsAction,
 } = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
@@ -185,14 +186,43 @@ describe("the submission queue", () => {
   it("asks the database for one page, searched and filtered there", async () => {
     rpc.mockResolvedValue({ data: [{ session_id: "s26", total_count: 60 }], error: null });
     const page = await listSubmissions({ status: "won", search: "  acme  pat ", page: 2 });
-    expect(rpc).toHaveBeenCalledWith("advisor_list_submissions", { p_status: "won", p_search: "acme  pat", p_limit: 25, p_offset: 25 });
+    expect(rpc).toHaveBeenCalledWith("advisor_list_submissions", {
+      p_status: "won", p_search: "acme  pat", p_limit: 25, p_offset: 25, p_needs_action: null,
+    });
     expect(page).toEqual({ rows: [{ session_id: "s26", total_count: 60 }], total: 60 });
   });
 
   it("asks for the first page with no search by default, and calls an empty page empty", async () => {
     rpc.mockResolvedValue({ data: [], error: null });
     expect(await listSubmissions({ status: null, search: "   ", page: 0 })).toEqual({ rows: [], total: 0 });
-    expect(rpc).toHaveBeenCalledWith("advisor_list_submissions", { p_status: null, p_search: null, p_limit: 25, p_offset: 0 });
+    expect(rpc).toHaveBeenCalledWith("advisor_list_submissions", {
+      p_status: null, p_search: null, p_limit: 25, p_offset: 0, p_needs_action: null,
+    });
+  });
+
+  it("lists only the submissions that need advisor action when asked", async () => {
+    rpc.mockResolvedValue({ data: [], error: null });
+    await listSubmissions({ status: "under_review", needsAction: true });
+    expect(rpc).toHaveBeenCalledWith("advisor_list_submissions", {
+      p_status: "under_review", p_search: null, p_limit: 25, p_offset: 0, p_needs_action: true,
+    });
+  });
+});
+
+describe("needs advisor action", () => {
+  beforeEach(() => rpc.mockReset().mockResolvedValue({ data: {}, error: null }));
+
+  it("raises it with a trimmed note, and clears it with none", async () => {
+    await setNeedsAction("s1", true, "  Call the CFO  ");
+    expect(rpc).toHaveBeenCalledWith("set_submission_needs_action", { p_session_id: "s1", p_needs_action: true, p_note: "Call the CFO" });
+    await setNeedsAction("s1", false, "   ");
+    expect(rpc).toHaveBeenCalledWith("set_submission_needs_action", { p_session_id: "s1", p_needs_action: false, p_note: null });
+  });
+
+  it("reports a refusal", async () => {
+    failWith({ message: "A needs-advisor-action note is limited to 500 characters", code: "22023" });
+    const err = await caught(() => setNeedsAction("s1", true, "x"));
+    expect(err.message).toMatch(/500 characters/);
   });
 });
 
@@ -317,6 +347,17 @@ describe("loadSubmission", () => {
     expect(d.transcriptChangedSinceCertified).toBe(true);
     expect(d.documents.map((x) => [x.id, x.certification])).toEqual([["d3", "added"], ["d2", "removed"], ["d1", "certified"]]);
     expect(d.pipelineStatus).toBe("under_review");
+    expect(d.needsAction).toEqual({ on: false, note: null, at: null, by: null, byEmail: null });
+  });
+
+  it("reads whether the submission needs advisor action, and who said so", async () => {
+    tables.chamber_sessions = [row()];
+    tables.submission_workflow = [{
+      status: "under_review", needs_action: true, needs_action_note: "Call the CFO",
+      needs_action_at: "2026-11-04T10:00:00Z", needs_action_by: "a1", needs_action_by_email: "adv@example.com",
+    }];
+    const d = (await loadSubmission("s1"))!;
+    expect(d.needsAction).toEqual({ on: true, note: "Call the CFO", at: "2026-11-04T10:00:00Z", by: "a1", byEmail: "adv@example.com" });
   });
 
   it("shows an intake whose certification was withdrawn as it stands now", async () => {

@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Loader2, MailWarning } from "lucide-react";
+import { ArrowLeft, BellRing, Loader2, MailWarning } from "lucide-react";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import AuditTrail from "@/components/advisor/AuditTrail";
 import DocumentsPanel from "@/components/advisor/DocumentsPanel";
 import FieldReviewPanel from "@/components/advisor/FieldReviewPanel";
 import ManuscriptPanel from "@/components/advisor/ManuscriptPanel";
+import NeedsActionPanel from "@/components/advisor/NeedsActionPanel";
 import NotesPanel from "@/components/advisor/NotesPanel";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
-import { changesSinceSigning } from "@/data/advisor";
+import { changesSinceSigning, NEEDS_ACTION_LABEL } from "@/data/advisor";
 import { censusPay, isW2 } from "@/data/census";
 import { coverageTier, NOT_PROVIDED } from "@/data/manuscript";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
@@ -121,7 +122,14 @@ const Detail = ({
         </div>
       )}
       <div className="mb-6">
-        <h1 className="font-display text-3xl font-bold">{detail.data.company_name ?? "Company not provided"}</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="font-display text-3xl font-bold">{detail.data.company_name ?? "Company not provided"}</h1>
+          {detail.needsAction.on && (
+            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-warning/15 text-warning whitespace-nowrap">
+              <BellRing className="w-3 h-3" aria-hidden="true" /> {NEEDS_ACTION_LABEL}
+            </span>
+          )}
+        </div>
         <p className="text-sm text-muted-foreground font-mono">{detail.fileId ?? "File ID assigned when the prospect certifies"}</p>
         <p className="text-sm text-muted-foreground mt-1">
           {detail.certified && sub
@@ -155,6 +163,13 @@ const Detail = ({
           />
         </div>
         <div className="space-y-6">
+          <NeedsActionPanel
+            key={`${detail.needsAction.on}-${detail.needsAction.at}`}
+            sessionId={detail.id}
+            prospectUserId={detail.userId}
+            needsAction={detail.needsAction}
+            onChanged={reload}
+          />
           <StatusPanel
             key={detail.pipelineStatus}
             sessionId={detail.id}

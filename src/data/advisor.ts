@@ -96,6 +96,14 @@ export function prospectStatusAfter(next: PipelineStatus, history: readonly { to
   return lastShared ?? null;
 }
 
+// ---------- Needs advisor action (F-4.3) ----------
+
+/** What the queue and the submission page call a submission an advisor marked for the team to act on. */
+export const NEEDS_ACTION_LABEL = "Needs advisor action";
+
+/** The longest note it can carry; the database holds the same cap (20261104132000_needs_advisor_action.sql). */
+export const NEEDS_ACTION_NOTE_MAX = 500;
+
 // ---------- Completeness ----------
 
 export type Completeness =
