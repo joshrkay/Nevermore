@@ -103,12 +103,13 @@ $$;
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 -- Versioned, validated writes (what the browser's save and certify go through), the chosen PEO, the readiness
 -- check, and the submission record: the server-assigned File ID, the numbered immutable certification rows and
--- the repeat-submit guard. With these, a certify PATCH needs the company legal name, states of operation and pay
--- frequency, as in production.
+-- the repeat-submit guard, then the check that a certification carries its intake's File ID. With these, a certify
+-- PATCH needs the company legal name, states of operation and pay frequency, as in production.
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
 \i supabase/migrations/20261104120000_submission_records.sql
+\i supabase/migrations/20261104131000_certification_file_id_check.sql
 
 -- Seed: a verified prospect (with a profile), a guest, and one fixed session per scenario.
 INSERT INTO auth.users VALUES

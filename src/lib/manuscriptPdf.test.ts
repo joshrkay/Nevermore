@@ -161,6 +161,36 @@ describe("buildManuscriptPdf", () => {
     expect(text).toContain("Signed electronically by Jo Doe on");
   });
 
+  it("marks consent wording counsel hasn't approved as a draft, with a watermark on the certification", async () => {
+    const { text } = await render();
+    expect(text).toContain("Consent wording v1 · DRAFT: NOT LEGALLY REVIEWED");
+    // One watermark, drawn first on the certification's page, under the block it marks: no page ends in between
+    // (each page's stream ends with its footer).
+    expect(occurrences(text, "(DRAFT) Tj")).toBe(1);
+    const between = text.slice(text.indexOf("(DRAFT) Tj"), text.indexOf("12 — Submission Certification"));
+    expect(between.length).toBeGreaterThan(0);
+    expect(between).not.toMatch(/Page \d+ of \d+/);
+  });
+
+  it("says when a certification didn't record which wording was signed, and marks it as a draft", async () => {
+    const { text } = await render(DEMO_CHAMBER_DATA, {}, { ...submission, consent_version: undefined, consent_text: undefined });
+    expect(text).toContain("Consent wording not recorded · DRAFT: NOT LEGALLY REVIEWED");
+    expect(occurrences(text, "(DRAFT) Tj")).toBe(1);
+  });
+
+  it("prints approved consent wording with no draft mark or watermark", async () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: FILE_ID, submission });
+    const approved = { ...m, signer: { ...m.signer!, consentDraft: false } };
+    const text = await readPdf(buildManuscriptPdf(approved, { generatedOn: GENERATED, compress: false }).blob);
+    expect(text).toContain("I certify the answers are accurate.");
+    expect(text).not.toContain("DRAFT");
+  });
+
+  it("puts no draft mark on a packet nobody signed", async () => {
+    const { text } = await render(DEMO_CHAMBER_DATA, { sample: true }, null);
+    expect(text).not.toContain("DRAFT");
+  });
+
   it("builds a PDF for an empty intake without throwing", async () => {
     const { text, pageCount } = await render(EMPTY_CHAMBER_DATA, {}, null);
     expect(pageCount).toBeGreaterThanOrEqual(1);

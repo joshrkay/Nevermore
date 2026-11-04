@@ -187,3 +187,60 @@ test("a submission gets one File ID from the database, a repeat records nothing 
   expect(guessed.status()).toBe(200);
   expect(await guessed.json()).toEqual([]);
 });
+
+test("identical certifications sent at the same moment record one submission, one File ID and one set of emails", async ({ request }) => {
+  const prospect = await verifiedProspect(request);
+  const data = { company_name: "Race Co", states: ["NY"], pay_frequency: "weekly" };
+  // As The Reckoning sends it: no File ID (the database assigns it), and no data_version filter, so nothing but the
+  // database stands between the copies.
+  const submission = {
+    signer_name: "Jo Doe", signer_title: "CEO", signed_at: new Date().toISOString(),
+    consent_version: "2026-10-draft-1", consent_text: ["I certify."], chamber_data: data,
+  };
+  const certify = () =>
+    request.patch(`${GATEWAY_URL}/rest/v1/chamber_sessions?id=eq.${prospect.id}&select=id,status,file_id,submission`, {
+      headers: prospect.headers,
+      data: { status: "submitted", chamber_data: data, submission },
+    });
+  const COPIES = 4;
+
+  // Hold the intake's row so every copy queues behind the same lock, then let them all go at once: a double click,
+  // or a retry racing the request it retries, at its worst. Each copy is its own transaction on its own connection.
+  const locker = new pg.Client({ ...PG, database: DATABASE });
+  await locker.connect();
+  let responses: Awaited<ReturnType<typeof certify>>[];
+  try {
+    await locker.query("BEGIN");
+    await locker.query("SELECT 1 FROM chamber_sessions WHERE id = $1 FOR UPDATE", [prospect.id]);
+    const lockerPid = (await locker.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+    const sent = Array.from({ length: COPIES }, () => certify());
+    await expect
+      .poll(async () => (await sql<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = $1 AND pid <> $2 AND wait_event_type = 'Lock' AND query ILIKE '%UPDATE%chamber_sessions%'`,
+        [DATABASE, lockerPid],
+      ))[0].n, { timeout: 15_000 })
+      .toBe(COPIES);
+    await locker.query("COMMIT");
+    responses = await Promise.all(sent);
+  } finally {
+    await locker.end().catch(() => {});
+  }
+
+  // Every copy is answered with the one certification on record.
+  const rows = await Promise.all(responses.map(async (r) => {
+    expect(r.status()).toBe(200);
+    const [row] = (await r.json()) as { status: string; file_id: string; submission: { file_id: string; version: number } }[];
+    return row;
+  }));
+  const [first] = rows;
+  expect(first.file_id).toMatch(/^EAA-\d{4}-\d{4,}$/);
+  for (const row of rows) {
+    expect(row).toMatchObject({ status: "submitted", file_id: first.file_id, submission: { file_id: first.file_id, version: 1 } });
+  }
+  expect(await sql("SELECT count(*)::int AS n, min(file_id) AS file_id FROM chamber_certifications WHERE session_id = $1", [prospect.id]))
+    .toEqual([{ n: 1, file_id: first.file_id }]);
+  // One advisor alert and one confirmation, not one of each per copy.
+  expect(await sql("SELECT kind FROM outbox_events WHERE session_id = $1 ORDER BY kind", [prospect.id]))
+    .toEqual([{ kind: "advisor_notification" }, { kind: "prospect_confirmation" }]);
+});
