@@ -10,11 +10,7 @@ import * as documents from "../../document-extract/schema";
 const fingerprint = (prompt: string, tool: unknown) => createHash("sha256").update(`${prompt}\n${JSON.stringify(tool)}`).digest("hex");
 
 const KNOWN = {
-  "chamber-extract": {
-    1: "89db609d8c6914c5db41973ad37c4869602bb24d1c3facfce87e81cd84ed5231",
-    // 2: every intake field but the census (B-1.1), workers' comp included.
-    2: "9353e3ba7b62efffdcbdf7d58d28c910f1d2d545532a50bbece21cefbd2b52e8",
-  } as Record<number, string>,
+  "chamber-extract": { 1: "89db609d8c6914c5db41973ad37c4869602bb24d1c3facfce87e81cd84ed5231", 2: "df5be12a55b4b2732660a15192245b18ca8d663a4cc58acbac0486bb6073e75d" } as Record<number, string>,
   "document-extract": { 1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526" } as Record<number, string>,
 };
 

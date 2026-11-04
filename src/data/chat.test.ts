@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
-import { chatContext, createChatMessage, dedupeGreetings, isGreeting, OPENING_MESSAGE, openingMessage, parseTranscript } from "./chat";
+import {
+  createChatMessage,
+  dedupeGreetings,
+  formatMessageTime,
+  isGreeting,
+  MAX_MESSAGE_CHARS,
+  OPENING_MESSAGE,
+  openingMessage,
+  parseTranscript,
+} from "./chat";
 
 describe("parseTranscript", () => {
   it("returns an empty transcript for non-arrays", () => {
@@ -19,6 +27,60 @@ describe("parseTranscript", () => {
     expect(parsed[0]).toEqual({ id: "1", sender: "lenore", text: "Hello", timestamp: "09:00" });
     expect(parsed[1]).toMatchObject({ sender: "user", text: "Hi", timestamp: "" });
     expect(parsed[1].id).toBeTruthy();
+  });
+
+  it("keeps the Chamber's own notes and the spoken mark, in the stored order", () => {
+    const parsed = parseTranscript([
+      { id: "1", sender: "system", text: "Voice call started", timestamp: "2026-11-04T14:34:00.000Z" },
+      { id: "2", sender: "user", text: "twelve people", timestamp: "2026-11-04T14:34:05.000Z", spoken: true },
+      { id: "3", sender: "lenore", text: "Twelve. Thank you.", timestamp: "2026-11-04T14:34:05.000Z", spoken: "yes" },
+    ]);
+    expect(parsed.map((m) => m.id)).toEqual(["1", "2", "3"]);
+    expect(parsed[0].sender).toBe("system");
+    expect(parsed[1].spoken).toBe(true);
+    expect(parsed[2]).not.toHaveProperty("spoken");
+  });
+
+  it("returns only what the database accepts, so saving it back is never refused", () => {
+    const [long] = parseTranscript([{ id: "x".repeat(101), sender: "user", text: "a".repeat(MAX_MESSAGE_CHARS + 5), timestamp: "9".repeat(65) }]);
+    expect(long.id).not.toBe("x".repeat(101));
+    expect(long.id.length).toBeLessThanOrEqual(100);
+    expect(long.text).toHaveLength(MAX_MESSAGE_CHARS);
+    expect(long.timestamp).toBe("");
+    const [blankId] = parseTranscript([{ id: "  ", sender: "user", text: "hi" }]);
+    expect(blankId.id.trim()).not.toBe("");
+    // Only the fields a message has survive.
+    const [extra] = parseTranscript([{ id: "1", sender: "user", text: "hi", extraction: { company_name: "Acme" } }]);
+    expect(Object.keys(extra).sort()).toEqual(["id", "sender", "text", "timestamp"]);
+  });
+});
+
+describe("message times", () => {
+  it("stamps a new message with the full instant, not a time of day", () => {
+    const m = createChatMessage("user", "hi", { now: new Date("2026-11-04T14:34:05.123Z") });
+    expect(m.timestamp).toBe("2026-11-04T14:34:05.123Z");
+    expect(m).not.toHaveProperty("spoken");
+    expect(createChatMessage("user", "twelve", { spoken: true }).spoken).toBe(true);
+  });
+
+  it("cuts very long text without leaving half an emoji", () => {
+    const text = "a".repeat(MAX_MESSAGE_CHARS - 1) + "\u{1F600}" + "tail";
+    const m = createChatMessage("user", text);
+    expect(m.text).toHaveLength(MAX_MESSAGE_CHARS - 1);
+    expect(/[\uD800-\uDBFF]$/.test(m.text)).toBe(false);
+  });
+
+  it("shows an instant in the reader's time, with the date when asked", () => {
+    const at = "2026-11-04T14:34:05.123Z";
+    expect(formatMessageTime(at)).toBe(new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+    expect(formatMessageTime(at, { withDate: true })).toContain("2026");
+  });
+
+  it("shows a time of day saved before the full instant was kept as it was saved", () => {
+    expect(formatMessageTime("02:34 PM")).toBe("02:34 PM");
+    expect(formatMessageTime("02:34 PM", { withDate: true })).toBe("02:34 PM");
+    expect(formatMessageTime("")).toBe("");
+    expect(formatMessageTime("2026-13-45T99:99:99Z")).toBe("2026-13-45T99:99:99Z");
   });
 });
 
@@ -40,7 +102,7 @@ describe("chatContext", () => {
 });
 
 describe("greetings", () => {
-  const hello = (text = "Hi, I'm Lenore.") => createChatMessage("lenore", text, "greeting");
+  const hello = (text = "Hi, I'm Lenore.") => createChatMessage("lenore", text, { kind: "greeting" });
   const said = (text: string) => createChatMessage("user", text);
   const reply = (text: string) => createChatMessage("lenore", text);
 

@@ -29,6 +29,7 @@ describe("certificationBlockers", () => {
     ["a blank role", { signer: { name: "Jo", title: " " } }, "Enter your role"],
     ["no signature", { signed: false }, "Sign"],
     ["a missing required answer", { missingAnswers: ["Pay frequency"] }, "Add pay frequency"],
+    ["a required answer in conflict", { conflictingAnswers: ["Company legal name"] }, "Choose one answer for company legal name"],
   ])("blocks on %s", (_label, override, expected) => {
     expect(certificationBlockers({ ...ready, ...override })).toEqual([expected]);
   });
@@ -60,10 +61,12 @@ describe("certificationBlockers", () => {
     ]);
   });
 
-  it("lists missing answers before conflicting ones", () => {
-    expect(
-      certificationBlockers({ ...ready, missingAnswers: ["States of operation"], requiredItems: itemsIn("conflicting", "missing", "settled", "missing") }),
-    ).toEqual(["Add states of operation", "Resolve the conflicting answers for Company legal name"]);
+  it("names missing answers, then conflicts, then the signer's steps", () => {
+    expect(certificationBlockers({ ...ready, signed: false, missingAnswers: ["Pay frequency"], conflictingAnswers: ["Company legal name"] })).toEqual([
+      "Add pay frequency",
+      "Choose one answer for company legal name",
+      "Sign",
+    ]);
   });
 });
 

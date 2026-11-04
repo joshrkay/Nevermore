@@ -37,11 +37,14 @@ export function certificationBlockers(opts: {
   isGuest: boolean;
   /** Labels of the required answers the intake doesn't have yet (missingRequired in readiness.ts). */
   missingAnswers?: string[];
-  /** The intake's items (requiredItems.ts): a required one whose answers conflict holds certification back. */
-  requiredItems?: readonly RequiredItem[];
+  /** Labels of the required answers with two competing values (conflictingRequired in readiness.ts). */
+  conflictingAnswers?: string[];
 }): string[] {
   // What the intake still needs comes first: no signature can make up for it.
-  const blockers: string[] = (opts.missingAnswers ?? []).map((label) => `Add ${label.toLowerCase()}`);
+  const blockers: string[] = [
+    ...(opts.missingAnswers ?? []).map((label) => `Add ${label.toLowerCase()}`),
+    ...(opts.conflictingAnswers ?? []).map((label) => `Choose one answer for ${label.toLowerCase()}`),
+  ];
   if (opts.isGuest) blockers.push("Verify your email");
   if (!opts.hasFileId) blockers.push("Wait for your intake to finish saving");
   // A required answer whose answers conflict can't be certified as either; the recommended census never

@@ -65,7 +65,9 @@
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
-\i supabase/migrations/20261104100000_required_items.sql
+\i supabase/migrations/20261104100000_certification_conflicts.sql
+\i supabase/migrations/20261104101000_transcript_validation.sql
+\i supabase/migrations/20261104102000_one_open_draft.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -201,23 +203,41 @@ BEGIN
   END LOOP;
 
   -- Guest A: an open draft with a conversation and a file, and three that will close, each with a file.
+  -- A person has one open draft at a time (20261104102000_one_open_draft.sql), so each intake below is
+  -- started from the browser once the one before it is closed or certified.
+
+  -- Guest A: three drafts that close the three ways a draft closes (two with a file), then an open draft
+  -- with a conversation and a file.
+  PERFORM pg_temp.become('guest_a');
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Expired"}') RETURNING id INTO ga_expired;
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
+  VALUES (ga, ga_expired, 'payroll.pdf', '1 KB', ga || '/' || ga_expired || '/payroll.pdf', 'payroll_report');
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', ga || '/' || ga_expired || '/payroll.pdf');
+  RESET ROLE;
+  UPDATE public.chamber_sessions SET last_activity_at = now() - interval '40 days' WHERE id = ga_expired;
+  PERFORM pg_temp.become('service');
+  IF public.expire_idle_intakes() <> 1 THEN RAISE EXCEPTION 'setup: expected exactly one draft to expire'; END IF;
+
+  PERFORM pg_temp.become('guest_a');
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Archived"}') RETURNING id INTO ga_archived;
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
+  VALUES (ga, ga_archived, 'loss-runs.pdf', '1 KB', ga || '/' || ga_archived || '/loss-runs.pdf', 'workers_comp_loss_runs');
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', ga || '/' || ga_archived || '/loss-runs.pdf');
+  IF public.archive_chamber_session(ga_archived) <> 'archived' THEN RAISE EXCEPTION 'setup: archive failed'; END IF;
+
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Revoked"}') RETURNING id INTO ga_revoked;
+  PERFORM pg_temp.become('admin');
+  IF public.revoke_chamber_session(ga_revoked, 'Shared by mistake') <> 'revoked' THEN RAISE EXCEPTION 'setup: revoke failed'; END IF;
+
   PERFORM pg_temp.become('guest_a');
   INSERT INTO public.chamber_sessions (user_id, chamber_data, transcript, field_provenance)
   VALUES (ga, '{"company_name":"Guest A Co"}',
           '[{"id":"m1","sender":"user","text":"We have 12 staff in Fresno"}]',
           '{"company_name":{"status":"confirmed","source":"transcript"}}')
   RETURNING id INTO ga_open;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Expired"}') RETURNING id INTO ga_expired;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Archived"}') RETURNING id INTO ga_archived;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (ga, '{"company_name":"Guest A Revoked"}') RETURNING id INTO ga_revoked;
-  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category) VALUES
-    (ga, ga_open, 'census.csv', '1 KB', ga || '/' || ga_open || '/census.csv', 'employee_census'),
-    (ga, ga_expired, 'payroll.pdf', '1 KB', ga || '/' || ga_expired || '/payroll.pdf', 'payroll_report'),
-    (ga, ga_archived, 'loss-runs.pdf', '1 KB', ga || '/' || ga_archived || '/loss-runs.pdf', 'workers_comp_loss_runs');
-  INSERT INTO storage.objects (bucket_id, name) VALUES
-    ('documents', ga || '/' || ga_open || '/census.csv'),
-    ('documents', ga || '/' || ga_expired || '/payroll.pdf'),
-    ('documents', ga || '/' || ga_archived || '/loss-runs.pdf');
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
+  VALUES (ga, ga_open, 'census.csv', '1 KB', ga || '/' || ga_open || '/census.csv', 'employee_census');
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', ga || '/' || ga_open || '/census.csv');
 
   -- Guest B: one open draft with a file.
   PERFORM pg_temp.become('guest_b');
@@ -228,10 +248,9 @@ BEGIN
   VALUES (gb, gb_open, 'roster.xlsx', '1 KB', gb || '/' || gb_open || '/roster.xlsx');
   INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', gb || '/' || gb_open || '/roster.xlsx');
 
-  -- Prospects A and B each certify one intake from the browser and keep a draft; A's has a file.
+  -- Prospects A and B each certify one intake from the browser, then keep a draft; A's certified one has a file.
   PERFORM pg_temp.become('prospect_a');
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pa, format(ready, 'Prospect A Co')::jsonb) RETURNING id INTO pa_cert;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pa, '{"company_name":"Prospect A Draft"}') RETURNING id INTO pa_open;
   INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path)
   VALUES (pa, pa_cert, 'benefits.pdf', '1 KB', pa || '/' || pa_cert || '/benefits.pdf');
   INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', pa || '/' || pa_cert || '/benefits.pdf');
@@ -240,25 +259,16 @@ BEGIN
       submission = jsonb_build_object('signer_name', 'Pat A', 'signer_title', 'CEO', 'signed_at', '2026-11-01T12:00:00Z',
         'file_id', 'EAA-2026-AAAAAAAA', 'consent_version', 'v1', 'consent_text', 'I certify.', 'chamber_data', chamber_data)
   WHERE id = pa_cert;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pa, '{"company_name":"Prospect A Draft"}') RETURNING id INTO pa_open;
 
   PERFORM pg_temp.become('prospect_b');
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, format(ready, 'Prospect B Co')::jsonb) RETURNING id INTO pb_cert;
-  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, '{"company_name":"Prospect B Draft"}') RETURNING id INTO pb_open;
   UPDATE public.chamber_sessions
   SET status = 'submitted',
       submission = jsonb_build_object('signer_name', 'Bo B', 'signer_title', 'COO', 'signed_at', '2026-11-01T12:00:00Z',
         'file_id', 'EAA-2026-BBBBBBBB', 'consent_version', 'v1', 'consent_text', 'I certify.', 'chamber_data', chamber_data)
   WHERE id = pb_cert;
-
-  -- Close guest A's three drafts the three ways a draft closes.
-  PERFORM pg_temp.become('guest_a');
-  IF public.archive_chamber_session(ga_archived) <> 'archived' THEN RAISE EXCEPTION 'setup: archive failed'; END IF;
-  PERFORM pg_temp.become('admin');
-  IF public.revoke_chamber_session(ga_revoked, 'Shared by mistake') <> 'revoked' THEN RAISE EXCEPTION 'setup: revoke failed'; END IF;
-  RESET ROLE;
-  UPDATE public.chamber_sessions SET last_activity_at = now() - interval '40 days' WHERE id = ga_expired;
-  PERFORM pg_temp.become('service');
-  IF public.expire_idle_intakes() <> 1 THEN RAISE EXCEPTION 'setup: expected exactly one draft to expire'; END IF;
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, '{"company_name":"Prospect B Draft"}') RETURNING id INTO pb_open;
 
   -- A file planted in guest B's folder under guest A's intake: neither of them may read it.
   RESET ROLE;
@@ -571,12 +581,8 @@ INSERT INTO callable VALUES
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
-  ('intake_missing_required(d jsonb)',         'helper',  NULL, 'the certification gate''s trigger calls it as the signed-in prospect; pure: required answers missing from the jsonb it is given'),
-  ('intake_answers_present(p_data jsonb)',     'helper',  NULL, 'pure: which answers the jsonb it is given holds; behind intake_missing_required and intake_required_items'),
-  ('intake_required_items(p_data jsonb, p_provenance jsonb, p_verified text[])', 'helper', NULL, 'pure: each required item''s state for the jsonb it is given; behind the advisor queue (B-2.2)'),
-  ('provenance_entry_status(p_entry jsonb)',   'helper',  NULL, 'pure: a stored provenance entry''s status, as the browser reads it'),
-  ('provenance_source_is_valid(p_source jsonb)', 'helper', NULL, 'pure: whether a provenance source is well formed'),
-  ('session_verified_fields(p_session_id uuid)', 'own',   NULL, 'the field names an advisor verified on the caller''s own intake (any intake, for advisors); empty for anyone else''s'),
+  ('intake_missing_required(d jsonb)',         'anyone',  NULL, 'pure: required answers missing from the jsonb it is given'),
+  ('intake_conflicting_required(p jsonb)',     'anyone',  NULL, 'pure: required fields in conflict in the provenance it is given'),
   ('is_prospect_visible_status(s text)',       'anyone',  NULL, 'pure: whether a status name is shared with prospects'),
   ('is_reviewable_field(f text)',              'anyone',  NULL, 'pure: whether a field name can be reviewed'),
   ('ops_clean_code(p_code text)',              'anyone',  NULL, 'pure: cleans a failure code'),
@@ -590,6 +596,7 @@ INSERT INTO callable VALUES
   ('chamber_data_census_row_error(census_row jsonb, base text, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_error(d jsonb, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_field_kind(field text)',      'helper',  NULL, 'intake validation trigger; pure'),
+  ('chamber_transcript_error(t jsonb, OUT path text, OUT reason text)', 'helper', NULL, 'transcript validation trigger; pure'),
   ('chamber_data_is_text(v jsonb, max_length integer)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_is_whole_number(v jsonb, max_value numeric)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_person_error(person jsonb, base text, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),

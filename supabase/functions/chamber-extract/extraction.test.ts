@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { emptyExtraction, shapeExtraction } from "./extraction";
-import { LIMITS } from "../_shared/intakeSchema";
-import { EXTRACT_TOOL, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
+import { EXTRACT_TOOL, FIELD_GUIDE, FIELDS, MAX_EVIDENCE_CHARS, SYSTEM_PROMPT } from "./schema";
+import { INTAKE_SCHEMA } from "../_shared/intakeSchema";
 
 describe("shapeExtraction", () => {
   it("keeps the fields the model extracted, with their status, evidence and corrections", () => {
@@ -203,5 +203,79 @@ describe("extraction tool schema", () => {
   it("tells the model how to report status, evidence and corrections", () => {
     for (const word of ["field_status", "evidence", "corrected_fields"]) expect(SYSTEM_PROMPT).toContain(word);
     expect(SYSTEM_PROMPT).toContain(`at most ${MAX_EVIDENCE_CHARS} characters`);
+  });
+});
+
+// US-2.1b: the contract covers every top-level field of the intake schema but the census.
+describe("the extraction contract", () => {
+  const PROPERTIES = INTAKE_SCHEMA.properties as Record<string, { type: unknown; enum?: unknown[] }>;
+  // A value the schema accepts for each kind of field, as the model would send it.
+  const sample = (key: string): unknown => {
+    if (key === "hq_state") return "NY";
+    if (key === "states") return ["NY", "NJ"];
+    const types = Array.isArray(PROPERTIES[key].type) ? (PROPERTIES[key].type as string[]) : [PROPERTIES[key].type as string];
+    if (types.includes("array")) return ["Dental"];
+    if (types.includes("boolean")) return false;
+    if (types.includes("integer")) return 0;
+    if (types.includes("number")) return 0.92;
+    return "Acme";
+  };
+
+  it("asks for every field of the intake schema but the census, each with a guide for the model and a type", () => {
+    expect([...FIELDS].sort()).toEqual(Object.keys(PROPERTIES).filter((k) => k !== "census").sort());
+    for (const key of FIELDS) {
+      expect(FIELD_GUIDE[key], key).toBeTruthy();
+      expect(SYSTEM_PROMPT).toContain(`- ${key} (`);
+      expect((EXTRACT_TOOL.parameters.properties as Record<string, unknown>)[key], key).toBeTruthy();
+    }
+    expect(Object.keys(FIELD_GUIDE).sort()).toEqual([...FIELDS].sort());
+    expect(EXTRACT_TOOL.parameters.properties).not.toHaveProperty("census");
+  });
+
+  it.each(Object.keys(PROPERTIES).filter((k) => k !== "census"))("takes an answer for %s, with its status and evidence", (key) => {
+    const value = sample(key);
+    const shaped = shapeExtraction({ [key]: value, field_status: { [key]: "confirmed" }, evidence: { [key]: "as they said" } });
+    expect(shaped.extracted).toEqual({ [key]: value });
+    expect(shaped.field_status).toEqual({ [key]: "confirmed" });
+    expect(shaped.evidence).toEqual({ [key]: "as they said" });
+    expect(shaped.rejected).toEqual([]);
+  });
+
+  it("never takes the census from chat", () => {
+    const shaped = shapeExtraction({ census: [{ id: "1", first_name: "Ada" }], field_status: { census: "unknown" } });
+    expect(shaped.extracted).toEqual({});
+    expect(shaped.field_status).toEqual({});
+  });
+
+  it("records a field the prospect doesn't know as unknown, with its evidence and no answer", () => {
+    const shaped = shapeExtraction({
+      field_status: { wc_experience_mod: "unknown", renewal_date: "unknown" },
+      evidence: { wc_experience_mod: "no idea what our mod is", renewal_date: "not sure when it renews" },
+      reply: "No matter.",
+    });
+    expect(shaped.extracted).toEqual({});
+    expect(shaped.field_status).toEqual({ wc_experience_mod: "unknown", renewal_date: "unknown" });
+    expect(shaped.evidence).toEqual({ wc_experience_mod: "no idea what our mod is", renewal_date: "not sure when it renews" });
+  });
+
+  it("doesn't call an answer unknown, or a refused answer unknown", () => {
+    const shaped = shapeExtraction({
+      employee_count: 12,
+      hq_state: "new york",
+      field_status: { employee_count: "unknown", hq_state: "unknown", made_up_field: "unknown" },
+    });
+    // An answer marked unknown keeps the answer, without the contradictory status.
+    expect(shaped.extracted).toEqual({ employee_count: 12 });
+    expect(shaped.field_status).toEqual({});
+    expect(shaped.rejected.map((r) => r.path)).toEqual(["hq_state"]);
+  });
+
+  it("never takes conflicting or not applicable from the model: only a disagreement or the prospect sets those", () => {
+    const shaped = shapeExtraction({
+      industry: "Print",
+      field_status: { industry: "conflicting", hq_state: "not_applicable" },
+    });
+    expect(shaped.extracted).toEqual({ industry: "Print" });
+    expect(shaped.field_status).toEqual({});
   });
 });

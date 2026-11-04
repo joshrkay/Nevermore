@@ -208,7 +208,7 @@ Follow-ups:
    intake in `ai_extraction_events` (`docs/AI_OPERATIONS.md`).
 2. If the provider is down for long, switch `AI_PROVIDER` to the other supported provider and set its key
    (`docs/SUPABASE_SETUP.md`). Both functions read the one setting, so no code change is needed.
-3. Prospects can always fill the workspace by hand ("Continue manually"); say so if advisors are asked.
+3. Prospects can always fill the workspace by hand ("Continue manually" opens Review, where every answer can be added); say so if advisors are asked.
 
 ### Authorization failures
 

@@ -97,7 +97,7 @@ Writers: **C** chat extraction (`chamber-extract`, which asks for every field bu
 | Operations & HR | `key_challenges` | Key challenges | text | Recommended | 41 | C V |
 | Operations & HR | `business_goals` | Business goals | text | Recommended | 42 | C V |
 
-Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`, `dob`) are free text. `transcript`, `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks.
+Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`, `dob`) are free text. `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks. `transcript` is checked message by message (see "The transcript" below).
 
 ### Sections, required fields and rank
 
@@ -323,6 +323,9 @@ npm run eval:extraction -- --update-baseline                         # record ba
 `AI_MODEL` overrides the provider's default model, as it does for the function. The variables can also go in `.env.local`, which the runner (vite-node) reads. The run prints a fixture-by-field table and the overall accuracy, then compares it with `scripts/extraction-eval/baseline.json`: a cell that passed there and fails now is a regression, and a regression, a failed model call or a missing key exits 1. New cells, and baseline cells no longer asserted (a deleted or renamed fixture), are reported. With no baseline the run reports any failed model calls, says how to record one and exits 0.
 
 Before merging any change to the prompt, the tool schema or the response shape: raise `PROMPT_VERSION` and record its fingerprints, run the eval, review the regressions, then record a new baseline with `--update-baseline` and commit it with the change. No baseline is committed yet: the first needs a live provider key.
+Version 2 of the prompt (`PROMPT_VERSION`, recorded on every extraction event; US-2.1b). The request is `{ message, context, statuses, recent, session_id }`: the prospect's message; the answers captured so far (the census left out); each field's status; the last 10 messages, the prospect's and Lenore's only, oldest first, each at most 2,000 characters, with Social Security and account numbers removed again by the function; and the intake id, which must be the caller's own intake. `context`, `statuses` and `recent` together are at most 20,000 characters (`_shared/chatContext.ts`, which the browser uses to cut the oldest messages until they fit). A status for a field the intake doesn't have, a status that isn't one, or a message from anyone else is `bad_request`, before any quota is spent. From the answers and statuses the function works out the fields not yet settled, by rank (`_shared/followUp.ts`, D26), and names the first eight in the prompt; the recent conversation lets a one-word answer ("Yes") be placed against the question Lenore asked last.
+
+The tool covers every top-level field of intake schema v2 but the census (`FIELDS` and `FIELD_GUIDE` in `chamber-extract/schema.ts`; the field list and types come from the schema, and a test fails when a field has no guide). The response is `{ extracted, field_status, evidence, corrected_fields, reply, rejected, request_id }`; a failure is `{ error, code, request_id }` (codes, limits and the extraction event each call leaves: `docs/AI_OPERATIONS.md`). An answer without the forced tool call is `invalid_response`, not an empty extraction. `field_status` and `evidence` are keyed by field name. For a field in `extracted`, `field_status` is `confirmed`, `inferred` or `incomplete`. A field the prospect said they don't know has `field_status` `unknown`, its evidence, and no value; the browser marks it `unknown` ("Prospect to provide") while it has no answer, and never over the prospect's own edit or "Doesn't apply". The model never sets `conflicting` (only a disagreement does) or `not_applicable` (only the prospect does, D31). A field enters `extracted` only if the intake schema accepts the model's value exactly as sent. A lower-case `"ny"`, a state list with one unknown code, `12.5` people or a string of digits is refused and listed in `rejected` as `{ path, reason }`. The browser ignores `rejected`.
 
 ### Document candidates (`document-extract`)
 
@@ -362,6 +365,14 @@ The employee census is recommended, not required (`RECOMMENDED_ITEMS`): it can o
 - **In the app.** These fields are marked "Required" wherever they appear (`ProvenanceField`), and say they're needed while empty. The Review step lists what is still missing, with a link to each field. The Reckoning lists them with a way back to Review, and keeps Generate disabled (`certificationBlockers`). The Manuscript lists them as "not provided" open items, as the advisor queue does.
 - **In the database.** `public.intake_missing_required(chamber_data)` returns the missing keys in the order above. Since migration `20261104100000` it reads `public.intake_answers_present`, the one presence rule `intake_required_items` reads too (see "Required items"), so it trims as the browser does and counts a state only when it is a code. A certification sent from the browser (`current_user` `anon` or `authenticated`) is refused while any are missing, with SQLSTATE `EA003` and the keys, comma-separated, in DETAIL (`company_name,pay_frequency`). Nothing is written. Other saves, existing certifications and privileged writes are not checked. `src/data/schemaSync.test.ts` compares the function's keys with `REQUIRED_ITEMS`.
 - **On `EA003`.** The client names the missing answers and points to the Review tab. It is a definite refusal: saving carries on as before.
+
+#### A required answer in conflict
+
+A required answer whose field status is `conflicting` (Lenore and a document, or two things the prospect said, disagree) blocks certification too, until the prospect picks one with "Use this" in Review, which confirms it (B-2, decision D26). A conflict on any other field is an open item and never blocks. A states conflict blocks even when census rows carry work states.
+
+- **In the app.** `conflictingRequired(provenance)` in `src/data/readiness.ts`. Review lists each under "Still needed" with a link to the field and its candidates; The Reckoning lists them ("choose one answer for") and `certificationBlockers` keeps Generate disabled.
+- **In the database.** `public.intake_conflicting_required(field_provenance)` returns the keys in the order above (migration `20261104100000_certification_conflicts.sql`). A certification from the browser is refused while any are in conflict, after the missing-answer check, with SQLSTATE `EA008` and the keys, comma-separated, in DETAIL. It reads the row's `field_provenance`, which the browser saves before it certifies. Nothing is written; other saves, existing certifications and privileged writes are not checked, and a conflict that appears after a certification doesn't withdraw it (the certified answers haven't changed). `src/data/schemaSync.test.ts` compares the keys with `REQUIRED_ITEMS`. Field provenance is written by the browser and not validated, so this holds an honest client to its own state.
+- **On `EA008`.** The client names the answers and points to the Review tab. It is a definite refusal, like `EA003`.
 
 ### The chosen PEO (`chosen_peo`)
 
@@ -408,6 +419,12 @@ A provenance entry counts only when `parseProvenance` would keep it (a known sta
 ## Session lifecycle
 
 Migration `20261103090000_intake_lifecycle.sql` (A-1.5). `supabase/tests/intake_lifecycle.sql` and `e2e/intake-lifecycle.spec.ts` cover it.
+
+### When an intake is created
+
+No intake exists until the prospect does something with it (A-1): their first message to Lenore, answer, PEO choice, upload, or voice call. Opening the Chamber, or reloading it, creates nothing; a blank intake with Lenore's greeting is on screen and the address names none. The first change creates the row with that change already in it (`useChamberSession`'s `ensureIntake`, which every change calls and which a message to Lenore and an upload wait for, so the AI call carries the intake id and the file is stored under it). After Start over, or "Start a new intake", the same holds: a blank intake, no row, and the address no longer names the old one.
+
+A person has one open draft at a time: an intake in progress that was never certified. A new intake from the browser is refused while they have one (migration `20261104102000_one_open_draft.sql`, SQLSTATE `EA009`, the open draft's id in DETAIL); a transaction-scoped advisory lock per person makes two simultaneous starts take turns, so the second is refused (checked by hand with two connections; `supabase/tests/one_open_draft.sql` covers the rest). A certified intake changed since is a submission, not a draft, so Start over can begin a new intake beside it. When the Chamber is refused (another tab started first), it offers that intake as it offers a save that another tab beat: "Load latest" or "Keep my changes". A bare `/start` opens the latest open draft, so an ordinary reload or navigation never makes a second.
 
 ### Status
 
@@ -469,6 +486,21 @@ While a change hasn't been confirmed by the server, the Chamber keeps a copy in 
 ### Getting back from another browser
 
 The intake belongs to the Supabase user that created it. A guest is anonymous until they verify an email (at certification). When a link can't be opened, usually because this browser no longer holds the sign-in (another device, a private window, cleared data), the Chamber explains why and offers to email a sign-in code to the address they verified (`signInWithOtp` with `shouldCreateUser: false`, then `verifyOtp` type `email`). It says the same thing whether or not the address has an account. A guest on a fresh intake gets the same offer ("Continue an earlier intake"). Once signed in, the Chamber drops the blank guest intake and opens the linked intake, or their latest one. An intake that never had an email verified can't be recovered from another browser. The code arrives in Supabase's "Magic Link" email template, which must contain `{{ .Token }}` (`npm run setup:supabase` sets it).
+
+### The transcript
+
+`chamber_sessions.transcript` is the conversation in the order it happened: a list of messages, appended by the browser and saved by the same versioned write as the answers, so a stale tab can't overwrite it (A-2.2). It is the source evidence for the answers Lenore captured: a field taken from chat points at its message by `message_id` (see Provenance above), and advisors read it beside the answers. A message is:
+
+| Key | Kind | Rule |
+| --- | --- | --- |
+| `id` | text, required | 1 to 100 characters; the `message_id` a field's provenance points to |
+| `sender` | text, required | `user` (the prospect), `lenore`, or `system` (a note from the Chamber itself: today "Voice call started" and "Voice call ended") |
+| `text` | text, required | at most 20,000 characters; Social Security and bank account numbers are removed before it is kept |
+| `timestamp` | text, optional | when it was written, an ISO 8601 instant (`2026-11-04T14:34:05.123Z`). Messages saved before 2026-11-04 hold the browser's local time of day (`02:34 PM`) with no date, and are shown as they are. At most 64 characters |
+| `kind` | `"greeting"`, optional | Lenore's hello; only the first is kept |
+| `spoken` | boolean, optional | said aloud in a voice call (D33). An answer captured from a spoken message is at most `inferred` until the prospect confirms it |
+
+Nothing else may be in a message. The database refuses a transcript that breaks these rules (`public.chamber_transcript_error`, migration `20261104101000_transcript_validation.sql`) on insert and whenever the transcript changes, with `EA001` and the path (`transcript[3].sender`) in DETAIL, never the text. Existing rows are not re-validated. The browser holds the same limits (`src/data/chat.ts`; `src/data/schemaSync.test.ts` compares them), and what it writes, and what `parseTranscript` reads back from an older row, always fits. A failed extraction never removes the prospect's message: it is added before Lenore is asked.
 
 ### Transcript on resume
 

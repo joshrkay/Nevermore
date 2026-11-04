@@ -16,7 +16,8 @@ import {
   consentStatements,
 } from "@/data/certification";
 import { useAuth } from "@/hooks/useAuth";
-import { missingRequired } from "@/data/readiness";
+import { conflictingRequired, missingRequired } from "@/data/readiness";
+import type { ProvenanceMap } from "@/data/provenance";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import VerifyEmailGate from "./VerifyEmailGate";
 
@@ -45,17 +46,9 @@ interface ReckoningTabProps {
 const formatSigned = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 
-const ReckoningTab = ({
-  data,
-  provenance = {},
-  verified = NO_VERIFIED_FIELDS,
-  peoName: chosenPeo,
-  sessionId,
-  fileId,
-  onSubmit,
-  certification = NO_CERTIFICATION,
-  onReview,
-}: ReckoningTabProps) => {
+const NO_PROVENANCE: ProvenanceMap = {};
+
+const ReckoningTab = ({ data, provenance = NO_PROVENANCE, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
   const peoName = chosenPeo ?? "your PEO";
   const { isAnonymous } = useAuth();
   // A returning signer doesn't retype their name and role to certify again.
@@ -90,6 +83,7 @@ const ReckoningTab = ({
 
   const signed = signedAt !== null;
   const missingAnswers = missingRequired(data);
+  const conflictingAnswers = conflictingRequired(provenance);
   const blockers = certificationBlockers({
     acknowledged: checks,
     signer: { name: signerName, title: signerTitle },
@@ -97,7 +91,7 @@ const ReckoningTab = ({
     hasFileId: !!fileId,
     isGuest: isAnonymous,
     missingAnswers: missingAnswers.map((item) => item.label),
-    requiredItems: requiredItems(data, provenance, verified),
+    conflictingAnswers: conflictingAnswers.map((item) => item.label),
   });
   const allChecked = blockers.length === 0;
   const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";
@@ -170,16 +164,34 @@ const ReckoningTab = ({
         </div>
 
         {/* The Manuscript can't be generated without these; the database refuses the certification too. */}
-        {missingAnswers.length > 0 && !certifiedAndCurrent && (
+        {(missingAnswers.length > 0 || conflictingAnswers.length > 0) && !certifiedAndCurrent && (
           <div role="alert" aria-label="Answers still needed" className="border border-destructive/40 bg-destructive/5 rounded-xl p-4 text-sm space-y-2">
-            <p className="font-medium">Before The Manuscript can be generated, add:</p>
-            <ul className="list-disc pl-5 space-y-0.5">
-              {missingAnswers.map((item) => (
-                <li key={item.key}>
-                  {item.label} <span className="text-muted-foreground text-xs">{item.hint}</span>
-                </li>
-              ))}
-            </ul>
+            {missingAnswers.length > 0 && (
+              <>
+                <p className="font-medium">Before The Manuscript can be generated, add:</p>
+                <ul className="list-disc pl-5 space-y-0.5">
+                  {missingAnswers.map((item) => (
+                    <li key={item.key}>
+                      {item.label} <span className="text-muted-foreground text-xs">{item.hint}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {conflictingAnswers.length > 0 && (
+              <>
+                <p className="font-medium">
+                  {missingAnswers.length > 0 ? "And choose one answer for:" : "Before The Manuscript can be generated, choose one answer for:"}
+                </p>
+                <ul className="list-disc pl-5 space-y-0.5">
+                  {conflictingAnswers.map((item) => (
+                    <li key={item.key}>
+                      {item.label} <span className="text-muted-foreground text-xs">You've given two different answers.</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
             {onReview && (
               <button type="button" onClick={onReview} className="text-sm font-medium text-primary underline underline-offset-2">
                 Go to Review

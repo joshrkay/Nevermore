@@ -68,6 +68,7 @@ const ChamberPage = () => {
     isLoading: sessionLoading,
     updateIntake,
     addMessage,
+    ensureIntake,
     submit,
     certification,
     chosenPeo,
@@ -86,6 +87,15 @@ const ChamberPage = () => {
       setSearchParams({ session: sessionId }, { replace: true });
     }
   }, [sessionId, searchParams, setSearchParams]);
+
+  // No intake exists until the prospect starts one (A-1). Once there is deliberately none on screen (after
+  // Start over, or a new intake asked for), the address mustn't name the old one, or a reload would try to open
+  // it. While a link is being opened, couldn't be, or turned out to have expired, it stays.
+  useEffect(() => {
+    if (!sessionId && !sessionLoading && !resumeFailed && !loadFailed && !expired && searchParams.get("session")) {
+      setSearchParams({}, { replace: true });
+    }
+  }, [sessionId, sessionLoading, resumeFailed, loadFailed, expired, searchParams, setSearchParams]);
 
   // The orb repeats Lenore's latest line, so a restored conversation doesn't open with a second hello.
   const latestLenore = [...messages].reverse().find((m) => m.sender === "lenore");
@@ -112,10 +122,28 @@ const ChamberPage = () => {
     },
   });
 
+  // The transcript notes when a voice call starts and ends, so whoever reads it can tell which part was
+  // spoken. A call still connected when the conversation was replaced (Start over) belongs to the old one.
+  const callRef = useRef<{ epoch: unknown } | null>(null);
+  useEffect(() => {
+    if (isConnected && !callRef.current) {
+      callRef.current = { epoch: conversationEpoch };
+      addMessage(createChatMessage("system", "Voice call started"));
+    } else if (!isConnected && callRef.current) {
+      const sameConversation = Object.is(callRef.current.epoch, conversationEpoch);
+      callRef.current = null;
+      if (sameConversation) addMessage(createChatMessage("system", "Voice call ended"));
+    }
+  }, [isConnected, conversationEpoch, addMessage]);
+
   const { send: handleSendMessage, retry, dismissFailure, failure, pending } = useLenoreChat({
     epoch: conversationEpoch,
     intakeId: sessionId,
+    ensureIntake,
     chamberData,
+    provenance,
+    messages,
+    setChamberData,
     addUserMessage: (text) => {
       const message = createChatMessage("user", text);
       addMessage(message);
@@ -127,8 +155,15 @@ const ChamberPage = () => {
       updateIntake((prev) => applyExtraction(prev, extracted, transcriptExtraction(message, response))),
   });
 
+  // "Continue manually": the prospect fills the intake in themselves, in Review, where every answer can be added.
+  const [reviewRequest, setReviewRequest] = useState(0);
+  const continueManually = useCallback(() => {
+    dismissFailure();
+    setReviewRequest((n) => n + 1);
+  }, [dismissFailure]);
+
   const failureNotice = failure && (
-    <ChatFailureNotice failure={failure} pending={pending} onRetry={retry} onDismiss={dismissFailure} />
+    <ChatFailureNotice failure={failure} pending={pending} onRetry={retry} onDismiss={continueManually} />
   );
 
   const handleFieldAction = useCallback(
@@ -296,6 +331,8 @@ const ChamberPage = () => {
             updateIntake={updateIntake}
             chosenPeo={chosenPeo}
             onChoosePeo={choosePeo}
+            openReview={reviewRequest}
+            ensureIntake={ensureIntake}
           />
         </div>
       </div>

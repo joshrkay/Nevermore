@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
@@ -25,6 +25,8 @@ interface ReviewTabProps {
   onAction?: (action: FieldAction) => void;
   onProceed: () => void;
   documents?: ReviewDocument[];
+  /** Raise it to put the keyboard on the heading, as when the prospect chose to fill the intake in themselves. */
+  focusRequest?: number;
 }
 
 interface Row {
@@ -139,7 +141,11 @@ const Section = ({ section, title, children }: { section: ReviewSection; title: 
   </section>
 );
 
-const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAction, onProceed, documents = [] }: ReviewTabProps) => {
+const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [], focusRequest = 0 }: ReviewTabProps) => {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (focusRequest > 0) headingRef.current?.focus();
+  }, [focusRequest]);
   const eeCount = headcount(data);
   const required = requiredItems(data, provenance, verified).filter((i) => i.required);
   // Still needed: the required answers that block certification, missing (US-1.2) or in conflict (B-2.2),
@@ -161,6 +167,9 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
   const uploaded = documents.filter((d) => d.status !== "uploading");
   const missing = missingRecommended(uploaded);
   const submitted = submittedCategories(uploaded);
+  const required = missingRequired(data);
+  const conflicting = conflictingRequired(provenance);
+  const blocking = required.length + conflicting.length;
   const recommended = missingRecommendedItems(data);
   const rows = rowsBySection(data);
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
@@ -190,7 +199,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h2 className="font-display text-2xl font-bold mb-2">Review</h2>
+        <h2 ref={headingRef} tabIndex={-1} className="font-display text-2xl font-bold mb-2 focus:outline-none">Review</h2>
         <p className="text-muted-foreground text-sm">
           Everything that goes into The Manuscript, by section. Correct anything here and it's saved right away: no need
           to start the conversation over. <span className="text-primary font-medium">Required</span> answers are needed
@@ -198,11 +207,11 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
         </p>
       </div>
 
-      {/* What's still needed: required answers missing or in conflict block certification; recommended ones never do */}
-      {stillNeeded.length > 0 ? (
+      {/* What's still needed: required answers block certification, recommended ones never do */}
+      {blocking > 0 ? (
         <div role="region" aria-label="Still needed" className="bg-card border border-destructive/40 rounded-xl p-6 space-y-3">
           <p className="text-xs font-mono text-destructive uppercase tracking-wider">
-            Still needed before The Manuscript can be generated: {stillNeeded.length}
+            Still needed before The Manuscript can be generated: {blocking}
           </p>
           <ul className="space-y-2">
             {stillNeeded.map((item) => (
@@ -211,6 +220,16 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
                 <span className="text-muted-foreground text-xs">{stillNeededNote(item)}</span>
                 <button type="button" onClick={() => jumpTo(item.viaCensus ? CENSUS_SPOT : item.readiness)} className="text-xs font-medium text-primary underline underline-offset-2">
                   Go to {(item.viaCensus ? "Employee census" : item.label).toLowerCase()}
+                </button>
+              </li>
+            ))}
+            {/* A required answer given two ways: picking one ("Use this") settles it. */}
+            {conflicting.map((item) => (
+              <li key={`conflict-${item.key}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+                <span className="font-medium">{item.label}</span>
+                <span className="text-muted-foreground text-xs">You've given two different answers. Choose the right one.</span>
+                <button type="button" onClick={() => jumpTo(item)} className="text-xs font-medium text-primary underline underline-offset-2">
+                  Choose {item.label.toLowerCase()}
                 </button>
               </li>
             ))}
@@ -387,9 +406,9 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
         </dl>
       </div>
 
-      {stillNeeded.length > 0 && (
+      {blocking > 0 && (
         <p className="text-xs text-muted-foreground">
-          You can choose a PEO now. The answers marked Required are needed before The Manuscript can be generated.
+          You can choose a PEO now. The answers marked Required are needed, each with one answer, before The Manuscript can be generated.
         </p>
       )}
       <button

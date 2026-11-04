@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
@@ -27,17 +27,10 @@ const session = {
   restoredThrough: null as string | null,
   messages: [] as ChatMessage[],
   certification: { status: "none" as string },
-  updateIntake: vi.fn(),
   addMessage: vi.fn(),
-  verifiedFields: new Set<string>() as ReadonlySet<string>,
+  conversationEpoch: {} as object,
 };
-
-// What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
-const hooks = {
-  workspace: null as null | { verified?: ReadonlySet<string> },
-  voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
-  chat: null as null | { onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string }) => void },
-};
+const voice = { isConnected: false };
 const auth = {
   isAnonymous: true,
   requestSignInCode: vi.fn(async () => ({ error: null, noAccount: false })),
@@ -50,12 +43,7 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 vi.mock("@/hooks/useChamberSession", () => ({ useChamberSession: () => session }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 vi.mock("@/data/intakeBackup", () => ({ browserStorageWorks: () => storageWorks }));
-vi.mock("@/hooks/useLenoreVoice", () => ({
-  useLenoreVoice: (options: typeof hooks.voice) => {
-    hooks.voice = options;
-    return { startVoice: vi.fn(), isConnected: false, hasAgentId: false };
-  },
-}));
+vi.mock("@/hooks/useLenoreVoice", () => ({ useLenoreVoice: () => ({ startVoice: vi.fn(), isConnected: voice.isConnected, hasAgentId: false }) }));
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => false }));
 // The orb only shows what Lenore last said; the workspace panes are not what these tests are about.
 vi.mock("@/components/chamber/VoiceOrb", () => ({ default: ({ lastSpokenText }: { lastSpokenText: string }) => <p data-testid="orb">{lastSpokenText}</p> }));
@@ -312,6 +300,69 @@ describe("ChamberPage", () => {
       renderPage();
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
       expect(session.retrySave).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("voice calls in the transcript", () => {
+    beforeEach(() => {
+      voice.isConnected = false;
+      session.addMessage.mockClear();
+      session.sessionId = "s1";
+    });
+    const notes = () => session.addMessage.mock.calls.map(([m]) => m as ChatMessage);
+
+    it("notes when a call starts and ends, as the Chamber's own messages", () => {
+      const { rerender } = renderPage();
+      expect(notes()).toEqual([]);
+      voice.isConnected = true;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      voice.isConnected = false;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      expect(notes().map((m) => [m.sender, m.text])).toEqual([["system", "Voice call started"], ["system", "Voice call ended"]]);
+      expect(notes()[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it("doesn't note the end of a call in a conversation that replaced the one it was in", () => {
+      const { rerender } = renderPage();
+      voice.isConnected = true;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      session.conversationEpoch = {};
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      voice.isConnected = false;
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      expect(notes().map((m) => m.text)).toEqual(["Voice call started"]);
+    });
+  });
+
+  describe("the address", () => {
+    const Where = () => {
+      const location = useLocation();
+      return <p data-testid="where">{location.pathname + location.search}</p>;
+    };
+    const at = (url: string) => render(<MemoryRouter initialEntries={[url]}><ChamberPage /><Where /></MemoryRouter>);
+
+    it("stops naming an intake once there is deliberately none on screen, so a reload doesn't try to open it", () => {
+      session.sessionId = null;
+      at("/start?session=archived-one");
+      expect(screen.getByTestId("where")).toHaveTextContent(/^\/start$/);
+    });
+
+    it("keeps a link that is still opening, couldn't be opened, or has expired", () => {
+      session.sessionId = null;
+      session.isLoading = true;
+      const opening = at("/start?session=linked");
+      expect(screen.getByTestId("where")).toHaveTextContent("/start?session=linked");
+      opening.unmount();
+      session.isLoading = false;
+      session.resumeFailed = true;
+      const failed = at("/start?session=linked");
+      expect(screen.getByTestId("where")).toHaveTextContent("/start?session=linked");
+      failed.unmount();
+      session.resumeFailed = false;
+      session.expired = { at: null };
+      at("/start?session=linked");
+      expect(screen.getByTestId("where")).toHaveTextContent("/start?session=linked");
+      session.expired = null;
     });
   });
 });

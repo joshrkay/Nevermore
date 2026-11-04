@@ -115,6 +115,22 @@ describe("LiveWorkspace", () => {
     expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Pay frequency");
   });
 
+  it("opens Review with the keyboard on it when the prospect chooses to fill the intake in themselves", () => {
+    const view = (openReview: number) => (
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} openReview={openReview} />
+      </MemoryRouter>
+    );
+    const { rerender } = render(view(0));
+    expect(screen.queryByRole("heading", { name: "Review" })).not.toBeInTheDocument();
+    rerender(view(1));
+    expect(screen.getByRole("heading", { name: "Review" })).toHaveFocus();
+    // Asking again after moving elsewhere brings it back.
+    fireEvent.click(screen.getByRole("button", { name: "② Company" }));
+    rerender(view(2));
+    expect(screen.getByRole("heading", { name: "Review" })).toHaveFocus();
+  });
+
   it("reaches The Reckoning with no PEO chosen without naming or inventing one", () => {
     render(
       <MemoryRouter>

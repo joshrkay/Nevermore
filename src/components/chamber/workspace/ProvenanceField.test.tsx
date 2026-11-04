@@ -28,7 +28,7 @@ function Harness({ initial, tab }: { initial: IntakeState; tab: "company" | "rev
 describe("provenance in the workspace", () => {
   it("distinguishes inferred from confirmed values and shows where each came from", () => {
     render(<Harness initial={inferred} tab="company" />);
-    expect(screen.getByText("Lenore inferred this")).toBeInTheDocument();
+    expect(screen.getByText("Lenore captured this — please confirm")).toBeInTheDocument();
     expect(screen.getByText("Confirmed")).toBeInTheDocument();
     expect(screen.getAllByText("From your message: “about 40 of us at Acme”")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Confirm Business Name" })).not.toBeInTheDocument();
@@ -37,8 +37,11 @@ describe("provenance in the workspace", () => {
   it("confirms an inferred value", () => {
     render(<Harness initial={inferred} tab="company" />);
     fireEvent.click(screen.getByRole("button", { name: "Confirm Employee Count" }));
-    expect(screen.queryByText("Lenore inferred this")).not.toBeInTheDocument();
+    expect(screen.queryByText("Lenore captured this — please confirm")).not.toBeInTheDocument();
     expect(screen.getByText("You confirmed this")).toBeInTheDocument();
+    // Told apart from a value Lenore heard stated outright, which stays "Confirmed".
+    expect(screen.getByText("Confirmed by you")).toBeInTheDocument();
+    expect(screen.getByText("Confirmed")).toBeInTheDocument();
   });
 
   it("edits a value, superseding the AI value, and rejects an invalid one", () => {
@@ -106,7 +109,7 @@ describe("provenance in the workspace", () => {
   it("is read-only without an action handler", () => {
     render(<CompanyTab data={inferred.data} isDemo={true} provenance={inferred.provenance} onAction={() => {}} />);
     expect(screen.queryByRole("button", { name: /Confirm|Edit|Add/ })).not.toBeInTheDocument();
-    expect(screen.queryByText("Lenore inferred this")).not.toBeInTheDocument();
+    expect(screen.queryByText("Lenore captured this — please confirm")).not.toBeInTheDocument();
   });
 });
 
