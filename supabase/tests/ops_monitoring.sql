@@ -23,7 +23,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090000_outbox_operations.sql
+\i supabase/migrations/20261027090100_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -33,7 +33,10 @@
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
-\i supabase/migrations/20261103110000_document_storage_path.sql
+\i supabase/migrations/20261103110100_document_storage_path.sql
+\i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
+\i supabase/migrations/20261103120100_intake_schema_v2_version.sql
+\i supabase/migrations/20261103120200_ai_extraction_events.sql
 \i supabase/migrations/20261104090000_intake_consent.sql
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
@@ -323,6 +326,56 @@ BEGIN
   RESET ROLE;
   PERFORM pg_temp.signed_out();
   RAISE NOTICE 'ops_monitoring: reading cases passed';
+END $$;
+
+-- ---------- AI failures come from the AI call records ----------
+DO $$
+DECLARE
+  prospect uuid := (SELECT id FROM fx WHERE name = 'prospect');
+  r record;
+  n integer;
+BEGIN
+  DELETE FROM public.ops_alerts WHERE kind = 'ai_failed';
+  DELETE FROM public.ops_events WHERE kind = 'ai_failed';
+  -- Refusals are the caller's limits, not failures: none of these counts.
+  INSERT INTO public.ai_extraction_events (request_id, function_name, user_id, outcome, error_code, http_status)
+  SELECT gen_random_uuid(), 'chamber-extract', prospect, 'error', c, 429
+  FROM unnest(ARRAY['bad_request', 'unauthorized', 'not_found', 'rate_limited', 'daily_cap']) c, generate_series(1, 3);
+  INSERT INTO public.ai_extraction_events (request_id, function_name, user_id, outcome, http_status)
+  SELECT gen_random_uuid(), 'chamber-extract', prospect, 'ok', 200 FROM generate_series(1, 10);
+  -- Three failures on our side or the provider's, and one an hour ago: under the threshold of 5.
+  INSERT INTO public.ai_extraction_events (request_id, function_name, user_id, outcome, error_code, http_status, created_at)
+  VALUES (gen_random_uuid(), 'chamber-extract', prospect, 'error', 'timeout', 504, now()),
+         (gen_random_uuid(), 'document-extract', prospect, 'error', 'provider_error', 502, now()),
+         (gen_random_uuid(), 'chamber-extract', prospect, 'error', 'unavailable', 503, now()),
+         (gen_random_uuid(), 'chamber-extract', prospect, 'error', 'timeout', 504, now() - interval '1 hour');
+  SET LOCAL ROLE service_role;
+  SELECT count(*) INTO n FROM public.claim_ops_alerts() a WHERE a.kind = 'ai_failed';
+  RESET ROLE;
+  PERFORM pg_temp.check(n = 0, 'refusals, successes and old failures don''t alert');
+
+  -- A browser report of a call that never reached the function counts with them; five in the window alert.
+  INSERT INTO public.ai_extraction_events (request_id, function_name, user_id, outcome, error_code, http_status)
+  VALUES (gen_random_uuid(), 'chamber-extract', prospect, 'error', 'invalid_response', 502);
+  PERFORM pg_temp.as_user(prospect);
+  SET LOCAL ROLE authenticated;
+  PERFORM public.report_client_event('ai_failed', 'chat_unreachable');
+  RESET ROLE;
+  SET LOCAL ROLE service_role;
+  SELECT * INTO r FROM public.claim_ops_alerts() a WHERE a.kind = 'ai_failed';
+  RESET ROLE;
+  PERFORM pg_temp.check(r.event_count = 5, format('five AI failures counted (%s)', r.event_count));
+  PERFORM pg_temp.check(r.top_codes = 'chamber-extract:invalid_response x1, chamber-extract:timeout x1, chamber-extract:unavailable x1, chat_unreachable x1, document-extract:provider_error x1',
+    format('codes: %s', r.top_codes));
+
+  -- The admin's summary shows them too, by function.
+  PERFORM pg_temp.as_user((SELECT id FROM fx WHERE name = 'admin'));
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO n FROM public.admin_ops_summary(1) s WHERE s.kind = 'ai_failed' AND s.source = 'document-extract' AND s.code = 'document-extract:provider_error';
+  RESET ROLE;
+  PERFORM pg_temp.check(n = 1, 'the summary includes AI call failures');
+  PERFORM pg_temp.signed_out();
+  RAISE NOTICE 'ops_monitoring: AI call record cases passed';
 END $$;
 
 DO $$ BEGIN RAISE NOTICE 'ops_monitoring: all cases passed'; END $$;

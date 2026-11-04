@@ -4,8 +4,8 @@
 // unit-tested with the frontend suite.
 
 import type { AllowanceResult, Refusal } from "../_shared/ai/allowance.ts";
-import { callModel, failureLogLine, type ModelDeps, type ProviderAdapter } from "../_shared/ai/model.ts";
-import { aiFailureCode } from "../_shared/opsEvents.ts";
+import type { AiErrorCode } from "../_shared/ai/errors.ts";
+import { callModel, failureLogLine, failureResponse, type ModelDeps, type ModelResult, type ProviderAdapter } from "../_shared/ai/model.ts";
 import { buildPromptText, shapeAiCandidates, type Candidate, type TextSection } from "./parse.ts";
 import { SYSTEM_PROMPT } from "./schema.ts";
 
@@ -50,11 +50,8 @@ export interface AskDeps {
   /** The intake the document belongs to, for the failure log. */
   sessionId?: string | null;
   log: (line: string) => void;
-  /**
-   * Records a failed model call for monitoring, with a code such as `provider_error:503` (index.ts writes
-   * it to ops_events). Best effort: whatever it does, the read fails or retries exactly as it would without it.
-   */
-  recordFailure?: (code: string) => Promise<unknown>;
+  /** Told how the model call went (attempts, latency), for the extraction event. */
+  onResult?: (result: ModelResult) => void;
 }
 
 export async function askForCandidates(sections: TextSection[], deps: AskDeps): Promise<Candidate[]> {
@@ -70,12 +67,7 @@ export async function askForCandidates(sections: TextSection[], deps: AskDeps): 
   deps.onResult?.(result);
   if (!result.ok) {
     // Fixed fields only: a provider's response can echo the document's text.
-    deps.log(failureLogLine({ requestId: deps.requestId, provider: deps.adapter.name, result }));
-    try {
-      await deps.recordFailure?.(aiFailureCode(result));
-    } catch {
-      // Monitoring never changes the outcome.
-    }
+    deps.log(failureLogLine({ requestId: deps.requestId, provider: deps.adapter.name, result, sessionId: deps.sessionId }));
     if (result.kind === "rate_limited") throw new AiQuotaError();
     throw new AiCallError(failureResponse(result.kind).code);
   }

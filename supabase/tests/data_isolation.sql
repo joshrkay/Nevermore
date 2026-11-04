@@ -28,6 +28,7 @@
 -- bucket or API-callable function, the catalogue checks fail until you add it to the matrix or allowlist.
 \set ON_ERROR_STOP 1
 \set migration_files `ls supabase/migrations/*.sql | wc -l | tr -d ' '`
+\set migrations_loaded `grep -c '^.i supabase/migrations/' supabase/tests/data_isolation.sql`
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
 \i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql
@@ -46,7 +47,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090000_outbox_operations.sql
+\i supabase/migrations/20261027090100_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -56,21 +57,25 @@
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
-\i supabase/migrations/20261103110000_document_storage_path.sql
+\i supabase/migrations/20261103110100_document_storage_path.sql
+\i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
+\i supabase/migrations/20261103120100_intake_schema_v2_version.sql
+\i supabase/migrations/20261103120200_ai_extraction_events.sql
 \i supabase/migrations/20261104090000_intake_consent.sql
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
 SET client_min_messages = notice;
 
--- The list above is every migration: a new one that isn't loaded here would go untested. Bump the 32 when
--- you add one to the list.
+-- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
+-- files in supabase/migrations must equal the number of lines above that load one.
 SELECT set_config('test.migration_files', :'migration_files', false) \gset
+SELECT set_config('test.migrations_loaded', :'migrations_loaded', false) \gset
 DO $$
 BEGIN
-  IF current_setting('test.migration_files') <> '32' THEN
-    RAISE EXCEPTION 'FAIL: supabase/migrations holds % files but data_isolation.sql loads 32; add the new ones to its list and bump the count',
-      current_setting('test.migration_files');
+  IF current_setting('test.migration_files') <> current_setting('test.migrations_loaded') THEN
+    RAISE EXCEPTION 'FAIL: supabase/migrations holds % files but data_isolation.sql loads %; add the new ones to its list',
+      current_setting('test.migration_files'), current_setting('test.migrations_loaded');
   END IF;
 END $$;
 
@@ -276,6 +281,9 @@ BEGIN
   PERFORM public.record_ops_event('ai_failed', 'chamber-extract', 'timeout', NULL, pa, NULL);
   RESET ROLE;
   INSERT INTO public.ops_alerts (kind, event_count, window_minutes, threshold, top_codes) VALUES ('ai_failed', 5, 15, 5, 'timeout x5');
+  -- The record chamber-extract keeps of a call (US-2.4a), on prospect A's submission.
+  INSERT INTO public.ai_extraction_events (request_id, function_name, user_id, session_id, outcome, error_code, http_status)
+  VALUES (gen_random_uuid(), 'chamber-extract', pa, pa_cert, 'error', 'timeout', 504);
 
   -- The admin asks for prospect B's draft to be deleted (it stays until purge-intakes runs).
   PERFORM pg_temp.become('admin');
@@ -331,6 +339,8 @@ INSERT INTO matrix VALUES
   -- Monitoring is the admin's: advisors don't need failure codes, routes or account ids.
   ('public.ops_events',                                 '{"admin":"all"}'),
   ('public.ops_alerts',                                 '{"admin":"all"}'),
+  -- AI call records (US-2.4a) are for advisors investigating an intake.
+  ('public.ai_extraction_events',                       '{"advisor":"all","admin":"all"}'),
   -- Reached only through SECURITY DEFINER functions, by nobody directly.
   ('public.outbox_events',                              '{}'),
   ('public.email_delivery_events',                      '{}'),
@@ -584,6 +594,9 @@ INSERT INTO callable VALUES
   ('submitted_record_retention()',             'helper',  NULL, 'a constant: the submitted-record window'),
   ('email_event_retention()',                  'helper',  NULL, 'a constant: the email event window'),
   ('intake_deletion_max_attempts()',           'helper',  NULL, 'a constant: purge attempts before an alert'),
+  ('ai_event_retention()',                     'anyone',  NULL, 'a constant: how long AI call records are kept'),
+  ('ai_event_names_ok(names text[], paths boolean)', 'helper', NULL, 'pure: the AI call records'' check constraint'),
+  ('intake_accepts_files(p_session text)',     'helper',  NULL, 'the upload policies call it as the uploader; answers only whether an intake exists with no deletion open (and holds the row against one)'),
   ('ops_alert_rules()',                        'helper',  NULL, 'constants: the alert thresholds'),
   ('require_advisor()',                        'helper',  NULL, 'advisor_list_submissions runs as the caller and calls it; raises unless an advisor (SR-2)'),
   ('advisor_list_submissions(p_status text)',  'advisor', 'SELECT count(*) FROM public.advisor_list_submissions(NULL)', 'the queue'),
@@ -677,7 +690,7 @@ BEGIN
     PERFORM pg_temp.become(who);
     FOREACH t IN ARRAY ARRAY['advisor_notes', 'advisor_field_reviews', 'advisor_review_events', 'submission_workflow',
                              'submission_status_history', 'manuscript_versions', 'intake_lifecycle_events', 'outbox_events',
-                             'intake_deletions', 'ops_events'] LOOP
+                             'intake_deletions', 'ops_events', 'ai_extraction_events'] LOOP
       IF pg_temp.visible(format('public.%I WHERE session_id = %L', t, sid)) <> 0 THEN
         RAISE EXCEPTION 'FAIL: % can read % about prospect A''s submission', who, t;
       END IF;

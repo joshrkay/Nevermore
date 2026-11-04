@@ -26,7 +26,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090000_outbox_operations.sql
+\i supabase/migrations/20261027090100_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -36,7 +36,10 @@
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
-\i supabase/migrations/20261103110000_document_storage_path.sql
+\i supabase/migrations/20261103110100_document_storage_path.sql
+\i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
+\i supabase/migrations/20261103120100_intake_schema_v2_version.sql
+\i supabase/migrations/20261103120200_ai_extraction_events.sql
 \i supabase/migrations/20261104090000_intake_consent.sql
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
@@ -116,7 +119,7 @@ EXCEPTION WHEN OTHERS THEN
 END $$;
 
 -- Every row an intake has, table by table (sessions, documents, certifications, outbox, workflow, history,
--- notes, reviews, review events, Manuscript versions, lifecycle events).
+-- notes, reviews, review events, Manuscript versions, lifecycle events, AI call records).
 CREATE FUNCTION pg_temp.footprint(sid uuid) RETURNS jsonb LANGUAGE sql AS $$
   SELECT jsonb_build_object(
     'chamber_sessions', (SELECT count(*) FROM public.chamber_sessions WHERE id = sid),
@@ -129,7 +132,8 @@ CREATE FUNCTION pg_temp.footprint(sid uuid) RETURNS jsonb LANGUAGE sql AS $$
     'advisor_field_reviews', (SELECT count(*) FROM public.advisor_field_reviews WHERE session_id = sid),
     'advisor_review_events', (SELECT count(*) FROM public.advisor_review_events WHERE session_id = sid),
     'manuscript_versions', (SELECT count(*) FROM public.manuscript_versions WHERE session_id = sid),
-    'intake_lifecycle_events', (SELECT count(*) FROM public.intake_lifecycle_events WHERE session_id = sid)
+    'intake_lifecycle_events', (SELECT count(*) FROM public.intake_lifecycle_events WHERE session_id = sid),
+    'ai_extraction_events', (SELECT count(*) FROM public.ai_extraction_events WHERE session_id = sid)
   );
 $$;
 
@@ -145,6 +149,8 @@ BEGIN
   VALUES (sid, 1, 'EAA-T', sid || '/v1-x.pdf', repeat('a', 64), 'hash', now(), advisor);
   INSERT INTO public.intake_lifecycle_events (session_id, user_id, from_status, to_status, reason)
   VALUES (sid, (SELECT user_id FROM public.chamber_sessions WHERE id = sid), 'in_progress', 'in_progress', 'test record');
+  INSERT INTO public.ai_extraction_events (request_id, function_name, user_id, session_id, outcome, http_status)
+  VALUES (gen_random_uuid(), 'chamber-extract', (SELECT user_id FROM public.chamber_sessions WHERE id = sid), sid, 'ok', 200);
   PERFORM pg_temp.signed_out();
 END $$;
 
@@ -597,6 +603,111 @@ BEGIN
   IF row_.status <> 'pending' OR row_.attempts <> 0 OR row_.next_attempt_at > now() THEN RAISE EXCEPTION 'FAIL: the retry left %', to_jsonb(row_); END IF;
   DELETE FROM public.intake_deletions WHERE id = d;
   RAISE NOTICE 'data_retention: failure cases passed';
+END $$;
+
+-- ---------- a worker lost on its last attempt is escalated, not retried for ever ----------
+DO $$
+DECLARE
+  prospect uuid := (SELECT id FROM fx WHERE name = 'prospect');
+  lost uuid; retried uuid; held uuid;
+  lost_sid uuid := gen_random_uuid();
+  got uuid[];
+  row_ public.intake_deletions;
+  ev public.ops_events;
+BEGIN
+  -- Park every other deletion, so the claims below can only take these three.
+  CREATE TEMP TABLE parked ON COMMIT DROP AS
+    SELECT id, status, next_attempt_at, locked_until FROM public.intake_deletions WHERE status IN ('pending', 'claimed');
+  UPDATE public.intake_deletions SET next_attempt_at = 'infinity', locked_until = 'infinity' WHERE id IN (SELECT id FROM parked);
+
+  -- Its worker was killed (or timed out) every time, so fail_intake_deletion never ran: lapsed, every attempt used.
+  INSERT INTO public.intake_deletions (session_id, user_id, trigger, reason, status, attempts, locked_until)
+  VALUES (lost_sid, prospect, 'retention', 'x', 'claimed', 5, now() - interval '1 second') RETURNING id INTO lost;
+  -- Lapsed with attempts left: claimed again. Still locked with every attempt used: its worker may be running.
+  INSERT INTO public.intake_deletions (session_id, user_id, trigger, reason, status, attempts, locked_until)
+  VALUES (gen_random_uuid(), prospect, 'retention', 'x', 'claimed', 2, now() - interval '1 second') RETURNING id INTO retried;
+  INSERT INTO public.intake_deletions (session_id, user_id, trigger, reason, status, attempts, locked_until)
+  VALUES (gen_random_uuid(), prospect, 'retention', 'x', 'claimed', 5, now() + interval '5 minutes') RETURNING id INTO held;
+
+  SET LOCAL ROLE service_role;
+  SELECT array_agg(c.id) INTO got FROM public.claim_intake_deletions(5, 600) c;
+  RESET ROLE;
+  IF got IS DISTINCT FROM ARRAY[retried] THEN RAISE EXCEPTION 'FAIL: the claim took %, expected only the one with attempts left', got; END IF;
+  IF (SELECT attempts FROM public.intake_deletions WHERE id = retried) <> 3 THEN RAISE EXCEPTION 'FAIL: the reclaimed deletion did not count an attempt'; END IF;
+
+  SELECT * INTO row_ FROM public.intake_deletions WHERE id = lost;
+  IF row_.status <> 'failed' OR row_.last_error <> 'worker_lost' OR row_.locked_until IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: the lost worker''s deletion was left %', to_jsonb(row_);
+  END IF;
+  SELECT * INTO ev FROM public.ops_events WHERE kind = 'deletion_failed' AND session_id = lost_sid;
+  IF ev.id IS NULL OR ev.source <> 'purge-intakes' OR ev.code <> 'worker_lost' THEN RAISE EXCEPTION 'FAIL: no alert for the lost worker (%)', to_jsonb(ev); END IF;
+  IF (SELECT status FROM public.intake_deletions WHERE id = held) <> 'claimed' THEN RAISE EXCEPTION 'FAIL: a claim still locked was reaped'; END IF;
+
+  DELETE FROM public.intake_deletions WHERE id IN (lost, retried, held);
+  DELETE FROM public.ops_events WHERE session_id = lost_sid;
+  UPDATE public.intake_deletions d SET next_attempt_at = p.next_attempt_at, locked_until = p.locked_until
+  FROM parked p WHERE d.id = p.id;
+  RAISE NOTICE 'data_retention: lost worker cases passed';
+END $$;
+
+-- ---------- no new files once a deletion is open ----------
+DO $$
+DECLARE
+  owner uuid := pg_temp.new_user('uploader@example.test');
+  advisor uuid := (SELECT id FROM fx WHERE name = 'advisor');
+  admin uuid := (SELECT id FROM fx WHERE name = 'admin');
+  sid uuid;
+  d uuid;
+  file_ text;
+  row_ text;
+BEGIN
+  PERFORM pg_temp.as_user(owner);
+  SET LOCAL ROLE authenticated;
+  PERFORM public.record_intake_consent(public.intake_consent_version(), 'I agree');
+  INSERT INTO public.chamber_sessions (user_id) VALUES (owner) RETURNING id INTO sid;
+  file_ := 'INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)';
+  row_ := 'INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path) VALUES (%L, %L, %L, %L, %L)';
+
+  -- Before: the owner stores a file and its row, and an advisor a Manuscript.
+  IF pg_temp.state_of(format(file_, 'documents', owner || '/' || sid || '/a.csv')) <> 'ok' THEN RAISE EXCEPTION 'FAIL: the owner could not upload'; END IF;
+  IF pg_temp.state_of(format(row_, owner, sid, 'a.csv', '1 KB', owner || '/' || sid || '/a.csv')) <> 'ok' THEN RAISE EXCEPTION 'FAIL: the owner could not add the row'; END IF;
+  RESET ROLE;
+  PERFORM pg_temp.as_user(advisor);
+  SET LOCAL ROLE authenticated;
+  IF pg_temp.state_of(format(file_, 'manuscripts', sid || '/v1-a.pdf')) <> 'ok' THEN RAISE EXCEPTION 'FAIL: the advisor could not store a Manuscript'; END IF;
+  RESET ROLE;
+
+  PERFORM pg_temp.as_user(admin);
+  SET LOCAL ROLE authenticated;
+  d := public.request_intake_deletion(sid, 'The owner asked by email');
+  RESET ROLE;
+
+  -- After: nothing more for that intake, in either bucket or as a row.
+  PERFORM pg_temp.as_user(owner);
+  SET LOCAL ROLE authenticated;
+  IF pg_temp.state_of(format(file_, 'documents', owner || '/' || sid || '/b.csv')) <> '42501' THEN RAISE EXCEPTION 'FAIL: a file was stored after the deletion was asked for'; END IF;
+  IF pg_temp.state_of(format(row_, owner, sid, 'a2.csv', '1 KB', owner || '/' || sid || '/a2.csv')) <> 'EA007' THEN RAISE EXCEPTION 'FAIL: a document row was added after the deletion was asked for'; END IF;
+  RESET ROLE;
+  PERFORM pg_temp.as_user(advisor);
+  SET LOCAL ROLE authenticated;
+  IF pg_temp.state_of(format(file_, 'manuscripts', sid || '/v2-a.pdf')) <> '42501' THEN RAISE EXCEPTION 'FAIL: a Manuscript was stored after the deletion was asked for'; END IF;
+  -- A folder that names no intake is refused too.
+  IF pg_temp.state_of(format(file_, 'manuscripts', gen_random_uuid() || '/v1-a.pdf')) <> '42501' THEN RAISE EXCEPTION 'FAIL: a Manuscript for no intake was stored'; END IF;
+  IF pg_temp.state_of(format(file_, 'manuscripts', 'not-an-id/v1-a.pdf')) <> '42501' THEN RAISE EXCEPTION 'FAIL: a Manuscript under a made-up folder was stored'; END IF;
+  RESET ROLE;
+  PERFORM pg_temp.signed_out();
+  IF public.intake_accepts_files(sid::text) OR public.intake_accepts_files(NULL) OR public.intake_accepts_files('x') THEN
+    RAISE EXCEPTION 'FAIL: intake_accepts_files said yes';
+  END IF;
+
+  -- Once it is done, the intake is gone, and so is the right to store anything under it.
+  DELETE FROM storage.objects WHERE name LIKE '%' || sid || '%';
+  UPDATE public.intake_deletions SET status = 'claimed', locked_until = now() + interval '10 minutes' WHERE id = d;
+  SET LOCAL ROLE service_role;
+  PERFORM public.complete_intake_deletion(d, 2);
+  RESET ROLE;
+  IF public.intake_accepts_files(sid::text) THEN RAISE EXCEPTION 'FAIL: a deleted intake accepts files'; END IF;
+  RAISE NOTICE 'data_retention: upload-during-deletion cases passed';
 END $$;
 
 -- ---------- run_retention prunes what has aged out ----------

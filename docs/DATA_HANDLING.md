@@ -47,7 +47,7 @@ doesn't.
 | Email notifications | Confidential | Queued advisor alert and prospect confirmation, delivery and bounce events, the do-not-send list | `outbox_events`, `email_delivery_events`, `email_suppressions`; Resend | Queued emails with the intake; delivery events 365 days; suppressions until removed | The deletion process; the retention job; suppressions by hand |
 | Accounts and access | Confidential | Accounts (guests included), profiles, advisor and admin roles | `profiles`, `user_roles`; Supabase Auth | Until the account is deleted; roles reviewed quarterly (`docs/RUNBOOK.md`) | An admin, on request ("Deleting an account") |
 | Lifecycle and deletion records | Internal | When a draft expired, was started over or revoked; every deletion with who asked and how much was removed | `intake_lifecycle_events`, `intake_deletions` | Lifecycle records with the intake; deletion records for good (ids and counts only) | Lifecycle records by the deletion process; deletion records are never deleted |
-| Operational monitoring and abuse limits | Internal | Failure counts and codes, alerts raised, AI rate-limit counters (a one-way hash of the network address, never the address) | `ops_events`, `ops_alerts`, `ai_request_log`, `ai_ip_log`, `ai_global_usage`; Supabase and Vercel logs | Events and daily AI totals 90 days; rate-limit records 1 day; alerts for incident review | The retention job |
+| Operational monitoring and abuse limits | Internal | Failure counts and codes, alerts raised, a record of each AI call (ids, codes and field names, never values), AI rate-limit counters (a one-way hash of the network address, never the address) | `ops_events`, `ops_alerts`, `ai_extraction_events`, `ai_request_log`, `ai_ip_log`, `ai_global_usage`; Supabase and Vercel logs | Events, AI call records and daily AI totals 90 days; rate-limit records 1 day; alerts for incident review | The retention jobs; AI call records for an intake also with the intake |
 
 The prospect's browser also keeps a copy of answers whose save hasn't been confirmed, for at most 7 days, in
 that browser only (`src/data/intakeBackup.ts`).
@@ -61,6 +61,7 @@ that browser only (`src/data/intakeBackup.ts`).
 | Submitted record (certified at least once) | 3 years after the latest certification | Listed for an admin to review, then deleted by request unless a legal obligation requires keeping it | `retention_review_due()`; deletion by request |
 | Documents, transcripts, advisor Manuscript versions | As long as their intake | Deleted with the intake | The deletion process |
 | Operational events | 90 days | Pruned | `run_retention()` |
+| AI call records (`ai_extraction_events`) | 90 days | Pruned | `prune_ai_extraction_events()`, daily (`prune-ai-extraction-events` job) |
 | Email delivery events | 365 days | Pruned; a suppression keeps its address | `run_retention()` |
 | AI rate-limit records | 1 day | Pruned | `run_retention()` (and the limiter itself, per caller) |
 | Deletion records | For good | Never deleted (no intake content) | — |
@@ -90,17 +91,22 @@ What it guarantees:
   stored, so no row is deleted while its file remains.
 - **Only that intake's files.** It removes everything under `{owner}/{session}/` in `documents` and
   `{session}/` in `manuscripts`, nothing else. A document row that points outside its own folder (possible
-  only for rows from before `20261103110000_document_storage_path`) is not followed, because that file may be
+  only for rows from before `20261103110100_document_storage_path`) is not followed, because that file may be
   someone else's.
 - **Every row.** The intake, its documents, certifications, queued emails, pipeline status and history,
-  notes, field reviews and review events, Manuscript versions and lifecycle events, in one transaction.
+  notes, field reviews and review events, Manuscript versions, lifecycle events and AI call records, in one
+  transaction.
   Monitoring events stay but no longer point at the intake. The append-only tables refuse every change except
   this function deleting the one intake it names.
+- **Nothing new arrives meanwhile.** From the moment a deletion is asked for, the intake takes no new files
+  (either bucket) or document rows (`EA007`). An upload already under way holds a lock on the intake that the
+  deletion waits for, so its file is seen and removed on the next attempt rather than left behind.
 - **A record that it happened.** The `intake_deletions` row is kept: who asked, why, when, and how many files
   and rows of each kind were removed. Never what they contained.
 - **Retries, then a person.** A failed attempt is retried after 5 minutes, 30 minutes, 2 hours and 6 hours.
   The fifth failure marks it `failed`, records a `deletion_failed` monitoring event and alerts engineering
-  (`docs/RUNBOOK.md`, "Deletion failed").
+  (`docs/RUNBOOK.md`, "Deletion failed"). A worker that is killed or times out on its last attempt is caught
+  the same way on the next run (`worker_lost`), so a deletion is never retried for ever.
 
 Not deleted with an intake: the account (Supabase Auth, `profiles`, `intake_consents`) and email delivery
 events (they age out). See "Deleting an account".

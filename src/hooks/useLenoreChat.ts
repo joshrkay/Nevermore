@@ -108,9 +108,10 @@ export function useLenoreChat({ intakeId, chamberData, setChamberData, addUserMe
     } catch (err) {
       onOrbStateChange("idle");
       if (replaced()) return false;
-      const rateLimited = err instanceof FunctionsHttpError && err.context?.status === 429;
-      // Provider failures are recorded by chamber-extract itself; this covers it never answering.
-      const unrecorded = unrecordedFunctionFailure("chat", err);
+      const info = timedOut ? { kind: "timeout" as const } : await describeInvokeError(err);
+      if (replaced()) return false;
+      // chamber-extract records every call it answers (ai_extraction_events); this covers it never answering.
+      const unrecorded = timedOut ? "chat_timeout" : unrecordedFunctionFailure("chat", err, info.requestId);
       if (unrecorded) reportOpsEvent("ai_failed", { code: unrecorded, detail: errorDetail(err) });
       failedMessageRef.current = message;
       setFailure({ text, ...info });

@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { guessCategory, type DocumentCategory } from "@/data/documentCategories";
 import { parseExtraction, type CandidateField, type DocumentExtraction } from "@/data/documentCandidates";
 import { inspectUpload, MAX_DOCUMENTS_PER_INTAKE } from "@/lib/uploadCheck";
+import { describeInvokeError, failureKindFromCode, type AiFailureKind } from "@/data/aiFailure";
 import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
 
 export interface SessionDocument {
@@ -183,12 +184,18 @@ export function useSessionDocuments(sessionId: string | null): UseSessionDocumen
     activeRef.current.add(doc.id);
     patchDoc(doc.id, { status: "processing" });
     try {
-      const { error } = await supabase.functions.invoke("document-extract", { body: { document_id: doc.id } });
+      const { data: answer, error } = await supabase.functions.invoke("document-extract", { body: { document_id: doc.id } });
+      let readIssue: AiFailureKind | null = null;
       if (error) {
-        console.error("Document extraction failed:", error.message);
-        // AI provider failures are recorded by document-extract itself; this covers it never answering.
-        const unrecorded = unrecordedFunctionFailure("document_read", error);
+        const info = await describeInvokeError(error);
+        readIssue = info.kind;
+        console.warn("Document not read:", info.kind, info.requestId ?? "");
+        // document-extract records every read it answers (ai_extraction_events); this covers it never answering.
+        const unrecorded = unrecordedFunctionFailure("document_read", error, info.requestId);
         if (unrecorded) reportOpsEvent("upload_failed", { code: unrecorded, detail: errorDetail(error), sessionId: sid });
+      } else if (answer && typeof answer.code === "string") {
+        // The function answered, and the read failed (the model timed out, say): the row says failed, this says why.
+        readIssue = failureKindFromCode(answer.code);
       }
       // The function records its outcome on the row (or leaves it untouched if it never ran),
       // so the row is the source of truth either way.

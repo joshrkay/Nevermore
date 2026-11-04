@@ -34,10 +34,10 @@ answers, file names, messages, addresses or links.
 | Kind | Recorded by | Codes you will see |
 |---|---|---|
 | `app_error` | The browser: the error boundary (`render_error`), uncaught errors (`window_error`), unhandled rejections (`unhandled_rejection`) | |
-| `upload_failed` | The browser: storage refusing a file (`storage_upload:<status>`), the document row not saving (`record_insert:<sqlstate>`), a stored file or row not deleting (`storage_remove`, `record_delete:<sqlstate>`), `document-extract` never answering (`document_read_unreachable`, `document_read:<status>`) | |
-| `ai_failed` | `chamber-extract` and `document-extract` when the provider fails (`<kind>:<status or ->`: `timeout:-`, `network:-`, `provider_error:503`, `rate_limited:429`, `credits:402`, `invalid_response:-`) or isn't configured (`config_missing`); the browser when `chamber-extract` never answers (`chat_unreachable`, `chat:<status>`) | |
+| `upload_failed` | The browser: storage refusing a file (`storage_upload:<status>`; a 403 can also mean no consent, or a deletion is under way), the document row not saving (`record_insert:<sqlstate>`), a stored file or row not deleting (`storage_remove`, `record_delete:<sqlstate>`), `document-extract` never answering (`document_read_unreachable`, `document_read:<status>`) | |
+| `ai_failed` | Counted from `ai_extraction_events`, the record `chamber-extract` and `document-extract` keep of every call (US-2.4a, `docs/AI_OPERATIONS.md`), when the call failed on our side or the provider's (`<function>:<code>`: `chamber-extract:timeout`, `document-extract:provider_error`, `…:unavailable` for a provider that isn't set up or is out of credit, `…:invalid_response`, `…:internal`). Refusals (bad request, signed out, rate limit, daily cap) are not failures. Plus the browser when `chamber-extract` never answered (`chat_timeout`, `chat_unreachable`, `chat:<5xx>`) | |
 | `auth_denied` | The browser: a signed-in non-advisor on an advisor page (`advisor_route`), the database refusing an advisor read (`advisor_forbidden`) | |
-| `deletion_failed` | `fail_intake_deletion` when a deletion has used every attempt | `storage_remove:<status>`, `files_remain:<n>`, `rpc_files:<code>`, `rpc_complete:<code>`, `unexpected` |
+| `deletion_failed` | `fail_intake_deletion` when a deletion has used every attempt, and `claim_intake_deletions` when a worker died on the last one | `storage_remove:<status>`, `files_remain:<n>`, `rpc_files:<code>`, `rpc_complete:<code>`, `unexpected`, `worker_lost` |
 
 The browser's reports go through `public.report_client_event`, which drops reports past 30 an hour per
 account, 200 an hour for all signed-out visitors together and 2,000 an hour overall, so a broken page or
@@ -73,13 +73,12 @@ Log lines to know (fixed fields only, never names, paths, messages or provider t
 | `OPS_ALERT kind=… count=… window=…m threshold=… codes=…` | `ops-monitor` | A kind crossed its threshold; `OPS_ALERT_UNDELIVERED kind=…` if the webhook refused it |
 | `OPS_CONFIG_MISSING: …` | `ops-monitor` | The webhook is unset or not an https URL, so alerts are only logged |
 | `OPS_MONITOR_ERROR: …` | `ops-monitor` | It couldn't claim alerts (`rpc_claim:<code>`) or failed unexpectedly |
-| `OPS_EVENT_NOT_RECORDED kind=… source=… reason=…` | `chamber-extract`, `document-extract` | An AI failure couldn't be recorded (the prospect's answer was not affected) |
 | `DELETION_DONE deletion=… intake=… files=… rows=…` | `purge-intakes` | A deletion finished. Keep these: "After a restore" needs them |
 | `DELETION_RETRY deletion=… intake=… attempt=… reason=… retry_in=…s` | `purge-intakes` | An attempt failed; tried again after 5 minutes, 30 minutes, 2 hours, then 6 hours |
 | `DELETION_FAILED deletion=… intake=… attempts=… reason=…` | `purge-intakes` | Out of attempts: an operator is needed |
 | `DELETION_ERROR …` | `purge-intakes` | A failure couldn't even be recorded; the claim lapses after 10 minutes and is retried |
 | `PURGE_CONFIG_MISSING: …`, `PURGE_ERROR: …` | `purge-intakes` | Missing secrets, or the run stopped early (`rpc_claim:<code>`, `unexpected`) |
-| `AI_CALL_FAILED`, `AI_CONFIG_MISSING`, `AI_UNEXPECTED_ERROR` | `chamber-extract`, `document-extract` | Provider failures, as recorded in `ops_events` |
+| `AI_CALL_FAILED`, `AI_CONFIG_MISSING`, `AI_UNEXPECTED_ERROR` | `chamber-extract`, `document-extract` | Provider failures and misconfiguration; each call is also in `ai_extraction_events` by its request id (`docs/AI_OPERATIONS.md`) |
 
 ### How alerts reach people
 
@@ -200,9 +199,13 @@ Follow-ups:
 `OPS_ALERT kind=ai_failed`, and `AI_CALL_FAILED` / `AI_CONFIG_MISSING` lines in the `chamber-extract` and
 `document-extract` logs.
 
-1. By code: `timeout`, `provider_error:5xx`: the provider is down or slow (its status page). `rate_limited`,
-   `credits`: our account's limits or billing. `config_missing`: `AI_PROVIDER` or the provider key is unset
-   or wrong (`docs/SUPABASE_SETUP.md`). `chat_unreachable`: the function itself isn't answering.
+1. By code: `…:timeout`, `…:provider_error`: the provider is down or slow (its status page). `…:unavailable`:
+   `AI_PROVIDER` or the provider key is unset or wrong (`AI_CONFIG_MISSING` in the logs;
+   `docs/SUPABASE_SETUP.md`), or our provider account is out of credit. `…:invalid_response`: the model
+   answered without the tool call (a prompt or provider change). `…:internal`: a bug in the function.
+   `chat_unreachable`, `chat:<5xx>`: the function itself isn't answering (not deployed, or crashing before its
+   handler). `chat_timeout`: the browser gave up after 45 seconds. Find individual calls by request id or
+   intake in `ai_extraction_events` (`docs/AI_OPERATIONS.md`).
 2. If the provider is down for long, switch `AI_PROVIDER` to the other supported provider and set its key
    (`docs/SUPABASE_SETUP.md`). Both functions read the one setting, so no code change is needed.
 3. Prospects can always fill the workspace by hand ("Continue manually"); say so if advisors are asked.

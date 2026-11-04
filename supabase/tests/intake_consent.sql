@@ -24,7 +24,7 @@
 \i supabase/migrations/20261025090000_submission_outbox.sql
 \i supabase/migrations/20261026090000_outbox_reliability.sql
 \i supabase/migrations/20261027090000_intake_validation_and_versioning.sql
-\i supabase/migrations/20261027090000_outbox_operations.sql
+\i supabase/migrations/20261027090100_outbox_operations.sql
 \i supabase/migrations/20261027100000_outbox_schedule.sql
 \i supabase/migrations/20261028090000_email_delivery_events.sql
 \i supabase/migrations/20261029090000_document_ingestion.sql
@@ -34,7 +34,10 @@
 \i supabase/migrations/20261103091000_intake_schema_version.sql
 \i supabase/migrations/20261103100000_chosen_peo.sql
 \i supabase/migrations/20261103110000_certification_readiness.sql
-\i supabase/migrations/20261103110000_document_storage_path.sql
+\i supabase/migrations/20261103110100_document_storage_path.sql
+\i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
+\i supabase/migrations/20261103120100_intake_schema_v2_version.sql
+\i supabase/migrations/20261103120200_ai_extraction_events.sql
 \i supabase/migrations/20261104090000_intake_consent.sql
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
@@ -141,6 +144,9 @@ BEGIN
     'INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path) VALUES (%L, %L, %L, %L, %L)',
     prospect, legacy, 'census.csv', '1 KB', prospect || '/' || legacy || '/a_census.csv')) = 'EA004',
     'a document without an agreement');
+  -- The file itself, which the browser stores before its row, is refused too.
+  PERFORM pg_temp.check(pg_temp.state_of(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)',
+    'documents', prospect || '/' || legacy || '/a_census.csv')) = '42501', 'a stored file without an agreement');
   RESET ROLE;
 
   -- Someone else's row is row security's to refuse, with nothing said about agreements.
@@ -235,6 +241,8 @@ BEGIN
   UPDATE public.chamber_sessions SET chamber_data = '{"company_name":"Legacy Co, again"}' WHERE id = legacy;
   PERFORM pg_temp.check((SELECT intake_consent_id FROM public.chamber_sessions WHERE id = legacy) = prospect_agreed,
     'an old intake records the agreement on its next save');
+  PERFORM pg_temp.check(pg_temp.state_of(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)',
+    'documents', prospect || '/' || legacy || '/a_census.csv')) = 'ok', 'a stored file once agreed');
   RESET ROLE;
 
   -- Privileged writers are not asked: the service role starts an intake for an account with no agreement.

@@ -72,11 +72,15 @@ describe("cleanCode and errorDetail", () => {
 
 describe("unrecordedFunctionFailure", () => {
   const http = (status: number) => ({ context: { status } });
-  it("leaves failures the function records, and refusals, to the function", () => {
-    for (const status of [502, 503, 504, 400, 401, 413, 429]) expect(unrecordedFunctionFailure("chat", http(status))).toBeNull();
+  it("leaves any failure the function answered, which carries its request id, to the function", () => {
+    for (const status of [500, 502, 503, 504, 400, 429]) expect(unrecordedFunctionFailure("chat", http(status), "req-1")).toBeNull();
   });
-  it("reports a crash or a function that never answered", () => {
+  it("leaves the gateway refusing the caller alone", () => {
+    for (const status of [400, 401, 403, 413, 429]) expect(unrecordedFunctionFailure("chat", http(status))).toBeNull();
+  });
+  it("reports a function that crashed before answering, or never answered", () => {
     expect(unrecordedFunctionFailure("chat", http(500))).toBe("chat:500");
+    expect(unrecordedFunctionFailure("chat", http(503), null)).toBe("chat:503");
     expect(unrecordedFunctionFailure("chat", new Error("Failed to fetch"))).toBe("chat_unreachable");
     expect(unrecordedFunctionFailure("document_read", null)).toBe("document_read_unreachable");
   });

@@ -22,7 +22,10 @@
 --                                                                               └─ on failure: fail_intake_deletion
 --
 -- complete_intake_deletion refuses (EA006) while any of the intake's files is still stored, so a row is
--- never deleted before its file. It deletes every row that belongs to the intake in one transaction,
+-- never deleted before its file. Once a deletion is open the intake takes no new files or documents, and an
+-- upload already under way holds a lock on the intake row that the deletion waits for, so a file can't
+-- land after the check (public.intake_accepts_files). A worker that dies after using every attempt is
+-- reaped to failed, and alerted, on the next claim. It deletes every row that belongs to the intake in one transaction,
 -- including the append-only audit rows (status history, review events, notes, lifecycle events, Manuscript
 -- versions), which only it can delete; and records what it removed. The intake_deletions row itself is kept
 -- for good as the record that the deletion happened: ids, counts and who asked, no intake content.
@@ -332,7 +335,9 @@ GRANT EXECUTE ON FUNCTION public.retention_review_due(integer) TO authenticated;
 -- ---------- Carrying a deletion out (purge-intakes, service role) ----------
 
 -- Claims up to p_batch deletions that are due (pending, or claimed by a worker whose lock lapsed), one
--- attempt each.
+-- attempt each. First, a claim that lapsed with every attempt used (its worker was killed or timed out each
+-- time, so fail_intake_deletion never ran) is marked failed with 'worker_lost' and a deletion_failed event,
+-- so it is escalated to an operator instead of being retried for ever.
 CREATE OR REPLACE FUNCTION public.claim_intake_deletions(p_batch integer DEFAULT 5, p_lock_seconds integer DEFAULT 600)
 RETURNS TABLE (id uuid, session_id uuid, user_id uuid, attempt integer)
 LANGUAGE plpgsql
@@ -343,6 +348,17 @@ BEGIN
   IF p_batch IS NULL OR p_batch < 1 OR p_lock_seconds IS NULL OR p_lock_seconds < 30 THEN
     RAISE EXCEPTION 'p_batch must be at least 1 and p_lock_seconds at least 30' USING ERRCODE = '22023';
   END IF;
+
+  WITH lost AS (
+    UPDATE public.intake_deletions d
+    SET status = 'failed', locked_until = NULL, last_error = 'worker_lost'
+    WHERE d.status = 'claimed' AND d.locked_until <= now()
+      AND d.attempts >= public.intake_deletion_max_attempts()
+    RETURNING d.session_id
+  )
+  INSERT INTO public.ops_events (kind, source, code, session_id)
+  SELECT 'deletion_failed', 'purge-intakes', 'worker_lost', lost.session_id FROM lost;
+
   RETURN QUERY
     WITH due AS (
       SELECT d.id
@@ -369,7 +385,7 @@ GRANT EXECUTE ON FUNCTION public.claim_intake_deletions(integer, integer) TO ser
 -- The intake's files that are still stored: everything in the documents bucket under its owner's folder
 -- for it ({user_id}/{session_id}/...), and every generated Manuscript under {session_id}/ in the
 -- manuscripts bucket. A document row that points anywhere else (only rows from before
--- 20261103110000_document_storage_path can) is not followed: that file may be someone else's.
+-- 20261103110100_document_storage_path can) is not followed: that file may be someone else's.
 CREATE OR REPLACE FUNCTION public.intake_stored_files(p_session_id uuid, p_user_id uuid)
 RETURNS TABLE (bucket text, name text)
 LANGUAGE sql
@@ -456,7 +472,9 @@ BEGIN
   END IF;
   sid := d.session_id;
 
-  -- Hold the intake still while it is checked and deleted.
+  -- Hold the intake still while it is checked and deleted. This waits for any upload still in flight: each
+  -- holds a share lock on the row from its policy check (intake_accepts_files) until it commits, so its file
+  -- is visible to the check below, and any upload after this one finds the deletion open, or the intake gone.
   SELECT s.user_id INTO owner_id FROM public.chamber_sessions s WHERE s.id = sid FOR UPDATE;
   owner_id := COALESCE(owner_id, d.user_id);
 
@@ -489,6 +507,8 @@ BEGIN
   GET DIAGNOSTICS n = ROW_COUNT; removed := removed || jsonb_build_object('chamber_certifications', n);
   DELETE FROM public.documents WHERE session_id = sid;
   GET DIAGNOSTICS n = ROW_COUNT; removed := removed || jsonb_build_object('documents', n);
+  DELETE FROM public.ai_extraction_events WHERE session_id = sid;
+  GET DIAGNOSTICS n = ROW_COUNT; removed := removed || jsonb_build_object('ai_extraction_events', n);
   -- Operational events stay (they are counts for monitoring) but no longer point at the intake.
   UPDATE public.ops_events SET session_id = NULL WHERE session_id = sid;
   DELETE FROM public.chamber_sessions WHERE id = sid;
@@ -551,6 +571,87 @@ $$;
 
 REVOKE ALL ON FUNCTION public.fail_intake_deletion(uuid, text, integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.fail_intake_deletion(uuid, text, integer) TO service_role;
+
+-- ---------- No new files once a deletion is open ----------
+
+-- Whether a file may be stored for this intake now: it exists and no deletion of it is open. Called from
+-- the upload policies of both buckets, as the uploader, with the folder name the file is stored under.
+-- It takes a share lock on the intake row (volatile for that reason), held until the upload commits, which
+-- complete_intake_deletion's FOR UPDATE waits for: so either the deletion sees the file, or the upload sees
+-- the deletion. SECURITY DEFINER because the uploader can't read intake_deletions, and an advisor has no
+-- right to lock a prospect's row; it answers only true or false.
+CREATE OR REPLACE FUNCTION public.intake_accepts_files(p_session text)
+RETURNS boolean
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  sid uuid;
+BEGIN
+  IF p_session IS NULL OR p_session !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    RETURN false;
+  END IF;
+  sid := p_session::uuid;
+  PERFORM 1 FROM public.chamber_sessions s WHERE s.id = sid FOR KEY SHARE;
+  IF NOT FOUND THEN
+    RETURN false;
+  END IF;
+  RETURN NOT EXISTS (SELECT 1 FROM public.intake_deletions d WHERE d.session_id = sid AND d.status <> 'done');
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.intake_accepts_files(text) FROM PUBLIC, anon;
+-- Row security evaluates it as the uploader.
+GRANT EXECUTE ON FUNCTION public.intake_accepts_files(text) TO authenticated, service_role;
+
+-- Documents: the rule from 20261104090000_intake_consent, plus the check above.
+DROP POLICY IF EXISTS "Users can upload documents into their own sessions" ON storage.objects;
+CREATE POLICY "Users can upload documents into their own sessions"
+ON storage.objects FOR INSERT TO authenticated
+WITH CHECK (
+  bucket_id = 'documents'
+  AND (storage.foldername(name))[1] = auth.uid()::text
+  AND public.current_intake_consent_id(auth.uid()) IS NOT NULL
+  AND EXISTS (
+    SELECT 1 FROM public.chamber_sessions s
+    WHERE s.id::text = (storage.foldername(name))[2] AND s.user_id = auth.uid()
+      AND s.status IN ('in_progress', 'submitted')
+  )
+  AND public.intake_accepts_files((storage.foldername(name))[2])
+);
+
+-- Manuscripts, stored at {session_id}/v{n}-{nonce}.pdf: the rule from 20261022090000_advisor_operations,
+-- plus the check above.
+DROP POLICY IF EXISTS "Advisors can store generated manuscripts" ON storage.objects;
+CREATE POLICY "Advisors can store generated manuscripts"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'manuscripts' AND public.is_advisor() AND public.intake_accepts_files((storage.foldername(name))[1]));
+
+-- A document row for an intake being deleted is refused too (EA007), whoever writes it. The row's foreign
+-- key already locks the intake row, so this can't race the deletion either.
+CREATE OR REPLACE FUNCTION public.documents_refuse_deleting_intake()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.session_id IS NOT NULL
+     AND EXISTS (SELECT 1 FROM public.intake_deletions d WHERE d.session_id = NEW.session_id AND d.status <> 'done') THEN
+    RAISE EXCEPTION 'This intake is being deleted and takes no more documents' USING ERRCODE = 'EA007';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.documents_refuse_deleting_intake() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS documents_refuse_deleting_intake ON public.documents;
+CREATE TRIGGER documents_refuse_deleting_intake
+  BEFORE INSERT ON public.documents
+  FOR EACH ROW EXECUTE FUNCTION public.documents_refuse_deleting_intake();
 
 -- ---------- Schedules ----------
 

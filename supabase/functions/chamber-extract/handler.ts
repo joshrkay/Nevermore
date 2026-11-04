@@ -13,9 +13,9 @@ import { aiError, type AiErrorCode, type AiErrorReply } from "../_shared/ai/erro
 import { recordAiEvent, type AiEvent, type EventWriter } from "../_shared/ai/events.ts";
 import { callModel, failureLogLine, failureResponse, unexpectedErrorLine } from "../_shared/ai/model.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
-import { aiFailureCode, recordOpsEvent } from "../_shared/opsEvents.ts";
-import { emptyExtraction, shapeExtraction } from "./extraction.ts";
-import { EXTRACT_TOOL, SYSTEM_PROMPT } from "./schema.ts";
+import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
+import { shapeExtraction } from "./extraction.ts";
+import { EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -136,24 +136,11 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
       return await fail(aiError("bad_request", { message: "session_id must be an intake id" }));
     }
 
-    // An AI failure is recorded for monitoring (ops-monitor alerts on a run of them), best effort and
-    // bounded: it never changes the answer. Needs the service role; without it there is nowhere to write.
-    const userId = typeof (user as { id?: unknown }).id === "string" ? (user as { id: string }).id : null;
-    const noteAiFailure = (code: string) => {
-      const serviceRoleKey = deps.env("SUPABASE_SERVICE_ROLE_KEY");
-      return recordOpsEvent(
-        serviceRoleKey ? deps.createClient(supabaseUrl, serviceRoleKey) : null,
-        { kind: "ai_failed", source: "chamber-extract", code, userId },
-        { log: deps.logError },
-      );
-    };
-
-    // Check provider configuration before spending any budget on the request.
+    // 2. The provider must be set up.
     const chosen = selectAdapter(deps.env, EXTRACT_TOOL);
     if (!chosen.ok) {
       deps.logError(`AI_CONFIG_MISSING: ${chosen.problem}`);
-      await noteAiFailure("config_missing");
-      return json({ error: UNAVAILABLE }, 503);
+      return await fail(aiError("unavailable"));
     }
     event.provider = chosen.adapter.name;
     event.model = chosen.adapter.model;
@@ -190,10 +177,13 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     event.attempts = result.attempts;
     event.latencyMs = result.latencyMs;
     if (!result.ok) {
-      deps.logError(failureLogLine({ requestId, provider: chosen.adapter.name, result }));
-      await noteAiFailure(aiFailureCode(result));
-      const failure = failureResponse(result.kind);
-      return json({ error: failure.message }, failure.status);
+      deps.logError(failureLogLine({ requestId, provider: chosen.adapter.name, result, sessionId: event.sessionId }));
+      return await fail(failureResponse(result.kind));
+    }
+    // The tool call is forced, so an answer without one is a broken answer, not "nothing to extract".
+    if (!result.args) {
+      deps.logError(`AI_NO_TOOL_CALL request=${requestId} session=${event.sessionId ?? "-"} provider=${chosen.adapter.name}`);
+      return await fail(aiError("invalid_response"));
     }
 
     const shaped = shapeExtraction(result.args);

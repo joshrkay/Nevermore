@@ -20,6 +20,7 @@ import { FIELD_KINDS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
 import { RETENTION } from "@/data/dataPolicy";
 import { INTAKE_CONSENT_VERSION } from "@/data/intakeConsent";
+import { AI_ERROR_CODES } from "../../supabase/functions/_shared/ai/errors";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
@@ -253,6 +254,7 @@ describe("server and client intake rules agree", () => {
     ["submitted_record_retention", "years", RETENTION.submittedYears],
     ["ops_event_retention", "days", RETENTION.opsEventDays],
     ["email_event_retention", "days", RETENTION.emailEventDays],
+    ["ai_event_retention", "days", RETENTION.aiEventDays],
   ] as const)("states the %s window the database enforces", (block, unit, value) => {
     const found = new RegExp(`interval\\s+'(\\d+) ${unit}'`).exec(blocks(block).join("\n"))?.[1];
     expect(Number(found)).toBe(value);

@@ -10,8 +10,11 @@
 --   and drops reports past a per-account and an overall hourly cap (returning false) so a broken page,
 --   or someone abusing the endpoint, can't flood it. Signed-out visitors can report too (an error on the
 --   landing page), under a shared cap.
--- * Edge functions report through public.record_ops_event() with the service role (AI provider
---   failures, deletion failures).
+-- * AI failures are already recorded, one row per call, in public.ai_extraction_events
+--   (20261103120200, US-2.4a), so the AI functions don't report them again: the ai_failed alert counts
+--   those rows whose code is a failure of ours or the provider's (not a refusal such as a rate limit), with
+--   the browser's reports of calls that never reached the function. public.record_ops_event() (service
+--   role) is for anything else a function sees, such as a deletion that gave up.
 -- * public.ops_alert_rules() is the threshold for each kind. public.claim_ops_alerts() (service role)
 --   returns each kind over its threshold that hasn't been alerted within its cooldown, and records the
 --   alert, so two overlapping runs can't both send it. The ops-monitor edge function runs it every five
@@ -218,6 +221,31 @@ $$;
 REVOKE ALL ON FUNCTION public.ops_alert_rules() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.ops_alert_rules() TO authenticated, service_role;
 
+-- The events of one kind since p_since, as codes: ops_events, and for ai_failed also the AI calls that failed
+-- on our side or the provider's (ai_extraction_events; refusals such as bad_request, unauthorized,
+-- not_found, rate_limited and daily_cap are the caller's limits, not failures), coded
+-- '<function>:<error code>'.
+CREATE OR REPLACE FUNCTION public.ops_alert_events(p_kind text, p_since timestamptz)
+RETURNS TABLE (source text, code text, created_at timestamptz)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT e.source, COALESCE(e.code, '-'), e.created_at
+  FROM public.ops_events e
+  WHERE e.kind = p_kind AND e.created_at > p_since
+  UNION ALL
+  SELECT a.function_name, a.function_name || ':' || a.error_code, a.created_at
+  FROM public.ai_extraction_events a
+  WHERE p_kind = 'ai_failed' AND a.outcome = 'error'
+    AND a.error_code IN ('unavailable', 'provider_error', 'timeout', 'invalid_response', 'internal')
+    AND a.created_at > p_since;
+$$;
+
+REVOKE ALL ON FUNCTION public.ops_alert_events(text, timestamptz) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ops_alert_events(text, timestamptz) TO service_role;
+
 -- Every alert raised, kept for good (counts and codes only).
 CREATE TABLE IF NOT EXISTS public.ops_alerts (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -260,17 +288,16 @@ BEGIN
       CONTINUE;
     END IF;
 
-    SELECT count(*)::integer INTO n FROM public.ops_events e
-    WHERE e.kind = r.kind AND e.created_at > now() - make_interval(mins => r.window_minutes);
+    SELECT count(*)::integer INTO n
+    FROM public.ops_alert_events(r.kind, now() - make_interval(mins => r.window_minutes));
     IF n < r.threshold THEN
       CONTINUE;
     END IF;
 
     SELECT string_agg(t.code || ' x' || t.c, ', ' ORDER BY t.c DESC, t.code) INTO codes
     FROM (
-      SELECT COALESCE(e.code, '-') AS code, count(*) AS c
-      FROM public.ops_events e
-      WHERE e.kind = r.kind AND e.created_at > now() - make_interval(mins => r.window_minutes)
+      SELECT ev.code AS code, count(*) AS c
+      FROM public.ops_alert_events(r.kind, now() - make_interval(mins => r.window_minutes)) ev
       GROUP BY 1
       ORDER BY 2 DESC, 1
       LIMIT 5
@@ -294,7 +321,7 @@ GRANT EXECUTE ON FUNCTION public.claim_ops_alerts() TO service_role;
 
 -- ---------- Reading ----------
 
--- Counts by kind, source and code over the last p_hours (1 to 720). Admins only.
+-- Counts by kind, source and code over the last p_hours (1 to 720), the AI failures among them. Admins only.
 CREATE OR REPLACE FUNCTION public.admin_ops_summary(p_hours integer DEFAULT 24)
 RETURNS TABLE (kind text, source text, code text, events bigint, last_at timestamptz)
 LANGUAGE plpgsql
@@ -310,11 +337,11 @@ BEGIN
     RAISE EXCEPTION 'p_hours must be between 1 and 720' USING ERRCODE = '22023';
   END IF;
   RETURN QUERY
-    SELECT e.kind, e.source, e.code, count(*), max(e.created_at)
-    FROM public.ops_events e
-    WHERE e.created_at > now() - make_interval(hours => p_hours)
-    GROUP BY e.kind, e.source, e.code
-    ORDER BY count(*) DESC, e.kind, e.source, e.code;
+    SELECT k.kind, ev.source, ev.code, count(*), max(ev.created_at)
+    FROM (SELECT DISTINCT r.kind FROM public.ops_alert_rules() r) k
+    CROSS JOIN LATERAL public.ops_alert_events(k.kind, now() - make_interval(hours => p_hours)) ev
+    GROUP BY k.kind, ev.source, ev.code
+    ORDER BY count(*) DESC, k.kind, ev.source, ev.code;
 END;
 $$;
 

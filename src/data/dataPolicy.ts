@@ -7,6 +7,7 @@
 // * public.submitted_record_retention()   submitted records (same)
 // * public.ops_event_retention()          monitoring events (20261104091000_ops_monitoring.sql)
 // * public.email_event_retention()        email delivery    (20261104092000_data_retention_and_deletion.sql)
+// * public.ai_event_retention()           AI call records   (20261103120200_ai_extraction_events.sql)
 //
 // src/data/schemaSync.test.ts keeps those equal to RETENTION, and dataPolicy.test.ts checks that every table
 // and storage bucket the migrations create belongs to a data class below, so nothing new is stored unclassified.
@@ -81,6 +82,8 @@ export const RETENTION = {
   emailEventDays: 365,
   /** AI rate-limit records. */
   aiLimitDays: 1,
+  /** The record of each AI call: ids, codes and field names, never values. */
+  aiEventDays: 90,
 } as const;
 
 export interface RetentionRule {
@@ -131,7 +134,7 @@ export const RETENTION_RULES: RetentionRule[] = [
   },
   {
     record: "Security and operations records (error and failure counts, rate limits)",
-    period: `${RETENTION.opsEventDays} days for error records; ${RETENTION.aiLimitDays} day for rate limits`,
+    period: `${RETENTION.opsEventDays} days for error records and the record of each AI call; ${RETENTION.aiLimitDays} day for rate limits`,
     then: "Deleted. These never contain your answers.",
   },
   {
@@ -299,10 +302,14 @@ export const DATA_CLASSES: DataClass[] = [
     id: "operational",
     label: "Operational monitoring and abuse limits",
     sensitivity: "internal",
-    examples: "Failure counts and codes (errors, failed uploads, AI failures, refused access), the alerts raised from them, and the counters that rate-limit AI use (a one-way hash of the network address, never the address).",
-    stored: { tables: ["ops_events", "ops_alerts", "ai_request_log", "ai_ip_log", "ai_global_usage"], buckets: [], elsewhere: ["Supabase and Vercel logs"] },
-    retention: `Events and daily AI totals ${RETENTION.opsEventDays} days; rate-limit records ${RETENTION.aiLimitDays} day; alerts (kind, count and codes only) kept for incident review.`,
-    deletion: "By the daily retention job.",
+    examples: "Failure counts and codes (errors, failed uploads, AI failures, refused access), the alerts raised from them, a record of each AI call (ids, codes and the names of the fields it read, never their values), and the counters that rate-limit AI use (a one-way hash of the network address, never the address).",
+    stored: {
+      tables: ["ops_events", "ops_alerts", "ai_extraction_events", "ai_request_log", "ai_ip_log", "ai_global_usage"],
+      buckets: [],
+      elsewhere: ["Supabase and Vercel logs"],
+    },
+    retention: `Events, AI call records and daily AI totals ${RETENTION.opsEventDays} days; rate-limit records ${RETENTION.aiLimitDays} day; alerts (kind, count and codes only) kept for incident review.`,
+    deletion: "By the daily retention jobs. AI call records that point at an intake are also deleted with it.",
   },
 ];
 

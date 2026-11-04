@@ -134,7 +134,8 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-11-03 | Migration versions made unique: `outbox_operations` is now `20261027090100` and `document_storage_path` `20261103110100` (a second copy of each, numbered `…090001` and `…110001` by a parallel fix, was removed), each the second of a pair that shared a number, which `supabase db push` can't apply. CI fails on a duplicate (`src/data/migrations.test.ts`). An existing project: see `docs/SUPABASE_SETUP.md`, Migration versions. |
 | 2026-11-03 | US-1.4, real data in the Manuscript: a payroll section, and no invented values (census defaults are recorded in a row's `assumed` list and shown as not provided; no made-up coverage tiers or dependent counts). No migration. See D-1.2 and `docs/intake-schema.md`. |
 | 2026-11-03 | US-1.3, the hand-off to The Reckoning: the chosen PEO is saved with the intake (`chamber_sessions.chosen_peo`, migration `20261103100000`, deploy it before the front end), and the Manuscript page says when an intake has expired instead of calling it unsigned. See A-1.3. |
-| 2026-11-03 | Document fixes from the US-3 review: a new document row must point into its own intake's folder (migration `20261103110000`, which only changes a policy and can deploy before or after the front end), and removing a document deletes the stored file before its row and treats storage's empty answer as "not deleted" unless the file is gone. See E-1.2 and E-1.3. |
+| 2026-11-03 | Document fixes from the US-3 review: a new document row must point into its own intake's folder (migration `20261103110100`, which only changes a policy and can deploy before or after the front end), and removing a document deletes the stored file before its row and treats storage's empty answer as "not deleted" unless the file is gone. See E-1.2 and E-1.3. |
+| 2026-11-03 | Epic G closed (US-5.1 to US-5.3). D6 decided: the Advisor Console is the operating workflow, mapped in `docs/ADVISOR_CONSOLE.md`; G-3.2 and G-3.3 superseded. The File ID keeps the year its intake started (UTC) instead of the signer's current year. Both emails and the queue search call it the File ID. The confirmation's consent stance is written down in `docs/NOTIFICATIONS.md`. Terms are in a new `GLOSSARY.md`. |
 | 2026-11-04 | US-6.1 to US-6.4 (Epic H). Classification and retention (`docs/DATA_HANDLING.md`, `src/data/dataPolicy.ts`) with a daily retention job and a deletion process that removes stored files, then rows (`purge-intakes`); the Privacy Policy, Terms of Use, legal links on every page and an intake consent gate the database enforces; an isolation test over every migration with a findings register (`docs/SECURITY_REVIEW.md`) and a fix migration; failure monitoring with threshold alerts (`ops-monitor`) and `docs/RUNBOOK.md`. Deploy order: migrations `20261104090000` to `20261104093000`, then the `purge-intakes` and `ops-monitor` functions and the updated `chamber-extract` and `document-extract` (they import `_shared`), then the front end, close behind the consent migration. See H-1 to H-4. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
@@ -151,13 +152,13 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | D Manuscript | 0 | 7 | 2 | 0 | 1 | 10 |
 | E Documents | 6 | 1 | 3 | 1 | 0 | 11 |
 | F Advisor | 4 | 6 | 1 | 0 | 0 | 11 |
-| G Communications | 2 | 2 | 0 | 4 | 0 | 8 |
+| G Communications | 6 | 0 | 2 | 0 | 0 | 8 |
 | H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
 | I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **32** | **44** | **11** | **14** | **5** | **106** |
+| **Total** | **36** | **42** | **13** | **10** | **5** | **106** |
 
-24 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 18 of 39 M2; 1 of 13 M3. (Counts updated for US-6.1 to US-6.4 only; other stories since 2.6 are not recounted here.) The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+24 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met); 20 of 39 M2; 5 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -961,7 +962,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 
 #### H-4.1 Alerts for failed uploads, submits, AI calls, and auth
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** OPS · **Depends:** G-1.1, B-3.3 · **Milestone:** M2
-- **Built (US-6.4):** Migration `20261104091000_ops_monitoring.sql`: `ops_events` records application errors, failed uploads, AI failures, authorization failures and failed deletions, with a code and a redacted detail, never contents. The browser reports through `report_client_event` (`src/lib/monitoring.ts`: the error boundary, uncaught errors, upload and document-read failures, chat that never answered, advisor denials), capped per account and overall; `chamber-extract` and `document-extract` record provider failures with the service role. `ops_alert_rules()` sets a threshold per kind; the `ops-monitor` edge function (every five minutes) raises each at most once per cooldown and posts to `ENGINEERING_ALERT_WEBHOOK_URL`. Admins read `admin_ops_summary`. Tests: `supabase/tests/ops_monitoring.sql`, `src/lib/monitoring.test.ts`, `ops-monitor/handler.test.ts`.
+- **Built (US-6.4):** Migration `20261104091000_ops_monitoring.sql`: `ops_events` records application errors, failed uploads, AI failures, authorization failures and failed deletions, with a code and a redacted detail, never contents. The browser reports through `report_client_event` (`src/lib/monitoring.ts`: the error boundary, uncaught errors, upload and document-read failures, chat that never answered, advisor denials), capped per account and overall. AI failures are counted from `ai_extraction_events`, the record of every AI call (US-2.4a), so the AI functions don't report them twice; the browser adds only calls that never reached them. `ops_alert_rules()` sets a threshold per kind; the `ops-monitor` edge function (every five minutes) raises each at most once per cooldown and posts to `ENGINEERING_ALERT_WEBHOOK_URL`. Admins read `admin_ops_summary`. Tests: `supabase/tests/ops_monitoring.sql`, `src/lib/monitoring.test.ts`, `ops-monitor/handler.test.ts`.
 - **Notes:** Before launch, set `ENGINEERING_ALERT_WEBHOOK_URL` to a watched channel and send the test event (`docs/RUNBOOK.md`). Refusals that never reach the browser or a function (direct API 401/403, failed sign-ins) are in Supabase's logs only; the runbook says where to look. Browser reports can be forged to raise false alerts (SR-11, accepted, capped). No external uptime check.
 
 #### H-4.2 Incident runbook and escalation contacts
@@ -1266,9 +1267,9 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | G-1.3 | Retry failed notifications | S | High | M2 | DONE |
 | G-2.1 | Prospect confirmation email | M | Medium | M3 | DONE |
 | G-2.2 | Bounce and suppression handling | S | Medium | M3 | DONE |
-| G-3.1 | CRM selection and field-mapping specification | S | Medium | M3 | NOT STARTED |
-| G-3.2 | CRM sync worker | M | Medium | M3 | NOT STARTED |
-| G-3.3 | Sync failure visibility and retry | S | Medium | M3 | NOT STARTED |
+| G-3.1 | CRM selection and field-mapping specification | S | Medium | M3 | DONE |
+| G-3.2 | CRM sync worker | M | Medium | M3 | SUPERSEDED |
+| G-3.3 | Sync failure visibility and retry | S | Medium | M3 | SUPERSEDED |
 | H-1.1 | Data classification and retention matrix | S | Highest | M2 | PARTIAL |
 | H-1.2 | Automated retention enforcement | M | Highest | M2 | DONE |
 | H-1.3 | Deletion request workflow | S | High | M2 | DONE |

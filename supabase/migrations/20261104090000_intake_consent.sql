@@ -10,7 +10,9 @@
 --   Owners read their own; advisors read all, so a submission's consent can be shown in a dispute.
 --   Nobody writes the table directly: public.record_intake_consent() is the only way in.
 -- * A new intake, and a new document, from the browser is refused (EA004, DETAIL the version needed) unless
---   its owner agreed to the version in force. The new intake records which agreement it was made under
+--   its owner agreed to the version in force. So is storing a file in the documents bucket (row security on
+--   storage.objects), which the browser does before it writes the document's row, so a file is refused
+--   before it is ever received. The new intake records which agreement it was made under
 --   (chamber_sessions.intake_consent_id); the browser can't set or change that.
 -- * Saves to an intake that already exists are NOT refused: tabs opened before this deploys keep saving,
 --   and the Chamber asks for consent before it opens any intake. An intake started before this change has
@@ -184,3 +186,21 @@ DROP TRIGGER IF EXISTS documents_require_intake_consent ON public.documents;
 CREATE TRIGGER documents_require_intake_consent
   BEFORE INSERT ON public.documents
   FOR EACH ROW EXECUTE FUNCTION public.documents_require_intake_consent();
+
+-- The file itself: the browser stores it before it writes the document's row, so the agreement is checked
+-- here too, or a tab opened before this deployed (or a direct Storage call) could leave a file stored with
+-- no row and no agreement. Otherwise the same rule as 20261103090000_intake_lifecycle: the uploader's own
+-- folder, an intake of theirs that is still open.
+DROP POLICY IF EXISTS "Users can upload documents into their own sessions" ON storage.objects;
+CREATE POLICY "Users can upload documents into their own sessions"
+ON storage.objects FOR INSERT TO authenticated
+WITH CHECK (
+  bucket_id = 'documents'
+  AND (storage.foldername(name))[1] = auth.uid()::text
+  AND public.current_intake_consent_id(auth.uid()) IS NOT NULL
+  AND EXISTS (
+    SELECT 1 FROM public.chamber_sessions s
+    WHERE s.id::text = (storage.foldername(name))[2] AND s.user_id = auth.uid()
+      AND s.status IN ('in_progress', 'submitted')
+  )
+);

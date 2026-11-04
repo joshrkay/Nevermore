@@ -48,14 +48,16 @@ export function errorDetail(error: unknown): string {
 }
 
 /**
- * The code for a failed edge-function call that the function could not have recorded itself, or null when
- * it could have. A function that answered 502, 503 or 504 reached the AI provider (or found it unconfigured)
- * and records that failure on the server; a 4xx is a refusal (signed out, rate limited, bad input), not a
- * failure. What is left is the function crashing (another 5xx) or not being reached at all.
+ * The code for a failed edge-function call that the function didn't record itself, or null when it did.
+ * The AI functions record every call they answer (ai_extraction_events), and every answer carries the
+ * request id, so a failure with a request id is already counted. Without one, the handler never answered:
+ * the function crashed or wasn't deployed (a 5xx from Supabase's gateway), or it couldn't be reached at all.
+ * A 4xx without a request id is the gateway refusing the caller (an expired session), not a failure.
  */
-export function unrecordedFunctionFailure(prefix: string, error: unknown): string | null {
+export function unrecordedFunctionFailure(prefix: string, error: unknown, requestId?: string | null): string | null {
+  if (requestId) return null;
   const status = (error as { context?: { status?: unknown } } | null)?.context?.status;
-  if (typeof status === "number") return status >= 500 && ![502, 503, 504].includes(status) ? `${prefix}:${status}` : null;
+  if (typeof status === "number") return status >= 500 ? `${prefix}:${status}` : null;
   return `${prefix}_unreachable`;
 }
 
