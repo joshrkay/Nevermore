@@ -1,0 +1,60 @@
+[
+  {
+    "name": "an empty intake",
+    "chamber_data": {},
+    "field_provenance": {},
+    "missing": ["Company legal name", "States of operation", "Pay frequency", "Employee census"],
+    "open_fields": 0
+  },
+  {
+    "name": "every required answer and a census, all confirmed",
+    "chamber_data": {
+      "company_name": "Acme", "states": ["NY"], "pay_frequency": "weekly",
+      "census": [{ "id": "e1", "first_name": "Ada", "last_name": "L", "work_state": "NY", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }]
+    },
+    "field_provenance": {
+      "company_name": { "status": "confirmed", "source": { "kind": "prospect_edit" }, "updated_at": "2026-11-04T00:00:00Z" }
+    },
+    "missing": [],
+    "open_fields": 0
+  },
+  {
+    "name": "fields open by status, one closed as not applicable",
+    "chamber_data": {
+      "company_name": "Acme", "states": ["NY"], "pay_frequency": "weekly", "industry": "Print", "hq_state": "NY", "current_carrier": "Aetna",
+      "census": [{ "id": "e1", "first_name": "Ada", "last_name": "L", "work_state": "NY", "compensation_type": "salary", "employment_type": "full_time", "classification": "w2" }]
+    },
+    "field_provenance": {
+      "industry": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-04T00:00:00Z" },
+      "hq_state": { "status": "incomplete", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-04T00:00:00Z" },
+      "renewal_date": { "status": "unknown", "source": { "kind": "transcript", "message_id": "m2" }, "updated_at": "2026-11-04T00:00:00Z" },
+      "current_carrier": { "status": "conflicting", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-04T00:00:00Z" },
+      "wc_carrier": { "status": "not_applicable", "source": { "kind": "prospect_edit" }, "updated_at": "2026-11-04T00:00:00Z" },
+      "has_handbook": { "status": "confirmed", "source": { "kind": "prospect_edit" }, "updated_at": "2026-11-04T00:00:00Z" }
+    },
+    "missing": [],
+    "open_fields": 4
+  },
+  {
+    "name": "a required answer the prospect doesn't know is one open item, not two",
+    "chamber_data": { "states": ["CA"], "pay_frequency": "monthly", "industry": "Print" },
+    "field_provenance": {
+      "company_name": { "status": "unknown", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-04T00:00:00Z" },
+      "industry": { "status": "inferred", "source": { "kind": "transcript", "message_id": "m1" }, "updated_at": "2026-11-04T00:00:00Z" }
+    },
+    "missing": ["Company legal name", "Employee census"],
+    "open_fields": 1
+  },
+  {
+    "name": "states from the census's work states",
+    "chamber_data": {
+      "company_name": "Acme", "pay_frequency": "weekly",
+      "census": [{ "id": "e1", "first_name": "Ada", "last_name": "L", "work_state": "TX", "compensation_type": "hourly", "employment_type": "part_time", "classification": "w2" }]
+    },
+    "field_provenance": {
+      "census": { "status": "inferred", "source": { "kind": "document", "document_id": "d1" }, "updated_at": "2026-11-04T00:00:00Z" }
+    },
+    "missing": [],
+    "open_fields": 1
+  }
+]

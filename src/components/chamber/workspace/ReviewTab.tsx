@@ -2,7 +2,10 @@ import { useEffect, useRef, type ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
-import { fieldOpenItems, formatFieldValue, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
+import { FIELD_LABELS, formatFieldValue, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
+import { isSettled } from "@/data/followUp";
+import { openItems } from "@/data/openItems";
+import { REVIEW_FIELDS } from "@/data/reviewFields";
 import { conflictingRequired, missingRecommendedItems, missingRequired, type ReadinessItem, type ReviewSection } from "@/data/readiness";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
@@ -45,67 +48,33 @@ const SECTIONS: { key: ReviewSection; title: string }[] = [
   { key: "locations", title: "Locations" },
   { key: "payroll", title: "Payroll" },
   { key: "benefits", title: "Benefits" },
+  { key: "workers_comp", title: "Workers' comp" },
+  { key: "operations", title: "Operations & HR" },
 ];
+
+const displayOf = (field: FieldKey, value: unknown): string | null => {
+  const text = shown(value);
+  if (text === null) return null;
+  if (field === "funding_days") return `${text} days`;
+  if (field === "wc_annual_premium" && typeof value === "number") return `$${value.toLocaleString()}`;
+  return text;
+};
 
 // Every answer the Manuscript draws on, by section, each editable in place.
 function rowsBySection(data: ChamberData): Record<ReviewSection, Row[]> {
-  return {
-    company: [
-      { label: "Company legal name", field: "company_name", display: shown(data.company_name) },
-      { label: "Industry", field: "industry", display: shown(data.industry) },
-      {
-        label: "Entity structure",
-        field: "multiple_entities",
-        display: data.multiple_entities === null ? null : data.multiple_entities ? `Multiple (${data.fein_count ?? "?"} FEINs)` : "Single entity",
-      },
-      { label: "Target start", field: "start_month", display: shown(data.start_month) },
-      {
-        label: "Health coverage today",
-        field: "virgin_medical",
-        display: data.virgin_medical === null ? null : data.virgin_medical ? "None yet: first employer plan" : "Switching existing coverage",
-      },
-    ],
-    workforce: [
-      { label: "Employee count", field: "employee_count", display: shown(data.employee_count) },
-      {
-        label: "Nonexempt / exempt",
-        field: "has_nonexempt",
-        display: data.has_nonexempt !== null ? `${data.nonexempt_count ?? 0} nonexempt · ${data.exempt_count ?? 0} exempt` : null,
-        editable: false,
-      },
-      { label: "1099 contractors", field: "has_1099", display: shown(data.has_1099) },
-      { label: "In-house HR staff", field: "hr_staff_count", display: shown(data.hr_staff_count) },
-      { label: "Employee handbook", field: "has_handbook", display: shown(data.has_handbook) },
-    ],
-    locations: [
-      { label: "HQ state", field: "hq_state", display: shown(data.hq_state) },
-      { label: "States of operation", field: "states", display: shown(data.states) },
-    ],
-    payroll: [
-      { label: "Payroll vendor", field: "payroll_vendor", display: shown(data.payroll_vendor) },
-      { label: "Pay frequency", field: "pay_frequency", display: shown(data.pay_frequency) },
-      { label: "Funding lead time", field: "funding_days", display: data.funding_days !== null ? `${data.funding_days} days` : null },
-      { label: "Accrual method", field: "accrual_method", display: shown(data.accrual_method) },
-      { label: "PTO types", field: "pto_types", display: shown(data.pto_types) },
-    ],
-    benefits: [
-      { label: "Current carrier", field: "current_carrier", display: shown(data.current_carrier) },
-      { label: "Renewal date", field: "renewal_date", display: shown(data.renewal_date) },
-      { label: "Waiting period", field: "benefits_waiting_period", display: shown(data.benefits_waiting_period) },
-      { label: "Rate history", field: "rate_history", display: shown(data.rate_history) },
-      { label: "Ancillary benefits", field: "ancillary_benefits", display: shown(data.ancillary_benefits) },
-      {
-        label: "Retirement plan",
-        field: "has_401k",
-        display:
-          data.has_401k === null
-            ? null
-            : data.has_401k
-              ? `${data.retirement_type || "401(k)"} · ${data.employer_contributes ? "employer contributes" : "no employer match"}`
-              : "No retirement plan",
-      },
-    ],
-  };
+  return Object.fromEntries(
+    SECTIONS.map(({ key }) => [key, REVIEW_FIELDS[key].map((field) => ({ label: FIELD_LABELS[field], field, display: displayOf(field, data[field]) }))]),
+  ) as Record<ReviewSection, Row[]>;
+}
+
+/** How many of a section's answers are settled (an answer, or "Doesn't apply" or "Not known yet"), of how many. */
+function sectionProgress(section: ReviewSection, data: ChamberData, provenance: ProvenanceMap): { settled: number; total: number } {
+  const fields = REVIEW_FIELDS[section];
+  const settled = fields.filter((f) => isSettled(data[f], provenance[f]?.status)).length;
+  // The census counts in Workforce, settled once one is uploaded.
+  return section === "workforce"
+    ? { settled: settled + (data.census.length > 0 ? 1 : 0), total: fields.length + 1 }
+    : { settled, total: fields.length };
 }
 
 const rowId = (field: FieldKey) => `review-field-${field}`;
@@ -118,11 +87,16 @@ function jumpTo(item: ReadinessItem) {
   target?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
 }
 
-const Section = ({ section, title, children }: { section: ReviewSection; title: string; children: ReactNode }) => (
+const Section = ({ section, title, progress, children }: { section: ReviewSection; title: string; progress: { settled: number; total: number }; children: ReactNode }) => (
   <section id={sectionId(section)} aria-labelledby={`${sectionId(section)}-title`} className="bg-card border border-border rounded-xl p-6 space-y-4">
-    <h3 id={`${sectionId(section)}-title`} className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
-      {title}
-    </h3>
+    <div className="flex items-baseline justify-between gap-2">
+      <h3 id={`${sectionId(section)}-title`} className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
+        {title}
+      </h3>
+      <p className="text-[10px] text-muted-foreground" data-testid={`progress-${section}`}>
+        {progress.settled === progress.total ? "Complete" : `${progress.settled} of ${progress.total} settled`}
+      </p>
+    </div>
     {children}
   </section>
 );
@@ -133,7 +107,11 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
     if (focusRequest > 0) headingRef.current?.focus();
   }, [focusRequest]);
   const eeCount = headcount(data);
-  const needsReview = fieldOpenItems(provenance);
+  // One list of open items (src/data/openItems.ts), shared with The Manuscript and the advisor queue. The required
+  // answers still to give are "Still needed", the census is "Recommended", and fields by status "Needs your review".
+  const open = openItems(data, provenance);
+  const STATUS_REASONS = new Set(["Conflicting answers", "Incomplete", "Prospect to provide", "Please confirm"]);
+  const needsReview = open.flatMap((item) => (item.field && STATUS_REASONS.has(item.reason) ? [{ ...item, field: item.field }] : []));
   const checks = eligibilityChecks(data);
   const flaggedEmployees = data.census.filter(e => employeeFlag(e) !== null);
   const uploaded = documents.filter((d) => d.status !== "uploading");
@@ -142,7 +120,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
   const required = missingRequired(data);
   const conflicting = conflictingRequired(provenance);
   const blocking = required.length + conflicting.length;
-  const recommended = missingRecommendedItems(data);
+  const recommended = missingRecommendedItems(data).filter((item) => open.some((o) => o.key === item.key));
   const rows = rowsBySection(data);
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
   const censusStates = [...data.census.reduce((counts, e) => {
@@ -162,6 +140,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
             provenance={provenance[row.field]}
             onAction={onAction}
             editable={row.editable}
+            allowNotApplicable
           />
         </div>
       ))}
@@ -271,7 +250,7 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
       </div>
 
       {SECTIONS.map(({ key, title }) => (
-        <Section key={key} section={key} title={title}>
+        <Section key={key} section={key} title={title} progress={sectionProgress(key, data, provenance)}>
           {renderRows(rows[key])}
 
           {key === "workforce" && (

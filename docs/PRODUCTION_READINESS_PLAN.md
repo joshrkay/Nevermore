@@ -143,6 +143,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 | 2026-11-04 | An intake is created on the prospect's first change, not when the Chamber opens, and a person has one open draft at a time (A-1): migration `20261104102000_one_open_draft.sql` (`EA009`, either deploy order), `ensureIntake` for chat and uploads, and the address cleared after Start over. See A-1.3 and `docs/intake-schema.md`, When an intake is created. |
 | 2026-11-04 | US-2.1b, the extraction contract: chat extracts every field but the census, with `unknown` for what the prospect doesn't know, and each call carries the field statuses and the last 10 messages; prompt version 2. No migration; deploy `chamber-extract` with the front end (an old bundle's requests still work). See US-2.1b and `docs/intake-schema.md`, Extraction contract. |
 | 2026-11-04 | US-2.3a: Lenore asks about the next unsettled field, one at a time, wraps up when none is left, and says once when the intake is ready to certify ("Ready for your review" in the header); one shared readiness rule; ten golden transcripts; prompt version 3. No migration. See US-2.3a and `GLOSSARY.md`, Ready to certify. |
+| 2026-11-04 | US-2.2a: Review lists every field with its badge and how much of each section is settled, "Doesn't apply" with Undo, one open-items list (Review, The Manuscript, the advisor queue, migration `20261104103000_open_items.sql`, either deploy order), the census's status on the Census tab, and advisors can review workers' comp answers. See US-2.2a. |
 | 2026-10-28 | The intake-to-PDF end-to-end test, its `e2e/stack` stand-ins and the `e2e` CI job (I-4.3, I-4.4). Also on `main`, not re-checked against their stories in 2.4: a save-status indicator and resume of the latest intake, public copy that no longer promises what the product doesn't do, no new intake started over one that could not be loaded, and a script that sets up and checks a Supabase project. |
 
 Both busy days also include commits titled 'repair main after ... merges' (for example `7260101`, `7e3cd6d`, `b543876`, `d5ad19f`, `1f65822`), which fix breakage from overlapping branches. The `chamber-extract` break came from another merge of that kind, and no later commit repaired it.
@@ -374,9 +375,9 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Notes:** Since 2026-11-04 the copy is the plan's: 'Lenore captured this — please confirm' with a Confirm button, and a value the prospect confirmed or typed is badged 'Confirmed by you', apart from one Lenore heard stated outright ('Confirmed'). Since 2026-11-04 a required answer in conflict can't be certified until one value is chosen (C-1.3), so a conflicting required value never reaches The Manuscript as a certified fact.
 
 #### B-2.2 Derive open items from the schema
-- **Status:** **PARTIAL** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-1.2, A-2.1 · **Milestone:** M1
-- **Built:** `fieldOpenItems` derives 'Conflicting answers', 'Incomplete' and 'Please confirm', and items clear when the issue is resolved. The Manuscript adds `<field> not provided` for the four core items.
-- **Remaining:** Derived in the browser, not on the server. No 'Document needed' reason (missing recommended documents show as an informational line in Review). The reasons differ from the approved four.
+- **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-1.2, A-2.1 · **Milestone:** M1
+- **Built:** Since 2026-11-04 (US-2.2a), one list (`src/data/openItems.ts`) with the reasons Not provided, Document needed, Conflicting answers, Incomplete, Prospect to provide and Please confirm, used by Review and The Manuscript and copied in the advisor queue's SQL, which a shared fixture and a sync test hold to it.
+- **Notes:** The browser derives it for the prospect; the server derives the queue's counts itself.
 
 #### B-3.1 Timeouts, retries, and rate limits
 - **Status:** **PARTIAL** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** B-1.1, F-0.2 · **Milestone:** M1
@@ -549,7 +550,14 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Tests:** unit tests for the shared function, and golden transcripts covering the field order, a conflict, unknown answers and the wrap-up.
 
 ##### US-2.2a Review lists every field, "Doesn't apply", and one open-items list
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** High · **Owner:** FE + BE · **Depends:** 2.1a · **Milestone:** M1
+- **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** FE + BE · **Depends:** 2.1a · **Milestone:** M1
+- **Built (2026-11-04):**
+  - **Every field.** Review lists every answer of the intake schema, each its own row with its badge and Confirm/Edit, in seven sections (Company, Workforce, Locations, Payroll, Benefits, Workers' comp, Operations & HR; `REVIEW_FIELDS`, which a test holds to the schema). Each section says how many of its answers are settled ("3 of 5 settled", or "Complete"). The census keeps its table in Workforce, and the Census tab shows its status, source and Confirm.
+  - **Doesn't apply (D31).** An unanswered field that certification doesn't need can be marked "Doesn't apply" (`applyFieldAction` `not_applicable`), which closes it, and "Undo" (`reopen`) takes it back. No extraction or document changes it (2.1a).
+  - **One list.** `src/data/openItems.ts`: a required answer with none ("Not provided", or "Prospect to provide" when they don't know), the census ("Document needed"), then fields by status (conflicting, incomplete, unknown, inferred). Review shows them under "Still needed", "Recommended" and "Needs your review"; The Manuscript lists them as "Company legal name — not provided"; the advisor queue counts them (migration `20261104103000_open_items.sql`: `open_fields` now counts unknown answers, and a required answer the prospect doesn't know once, not twice). The queue reads "N open items".
+  - **Held together.** `supabase/tests/fixtures/open_items.json` holds five intakes with what the queue must show; `src/data/openItems.test.ts` and `supabase/tests/open_items.sql` both read it. `schemaSync.test.ts` holds the queue's statuses and labels to `OPEN_ITEM_STATUSES` and the readiness items.
+  - **Found on the way:** `is_reviewable_field` never got the four workers' comp answers (2.1a), so advisors couldn't mark them reviewed. The same migration adds them, and a sync test holds the list to the schema.
+- **Notes:** The queue still leaves out a field an advisor marked verified; that is the advisor's own view, and the only way it differs from Review. Deploy the migration before or after the front end.
 - **Scope:**
   - Review lists every field by section, each with its badge and Confirm/Edit (D28).
   - "Doesn't apply" marks a field `not_applicable` as a prospect action, and can be undone (D31).

@@ -237,7 +237,7 @@ Social Security numbers and bank account details are not stored anywhere. `redac
 
 Each field in `chamber_sessions.chamber_data` (see `src/data/chamberTypes.ts`) has a status and a source. These are stored beside the data in `chamber_sessions.field_provenance` (jsonb, keyed by field name, default `{}`). Fields with no entry have not been captured yet, or were captured before provenance existed.
 
-The model, merge rules and open items are in `src/data/provenance.ts`.
+The model and merge rules are in `src/data/provenance.ts`; the open items, one list for Review, The Manuscript and the advisor queue, in `src/data/openItems.ts` (US-2.2a): a required answer with none ("Not provided", or "Prospect to provide" when the prospect said they don't know), the census ("Document needed"), then fields by status: conflicting, incomplete, unknown, inferred. "Doesn't apply" (`not_applicable`) closes a field; only the prospect sets it, in Review, on an unanswered field certification doesn't need, and "Undo" takes it back. The advisor queue counts the same items (`advisor_list_submissions`, migration `20261104103000_open_items.sql`), less those an advisor verified; `supabase/tests/fixtures/open_items.json` holds both to the same answers.
 
 ### Entry shape
 

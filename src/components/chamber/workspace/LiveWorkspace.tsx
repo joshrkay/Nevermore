@@ -117,7 +117,7 @@ const LiveWorkspace = ({
         {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
         {activeTab === "payroll" && <PayrollTab data={data} provenance={provenance} onAction={onAction} />}
         {activeTab === "benefits" && <BenefitsTab data={data} provenance={provenance} onAction={onAction} />}
-        {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} />}
+        {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
         {activeTab === "dependents" && <DependentsTab data={data} />}
         {activeTab === "review" && <ReviewTab data={data} provenance={provenance} onAction={onAction} documents={documents.docs} onProceed={() => setActiveTab("match")} focusRequest={openReview} />}
         {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}

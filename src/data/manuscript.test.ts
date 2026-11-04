@@ -194,11 +194,12 @@ describe("buildManuscript census and state mix with gaps", () => {
 describe("buildManuscript open items for missing core facts", () => {
   const opts = { fileId: "EAA-1", date: new Date("2026-05-01T00:00:00Z") };
 
-  it("lists each missing core fact as an open item", () => {
+  it("lists each missing core fact as an open item, with the census as a document needed", () => {
     const { open } = buildManuscript(EMPTY_CHAMBER_DATA, opts);
-    for (const fact of ["Company legal name", "States of operation", "Pay frequency", "Employee census"]) {
+    for (const fact of ["Company legal name", "States of operation", "Pay frequency"]) {
       expect(open).toContain(`${fact} — not provided`);
     }
+    expect(open).toContain("Employee census — document needed");
   });
 
   it("lists nothing for facts that were provided", () => {

@@ -68,6 +68,7 @@
 \i supabase/migrations/20261104100000_certification_conflicts.sql
 \i supabase/migrations/20261104101000_transcript_validation.sql
 \i supabase/migrations/20261104102000_one_open_draft.sql
+\i supabase/migrations/20261104103000_open_items.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

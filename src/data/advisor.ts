@@ -67,7 +67,7 @@ export function completenessOf(row: { missing_required: string[]; open_fields: n
   const open = row.open_fields + row.flagged_fields;
   if (open > 0) {
     const parts = [
-      row.open_fields > 0 && `${row.open_fields} unconfirmed`,
+      row.open_fields > 0 && `${row.open_fields} open item${row.open_fields === 1 ? "" : "s"}`,
       row.flagged_fields > 0 && `${row.flagged_fields} flagged by an advisor`,
     ].filter(Boolean);
     return { state: "needs_review", label: "Needs review", detail: parts.join(", ") };

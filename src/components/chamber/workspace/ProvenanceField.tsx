@@ -2,7 +2,9 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import type { ReactNode } from "react";
 import { sanitizeChamberPatch } from "@/data/chamberValidation";
+import type { ChamberData } from "@/data/chamberTypes";
 import {
+  canMarkNotApplicable,
   FIELD_KINDS,
   formatFieldValue,
   type FieldAction,
@@ -67,9 +69,11 @@ interface ProvenanceFieldProps {
   children?: ReactNode;
   /** Marks an answer needed before certifying. Defaults to the required answers (src/data/readiness.ts). */
   required?: boolean;
+  /** Offers "Doesn't apply" for an unanswered field certification doesn't need (Review only, D28, D31). */
+  allowNotApplicable?: boolean;
 }
 
-const ProvenanceField = ({ label, field, display, raw, provenance, onAction, editable = true, children, required = isRequiredField(field) }: ProvenanceFieldProps) => {
+const ProvenanceField = ({ label, field, display, raw, provenance, onAction, editable = true, children, required = isRequiredField(field), allowNotApplicable = false }: ProvenanceFieldProps) => {
   const kind = field === "census" ? null : FIELD_KINDS[field];
   const canEdit = Boolean(onAction && editable && kind);
   const [editing, setEditing] = useState(false);
@@ -189,7 +193,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
       )}
 
       {!editing && onAction && (
-        <div className="flex gap-2 mt-1">
+        <div className="flex flex-wrap gap-2 mt-1">
           {display && (status === "inferred" || status === "incomplete") && (
             <button
               type="button"
@@ -203,6 +207,27 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
           {canEdit && (
             <button type="button" onClick={startEdit} aria-label={`${display ? "Edit" : "Add"} ${label}`} className="text-[10px] text-muted-foreground hover:text-foreground hover:underline">
               {display ? "Edit" : "Add"}
+            </button>
+          )}
+          {/* Only the prospect closes a field this way (D31), and only one they haven't answered. */}
+          {allowNotApplicable && status !== "not_applicable" && !display && canMarkNotApplicable(field, { [field]: raw } as unknown as ChamberData) && (
+            <button
+              type="button"
+              onClick={() => onAction({ type: "not_applicable", field })}
+              aria-label={`${label} doesn't apply`}
+              className="text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+            >
+              Doesn't apply
+            </button>
+          )}
+          {status === "not_applicable" && (
+            <button
+              type="button"
+              onClick={() => onAction({ type: "reopen", field })}
+              aria-label={`Undo: ${label} doesn't apply`}
+              className="text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+            >
+              Undo
             </button>
           )}
         </div>
