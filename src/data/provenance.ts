@@ -23,8 +23,8 @@ export type ExtractedStatus = "confirmed" | "inferred" | "incomplete";
 
 export type FieldSource =
   // prompt_version is chamber-extract's PROMPT_VERSION (a positive integer, as ai_extraction_events records
-  // it) for a chat extraction. Voice extractions, whose
-  // prompt lives in the ElevenLabs agent, and entries saved before versioning have none.
+  // it) for an extraction, typed or spoken (US-2.3b). Entries saved before versioning, and from a voice <extract>
+  // before voice went through chamber-extract, have none.
   | { kind: "transcript"; message_id: string; quote?: string; prompt_version?: number }
   // A value the prospect applied from an uploaded document (document-extract's candidates).
   | { kind: "document"; document_id: string; document_name?: string; location?: string }
@@ -287,7 +287,7 @@ export interface ExtractionOptions {
 }
 
 /**
- * Applies an untrusted AI patch (chat, voice, or a document the prospect applied). A prospect's own
+ * Applies an untrusted AI patch (an extraction from a typed or spoken message, or a document the prospect applied). A prospect's own
  * edit is never overwritten. Otherwise, when values disagree, the higher-ranked source (RANK) stands
  * and the other is noted in also_heard; two values from sources of the same rank are kept as a
  * conflict for the prospect to settle. An explicit correction and a list that only adds entries
@@ -569,9 +569,10 @@ export function parseFieldList(raw: unknown): FieldKey[] {
 }
 
 /**
- * Extraction options for a reply to a transcript message. `meta` carries the model's
+ * Extraction options for a reply to a transcript message, typed or spoken. `meta` carries the model's
  * optional field_status, evidence and corrected_fields, and chamber-extract's prompt_version;
- * the message text is the fallback quote for fields with no evidence of their own.
+ * the message text is the fallback quote for fields with no evidence of their own. A spoken message's
+ * answers are inferred at most (D33).
  */
 export function transcriptExtraction(message: { id: string; text: string; spoken?: boolean }, meta: unknown): ExtractionOptions {
   const m = (typeof meta === "object" && meta !== null ? meta : {}) as Record<string, unknown>;
@@ -595,13 +596,4 @@ export function transcriptExtraction(message: { id: string; text: string; spoken
     corrections: parseFieldList(m.corrected_fields),
     unknown,
   };
-}
-
-/**
- * Extraction options for a voice <extract>. The agent's prompt lives in ElevenLabs, outside
- * PROMPT_VERSION, so a prompt_version in what it wrote is never stored as chamber-extract's.
- */
-export function voiceExtraction(message: { id: string; text: string }, data: unknown): ExtractionOptions {
-  const { prompt_version: _unversioned, ...meta } = (typeof data === "object" && data !== null ? data : {}) as Record<string, unknown>;
-  return transcriptExtraction(message, meta);
 }

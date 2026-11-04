@@ -3,12 +3,15 @@
 // real chamber-extract handler with the model stubbed to the turn's tool call, applies the answer as the Chamber
 // does (transcriptExtraction, applyExtraction), and has Lenore announce readiness as ChamberPage does. What is
 // checked is ours, not the model's: what the prompt names as unsettled and in what order, what is captured and
-// with which status, when the intake is ready to certify, and that Lenore says so once.
+// with which status, when the intake is ready to certify, and that Lenore says so once. A turn can be said aloud in a
+// voice call (US-2.3b): the same request goes to the same handler, Lenore's voice answers it instead of the
+// function's reply, and what Lenore's voice is told next (voiceContextUpdate) is checked too.
 import { describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "../../../src/data/chamberTypes";
 import { createChatMessage, openingMessage, type ChatMessage } from "../../../src/data/chat";
 import { censusSummary, isReadyToCertify, READY_MESSAGE, shouldAnnounceReady, statusesOf } from "../../../src/data/followUp";
 import { applyExtraction, applyFieldAction, transcriptExtraction, type IntakeState } from "../../../src/data/provenance";
+import { voiceContextUpdate } from "../../../src/data/voiceAgent";
 import { chatContext } from "../_shared/chatContext";
 import { INTAKE_FIELDS } from "../_shared/intakeSchema";
 import { isSettled } from "../_shared/followUp";
@@ -22,9 +25,13 @@ interface Turn {
   /** Something the prospect does in the workspace before writing (resolving a conflict, uploading a census). */
   act?: (state: IntakeState) => IntakeState;
   prospect: string;
+  /** Said aloud in a voice call, and answered aloud by Lenore's voice with this line (US-2.3b). */
+  spoken?: { voiceReply: string };
   /** The model's forced tool call for this message. */
   model: Record<string, unknown>;
   expect?: {
+    /** The first fields Lenore's voice is told to ask about next once the answer is applied, by label. */
+    voiceNext?: string[];
     /** The first fields the prompt names as not yet settled, in order. */
     next?: string[];
     /** Fields the prompt must not name as unsettled. */
@@ -88,7 +95,7 @@ async function run(turns: Turn[], start: IntakeState = { data: { ...EMPTY_CHAMBE
     const at = `turn ${i + 1} ("${turn.prospect}")`;
     if (turn.act) state = turn.act(state);
     const settledBefore = INTAKE_FIELDS.filter((f) => isSettled(state.data[f.key as keyof ChamberData], state.provenance[f.key as keyof ChamberData]?.status)).map((f) => f.key);
-    const message = createChatMessage("user", turn.prospect);
+    const message = createChatMessage("user", turn.prospect, { spoken: Boolean(turn.spoken) });
     transcript.push(message);
 
     // The request, as useLenoreChat builds it.
@@ -117,7 +124,8 @@ async function run(turns: Turn[], start: IntakeState = { data: { ...EMPTY_CHAMBE
 
     // The answer, as ChamberPage applies it, then Lenore's reply, then (once) her word that it is ready.
     state = applyExtraction(state, out.extracted, transcriptExtraction(message, out));
-    transcript.push(createChatMessage("lenore", out.reply));
+    // Said aloud, the message was answered aloud: the function's reply is never kept (US-2.3b).
+    transcript.push(turn.spoken ? createChatMessage("lenore", turn.spoken.voiceReply, { spoken: true }) : createChatMessage("lenore", out.reply));
     const ready = isReadyToCertify(state.data, state.provenance);
     const announced = shouldAnnounceReady(readyBefore, ready, false, transcript);
     if (announced) transcript.push(createChatMessage("lenore", READY_MESSAGE));
@@ -134,6 +142,10 @@ async function run(turns: Turn[], start: IntakeState = { data: { ...EMPTY_CHAMBE
     if (want.data) expect(state.data, at).toMatchObject(want.data);
     for (const [key, status] of Object.entries(want.statuses ?? {})) expect(state.provenance[key as keyof ChamberData]?.status, `${at}: ${key}`).toBe(status);
     if (want.refused) expect(fn.event()?.refused_paths ?? [], at).toEqual(want.refused);
+    if (want.voiceNext) {
+      const next = /Ask about next, most important first: (.*)/.exec(voiceContextUpdate(state.data, state.provenance))![1].split("; ");
+      expect(next.slice(0, want.voiceNext.length), `${at}: voice next`).toEqual(want.voiceNext);
+    }
   }
   return { state, transcript };
 }
@@ -307,5 +319,57 @@ describe("golden transcripts", () => {
         expect: { next: [], promptIncludes: ["Not yet settled, most important first: none"], reply: "Thank you. That is everything I need: you can review your intake on the Review tab." },
       },
     ], { data, provenance });
+  });
+
+  it("takes a voice call's answers as Inferred until the prospect types or confirms them, and tells Lenore's voice what is next", async () => {
+    const { state, transcript } = await run([
+      {
+        prospect: "We're Quill and Ink Bindery, in New York and New Jersey.",
+        spoken: { voiceReply: "How often do you run payroll?" },
+        model: {
+          company_name: "Quill and Ink Bindery",
+          states: ["NY", "NJ"],
+          field_status: { company_name: "confirmed", states: "confirmed" },
+          reply: "A fine name. How often do you run payroll?",
+        },
+        expect: {
+          statuses: { company_name: "inferred", states: "inferred" },
+          ready: false,
+          voiceNext: ["Pay frequency (required)", "Employee count", "Industry"],
+        },
+      },
+      {
+        prospect: "Every two weeks.",
+        spoken: { voiceReply: "Every two weeks. And how many people work for you?" },
+        model: { ...said("pay_frequency", "bi-weekly", "confirmed", "Every two weeks"), reply: "Bi-weekly. How many employees?" },
+        // The one-word answer travels with the question Lenore's voice asked aloud. Inferred answers count toward ready.
+        expect: {
+          promptIncludes: ['{"sender":"lenore","text":"How often do you run payroll?"}'],
+          statuses: { pay_frequency: "inferred" },
+          ready: true,
+          announced: true,
+          voiceNext: ["Employee count", "Industry"],
+        },
+      },
+      {
+        prospect: "Yes, bi-weekly is right.",
+        model: { ...said("pay_frequency", "bi-weekly", "confirmed", "bi-weekly is right"), reply: "Thank you. How many employees do you have?" },
+        // Typed, the same answer is confirmed.
+        expect: { statuses: { pay_frequency: "confirmed", company_name: "inferred" }, ready: true, announced: false },
+      },
+      {
+        prospect: "Our legal name is Quill & Ink Bindery LLC.",
+        model: { ...said("company_name", "Quill & Ink Bindery LLC"), reply: "Thank you." },
+        // A typed answer that differs from a spoken one is a conflict for the prospect to choose (GLOSSARY.md, Field source).
+        expect: { statuses: { company_name: "conflicting" }, data: { company_name: "Quill and Ink Bindery" }, ready: false, voiceNext: ["Company legal name (required)"] },
+      },
+    ]);
+    // Only what Lenore's voice said is in the transcript as her answer to what was said aloud.
+    expect(transcript.filter((m) => m.sender === "lenore" && m.spoken).map((m) => m.text)).toEqual([
+      "How often do you run payroll?",
+      "Every two weeks. And how many people work for you?",
+    ]);
+    expect(transcript.some((m) => m.text === "A fine name. How often do you run payroll?")).toBe(false);
+    expect(state.provenance.states?.source).toMatchObject({ kind: "transcript", quote: "We're Quill and Ink Bindery, in New York and New Jersey." });
   });
 });

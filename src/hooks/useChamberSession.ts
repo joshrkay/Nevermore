@@ -106,6 +106,11 @@ interface UseChamberSessionReturn {
   /** Updates the data and its provenance together. */
   updateIntake: (updater: (prev: IntakeState) => IntakeState) => void;
   addMessage: (msg: ChatMessage) => void;
+  /**
+   * The answers, their provenance and the conversation as they stand right now, including changes made since the last
+   * render (updateIntake and addMessage apply at once). Lenore's chat reads it when it builds each call.
+   */
+  readIntake: () => IntakeState & { messages: ChatMessage[] };
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   /** With `signedDataKey` (the answers as signed, JSON), refuses to save if the answers have since changed. */
   submit: (submission: CertificationRequest, signedDataKey?: string) => Promise<boolean | SubmitFailure>;
@@ -1236,6 +1241,11 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     scheduleSave();
   }, [scheduleSave]);
 
+  const readIntake = useCallback(
+    () => ({ data: dataRef.current, provenance: provenanceRef.current, messages: messagesRef.current }),
+    [],
+  );
+
   const addMessage = useCallback((msg: ChatMessage) => {
     // Lenore says hello once per intake. A voice session opens with her own greeting; it isn't kept twice.
     if (isGreeting(msg) && messagesRef.current.some(isGreeting)) return;
@@ -1395,6 +1405,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     setChamberData,
     updateIntake,
     addMessage,
+    readIntake,
     setMessages,
     submit,
     certification,

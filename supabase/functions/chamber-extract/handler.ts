@@ -13,7 +13,7 @@ import { aiError, type AiErrorCode, type AiErrorReply } from "../_shared/ai/erro
 import { recordAiEvent, type AiEvent, type EventWriter } from "../_shared/ai/events.ts";
 import { callModel, failureLogLine, failureResponse, unexpectedErrorLine } from "../_shared/ai/model.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
-import { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES } from "../_shared/chatContext.ts";
+import { MAX_CHAT_MESSAGE_CHARS, MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES } from "../_shared/chatContext.ts";
 import { FIELD_STATUSES as CONTEXT_STATUSES, type CensusSummary } from "../_shared/followUp.ts";
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactSensitive } from "../_shared/sensitive.ts";
@@ -31,7 +31,7 @@ const corsHeaders = {
 // Caps keep a single request from running up AI costs. The context cap (_shared/chatContext.ts) covers
 // everything the browser sends besides the message: the answers, their field statuses and the recent
 // conversation (D22).
-export const MAX_MESSAGE_CHARS = 2000;
+export const MAX_MESSAGE_CHARS = MAX_CHAT_MESSAGE_CHARS;
 export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES, NEXT_FIELDS };
 
 const SCHEMA_KEYS = new Set(Object.keys(INTAKE_SCHEMA.properties as object));

@@ -11,7 +11,6 @@ import {
   parseExtractedStatuses,
   parseProvenance,
   transcriptExtraction,
-  voiceExtraction,
   type ExtractionOptions,
   type FieldSource,
   type IntakeState,
@@ -669,20 +668,15 @@ describe("transcriptExtraction", () => {
     expect(next.provenance.employee_count?.source).toEqual({ kind: "transcript", message_id: "m1", quote: "40 people", prompt_version: PROMPT_VERSION });
   });
 
-  it("leaves the source unversioned when the reply carries no valid version, as a voice extraction doesn't", () => {
+  it("leaves the source unversioned when the reply carries no valid version", () => {
     for (const meta of [{ employee_count: 40 }, { prompt_version: "7" }, { prompt_version: 0 }, { prompt_version: 2.5 }, null]) {
       expect(transcriptExtraction({ id: "m1", text: "hi" }, meta).source).not.toHaveProperty("prompt_version");
     }
   });
 
-  it("never stamps a voice extraction, even when the agent's <extract> names a prompt version", () => {
-    const data = { employee_count: 40, prompt_version: PROMPT_VERSION, evidence: { employee_count: "40 people" } };
-    const opts = voiceExtraction({ id: "m1", text: "We have 40 people" }, data);
-    expect(opts.source).toEqual({ kind: "transcript", message_id: "m1", quote: "We have 40 people" });
-    expect(opts.evidence).toEqual({ employee_count: "40 people" });
-    const next = applyExtraction(EMPTY, { employee_count: 40 }, { ...opts, now: NOW });
-    expect(next.provenance.employee_count?.source).not.toHaveProperty("prompt_version");
-    expect(voiceExtraction({ id: "m1", text: "hi" }, null).source).toEqual({ kind: "transcript", message_id: "m1", quote: "hi" });
+  it("stamps a spoken message's answers with chamber-extract's version too, since they come through it (US-2.3b)", () => {
+    const opts = transcriptExtraction({ id: "v1", text: "We have 40 people", spoken: true }, { prompt_version: PROMPT_VERSION });
+    expect(opts.source).toEqual({ kind: "transcript", message_id: "v1", quote: "We have 40 people", prompt_version: PROMPT_VERSION });
   });
 
   it("never leaves half an emoji in the quote, which Postgres jsonb refuses", () => {
@@ -700,6 +694,46 @@ describe("transcriptExtraction", () => {
     });
     // Typed, the model's status stands.
     expect(transcriptExtraction({ id: "m1", text: "15 people" }, meta).statuses?.employee_count).toBe("confirmed");
+  });
+});
+
+// A spoken answer through the merge (US-2.3b, D33): what the Chamber stores from a voice call's extraction.
+describe("merging a spoken answer", () => {
+  const spoken = (id: string, text: string) => ({ id, text, spoken: true });
+  const confirmedBy = (field: string, value: unknown) => ({ field_status: { [field]: "confirmed" }, evidence: { [field]: String(value) } });
+
+  it("stores what the model called confirmed as inferred, citing the spoken message, so it waits as 'Please confirm'", () => {
+    const next = applyExtraction(EMPTY, { employee_count: 15 }, { ...transcriptExtraction(spoken("v1", "fifteen people"), confirmedBy("employee_count", "fifteen people")), now: NOW });
+    expect(next.data.employee_count).toBe(15);
+    expect(next.provenance.employee_count).toEqual({
+      status: "inferred",
+      source: { kind: "transcript", message_id: "v1", quote: "fifteen people" },
+      updated_at: NOW.toISOString(),
+    });
+    expect(fieldOpenItems(next.provenance)).toEqual([{ field: "employee_count", label: FIELD_LABELS.employee_count, reason: "Please confirm" }]);
+  });
+
+  it("isn't confirmed by being said again, but is when the prospect types it or confirms it", () => {
+    const heard = applyExtraction(EMPTY, { employee_count: 15 }, transcriptExtraction(spoken("v1", "fifteen"), confirmedBy("employee_count", "fifteen")));
+    const again = applyExtraction(heard, { employee_count: 15 }, transcriptExtraction(spoken("v2", "yes, fifteen"), confirmedBy("employee_count", "yes, fifteen")));
+    expect(again.provenance.employee_count?.status).toBe("inferred");
+    const typed = applyExtraction(again, { employee_count: 15 }, transcriptExtraction({ id: "m3", text: "15" }, confirmedBy("employee_count", "15")));
+    expect(typed.provenance.employee_count?.status).toBe("confirmed");
+    expect(applyFieldAction(again, { type: "confirm", field: "employee_count" }).provenance.employee_count?.status).toBe("confirmed");
+  });
+
+  it("never lowers an answer the prospect already typed and confirmed when they say it again", () => {
+    const typed = applyExtraction(EMPTY, { pay_frequency: "weekly" }, transcriptExtraction({ id: "m1", text: "weekly" }, confirmedBy("pay_frequency", "weekly")));
+    const said = applyExtraction(typed, { pay_frequency: "weekly" }, transcriptExtraction(spoken("v2", "weekly"), confirmedBy("pay_frequency", "weekly")));
+    expect(said.provenance.pay_frequency?.status).toBe("confirmed");
+  });
+
+  it("puts a typed answer and a different spoken one in conflict, for the prospect to choose (GLOSSARY.md, Field source)", () => {
+    const typed = applyExtraction(EMPTY, { company_name: "Quill & Ink Bindery LLC" }, transcriptExtraction({ id: "m1", text: "Quill & Ink Bindery LLC" }, confirmedBy("company_name", "Quill & Ink Bindery LLC")));
+    const said = applyExtraction(typed, { company_name: "Quill and Ink Bindery" }, transcriptExtraction(spoken("v2", "Quill and Ink Bindery"), confirmedBy("company_name", "Quill and Ink Bindery")));
+    expect(said.data.company_name).toBe("Quill & Ink Bindery LLC");
+    expect(said.provenance.company_name?.status).toBe("conflicting");
+    expect(said.provenance.company_name?.candidates?.map((c) => c.value)).toEqual(["Quill & Ink Bindery LLC", "Quill and Ink Bindery"]);
   });
 });
 
