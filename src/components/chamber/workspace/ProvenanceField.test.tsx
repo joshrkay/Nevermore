@@ -1,11 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { applyExtraction, applyFieldAction, type IntakeState } from "@/data/provenance";
+import { applyExtraction, applyFieldAction, type FieldProvenance, type IntakeState } from "@/data/provenance";
 import CompanyTab from "./CompanyTab";
 import ProvenanceField from "./ProvenanceField";
 import ReviewTab from "./ReviewTab";
+import { VerifiedFieldsContext } from "./verifiedFields";
 
 const inferred = applyExtraction(
   { data: EMPTY_CHAMBER_DATA, provenance: {} },
@@ -138,3 +139,81 @@ describe("required answers", () => {
   });
 });
 
+
+// B-2.1: an advisor's verification settles a field for the prospect too, and a value Lenore heard from another
+// source (the ladder's loser, B-1.2) is shown beside the one kept.
+describe("advisor verification and what else was heard", () => {
+  const at = "2026-05-01T00:00:00Z";
+  const said = { kind: "transcript" as const, message_id: "m1", quote: "about 40 of us" };
+  const register = { kind: "document" as const, document_id: "d1", document_name: "Payroll.xlsx" };
+  const entry = (over: Partial<FieldProvenance> = {}): FieldProvenance => ({ status: "inferred", source: said, updated_at: at, ...over });
+
+  // `onAction: null` renders the row read-only, as the demo does.
+  const field = (provenance: FieldProvenance, { verified = [] as string[], onAction = vi.fn() as ((a: never) => void) | null } = {}) =>
+    render(
+      <VerifiedFieldsContext.Provider value={new Set(verified)}>
+        <ProvenanceField label="Employee Count" field="employee_count" display="40" raw={40} provenance={provenance} onAction={onAction ?? undefined} />
+      </VerifiedFieldsContext.Provider>,
+    );
+
+  it("shows 'Verified by your advisor' in place of the please-confirm badge, with nothing left to confirm", () => {
+    field(entry(), { verified: ["employee_count"] });
+    expect(screen.getByText("Verified by your advisor")).toBeInTheDocument();
+    expect(screen.queryByText("Lenore captured this — please confirm")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm Employee Count" })).not.toBeInTheDocument();
+    // The prospect can still change it.
+    expect(screen.getByRole("button", { name: "Edit Employee Count" })).toBeInTheDocument();
+  });
+
+  it("settles an incomplete answer the same way", () => {
+    field(entry({ status: "incomplete" }), { verified: ["employee_count"] });
+    expect(screen.getByText("Verified by your advisor")).toBeInTheDocument();
+    expect(screen.queryByText("Incomplete")).not.toBeInTheDocument();
+  });
+
+  it("doesn't offer the rival answers of a conflict the advisor settled", () => {
+    field(
+      entry({ status: "conflicting", candidates: [{ value: 40, source: said }, { value: 45, source: register }] }),
+      { verified: ["employee_count"] },
+    );
+    expect(screen.getByText("Verified by your advisor")).toBeInTheDocument();
+    expect(screen.queryByText("Conflicting answers")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Answers for Employee Count" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Use / })).not.toBeInTheDocument();
+  });
+
+  it("keeps what the prospect already confirmed, and every field the advisor hasn't verified", () => {
+    const { unmount } = field(entry({ status: "confirmed", source: { kind: "prospect_edit" } }), { verified: ["employee_count"] });
+    expect(screen.getByText("Confirmed by you")).toBeInTheDocument();
+    expect(screen.queryByText("Verified by your advisor")).not.toBeInTheDocument();
+    unmount();
+    field(entry(), { verified: ["company_name"] });
+    expect(screen.getByText("Lenore captured this — please confirm")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm Employee Count" })).toBeInTheDocument();
+  });
+
+  it("lists what else was heard, from the conversation or a document, beside the answer kept", () => {
+    field(entry({ also_heard: [{ value: 45, source: register }, { value: 38, source: { ...said, quote: "closer to 38" } }] }));
+    expect(screen.getByText("Also heard: 45 — From Payroll.xlsx")).toBeInTheDocument();
+    expect(screen.getByText("Also heard: 38 — From your message: “closer to 38”")).toBeInTheDocument();
+  });
+
+  it("says nothing about what else was heard when there is none, or in a read-only view", () => {
+    const { unmount } = field(entry());
+    expect(screen.queryByText(/Also heard/)).not.toBeInTheDocument();
+    unmount();
+    field(entry({ also_heard: [{ value: 45, source: register }] }), { onAction: null });
+    expect(screen.queryByText(/Also heard/)).not.toBeInTheDocument();
+  });
+
+  it("drops the also-heard note once the prospect confirms the answer", () => {
+    const heard: IntakeState = {
+      data: inferred.data,
+      provenance: { ...inferred.provenance, employee_count: { ...inferred.provenance.employee_count!, also_heard: [{ value: 45, source: register }] } },
+    };
+    render(<Harness initial={heard} tab="company" />);
+    expect(screen.getByText("Also heard: 45 — From Payroll.xlsx")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Employee Count" }));
+    expect(screen.queryByText(/Also heard/)).not.toBeInTheDocument();
+  });
+});

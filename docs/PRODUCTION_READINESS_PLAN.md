@@ -370,7 +370,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Notes:**
   - **No server-side enforcement, by decision.** Every AI value reaches the database through the prospect's own browser, which can already save any value as the prospect's own edit, so a database check of provenance or precedence would stop nothing the prospect couldn't do anyway. That part of v1.0's AC is dropped for good, not deferred. The database validates the answers themselves (A-2.2).
   - There is no `system` rung: nothing writes a system value.
-  - `also_heard` is stored only. Showing it in the workspace and the advisor view is B-2.1's.
+  - `also_heard` is stored by this story and shown by B-2.1: under the answer in the workspace and in the advisor's field row.
   - `scripts/extraction-eval` drives chat only, so its scoring is unchanged, except that its forbidden-digits check now also scans `also_heard`. The prompt did not change, so neither did `PROMPT_VERSION`.
 - *Revised scope, AC and tests:*
   - **Scope:** One precedence ladder in the browser's merge: prospect edit, then document, then chat. A value that loses is kept on the field as a note rather than discarded or raised as a conflict, and values of the same rank still conflict. No AI value reaches the intake except through the merge.
@@ -412,6 +412,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** FE · **Depends:** B-1.2 · **Milestone:** M2
 - **Built:** Status badges, Confirm and Edit/Add controls, conflict candidates with 'Use this', and a 'Needs your review' list in the Review tab. Confirm sets source `prospect_edit`. Tested (`ProvenanceField.test.tsx`).
 - **Notes:** Since 2026-11-04 the copy is the plan's: 'Lenore captured this — please confirm' with a Confirm button, and a value the prospect confirmed or typed is badged 'Confirmed by you', apart from one Lenore heard stated outright ('Confirmed'). Since 2026-11-04 a required answer in conflict can't be certified until one value is chosen (C-1.3), so a conflicting required value never reaches The Manuscript as a certified fact.
+- **Notes (verified and also heard):** A field an advisor verified shows 'Verified by your advisor' in place of the please-confirm, incomplete or conflicting badge, with no Confirm button and no rival answers; Edit stays, and a prospect-confirmed answer keeps its 'Confirmed' badge (`VerifiedFieldsContext`, provided by `LiveWorkspace`, so every tab's rows read the set `session_verified_fields` loaded). Each `also_heard` note shows under the answer as 'Also heard: <value> — <source>' in the workspace and in the advisor's field row (`FieldReviewPanel`); not in The Manuscript or its PDF, and it goes when the prospect confirms or edits. Tested in `ProvenanceField.test.tsx`, `LiveWorkspace.test.tsx` and `FieldReviewPanel.test.tsx`.
 
 #### B-2.2 Derive open items from the schema
 - **Status:** **DONE** · **Size:** S · **Priority:** High · **Owner:** BE · **Depends:** B-1.2, A-2.1 · **Milestone:** M1

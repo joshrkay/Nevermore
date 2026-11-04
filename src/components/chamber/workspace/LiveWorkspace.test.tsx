@@ -158,4 +158,24 @@ describe("LiveWorkspace", () => {
     rerender(mount(new Set(["company_name"])));
     expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
   });
+
+  it("badges a field the advisor verified as such, wherever it is shown", () => {
+    const provenance: ProvenanceMap = {
+      company_name: { status: "inferred", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-03T12:00:00Z" },
+    };
+    const mount = (verified?: ReadonlySet<string>) => (
+      <MemoryRouter>
+        <LiveWorkspace data={{ ...DEMO_CHAMBER_DATA, company_name: "Acme Bindery" }} isDemo={false} sessionId="s1" onSubmit={async () => true} provenance={provenance} verified={verified} onFieldAction={() => {}} />
+      </MemoryRouter>
+    );
+    const { rerender } = render(mount());
+    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    expect(screen.queryByText("Verified by your advisor")).not.toBeInTheDocument();
+    // Listed under Needs your review and in the Company section.
+    expect(screen.getAllByRole("button", { name: /^Confirm / })).toHaveLength(2);
+    rerender(mount(new Set(["company_name"])));
+    // Settled, so it is no longer listed for review, and the Company section's row carries the badge.
+    expect(screen.getAllByText("Verified by your advisor")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /^Confirm / })).not.toBeInTheDocument();
+  });
 });

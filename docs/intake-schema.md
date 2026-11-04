@@ -295,9 +295,13 @@ Every AI value reaches the intake through `applyExtraction`: a chat reply (`useL
 
 These rules run in the browser, and the database checks only that `field_provenance` is an object. That is by design: every AI value reaches the database through the prospect's own browser, which can already save any value as the prospect's own edit, so a database check of precedence would stop nothing.
 
+#### Advisor verification in the workspace
+
+A field an advisor verified (`public.session_verified_fields`) is settled for the prospect too. In place of "Lenore captured this — please confirm", "Incomplete" or "Conflicting answers" the row shows "Verified by your advisor", with no Confirm button and no rival answers to choose between; Edit stays. An answer the prospect already confirmed keeps "Confirmed" or "Confirmed by you", and `unknown` and `not_applicable` fields are unchanged. The set reaches every field row through `VerifiedFieldsContext` (`src/components/chamber/workspace/verifiedFields.ts`), provided by `LiveWorkspace`.
+
 #### Also heard
 
-`also_heard` is a list of `{ value, source }`, the same shape as a candidate. It is a note, not a choice: it never changes the status or adds an open item. It holds at most 5 entries, newest last, one per value (a value heard again moves to the end, keeping the higher-ranked of the sources that gave it, or the latest if they rank the same), and never the field's current value. It is only stored for now; the workspace and the advisor view don't show it yet. Entries saved before it existed have none, and a malformed note is dropped without losing the rest of the entry.
+`also_heard` is a list of `{ value, source }`, the same shape as a candidate. It is a note, not a choice: it never changes the status or adds an open item. It holds at most 5 entries, newest last, one per value (a value heard again moves to the end, keeping the higher-ranked of the sources that gave it, or the latest if they rank the same), and never the field's current value. The prospect sees each entry under the answer as "Also heard: <value> — <where it came from>" (in the Review tab and the other workspace tabs, not in a read-only view), and the advisor sees it in the field row; neither The Manuscript nor its PDF shows it. It goes when the prospect confirms or edits the answer. Entries saved before it existed have none, and a malformed note is dropped without losing the rest of the entry.
 
 ### Extraction contract (`chamber-extract`)
 

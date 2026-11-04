@@ -140,6 +140,11 @@ const FieldRow = ({
             Conflicting answers: {prov.candidates.map((c) => formatFieldValue(c.value)).join(" vs ")}
           </p>
         )}
+        {prov?.also_heard?.map((heard, i) => (
+          <p key={i} className="text-xs text-muted-foreground mt-1">
+            {`Also heard: ${formatFieldValue(heard.value)} — ${describeSource(heard.source)}`}
+          </p>
+        ))}
       </div>
 
       <div>

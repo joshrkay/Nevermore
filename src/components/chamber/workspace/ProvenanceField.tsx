@@ -12,6 +12,7 @@ import {
   type FieldSource,
 } from "@/data/provenance";
 import { isRequiredField } from "@/data/readiness";
+import { useVerifiedFields } from "./verifiedFields";
 
 const BADGES: Record<FieldProvenance["status"], { text: string; color: string }> = {
   confirmed: { text: "Confirmed", color: "bg-success/15 text-success" },
@@ -21,6 +22,10 @@ const BADGES: Record<FieldProvenance["status"], { text: string; color: string }>
   unknown: { text: "Not known yet", color: "border border-warning/50 text-warning" },
   not_applicable: { text: "Doesn't apply", color: "bg-muted text-muted-foreground" },
 };
+
+// An advisor verified an answer the prospect hadn't confirmed: it is settled, so no badge asks for a confirmation
+// and there are no rival answers to choose between (the Manuscript shows it the same way).
+const VERIFIED_BADGE = { text: "Verified by your advisor", color: "bg-success/15 text-success" };
 
 // Statuses that close or park a field without an answer.
 const NO_ANSWER_STATUSES: ReadonlySet<FieldProvenance["status"]> = new Set(["unknown", "not_applicable"]);
@@ -94,9 +99,13 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
   };
 
   const status = provenance?.status;
+  const verifiedByAdvisor = useVerifiedFields().has(field);
+  const settledByAdvisor = verifiedByAdvisor && (status === "inferred" || status === "incomplete" || status === "conflicting");
   // A value the prospect confirmed or typed says so, apart from one Lenore heard stated outright (B-2).
   const badge = onAction && status
-    ? status === "confirmed" && provenance?.source.kind === "prospect_edit" ? { ...BADGES.confirmed, text: "Confirmed by you" } : BADGES[status]
+    ? settledByAdvisor
+      ? VERIFIED_BADGE
+      : status === "confirmed" && provenance?.source.kind === "prospect_edit" ? { ...BADGES.confirmed, text: "Confirmed by you" } : BADGES[status]
     : null;
 
   return (
@@ -169,7 +178,13 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
         <p className="text-[10px] text-muted-foreground mt-0.5 break-words">{sourceLine(provenance.source)}</p>
       )}
 
-      {!editing && onAction && status === "conflicting" && provenance?.candidates && (
+      {!editing && onAction && display && provenance?.also_heard?.map((heard, i) => (
+        <p key={i} className="text-[10px] text-muted-foreground mt-0.5 break-words">
+          {`Also heard: ${formatFieldValue(heard.value)} — ${sourceLine(heard.source)}`}
+        </p>
+      ))}
+
+      {!editing && onAction && status === "conflicting" && !settledByAdvisor && provenance?.candidates && (
         <ul className="mt-1 space-y-1" aria-label={`Answers for ${label}`}>
           {provenance.candidates.map((c, i) => (
             <li key={i} className="flex items-center gap-2 text-xs">
@@ -190,7 +205,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
 
       {!editing && onAction && (
         <div className="flex gap-2 mt-1">
-          {display && (status === "inferred" || status === "incomplete") && (
+          {display && !settledByAdvisor && (status === "inferred" || status === "incomplete") && (
             <button
               type="button"
               onClick={() => onAction({ type: "confirm", field })}
