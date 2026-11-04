@@ -82,6 +82,7 @@
 \i supabase/migrations/20261104120000_submission_records.sql
 \i supabase/migrations/20261104121000_voice_failed_ops_kind.sql
 \i supabase/migrations/20261104122000_pipeline_transitions.sql
+\i supabase/migrations/20261104131000_needs_advisor_action.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -667,13 +668,15 @@ INSERT INTO callable VALUES
   ('ai_event_names_ok(names text[], paths boolean)', 'helper', NULL, 'pure: the AI call records'' check constraint'),
   ('intake_accepts_files(p_session text)',     'helper',  NULL, 'the upload policies call it as the uploader; answers only whether an intake exists with no deletion open (and holds the row against one)'),
   ('ops_alert_rules()',                        'helper',  NULL, 'constants: the alert thresholds'),
-  ('advisor_list_submissions(p_status text, p_search text, p_limit integer, p_offset integer)', 'advisor',
-                                                                     'SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 25, 0)', 'the queue: one page, searched'),
+  ('advisor_list_submissions(p_status text, p_search text, p_limit integer, p_offset integer, p_needs_action boolean)', 'advisor',
+                                                                     'SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 25, 0, true)', 'the queue: one page, searched, filtered'),
   ('advisor_email_problems()',                 'advisor', 'SELECT count(*) FROM public.advisor_email_problems()', 'email problems on the queue'),
   ('advisor_list_outbox_events(p_status text, p_limit integer)', 'advisor', 'SELECT count(*) FROM public.advisor_list_outbox_events(NULL, 10)', 'the outbox page'),
   ('advisor_outbox_summary()',                 'advisor', 'SELECT count(*) FROM public.advisor_outbox_summary()', 'the outbox page'),
   ('advisor_requeue_outbox_event(event_id uuid, rebuild_payload boolean)', 'advisor', 'SELECT public.advisor_requeue_outbox_event(%2$L, false)', 'retrying a dead email'),
   ('set_submission_status(p_session_id uuid, p_status text, p_note text)', 'advisor', 'SELECT public.set_submission_status(%1$L, ''information_requested'', ''probe'')', 'the pipeline'),
+  ('set_submission_needs_action(p_session_id uuid, p_needs_action boolean, p_note text)', 'advisor',
+                                                                     'SELECT public.set_submission_needs_action(%1$L, true, ''probe'')', 'needs advisor action'),
   ('review_submission_field(p_session_id uuid, p_field text, p_review_state text, p_correction text, p_value jsonb, p_reason text, p_answer jsonb)', 'advisor',
                                                                      'SELECT public.review_submission_field(%1$L, ''company_name'', ''flagged'')', 'field review'),
   ('record_manuscript_version(p_session_id uuid, p_version integer, p_storage_path text, p_pdf_sha256 text, p_review_event_id bigint, p_corrections_applied integer, p_sensitive_revealed boolean, p_certified_data_hash text, p_certified_at timestamp with time zone)', 'advisor',

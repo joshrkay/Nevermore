@@ -33,6 +33,9 @@ US-5.3 asks for. Who may open what is in `docs/ADVISOR_ACCESS.md`, and the terms
   names for the current one (`docs/ADVISOR_ACCESS.md`). The system makes two moves itself. Certifying moves a draft
   to `submitted`. A withdrawn certification moves `submitted` back to `draft`, but only while no
   advisor has moved it on.
+- **Advisors mark what needs action.** Any submission can be marked "Needs advisor action" with a
+  note, through `set_submission_needs_action()`; the queue shows it and can list only those. It is
+  recorded in the status history and never shown to the prospect.
 - **Advisors own notes.** Notes are internal, can't be edited or deleted, and prospects never see
   them.
 - **Every Submission is worked.** There is no qualifying step; the status is the team's triage.

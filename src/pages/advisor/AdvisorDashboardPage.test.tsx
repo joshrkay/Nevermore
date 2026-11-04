@@ -16,7 +16,7 @@ vi.mock("@/lib/advisorApi", () => ({
   },
   listEmailProblems: () => listEmailProblems(),
 }));
-const query = (over: Record<string, unknown> = {}) => ({ status: null, search: "", page: 1, ...over });
+const query = (over: Record<string, unknown> = {}) => ({ status: null, search: "", page: 1, needsAction: false, ...over });
 
 const { default: AdvisorDashboardPage } = await import("./AdvisorDashboardPage");
 
@@ -37,6 +37,8 @@ const row = (over: Partial<SubmissionSummary> = {}): SubmissionSummary => ({
   verified_fields: 0,
   file_id: "EAA-2026-ACME0001",
   states: ["CA", "NY"],
+  needs_action: false,
+  needs_action_note: null,
   total_count: 1,
   ...over,
 });
@@ -222,6 +224,45 @@ describe("AdvisorDashboardPage", () => {
     renderAt("/advisor?status=information_requested");
     expect(await screen.findByText("No submissions are information requested.")).toBeInTheDocument();
     expect(listSubmissions).toHaveBeenCalledWith(query({ status: "information_requested" }));
+  });
+
+  it("marks a submission that needs advisor action on its row, with the advisor's note", async () => {
+    listSubmissions.mockResolvedValue([
+      row({ session_id: "s1", needs_action: true, needs_action_note: "Call the CFO about payroll" }),
+      row({ session_id: "s2", company_name: "Beta" }),
+    ]);
+    renderAt();
+    await screen.findByRole("link", { name: "Acme" });
+    const marked = screen.getByTestId("needs-action-s1");
+    expect(marked).toHaveTextContent("Needs advisor action");
+    expect(marked).toHaveTextContent("Call the CFO about payroll");
+    expect(screen.queryByTestId("needs-action-s2")).not.toBeInTheDocument();
+  });
+
+  it("lists only the submissions that need advisor action, alone or with a status, and says when there are none", async () => {
+    listSubmissions.mockResolvedValue([row({ needs_action: true })]);
+    renderAt("/advisor?status=under_review");
+    await screen.findByRole("link", { name: "Acme" });
+    const toggle = screen.getByRole("checkbox", { name: "Needs advisor action only" });
+    expect(toggle).not.toBeChecked();
+
+    listSubmissions.mockResolvedValue([]);
+    fireEvent.click(toggle);
+    expect(await screen.findByText("No under review submissions that need advisor action.")).toBeInTheDocument();
+    expect(listSubmissions).toHaveBeenLastCalledWith(query({ status: "under_review", needsAction: true }));
+    expect(screen.getByRole("checkbox", { name: "Needs advisor action only" })).toBeChecked();
+
+    listSubmissions.mockResolvedValue([row()]);
+    fireEvent.click(screen.getByRole("button", { name: "Show all submissions" }));
+    expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+    expect(listSubmissions).toHaveBeenLastCalledWith(query());
+  });
+
+  it("reads the needs-action filter from the URL", async () => {
+    listSubmissions.mockResolvedValue([]);
+    renderAt("/advisor?action=1");
+    expect(await screen.findByText("No submissions that need advisor action.")).toBeInTheDocument();
+    expect(listSubmissions).toHaveBeenCalledWith(query({ needsAction: true }));
   });
 
   describe("search", () => {

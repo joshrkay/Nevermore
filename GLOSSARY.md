@@ -67,6 +67,10 @@ _Avoid_: requirement, open item
 A field an advisor has marked as needing more from the prospect. It belongs to the advisor's review, not to the prospect's open items.
 _Avoid_: open item, flag
 
+**Needs advisor action**:
+A submission an advisor has marked because someone on the team has to act on it, with an optional note saying what. It shows on the queue, which can list only these, until an advisor clears it, and stays through pipeline stage changes. It belongs to the whole submission, where an advisor follow-up belongs to one field, and the prospect never sees it.
+_Avoid_: flag, flagged, follow-up flag
+
 ### Talking with Lenore
 
 **Transcript**:

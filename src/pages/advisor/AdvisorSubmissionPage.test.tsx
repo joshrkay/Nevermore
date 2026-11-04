@@ -14,6 +14,7 @@ const api = {
   loadSubmission: vi.fn(),
   listEmailProblems: vi.fn(),
   setStatus: vi.fn(),
+  setNeedsAction: vi.fn(),
   addNote: vi.fn(),
   reviewField: vi.fn(),
   saveManuscriptVersion: vi.fn(),
@@ -36,6 +37,7 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   fileId: "EAA-2026-S1",
   intakeStatus: "submitted",
   pipelineStatus: "submitted",
+  needsAction: { on: false, note: null, at: null, by: null, byEmail: null },
   createdAt: "2026-10-01T00:00:00Z",
   updatedAt: "2026-10-01T00:00:00Z",
   data: signedData,
@@ -260,6 +262,39 @@ describe("AdvisorSubmissionPage", () => {
     const panel = (await screen.findByRole("heading", { name: "Status" })).closest("section")!;
     expect(within(panel).getByLabelText("Change status to")).toHaveValue("information_requested");
     expect(within(panel).getByText(/once they certify again: “Received\. An advisor will review your submission\.”/)).toBeInTheDocument();
+  });
+
+  it("marks the submission as needing advisor action, with a note", async () => {
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Needs advisor action" })).closest("section")!;
+    expect(within(panel).getByText(/the prospect never sees it/)).toBeInTheDocument();
+    fireEvent.change(within(panel).getByLabelText("What needs doing (optional)"), { target: { value: "Call the CFO" } });
+    api.setNeedsAction.mockResolvedValue(undefined);
+    fireEvent.click(within(panel).getByRole("button", { name: "Mark as needing advisor action" }));
+    await waitFor(() => expect(api.setNeedsAction).toHaveBeenCalledWith("s1", true, "Call the CFO"));
+    await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows who marked it and why, at the top and in its panel, and clears it", async () => {
+    api.loadSubmission.mockResolvedValue(
+      detail({ needsAction: { on: true, note: "Call the CFO", at: "2026-10-02T12:00:00Z", by: "a1", byEmail: "adv@example.com" } }),
+    );
+    renderPage();
+    const heading = await screen.findByRole("heading", { level: 1, name: "Signed Co" });
+    expect(heading.parentElement).toHaveTextContent("Needs advisor action");
+    const panel = screen.getByRole("heading", { name: "Needs advisor action" }).closest("section")!;
+    expect(within(panel).getByText("Call the CFO")).toBeInTheDocument();
+    expect(within(panel).getByText(/Marked by adv@example\.com/)).toBeInTheDocument();
+    fireEvent.change(within(panel).getByLabelText("What was done (optional)"), { target: { value: "Spoke to the CFO" } });
+    api.setNeedsAction.mockResolvedValue(undefined);
+    fireEvent.click(within(panel).getByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(api.setNeedsAction).toHaveBeenCalledWith("s1", false, "Spoke to the CFO"));
+  });
+
+  it("doesn't show the needs-action badge on a submission nobody marked", async () => {
+    renderPage();
+    const heading = await screen.findByRole("heading", { level: 1, name: "Signed Co" });
+    expect(heading.parentElement).not.toHaveTextContent("Needs advisor action");
   });
 
   it("shows a history row that kept the status as the status and its note, not a change", async () => {

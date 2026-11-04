@@ -70,16 +70,23 @@ export interface SubmissionPage {
 }
 
 /**
- * One page of the queue, filtered by status and searched (every word must appear in the company,
- * contact or reference) in the database. Pages count from 1.
+ * One page of the queue, filtered by status (and, with `needsAction`, to the submissions that need advisor
+ * action) and searched (every word must appear in the company, contact or reference) in the database.
+ * Pages count from 1.
  */
-export async function listSubmissions(opts: { status: PipelineStatus | null; search?: string; page?: number }): Promise<SubmissionPage> {
+export async function listSubmissions(opts: {
+  status: PipelineStatus | null;
+  search?: string;
+  page?: number;
+  needsAction?: boolean;
+}): Promise<SubmissionPage> {
   const page = Math.max(1, Math.floor(opts.page ?? 1));
   const { data, error } = await supabase.rpc("advisor_list_submissions", {
     p_status: opts.status,
     p_search: opts.search?.trim() || null,
     p_limit: QUEUE_PAGE_SIZE,
     p_offset: (page - 1) * QUEUE_PAGE_SIZE,
+    p_needs_action: opts.needsAction ? true : null,
   });
   if (error) fail(error, "Couldn't load submissions.");
   const rows = data ?? [];
@@ -128,6 +135,15 @@ export async function requeueOutboxEvent(eventId: string, rebuild: boolean): Pro
   return data === true;
 }
 
+/** Whether an advisor marked the submission as needing advisor action, why, and who last raised or cleared it. */
+export interface NeedsAction {
+  on: boolean;
+  note: string | null;
+  at: string | null;
+  by: string | null;
+  byEmail: string | null;
+}
+
 export interface SubmissionDetail {
   id: string;
   userId: string;
@@ -135,6 +151,7 @@ export interface SubmissionDetail {
   fileId: string | null;
   intakeStatus: string;
   pipelineStatus: PipelineStatus;
+  needsAction: NeedsAction;
   createdAt: string;
   updatedAt: string;
   /** The values as the prospect certified them (or as saved, if not certified). */
@@ -177,7 +194,11 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
       .select("id, user_id, chamber_data, field_provenance, transcript, status, submission, created_at, updated_at, file_id")
       .eq("id", id)
       .maybeSingle(),
-    supabase.from("submission_workflow").select("status").eq("session_id", id).maybeSingle(),
+    supabase
+      .from("submission_workflow")
+      .select("status, needs_action, needs_action_note, needs_action_at, needs_action_by, needs_action_by_email")
+      .eq("session_id", id)
+      .maybeSingle(),
     supabase.from("submission_status_history").select("*").eq("session_id", id).order("id", { ascending: false }),
     supabase.from("advisor_notes").select("*").eq("session_id", id).order("created_at", { ascending: false }),
     supabase.from("advisor_field_reviews").select("*").eq("session_id", id),
@@ -218,6 +239,13 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     fileId: row.file_id ?? submission?.file_id ?? null,
     intakeStatus: row.status,
     pipelineStatus: isPipelineStatus(workflow.data.status) ? workflow.data.status : "draft",
+    needsAction: {
+      on: workflow.data.needs_action === true,
+      note: workflow.data.needs_action_note ?? null,
+      at: workflow.data.needs_action_at ?? null,
+      by: workflow.data.needs_action_by ?? null,
+      byEmail: workflow.data.needs_action_by_email ?? null,
+    },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     data: parseChamberData(shown),
@@ -253,6 +281,19 @@ export async function setStatus(sessionId: string, status: PipelineStatus, note:
     p_note: note.trim() || null,
   });
   if (error) fail(error, "Couldn't change the status.");
+}
+
+/**
+ * Marks a submission as needing advisor action, with an optional note, or clears it. The database records
+ * each change in the status history at the current stage.
+ */
+export async function setNeedsAction(sessionId: string, needsAction: boolean, note: string): Promise<void> {
+  const { error } = await supabase.rpc("set_submission_needs_action", {
+    p_session_id: sessionId,
+    p_needs_action: needsAction,
+    p_note: note.trim() || null,
+  });
+  if (error) fail(error, needsAction ? "Couldn't mark this submission." : "Couldn't clear the mark.");
 }
 
 export async function addNote(sessionId: string, body: string): Promise<void> {
