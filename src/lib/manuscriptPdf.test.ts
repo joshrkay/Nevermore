@@ -162,6 +162,16 @@ describe("buildManuscriptPdf", () => {
     expect(text.match(/unresolved/g)).toHaveLength(4);
   });
 
+  it("marks a packet whose certification was withdrawn, and only that one", async () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: FILE_ID, submission });
+    const text = await readPdf(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false, withdrawn: true }).blob);
+    expect(text).toContain("Withdrawn Underwriting Packet");
+    expect(text).toContain("Certification withdrawn");
+    const current = await readPdf(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob);
+    expect(current).toContain("Certified Underwriting Packet");
+    expect(current).not.toContain("withdrawn");
+  });
+
   it("labels a sample packet as fictional", async () => {
     const { text } = await render(DEMO_CHAMBER_DATA, { sample: true }, null);
     expect(text).toContain("sample manuscript built from fictional data");

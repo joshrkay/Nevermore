@@ -65,7 +65,11 @@ describe("ManuscriptPage", () => {
     expect(screen.getByRole("link", { name: "Go to The Chamber" })).toHaveAttribute("href", "/start");
   });
 
-  it("says the certification no longer applies when the information changed after it", async () => {
+  // What the database leaves behind when a signed intake is edited: the status is back to in progress,
+  // the draft holds the new answers, and the signed snapshot is still on the submission.
+  it("still shows the packet as signed after the answers changed, marked as withdrawn, never the draft", async () => {
+    vi.mocked(buildManuscriptPdf).mockClear();
+    downloadBlob.mockClear();
     row = {
       chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Edited Later Inc" },
       submission: {
@@ -79,9 +83,30 @@ describe("ManuscriptPage", () => {
       created_at: "2026-05-01T00:00:00Z",
     };
     renderAt("/manuscript?session=s1");
+    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(screen.getAllByText(/Signed Co/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Edited Later Inc/)).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/changed your answers after certifying/);
+    expect(screen.getByText(/Withdrawn Underwriting Packet/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Back to The Chamber/ })).toHaveAttribute("href", "/start?session=s1");
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Download The Manuscript \(PDF\)/ })[0]);
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(buildManuscriptPdf).mock.calls[0][1]).toMatchObject({ withdrawn: true });
+    expect(vi.mocked(buildManuscriptPdf).mock.calls[0][0].companyName).toBe("Signed Co");
+  });
+
+  it("asks for a new certification when an edited submission has no stored snapshot to show", async () => {
+    row = {
+      chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Edited Later Inc" },
+      submission: { signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-2026-ABC" },
+      status: "in_progress",
+      created_at: "2026-05-01T00:00:00Z",
+    };
+    renderAt("/manuscript?session=s1");
     expect(await screen.findByText(/changed after you certified it/)).toBeInTheDocument();
     expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Back to The Chamber/ })).toHaveAttribute("href", "/start?session=s1");
+    expect(screen.queryByText(/Edited Later Inc/)).not.toBeInTheDocument();
   });
 
   it("renders the data as signed, not later edits", async () => {
@@ -102,6 +127,7 @@ describe("ManuscriptPage", () => {
     expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
     expect(screen.getAllByText(/Signed Co/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Edited Later Inc/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     // The packet is prepared for the PEO the prospect chose; nothing says it was submitted to them.
     expect(screen.getByText("PREPARED FOR").parentElement).toHaveTextContent("PREPARED FORJustworks");
   });

@@ -6,6 +6,8 @@ export interface ManuscriptPdfOptions {
   revealSensitive?: boolean;
   /** Marks the packet as a sample built from fictional data. */
   sample?: boolean;
+  /** Marks a packet whose certification was withdrawn because the answers changed after signing. */
+  withdrawn?: boolean;
   /** When the PDF is generated; printed in the footer. Defaults to now. */
   generatedOn?: Date;
   /** Compress page streams. Tests turn this off so the text can be read back. */
@@ -211,11 +213,16 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   y += 11;
   font("normal", 9);
   setInk(MUTED);
-  pdf.text(pdfSafe(`Edgar Allan Advisory · ${opts.sample ? "Sample" : "Certified"} Underwriting Packet`), MARGIN, y + 3);
+  pdf.text(pdfSafe(`Edgar Allan Advisory · ${opts.sample ? "Sample" : opts.withdrawn ? "Withdrawn" : "Certified"} Underwriting Packet`), MARGIN, y + 3);
   y += 9;
 
   if (opts.sample) {
     paragraph("This is a sample manuscript built from fictional data.", 9, "bold", WARN, 3);
+  } else if (opts.withdrawn) {
+    paragraph(
+      "Certification withdrawn: the answers changed after this packet was signed. It shows them as signed; it is not a current certification.",
+      9, "bold", WARN, 3,
+    );
   }
 
   keyValues([
