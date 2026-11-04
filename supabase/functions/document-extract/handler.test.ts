@@ -52,7 +52,7 @@ const setup = (opts: Setup = {}) => {
   const updates: Record<string, unknown>[] = [];
   const events: Array<{ key: string; row: Record<string, unknown> }> = [];
   const doc = opts.doc === undefined
-    ? { id: DOC, user_id: USER, session_id: INTAKE, file_name: "benefits.pdf", storage_path: `${USER}/${INTAKE}/benefits.pdf`, size_bytes: 1000, status: "uploaded", category: "benefits_summary", file_sha256: null }
+    ? { id: DOC, user_id: USER, session_id: INTAKE, file_name: "benefits.pdf", storage_path: `${USER}/${INTAKE}/benefits.pdf`, size_bytes: 1000, status: "uploaded", category: "benefits_summary", file_sha256: null, scan_verdict: "clean" }
     : opts.doc;
   const queue = [...(opts.responses ?? [gatewayReply({ fields: [{ field: "current_carrier", value: "Pinnacle Mutual", section: 1 }] })])];
   const fetchFn = vi.fn(async () => {
@@ -180,9 +180,27 @@ describe("document-extract handler: the request", () => {
   });
 });
 
+describe("document-extract handler: files whose malware scan hasn't passed", () => {
+  it.each(["pending", "infected", "failed", undefined])("never reads a %s file, and leaves its row as it is", async (verdict) => {
+    const t = setup({ doc: { id: DOC, user_id: USER, session_id: INTAKE, file_name: "a.pdf", storage_path: "p", size_bytes: 10, status: "uploaded", category: "other", scan_verdict: verdict } });
+    const { status, body } = await read(await handleDocumentRequest(post({ document_id: DOC }), t.deps));
+    expect(status).toBe(409);
+    expect(body.code).toBe("not_found");
+    expect(t.steps).toEqual([]);
+    expect(t.updates).toEqual([]);
+    expect(t.event()).toMatchObject({ error_code: "not_found", document_id: DOC });
+  });
+
+  it("reads a file recorded as skipped (no scanner configured)", async () => {
+    const t = setup({ reader: readsACensus, doc: { id: DOC, user_id: USER, session_id: INTAKE, file_name: "c.csv", storage_path: "p", size_bytes: 10, category: "other", scan_verdict: "skipped" } });
+    expect((await handleDocumentRequest(post({ document_id: DOC }), t.deps)).status).toBe(200);
+    expect(t.steps).toContain("download");
+  });
+});
+
 describe("document-extract handler: reading", () => {
   it("reads a census by its headers without the model, spends no AI budget, and records the fields it proposes", async () => {
-    const t = setup({ reader: readsACensus, doc: { id: DOC, user_id: USER, session_id: INTAKE, file_name: "census.csv", storage_path: "p", size_bytes: 10, category: "other", file_sha256: null } });
+    const t = setup({ reader: readsACensus, doc: { id: DOC, user_id: USER, session_id: INTAKE, file_name: "census.csv", storage_path: "p", size_bytes: 10, category: "other", file_sha256: null, scan_verdict: "clean" } });
     const { status, body } = await read(await handleDocumentRequest(post({ document_id: DOC }), t.deps));
     expect(status).toBe(200);
     expect(body).toEqual({ status: "extracted", request_id: REQUEST });
@@ -216,7 +234,7 @@ describe("document-extract handler: reading", () => {
   });
 
   it("doesn't download a file that is too large to read", async () => {
-    const t = setup({ doc: { id: DOC, user_id: USER, session_id: INTAKE, file_name: "big.pdf", storage_path: "p", size_bytes: 50 * 1024 * 1024, category: "other" } });
+    const t = setup({ doc: { id: DOC, user_id: USER, session_id: INTAKE, file_name: "big.pdf", storage_path: "p", size_bytes: 50 * 1024 * 1024, category: "other", scan_verdict: "clean" } });
     const { body } = await read(await handleDocumentRequest(post({ document_id: DOC }), t.deps));
     expect(body.status).toBe("too_large");
     expect(t.steps).toEqual([]);

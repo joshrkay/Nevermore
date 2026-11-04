@@ -34,11 +34,13 @@ answers, file names, messages, addresses or links.
 | Kind | Recorded by | Codes you will see |
 |---|---|---|
 | `app_error` | The browser: the error boundary (`render_error`), uncaught errors (`window_error`), unhandled rejections (`unhandled_rejection`) | |
-| `upload_failed` | The browser: storage refusing a file (`storage_upload:<status>`; a 403 can also mean no consent, or a deletion is under way), the document row not saving (`record_insert:<sqlstate>`), a stored file or row not deleting (`storage_remove`, `record_delete:<sqlstate>`), `document-extract` never answering (`document_read_unreachable`, `document_read:<status>`) | |
+| `upload_failed` | The browser: `document-upload` failing to store a file (`document_upload:<code>`: `storage`, `internal`, `unavailable`, or `document_upload:<status>` / `document_upload:unreachable` when it never answered), a stored file or row not deleting (`storage_remove`, `record_delete:<sqlstate>`), `document-extract` never answering (`document_read_unreachable`, `document_read:<status>`). A refused file (wrong contents, a program, too large, a duplicate, the 25-file limit) or a closed intake is not a failure and isn't reported | |
 | `ai_failed` | Counted from `ai_extraction_events`, the record `chamber-extract` and `document-extract` keep of every call (US-2.4a, `docs/AI_OPERATIONS.md`), when the call failed on our side or the provider's (`<function>:<code>`: `chamber-extract:timeout`, `document-extract:provider_error`, `…:unavailable` for a provider that isn't set up or is out of credit, `…:invalid_response`, `…:internal`). Refusals (bad request, signed out, rate limit, daily cap) are not failures. Plus the browser when `chamber-extract` never answered (`chat_timeout`, `chat_unreachable`, `chat:<5xx>`) | |
 | `auth_denied` | The browser: a signed-in non-advisor on an advisor page (`advisor_route`), the database refusing an advisor read (`advisor_forbidden`) | |
 | `deletion_failed` | `fail_intake_deletion` when a deletion has used every attempt, and `claim_intake_deletions` when a worker died on the last one | `storage_remove:<status>`, `files_remain:<n>`, `rpc_files:<code>`, `rpc_complete:<code>`, `unexpected`, `worker_lost` |
 | `voice_failed` | The browser, when a voice call with Lenore (ElevenLabs) fails on our side or the service's (`src/hooks/useLenoreVoice.ts`, `docs/VOICE_ISSUES.md`). A microphone the prospect blocked or doesn't have is shown to them and not reported | `voice_connect_timeout` (no connection 15 seconds after the microphone was ready), `voice_connect_failed` (the connection was refused), `voice_dropped:<close code>` (a call under way closed with an error), `voice_error` (the service reported an error during a call that carried on) |
+| `malware_detected` | `record_document_scan` (from `document-upload` or `document-scan`) when the scanner names a signature in an upload | `malware:<signature>` |
+| `scan_failed` | `fail_document_scan` when an upload couldn't be scanned after every attempt, `claim_document_scans` when a worker died on the last one, and `document-scan` on every run while no scanner is set up | `config_missing`, `unreachable`, `timeout`, `http:<status>`, `invalid_response`, `clamd_error`, `clamd_size_limit`, `clamd_no_reply`, `file_missing`, `storage_download:<code>`, `storage_release:<code>`, `rpc_record:<code>`, `worker_lost` |
 
 The browser's reports go through `public.report_client_event`, which drops reports past 30 an hour per
 account, 200 an hour for all signed-out visitors together and 2,000 an hour overall, so a broken page or
@@ -60,6 +62,8 @@ to it. `ops-monitor` runs every five minutes, raises each kind at most once per 
 | `auth_denied` | 20 events | 15 minutes | 60 minutes | [Authorization failures](#authorization-failures) |
 | `deletion_failed` | 1 event | 60 minutes | 60 minutes | [Deletion failed](#deletion-failed) |
 | `voice_failed` | 5 events | 15 minutes | 60 minutes | [Voice failures](#voice-failures) |
+| `malware_detected` | 1 event | 60 minutes | 60 minutes | [Malware detected](#malware-detected) |
+| `scan_failed` | 1 event | 60 minutes | 60 minutes | [Scan failed](#scan-failed) |
 
 Alerts that come from elsewhere:
 
@@ -67,6 +71,8 @@ Alerts that come from elsewhere:
 |---|---|---|
 | `OUTBOX_DEAD` (webhook and log) | `dispatch-outbox`, when a notification email gives up | `docs/NOTIFICATIONS.md`, "Operating" |
 | `DELETION_FAILED` (webhook and log) | `purge-intakes`, when a deletion gives up. The same failure also raises `OPS_ALERT kind=deletion_failed` within five minutes, so expect both | [Deletion failed](#deletion-failed) |
+| `MALWARE_DETECTED` (webhook and log) | `document-upload` or `document-scan`, at once, for every detection. The first in an hour also raises `OPS_ALERT kind=malware_detected`, so expect both | [Malware detected](#malware-detected) |
+| `SCAN_FAILED` (webhook and log) | `document-scan`, when an upload gives up after six attempts. Also raises `OPS_ALERT kind=scan_failed` | [Scan failed](#scan-failed) |
 
 Log lines to know (fixed fields only, never names, paths, messages or provider text):
 
@@ -81,11 +87,18 @@ Log lines to know (fixed fields only, never names, paths, messages or provider t
 | `DELETION_ERROR …` | `purge-intakes` | A failure couldn't even be recorded; the claim lapses after 10 minutes and is retried |
 | `PURGE_CONFIG_MISSING: …`, `PURGE_ERROR: …` | `purge-intakes` | Missing secrets, or the run stopped early (`rpc_claim:<code>`, `unexpected`) |
 | `AI_CALL_FAILED`, `AI_CONFIG_MISSING`, `AI_UNEXPECTED_ERROR` | `chamber-extract`, `document-extract` | Provider failures and misconfiguration; each call is also in `ai_extraction_events` by its request id (`docs/AI_OPERATIONS.md`) |
+| `UPLOAD_REFUSED request=… user=… reason=…` | `document-upload` | A file refused before anything was stored: `executable` (a program, whatever its name), `mismatch` (contents don't match the name), `unsupported`, `empty`, `too_large`, `duplicate`, `limit`, `closed`, `consent`, `not_found`. Many `executable` lines from one user are worth a look |
+| `UPLOAD_RECORD_FAILED …`, `UPLOAD_STORE_FAILED …`, `UPLOAD_ERROR …`, `UPLOAD_CONFIG_MISSING: …` | `document-upload` | The row or the file couldn't be saved (`code=<sqlstate or status>`); a stored file's row is removed again (`undo=` if that failed too) |
+| `SCAN_DEFERRED document=… engine=… reason=…` | `document-upload` | The scanner gave no verdict at upload; the file waits in quarantine and `document-scan` retries it |
+| `SCAN_RETRY document=… attempt=… reason=… retry_in=…s` | `document-scan` | A scan didn't settle; tried again after 5 minutes, 15 minutes, 1 hour, 4 hours, then 12 hours |
+| `SCAN_CONFIG_MISSING: …` | `document-upload`, `document-scan` | `MALWARE_SCANNER` (or its settings) is unset or unusable: every upload is held in quarantine |
+| `SCAN_NOT_RECORDED …`, `SCAN_ERROR …`, `SCAN_QUARANTINE_NOT_REMOVED …`, `SCAN_QUARANTINE_MOVE_FAILED …`, `SCAN_ORPHANS_ERROR …`, `SCAN_RUN_ERROR: …` | `document-upload`, `document-scan` | A step after the scan failed; the file stays unreadable and the next run settles it |
 
 ### How alerts reach people
 
 - **The webhook.** Set `ENGINEERING_ALERT_WEBHOOK_URL` (a Slack or Teams incoming webhook, https) in the
-  function secrets. `dispatch-outbox`, `purge-intakes` and `ops-monitor` all post to it. Without it, alerts
+  function secrets. `dispatch-outbox`, `purge-intakes`, `document-upload`, `document-scan` and `ops-monitor`
+  all post to it. Without it, alerts
   are only log lines, and `ops-monitor` logs `OPS_CONFIG_MISSING` to say so.
 - **The log lines.** Every alert is also a fixed-field log line (`OPS_ALERT`, `OUTBOX_DEAD`, `DELETION_FAILED`).
   As a second path, set up a Supabase log alert or a log drain on them, so a broken webhook doesn't silence
@@ -115,7 +128,7 @@ select * from public.ops_alerts order by raised_at desc limit 20;
 
 ```sql
 select jobname, schedule, active from cron.job order by jobname;
--- expect dispatch-outbox (every minute), ops-monitor (*/5), purge-intakes (:23 hourly),
+-- expect dispatch-outbox (every minute), ops-monitor (*/5), document-scan (*/5), purge-intakes (:23 hourly),
 -- expire-idle-intakes (:17 hourly) and run-retention (03:41 daily)
 select jobname, status, return_message, start_time
 from cron.job_run_details join cron.job using (jobid)
@@ -188,11 +201,14 @@ Follow-ups:
 
 `OPS_ALERT kind=upload_failed`.
 
-1. By code: `storage_upload:413` or `:415` means the bucket refused a size or type the browser allowed: check
-   the bucket limits (`select id, file_size_limit, allowed_mime_types from storage.buckets`) against
-   `src/lib/uploadCheck.ts`. `storage_upload:5xx` or `storage_remove`: Supabase Storage, check its status.
-   `record_insert:<sqlstate>`: the documents table refused the row (a migration or policy change).
-   `document_read_unreachable`: `document-extract` not deployed or crashing (function logs).
+1. By code: `document_upload:storage`: `document-upload` couldn't store a file (`UPLOAD_STORE_FAILED` in its
+   logs: Supabase Storage, or the bucket limits, which take only `application/octet-stream` up to 20 MB:
+   `select id, file_size_limit, allowed_mime_types from storage.buckets`). `document_upload:internal`: the
+   documents table refused the row for a reason the function doesn't know (`UPLOAD_RECORD_FAILED`, a
+   migration or policy change). `document_upload:unavailable`: the function's Supabase secrets are missing.
+   `document_upload:unreachable` or `:<5xx>`: the function isn't deployed or is crashing (function logs).
+   `storage_remove`: Supabase Storage, check its status. `document_read_unreachable`: `document-extract` not
+   deployed or crashing (function logs).
 2. Prospects keep their files in their own hands: nothing is lost by a failed upload. Ask affected prospects
    (by intake id) to try again once fixed.
 
@@ -256,6 +272,53 @@ so with a "Continue in text" button, so this is never a SEV-1 on its own.
 3. Fix the cause, then `select public.retry_intake_deletion('<id>');` as an admin, or set it back to pending
    from the SQL editor (`docs/DATA_HANDLING.md`, "Asking for a deletion"). A retention deletion that waits a
    day is not urgent; a deletion someone asked for is, because we told them it would happen.
+
+### Malware detected
+
+`OPS_ALERT kind=malware_detected` or `MALWARE_DETECTED`. An upload matched a malware signature. It is already
+quarantined: its file is in the `quarantine` bucket (or, for an upload from before scanning, withheld in
+`documents`), which nobody signed in can read, list or sign a link to, and Lenore never read it. This is a
+SEV-2 until step 2 says otherwise.
+
+1. Which one: `select id, user_id, session_id, scan_signature, scanned_at, file_sha256 from public.documents
+   where scan_verdict = 'infected' order by scanned_at desc;` The alert names the document and intake ids;
+   look the intake up in the advisor console for who it is.
+2. Is it real? `Eicar-Signature` / `Win.Test.EICAR_HDB-1` is the standard test file (someone testing the
+   scanner, see below). For anything else, the SHA-256 identifies the sample: look it up in your threat
+   intelligence source. Treat a real detection from a prospect as a compromised machine on their side, not
+   an attack on us: the advisory lead tells the prospect, without forwarding the file, that a file they sent
+   was flagged and set aside, and asks them to send a clean copy.
+3. Leave the file where it is unless you need it: it is removed with the intake (retention), or at the next
+   `document-scan` run after the prospect removes it. To examine it, download it with the service role into an
+   isolated machine, never a work laptop.
+4. A false positive (confirmed with the scanner's vendor): `select public.requeue_document_scan('<document id>');`
+   as the service role. It is scanned again within five minutes, and stays unreadable until a scan passes.
+5. Many detections from one account, or `UPLOAD_REFUSED … reason=executable` lines from the same user: someone
+   is probing the upload. Revoke the intake (`revoke_chamber_session`) and treat it under
+   [Authorization failures](#authorization-failures).
+
+Testing it (once a month, and after changing the scanner): upload the EICAR test file (the 68-character
+string from eicar.org, saved as `eicar.csv`) to a test intake. Within seconds the Upload tab says "Blocked",
+the channel shows `MALWARE_DETECTED`, and `OPS_ALERT kind=malware_detected` follows within five minutes.
+
+### Scan failed
+
+`OPS_ALERT kind=scan_failed` or `SCAN_FAILED`. Uploads are not being scanned, so they are held: prospects see
+"Checking for viruses" and nobody can open their files. Nothing unsafe is exposed; this is a SEV-2 because
+uploads are stuck.
+
+1. By code: `config_missing`: `MALWARE_SCANNER` (or `CLAMAV_HOST`, `MALWARE_SCANNER_URL`,
+   `MALWARE_SCANNER_TOKEN`) is unset or wrong in the function secrets (`docs/SUPABASE_SETUP.md`).
+   `unreachable`, `timeout`, `http:<status>`, `clamd_*`: the scanner is down, refusing us, or rejecting the
+   file (`clamd_size_limit`: raise clamd's `StreamMaxLength` above 20 MB). `file_missing`: the document has no
+   stored file (its upload failed half way); the prospect should remove it and upload again.
+   `storage_*`, `rpc_*`: Supabase Storage or the database (function logs). `worker_lost`: the function was
+   stopped mid-scan on its last attempt.
+2. What is waiting: `select scan_verdict, scan_error, count(*) from public.documents where scan_verdict in
+   ('pending', 'failed') group by 1, 2;`
+3. Fix the cause. Pending documents are retried on their own; failed ones are requeued with
+   `select public.requeue_document_scan(id) from public.documents where scan_verdict = 'failed';` as the
+   service role.
 
 ### Notification emails
 

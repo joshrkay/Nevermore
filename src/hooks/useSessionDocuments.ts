@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { useAuth } from "@/hooks/useAuth";
 import { guessCategory, type DocumentCategory } from "@/data/documentCategories";
 import { parseExtraction, type CandidateField, type DocumentExtraction } from "@/data/documentCandidates";
 import { inspectUpload, MAX_DOCUMENTS_PER_INTAKE } from "@/lib/uploadCheck";
+import { formatFileSize } from "../../supabase/functions/_shared/fileSignature.ts";
+import { isScanReleased } from "@/data/documentStatus";
 import { describeInvokeError, failureKindFromCode, type AiFailureKind } from "@/data/aiFailure";
 import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
 
@@ -20,6 +23,11 @@ export interface SessionDocument {
   status: string;
   created_at: string;
   storage_path: string | null; // null while the upload is in flight
+  /**
+   * The malware scan (20261104130000_document_scanning.sql): pending, clean, skipped (no scanner set up),
+   * infected or failed. Only a clean or skipped file can be read, by Lenore or an advisor.
+   */
+  scan_verdict: string;
   extraction: DocumentExtraction;
   /**
    * Why the last read in this tab didn't go through (a rate limit, the daily cap, a timeout...), from the
@@ -29,7 +37,7 @@ export interface SessionDocument {
 }
 
 /** Why a file wasn't uploaded, before or as it was stored. */
-export type UploadRejection = "empty" | "mismatch" | "duplicate" | "limit";
+export type UploadRejection = "empty" | "mismatch" | "too_large" | "duplicate" | "limit";
 
 export interface UploadOutcome {
   saved: number;
@@ -45,7 +53,8 @@ export interface UseSessionDocumentsReturn {
   uploading: boolean;
   /**
    * Checks the files (contents match the name, not already in this intake, within the per-intake
-   * limit), stores the rest with this intake, then has Lenore read each one.
+   * limit), sends the rest to document-upload, which checks them again, scans them for malware and stores
+   * them with this intake, then has Lenore read each one that passed its scan.
    */
   upload: (files: File[]) => Promise<UploadOutcome>;
   /**
@@ -59,29 +68,52 @@ export interface UseSessionDocumentsReturn {
    * `kept`, left as the prospect's own answer.
    */
   markApplied: (doc: SessionDocument, fields: CandidateField[], opts?: { kept?: boolean }) => Promise<void>;
-  /** Reads the document again, e.g. after a failure. */
+  /** Reads the document again, e.g. after a failure. Does nothing until its malware scan has passed. */
   extract: (doc: SessionDocument) => Promise<void>;
 }
 
-const COLUMNS = "id, file_name, file_size, size_bytes, mime_type, file_sha256, category, status, created_at, storage_path, extraction, processing_started_at";
+const COLUMNS = "id, file_name, file_size, size_bytes, mime_type, file_sha256, category, status, created_at, storage_path, extraction, processing_started_at, scan_verdict";
 const BUCKET = "documents";
 
-export function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+export { formatFileSize };
 
-type Row = Omit<SessionDocument, "extraction" | "file_sha256"> & {
+type Row = Omit<SessionDocument, "extraction" | "file_sha256" | "scan_verdict"> & {
   extraction: unknown;
   file_sha256?: string | null;
   processing_started_at?: string | null;
+  scan_verdict?: string | null;
 };
 const fromRow = ({ processing_started_at: _startedAt, ...row }: Row): SessionDocument => ({
   ...row,
   file_sha256: row.file_sha256 ?? null,
+  scan_verdict: row.scan_verdict ?? "pending",
   extraction: parseExtraction(row.extraction),
 });
+
+/** What document-upload refused a file with, read from its answer; null when it never answered. */
+async function uploadRefusal(error: unknown): Promise<{ code: string | null; status: number | null }> {
+  if (!(error instanceof FunctionsHttpError)) return { code: null, status: null };
+  const response = error.context as Response | undefined;
+  try {
+    const body = await response?.clone().json();
+    return { code: typeof body?.code === "string" ? body.code : null, status: response?.status ?? null };
+  } catch {
+    return { code: null, status: response?.status ?? null };
+  }
+}
+
+// document-upload's refusals that are about the file, as the prospect's reasons.
+const REFUSALS: Record<string, UploadRejection> = {
+  empty: "empty",
+  mismatch: "mismatch",
+  executable: "mismatch",
+  unsupported: "mismatch",
+  too_large: "too_large",
+  duplicate: "duplicate",
+  limit: "limit",
+};
+// Refusals that are about the intake's state (closed, being deleted, no agreement yet), not a failure.
+const STATE_REFUSALS = new Set(["closed", "consent", "not_found", "unauthorized"]);
 
 /**
  * Deletes a stored file. True once it is gone, including when it was already gone; false while it is
@@ -111,6 +143,8 @@ async function removeStoredFile(path: string): Promise<boolean> {
 const STALE_PROCESSING_MS = 5 * 60 * 1000;
 // How often to look again at a read that another tab or an earlier visit started.
 const PROCESSING_POLL_MS = 4000;
+// How often to look again at a file waiting for its malware scan (document-scan runs every five minutes).
+const SCAN_POLL_MS = 15_000;
 
 // A file still marked "processing" may be mid-read elsewhere (another tab, or before the page was
 // left and reopened), so it stays "processing" until it has gone stale; then it is offered a retry.
@@ -151,6 +185,8 @@ export function useSessionDocuments(sessionId: string | null, ensureSession?: ()
   }), []);
   // Documents this tab is reading itself; their status comes from extract(), not from re-fetching.
   const activeRef = useRef(new Set<string>());
+  // Documents this tab uploaded that wait for their malware scan; Lenore reads each once it passes.
+  const awaitingScanRef = useRef(new Set<string>());
   const docsRef = useRef(docs);
   useEffect(() => { docsRef.current = docs; }, [docs]);
 
@@ -184,10 +220,12 @@ export function useSessionDocuments(sessionId: string | null, ensureSession?: ()
     return () => { cancelled = true; };
   }, [userId, sessionId]);
 
-  // Reads another tab (or an earlier visit) started: look again until they finish or go stale.
+  // Reads another tab (or an earlier visit) started, and files waiting for their malware scan: look again
+  // until they finish (or go stale).
   const hasForeignRead = docs.some((d) => d.status === "processing" && !activeRef.current.has(d.id));
+  const hasPendingScan = docs.some((d) => d.scan_verdict === "pending" && d.status !== "uploading");
   useEffect(() => {
-    if (!userId || !sessionId || !hasForeignRead) return;
+    if (!userId || !sessionId || (!hasForeignRead && !hasPendingScan)) return;
     const timer = setTimeout(async () => {
       const { data } = await supabase
         .from("documents")
@@ -197,11 +235,19 @@ export function useSessionDocuments(sessionId: string | null, ensureSession?: ()
       if (!data || sessionRef.current !== sessionId) return;
       const fresh = new Map((data as Row[]).map((r) => [r.id, fromLoadedRow(r)]));
       setDocs((prev) => prev.map((d) => (fresh.has(d.id) && !activeRef.current.has(d.id) ? fresh.get(d.id)! : d)));
-    }, PROCESSING_POLL_MS);
+      // A file this tab uploaded whose scan has now passed is read, as it would have been at once.
+      for (const doc of fresh.values()) {
+        if (!awaitingScanRef.current.has(doc.id) || doc.scan_verdict === "pending") continue;
+        awaitingScanRef.current.delete(doc.id);
+        if (isScanReleased(doc.scan_verdict) && doc.status === "uploaded") void extractRef.current(doc);
+      }
+    }, hasForeignRead ? PROCESSING_POLL_MS : SCAN_POLL_MS);
     return () => clearTimeout(timer);
-  }, [userId, sessionId, hasForeignRead, docs]);
+  }, [userId, sessionId, hasForeignRead, hasPendingScan, docs]);
 
   const extract = useCallback(async (doc: SessionDocument) => {
+    // Nothing can read a file until its malware scan passes; the function would refuse it.
+    if (!isScanReleased(doc.scan_verdict)) return;
     const sid = sessionRef.current;
     activeRef.current.add(doc.id);
     patchDoc(doc.id, { status: "processing" });
@@ -229,6 +275,8 @@ export function useSessionDocuments(sessionId: string | null, ensureSession?: ()
       activeRef.current.delete(doc.id);
     }
   }, [patchDoc]);
+  const extractRef = useRef(extract);
+  extractRef.current = extract;
 
   const upload = useCallback(async (files: File[]): Promise<UploadOutcome> => {
     let sid = sessionRef.current;
@@ -275,74 +323,50 @@ export function useSessionDocuments(sessionId: string | null, ensureSession?: ()
       status: "uploading",
       created_at: new Date().toISOString(),
       storage_path: null,
+      scan_verdict: "pending",
       extraction: parseExtraction(null),
     }));
     if (sessionRef.current === sid) setDocs((prev) => [...prev, ...pending]);
 
     const saved: SessionDocument[] = [];
     const failed: string[] = [];
-    for (const [i, { file, contentType, sha256 }] of accepted.entries()) {
+    for (const [i, { file }] of accepted.entries()) {
       const pendingId = pending[i].id;
       const dropPending = () => setDocs((prev) => prev.filter((d) => d.id !== pendingId));
-      // Unique prefix avoids collisions; strip characters storage keys don't allow.
-      const safeName = file.name.replace(/[^\w.-]+/g, "_");
-      const storagePath = `${userId}/${sid}/${crypto.randomUUID()}_${safeName}`;
 
-      // Stored as the type its contents showed, not the one the browser guessed.
-      const { error: storageError } = await supabase.storage
-        .from(BUCKET)
-        .upload(storagePath, file, { contentType });
-      if (storageError) {
-        console.error("Failed to upload a document:", storageError.message);
-        // The status only: storage's message can quote the path, which carries the file name.
-        const status = (storageError as { statusCode?: string | number }).statusCode;
-        reportOpsEvent("upload_failed", { code: `storage_upload:${status ?? "unknown"}`, sessionId: sid });
-        failed.push(file.name);
-        dropPending();
-        continue;
-      }
-
-      const { data, error: dbError } = await supabase
-        .from("documents")
-        .insert({
-          user_id: userId,
-          session_id: sid,
-          file_name: file.name,
-          file_size: formatFileSize(file.size),
-          size_bytes: file.size,
-          mime_type: contentType,
-          file_sha256: sha256,
-          category: pending[i].category,
-          storage_path: storagePath,
-          status: "uploaded",
-        })
-        .select(COLUMNS)
-        .single();
-      if (dbError || !data) {
-        console.error("Failed to save a document record:", dbError?.message);
-        // Don't leave an untracked file behind.
-        await supabase.storage.from(BUCKET).remove([storagePath]);
-        // The database refuses a second copy of a file (23505) and a 26th document (23514).
-        const code = (dbError as { code?: string } | null)?.code;
-        if (code === "23505") rejected.push({ name: file.name, reason: "duplicate" });
-        else if (code === "23514") rejected.push({ name: file.name, reason: "limit" });
+      // document-upload checks the bytes again, writes the row as this user, scans the file for malware and
+      // stores it: nothing reaches storage any other way (20261104130000_document_scanning.sql).
+      const form = new FormData();
+      form.append("session_id", sid);
+      form.append("category", pending[i].category);
+      form.append("file", file, file.name);
+      const { data, error } = await supabase.functions.invoke("document-upload", { body: form });
+      const row = (data as { document?: Row } | null)?.document;
+      if (error || !row) {
+        const { code, status } = await uploadRefusal(error);
+        const reason = code ? REFUSALS[code] : undefined;
+        if (reason) rejected.push({ name: file.name, reason });
         else {
           failed.push(file.name);
-          // A closed intake (EA002) refusing a file is the intake's state, not a failure.
-          if (code !== "EA002") reportOpsEvent("upload_failed", { code: `record_insert:${code ?? "unknown"}`, sessionId: sid });
+          // A closed intake refusing a file is the intake's state, not a failure. The code only: never the name.
+          if (!code || !STATE_REFUSALS.has(code)) {
+            reportOpsEvent("upload_failed", { code: `document_upload:${code ?? status ?? "unreachable"}`, sessionId: sid });
+          }
         }
         dropPending();
         continue;
       }
-      const doc = fromRow(data as Row);
+      const doc = fromRow(row);
       saved.push(doc);
+      if (doc.scan_verdict === "pending") awaitingScanRef.current.add(doc.id);
       if (sessionRef.current === sid) setDocs((prev) => prev.map((d) => (d.id === pendingId ? doc : d)));
     }
     setUploading(false);
 
-    // Read them one at a time, after every upload is safely stored.
+    // Read them one at a time, after every upload is safely stored. A file still waiting for its malware
+    // scan is read once the scan passes (the poll above).
     void (async () => {
-      for (const doc of saved) {
+      for (const doc of saved.filter((d) => isScanReleased(d.scan_verdict))) {
         if (sessionRef.current !== sid) return;
         await extract(doc);
       }
@@ -355,8 +379,9 @@ export function useSessionDocuments(sessionId: string | null, ensureSession?: ()
     // The file goes first, then the record. If the record can't be deleted, it stays listed and the
     // next try finds its file already gone and finishes. The other order could leave a stored file
     // with no record, which nobody can see or delete: putting the record back can fail too (an
-    // expired intake refuses new rows).
-    if (!(await removeStoredFile(doc.storage_path))) {
+    // expired intake refuses new rows). A file whose scan hasn't passed is out of the prospect's reach
+    // (in quarantine); once its record is gone, document-scan removes it.
+    if (isScanReleased(doc.scan_verdict) && !(await removeStoredFile(doc.storage_path))) {
       reportOpsEvent("upload_failed", { code: "storage_remove", sessionId: sessionRef.current });
       return false;
     }
@@ -366,6 +391,7 @@ export function useSessionDocuments(sessionId: string | null, ensureSession?: ()
       reportOpsEvent("upload_failed", { code: `record_delete:${(error as { code?: string }).code ?? "unknown"}`, sessionId: sessionRef.current });
       return false;
     }
+    awaitingScanRef.current.delete(doc.id);
     setDocs((prev) => prev.filter((d) => d.id !== doc.id));
     return true;
   }, [userId]);

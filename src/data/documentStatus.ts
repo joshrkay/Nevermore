@@ -60,3 +60,45 @@ export function documentStatusInfo(status: string) {
 export function canRetryExtraction(status: string): boolean {
   return status === "failed" || status === "uploaded";
 }
+
+// ---------- The malware scan ----------
+// Every upload is scanned before anyone can open it (20261104130000_document_scanning.sql). Until it passes,
+// Lenore can't read it and the advisor can't open it; the prospect can still remove it or change its category.
+
+export type ScanVerdict = "pending" | "clean" | "skipped" | "infected" | "failed";
+
+/** Whether a file can be read: its scan passed, or the deployment runs without a scanner. */
+export const isScanReleased = (verdict: string | null | undefined) => verdict === "clean" || verdict === "skipped";
+
+const SCAN: Record<"pending" | "infected" | "failed", { label: string; message: string; tone: StatusTone }> = {
+  pending: {
+    label: "Checking for viruses",
+    message: "Every file is checked before anyone can open it. Lenore reads it as soon as that's done.",
+    tone: "busy",
+  },
+  infected: {
+    label: "Blocked",
+    message: "Our virus check flagged this file, so it's set aside and nobody can open it. Remove it, and upload a clean copy if you have one.",
+    tone: "warn",
+  },
+  failed: {
+    label: "Couldn't be checked",
+    message: "We couldn't finish checking this file for viruses, so nobody can open it yet. Our team has been told; you can also remove it and upload it again.",
+    tone: "warn",
+  },
+};
+
+/** What to tell the prospect while a file's scan hasn't passed; null once it has. */
+export function scanStatusInfo(verdict: string | null | undefined) {
+  if (isScanReleased(verdict)) return null;
+  return SCAN[verdict as keyof typeof SCAN] ?? SCAN.pending;
+}
+
+/** Why a file can't be opened yet (or ever), from its malware scan; null when it can. */
+export function advisorScanNotice(verdict: string | undefined): string | null {
+  // A certified copy whose live row is gone has no verdict here; storage decides.
+  if (verdict === undefined || isScanReleased(verdict)) return null;
+  if (verdict === "infected") return "Quarantined: the virus scan flagged this file. Nobody can open it; Operations has been alerted.";
+  if (verdict === "failed") return "Not openable: the virus scan couldn't finish. Operations has been alerted.";
+  return "Being checked for viruses. It can be opened once the check passes.";
+}

@@ -322,7 +322,7 @@ describe("server and client intake rules agree", () => {
       threshold: Number(m[3]),
       cooldown: Number(m[4]),
     }));
-    expect(rules.map((r) => r.kind).sort()).toEqual(["ai_failed", "app_error", "auth_denied", "deletion_failed", "upload_failed", "voice_failed"]);
+    expect(rules.map((r) => r.kind).sort()).toEqual(["ai_failed", "app_error", "auth_denied", "deletion_failed", "malware_detected", "scan_failed", "upload_failed", "voice_failed"]);
     const runbook = readFileSync("docs/RUNBOOK.md", "utf8");
     for (const r of rules) {
       const row = new RegExp(

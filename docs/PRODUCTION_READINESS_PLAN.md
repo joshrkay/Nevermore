@@ -172,7 +172,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | F Advisor | 4 | 6 | 1 | 0 | 0 | 11 |
 | G Communications | 6 | 0 | 2 | 0 | 0 | 8 |
 | H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
-| I Quality and accessibility | 2 | 8 | 0 | 3 | 1 | 14 |
+| I Quality and accessibility | 3 | 9 | 0 | 1 | 1 | 14 |
 | J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
 | **Total** | **43** | **38** | **13** | **7** | **5** | **106** |
 
@@ -188,7 +188,7 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 4. **Sensitive data stays private.** Census, payroll, benefits, and workers' compensation data are never publicly reachable. *Holds: private buckets, owner and advisor RLS, a test that every public table has row security.*
 5. **One source of truth.** The saved intake session feeds the Chamber, the review, the Manuscript, and the advisor view. Submitted packets are frozen as snapshots. *Holds, with the snapshot gaps in C-3.2.*
 6. **Every story is independently releasable** and no larger than M.
-7. **Access is enforced in the backend.** A hidden button is not access control. *Holds for advisors and prospects through RLS. Checking a file's contents is the exception: storage enforces the size and declared type, and only the browser reads the bytes (E-4.1).*
+7. **Access is enforced in the backend.** A hidden button is not access control. *Holds for advisors and prospects through RLS, and for files: `document-upload` checks a file's bytes before storing it, and a file is readable only once its malware scan passed (E-4.1, E-4.3).*
 
 ---
 
@@ -210,7 +210,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | D10 | Legal reviewer for policy, terms and disclosures | **Not recorded in the repo.** `docs/LEGAL_REVIEW.md` is the record to fill in: what to review, the questions for counsel, and how approval is made live. | LEGAL | H-2.1, H-2.3 |
 | D11 | AI provider for Lenore and document extraction | **Partly decided:** the adapter supports Lovable (default) and Anthropic, and neither is chosen. Both AI functions use the one adapter, so a single `AI_PROVIDER` secret switches them. Voice uses ElevenLabs. No data-processing terms are recorded. | PM + BE | F-0.2, E-3.1 |
 | D12 | PDF rendering approach | **Decided and implemented:** browser jsPDF with vector text, lazy-loaded. Server-side rendering has not been revisited. | BE + FE | none |
-| D13 | Malware-scanning provider for uploads | **Open.** | OPS | E-4.3 |
+| D13 | Malware-scanning provider for uploads | **Open; the pipeline is built for either kind** (E-4.3): a clamd daemon behind TLS (`MALWARE_SCANNER=clamav`) or an HTTPS scanning service (`http`). Until one is chosen uploads are held, unreadable, or, for the internal demo only, recorded unscanned (`none`). The chosen scanner sees every file, so it needs data-processing terms like the AI provider's. | OPS | E-4.3 |
 | D14 | **New.** Intake access model: keep Supabase Auth with owner RLS, or move to continuation tokens (v1.0 D1)? | **Recommended: keep as built.** It isolates sessions today and is covered by SQL tests. Drop the token stories (A-1.6), amend the envelope AC in A-2.1, and close the gaps it leaves: a return path for upgraded guests, and database validation with a version check (A-2.2). | PM + BE | A-1.3, A-2.1, H-3.3 |
 | D15 | **New.** File ID format and assignment | **Decided and built 2026-11-04 (C-3.1):** the database assigns `EAA-YYYY-NNNN` at the intake's first certification, YYYY the year certified (UTC), from a per-year counter (`submission_reference_counters`) rather than a native sequence: it takes its number inside the certifying transaction, so a refused certification uses none and numbering restarts each year. The intake keeps it for good. It is unique across intakes (`chamber_sessions_file_id_key`), and a certification must carry its intake's (`20261104122000`). The browser sends none. A File ID already recorded on a certification, even a withdrawn one, is kept as it is, so no File ID already issued changes. | PM + BE | C-3.1, D-3.2 |
 | D16 | **New.** Advisor visibility: does every advisor see every intake? | **As built: yes**, with no assignment. **Recommended:** keep for a pilot with a small named advisory team and revisit before M3. | PM | F-2.1 |
@@ -231,7 +231,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | D31 | **New (US-2.2).** Who sets `unknown` and `not_applicable` | **Decided 2026-11-03:** the model may set `unknown`, with an evidence quote, when the prospect says they don't know. Only the prospect sets `not_applicable`, with a "Doesn't apply" control in Review. When the prospect says a field doesn't apply, Lenore points them to that control. | PM | US-2.2, US-2.3 |
 | D32 | **New.** How US-2.1 to US-2.4 are split | **Decided 2026-11-03:** US-2.1 to US-2.4 stay as parent stories, and the work ships as nine S or M child stories, each releasable alone with its migration first. In deploy order: 2.1a schema metadata, the WC block and the new statuses (M); 2.4a extraction events, session and request ids, error codes and the client timeout (M); 2.1b the extraction contract and Lenore's context (M); 2.3a the follow-up policy, readiness, wrap-up and golden transcripts (M); 2.2a Review lists every field, with "Doesn't apply" and one open-items list (M); 2.3b voice through `chamber-extract` with live context (M); 2.3c voice failure states and the mobile transcript (S); 2.1c Manuscript coverage (M); 2.3d the census template (S). | PM | US-2.1 to US-2.4 |
 | D33 | **New (US-2.2).** What field status a spoken answer can have | **Decided 2026-11-03:** an extraction from a voice utterance can be `inferred`, `incomplete` or `unknown`, never `confirmed`. Speech-to-text mishears: "fifteen" stored as a confirmed 50 would change PEO eligibility and never show as an open item. A spoken answer shows as "Please confirm" until the prospect confirms it in Review or types it. Transcript messages record whether they were spoken. Vocabulary for this and D26 is in `GLOSSARY.md`. | PM | US-2.2, US-2.3 |
-| D34 | **New.** Name of the intake's identifier, and what a Submission is | **Decided 2026-11-04:** **File ID** is the canonical name of the intake's identifier (EAA-…): it is what the app, the Manuscript, the signed PDF, both emails and the advisor queue show, and it belongs to the intake, set when the intake starts and never changed. "Reference" is retired from the glossary and from D15's and the stories' wording. This reverses the 2026-11-03 vocabulary choice of "Reference", made before the File ID work (US-5.1) shipped. **Submission** keeps the Epic G meaning: an intake certified at least once, updated in place when certified again. The copy each certification keeps of the answers it covered (migration `20261104117000`) has no glossary term. | PM | `GLOSSARY.md`, C-3.1, D-3.2 |
+| D34 | **New.** Name of the intake's identifier, and what a Submission is | **Decided 2026-11-04:** **File ID** is the canonical name of the intake's identifier (EAA-…): it is what the app, the Manuscript, the signed PDF, both emails and the advisor queue show, and it belongs to the intake, assigned by the database at its first certification (D15) and never changed. "Reference" is retired from the glossary and from D15's and the stories' wording. This reverses the 2026-11-03 vocabulary choice of "Reference", made before the File ID work (US-5.1) shipped. **Submission** keeps the Epic G meaning: an intake certified at least once, updated in place when certified again. The copy each certification keeps of the answers it covered (migration `20261104117000`) has no glossary term. | PM | `GLOSSARY.md`, C-3.1, D-3.2 |
 | D35 | **New (US-2.3b).** Does `chamber-extract` know a message was spoken? | **Decided 2026-11-04:** no. A spoken message's request is the typed one, and only the browser caps its answers at `inferred` when it stores them (D33), as it stores every answer. A server cap would guard only against a browser bug, since the browser can already save any answer as the prospect's own edit. Consequence: the extraction events don't say which calls were spoken. | PM | US-2.3b |
 | D36 | **New (US-2.3b).** A typed answer and a different spoken one | **Decided 2026-11-04:** they are the same kind of source (something the prospect said), so the field is `conflicting` and the prospect chooses, as for two typed answers. A typed answer doesn't outrank a spoken one: that would demote a real spoken correction of a typo. A required field in conflict keeps the intake from being ready to certify until the prospect chooses. In `GLOSSARY.md`, Field source. | PM | US-2.3b |
 | D37 | **New (US-2.3b).** Where Lenore's voice prompt runs from | **Decided 2026-11-04:** the repo file (`docs/prompts/voice-agent-v{n}.md`, versioned and fingerprinted in CI) is pasted into the ElevenLabs agent; the Chamber sends no prompt override at call start, which would fail every call on an agent with overrides switched off. The cost: what ElevenLabs runs can drift from the repo, so the agent's description names the version deployed. During a call Lenore never says the intake is ready (the Chamber shows it on screen, D29), her wrap-up says that what was said aloud waits for confirmation in Review, and a message typed during a call is answered in text as any typed message is. | PM | US-2.3b |
@@ -924,9 +924,10 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Notes:** No tests for `UploadTab` or `documentStatus`. Upload accepts up to 20 MB while extraction refuses over 10 MB ('saved for your advisor').
 
 #### E-4.1 Upload validation before storage (interim controls)
-- **Status:** **PARTIAL** · **Size:** S · **Priority:** Highest · **Owner:** BE · **Depends:** E-1.1 · **Milestone:** M1
+- **Status:** **DONE** · **Size:** S · **Priority:** Highest · **Owner:** BE · **Depends:** E-1.1 · **Milestone:** M1
 - **Built:** The storage key is sanitised plus a UUID. Advisor links request a download. `sniffFormat` identifies files by signature inside `document-extract`, and the browser now reads each file's leading bytes before upload (`uploadCheck.ts`), refusing a mismatch or an empty file, and stores it with the type its contents show. Migration `20261029090000` sets the `documents` bucket's `file_size_limit` (20 MB) and `allowed_mime_types`, adds a trigger capping an intake at 25 documents, and records each file's `file_sha256` with a unique index per intake (the browser refuses a repeat first; `document-extract` records the hash of the stored bytes). The SQL tests cover the cap, the unique hash and the category names.
-- **Remaining:** The bucket limits are applied only where the storage schema has those columns, and the SQL tests' storage stand-in has them but real Supabase Storage was not exercised, so confirm they took effect on the project. Storage checks the declared type, not the bytes: a renamed file sent straight to the API is stored and later marked `unsupported`. `file_name` is stored raw. No test for `Content-Disposition`. The 20 MB upload cap is above the 10 MB the plan names and the 10 MB `document-extract` reads.
+- **Built (2026-11-04, migration `20261104130000_document_scanning.sql`):** Files reach storage only through the `document-upload` edge function. It reads the file's bytes before anything is stored (`supabase/functions/_shared/fileSignature.ts`, which the browser's `uploadCheck.ts` now shares): it refuses a program whatever its name (Windows, Linux and macOS executables and scripts, `executable`), contents that don't match the extension (`mismatch`), an extension the intake doesn't take, an empty file or one over 20 MB, and stores and records nothing for any of them. It then writes the row as the prospect (so row security and the triggers still decide), with the SHA-256 of the bytes it received, and stores the file with the service role. The prospect's own storage upload policy is dropped, so a renamed file sent straight to the Storage API is refused (403) rather than stored and later marked `unsupported`. `file_name` is cleaned (no path, control or direction-override characters, at most 200 characters). Every signed link asks for `Content-Disposition: attachment` under a cleaned name, and because Storage doesn't sign that parameter, every document is also stored as `application/octet-stream`, which a browser downloads whatever the link says (the type its bytes showed is kept in `documents.mime_type`). Tests: `fileSignature.test.ts`, `document-upload/handler.test.ts` (a renamed `.exe` sent to the API: no row, no file, no scan), `fileLinks.test.ts` (every link a download), `document_scanning.sql` and `data_isolation.sql` (no prospect stores a file directly).
+- **Notes:** Confirm on the project that the bucket limits took effect and that a 20 MB upload passes Supabase's gateway (`docs/SECURITY_REVIEW.md`, launch check 5). A zip-based file named `.xlsx` or `.docx` passes the byte check whatever it holds; the malware scan (E-4.3) reads inside it. The 20 MB upload cap is above the 10 MB the plan names and the 10 MB `document-extract` reads.
 
 #### E-4.2 Document retention and deletion
 - **Status:** **DONE** · **Size:** M · **Priority:** High · **Owner:** BE · **Depends:** E-1.1, H-1.2 · **Milestone:** M2
@@ -934,9 +935,9 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 - **Notes:** Since US-6.3 (SR-5) a prospect can only change a document's row while its intake is open; removing one from an expired draft is still allowed.
 
 #### E-4.3 Malware scanning
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** OPS · **Depends:** D13, E-1.1 · **Milestone:** M2
-- **Built:** No scanner and no quarantine status. Downloads are not gated.
-- **Remaining:** The owner's update policy lets a prospect write `documents.status` (the ownership trigger locks only `user_id`, `session_id` and `storage_path`), so a scan verdict cannot live in that column as it is: use a separate, service-only column.
+- **Status:** **DONE** (code; the scanner itself waits on D13) · **Size:** S · **Priority:** High · **Owner:** OPS · **Depends:** D13, E-1.1 · **Milestone:** M2
+- **Built (2026-11-04, migration `20261104130000_document_scanning.sql`):** Every document has a scan verdict (`documents.scan_verdict`: pending, clean, skipped, infected, failed, with the signature, attempts and error) that only the service role and database functions can write; `documents_guard_scan` refuses it from the API roles, on insert and update. `document-upload` scans each file before storing it (`supabase/functions/_shared/malwareScan.ts`: clamd over TLS, or an HTTPS scanning service, chosen by `MALWARE_SCANNER`): a clean file goes to the `documents` bucket; an infected one, or one the scanner couldn't check, to the new `quarantine` bucket, which has no policies, so nobody signed in can read, list, sign a link to or delete it. The `documents` read policies also refuse a file whose row hasn't passed (`is_withheld_document_file`), which covers files uploaded before scanning. `document-extract` refuses to read an unscanned file, the Upload tab says "Checking for viruses" / "Blocked" / "Couldn't be checked" and offers no read until the scan passes, and the advisor's **Open** is disabled with the reason. `document-scan` (every five minutes) settles what is pending: it moves clean files out of quarantine and infected legacy files into it, retries with backoff (5 minutes to 12 hours), gives up after six attempts (`failed`, alerted), reaps a worker lost on its last attempt, and deletes quarantined copies whose document is gone. A detection records a `malware_detected` event (and `scan_failed` for a scan that gave up or a missing scanner), which ops-monitor alerts on at one event; both functions also post `MALWARE_DETECTED` / `SCAN_FAILED` to the engineering webhook at once, with ids and the signature, never the file name. Deleting an intake deletes its quarantined files too. Tests: `malwareScan.test.ts` (the EICAR test file through a fake clamd speaking INSTREAM, and through the HTTP adapter), `document-upload` and `document-scan` handler tests (quarantine and alert on EICAR, retries, give-up alert, orphan removal), `document_scanning.sql` (who may read or write what, the queue, the alert rules), `data_isolation.sql`. The runbook has "Malware detected" and "Scan failed" playbooks and a monthly EICAR check.
+- **Remaining (OPS):** Choose the scanner (D13), set `MALWARE_SCANNER` and its settings, deploy `document-upload` and `document-scan`, and run the EICAR check in `docs/RUNBOOK.md` on the project. Until then, set `MALWARE_SCANNER=none` for the internal demo only; unset, every upload is held.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Integrate the chosen scanner before any document is available for download. Define the operational response for a positive result.
   - **AC:**
@@ -1303,7 +1304,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Criterion | Status |
 |---|---|
-| All M1 stories are done. | **Not met.** 22 of 54 are DONE or SUPERSEDED. |
+| All M1 stories are done. | **Not met.** 43 of 54 are DONE or SUPERSEDED. |
 | A test prospect completes text intake, review, certification, submission, and PDF download with real data. | **Shown in CI against stand-ins, not live.** The end-to-end test (I-4.3) completes text intake, review, certification, submission and PDF download in a browser with a scripted AI model and a Supabase stand-in. It is not shown on a deployed environment, with a real model or real Supabase, or with document upload. |
 | No "Meridian" text appears in the live path. | **Mostly met.** The live Manuscript never renders the sample (tested). 'Meridian Creative Group' remains in `chamberTypes.ts` and an `AuthPage` placeholder (D-1.5). |
 | Two sessions cannot access each other's data (automated test). | **Met at the database level.** The SQL matrix covers cross-user reads and writes and runs in CI (not run in this refresh). There is no HTTP-level test. |
@@ -1313,18 +1314,18 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Criterion | Status |
 |---|---|
-| All M2 stories are done. | **Not met.** 13 of 39 are DONE or SUPERSEDED. |
+| All M2 stories are done. | **Not met.** 20 of 39 are DONE or SUPERSEDED. |
 | Advisors can review, manage status, and see notifications. | **Largely met in code:** queue, detail, field review, notes, status history, versioned Manuscripts, alert emails. Email needs secrets, a verified sender and the schedule. |
 | Retention and deletion run on schedule. | **Met in the repository.** Drafts expire hourly (A-1.5); `run-retention` queues closed drafts for deletion and prunes logs daily, and `purge-intakes` deletes files and rows hourly (H-1.2, H-1.3, E-4.2). Needs the functions deployed and Vault's secrets set on the project. |
 | Privacy policy and terms are approved by LEGAL. | **Not met.** The pages and the intake consent exist as marked drafts; LEGAL's approval is recorded in `docs/LEGAL_REVIEW.md` (H-2.1, H-2.2, D10). |
-| Authorization, upload, and isolation tests pass in CI. | **Authorization and isolation met** (`data_isolation.sql` over every migration, `e2e/data-isolation.spec.ts`, cross-user storage reads included). **Upload partly met:** only the browser checks file contents (E-4.1), and signed-link expiry is a manual launch check (H-3.3, SR-10). |
+| Authorization, upload, and isolation tests pass in CI. | **Authorization and isolation met** (`data_isolation.sql` over every migration, `e2e/data-isolation.spec.ts`, cross-user storage reads included). **Upload met in the repository:** `document-upload` checks a file's bytes before storing it and quarantines it until its malware scan passes (E-4.1, E-4.3; `document_scanning.sql`, the function tests). Signed-link expiry and the upload checks on the real project are manual launch checks (H-3.3, SR-10; `docs/SECURITY_REVIEW.md` checks 1 and 5). |
 | Runbook, alerts, and backup drill are complete. | **Partly met.** `docs/RUNBOOK.md` and alerting for every failure kind exist (H-4.1, H-4.2). Escalation names, the alert channel and the first restore drill (H-4.3) are still to do. |
 
 ### Milestone 3: Public Launch
 
 | Criterion | Status |
 |---|---|
-| All M3 stories are done, including voice items if voice is marketed (D8). | **Not met.** 1 of 13 are DONE or SUPERSEDED. |
+| All M3 stories are done, including voice items if voice is marketed (D8). | **Not met.** 6 of 13 are DONE or SUPERSEDED. |
 | Branded email is live and verified. | **Not met.** The emails are built and plain text. The sender domain is unverified. |
 | Analytics consent is in place. | **Not met.** No analytics or consent exists. |
 | Launch checklist is signed off and rollback is rehearsed. | **Not met.** Email-only checklist, unchecked. |
@@ -1362,7 +1363,7 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | C-1.1 | Read-only review by Manuscript section | M | Highest | M1 | DONE |
 | C-1.2 | Inline editing that writes to the canonical record | M | Highest | M1 | DONE |
 | C-1.3 | Readiness gate with jump links | M | Highest | M1 | DONE |
-| C-2.1 | Certification record and endpoint | M | Highest | M1 | PARTIAL |
+| C-2.1 | Certification record and endpoint | M | Highest | M1 | DONE |
 | C-2.2 | Certification screen | S | Highest | M1 | DONE |
 | C-2.3 | Re-certification after material changes | M | Highest | M1 | PARTIAL |
 | C-2.4 | One consent definition, marked DRAFT everywhere it appears | S | Highest | M1 | DONE |
@@ -1387,9 +1388,9 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | E-3.1 | Text extraction for CSV, XLSX, and text PDF | M | High | M2 | DONE |
 | E-3.2 | Candidate review and merge policy | M | High | M2 | SUPERSEDED |
 | E-3.3 | Unsupported, encrypted, and unreadable file messages | S | High | M2 | DONE |
-| E-4.1 | Upload validation before storage (interim controls) | S | Highest | M1 | PARTIAL |
+| E-4.1 | Upload validation before storage (interim controls) | S | Highest | M1 | DONE |
 | E-4.2 | Document retention and deletion | M | High | M2 | DONE |
-| E-4.3 | Malware scanning | S | High | M2 | NOT STARTED |
+| E-4.3 | Malware scanning | S | High | M2 | DONE |
 | F-1.1 | Role model | M | High | M2 | DONE |
 | F-1.2 | Advisor routes and backend enforcement | M | High | M2 | DONE |
 | F-1.3 | Sign-in, sign-out, and unauthorized states | S | High | M2 | PARTIAL |

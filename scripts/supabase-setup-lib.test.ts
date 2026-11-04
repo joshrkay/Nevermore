@@ -19,6 +19,8 @@ const goodEnv = {
   SUPPORT_EMAIL: "help@example.com",
   PROSPECT_RESPONSE_TIME: "two business days",
   RESEND_WEBHOOK_SECRET: "whsec_c2VjcmV0",
+  MALWARE_SCANNER: "clamav",
+  CLAMAV_HOST: "scan.example.com",
 };
 
 describe("isProjectRef", () => {
@@ -73,7 +75,8 @@ describe("checkSecrets", () => {
     const template = parseEnvFile(readFileSync(path.resolve(__dirname, "../supabase/env.production.example"), "utf8"));
     const { errors, warnings } = checkSecrets(template);
     expect(errors).toEqual(["LOVABLE_API_KEY is required (or set AI_PROVIDER=anthropic and ANTHROPIC_API_KEY)"]);
-    expect(warnings).toHaveLength(1);
+    // Emails stay queued, and uploads are held until a malware scanner is chosen.
+    expect(warnings).toHaveLength(2);
   });
 
   it("warns, without stopping, that bounces are not processed when sending is set up but the webhook secret is not", () => {
@@ -83,11 +86,29 @@ describe("checkSecrets", () => {
     expect(warnings[0]).toMatch(/RESEND_WEBHOOK_SECRET/);
     expect(warnings[0]).toMatch(/Bounces and spam complaints/);
     // Not a second warning on top of "emails stay queued" when sending itself is not set up.
-    expect(checkSecrets({ LOVABLE_API_KEY: "k", APP_BASE_URL: "https://example.com" }).warnings).toHaveLength(1);
+    expect(checkSecrets({ LOVABLE_API_KEY: "k", APP_BASE_URL: "https://example.com", MALWARE_SCANNER: "clamav", CLAMAV_HOST: "h" }).warnings).toHaveLength(1);
   });
 
   it("lists the webhook function among those it deploys and checks", () => {
     expect(FUNCTIONS).toContain("resend-webhook");
+  });
+
+  it("deploys and checks the upload and scan functions", () => {
+    expect(FUNCTIONS).toEqual(expect.arrayContaining(["document-upload", "document-scan"]));
+  });
+
+  it("checks the malware scanner's settings: unset holds uploads, an incomplete one stops the setup", () => {
+    const base = { ...goodEnv };
+    delete (base as Record<string, string>).MALWARE_SCANNER;
+    expect(checkSecrets(base).warnings.some((w) => /Uploads are held/.test(w))).toBe(true);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "clamscan" }).errors).toEqual([expect.stringMatching(/clamav, http or none/)]);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "clamav", CLAMAV_HOST: "" }).errors).toEqual([expect.stringMatching(/CLAMAV_HOST/)]);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "clamav", CLAMAV_HOST: "scan.example.com" }).errors).toEqual([]);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "http", MALWARE_SCANNER_URL: "https://scan.example.com" }).errors)
+      .toEqual([expect.stringMatching(/MALWARE_SCANNER_TOKEN/)]);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "http", MALWARE_SCANNER_URL: "http://scan.example.com", MALWARE_SCANNER_TOKEN: "t" }).errors)
+      .toEqual([expect.stringMatching(/https/)]);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none" }).warnings.some((w) => /not scanned/.test(w))).toBe(true);
   });
 
     it("warns, without stopping, when email secrets are missing", () => {
@@ -282,7 +303,7 @@ describe("SQL", () => {
 
   it("schedules each scheduled function on the project's own URL, as often as its migration does", () => {
     const migrations = readdirSync("supabase/migrations").map((f) => readFileSync(`supabase/migrations/${f}`, "utf8")).join("\n");
-    expect(SCHEDULED_FUNCTIONS.map((j) => j.fn)).toEqual(["dispatch-outbox", "purge-intakes", "ops-monitor"]);
+    expect(SCHEDULED_FUNCTIONS.map((j) => j.fn)).toEqual(["dispatch-outbox", "purge-intakes", "ops-monitor", "document-scan"]);
     for (const job of SCHEDULED_FUNCTIONS) {
       expect(FUNCTIONS).toContain(job.fn);
       const sql = functionScheduleSql(REF, job.fn, job.schedule);
@@ -320,8 +341,8 @@ describe("SQL", () => {
 describe("interpretChecks", () => {
   const allSet = {
     status: {
-      migrations: 16, intake_table: 1, table_grants: 1, buckets: 2, extensions: 2, vault_secret: 1, schedule: 1, expiry_schedule: 1,
-      purge_schedule: 1, monitor_schedule: 1, retention_schedule: 1, role_grants: 0,
+      migrations: 16, intake_table: 1, table_grants: 1, buckets: 3, extensions: 2, vault_secret: 1, schedule: 1, expiry_schedule: 1,
+      purge_schedule: 1, monitor_schedule: 1, scan_schedule: 1, retention_schedule: 1, role_grants: 0,
     },
     auth: { external: { anonymous_users: true }, mailer_autoconfirm: false },
     authConfig: {
@@ -337,7 +358,7 @@ describe("interpretChecks", () => {
   it("passes a finished project, leaving emails and advisors as to-dos", () => {
     const checks = interpretChecks(allSet, { localMigrations: 16 });
     expect(setupComplete(checks)).toBe(true);
-    expect(checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["Email secrets", "Engineering alerts", "Advisor accounts"]);
+    expect(checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["Email secrets", "Engineering alerts", "Malware scanner", "Advisor accounts"]);
     expect(checks.find((c) => c.name === "Advisor accounts")?.detail).toContain("--grant-advisor");
   });
 
