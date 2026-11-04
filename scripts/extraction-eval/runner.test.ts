@@ -8,7 +8,7 @@ import { buildUserPrompt } from "../../supabase/functions/chamber-extract/prompt
 import { CHAT_MAX_TOKENS, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema";
 import { FIXTURES, type Fixture } from "./fixtures";
 import { connectProvider, main, runFixture, runFixtures, type Connection, type MainDeps, type ModelCall } from "./runner";
-import { parseBaseline } from "./scoring";
+import { parseBaseline, replyChecks } from "./scoring";
 
 const confirmed = (...fields: string[]) => Object.fromEntries(fields.map((f) => [f, "confirmed"]));
 
@@ -64,6 +64,17 @@ const CANNED: Record<string, Record<string, unknown> | null> = {
   "Our hourly staff clock in on a mobile app. We don't use physical time clocks.": {
     uses_mobile_app: true, uses_physical_clocks: false, field_status: confirmed("uses_mobile_app", "uses_physical_clocks"),
   },
+  "We're Brightwater Dental Group: 12 employees, all in Oregon.": {
+    company_name: "Brightwater Dental Group", employee_count: 12, states: ["OR"],
+    field_status: confirmed("company_name", "employee_count", "states"),
+  },
+  // Lenore takes no one's details in chat (US-2.3d): the canned reply points to the template, and nothing is extracted.
+  "Here's the team so far: Maria Lopez, office manager, born 4/2/1988, $58,000 a year; Dev Patel, hygienist, born 9/14/1979, $41 an hour.": {
+    reply: "Thank you. Rather than typing each person here, download the census template on the Upload tab, fill in one row per employee and upload it there.",
+  },
+  "What's the easiest way to get you our employee list?": {
+    reply: "Our census template: download it on the Upload tab, add one row per employee, and upload it there.",
+  },
 };
 
 // buildUserPrompt ends with the JSON-quoted message.
@@ -77,7 +88,8 @@ const stubModel = (overrides: Record<string, ModelResult> = {}) => {
     const message = lastMessage(request.user);
     if (overrides[message]) return overrides[message];
     if (!(message in CANNED)) throw new Error(`no canned answer for ${JSON.stringify(message)}`);
-    return { ok: true, args: CANNED[message] ? { ...CANNED[message], reply: "Noted." } : null, attempts: 1, latencyMs: 0 };
+    // "Noted." unless the canned answer has a reply of its own.
+    return { ok: true, args: CANNED[message] ? { reply: "Noted.", ...CANNED[message] } : null, attempts: 1, latencyMs: 0 };
   });
   return { call: call as ModelCall & typeof call, requests };
 };
@@ -159,10 +171,24 @@ describe("runFixtures", () => {
     expect(errors).toEqual([]);
     expect(Object.entries(cells).filter(([, c]) => !c.pass)).toEqual([]);
     const assertions = FIXTURES.reduce(
-      (n, f) => n + Object.keys(f.expected).length + (f.absent?.length ?? 0) + (f.forbidden_digits?.length ?? 0),
+      (n, f) => n + Object.keys(f.expected).length + (f.absent?.length ?? 0) + (f.forbidden_digits?.length ?? 0) + replyChecks(f).length,
       0,
     );
     expect(Object.keys(cells)).toHaveLength(assertions);
+  });
+
+  it("scores Lenore's own reply: one that doesn't name the template fails, and so does none, though the chat shows a fallback", async () => {
+    const message = "What's the easiest way to get you our employee list?";
+    const elsewhere: ModelResult = { ok: true, args: { reply: "Happy to help. How many employees do you have?" }, attempts: 1, latencyMs: 0 };
+    const silent: ModelResult = { ok: true, args: {}, attempts: 1, latencyMs: 0 };
+    const run = await runFixture(fixture("roster-question"), stubModel({ [message]: silent }).call);
+    expect(run.replies).toEqual([null]);
+
+    const offTopic = await runFixtures([fixture("roster-question")], stubModel({ [message]: elsewhere }).call);
+    expect(offTopic.cells["roster-question/reply1:template"]).toEqual({ pass: false, actual: "Happy to help. How many employees do you have?", status: null });
+    const none = await runFixtures([fixture("roster-question")], stubModel({ [message]: silent }).call);
+    expect(none.cells["roster-question/reply1:template"]).toEqual({ pass: false, actual: "(no reply)", status: null });
+    expect(none.errors).toEqual([]);
   });
 
   it("counts a reply with no tool call as a failed call, as the handler answers it invalid_response", async () => {
