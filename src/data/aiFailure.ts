@@ -2,8 +2,9 @@ import { FunctionsFetchError, FunctionsHttpError } from "@supabase/supabase-js";
 
 // Why Lenore couldn't answer, as the prospect is told it. The AI functions answer a failure with a code
 // (supabase/functions/_shared/ai/errors.ts); several codes read the same to a prospect, so they are
-// folded into these kinds. Each kind has its own words (US-2.4a).
-export type AiFailureKind = "rate_limited" | "daily_cap" | "timeout" | "unavailable" | "failed";
+// folded into these kinds. Each kind has its own words (US-2.4a). `unavailable` is Lenore not being set
+// up or paid for; `unreachable` is the provider or the function not answering this time.
+export type AiFailureKind = "rate_limited" | "daily_cap" | "timeout" | "unavailable" | "unreachable" | "failed";
 
 export interface AiFailureInfo {
   kind: AiFailureKind;
@@ -21,12 +22,19 @@ export function failureKindFromCode(code: unknown): AiFailureKind {
     case "timeout":
       return "timeout";
     case "unavailable":
-    case "provider_error":
       return "unavailable";
+    case "provider_error":
+      return "unreachable";
     default:
       return "failed";
   }
 }
+
+/**
+ * Whether trying again could get Lenore to answer. A daily cap, or a Lenore that isn't set up or paid
+ * for, won't clear by retrying, so no retry is offered for them (B-3.2).
+ */
+export const retryCanClear = (kind: AiFailureKind): boolean => kind !== "daily_cap" && kind !== "unavailable";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -48,7 +56,7 @@ export async function describeInvokeError(error: unknown): Promise<AiFailureInfo
     const code = isObject(body) && typeof body.code === "string" ? body.code : response?.status === 429 ? "rate_limited" : null;
     return { kind: failureKindFromCode(code), requestId };
   }
-  if (error instanceof FunctionsFetchError) return { kind: "unavailable" };
+  if (error instanceof FunctionsFetchError) return { kind: "unreachable" };
   return { kind: "failed" };
 }
 
@@ -57,7 +65,8 @@ export const CHAT_FAILURE_MESSAGES: Record<AiFailureKind, string> = {
   rate_limited: "You're writing faster than Lenore can keep up. Give her a minute, then try again.",
   daily_cap: "Lenore is resting for the day. Your message is saved, and you can keep filling in the workspace yourself.",
   timeout: "Lenore took too long to answer. Your message is saved.",
-  unavailable: "Lenore can't be reached right now. Your message is saved.",
+  unavailable: "Lenore isn't available right now. Your message is saved, and you can keep filling in the workspace yourself.",
+  unreachable: "Lenore can't be reached right now. Your message is saved.",
   failed: "Lenore couldn't respond. Your message is saved.",
 };
 
@@ -66,6 +75,7 @@ export const DOCUMENT_FAILURE_MESSAGES: Record<AiFailureKind, string> = {
   rate_limited: "Lenore is reading a lot at once. Give her a minute, then try again.",
   daily_cap: "Lenore is resting for the day. The file is saved, and you can try again tomorrow.",
   timeout: "Lenore took too long reading it. The file is saved, and you can try again.",
-  unavailable: "Lenore can't be reached right now. The file is saved, and you can try again.",
+  unavailable: "Lenore isn't available right now. The file is saved, and you can keep filling in the workspace yourself.",
+  unreachable: "Lenore can't be reached right now. The file is saved, and you can try again.",
   failed: "Something went wrong reading this file. It's saved, and you can try again.",
 };

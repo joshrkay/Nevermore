@@ -73,7 +73,7 @@ BEGIN
   UPDATE twice_ SET sid = new_id;
 END $$;
 
-\i supabase/migrations/20261104110000_certification_snapshots.sql
+\i supabase/migrations/20261104117000_certification_snapshots.sql
 
 DO $$
 DECLARE

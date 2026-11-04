@@ -208,26 +208,8 @@ they always ran in:
 
 | Was | Now |
 | --- | --- |
-| `20261027090000_outbox_operations.sql` | `20261027090100_outbox_operations.sql` |
-| `20261103110000_document_storage_path.sql` | `20261103110100_document_storage_path.sql` |
-
-On 2026-11-04 `required_items` and `certification_conflicts` both arrived as `20261104100000`, and the merge
-that brought them together also dropped both copies of the two files above. `required_items` is now
-`20261104100100`, and the two files above are back under their kept numbers. A push from that `main` applied
-`certification_conflicts` and stopped on `required_items`, so push again: it applies `20261104100100` and
-whatever came after. `required_items` only replaces functions and grants, so running it again is safe.
-A project set up from that `main` never got `outbox_operations` or `document_storage_path`. They sort before
-migrations it has already applied, so `supabase db push` asks for `--include-all` to apply them; check
-`supabase migration list --linked` first, and only use it for these files. Both are safe to run there:
-`outbox_operations` adds only the columns, indexes and functions that are missing, and leaves the later,
-suppression-aware queue functions and status check from `20261028090000_email_delivery_events` as they are.
-
-Two fixes landed at once and briefly left a second copy of each renumbered file, as `20261027090001` and
-`20261103110001`; those copies were removed (applying `outbox_operations` twice fails on the column its first run adds).
-A project that recorded either number has run that file: record the kept number as applied and drop the
-stray one before pushing, for example
-`supabase migration repair --status applied 20261027090100 --linked` then
-`supabase migration repair --status reverted 20261027090001 --linked`, and likewise for `20261103110001`.
+| `20261027090000_outbox_operations.sql` | `20261027090001_outbox_operations.sql` |
+| `20261103110000_document_storage_path.sql` | `20261103110001_document_storage_path.sql` |
 
 A project pushed with the old names has the first file of each pair recorded under the shared number and
 the second never applied, along with everything after it. Before pushing again, list what is recorded:
@@ -236,7 +218,7 @@ the second never applied, along with everything after it. Before pushing again, 
 supabase migration list --linked
 ```
 
-- `20261027090100` and `20261103110100` show as not applied, and the project was only ever updated with
+- `20261027090001` and `20261103110001` show as not applied, and the project was only ever updated with
   `supabase db push` (this script): push. They run now, followed by everything the failed push left out.
 - Either was applied some other way (the SQL editor, for example): neither is safe to run twice, so mark
   it applied before pushing. `outbox_operations` ran if the index `public.outbox_events_status_created_idx`
@@ -244,24 +226,40 @@ supabase migration list --linked
   on `public.documents` checks `storage_path`.
 
   ```sh
-  supabase migration repair --status applied 20261027090100 --linked
-  supabase migration repair --status applied 20261103110100 --linked
+  supabase migration repair --status applied 20261027090001 --linked
+  supabase migration repair --status applied 20261103110001 --linked
   ```
 
-For a few minutes on 2026-11-03 `main` held each of the two files twice, also as
-`20261027090100_outbox_operations.sql` and `20261103110100_document_storage_path.sql`, and a push from then
+Two fixes renumbered the same two files at once, the other choosing `20261027090100` and
+`20261103110100`. For a few minutes on 2026-11-03 `main` held both copies of each, and a push from then
 applied `20261027090001`, then stopped on the second copy (`column "claimed_at" of relation "outbox_events"
-already exists`). Those copies are gone: push again and it carries on. Only a project pushed with the copies
-and not the originals (from the branch that added them) has `20261027090100` or `20261103110100` in
-`supabase migration list --linked`. Record it under the number that stays, then push:
+already exists`). Two later fixes each removed a different copy, which left neither in the folder until the
+`…0001` copies were put back (2026-11-04). So:
+
+- A project pushed from `main` before that gap has `20261027090001` and `20261103110001` recorded: push.
+- A project first pushed during the gap has later migrations recorded and not these two, and `supabase db push`
+  won't apply a file older than the last one recorded unless asked. Neither has run there, so push once with
+  `supabase db push --include-all --linked`.
+- Only a project pushed from the branch that used the other numbers has `20261027090100` or `20261103110100`
+  in `supabase migration list --linked`. Record it under the number that stays, then push:
 
 ```sh
 supabase migration repair --status reverted 20261027090100 --linked
 supabase migration repair --status applied 20261027090001 --linked
 ```
 
-and the same for `20261103110100` and `20261103110001`. `src/data/migrations.test.ts` also fails when a
-migration is in the folder twice, under one name or with the same SQL.
+and the same for `20261103110100` and `20261103110001`.
+
+`20261104100000` was also shared for a time (2026-11-04), by `certification_conflicts` and
+`required_items`; `required_items` is now `20261104103000`, after `one_open_draft`. A project that recorded
+`20261104100000` ran only one of the two. Check which before pushing: `certification_conflicts` ran if the
+function `public.intake_conflicting_required` exists, `required_items` if `public.intake_required_items`
+exists. If `required_items` ran, mark it applied (`supabase migration repair --status applied 20261104103000
+--linked`), then push. If `certification_conflicts` didn't run, apply that file in the SQL editor before
+pushing (`20261104100000` stays recorded); it only replaces functions, so it is safe to run.
+
+`src/data/migrations.test.ts` fails CI when two files share a number, or when a migration is in the folder
+twice, under one name or with the same SQL.
 
 ## If a step fails
 

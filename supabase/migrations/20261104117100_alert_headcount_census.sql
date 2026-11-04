@@ -1,6 +1,6 @@
 -- The advisor alert's headcount counts the census (US-1.4's canonical roster) when no headcount was stated.
 --
--- enqueue_certification_notifications (20261027090100_outbox_operations) fell back to the W-2 rows of
+-- enqueue_certification_notifications (20261027090001_outbox_operations) fell back to the W-2 rows of
 -- `employees`, the roster's name before the census contract. Intakes since then keep their rows in `census`,
 -- classified 'w2' or '1099', so an intake whose headcount came only from an uploaded census reached the
 -- advisor with no employee count, though the Manuscript shows one (src/data/headcount.ts). The fallback now

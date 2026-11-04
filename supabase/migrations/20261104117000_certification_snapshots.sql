@@ -13,7 +13,7 @@ ALTER TABLE public.chamber_certifications
   ADD COLUMN field_provenance jsonb;
 
 COMMENT ON COLUMN public.chamber_certifications.chamber_data IS
-  'The answers exactly as signed (the submission''s snapshot). Null only for certifications recorded before 20261104110000 whose snapshot was already gone.';
+  'The answers exactly as signed (the submission''s snapshot). Null only for certifications recorded before 20261104117000 whose snapshot was already gone.';
 COMMENT ON COLUMN public.chamber_certifications.field_provenance IS
   'Field status and source as signed, paired with chamber_data.';
 

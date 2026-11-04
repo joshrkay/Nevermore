@@ -1,5 +1,3 @@
-import type { RequiredItem } from "./requiredItems";
-
 // The wording a prospect certifies. The version is stored with every certification so we can
 // always tell which text a signer agreed to; bump it whenever any wording below changes.
 //
@@ -26,10 +24,8 @@ export interface SignerDetails {
 
 /**
  * Why certification can't be completed yet; empty when it can. Drives the submit button and its hint.
- * Missing required answers come first (US-1.2; the database refuses them too, EA003). Then each required
- * answer whose answers conflict (B-2, D26): the database refuses those too (EA008), whoever verified them,
- * so the browser holds back exactly what it would refuse. States of operation taken from a census in
- * conflict is resolved on the census, so that is named as well (B-2.2); the census alone never blocks.
+ * What the intake still needs comes first: the required answers missing (US-1.2; the database refuses them
+ * too, EA003), then those in conflict (B-2 D26, EA008). The recommended census never blocks.
  */
 export function certificationBlockers(opts: {
   acknowledged: boolean[];
@@ -39,19 +35,16 @@ export function certificationBlockers(opts: {
   isGuest: boolean;
   /** Labels of the required answers the intake doesn't have yet (missingRequired in readiness.ts). */
   missingAnswers?: string[];
-  /** Labels of the required answers in conflict, as the database reads them (conflictingRequired in readiness.ts). */
+  /**
+   * Labels of the required answers in conflict (certificationBlockingItems in requiredItems.ts): those the
+   * database refuses (EA008), and States of operation decided by a census in conflict.
+   */
   conflictingAnswers?: string[];
-  /** The intake's items (requiredItems.ts), for states of operation in conflict through the census. */
-  requiredItems?: readonly RequiredItem[];
 }): string[] {
-  const conflicts = [...(opts.conflictingAnswers ?? [])];
-  for (const item of opts.requiredItems ?? []) {
-    if (item.required && item.state === "conflicting" && item.viaCensus && !conflicts.includes(CENSUS_LABEL)) conflicts.push(CENSUS_LABEL);
-  }
   // What the intake still needs comes first: no signature can make up for it.
   const blockers: string[] = [
     ...(opts.missingAnswers ?? []).map((label) => `Add ${label.toLowerCase()}`),
-    ...conflicts.map((label) => `Resolve the conflicting answers for ${label}`),
+    ...(opts.conflictingAnswers ?? []).map((label) => `Choose one answer for ${label.toLowerCase()}`),
   ];
   if (opts.isGuest) blockers.push("Verify your email");
   if (!opts.hasFileId) blockers.push("Wait for your intake to finish saving");
@@ -61,5 +54,3 @@ export function certificationBlockers(opts: {
   if (!opts.signed) blockers.push("Sign");
   return blockers;
 }
-
-const CENSUS_LABEL = "Employee census";

@@ -1348,7 +1348,7 @@ BEGIN
   PERFORM pg_temp.mk_event(sid, 'dead', 5);
 END $$;
 
-\i supabase/migrations/20261027090100_outbox_operations.sql
+\i supabase/migrations/20261027090001_outbox_operations.sql
 
 DO $$
 DECLARE
@@ -1580,8 +1580,8 @@ BEGIN
   RAISE NOTICE 'submission_outbox: operations privilege cases passed';
 END $$;
 
--- The census, the roster's current name, counts toward the alert's headcount (20261104110100).
-\i supabase/migrations/20261104110100_alert_headcount_census.sql
+-- The census, the roster's current name, counts toward the alert's headcount (20261104117100).
+\i supabase/migrations/20261104117100_alert_headcount_census.sql
 DO $$
 DECLARE
   p jsonb;

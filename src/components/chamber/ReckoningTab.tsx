@@ -5,8 +5,7 @@ import { CheckCircle2, Download, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChamberData } from "@/data/chamberTypes";
-import type { ProvenanceMap } from "@/data/provenance";
-import { NO_VERIFIED_FIELDS, requiredItems } from "@/data/requiredItems";
+import { certificationBlockingItems, NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { NO_CERTIFICATION, type CertificationState, type ChamberSubmission } from "@/data/manuscript";
 import {
   CONSENT_IS_DRAFT,
@@ -16,7 +15,7 @@ import {
   consentStatements,
 } from "@/data/certification";
 import { useAuth } from "@/hooks/useAuth";
-import { conflictingRequired, missingRequired } from "@/data/readiness";
+import type { ProvenanceMap } from "@/data/provenance";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import VerifyEmailGate from "./VerifyEmailGate";
 
@@ -24,7 +23,7 @@ interface ReckoningTabProps {
   data: ChamberData;
   /** Each answer's field status: a required answer in conflict blocks certification until one is chosen. */
   provenance?: ProvenanceMap;
-  /** Fields an advisor verified, for the required items' states (a census settled by an advisor doesn't block). */
+  /** Fields an advisor verified: a verified census settles the States of operation it gives. */
   verified?: ReadonlySet<string>;
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
@@ -81,14 +80,18 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
   }, [dataKey, signedDataKey]);
 
   const signed = signedAt !== null;
-  const missingAnswers = missingRequired(data);
-  // What the database refuses (EA008), then states of operation in conflict through the census (B-2.2).
-  const items = requiredItems(data, provenance, verified);
-  const censusConflict = items.some((i) => i.required && i.viaCensus && i.state === "conflicting");
-  const conflictingAnswers = [
-    ...conflictingRequired(provenance),
-    ...(censusConflict ? [{ key: "census", label: "Employee census" }] : []),
-  ];
+  // What the intake still needs, as Review lists it (certificationBlockingItems): the missing answers, then
+  // those in conflict, which the database refuses (EA008), and States of operation that only a census in
+  // conflict gives, which only the browser checks.
+  const blocking = certificationBlockingItems(data, provenance, verified);
+  const missingAnswers = blocking.filter((item) => item.state === "missing").map((item) => item.readiness);
+  const conflictingAnswers = blocking
+    .filter((item) => item.state === "conflicting")
+    .map((item) =>
+      item.viaCensus
+        ? { key: "census", label: "Employee census", note: "Its answers conflict, and it gives your states." }
+        : { key: item.item, label: item.label, note: "You've given two different answers." },
+    );
   const blockers = certificationBlockers({
     acknowledged: checks,
     signer: { name: signerName, title: signerTitle },
@@ -97,7 +100,6 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
     isGuest: isAnonymous,
     missingAnswers: missingAnswers.map((item) => item.label),
     conflictingAnswers: conflictingAnswers.map((item) => item.label),
-    requiredItems: items,
   });
   const allChecked = blockers.length === 0;
   const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";
@@ -169,7 +171,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
           </p>
         </div>
 
-        {/* The Manuscript can't be generated without these; the database refuses the certification too. */}
+        {/* The Manuscript can't be generated without these; the database refuses the certification too, but for the census's states. */}
         {(missingAnswers.length > 0 || conflictingAnswers.length > 0) && !certifiedAndCurrent && (
           <div role="alert" aria-label="Answers still needed" className="border border-destructive/40 bg-destructive/5 rounded-xl p-4 text-sm space-y-2">
             {missingAnswers.length > 0 && (
@@ -192,7 +194,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
                 <ul className="list-disc pl-5 space-y-0.5">
                   {conflictingAnswers.map((item) => (
                     <li key={item.key}>
-                      {item.label} <span className="text-muted-foreground text-xs">You've given two different answers.</span>
+                      {item.label} <span className="text-muted-foreground text-xs">{item.note}</span>
                     </li>
                   ))}
                 </ul>

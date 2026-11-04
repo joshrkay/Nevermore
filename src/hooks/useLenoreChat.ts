@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { describeInvokeError, type AiFailureKind } from "@/data/aiFailure";
 import type { ChamberData } from "@/data/chamberTypes";
-import { chatRequestBody, type ChatMessage } from "@/data/chat";
+import { CHAT_FALLBACK_REPLY, chatRequestBody, type ChatMessage } from "@/data/chat";
 import type { ProvenanceMap } from "@/data/provenance";
 import { redactSensitive } from "@/data/sensitive";
 import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
@@ -52,8 +52,6 @@ interface UseLenoreChatOptions {
   epoch?: unknown;
 }
 
-const FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?";
-
 /**
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
@@ -98,7 +96,8 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       controller.abort();
     }, CHAT_TIMEOUT_MS);
     try {
-      const body: Record<string, unknown> = { ...chatRequestBody(text, dataRef.current, provenanceRef.current ?? {}, messagesRef.current ?? [], message.id) };
+      // The answers without the roster, their field statuses and the recent conversation (chatRequestBody).
+      const body: Record<string, unknown> = { ...chatRequestBody({ id: message.id, text }, dataRef.current, provenanceRef.current, messagesRef.current ?? []) };
       const sessionId = intakeIdRef.current ?? (ensureIntakeRef.current ? await ensureIntakeRef.current() : null);
       if (sessionId) body.session_id = sessionId;
       const { data, error } = await supabase.functions.invoke("chamber-extract", { body, signal: controller.signal });
@@ -110,7 +109,7 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
       if (error) throw error;
 
       if (data?.extracted) onExtracted(data.extracted, data, message);
-      const reply = (typeof data?.reply === "string" && data.reply.trim()) || FALLBACK_REPLY;
+      const reply = (typeof data?.reply === "string" && data.reply.trim()) || CHAT_FALLBACK_REPLY;
       onOrbStateChange("speaking");
       addLenoreMessage(reply);
       idleTimer.current = setTimeout(() => onOrbStateChange("idle"), 2000);

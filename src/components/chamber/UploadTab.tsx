@@ -8,7 +8,7 @@ import { DOCUMENT_CATEGORIES, isDocumentCategory, missingRecommended } from "@/d
 import type { CandidateResolution } from "@/data/documentCandidates";
 import type { ProvenanceMap } from "@/data/provenance";
 import { canRetryExtraction, documentStatusInfo } from "@/data/documentStatus";
-import { DOCUMENT_FAILURE_MESSAGES } from "@/data/aiFailure";
+import { DOCUMENT_FAILURE_MESSAGES, retryCanClear } from "@/data/aiFailure";
 import type { SessionDocument, UploadRejection, UseSessionDocumentsReturn } from "@/hooks/useSessionDocuments";
 import { MAX_DOCUMENTS_PER_INTAKE, MAX_UPLOAD_BYTES } from "@/lib/uploadCheck";
 import DocumentCandidates from "./DocumentCandidates";
@@ -137,8 +137,11 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
           </p>
           {docs.map((doc) => {
             const status = documentStatusInfo(doc.status);
-            // Why the last read in this tab didn't go through, while it can still be tried again.
+            // Why the last read in this tab didn't go through, while the file is still unread.
             const readIssue = doc.readIssue && canRetryExtraction(doc.status) ? doc.readIssue : null;
+            // No "Read it" or "Try again" while reading again can't help (the daily cap, a Lenore that isn't set
+            // up); after a reload it is offered again.
+            const canRead = canRetryExtraction(doc.status) && (!readIssue || retryCanClear(readIssue));
             const busy = doc.status === "uploading" || doc.status === "processing";
             return (
               <div key={doc.id} className="bg-muted rounded-lg p-3">
@@ -187,7 +190,7 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
                 {status.message && (
                   <p className={`text-xs mt-1.5 ml-8 ${status.tone === "warn" || readIssue ? "text-warning" : "text-muted-foreground"}`}>
                     <span className="font-medium">{status.label}.</span> {readIssue ? DOCUMENT_FAILURE_MESSAGES[readIssue] : doc.extraction.message ?? status.message}
-                    {canRetryExtraction(doc.status) && (
+                    {canRead && (
                       <button onClick={() => void extract(doc)} className="ml-1.5 text-primary hover:underline">
                         {doc.status === "uploaded" ? "Read it" : "Try again"}
                       </button>

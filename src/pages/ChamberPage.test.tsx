@@ -29,16 +29,17 @@ const session = {
   certification: { status: "none" as string },
   updateIntake: vi.fn(),
   addMessage: vi.fn(),
-  verifiedFields: new Set<string>() as ReadonlySet<string>,
   conversationEpoch: {} as object,
+  verifiedFields: new Set<string>() as ReadonlySet<string>,
 };
-const voice = { isConnected: false };
+
 // What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
 const hooks = {
   workspace: null as null | { verified?: ReadonlySet<string> },
   voice: null as null | { onExtract: (data: unknown, message: ChatMessage | null) => void },
   chat: null as null | { onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string }) => void },
 };
+const voice = { isConnected: false };
 const auth = {
   isAnonymous: true,
   requestSignInCode: vi.fn(async () => ({ error: null, noAccount: false })),

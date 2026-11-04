@@ -7,10 +7,13 @@ import {
   changesSinceSigning,
   completenessOf,
   formatStates,
+  isCurrentVersion,
+  isStaleRefusal,
   manuscriptStoragePath,
-  matchesSearch,
   parseCorrection,
   PIPELINE_STATUSES,
+  prospectStatusAfter,
+  reconcileDocuments,
   prospectStatusMessage,
   referenceOf,
   reviewMap,
@@ -163,48 +166,6 @@ describe("referenceOf", () => {
   });
 });
 
-describe("matchesSearch", () => {
-  const row = {
-    session_id: "a1b2c3d4-0000-0000-0000-000000000000",
-    company_name: "Acme Holdings LLC",
-    contact_name: "Pat Prospect",
-    file_id: "EAA-2026-A1B2C3D4",
-    created_at: "2026-03-01T12:00:00Z",
-  };
-
-  it("matches everything when there is no search", () => {
-    expect(matchesSearch(row, "")).toBe(true);
-    expect(matchesSearch(row, "   ")).toBe(true);
-  });
-
-  it("finds a row by company, contact or File ID, ignoring case", () => {
-    expect(matchesSearch(row, "acme")).toBe(true);
-    expect(matchesSearch(row, "PROSPECT")).toBe(true);
-    expect(matchesSearch(row, "eaa-2026-a1b2")).toBe(true);
-    expect(matchesSearch(row, "a1b2c3d4")).toBe(true);
-  });
-
-  it("needs every word to match, in any of the three fields", () => {
-    expect(matchesSearch(row, "acme pat")).toBe(true);
-    expect(matchesSearch(row, "acme  a1b2")).toBe(true);
-    expect(matchesSearch(row, "acme nobody")).toBe(false);
-  });
-
-  it("matches a draft by the reference the app derives for it", () => {
-    expect(matchesSearch({ ...row, file_id: null }, "EAA-2026-A1B2C3D4")).toBe(true);
-  });
-
-  it("copes with missing company and contact", () => {
-    const blank = { ...row, company_name: null, contact_name: null };
-    expect(matchesSearch(blank, "acme")).toBe(false);
-    expect(matchesSearch(blank, "a1b2")).toBe(true);
-  });
-
-  it("doesn't search anything a row doesn't show, such as the session id's other digits", () => {
-    expect(matchesSearch(row, "0000-0000")).toBe(false);
-  });
-});
-
 describe("formatStates", () => {
   it("is null when no state is known", () => {
     expect(formatStates([])).toBeNull();
@@ -220,6 +181,112 @@ describe("formatStates", () => {
 
   it("summarises a long one", () => {
     expect(formatStates(["AZ", "CA", "CO", "FL", "NY", "TX", "WA"])).toBe("AZ, CA, CO, FL +3 more");
+  });
+});
+
+describe("isStaleRefusal", () => {
+  it("is the database's refusal of a change based on answers, a review or a version that moved on", () => {
+    expect(isStaleRefusal({ code: "PT409", message: "The prospect certified their intake again" })).toBe(true);
+  });
+
+  it("is nothing else", () => {
+    for (const err of [{ code: "42501" }, { code: "P0002" }, new Error("Network request failed"), null, undefined, "PT409"]) {
+      expect(isStaleRefusal(err)).toBe(false);
+    }
+  });
+});
+
+describe("prospectStatusAfter", () => {
+  const h = (...statuses: string[]) => statuses.map((to_status) => ({ to_status }));
+
+  it("shows a shared status as it is", () => {
+    expect(prospectStatusAfter("under_review", h("submitted"))).toBe("under_review");
+    expect(prospectStatusAfter("information_requested", h("under_review"))).toBe("information_requested");
+  });
+
+  it("leaves the last shared status in place for an internal one", () => {
+    expect(prospectStatusAfter("lost", h("lost", "under_review", "submitted", "draft"))).toBe("under_review");
+  });
+
+  it("never leaves the prospect being asked for information once the advisor has moved on", () => {
+    expect(prospectStatusAfter("sent_to_carrier", h("information_requested", "submitted"))).toBe("under_review");
+  });
+
+  it("is nothing when nothing was ever shared", () => {
+    expect(prospectStatusAfter("archived", h("draft"))).toBeNull();
+  });
+});
+
+describe("reconcileDocuments", () => {
+  const doc = (id: string, over: Record<string, string> = {}) => ({
+    id, file_name: `${id}.pdf`, file_size: "1 KB", category: "other", status: "uploaded",
+    storage_path: `u/s/${id}.pdf`, created_at: `2026-10-0${id.slice(-1)}T00:00:00Z`, ...over,
+  });
+
+  it("leaves the live list as it is when there's no certified list", () => {
+    expect(reconcileDocuments([doc("d1")], undefined)).toEqual([doc("d1")]);
+  });
+
+  it("marks certified, removed and added documents, newest first", () => {
+    const out = reconcileDocuments([doc("d1"), doc("d3")], [doc("d1"), doc("d2")]);
+    expect(out.map((d) => [d.id, d.certification])).toEqual([["d3", "added"], ["d2", "removed"], ["d1", "certified"]]);
+    // A removed document keeps what it was certified with, so its kept file can still be opened.
+    expect(out.find((d) => d.id === "d2")).toMatchObject({ storage_path: "u/s/d2.pdf", file_name: "d2.pdf" });
+  });
+
+  it("says what a certified document was certified as, when it has changed since", () => {
+    const [d] = reconcileDocuments([doc("d1", { category: "other", file_name: "new.pdf" })], [doc("d1", { category: "employee_census" })]);
+    expect(d).toMatchObject({ certification: "certified", category: "other", certifiedCategory: "employee_census", certifiedFileName: "d1.pdf" });
+    const [same] = reconcileDocuments([doc("d1")], [doc("d1")]);
+    expect(same).not.toHaveProperty("certifiedCategory");
+    expect(same).not.toHaveProperty("certifiedFileName");
+  });
+
+  it("ignores entries in the certified list it can't use", () => {
+    expect(reconcileDocuments([], [null, "x", { id: 1 }, { id: "d9" }, doc("d2")]).map((d) => d.id)).toEqual(["d2"]);
+  });
+});
+
+describe("reconcileDocuments: a certified document is the certified one only with the certified file", () => {
+  const doc = (over: Record<string, string | null> = {}) => ({
+    id: "d1", file_name: "payroll.pdf", file_size: "10 KB", category: "payroll_report", status: "uploaded",
+    storage_path: "u/s/orig.pdf", created_at: "2026-10-01T00:00:00Z", file_sha256: "1".repeat(64), ...over,
+  });
+
+  it("shows a row re-created under the same id with another file as the certified one removed and a new one added", () => {
+    const out = reconcileDocuments([doc({ storage_path: "u/s/swapped.pdf", file_sha256: "2".repeat(64) })], [doc()]);
+    expect(out.map((d) => [d.certification, d.storage_path])).toEqual([["removed", "u/s/orig.pdf"], ["added", "u/s/swapped.pdf"]]);
+  });
+
+  it("does the same when only the bytes differ", () => {
+    const out = reconcileDocuments([doc({ file_sha256: "2".repeat(64) })], [doc()]);
+    expect(out.map((d) => d.certification)).toEqual(["removed", "added"]);
+  });
+
+  it("keeps a document restored under its id with the same file as the certified one", () => {
+    expect(reconcileDocuments([doc()], [doc()]).map((d) => d.certification)).toEqual(["certified"]);
+    // A hash missing on either side doesn't count as a difference.
+    expect(reconcileDocuments([doc({ file_sha256: null })], [doc()]).map((d) => d.certification)).toEqual(["certified"]);
+  });
+});
+
+describe("isCurrentVersion", () => {
+  const submission = { certified_at: "2026-10-01T12:00:05.123456+00:00", signed_at: "2026-10-01T12:00:00Z", data_sha256: "h" };
+  const v = { certified_at: "2026-10-01T12:00:05.123456+00:00", certified_signed_at: "2026-10-01T12:00:00+00:00", certified_data_hash: "h" };
+
+  it("is current when built from this certification, whatever the timestamp format", () => {
+    expect(isCurrentVersion(v, submission)).toBe(true);
+  });
+
+  it("isn't when the prospect certified again", () => {
+    expect(isCurrentVersion(v, { ...submission, certified_at: "2026-10-02T12:00:05+00:00" })).toBe(false);
+    expect(isCurrentVersion(v, { ...submission, data_sha256: "other" })).toBe(false);
+    expect(isCurrentVersion(v, null)).toBe(false);
+  });
+
+  it("matches a version recorded before certified_at existed by its signing time and data", () => {
+    expect(isCurrentVersion({ ...v, certified_at: null }, submission)).toBe(true);
+    expect(isCurrentVersion({ ...v, certified_at: null }, { ...submission, signed_at: "2026-10-02T12:00:00Z" })).toBe(false);
   });
 });
 
