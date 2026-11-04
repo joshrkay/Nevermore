@@ -12,7 +12,7 @@ import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup }
 import { INTAKE_SCHEMA_VERSION, validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
-import { describeRequiredKeys } from "@/data/readiness";
+import { describeMissingKeys } from "@/data/readiness";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { fetchVerifiedFields } from "@/lib/verifiedFields";
 import {

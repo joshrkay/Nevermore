@@ -77,7 +77,7 @@ describe("ReviewTab needs your review", () => {
     render(<ReviewTab data={data} provenance={provenance} onAction={() => {}} onProceed={() => {}} />);
     // Missing and conflicting both hold certification back; the census is only recommended.
     expect(stillNeeded()).toEqual(["States of operation", "Pay frequency"]);
-    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("You've given two different answers");
+    expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Your answers conflict");
     expect(screen.queryByText(/Every required answer is here/)).not.toBeInTheDocument();
     expect(screen.getByText("Needs your review — 3 items")).toBeInTheDocument();
     expectListed([
@@ -95,12 +95,6 @@ describe("ReviewTab needs your review", () => {
     );
     expect(screen.getByText("Needs your review — 1 item")).toBeInTheDocument();
     expectListed([["Incomplete", "Employee count"]]);
-  });
-
-  it("still needs a required answer in conflict, even if an advisor verified its field, as the database refuses it", () => {
-    render(<ReviewTab data={data} provenance={provenance} verified={new Set(["pay_frequency"])} onAction={() => {}} onProceed={() => {}} />);
-    expect(stillNeeded()).toEqual(["States of operation", "Pay frequency"]);
-    expect(screen.getByRole("button", { name: "Choose pay frequency" })).toBeInTheDocument();
   });
 
   it("still needs a required answer that was never given, even if an advisor verified its field", () => {

@@ -2,9 +2,9 @@
 // stub model with canned tool arguments. No provider is called.
 import { describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { chatAnswers, OPENING_MESSAGE } from "@/data/chat";
+import { chatContext } from "@/data/chat";
 import type { ModelRequest, ModelResult } from "../../supabase/functions/_shared/ai/model";
-import { buildUserPrompt } from "../../supabase/functions/chamber-extract/prompt";
+import { buildUserPrompt, serializeContext } from "../../supabase/functions/chamber-extract/prompt";
 import { CHAT_MAX_TOKENS, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema";
 import { FIXTURES, type Fixture } from "./fixtures";
 import { connectProvider, main, runFixture, runFixtures, type Connection, type MainDeps, type ModelCall } from "./runner";
@@ -66,8 +66,8 @@ const CANNED: Record<string, Record<string, unknown> | null> = {
   },
 };
 
-// buildUserPrompt ends with the JSON-quoted message.
-const lastMessage = (user: string) => JSON.parse(/New user message: ("(?:[^"\\]|\\.)*")$/s.exec(user)![1]) as string;
+// buildUserPrompt ends with the JSON-quoted message after one of two labels.
+const lastMessage = (user: string) => JSON.parse(/(?:New user message|User message): ("(?:[^"\\]|\\.)*")$/s.exec(user)![1]) as string;
 
 /** A model that answers from CANNED, recording what it was sent. Unknown messages fail the test. */
 const stubModel = (overrides: Record<string, ModelResult> = {}) => {
@@ -85,28 +85,14 @@ const stubModel = (overrides: Record<string, ModelResult> = {}) => {
 const fixture = (id: string): Fixture => FIXTURES.find((f) => f.id === id)!;
 
 describe("runFixture", () => {
-  it("sends the message the way the browser does: redacted, with the intake so far minus the census, each answer's status and the conversation, in the handler's prompt", async () => {
+  it("sends the message the way the browser does: redacted, with the intake so far minus the census, in the handler's prompt", async () => {
     const model = stubModel();
     const run = await runFixture(fixture("contradiction"), model.call);
     expect(model.requests).toHaveLength(2);
-    expect(model.requests[0]).toEqual({
-      system: SYSTEM_PROMPT,
-      user: buildUserPrompt({ message: "We have 40 employees.", context: chatAnswers(EMPTY_CHAMBER_DATA), statuses: {}, recent: [{ sender: "lenore", text: OPENING_MESSAGE }] }),
-    });
+    const prompt = (message: string, data: typeof EMPTY_CHAMBER_DATA) => buildUserPrompt(message, serializeContext(chatContext(data)));
+    expect(model.requests[0]).toEqual({ system: SYSTEM_PROMPT, user: prompt("We have 40 employees.", EMPTY_CHAMBER_DATA) });
     const afterFirst = { ...EMPTY_CHAMBER_DATA, employee_count: 40 };
-    expect(model.requests[1].user).toBe(
-      buildUserPrompt({
-        message: "Payroll is getting harder to manage with 55 employees.",
-        context: chatAnswers(afterFirst),
-        statuses: { employee_count: "confirmed" },
-        // The conversation so far, from Lenore's opening line to her answer to the first message.
-        recent: [
-          { sender: "lenore", text: OPENING_MESSAGE },
-          { sender: "user", text: "We have 40 employees." },
-          { sender: "lenore", text: "Noted." },
-        ],
-      }),
-    );
+    expect(model.requests[1].user).toBe(prompt("Payroll is getting harder to manage with 55 employees.", afterFirst));
     expect(model.requests[1].user).not.toContain("census");
     expect(run.error).toBeNull();
   });

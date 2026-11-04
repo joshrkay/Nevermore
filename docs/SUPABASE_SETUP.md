@@ -234,14 +234,10 @@ Two fixes renumbered the same two files at once, the other choosing `20261027090
 `20261103110100`. For a few minutes on 2026-11-03 `main` held both copies of each, and a push from then
 applied `20261027090001`, then stopped on the second copy (`column "claimed_at" of relation "outbox_events"
 already exists`). Two later fixes each removed a different copy, which left neither in the folder until the
-`…0001` copies were put back (2026-11-04). So:
-
-- A project pushed from `main` before that gap has `20261027090001` and `20261103110001` recorded: push.
-- A project first pushed during the gap has later migrations recorded and not these two, and `supabase db push`
-  won't apply a file older than the last one recorded unless asked. Neither has run there, so push once with
-  `supabase db push --include-all --linked`.
-- Only a project pushed from the branch that used the other numbers has `20261027090100` or `20261103110100`
-  in `supabase migration list --linked`. Record it under the number that stays, then push:
+`…0001` copies were put back (2026-11-04); a push in that time applied neither file. Every push from `main`
+has recorded `20261027090001` and `20261103110001`, so only a project pushed from the branch that used the
+other numbers has `20261027090100` or `20261103110100` in `supabase migration list --linked`. Record it
+under the number that stays, then push:
 
 ```sh
 supabase migration repair --status reverted 20261027090100 --linked

@@ -1,6 +1,4 @@
-import { chatContext as requestContext, type ChatContext } from "../../supabase/functions/_shared/chatContext.ts";
 import type { ChamberData } from "./chamberTypes";
-import type { ProvenanceMap } from "./provenance";
 import { redactSensitive } from "./sensitive";
 
 /** Who a transcript message is from: the prospect, Lenore, or the Chamber itself (a note such as a voice call starting). */
@@ -120,29 +118,11 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
   });
 }
 
-/** What Lenore says when her answer has no reply in it: the conversation carries it like any other line. */
-export const CHAT_FALLBACK_REPLY = "I've noted that. Could you tell me more about your team?";
-
 /**
- * The answers as Lenore's chat sends them to chamber-extract. The roster isn't extracted from chat and holds
- * personal details, so it is left out.
+ * The intake as Lenore's chat sends it to chamber-extract for context. The roster isn't extracted
+ * from chat and holds personal details, so it is left out. scripts/extraction-eval replays it too.
  */
-export function chatAnswers(data: ChamberData): Omit<ChamberData, "census"> {
+export function chatContext(data: ChamberData): Omit<ChamberData, "census"> {
   const { census: _census, ...context } = data;
   return context;
-}
-
-/**
- * What a chat call sends chamber-extract besides the intake id (D22): the prospect's message, the answers
- * without the roster (chatAnswers), each answer's field status and the last few messages before this one.
- * useLenoreChat sends it, and scripts/extraction-eval replays it.
- */
-export function chatRequestBody(
-  message: { id?: string; text: string },
-  data: ChamberData,
-  provenance: ProvenanceMap | undefined,
-  transcript: readonly ChatMessage[],
-): { message: string } & ChatContext {
-  const statuses = Object.fromEntries(Object.entries(provenance ?? {}).flatMap(([field, p]) => (p ? [[field, p.status]] : [])));
-  return { message: message.text, ...requestContext(chatAnswers(data), statuses, transcript, message.id) };
 }
