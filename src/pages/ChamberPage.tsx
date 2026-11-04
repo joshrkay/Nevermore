@@ -143,7 +143,6 @@ const ChamberPage = () => {
     chamberData,
     provenance,
     messages,
-    setChamberData,
     addUserMessage: (text) => {
       const message = createChatMessage("user", text);
       addMessage(message);

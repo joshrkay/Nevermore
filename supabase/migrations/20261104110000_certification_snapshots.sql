@@ -108,3 +108,4 @@ DROP TRIGGER IF EXISTS chamber_certifications_immutable ON public.chamber_certif
 CREATE TRIGGER chamber_certifications_immutable
   BEFORE UPDATE ON public.chamber_certifications
   FOR EACH ROW EXECUTE FUNCTION public.chamber_certifications_immutable();
+REVOKE ALL ON FUNCTION public.chamber_certifications_immutable() FROM PUBLIC, anon, authenticated;

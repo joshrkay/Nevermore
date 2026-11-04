@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildUserPrompt, serializeContext } from "../../chamber-extract/prompt";
+import { buildUserPrompt } from "../../chamber-extract/prompt";
 import * as chat from "../../chamber-extract/schema";
 import * as documents from "../../document-extract/schema";
 
@@ -16,10 +16,18 @@ const KNOWN = {
 
 // chamber-extract's user turn (prompt.ts, shared with the extraction eval) is part of its contract too
 // (B-1.4), so its wording, rendered for fixed inputs with and without context, is fingerprinted per version.
-const USER_TURNS = [buildUserPrompt("<message>", ""), buildUserPrompt("<message>", serializeContext({ company_name: "<value>" }))];
+const USER_TURNS = [
+  buildUserPrompt({ message: "<message>", context: null, statuses: {}, recent: [] }),
+  buildUserPrompt({
+    message: "<message>",
+    context: { company_name: "<value>" },
+    statuses: { company_name: "confirmed" },
+    recent: [{ sender: "lenore", text: "<question>" }],
+  }),
+];
 const USER_TURN_KNOWN: Record<number, string> = {
   1: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
-  2: "3896da3494d25d62cd3728e082826d3fb5ce09e598736c25e65f626047d8656a",
+  2: "e7023fa7ea37b59c70b85de10c31d3b5119be36e354b6806e795d4dc491d5624",
 };
 
 describe("prompt versions", () => {

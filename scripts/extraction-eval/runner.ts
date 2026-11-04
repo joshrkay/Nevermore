@@ -6,13 +6,13 @@
 // system and the process.
 
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { chatContext, createChatMessage } from "@/data/chat";
+import { chatRequestBody, createChatMessage, type ChatMessage } from "@/data/chat";
 import { applyExtraction, transcriptExtraction, type IntakeState } from "@/data/provenance";
 import { redactSensitive } from "@/data/sensitive";
 import { callModel, type ModelRequest, type ModelResult } from "../../supabase/functions/_shared/ai/model.ts";
 import { selectAdapter } from "../../supabase/functions/_shared/ai/providers.ts";
 import { shapeExtraction } from "../../supabase/functions/chamber-extract/extraction.ts";
-import { buildUserPrompt, serializeContext } from "../../supabase/functions/chamber-extract/prompt.ts";
+import { buildUserPrompt } from "../../supabase/functions/chamber-extract/prompt.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema.ts";
 import { FIXTURES, type Fixture } from "./fixtures";
 import { describeCell, diffBaseline, formatBaseline, formatTable, parseBaseline, scoreFixture, type Baseline, type Cells } from "./scoring";
@@ -52,13 +52,15 @@ export interface FixtureRun {
 /** Sends the fixture's messages one after another, carrying the intake forward as the Chamber does. */
 export async function runFixture(fixture: Fixture, model: ModelCall): Promise<FixtureRun> {
   let state: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
+  const transcript: ChatMessage[] = [];
   for (const [i, turn] of fixture.turns.entries()) {
     // useLenoreChat.send: the model and the transcript only see the message with sensitive numbers removed.
     const text = redactSensitive(turn.message);
     const message = createChatMessage("user", text);
+    transcript.push(message);
     // The request body crosses the network as JSON, and the handler reads it back with req.json().
-    const body = JSON.parse(JSON.stringify({ message: text, context: chatContext(state.data) }));
-    const user = buildUserPrompt(body.message, serializeContext(body.context));
+    const body = JSON.parse(JSON.stringify(chatRequestBody(text, state.data, state.provenance, transcript, message.id)));
+    const user = buildUserPrompt(body);
 
     const result = await model({ system: SYSTEM_PROMPT, user });
     if (!result.ok) {
@@ -70,6 +72,7 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
     const response = JSON.parse(JSON.stringify(shapeExtraction(result.args)));
     // ChamberPage's onExtracted for a chat message.
     if (response.extracted) state = applyExtraction(state, response.extracted, transcriptExtraction(message, response));
+    if (typeof response.reply === "string" && response.reply.trim()) transcript.push(createChatMessage("lenore", response.reply));
   }
   return { state, error: null };
 }

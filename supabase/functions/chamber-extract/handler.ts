@@ -14,11 +14,12 @@ import { recordAiEvent, type AiEvent, type EventWriter } from "../_shared/ai/eve
 import { callModel, failureLogLine, failureResponse, unexpectedErrorLine } from "../_shared/ai/model.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
 import { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES } from "../_shared/chatContext.ts";
-import { FIELD_STATUSES as CONTEXT_STATUSES, unsettledFields } from "../_shared/followUp.ts";
+import { FIELD_STATUSES as CONTEXT_STATUSES } from "../_shared/followUp.ts";
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactSensitive } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
 import { buildUserPrompt, serializeContext } from "./prompt.ts";
+export { NEXT_FIELDS } from "./prompt.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
@@ -33,11 +34,8 @@ const corsHeaders = {
 // conversation (D22).
 export const MAX_MESSAGE_CHARS = 2000;
 export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES };
-/** How many unsettled fields the prompt names, most important first. */
-export const NEXT_FIELDS = 8;
 
 const SCHEMA_KEYS = new Set(Object.keys(INTAKE_SCHEMA.properties as object));
-const CHAT_EXCLUDES: ReadonlySet<string> = new Set(["census"]);
 
 /** The recent conversation as sent, or why it isn't acceptable. Only the prospect's and Lenore's lines. */
 function readRecent(raw: unknown): { ok: true; messages: { sender: "user" | "lenore"; text: string }[] } | { ok: false; message: string } {
@@ -168,7 +166,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (!statuses.ok) return await fail(aiError("bad_request", { message: statuses.message }));
     const recent = readRecent(rawRecent);
     if (!recent.ok) return await fail(aiError("bad_request", { message: recent.message }));
-    const contextJson = context ? JSON.stringify(context) : "";
+    const contextJson = serializeContext(context);
     const statusesJson = JSON.stringify(statuses.statuses);
     const recentJson = JSON.stringify(recent.messages);
     if (contextJson.length + statusesJson.length + recentJson.length > MAX_CONTEXT_CHARS) {
@@ -210,19 +208,13 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     });
     if (!budget.allowed) return await fail(aiError(budget.code, { status: budget.status, message: budget.error }));
 
-    // 5. Ask the model. JSON.stringify quotes and escapes what the prospect wrote so it can't break out of its slot.
-    const answers = isObject(context) ? context : {};
-    const next = unsettledFields(answers, statuses.statuses, { exclude: CHAT_EXCLUDES }).slice(0, NEXT_FIELDS);
-    const userPrompt = [
-      `Captured so far (answers): ${contextJson || "{}"}`,
-      `Field statuses: ${statusesJson}`,
-      `Not yet settled, most important first: ${next.length > 0 ? next.map((f) => `${f.key} (${f.label})`).join(", ") : "none"}`,
-      `Recent conversation, oldest first: ${recentJson}`,
-      `New user message: ${JSON.stringify(message)}`,
-    ].join("\n\n");
+    // 5. Ask the model.
     const result = await callModel(
       chosen.adapter,
-      { system: SYSTEM_PROMPT, user: buildUserPrompt(message, contextJson) },
+      {
+        system: SYSTEM_PROMPT,
+        user: buildUserPrompt({ message, context: isObject(context) ? context : null, statuses: statuses.statuses, recent: recent.messages }),
+      },
       { fetch: deps.fetch, sleep: deps.sleep, now: deps.now },
     );
     event.attempts = result.attempts;

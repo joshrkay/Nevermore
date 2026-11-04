@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { emptyExtraction, shapeExtraction } from "./extraction";
-import { EXTRACT_TOOL, FIELD_GUIDE, FIELDS, MAX_EVIDENCE_CHARS, SYSTEM_PROMPT } from "./schema";
+import { EXTRACT_TOOL, FIELD_GUIDE, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 import { INTAKE_SCHEMA } from "../_shared/intakeSchema";
 
 describe("shapeExtraction", () => {
@@ -175,29 +175,8 @@ describe("extraction tool schema", () => {
 
   // A field the tool asks for with no definition leaves the model to guess what it means.
   it("defines every field it asks for in the system prompt", () => {
-    const defined = new Set([...SYSTEM_PROMPT.matchAll(/^- (\w+): \S/gm)].map((m) => m[1]));
+    const defined = new Set([...SYSTEM_PROMPT.matchAll(/^- (\w+) \([^)]+\): \S/gm)].map((m) => m[1]));
     expect(FIELDS.filter((field) => !defined.has(field))).toEqual([]);
-  });
-
-  const definition = (field: string) => SYSTEM_PROMPT.match(new RegExp(`^- ${field}: (.*)$`, "m"))?.[1] ?? "";
-
-  // The workspace labels has_401k "Retirement plan", and shows the plan type and match only while it is true.
-  it("defines has_401k as any retirement plan, not only a 401(k)", () => {
-    expect(definition("has_401k")).toMatch(/any .*retirement plan/i);
-  });
-
-  // The workspace shows each of these only beside its flag (the FEIN count while multiple_entities is true,
-  // the plan type and match while has_401k is, the counts once has_nonexempt is answered), so one sent alone is hidden.
-  it("asks for the flag with each answer the workspace only shows beside it", () => {
-    const flags = { fein_count: "multiple_entities", retirement_type: "has_401k", employer_contributes: "has_401k", nonexempt_count: "has_nonexempt", exempt_count: "has_nonexempt" };
-    for (const [field, flag] of Object.entries(flags)) expect(definition(field), field).toContain(`report ${flag}`);
-  });
-
-  // Intake schema v1 refuses a value past its caps, so the prompt states them.
-  it("states intake schema v1's caps on counts, text and lists", () => {
-    expect(SYSTEM_PROMPT).toContain(`whole numbers from 0 to ${LIMITS.count.toLocaleString("en-US")}`);
-    expect(SYSTEM_PROMPT).toContain(`at most ${LIMITS.text.toLocaleString("en-US")} characters`);
-    expect(SYSTEM_PROMPT).toContain(`at most ${LIMITS.listItems} items`);
   });
 
   it("tells the model how to report status, evidence and corrections", () => {

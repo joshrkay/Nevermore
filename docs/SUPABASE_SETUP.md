@@ -211,6 +211,15 @@ they always ran in:
 | `20261027090000_outbox_operations.sql` | `20261027090100_outbox_operations.sql` |
 | `20261103110000_document_storage_path.sql` | `20261103110100_document_storage_path.sql` |
 
+On 2026-11-04 `required_items` and `certification_conflicts` both arrived as `20261104100000`, and the merge
+that brought them together also dropped both copies of the two files above. `required_items` is now
+`20261104100100`, and the two files above are back under their kept numbers. A push from that `main` applied
+`certification_conflicts` and stopped on `required_items`, so push again: it applies `20261104100100` and
+whatever came after. `required_items` only replaces functions and grants, so running it again is safe.
+A project set up from that `main` never got `outbox_operations` or `document_storage_path`. They sort before
+migrations it has already applied, so `supabase db push` asks for `--include-all` to apply them; check
+`supabase migration list --linked` first, and only use it for these files.
+
 Two fixes landed at once and briefly left a second copy of each renumbered file, as `20261027090001` and
 `20261103110001`; those copies were removed (applying `outbox_operations` twice fails on the column its first run adds).
 A project that recorded either number has run that file: record the kept number as applied and drop the

@@ -3,7 +3,7 @@ import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
 import { fieldOpenItems, formatFieldValue, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
-import { missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
+import { conflictingRequired, missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
 import { NO_VERIFIED_FIELDS, REQUIRED_ITEM_REASONS, requiredItems, type RequiredItem } from "@/data/requiredItems";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
@@ -22,11 +22,11 @@ interface ReviewTabProps {
   provenance?: ProvenanceMap;
   /** Fields an advisor verified: settled whatever their status, so never listed. */
   verified?: ReadonlySet<string>;
+  /** Raise it to put the keyboard on the heading, as when the prospect chose to fill the intake in themselves. */
+  focusRequest?: number;
   onAction?: (action: FieldAction) => void;
   onProceed: () => void;
   documents?: ReviewDocument[];
-  /** Raise it to put the keyboard on the heading, as when the prospect chose to fill the intake in themselves. */
-  focusRequest?: number;
 }
 
 interface Row {
@@ -141,13 +141,18 @@ const Section = ({ section, title, children }: { section: ReviewSection; title: 
   </section>
 );
 
-const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [], focusRequest = 0 }: ReviewTabProps) => {
+const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAction, onProceed, documents = [], focusRequest = 0 }: ReviewTabProps) => {
   const headingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     if (focusRequest > 0) headingRef.current?.focus();
   }, [focusRequest]);
   const eeCount = headcount(data);
-  const required = requiredItems(data, provenance, verified).filter((i) => i.required);
+  // A required answer whose own field is in conflict blocks certification in the database (EA008) even when an
+  // advisor verified it or the census settles it, so it is listed as conflicting here too.
+  const refused = new Set(conflictingRequired(provenance).map((i) => i.key));
+  const required = requiredItems(data, provenance, verified)
+    .filter((i) => i.required)
+    .map((i): RequiredItem => (i.state !== "missing" && refused.has(i.item) ? { ...i, state: "conflicting", viaCensus: undefined } : i));
   // Still needed: the required answers that block certification, missing (US-1.2) or in conflict (B-2.2),
   // in their fixed order. A missing one is listed even if an advisor verified its field: verifying never
   // supplies a value.
@@ -167,9 +172,6 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
   const uploaded = documents.filter((d) => d.status !== "uploading");
   const missing = missingRecommended(uploaded);
   const submitted = submittedCategories(uploaded);
-  const required = missingRequired(data);
-  const conflicting = conflictingRequired(provenance);
-  const blocking = required.length + conflicting.length;
   const recommended = missingRecommendedItems(data);
   const rows = rowsBySection(data);
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
@@ -207,11 +209,11 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
         </p>
       </div>
 
-      {/* What's still needed: required answers block certification, recommended ones never do */}
-      {blocking > 0 ? (
+      {/* What's still needed: required answers missing or in conflict block certification; recommended ones never do */}
+      {stillNeeded.length > 0 ? (
         <div role="region" aria-label="Still needed" className="bg-card border border-destructive/40 rounded-xl p-6 space-y-3">
           <p className="text-xs font-mono text-destructive uppercase tracking-wider">
-            Still needed before The Manuscript can be generated: {blocking}
+            Still needed before The Manuscript can be generated: {stillNeeded.length}
           </p>
           <ul className="space-y-2">
             {stillNeeded.map((item) => (
@@ -220,16 +222,6 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
                 <span className="text-muted-foreground text-xs">{stillNeededNote(item)}</span>
                 <button type="button" onClick={() => jumpTo(item.viaCensus ? CENSUS_SPOT : item.readiness)} className="text-xs font-medium text-primary underline underline-offset-2">
                   Go to {(item.viaCensus ? "Employee census" : item.label).toLowerCase()}
-                </button>
-              </li>
-            ))}
-            {/* A required answer given two ways: picking one ("Use this") settles it. */}
-            {conflicting.map((item) => (
-              <li key={`conflict-${item.key}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
-                <span className="font-medium">{item.label}</span>
-                <span className="text-muted-foreground text-xs">You've given two different answers. Choose the right one.</span>
-                <button type="button" onClick={() => jumpTo(item)} className="text-xs font-medium text-primary underline underline-offset-2">
-                  Choose {item.label.toLowerCase()}
                 </button>
               </li>
             ))}
@@ -406,9 +398,9 @@ const ReviewTab = ({ data, provenance = {}, onAction, onProceed, documents = [],
         </dl>
       </div>
 
-      {blocking > 0 && (
+      {stillNeeded.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          You can choose a PEO now. The answers marked Required are needed, each with one answer, before The Manuscript can be generated.
+          You can choose a PEO now. The answers marked Required are needed before The Manuscript can be generated.
         </p>
       )}
       <button

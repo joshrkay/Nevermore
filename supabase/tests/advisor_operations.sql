@@ -108,7 +108,7 @@ CREATE FUNCTION public.is_us_state_code(code text) RETURNS boolean LANGUAGE sql 
     'SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC','AS','GU','MP','PR','VI'
   ]), false);
 $$;
-\i supabase/migrations/20261104100000_required_items.sql
+\i supabase/migrations/20261104100100_required_items.sql
 
 -- Runs `stmt` as `who` and fails the run unless it's refused (permission, row security or a
 -- deliberate check).

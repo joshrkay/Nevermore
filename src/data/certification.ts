@@ -26,8 +26,10 @@ export interface SignerDetails {
 
 /**
  * Why certification can't be completed yet; empty when it can. Drives the submit button and its hint.
- * Missing required answers come first (US-1.2; the database refuses them too, EA003); a required answer
- * whose answers conflict blocks it as well, in the browser only (B-2.2). The census never blocks.
+ * Missing required answers come first (US-1.2; the database refuses them too, EA003). Then each required
+ * answer whose answers conflict (B-2, D26): the database refuses those too (EA008), whoever verified them,
+ * so the browser holds back exactly what it would refuse. States of operation taken from a census in
+ * conflict is resolved on the census, so that is named as well (B-2.2); the census alone never blocks.
  */
 export function certificationBlockers(opts: {
   acknowledged: boolean[];
@@ -37,25 +39,27 @@ export function certificationBlockers(opts: {
   isGuest: boolean;
   /** Labels of the required answers the intake doesn't have yet (missingRequired in readiness.ts). */
   missingAnswers?: string[];
-  /** Labels of the required answers with two competing values (conflictingRequired in readiness.ts). */
+  /** Labels of the required answers in conflict, as the database reads them (conflictingRequired in readiness.ts). */
   conflictingAnswers?: string[];
+  /** The intake's items (requiredItems.ts), for states of operation in conflict through the census. */
+  requiredItems?: readonly RequiredItem[];
 }): string[] {
+  const conflicts = [...(opts.conflictingAnswers ?? [])];
+  for (const item of opts.requiredItems ?? []) {
+    if (item.required && item.state === "conflicting" && item.viaCensus && !conflicts.includes(CENSUS_LABEL)) conflicts.push(CENSUS_LABEL);
+  }
   // What the intake still needs comes first: no signature can make up for it.
   const blockers: string[] = [
     ...(opts.missingAnswers ?? []).map((label) => `Add ${label.toLowerCase()}`),
-    ...(opts.conflictingAnswers ?? []).map((label) => `Choose one answer for ${label.toLowerCase()}`),
+    ...conflicts.map((label) => `Resolve the conflicting answers for ${label}`),
   ];
   if (opts.isGuest) blockers.push("Verify your email");
   if (!opts.hasFileId) blockers.push("Wait for your intake to finish saving");
-  // A required answer whose answers conflict can't be certified as either; the recommended census never
-  // blocks. States of operation taken from a conflicting census is resolved on the census, so it is named.
-  for (const item of opts.requiredItems ?? []) {
-    if (!item.required || item.state !== "conflicting") continue;
-    blockers.push(`Resolve the conflicting answers for ${item.viaCensus ? "Employee census" : item.label}`);
-  }
   if (!opts.acknowledged.every(Boolean)) blockers.push("Check every statement");
   if (!opts.signer.name.trim()) blockers.push("Enter your full name");
   if (!opts.signer.title.trim()) blockers.push("Enter your role");
   if (!opts.signed) blockers.push("Sign");
   return blockers;
 }
+
+const CENSUS_LABEL = "Employee census";

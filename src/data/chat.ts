@@ -1,4 +1,6 @@
 import type { ChamberData } from "./chamberTypes";
+import type { ProvenanceMap } from "./provenance";
+import { chatContext, type ChatContext } from "../../supabase/functions/_shared/chatContext.ts";
 import { redactSensitive } from "./sensitive";
 
 /** Who a transcript message is from: the prospect, Lenore, or the Chamber itself (a note such as a voice call starting). */
@@ -119,10 +121,18 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
 }
 
 /**
- * The intake as Lenore's chat sends it to chamber-extract for context. The roster isn't extracted
- * from chat and holds personal details, so it is left out. scripts/extraction-eval replays it too.
+ * What Lenore's chat sends chamber-extract for one message (D22): the message, the answers so far without the
+ * census (chat never extracts it, and it holds personal details), each answer's field status, and the recent
+ * conversation less this message. useLenoreChat sends it and scripts/extraction-eval replays it.
  */
-export function chatContext(data: ChamberData): Omit<ChamberData, "census"> {
-  const { census: _census, ...context } = data;
-  return context;
+export function chatRequestBody(
+  message: string,
+  data: ChamberData,
+  provenance: ProvenanceMap,
+  transcript: readonly { id?: string; sender: string; text: string }[],
+  messageId?: string,
+): { message: string } & ChatContext {
+  const { census: _census, ...answers } = data;
+  const statuses = Object.fromEntries(Object.entries(provenance).flatMap(([field, p]) => (p ? [[field, p.status]] : [])));
+  return { message, ...chatContext(answers, statuses, transcript, messageId) };
 }

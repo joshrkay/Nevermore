@@ -2,9 +2,9 @@
 // stub model with canned tool arguments. No provider is called.
 import { describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { chatContext } from "@/data/chat";
+import { chatRequestBody, createChatMessage } from "@/data/chat";
 import type { ModelRequest, ModelResult } from "../../supabase/functions/_shared/ai/model";
-import { buildUserPrompt, serializeContext } from "../../supabase/functions/chamber-extract/prompt";
+import { buildUserPrompt } from "../../supabase/functions/chamber-extract/prompt";
 import { CHAT_MAX_TOKENS, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema";
 import { FIXTURES, type Fixture } from "./fixtures";
 import { connectProvider, main, runFixture, runFixtures, type Connection, type MainDeps, type ModelCall } from "./runner";
@@ -89,10 +89,18 @@ describe("runFixture", () => {
     const model = stubModel();
     const run = await runFixture(fixture("contradiction"), model.call);
     expect(model.requests).toHaveLength(2);
-    const prompt = (message: string, data: typeof EMPTY_CHAMBER_DATA) => buildUserPrompt(message, serializeContext(chatContext(data)));
-    expect(model.requests[0]).toEqual({ system: SYSTEM_PROMPT, user: prompt("We have 40 employees.", EMPTY_CHAMBER_DATA) });
-    const afterFirst = { ...EMPTY_CHAMBER_DATA, employee_count: 40 };
-    expect(model.requests[1].user).toBe(prompt("Payroll is getting harder to manage with 55 employees.", afterFirst));
+    const first = "We have 40 employees.";
+    expect(model.requests[0]).toEqual({ system: SYSTEM_PROMPT, user: buildUserPrompt(chatRequestBody(first, EMPTY_CHAMBER_DATA, {}, [])) });
+    // The second carries the first answer with its status, and the conversation so far.
+    const second = buildUserPrompt(
+      chatRequestBody(
+        "Payroll is getting harder to manage with 55 employees.",
+        { ...EMPTY_CHAMBER_DATA, employee_count: 40 },
+        { employee_count: { status: "confirmed", source: { kind: "transcript", message_id: "m" }, updated_at: "" } },
+        [createChatMessage("user", first), createChatMessage("lenore", "Noted.")],
+      ),
+    );
+    expect(model.requests[1].user).toBe(second);
     expect(model.requests[1].user).not.toContain("census");
     expect(run.error).toBeNull();
   });

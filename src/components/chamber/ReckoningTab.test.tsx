@@ -289,13 +289,15 @@ describe("ReckoningTab certification", () => {
       );
     });
 
-    it("lets it through once an advisor has verified the field", () => {
+    it("still holds it back when an advisor verified the field, as the database would refuse it (EA008)", () => {
       mountWith(new Set(["pay_frequency"]));
       checkAll();
       fillSigner();
       sign();
-      expect(submitButton()).toBeEnabled();
-      expect(screen.queryByTestId("certification-blockers")).not.toBeInTheDocument();
+      expect(submitButton()).toBeDisabled();
+      expect(screen.getByTestId("certification-blockers")).toHaveTextContent(
+        "Before you can submit: Resolve the conflicting answers for Pay frequency",
+      );
     });
   });
 });
@@ -494,7 +496,7 @@ describe("ReckoningTab required answers", () => {
     signAndTry();
     expect(submitButton()).toBeDisabled();
     expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Choose one answer for company legal name");
+    expect(screen.getByTestId("certification-blockers")).toHaveTextContent("Before you can submit: Resolve the conflicting answers for Company legal name");
   });
 
   it("names missing answers and conflicts together", () => {

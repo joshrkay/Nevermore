@@ -5,7 +5,7 @@ import { RECOMMENDED_ITEMS, REQUIRED_ITEMS, type ReadinessItem } from "./readine
 // How far along each item an intake needs is (decision D2): the three required answers, then the
 // recommended census, as src/data/readiness.ts lists them and decides whether each is there. This adds
 // whether a present answer is settled, from its provenance and the advisor's verifications. The
-// database's public.intake_required_items (migration 20261104100000) is the same rule; the advisor queue's
+// database's public.intake_required_items (migration 20261104100100) is the same rule; the advisor queue's
 // "missing required" reads it. requiredItems.cases.json holds the cases both sides are tested against.
 
 /** "unconfirmed" is an inferred field. A settled item needs nothing more from the prospect. */

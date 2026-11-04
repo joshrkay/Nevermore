@@ -17,15 +17,14 @@ import {
 } from "@/data/certification";
 import { useAuth } from "@/hooks/useAuth";
 import { conflictingRequired, missingRequired } from "@/data/readiness";
-import type { ProvenanceMap } from "@/data/provenance";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import VerifyEmailGate from "./VerifyEmailGate";
 
 interface ReckoningTabProps {
   data: ChamberData;
-  /** Status of each field, so a required item whose answers conflict can hold certification back. */
+  /** Each answer's field status: a required answer in conflict blocks certification until one is chosen. */
   provenance?: ProvenanceMap;
-  /** Fields an advisor verified: settled whatever their status. */
+  /** Fields an advisor verified, for the required items' states (a census settled by an advisor doesn't block). */
   verified?: ReadonlySet<string>;
   /** The PEO the packet is prepared for, if the prospect chose one. */
   peoName: string | null;
@@ -48,7 +47,7 @@ const formatSigned = (iso: string) =>
 
 const NO_PROVENANCE: ProvenanceMap = {};
 
-const ReckoningTab = ({ data, provenance = NO_PROVENANCE, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
+const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED_FIELDS, peoName: chosenPeo, sessionId, fileId, onSubmit, certification = NO_CERTIFICATION, onReview }: ReckoningTabProps) => {
   const peoName = chosenPeo ?? "your PEO";
   const { isAnonymous } = useAuth();
   // A returning signer doesn't retype their name and role to certify again.
@@ -83,7 +82,13 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, peoName: chosenPeo, se
 
   const signed = signedAt !== null;
   const missingAnswers = missingRequired(data);
-  const conflictingAnswers = conflictingRequired(provenance);
+  // What the database refuses (EA008), then states of operation in conflict through the census (B-2.2).
+  const items = requiredItems(data, provenance, verified);
+  const censusConflict = items.some((i) => i.required && i.viaCensus && i.state === "conflicting");
+  const conflictingAnswers = [
+    ...conflictingRequired(provenance),
+    ...(censusConflict ? [{ key: "census", label: "Employee census" }] : []),
+  ];
   const blockers = certificationBlockers({
     acknowledged: checks,
     signer: { name: signerName, title: signerTitle },
@@ -92,6 +97,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, peoName: chosenPeo, se
     isGuest: isAnonymous,
     missingAnswers: missingAnswers.map((item) => item.label),
     conflictingAnswers: conflictingAnswers.map((item) => item.label),
+    requiredItems: items,
   });
   const allChecked = blockers.length === 0;
   const manuscriptUrl = sessionId ? `/manuscript?session=${sessionId}` : "/manuscript";

@@ -66,8 +66,10 @@
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
 \i supabase/migrations/20261104100000_certification_conflicts.sql
+\i supabase/migrations/20261104100100_required_items.sql
 \i supabase/migrations/20261104101000_transcript_validation.sql
 \i supabase/migrations/20261104102000_one_open_draft.sql
+\i supabase/migrations/20261104110000_certification_snapshots.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -581,8 +583,13 @@ INSERT INTO callable VALUES
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
-  ('intake_missing_required(d jsonb)',         'anyone',  NULL, 'pure: required answers missing from the jsonb it is given'),
+  ('intake_missing_required(d jsonb)',         'helper',  NULL, 'the certification gate calls it as the caller; pure: required answers missing from the jsonb it is given'),
   ('intake_conflicting_required(p jsonb)',     'anyone',  NULL, 'pure: required fields in conflict in the provenance it is given'),
+  ('intake_answers_present(p_data jsonb)',     'helper',  NULL, 'pure: which required answers the jsonb it is given holds'),
+  ('intake_required_items(p_data jsonb, p_provenance jsonb, p_verified text[])', 'helper', NULL, 'pure: where each required item stands, from the values it is given'),
+  ('provenance_entry_status(p_entry jsonb)',   'helper',  NULL, 'pure: a provenance entry''s status, as the browser reads it'),
+  ('provenance_source_is_valid(p_source jsonb)', 'helper', NULL, 'pure: whether a provenance source is well formed'),
+  ('session_verified_fields(p_session_id uuid)', 'own',   NULL, 'names of the fields an advisor verified, under the owner''s read rule (all, for advisors); nothing for anyone else''s intake'),
   ('is_prospect_visible_status(s text)',       'anyone',  NULL, 'pure: whether a status name is shared with prospects'),
   ('is_reviewable_field(f text)',              'anyone',  NULL, 'pure: whether a field name can be reviewed'),
   ('ops_clean_code(p_code text)',              'anyone',  NULL, 'pure: cleans a failure code'),

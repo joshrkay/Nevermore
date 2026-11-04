@@ -212,13 +212,13 @@ describe("ReviewTab sections", () => {
     const needed = section("Still needed");
     expect(needed).toHaveTextContent("Still needed before The Manuscript can be generated: 1");
     expect(needed).toHaveTextContent("Company legal name");
-    expect(needed).toHaveTextContent("You've given two different answers");
+    expect(needed).toHaveTextContent("Your answers conflict");
     // A recommended field in conflict stays in "Needs your review", never in what's needed.
     expect(needed).not.toHaveTextContent("Industry");
     expect(screen.queryByText(/Every required answer is here/)).not.toBeInTheDocument();
     expect(screen.getByText(/You can choose a PEO now/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Choose company legal name" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to company legal name" }));
     expect(document.activeElement?.closest("#review-field-company_name")).not.toBeNull();
   });
 
