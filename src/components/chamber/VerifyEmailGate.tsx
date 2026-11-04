@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { authRateLimit, authRateLimitMessage } from "@/data/authRateLimit";
 
 const inputClass =
   "w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors";
@@ -30,7 +31,9 @@ const VerifyEmailGate = () => {
         "That email already has an account. Use a different email for now; we can't yet move your answers into an existing account.",
       );
     } else if (error) {
-      setMessage("We couldn't send a code. Check the address and try again.");
+      // A rate limit is not the address's fault, and the project-wide quota is not cleared by waiting a minute.
+      const limit = authRateLimit(error);
+      setMessage(limit ? authRateLimitMessage(limit) : "We couldn't send a code. Check the address and try again.");
     } else {
       setEmail(address);
       setCodeSent(true);

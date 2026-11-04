@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { RavenIcon } from "@/components/RavenLogo";
 import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
+import { authErrorMessage } from "@/data/authRateLimit";
 import { toast } from "sonner";
 
 const AuthPage = () => {
@@ -52,7 +53,7 @@ const AuthPage = () => {
     if (isSignUp) {
       const { error, alreadyRegistered } = await signUp(address, password, companyName.trim() || undefined, from);
       if (error) {
-        toast.error(error.message);
+        toast.error(authErrorMessage(error));
       } else if (alreadyRegistered) {
         // Supabase sends no link for an address that has an account; sign in instead.
         setIsSignUp(false);
@@ -68,7 +69,7 @@ const AuthPage = () => {
         setUnconfirmed(true);
         setLinkSentTo(address);
       } else {
-        toast.error(error.message);
+        toast.error(authErrorMessage(error));
       }
     }
     setLoading(false);
@@ -78,7 +79,7 @@ const AuthPage = () => {
     setResending(true);
     const { error } = await resendConfirmation(address, from);
     setResending(false);
-    if (error) toast.error(error.message);
+    if (error) toast.error(authErrorMessage(error));
     else toast.success(`We sent a new email to ${address}.`);
   };
 

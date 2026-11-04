@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, FUNCTIONS, functionScheduleSql, interpretChecks,
-  RETENTION_SCHEDULE_SQL, SCHEDULED_FUNCTIONS,
+  MIN_AUTH_EMAILS_PER_HOUR, RETENTION_SCHEDULE_SQL, SCHEDULED_FUNCTIONS,
   isProjectRef, parseEnvFile, parseSender, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete,
   sqlLiteral, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
@@ -197,6 +197,41 @@ describe("authConfigPatch", () => {
     expect(patch).not.toHaveProperty("smtp_host");
     expect(notes[0]).toMatch(/only delivers to your team/);
   });
+
+  describe("the hourly cap on auth emails", () => {
+    // Every prospect shares it: a sign-up confirmation, a code, a resend each count. Left at Supabase's
+    // default, a launch day answers 429 "email rate limit exceeded" to the next person who tries.
+    it("has a floor that is a real number, so the checks below can't pass on `undefined`", () => {
+      expect(Number.isInteger(MIN_AUTH_EMAILS_PER_HOUR)).toBe(true);
+      expect(MIN_AUTH_EMAILS_PER_HOUR).toBeGreaterThanOrEqual(100);
+    });
+
+    it("raises it on a fresh project that sends through Resend", () => {
+      expect(authConfigPatch({}, goodEnv).patch.rate_limit_email_sent).toBe(MIN_AUTH_EMAILS_PER_HOUR);
+    });
+
+    it("raises a lower figure, but never lowers a higher one someone chose", () => {
+      expect(authConfigPatch({ smtp_host: "smtp.resend.com", rate_limit_email_sent: 30 }, goodEnv).patch.rate_limit_email_sent).toBe(MIN_AUTH_EMAILS_PER_HOUR);
+      expect(authConfigPatch({ smtp_host: "smtp.resend.com", rate_limit_email_sent: 500 }, goodEnv).patch).not.toHaveProperty("rate_limit_email_sent");
+      expect(authConfigPatch({ smtp_host: "smtp.resend.com", rate_limit_email_sent: MIN_AUTH_EMAILS_PER_HOUR }, goodEnv).patch).not.toHaveProperty("rate_limit_email_sent");
+    });
+
+    it("raises it for SMTP someone else set up, which is left otherwise as it is", () => {
+      const { patch } = authConfigPatch({ smtp_host: "smtp.sendgrid.net", rate_limit_email_sent: 30 }, goodEnv);
+      expect(patch.rate_limit_email_sent).toBe(MIN_AUTH_EMAILS_PER_HOUR);
+      expect(patch).not.toHaveProperty("smtp_host");
+    });
+
+    it("leaves it alone on Supabase's built-in mailer, where a refused change would stop the whole run", () => {
+      const { patch, notes } = authConfigPatch({}, { ...goodEnv, RESEND_API_KEY: "" });
+      expect(patch).not.toHaveProperty("rate_limit_email_sent");
+      expect(notes[0]).toMatch(/hourly email limit/);
+    });
+
+    it("sends it again if the project doesn't report one, rather than guessing it is fine", () => {
+      expect(authConfigPatch({ smtp_host: "smtp.resend.com" }, goodEnv).patch.rate_limit_email_sent).toBe(MIN_AUTH_EMAILS_PER_HOUR);
+    });
+  });
 });
 
 describe("API keys", () => {
@@ -291,6 +326,7 @@ describe("interpretChecks", () => {
     auth: { external: { anonymous_users: true }, mailer_autoconfirm: false },
     authConfig: {
       mailer_otp_length: 6, mailer_templates_email_change_content: "{{ .Token }}", mailer_templates_magic_link_content: "{{ .Token }}", smtp_host: "smtp.resend.com",
+      rate_limit_email_sent: MIN_AUTH_EMAILS_PER_HOUR,
       site_url: "https://nevermore-gamma.vercel.app", uri_allow_list: "https://nevermore-gamma.vercel.app/**",
       mailer_templates_confirmation_content: "{{ .Token }} {{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email",
     },
@@ -363,6 +399,31 @@ describe("interpretChecks", () => {
     const checks = interpretChecks(fresh, { localMigrations: 16 });
     expect(setupComplete(checks)).toBe(false);
     expect(checks.find((c) => c.name === "Sign-up email survives mail scanners")?.ok).toBe(false);
+  });
+
+  describe("Sign-in email limit", () => {
+    const limitCheck = (authConfig: Record<string, unknown>) =>
+      interpretChecks({ ...allSet, authConfig: { ...allSet.authConfig, ...authConfig } }, { localMigrations: 16 }).find((c) => c.name === "Sign-in email limit");
+
+    it("passes when the hourly cap is at or above the floor", () => {
+      expect(limitCheck({ rate_limit_email_sent: MIN_AUTH_EMAILS_PER_HOUR })?.ok).toBe(true);
+      expect(limitCheck({ rate_limit_email_sent: 1000 })?.ok).toBe(true);
+    });
+
+    it("is a to-do, not a failure, when the cap is low or unreported, and says what happens", () => {
+      for (const authConfig of [{ rate_limit_email_sent: 30 }, { rate_limit_email_sent: undefined }]) {
+        const check = limitCheck(authConfig);
+        expect(check?.ok).toBe(false);
+        expect(check?.required).toBe(false);
+        expect(check?.detail).toMatch(/429/);
+      }
+      const checks = interpretChecks({ ...allSet, authConfig: { ...allSet.authConfig, rate_limit_email_sent: 30 } }, { localMigrations: 16 });
+      expect(setupComplete(checks)).toBe(true);
+    });
+
+    it("points at SMTP first on the built-in mailer, where the cap can't be raised", () => {
+      expect(limitCheck({ smtp_host: "", rate_limit_email_sent: 2 })?.detail).toMatch(/custom SMTP/);
+    });
   });
 
   it("fails when prospects can't receive sign-in emails", () => {
