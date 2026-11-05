@@ -48,7 +48,7 @@ const hooks = {
     onOrbStateChange: (state: OrbState) => void;
     readIntake?: unknown;
   },
-  orb: null as null | { orbState: OrbState; voice: VoiceState; onTypeInstead: () => void },
+  orb: null as null | { orbState: OrbState; voice: VoiceState; onTypeInstead: () => void; compact?: boolean; orbSize?: number; id?: string },
 };
 const voice = {
   isConnected: false,
@@ -84,7 +84,7 @@ vi.mock("@/hooks/useLenoreVoice", () => ({
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => mobile }));
 // The orb shows what Lenore last said, and is handed the orb state; the workspace panes are not what these tests are about.
 vi.mock("@/components/chamber/VoiceOrb", () => ({
-  default: (props: { lastSpokenText: string; orbState: OrbState; voice: VoiceState; onTypeInstead: () => void }) => {
+  default: (props: { lastSpokenText: string; orbState: OrbState; voice: VoiceState; onTypeInstead: () => void; compact?: boolean; orbSize?: number; id?: string }) => {
     hooks.orb = props;
     return <p data-testid="orb">{props.lastSpokenText}</p>;
   },
@@ -127,6 +127,8 @@ describe("ChamberPage", () => {
     auth.isAnonymous = true;
     storageWorks = true;
     mobile = false;
+    // What the prospect chose for the orb's size is kept in the browser, so it must not carry over between tests.
+    localStorage.clear();
     voice.state = { status: "idle", attempt: 0 };
     voice.dismissFailure.mockClear();
     for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges, session.restoreBackup, session.discardBackup, session.updateIntake]) {
@@ -408,6 +410,40 @@ describe("ChamberPage", () => {
     });
   });
 
+  describe("the orb's size", () => {
+    it("opens the orb, and the prospect can fold it into a bar with the handle's button and open it again", () => {
+      renderPage();
+      expect(hooks.orb?.compact).toBe(false);
+      fireEvent.click(screen.getByRole("button", { name: "Hide the orb" }));
+      expect(hooks.orb?.compact).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name: "Show the orb" }));
+      expect(hooks.orb?.compact).toBe(false);
+    });
+
+    it("folds the orb on \"Type instead\", so the conversation has the room", () => {
+      renderPage();
+      act(() => hooks.orb!.onTypeInstead());
+      expect(hooks.orb?.compact).toBe(true);
+      expect(voice.dismissFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the prospect's choice for the next visit", () => {
+      const first = renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "Hide the orb" }));
+      first.unmount();
+      renderPage();
+      expect(hooks.orb?.compact).toBe(true);
+      expect(screen.getByRole("button", { name: "Show the orb" })).toBeInTheDocument();
+    });
+
+    it("names the stage the handle resizes", () => {
+      renderPage();
+      const stageId = screen.getByRole("separator").getAttribute("aria-controls");
+      expect(stageId).toBeTruthy();
+      expect(hooks.orb).toMatchObject({ id: stageId });
+    });
+  });
+
   describe("on a phone", () => {
     beforeEach(() => {
       mobile = true;
@@ -425,6 +461,8 @@ describe("ChamberPage", () => {
       act(() => hooks.orb!.onTypeInstead());
       expect(voice.dismissFailure).toHaveBeenCalledTimes(1);
       expect(screen.getByPlaceholderText("Message Lenore...")).toHaveFocus();
+      // The orb folds too, so the workspace has the room the keyboard leaves.
+      expect(hooks.orb?.compact).toBe(true);
     });
   });
 

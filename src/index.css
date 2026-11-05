@@ -142,6 +142,44 @@
   50% { box-shadow: 0 0 60px 20px rgba(217, 169, 50, 0.35); }
 }
 
+/* The same orb states for a small orb (the folded stage's bar, or an open stage dragged small): the glows above
+   would swallow it, so these keep to a few pixels. */
+.orb-small-idle {
+  box-shadow: 0 0 10px 2px rgba(196, 30, 58, 0.3);
+  animation: orb-small-idle-pulse 3s ease-in-out infinite;
+}
+
+@keyframes orb-small-idle-pulse {
+  0%, 100% { box-shadow: 0 0 10px 2px rgba(196, 30, 58, 0.3); }
+  50% { box-shadow: 0 0 16px 5px rgba(196, 30, 58, 0.5); }
+}
+
+.orb-small-listening {
+  animation: orb-small-listen 1.2s ease-in-out infinite;
+}
+
+@keyframes orb-small-listen {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(196, 30, 58, 0.6); }
+  50% { transform: scale(1.05); box-shadow: 0 0 0 8px rgba(196, 30, 58, 0); }
+}
+
+.orb-small-speaking {
+  animation: orb-small-speak 0.8s ease-in-out infinite;
+}
+
+@keyframes orb-small-speak {
+  0%, 100% { box-shadow: 0 0 8px 2px rgba(196, 30, 58, 0.4), 0 0 16px 6px rgba(107, 70, 193, 0.2); }
+  50% { box-shadow: 0 0 14px 4px rgba(196, 30, 58, 0.6), 0 0 24px 10px rgba(107, 70, 193, 0.3); }
+}
+
+.orb-small-thinking {
+  box-shadow: 0 0 10px 2px rgba(196, 30, 58, 0.2);
+}
+
+.orb-small-disabled {
+  box-shadow: 0 0 10px 2px rgba(217, 169, 50, 0.25);
+}
+
 /* Parsing pulse dot */
 @keyframes parsing-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }

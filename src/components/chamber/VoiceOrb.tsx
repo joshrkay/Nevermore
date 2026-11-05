@@ -16,6 +16,12 @@ interface VoiceOrbProps {
   onEndVoice: () => void;
   /** Puts the cursor in the text input; also how a voice failure is set aside. */
   onTypeInstead: () => void;
+  /** The slim bar the prospect folded the stage into: a small orb, her latest line and the voice button on one row. */
+  compact?: boolean;
+  /** The orb's diameter while the stage is open (src/data/stageLayout.ts). */
+  orbSize?: number;
+  /** The id the stage's handle points at. */
+  id?: string;
 }
 
 /** What the line above Lenore's words says while a call is starting or under way. */
@@ -35,7 +41,70 @@ const orbClasses: Record<OrbState, string> = {
   disabled: "orb-disabled",
 };
 
-const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAgentId, onStartVoice, onEndVoice, onTypeInstead }: VoiceOrbProps) => {
+// The glows above are sized for a big orb; a small one gets the same states with small glows.
+const smallOrbClasses: Record<OrbState, string> = {
+  idle: "orb-small-idle",
+  listening: "orb-small-listening",
+  speaking: "orb-small-speaking",
+  thinking: "orb-small-thinking",
+  disabled: "orb-small-disabled",
+};
+const SMALL_ORB = 96;
+
+const DEFAULT_ORB_SIZE = 120;
+const COMPACT_ORB_SIZE = 32;
+
+interface OrbProps {
+  size: number;
+  orbState: OrbState;
+  onClick?: () => void;
+}
+
+/** The orb, at any size: its rings and the dark core scale with the diameter. */
+const Orb = ({ size, orbState, onClick }: OrbProps) => {
+  const thinkingInset = Math.max(3, Math.round(size * 0.07));
+  const listeningInset = Math.max(2, Math.round(size * 0.045));
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      {/* Thinking rotating arc */}
+      {orbState === "thinking" && (
+        <div
+          className="absolute rounded-full border-2 border-transparent border-t-primary animate-spin"
+          style={{ inset: -thinkingInset }}
+        />
+      )}
+      {/* Listening outer ring pulse */}
+      {orbState === "listening" && (
+        <div className="absolute rounded-full border-2 border-primary/40 animate-ping" style={{ inset: -listeningInset }} />
+      )}
+      <div
+        data-testid="voice-orb"
+        className={`w-full h-full rounded-full bg-gradient-to-br from-primary/80 to-primary/40 flex items-center justify-center transition-all duration-500 ${onClick ? "cursor-pointer" : ""} ${(size < SMALL_ORB ? smallOrbClasses : orbClasses)[orbState]}`}
+        onClick={onClick}
+      >
+        <div className="rounded-full bg-[#07080D] flex items-center justify-center" style={{ width: size * 0.82, height: size * 0.82 }}>
+          <div
+            className={`rounded-full bg-gradient-to-br from-primary/60 to-primary/20 ${orbState === "speaking" ? "animate-pulse" : ""}`}
+            style={{ width: size * 0.64, height: size * 0.64 }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const VoiceOrb = ({
+  orbState,
+  lastSpokenText,
+  voice = INITIAL_VOICE_STATE,
+  hasAgentId,
+  onStartVoice,
+  onEndVoice,
+  onTypeInstead,
+  compact = false,
+  orbSize = DEFAULT_ORB_SIZE,
+  id,
+}: VoiceOrbProps) => {
   const connecting = voice.status === "connecting";
   const inCall = voice.status === "active";
   const statusLine = voiceStatusLine(voice);
@@ -43,27 +112,90 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
   // The orb itself starts and ends a call, like the button; while one is starting it does nothing.
   const orbClick = !hasAgentId || connecting ? undefined : inCall ? onEndVoice : onStartVoice;
 
-  return (
-    <div className="relative w-full flex flex-col items-center justify-center py-8 md:py-12" style={{ background: "#07080D" }}>
-      {/* Orb */}
-      <div className="relative mb-6">
-        {/* Thinking rotating arc */}
-        {orbState === "thinking" && (
-          <div className="absolute inset-[-12px] rounded-full border-2 border-transparent border-t-primary animate-spin" />
-        )}
-        {/* Listening outer ring pulse */}
-        {orbState === "listening" && (
-          <div className="absolute inset-[-8px] rounded-full border-2 border-primary/40 animate-ping" />
-        )}
-        <div
-          data-testid="voice-orb"
-          className={`w-36 h-36 md:w-44 md:h-44 rounded-full bg-gradient-to-br from-primary/80 to-primary/40 flex items-center justify-center transition-all duration-500 ${orbClick ? "cursor-pointer" : ""} ${orbClasses[orbState]}`}
-          onClick={orbClick}
-        >
-          <div className="w-28 h-28 md:w-36 md:h-36 rounded-full bg-[#07080D] flex items-center justify-center">
-            <div className={`w-20 h-20 md:w-28 md:h-28 rounded-full bg-gradient-to-br from-primary/60 to-primary/20 ${orbState === "speaking" ? "animate-pulse" : ""}`} />
+  const failureNotice = voice.status === "failed" && (
+    <VoiceFailureNotice failure={voice.failure} onRetry={onStartVoice} onContinueInText={onTypeInstead} />
+  );
+
+  if (compact) {
+    // One row. Voice is offered only when it is set up, and the words on its buttons fold into their icons when
+    // there is no room; they stay as the buttons' names.
+    const label = "max-sm:sr-only";
+    return (
+      <div id={id} className="w-full" style={{ background: "#07080D" }}>
+        <div className="flex items-center gap-3 px-4 py-2">
+          <div className="p-1">
+            <Orb size={COMPACT_ORB_SIZE} orbState={orbState} onClick={orbClick} />
           </div>
+          <div className="min-w-0 flex-1">
+            {statusLine && (
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                role="status"
+                className="flex items-center gap-2 truncate text-xs text-primary/80"
+              >
+                <span className="w-2 h-2 shrink-0 rounded-full bg-primary animate-pulse" />
+                <span className="truncate">{statusLine}</span>
+              </motion.p>
+            )}
+            <motion.p
+              key={lastSpokenText}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              title={lastSpokenText}
+              className="truncate font-display italic text-sm text-foreground/80"
+            >
+              {lastSpokenText && `"${lastSpokenText}"`}
+            </motion.p>
+          </div>
+          {hasAgentId &&
+            (inCall ? (
+              <button
+                type="button"
+                onClick={onEndVoice}
+                className="shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full font-medium text-sm transition-colors bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                <MicOff className="w-4 h-4" />
+                <span className={label}>End voice call</span>
+              </button>
+            ) : connecting ? (
+              <>
+                <button
+                  type="button"
+                  disabled
+                  className="shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full font-medium text-sm bg-primary/60 text-primary-foreground cursor-wait"
+                >
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  <span className={label}>Connecting...</span>
+                  </button>
+                <button
+                  type="button"
+                  onClick={onEndVoice}
+                  className="shrink-0 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={onStartVoice}
+                className="shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full font-medium text-sm transition-colors bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                <Mic className="w-4 h-4" />
+                <span className={label}>Speak with Lenore</span>
+              </button>
+            ))}
         </div>
+        {failureNotice}
+      </div>
+    );
+  }
+
+  return (
+    <div id={id} className="relative w-full flex flex-col items-center justify-center py-5" style={{ background: "#07080D" }}>
+      <div className="mb-4">
+        <Orb size={orbSize} orbState={orbState} onClick={orbClick} />
       </div>
 
       {/* Status indicator */}
@@ -79,20 +211,19 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
         </motion.div>
       )}
 
-      {/* Last spoken text */}
+      {/* Last spoken text. Two lines whatever its length, so a longer reply doesn't push the workspace down. */}
       <motion.p
         key={lastSpokenText}
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0 }}
-        className="font-display italic text-lg md:text-xl text-foreground/80 text-center max-w-lg px-6 mb-6 min-h-[2em]"
+        title={lastSpokenText}
+        className="font-display italic text-base md:text-lg leading-[1.625rem] text-foreground/80 text-center max-w-xl px-6 mb-3 min-h-[3.25rem] line-clamp-2"
       >
         {lastSpokenText && `"${lastSpokenText}"`}
       </motion.p>
 
-      {voice.status === "failed" && (
-        <VoiceFailureNotice failure={voice.failure} onRetry={onStartVoice} onContinueInText={onTypeInstead} />
-      )}
+      {failureNotice}
 
       {/* Action buttons */}
       <div className="flex flex-wrap items-center justify-center gap-3 px-4">
