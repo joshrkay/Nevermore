@@ -14,6 +14,8 @@ import CensusWorkspaceTab from "./CensusWorkspaceTab";
 import DependentsTab from "./DependentsTab";
 import ReviewTab from "./ReviewTab";
 import { VerifiedFieldsContext } from "./VerifiedFieldsContext";
+import { RequestedFieldsContext } from "./RequestedFieldsContext";
+import { NO_REQUESTED_FIELDS } from "@/data/informationRequest";
 import PEOMatchTab from "../PEOMatchTab";
 import ReckoningTab from "../ReckoningTab";
 
@@ -39,6 +41,8 @@ interface LiveWorkspaceProps {
   provenance?: ProvenanceMap;
   /** Fields an advisor verified, still on the answer they saw: settled (`verificationSettles`). */
   verified?: ReadonlySet<string>;
+  /** Fields the advisor's open request for information is about: each row says the advisor asked about it. */
+  requested?: ReadonlySet<string>;
   /** Prospect confirms, edits, or resolves a field. Omit for read-only. */
   onFieldAction?: (action: FieldAction) => void;
   certification?: CertificationState;
@@ -61,6 +65,7 @@ const LiveWorkspace = ({
   onSubmit,
   provenance = {},
   verified = NO_VERIFIED_FIELDS,
+  requested = NO_REQUESTED_FIELDS,
   onFieldAction,
   certification,
   updateIntake,
@@ -118,6 +123,7 @@ const LiveWorkspace = ({
 
       {/* Tab content */}
       <VerifiedFieldsContext.Provider value={verified}>
+        <RequestedFieldsContext.Provider value={requested}>
         <div className="flex-1 overflow-y-auto">
           {activeTab === "upload" && <UploadTab documents={documents} sessionId={documentSessionId} canStart={!isDemo && Boolean(ensureIntake)} data={data} provenance={provenance} onResolveCandidates={handleResolve} />}
           {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
@@ -151,6 +157,7 @@ const LiveWorkspace = ({
             />
           )}
         </div>
+        </RequestedFieldsContext.Provider>
       </VerifiedFieldsContext.Provider>
     </div>
   );

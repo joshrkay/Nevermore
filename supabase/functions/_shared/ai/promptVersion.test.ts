@@ -25,6 +25,9 @@ const KNOWN = {
     // 6: "unknown" only on the prospect's own words of not knowing; never claims the intake is finished while a field is
     // unsettled; re-asks an unanswered question; prospect_stopping (QA F4, F11).
     6: "bae67521577c29fa4c236450d5ae9c4fd65dcd3f4e2bd45fd7decd429920520b",
+    // 7: a field an advisor asked about is marked in "Not yet settled", and Lenore says the advisor asked, reads back what
+    // the intake holds and asks for a confirmation or correction (information requests).
+    7: "d56d02c03a29f8d3992b20279f2ff52c8b9414c0fe210c03c3f7b811f2e1f9ec",
   } as Record<number, string>,
   "document-extract": { 1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526" } as Record<number, string>,
 };
@@ -41,6 +44,8 @@ const USER_TURNS = [
     recent: [{ sender: "lenore", text: "<question>" }, { sender: "user", text: "<answer>" }],
   }),
   buildUserPrompt({ message: "<message>", census: { rows: 2, workStates: true } }),
+  // From version 7: the fields an advisor asked about come first, marked.
+  buildUserPrompt({ message: "<message>", context: { pay_frequency: "<value>" }, statuses: { pay_frequency: "confirmed" }, requested: ["pay_frequency", "census"] }),
 ];
 const USER_TURN_KNOWN: Record<number, string> = {
   // 1 and B-1.1's 2: the captured answers and the message, rendered by the earlier buildUserPrompt(message, context).
@@ -54,6 +59,8 @@ const USER_TURN_KNOWN: Record<number, string> = {
   5: "9b021814414e815258f2934dc7ee157aa9642ca343c3c9be222c618a5c63746d",
   // 6: unchanged from 5 (QA F4 and F11 changed the system prompt and the tool).
   6: "9b021814414e815258f2934dc7ee157aa9642ca343c3c9be222c618a5c63746d",
+  // 7: the fields an advisor asked about first in "Not yet settled", marked. Rendered with a fourth turn that has some.
+  7: "720e99e10e619db28c25b43a612ac07584636a08e8ef91a65bc5763fb264bb5b",
 };
 
 describe("prompt versions", () => {

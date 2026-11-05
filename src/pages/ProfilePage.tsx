@@ -11,6 +11,7 @@ import { ArrowLeft, Save, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import LegalLinks from "@/components/LegalLinks";
+import DraftReminderToggle from "@/components/DraftReminderToggle";
 
 const ProfilePage = () => {
   const { user } = useAuth();
@@ -174,6 +175,12 @@ const ProfilePage = () => {
                 {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
                 Save Changes
               </Button>
+
+              {/* Saved as soon as it changes, apart from the fields above. A guest (a reminder's stop link opened in
+                  another browser) is offered the sign-in that gets to the setting. */}
+              <div className="pt-4 border-t border-border">
+                <DraftReminderToggle id="profile-draft-reminders" offerSignIn />
+              </div>
             </CardContent>
           </Card>
         </motion.div>

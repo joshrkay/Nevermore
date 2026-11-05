@@ -31,6 +31,7 @@ export type ReviewEvent = Tables["advisor_review_events"]["Row"];
 export type ManuscriptVersion = Tables["manuscript_versions"]["Row"];
 export type UploadedDocument = Pick<Tables["documents"]["Row"], "id" | "file_name" | "file_size" | "category" | "status" | "storage_path" | "created_at" | "file_sha256" | "scan_verdict">;
 export type DocumentEvent = Tables["document_events"]["Row"];
+export type InformationRequestRow = Tables["information_requests"]["Row"];
 
 export class AdvisorApiError extends Error {
   constructor(message: string, readonly code?: string, readonly unauthenticated = false) {
@@ -106,6 +107,14 @@ export async function listOutboxEvents(status: OutboxStatus | null): Promise<Out
 }
 
 export type EmailProblem = Database["public"]["Functions"]["advisor_email_problems"]["Returns"][number];
+export type FunnelResult = Database["public"]["Functions"]["advisor_intake_funnel"]["Returns"][number];
+
+/** The pilot funnel for intakes started between `from` and `to`: each step, how many reached it, the median minutes. */
+export async function loadFunnel(from: Date, to: Date): Promise<FunnelResult[]> {
+  const { data, error } = await supabase.rpc("advisor_intake_funnel", { p_from: from.toISOString(), p_to: to.toISOString() });
+  if (error) fail(error, "Couldn't load the funnel.");
+  return data ?? [];
+}
 
 /**
  * The submissions whose prospect cannot be reached by the confirmation email (it bounced for good,
@@ -185,6 +194,8 @@ export interface SubmissionDetail {
   documents: ReviewedDocument[];
   /** Every document added, removed, renamed or re-categorised, newest first. */
   documentEvents: DocumentEvent[];
+  /** What advisors have asked the prospect for, newest first. */
+  informationRequests: InformationRequestRow[];
 }
 
 export async function loadSubmission(id: string): Promise<SubmissionDetail | null> {
@@ -212,7 +223,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   // Row security hides sessions the caller may not see; a missing pipeline row means the same.
   if (!row || !workflow.data) return null;
 
-  const [docs, profile, docEvents] = await Promise.all([
+  const [docs, profile, docEvents, requests] = await Promise.all([
     supabase
       .from("documents")
       .select("id, file_name, file_size, category, status, storage_path, created_at, file_sha256, scan_verdict")
@@ -221,9 +232,11 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
       .order("created_at", { ascending: false }),
     supabase.from("profiles").select("contact_name, phone").eq("user_id", row.user_id).maybeSingle(),
     supabase.from("document_events").select("*").eq("session_id", id).order("id", { ascending: false }),
+    supabase.from("information_requests").select("*").eq("session_id", id).order("id", { ascending: false }),
   ]);
   if (docs.error) fail(docs.error, "Couldn't load uploaded documents.");
   if (docEvents.error) fail(docEvents.error, "Couldn't load the document history.");
+  if (requests.error) fail(requests.error, "Couldn't load the requests sent to the prospect.");
 
   const submission = (row.submission as unknown as ChamberSubmission | null) ?? null;
   const certified = row.status === "submitted" && !!submission?.signer_name;
@@ -271,6 +284,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     versions: versions.data ?? [],
     documents: reconcileDocuments(docs.data ?? [], useSnapshot ? submission!.documents : undefined),
     documentEvents: docEvents.data ?? [],
+    informationRequests: requests.data ?? [],
   };
 }
 
@@ -294,6 +308,19 @@ export async function setNeedsAction(sessionId: string, needsAction: boolean, no
     p_note: note.trim() || null,
   });
   if (error) fail(error, needsAction ? "Couldn't mark this submission." : "Couldn't clear the mark.");
+}
+
+/**
+ * Asks the prospect for more information: records the request, moves the pipeline to information requested (or
+ * keeps it there), and emails the prospect, in one transaction. `fields` are the answers it is about.
+ */
+export async function requestInformation(sessionId: string, message: string, fields: readonly FieldKey[]): Promise<void> {
+  const { error } = await supabase.rpc("advisor_request_information", {
+    p_session_id: sessionId,
+    p_message: message.trim(),
+    p_fields: [...fields],
+  });
+  if (error) fail(error, "Couldn't send the request.");
 }
 
 export async function addNote(sessionId: string, body: string): Promise<void> {

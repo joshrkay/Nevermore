@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   escapeHtml,
+  lines,
   oneLine,
   parseAdvisorNotification,
+  parseDraftExpiryReminder,
+  parseInformationRequest,
   parseProspectConfirmation,
   renderAdvisorNotification,
+  renderDraftExpiryReminder,
+  renderInformationRequest,
   renderProspectConfirmation,
 } from "./messages";
+import { fieldLabels } from "./fieldLabels";
 
 const advisorPayload = {
   reference: "EAA-2026-AB12CD34",
@@ -305,5 +311,118 @@ describe("prospect-entered text", () => {
 
   it("escapes the five HTML-significant characters", () => {
     expect(escapeHtml(`<>&"'`)).toBe("&lt;&gt;&amp;&quot;&#39;");
+  });
+});
+
+describe("information request", () => {
+  const payload = {
+    reference: "EAA-2026-0042",
+    company_name: "Acme Co",
+    recipient_name: "Jo Doe",
+    recipient_email: "jo@acme.example",
+    message: "Please confirm your pay frequency.\n\n\nAnd upload the census <b>today</b>.",
+    fields: ["pay_frequency", "census", "pay_frequency", "Bad Key", 7],
+    requested_at: "2026-11-05T12:00:00Z",
+  };
+  const ctx = { supportEmail: "support@example.com", intakeUrl: "https://app.example.com/start?session=s1", fieldLabels: ["Pay frequency", "Employee census"] };
+
+  it("keeps the named facts, the message's lines (one blank between paragraphs) and well-formed field keys, each once", () => {
+    expect(parseInformationRequest(payload)).toEqual({
+      reference: "EAA-2026-0042",
+      companyName: "Acme Co",
+      recipientName: "Jo Doe",
+      recipientEmail: "jo@acme.example",
+      message: ["Please confirm your pay frequency.", "", "And upload the census <b>today</b>."],
+      fields: ["pay_frequency", "census"],
+    });
+  });
+
+  it("can't be sent without a File ID, a recipient or a message", () => {
+    expect(parseInformationRequest({ ...payload, reference: "" })).toBeNull();
+    expect(parseInformationRequest({ ...payload, recipient_email: "nobody" })).toBeNull();
+    expect(parseInformationRequest({ ...payload, message: " \n " })).toBeNull();
+    expect(parseInformationRequest(null)).toBeNull();
+  });
+
+  it("caps the message as a whole", () => {
+    const long = lines(`${"a".repeat(600)}\n${"b".repeat(600)}`, 1000);
+    expect(long.join("").length).toBeLessThanOrEqual(1000);
+    expect(long[1].endsWith("…")).toBe(true);
+  });
+
+  it("says who asks, what, about which answers, and where to answer, escaped", () => {
+    const r = renderInformationRequest(parseInformationRequest(payload)!, ctx);
+    expect(r.subject).toBe("Your advisor needs a little more information (EAA-2026-0042)");
+    expect(r.text).toContain("Hello Jo Doe,");
+    expect(r.text).toContain("Their request\nPlease confirm your pay frequency.\n\nAnd upload the census <b>today</b>.");
+    expect(r.text).toContain("What it's about\n- Pay frequency\n- Employee census");
+    expect(r.text).toContain("File ID: EAA-2026-0042");
+    expect(r.text).toContain("https://app.example.com/start?session=s1");
+    expect(r.html).toContain("And upload the census &lt;b&gt;today&lt;/b&gt;.");
+    expect(r.html).not.toContain("<b>today</b>");
+    expect(r.html).toContain('href="https://app.example.com/start?session=s1"');
+  });
+
+  it("leaves out the field list when the request names no field", () => {
+    const r = renderInformationRequest(parseInformationRequest({ ...payload, fields: [] })!, { ...ctx, fieldLabels: [] });
+    expect(r.text).not.toContain("What it's about");
+    expect(r.html).not.toContain("<ul");
+  });
+
+  it("never carries intake contents a payload might hold", () => {
+    const r = renderInformationRequest(parseInformationRequest({ ...leaky, ...payload })!, ctx);
+    for (const value of SENSITIVE) {
+      expect(r.text).not.toContain(value);
+      expect(r.html).not.toContain(value);
+    }
+  });
+
+  it("names fields as the intake schema labels them, the census's older name as the census, unknown keys left out", () => {
+    expect(fieldLabels(["pay_frequency", "employees", "census", "made_up"])).toEqual(["Pay frequency", "Employee census"]);
+  });
+});
+
+describe("draft expiry reminder", () => {
+  const payload = { company_name: "Acme Co", recipient_name: "Jo Doe", recipient_email: "jo@acme.example", expires_at: "2026-12-05T09:30:00Z" };
+  const ctx = { supportEmail: "support@example.com", intakeUrl: "https://app.example.com/start?session=s1", profileUrl: "https://app.example.com/profile" };
+
+  it("needs a recipient and a UTC closing time", () => {
+    expect(parseDraftExpiryReminder(payload)).toEqual({
+      companyName: "Acme Co", recipientName: "Jo Doe", recipientEmail: "jo@acme.example", expiresAt: "2026-12-05T09:30:00Z",
+    });
+    expect(parseDraftExpiryReminder({ ...payload, expires_at: "2026-12-05" })).toBeNull();
+    expect(parseDraftExpiryReminder({ ...payload, expires_at: "2026-13-45T00:00:00Z" })).toBeNull();
+    expect(parseDraftExpiryReminder({ ...payload, recipient_email: undefined })).toBeNull();
+  });
+
+  it("says when the draft closes, in words, and how to keep it", () => {
+    const r = renderDraftExpiryReminder(parseDraftExpiryReminder(payload)!, ctx);
+    expect(r.subject).toBe("Your intake for Acme Co closes on 5 December 2026");
+    expect(r.text).toContain("will close on 5 December 2026 (UTC)");
+    expect(r.text).toContain("any change keeps it open");
+    expect(r.text).toContain("https://app.example.com/start?session=s1");
+    expect(r.text).toContain("If you no longer need it, you don't need to do anything.");
+    expect(r.text).not.toContain("File ID");
+  });
+
+  it("says why it was sent and how to stop them", () => {
+    const r = renderDraftExpiryReminder(parseDraftExpiryReminder(payload)!, ctx);
+    expect(r.text).toContain('You\'re getting this because you asked us to remind you. To stop these reminders, untick "Email me before an unfinished intake closes" on your profile');
+    expect(r.text).toContain("https://app.example.com/profile");
+    expect(r.html).toContain('href="https://app.example.com/profile"');
+  });
+
+  it("reads as about the prospect's company only when it has one", () => {
+    const r = renderDraftExpiryReminder(parseDraftExpiryReminder({ ...payload, company_name: null, recipient_name: null })!, ctx);
+    expect(r.subject).toBe("Your intake for your company closes on 5 December 2026");
+    expect(r.text.startsWith("Hello,\n")).toBe(true);
+  });
+
+  it("never carries intake contents a payload might hold", () => {
+    const r = renderDraftExpiryReminder(parseDraftExpiryReminder({ ...leaky, ...payload })!, ctx);
+    for (const value of SENSITIVE) {
+      expect(r.text).not.toContain(value);
+      expect(r.html).not.toContain(value);
+    }
   });
 });

@@ -10,6 +10,8 @@ export type Readiness<T> = ({ ok: true } & T) | { ok: false; problems: string[] 
 export interface DispatchConfig {
   advisor: Readiness<{ from: string; to: string[]; appBaseUrl: string }>;
   prospect: Readiness<{ from: string; supportEmail: string; responseTime: string }>;
+  /** The prospect emails that link to the intake: an advisor's request for information, and the draft reminder. */
+  prospectLink: Readiness<{ from: string; supportEmail: string; appBaseUrl: string }>;
 }
 
 type Env = (name: string) => string | undefined;
@@ -50,16 +52,19 @@ export function readDispatchConfig(env: Env): DispatchConfig {
   const responseTime = oneLine(env("PROSPECT_RESPONSE_TIME"), 80);
 
   const fromProblem = from ? [] : ["EMAIL_FROM is not set to a valid sender address"];
+  const supportProblem = supportEmail && EMAIL_PATTERN.test(supportEmail) ? [] : ["SUPPORT_EMAIL is not set to a valid address"];
+  const baseUrlProblem = appBaseUrl ? [] : ["APP_BASE_URL is not set to an https URL"];
   const advisorProblems = [
     ...fromProblem,
     ...(advisorTo ? [] : ["ADVISORY_NOTIFY_EMAIL is not set to valid address(es)"]),
-    ...(appBaseUrl ? [] : ["APP_BASE_URL is not set to an https URL"]),
+    ...baseUrlProblem,
   ];
   const prospectProblems = [
     ...fromProblem,
-    ...(supportEmail && EMAIL_PATTERN.test(supportEmail) ? [] : ["SUPPORT_EMAIL is not set to a valid address"]),
+    ...supportProblem,
     ...(responseTime ? [] : ["PROSPECT_RESPONSE_TIME is not set"]),
   ];
+  const prospectLinkProblems = [...fromProblem, ...supportProblem, ...baseUrlProblem];
 
   return {
     advisor:
@@ -70,7 +75,21 @@ export function readDispatchConfig(env: Env): DispatchConfig {
       prospectProblems.length === 0
         ? { ok: true, from: from!, supportEmail: supportEmail!, responseTime: responseTime! }
         : { ok: false, problems: prospectProblems },
+    prospectLink:
+      prospectLinkProblems.length === 0
+        ? { ok: true, from: from!, supportEmail: supportEmail!, appBaseUrl: appBaseUrl! }
+        : { ok: false, problems: prospectLinkProblems },
   };
+}
+
+/** Each kind's readiness. */
+export function kindReadiness(config: DispatchConfig): [OutboxKind, Readiness<object>][] {
+  return [
+    ["advisor_notification", config.advisor],
+    ["prospect_confirmation", config.prospect],
+    ["information_request", config.prospectLink],
+    ["draft_expiry_reminder", config.prospectLink],
+  ];
 }
 
 export interface BlockedKind {
@@ -81,12 +100,12 @@ export interface BlockedKind {
 
 /**
  * The kinds that cannot be sent right now, each with why. `providerProblem` (no usable email
- * provider) blocks both. Their events stay queued and go out once it is fixed, and each says why in
+ * provider) blocks every kind. Their events stay queued and go out once it is fixed, and each says why in
  * the meantime.
  */
 export function blockedKinds(config: DispatchConfig, providerProblem: string | null): BlockedKind[] {
   const out: BlockedKind[] = [];
-  for (const [kind, readiness] of [["advisor_notification", config.advisor], ["prospect_confirmation", config.prospect]] as const) {
+  for (const [kind, readiness] of kindReadiness(config)) {
     const problems = [...(providerProblem ? [providerProblem] : []), ...(readiness.ok ? [] : readiness.problems)];
     if (problems.length > 0) out.push({ kind, problem: problems.join("; ") });
   }

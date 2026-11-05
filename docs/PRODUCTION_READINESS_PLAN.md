@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Version** | 2.9 (2.8 closed Epic H; 2.9 closed Epics C and D with D15 decided. Earlier: v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings, A-2.2 added database validation and versioned writes, A-1.3, A-1.4, A-1.5, A-2.1 and A-3.2 closed Epic A's open work, and version 2.7 closed Epic G with D6 decided) |
-| **Date** | 2026-11-04 |
+| **Version** | 2.11 (2.11 added information requests, saving progress before certifying with an opt-in draft reminder, and the pilot funnel, D39 to D41, J-2.2 done and J-2.1 partly. 2.9 2.8 closed Epic H; 2.9 closed Epics C and D with D15 decided. Earlier: v1.0 refreshed against the code, then updated after F-0.2 and F-0.4 landed, `document-extract` moved onto the adapter and gained the per-address and global ceilings, A-2.2 added database validation and versioned writes, A-1.3, A-1.4, A-1.5, A-2.1 and A-3.2 closed Epic A's open work, and version 2.7 closed Epic G with D6 decided) |
+| **Date** | 2026-11-05 |
 | **Verified against** | `main` at commit `2a5e9af` (merge of pull request 27). That includes the `chamber-extract` fix, the move of `document-extract` onto the shared adapter, the per-address and global ceilings on document reads and the edge-function type check (pull request 26), and the end-to-end test (pull request 25). Version 2.3 was verified against `6f2bf5c` plus branch `claude/peaceful-albattani-neiujl`; v1.0 against `04503c3` (2026-10-20). A-2.2 (version 2.5) was verified on a branch cut from `2a5e9af`, before pull request 28's review fixes to the end-to-end test. |
 | **Scope** | Everything between the current build and a supervised private pilot (M2) and a public launch (M3) |
 | **How it was verified** | Every story was checked against the migrations, functions, front end, tests and docs. `npm ci`, `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (685 tests in 48 files) and `npm run build` all pass. The fixed `chamber-extract` handler and `document-extract`'s model call were also type-checked and run under Deno 2.9.6 with the network denied. A manual CI run of the branch (run 40063090154, on commit `a180305`) passed both jobs: `verify`, including `typecheck:functions`, and `sql-tests`. The `e2e` job has run green in CI: pull request 25's run 40774885703 on its final commit, and pull request 27's run 40812758403. This refresh read the test and its stand-ins and did not re-run the end-to-end test. **Not run:** `chamber-extract/index.ts` under Deno (its URL imports are unreachable from the verification environment). Nothing was deployed or tested live, so statuses describe the repository, not a running environment. A-2.2 was checked separately on `a22-local` with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `npm test` (806 tests in 50 files), `npm run build`, all eight SQL tests and `npm run test:e2e` (four tests, run three times in a row). The new two-tab test fails when the client's version condition is removed. Two real database connections saving from one version were checked by hand, not in CI. Version 2.6 (A-1.3, A-1.4, A-1.5, A-2.1, A-3.2) was checked on branch `claude/sharp-keller-qpo079`, cut from `main` at `34441de`, with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `tsc -p tsconfig.app.json` (clean once the advisor page's lost imports were restored), `npm test` (1,204 tests in 66 files), `npm run build`, all eleven SQL tests on Postgres 16, and `npm run test:e2e` (seven tests, three runs in a row). The new SQL and hook tests were checked to fail when the rule each covers is removed. The `/verify` harness (real PostgREST 12.2.3 and `dispatch-outbox` under Deno) passed its certify-and-send flow. Rebuilt on every migration, it showed that certifying through the lifecycle trigger still sends exactly two emails, that an expired draft can't be certified and queues nothing, and that archiving and every refused caller behave over HTTP. That run is also why a missing intake answers `PT404` (HTTP 404) and not `P0002`, which PostgREST turns into a 500. Nothing was deployed. Version 2.7 (Epic G, US-5.1 to US-5.3) was checked on branch `claude/vigilant-brahmagupta-astca7`, cut from `main` at `578cfba` and merged with `main` at `378abef`, with `npm run lint` (0 errors, 8 warnings), `npm run typecheck:functions`, `tsc -p tsconfig.app.json`, `npm test` (1,345 tests in 72 files), `npm run build`, all thirteen SQL tests on Postgres 16, and `npm run test:e2e` (nine tests, all 28 migrations). The new File ID and email-label tests were checked to fail before the change. The `/verify` harness (real PostgREST 12.2.3 and `dispatch-outbox` under Deno 2.9.6) delivered both emails labelled File ID with no census values, sent nothing for a repeat certification of the same answers, and sent one "Updated Intake" alert and a second, identical confirmation for changed answers. With US-1.2's readiness check loaded, a certification missing required answers was refused (`EA003`) and queued nothing, and a complete one sent both emails. Nothing was deployed. |
@@ -128,6 +128,7 @@ Owners: `FE` frontend, `BE` backend/database, `FS` full stack, `PM` product, `QA
 
 | Date | Work (commit subjects) |
 |---|---|
+| 2026-11-05 | Version 2.11. Information requests (D39, migration `20261105090000`): "Ask the prospect" on the submission page, an `information_request` email, the request in the prospect's Chamber with its answers marked, Lenore asking about them first (prompt version 7), and suppression for every email to the prospect. Saving progress before The Reckoning and the opt-in draft reminder (D40, `20261105091000`, a new `remind-idle-intakes` job). The pilot funnel (D41, `20261105092000`, `/advisor/funnel`; J-2.2 done, J-2.1 partly). Deploy order: the three migrations, then `dispatch-outbox`, `chamber-extract` (they import `_shared`) and `document-upload`, then the front end. Checked with `npm run lint` (0 errors, 8 warnings), `tsc -p tsconfig.app.json`, `npm run typecheck:functions`, `npm test`, all 31 SQL tests and `npm run test:e2e` (14 tests); the three new SQL tests were checked to fail with their rule removed. Nothing deployed. |
 | 2026-10-20 | Sourced PEO catalog replaces invented scoring. Guest intake with an email-verified account at certification. Per-IP and global AI limits with Turnstile. Real data and session recovery from the Reckoning to the Manuscript. Reliable AI calls (timeout, retry, adapter, safe logs, failure UX). Final certification with signer role, versioned consent and a server-side record. Text-based Manuscript PDF with a recorded, re-certifiable submission. Confidence and source for extracted fields. Session-linked uploads, categories and reviewed extraction. Advisor dashboard, pipeline status, field review and versioned Manuscripts. |
 | 2026-10-21 | Vercel configuration. Epic E document handling finished. Advisor session states, the access matrix and the searchable queue. CI for lint, tests, build and SQL tests. Advisor and prospect notifications on submission. Re-certification when a different PEO is chosen. A verify skill that drives the app against a local stand-in. |
 | 2026-10-22 | Supabase URL and key read from Vercel's integration variables. Outbox hardening: queueing faults heal and sends are frozen so a sender change cannot duplicate. |
@@ -174,10 +175,10 @@ Both busy days also include commits titled 'repair main after ... merges' (for e
 | G Communications | 6 | 0 | 2 | 0 | 0 | 8 |
 | H Security, privacy, legal | 6 | 5 | 0 | 0 | 1 | 12 |
 | I Quality and accessibility | 3 | 9 | 0 | 1 | 1 | 14 |
-| J Release operations | 0 | 1 | 0 | 3 | 2 | 6 |
-| **Total** | **65** | **21** | **11** | **4** | **5** | **106** |
+| J Release operations | 1 | 2 | 0 | 1 | 2 | 6 |
+| **Total** | **66** | **22** | **11** | **2** | **5** | **106** |
 
-45 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 25 of 39 M2; 6 of 13 M3. The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
+45 of 54 milestone-M1 stories are DONE or SUPERSEDED (intent met, except B-1.3: its work moved to US-2.3a, which is not started); 25 of 39 M2; 7 of 13 M3 (J-2.2 since 2.11). The plan now holds 106 stories: v1.0's 104 plus two found during this refresh (F-0.4, C-2.4).
 
 ---
 
@@ -237,6 +238,9 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 | D36 | **New (US-2.3b).** A typed answer and a different spoken one | **Decided 2026-11-04:** they are the same kind of source (something the prospect said), so the field is `conflicting` and the prospect chooses, as for two typed answers. A typed answer doesn't outrank a spoken one: that would demote a real spoken correction of a typo. A required field in conflict keeps the intake from being ready to certify until the prospect chooses. In `GLOSSARY.md`, Field source. | PM | US-2.3b |
 | D37 | **New (US-2.3b).** Where Lenore's voice prompt runs from | **Decided 2026-11-04:** the repo file (`docs/prompts/voice-agent-v{n}.md`, versioned and fingerprinted in CI) is pasted into the ElevenLabs agent; the Chamber sends no prompt override at call start, which would fail every call on an agent with overrides switched off. The cost: what ElevenLabs runs can drift from the repo, so the agent's description names the version deployed. During a call Lenore never says the intake is ready (the Chamber shows it on screen, D29), her wrap-up says that what was said aloud waits for confirmation in Review, and a message typed during a call is answered in text as any typed message is. | PM | US-2.3b |
 | D38 | **New (US-2.3b).** What the prospect sees when a spoken message's answers can't be noted | **Decided 2026-11-04:** the chat's failure notice, in words for speech: Lenore heard them but couldn't note that answer, and it's in the transcript (she has already answered aloud, so "couldn't respond" would be false). Try again reads every such message again, oldest first, without a reply, offered exactly when it is for a typed message. The rest of voice's failure states are US-2.3c. | PM | US-2.3b, US-2.3c |
+| D39 | **New (2.11).** How an advisor asks the prospect for more | **Decided 2026-11-05:** through the product, not by hand. "Ask the prospect" on the submission page sends an information request: a message (up to 1,000 characters) and the answers it is about (the ones marked Needs follow-up to start, or none). `advisor_request_information()` records it (`information_requests`, append-only), moves the pipeline to `information_requested` from any stage that may move there, writes the history and queues an `information_request` email to the account's own address, in one transaction (migration `20261105090000`). The prospect sees it in The Chamber (`prospect_information_request()`), each answer it names says "Your advisor asked about this", and Lenore asks about those answers first, even when they hold one (prompt version 7). Certifying again answers it (the pipeline returns to `submitted`, as before), and so does the advisor moving on. Suppression now covers every email to the prospect. Answers open question 2. | PM | F-4.1, G-1 |
+| D40 | **New (2.11).** Saving progress before The Reckoning, and reminding before a draft closes | **Decided 2026-11-05:** a guest can verify an email ("Save your progress") from the Chamber's top bar whenever there is an intake, and is nudged once when the required answers are in. Once verified they can tick "Email me before an unfinished intake closes" (also on the profile page); the database stamps when (`profiles.draft_reminders_at`). `queue_draft_expiry_reminders()`, hourly at :29, queues one `draft_expiry_reminder` per closing time a week before an uncertified draft that holds something closes, only for those owners; each says why and how to stop. Opt-in because a reminder isn't a receipt (`docs/NOTIFICATIONS.md`); counsel to confirm (`docs/LEGAL_REVIEW.md`, question 11). Migration `20261105091000`. | PM + LEGAL | D1, A-1.3 |
+| D41 | **New (2.11).** How the pilot is measured | **Decided 2026-11-05:** first-party and content-free. Triggers record the first time each intake reaches each step (`intake_milestones`: started, answered, a census, ready to certify, a verified email, certified); `document-upload` reports a document once its file is stored and kept (`record_document_uploaded()`), and the prospect's browser reports The Manuscript downloaded once its link is issued (`record_manuscript_download()`), with the intake's start time and no answer, name or address. Deleting an intake unlinks its rows and keeps them; they are pruned a year after the intake started (`funnel_retention()`, `run_retention()`). `/advisor/funnel` shows, for the last 7, 30 or 90 days or 12 months, how many intakes reached each step and the median time (`advisor_intake_funnel()`). Earlier intakes are backfilled, flagged, with approximate times the medians leave out. No third-party analytics. Migration `20261105092000`. | PM | J-2.1, J-2.2 |
 
 ---
 
@@ -1248,8 +1252,9 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
   - **Tests:** Redirect check. Header check.
 
 #### J-2.1 Funnel analytics events
-- **Status:** **NOT STARTED** · **Size:** M · **Priority:** Medium · **Owner:** FE + PM · **Depends:** H-2.2 · **Milestone:** M3
-- **Built:** No analytics code, dependency or consent mechanism exists.
+- **Status:** **PARTIAL** · **Size:** M · **Priority:** Medium · **Owner:** FE + PM · **Depends:** H-2.2 · **Milestone:** M3
+- **Built (2.11, D41):** Every milestone from the Chamber start onward is recorded, first-party and server-side, once per intake: started, answered, a document uploaded, a census, ready to certify, a verified email, certified, The Manuscript downloaded (`intake_milestones`, migration `20261105092000`; the download from the prospect's browser through `record_manuscript_download()`). Rows hold no personal or census value; the table's columns are checked in `supabase/tests/intake_milestones.sql`. Nothing fires before the intake consent, because an intake can't exist before it (H-2.2). Tested in `intake_milestones.sql` (each step once, the backfill, deletion, pruning, who may read).
+- **Remaining:** The landing CTA and review-start events (before an intake exists, or a page view), which would need a tracker and its consent.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Events: landing CTA, Chamber start, upload, intake milestones, review start, certification, submission, PDF download. No personal or census values in event payloads. Tracking waits for consent.
   - **AC:**
@@ -1259,8 +1264,9 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
   - **Tests:** Payload scan. Consent-gate test.
 
 #### J-2.2 Funnel view
-- **Status:** **NOT STARTED** · **Size:** S · **Priority:** Medium · **Owner:** PM · **Depends:** J-2.1 · **Milestone:** M3
-- **Built:** No funnel report exists.
+- **Status:** **DONE** · **Size:** S · **Priority:** Medium · **Owner:** PM · **Depends:** J-2.1 · **Milestone:** M3
+- **Built (2.11, D41):** `/advisor/funnel` (`AdvisorFunnelPage.tsx`, "Funnel" in the advisor header): for intakes started in the last 7, 30 or 90 days or 12 months, each step's count, its share of the intakes started and the median time from starting, from `advisor_intake_funnel()` (advisors only). Loading, empty and error states. Tested in `AdvisorFunnelPage.test.tsx`, `src/data/funnel.test.ts` and the SQL test, which compares the counts with the intakes it made.
+- **Notes:** Counts begin at the Chamber start (J-2.1's remainder).
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** A funnel report that shows drop-off between milestones.
   - **AC:**
@@ -1327,9 +1333,9 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 
 | Criterion | Status |
 |---|---|
-| All M3 stories are done, including voice items if voice is marketed (D8). | **Not met.** 6 of 13 are DONE or SUPERSEDED. |
+| All M3 stories are done, including voice items if voice is marketed (D8). | **Not met.** 7 of 13 are DONE or SUPERSEDED. |
 | Branded email is live and verified. | **Not met.** The emails are built and plain text. The sender domain is unverified. |
-| Analytics consent is in place. | **Not met.** No analytics or consent exists. |
+| Analytics consent is in place. | **Partly met.** The funnel is first-party and content-free (D41): no cookie, tracker or third party, so it waits on no consent banner; counsel to confirm (`docs/LEGAL_REVIEW.md`, question 12). Landing-page analytics, which would need consent, are not built (J-2.1). |
 | Launch checklist is signed off and rollback is rehearsed. | **Not met.** Email-only checklist, unchecked. |
 
 ---
@@ -1440,8 +1446,8 @@ v1.0's tiered starting order is replaced. This order follows the milestone tags 
 | I-5.3 | Voice failure UX | S | Medium | M3 | DONE |
 | J-1.1 | Environment separation | M | Highest | M1 | NOT VERIFIABLE |
 | J-1.2 | Production domain, HTTPS, canonical URL, and sender domain | S | High | M3 | NOT STARTED |
-| J-2.1 | Funnel analytics events | M | Medium | M3 | NOT STARTED |
-| J-2.2 | Funnel view | S | Medium | M3 | NOT STARTED |
+| J-2.1 | Funnel analytics events | M | Medium | M3 | PARTIAL |
+| J-2.2 | Funnel view | S | Medium | M3 | DONE |
 | J-3.1 | Launch checklist and controlled test submission | S | Highest | M3 | PARTIAL |
 | J-3.2 | Rollback and maintenance plan | S | Highest | M3 | NOT VERIFIABLE |
 
@@ -1564,7 +1570,7 @@ A story is done only when all of the following are true:
 | Deployed environments may differ from `main`. This refresh could not see them. | Statuses here could be wrong about production in either direction. | Confirm deployed function versions, secrets, the cron schedule and Turnstile before the demo. |
 | Repeated 'repair main after merge' commits. | Overlapping branches keep breaking `main`. | Smaller pull requests, F-0.4, and required checks on `main`. |
 | Decisions D3, D4, D14, D15 stay open. | Blocks the M1 critical path. | Start on the recommended defaults. Revisit at the next review. |
-| Guests who upgrade cannot return from another device. | Lost intakes and support load. | D1, A-1.3. |
+| Guests who upgrade cannot return from another device. | Lost intakes and support load. | D1, A-1.3. Since 2.11 a guest can verify an email from "Save your progress" at any point, nudged once the required answers are in, and ask for a reminder before the draft closes (D40). A guest who never verifies still has no way back. |
 | Prospect data leaks through a URL or log. | Serious privacy incident. | The session id is not a credential, signed URLs last 60 seconds, log redaction (B-3.3), scan tests (H-3.3). |
 | Lenore provider choice changes late. | Extraction behavior shifts. | The adapter (F-0.2) and the extraction eval against a recorded baseline (B-1.4). |
 | Voice behaves differently in production. | Users stall at the voice step. | Text-first path, state machine (I-5.1), I-5.2 fallback. |
@@ -1576,7 +1582,7 @@ A story is done only when all of the following are true:
 ## 11. Open Questions Left for Discussion
 
 1. Should the first pilot allow prospects to re-enter after submit to supplement information? The plan assumes no, and changes after submit create a new draft version. Today the owner can re-certify and replace the snapshot (C-3.2). Confirm.
-2. Should advisors be able to request a prospect re-certify from the advisor view, or only re-open the intake? The plan assumes re-open, then re-certify.
+2. ~~Should advisors be able to request a prospect re-certify from the advisor view, or only re-open the intake?~~ Answered by D39 (2.11): an advisor sends an information request, which emails the prospect and shows in their Chamber; certifying again answers it.
 3. Is there a required retention period from an insurer, PEO partner, or regulation that overrides D4?
 4. Which `chamber-extract` build is deployed (the fix is on the branch, not necessarily live), and is Turnstile enabled in every deployed environment?
 5. Are the CI checks required for merge on `main`? The README asks the owner to set it, and the repo cannot show whether they did.

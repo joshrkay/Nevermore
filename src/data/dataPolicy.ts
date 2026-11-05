@@ -84,6 +84,8 @@ export const RETENTION = {
   aiLimitDays: 1,
   /** The record of each AI call: ids, codes and field names, never values. */
   aiEventDays: 90,
+  /** How far each intake got, for the pilot funnel: steps and times, never answers. From the intake's start. */
+  funnelDays: 365,
 } as const;
 
 export interface RetentionRule {
@@ -136,6 +138,11 @@ export const RETENTION_RULES: RetentionRule[] = [
     record: "Security and operations records (error and failure counts, rate limits)",
     period: `${RETENTION.opsEventDays} days for error records and the record of each AI call; ${RETENTION.aiLimitDays} day for rate limits`,
     then: "Deleted. These never contain your answers.",
+  },
+  {
+    record: "How far each intake got (which steps it reached, such as certifying, and when), used to improve the intake",
+    period: `${RETENTION.funnelDays} days after the intake started`,
+    then: "Deleted. These never contain your answers, name or email address; if your intake is deleted sooner, these records stay without any link to it.",
   },
   {
     record: "Your account (email address, name, company, phone)",
@@ -266,9 +273,9 @@ export const DATA_CLASSES: DataClass[] = [
     id: "advisor_work",
     label: "Advisor review and notes",
     sensitivity: "confidential",
-    examples: "Advisors' field reviews and corrections, internal notes, pipeline status and its history, and who changed each uploaded document and when.",
+    examples: "Advisors' field reviews and corrections, internal notes, pipeline status and its history, the requests for information sent to the prospect, and who changed each uploaded document and when.",
     stored: {
-      tables: ["advisor_field_reviews", "advisor_review_events", "advisor_notes", "submission_workflow", "submission_status_history", "document_events"],
+      tables: ["advisor_field_reviews", "advisor_review_events", "advisor_notes", "submission_workflow", "submission_status_history", "information_requests", "document_events"],
       buckets: [],
       elsewhere: [],
     },
@@ -314,6 +321,15 @@ export const DATA_CLASSES: DataClass[] = [
     },
     retention: `Events, AI call records and daily AI totals ${RETENTION.opsEventDays} days; rate-limit records ${RETENTION.aiLimitDays} day; alerts (kind, count and codes only) kept for incident review.`,
     deletion: "By the daily retention jobs. AI call records that point at an intake are also deleted with it.",
+  },
+  {
+    id: "funnel",
+    label: "Intake progress (the pilot funnel)",
+    sensitivity: "internal",
+    examples: "Which steps each intake reached (started, first answer, a document, a census, ready to certify, a verified email, certified, The Manuscript downloaded), when, and when the intake started. Never an answer, a name, an address or a document.",
+    stored: { tables: ["intake_milestones"], buckets: [], elsewhere: [] },
+    retention: `${RETENTION.funnelDays} days from the intake's start, a whole start date at once.`,
+    deletion: "By the daily retention job. Deleting an intake removes its link to these records; the steps and times stay, unattached, so the funnel still counts it.",
   },
 ];
 

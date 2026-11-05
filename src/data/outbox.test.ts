@@ -34,6 +34,8 @@ describe("kind labels", () => {
   it("name both emails and pass an unknown kind through rather than hiding it", () => {
     expect(outboxKindLabel("advisor_notification")).toBe("Advisor alert");
     expect(outboxKindLabel("prospect_confirmation")).toBe("Prospect confirmation");
+    expect(outboxKindLabel("information_request")).toBe("Request for information");
+    expect(outboxKindLabel("draft_expiry_reminder")).toBe("Draft expiry reminder");
     expect(outboxKindLabel("crm_sync")).toBe("crm_sync");
   });
 });
@@ -139,5 +141,13 @@ describe("prospects who cannot be reached by email", () => {
     expect(map.get("s2")?.reason).toBe("complained");
     expect(map.get("s3")).toBeUndefined();
     expect(emailProblemsBySession([]).size).toBe(0);
+  });
+});
+
+describe("a draft reminder cancelled before it went", () => {
+  it("says why, in plain words", () => {
+    expect(explainOutboxError("cancelled: reminders turned off")).toBe("Not sent: the prospect stopped draft reminders before this one went.");
+    expect(explainOutboxError("cancelled: the draft changed")).toMatch(/^Not sent: the draft changed/);
+    expect(explainOutboxError("cancelled: something else")).toBeNull();
   });
 });

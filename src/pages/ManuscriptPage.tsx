@@ -16,6 +16,7 @@ import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { readVerifiedFields } from "@/lib/verifiedFields";
 import { SITE_DOMAIN } from "@/data/site";
 import { downloadBlob } from "@/lib/downloadFile";
+import { recordManuscriptDownload } from "@/lib/milestones";
 import { finalManuscriptUrl } from "@/lib/advisorApi";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
 import LegalLinks from "@/components/LegalLinks";
@@ -227,6 +228,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
       // Sensitive fields stay masked: only an advisor's own workflow can reveal them.
       const pdf = buildManuscriptPdf(d, { revealSensitive: false, sample: isSample });
       downloadBlob(pdf.blob, pdf.filename);
+      if (!isSample && sessionId) recordManuscriptDownload(sessionId);
     } catch (err) {
       console.error("Failed to generate manuscript PDF:", err);
       toast.error("We couldn't generate the PDF. Please try again.");
@@ -243,6 +245,8 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
       // Named as the advisor's own download of that version is (src/components/advisor/ManuscriptPanel.tsx).
       const filename = manuscriptFilename(d.fileId, d.companyName, { version: d.version, date: d.certifiedAt, suffix: `advisor-v${finalVersion.version}` });
       window.location.assign(await finalManuscriptUrl(finalVersion.storage_path, filename));
+      // Only once the link was issued: a failed fetch is not a download (the funnel counts the first one for good).
+      if (sessionId) recordManuscriptDownload(sessionId);
     } catch (err) {
       console.error("Failed to open the final manuscript:", err);
       toast.error("We couldn't download the final Manuscript. Please try again.");

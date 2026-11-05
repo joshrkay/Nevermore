@@ -266,6 +266,11 @@ export async function handleUploadRequest(req: Request, deps: UploadDeps): Promi
       return refuse(409, "closed", "This intake is being deleted and takes no more documents.");
     }
 
+    // The pilot funnel hears of the upload now its file is stored and kept: the row alone isn't an upload, since a
+    // failed store deletes it. A measurement, so a failure here never fails the upload.
+    const { error: milestoneError } = await admin.rpc("record_document_uploaded", { p_document_id: documentId });
+    if (milestoneError) deps.log(`UPLOAD_MILESTONE_NOT_RECORDED request=${requestId} document=${documentId} code=${errorCode(milestoneError)}`);
+
     let verdict = "pending";
     if (scan.verdict === "unavailable") {
       // Held in quarantine; document-scan tries again.

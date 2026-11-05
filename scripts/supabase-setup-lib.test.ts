@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cliCommands, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, FUNCTIONS, functionScheduleSql, interpretChecks,
-  MIN_AUTH_EMAILS_PER_HOUR, migrationVersions, newMigrations, parseCliVersion, resendKeyVerdict, RETENTION_SCHEDULE_SQL, SCHEDULED_FUNCTIONS,
+  MIN_AUTH_EMAILS_PER_HOUR, migrationVersions, newMigrations, parseCliVersion, REMINDER_SCHEDULE_SQL, resendKeyVerdict, RETENTION_SCHEDULE_SQL, SCHEDULED_FUNCTIONS,
   isProjectRef, parseEnvFile, parseSender, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete, smtpKeyNote, summaryLines,
   sqlLiteral, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
@@ -469,6 +469,13 @@ describe("SQL", () => {
     expect(EXPIRY_SCHEDULE_SQL).toBe(`select cron.schedule(${scheduled![1]}, ${scheduled![2]}, ${scheduled![3]});`);
   });
 
+  it("schedules draft reminders exactly as the migration does", () => {
+    const migration = readFileSync("supabase/migrations/20261105091000_draft_expiry_reminders.sql", "utf8");
+    const scheduled = /PERFORM cron\.schedule\(('[^']+'), ('[^']+'), ('[^']+')\)/.exec(migration);
+    expect(scheduled).not.toBeNull();
+    expect(REMINDER_SCHEDULE_SQL).toBe(`select cron.schedule(${scheduled![1]}, ${scheduled![2]}, ${scheduled![3]});`);
+  });
+
   it("schedules each scheduled function on the project's own URL, as often as its migration does", () => {
     const migrations = readdirSync("supabase/migrations").map((f) => readFileSync(`supabase/migrations/${f}`, "utf8")).join("\n");
     expect(SCHEDULED_FUNCTIONS.map((j) => j.fn)).toEqual(["dispatch-outbox", "purge-intakes", "ops-monitor", "document-scan"]);
@@ -509,7 +516,7 @@ describe("SQL", () => {
 describe("interpretChecks", () => {
   const allSet = {
     status: {
-      migrations: 16, intake_table: 1, table_grants: 1, buckets: 3, extensions: 2, vault_secret: 1, schedule: 1, expiry_schedule: 1,
+      migrations: 16, intake_table: 1, table_grants: 1, buckets: 3, extensions: 2, vault_secret: 1, schedule: 1, expiry_schedule: 1, reminder_schedule: 1,
       purge_schedule: 1, monitor_schedule: 1, scan_schedule: 1, retention_schedule: 1, role_grants: 0,
     },
     auth: { external: { anonymous_users: true }, mailer_autoconfirm: false },

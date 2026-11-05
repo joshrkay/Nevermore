@@ -21,7 +21,7 @@ export const OUTBOX_STATUS_HELP: Record<OutboxStatus, string> = {
   pending: "Waiting to be sent, or waiting out a retry delay.",
   claimed: "A worker has it and is sending now.",
   sent: "Delivered to the email provider.",
-  suppressed: "Not sent: the address bounced for good or reported an email as spam, so it is not emailed again.",
+  suppressed: "Not sent: the address bounced for good or reported an email as spam, so it is not emailed again; or a draft reminder whose reason had gone.",
 };
 
 /** The worker's attempt limit (`MAX_ATTEMPTS` in the dispatch-outbox function): the fifth failure is final. */
@@ -33,6 +33,8 @@ export const STALLED_AFTER_MINUTES = 10;
 export const OUTBOX_KIND_LABELS: Record<string, string> = {
   advisor_notification: "Advisor alert",
   prospect_confirmation: "Prospect confirmation",
+  information_request: "Request for information",
+  draft_expiry_reminder: "Draft expiry reminder",
 };
 
 export const outboxKindLabel = (kind: string) => OUTBOX_KIND_LABELS[kind] ?? kind;
@@ -49,6 +51,11 @@ const GLOSSES: Record<string, string> = {
   not_configured: "Not being sent: a setting is missing or invalid.",
   timeout: "The provider didn't answer in time. The email may have been delivered.",
   network: "The connection to the provider failed. The email may have been delivered.",
+};
+
+const CANCELLED_GLOSSES: Record<string, string> = {
+  "reminders turned off": "Not sent: the prospect stopped draft reminders before this one went.",
+  "the draft changed": "Not sent: the draft changed, was certified or closed after this reminder was queued, so the date it gave no longer held.",
 };
 
 const SUPPRESSED_GLOSSES: Record<string, string> = {
@@ -68,6 +75,8 @@ export function explainOutboxError(lastError: string | null): string | null {
   if (!text) return null;
   const suppressed = /^suppressed: (bounced|complained|provider_suppressed)$/.exec(text);
   if (suppressed) return SUPPRESSED_GLOSSES[suppressed[1]];
+  const cancelled = /^cancelled: (.+)$/.exec(text);
+  if (cancelled) return CANCELLED_GLOSSES[cancelled[1]] ?? null;
   const configured = /^not_configured: (.+)$/.exec(text);
   if (configured) return `Not being sent until this is fixed: ${configured[1]}. It sends by itself once it is.`;
   const m = /^([a-z_]+)(?::(\d{3}))?(?: \(.*\))?$/.exec(text);

@@ -893,9 +893,76 @@ describe("log routing", () => {
 
 describe("sendableKinds", () => {
   it("lists the kinds whose configuration is complete", () => {
-    expect(sendableKinds(config)).toEqual(["advisor_notification", "prospect_confirmation"]);
+    expect(sendableKinds(config)).toEqual(["advisor_notification", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
     expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification"]);
+    // The emails that link to the intake need the app's address; the confirmation doesn't.
+    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]))).toEqual(["prospect_confirmation"]);
     expect(sendableKinds(readDispatchConfig(() => undefined))).toEqual([]);
+  });
+});
+
+describe("dispatching the emails that link to the intake", () => {
+  const requestRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+    id: "evt-request",
+    kind: "information_request",
+    session_id: SESSION,
+    attempts: 1,
+    pending_send: null,
+    payload: {
+      reference: "EAA-2026-0042", company_name: "Acme Co", recipient_name: "Jo Doe", recipient_email: "jo@acme.example",
+      message: "Please confirm your pay frequency.", fields: ["pay_frequency", "employees", "not_a_field"],
+      requested_at: "2026-11-05T12:00:00Z", census: [{ first_name: "Zelda" }],
+    },
+    ...over,
+  });
+  const reminderRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+    id: "evt-reminder",
+    kind: "draft_expiry_reminder",
+    session_id: SESSION,
+    attempts: 1,
+    pending_send: null,
+    payload: { company_name: "Acme Co", recipient_name: "Jo Doe", recipient_email: "jo@acme.example", expires_at: "2026-12-05T09:30:00Z" },
+    ...over,
+  });
+
+  it("sends a request to the prospect alone, names its fields by label, links to the intake, and replies to support", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([requestRow()], deps);
+    expect(sent).toHaveLength(1);
+    const { message } = sent[0];
+    expect(message.to).toEqual(["jo@acme.example"]);
+    expect(message.replyTo).toBe("support@example.com");
+    expect(message.subject).toBe("Your advisor needs a little more information (EAA-2026-0042)");
+    expect(message.text).toContain(`https://app.example.com/start?session=${SESSION}`);
+    expect(message.text).toContain("- Pay frequency\n- Employee census\n");
+    expect(message.text).not.toContain("not_a_field");
+    expect(message.text + message.html).not.toContain("Zelda");
+    expect(deps.complete).toHaveBeenCalledWith("evt-request", "msg_1");
+  });
+
+  it("sends the reminder to the prospect alone, with the day the draft closes and the link", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([reminderRow()], deps);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message.to).toEqual(["jo@acme.example"]);
+    expect(sent[0].message.subject).toBe("Your intake for Acme Co closes on 5 December 2026");
+    expect(sent[0].message.text).toContain(`https://app.example.com/start?session=${SESSION}`);
+  });
+
+  it("gives up on a payload that can never be sent", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([requestRow({ payload: { reference: "EAA-2026-0042", recipient_email: "jo@acme.example", message: "   " } })], deps);
+    await dispatchEvents([reminderRow({ id: "evt-r2", payload: { recipient_email: "jo@acme.example", expires_at: "soon" } })], deps);
+    expect(sent).toHaveLength(0);
+    expect(deps.freeze).not.toHaveBeenCalled();
+    expect(deps.fail).toHaveBeenCalledWith("evt-request", "invalid_payload", null, 1, false);
+    expect(deps.fail).toHaveBeenCalledWith("evt-r2", "invalid_payload", null, 1, false);
+  });
+
+  it("holds them back, sending nothing, without the app's address to link to", async () => {
+    const { deps, sent } = harness({ config: configFrom({ ...env, APP_BASE_URL: "" }) });
+    await dispatchEvents([requestRow(), reminderRow()], deps);
+    expect(sent).toHaveLength(0);
   });
 });
 
@@ -1064,13 +1131,17 @@ describe("telling a blocked kind's events why they are waiting", () => {
     const blocked = blockedKinds(configFrom({ ...env, APP_BASE_URL: "http://app.example.com", ADVISORY_NOTIFY_EMAIL: "" }), null);
     expect(blocked).toEqual([
       { kind: "advisor_notification", problem: "ADVISORY_NOTIFY_EMAIL is not set to valid address(es); APP_BASE_URL is not set to an https URL" },
+      { kind: "information_request", problem: "APP_BASE_URL is not set to an https URL" },
+      { kind: "draft_expiry_reminder", problem: "APP_BASE_URL is not set to an https URL" },
     ]);
   });
 
-  it("blocks both kinds, naming the provider problem first, when there is no usable provider", () => {
+  it("blocks every kind, naming the provider problem first, when there is no usable provider", () => {
     expect(blockedKinds(config, "RESEND_API_KEY is not set")).toEqual([
       { kind: "advisor_notification", problem: "RESEND_API_KEY is not set" },
       { kind: "prospect_confirmation", problem: "RESEND_API_KEY is not set" },
+      { kind: "information_request", problem: "RESEND_API_KEY is not set" },
+      { kind: "draft_expiry_reminder", problem: "RESEND_API_KEY is not set" },
     ]);
     expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[1].problem)
       .toBe("RESEND_API_KEY is not set; SUPPORT_EMAIL is not set to a valid address");
@@ -1088,8 +1159,9 @@ describe("telling a blocked kind's events why they are waiting", () => {
       if (kind === "advisor_notification") throw { code: "PGRST202", message: "function not found, row jo@acme.example" };
     });
     await noteBlockedKinds(blockedKinds(config, "RESEND_API_KEY is not set"), note, (l) => logs.push(l));
-    expect(note).toHaveBeenCalledTimes(2);
+    expect(note).toHaveBeenCalledTimes(4);
     expect(note).toHaveBeenCalledWith("prospect_confirmation", "RESEND_API_KEY is not set");
+    expect(note).toHaveBeenCalledWith("information_request", "RESEND_API_KEY is not set");
     expect(logs).toEqual(["OUTBOX_NOTE_ERROR: kind=advisor_notification PGRST202"]);
   });
 

@@ -1,6 +1,7 @@
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
 import { FIELD_KINDS, FIELD_LABELS, formatFieldValue, type FieldKey, type ProvenanceMap } from "./provenance";
+import { REVIEW_FIELDS, REVIEW_SECTIONS } from "./reviewFields";
 
 // Advisor-side view of an intake: where it is in the pipeline, how complete it is, and the
 // advisor's review of each field. Mirrors supabase/migrations/20261022090000_advisor_operations.sql.
@@ -74,7 +75,7 @@ export const isPipelineStatus = (s: unknown): s is PipelineStatus =>
 export const PROSPECT_STATUS_MESSAGES: Partial<Record<PipelineStatus, string>> = {
   submitted: "Received. An advisor will review your submission.",
   under_review: "An advisor is reviewing your submission.",
-  information_requested: "Your advisor needs a little more information. Watch your email for their request.",
+  information_requested: "Your advisor needs a little more information. We've emailed you their request, and it's waiting in your intake.",
 };
 
 export function prospectStatusMessage(status: unknown): string | null {
@@ -99,6 +100,36 @@ export function prospectStatusAfter(next: PipelineStatus, history: readonly { to
 // ---------- Needs advisor action (F-4.3) ----------
 
 /** What the queue and the submission page call a submission an advisor marked for the team to act on. */
+// ---------- Information requests ----------
+
+/** The longest message a request for information can carry; the database refuses longer (20261105090000). */
+export const INFORMATION_REQUEST_MAX = 1000;
+
+/** Intake statuses a prospect can't answer from (public.advisor_request_information refuses them). */
+const CLOSED_INTAKE_STATUSES: ReadonlySet<string> = new Set(["archived", "revoked", "expired"]);
+
+/**
+ * Whether an advisor can ask the prospect for more information now: the intake was certified at least once, is
+ * not closed, and its pipeline is at, or may move to, information requested. The database applies the same rule.
+ */
+export function canRequestInformation(status: PipelineStatus, certifiedOnce: boolean, intakeStatus: string): boolean {
+  if (!certifiedOnce || CLOSED_INTAKE_STATUSES.has(intakeStatus)) return false;
+  return status === "information_requested" || PIPELINE_TRANSITIONS[status].includes("information_requested");
+}
+
+/**
+ * Every field a request can name, in Review's order: the census (reviewed in Workforce, with its table) after the
+ * Workforce answers.
+ */
+export const REQUESTABLE_FIELDS: readonly FieldKey[] = REVIEW_SECTIONS.flatMap(({ key }) =>
+  key === "workforce" ? [...REVIEW_FIELDS[key], "census" as FieldKey] : REVIEW_FIELDS[key],
+);
+
+/** The fields an advisor marked as needing follow-up, in Review's order: what a request starts out asking about. */
+export function followUpFieldsOf(reviews: ReviewMap): FieldKey[] {
+  return REQUESTABLE_FIELDS.filter((f) => reviews[f]?.review_state === "follow_up");
+}
+
 export const NEEDS_ACTION_LABEL = "Needs advisor action";
 
 /** The longest note it can carry; the database holds the same cap (20261104132000_needs_advisor_action.sql). */

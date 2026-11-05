@@ -33,6 +33,12 @@ US-5.3 asks for. Who may open what is in `docs/ADVISOR_ACCESS.md`, and the terms
   names for the current one (`docs/ADVISOR_ACCESS.md`). The system makes two moves itself. Certifying moves a draft
   to `submitted`. A withdrawn certification moves `submitted` back to `draft`, but only while no
   advisor has moved it on.
+- **Advisors ask the prospect through the console.** "Ask the prospect" on the submission page sends an
+  information request: a message and the answers it is about (the ones marked Needs follow-up to start). It is
+  emailed to the account's own address, shown in the prospect's Chamber until they certify again, recorded for good
+  (`information_requests`, `advisor_request_information()`), and moves the status to information requested, from
+  any stage that may move there. The panel lists every request sent, newest first. Advisors never need the
+  prospect's address to ask.
 - **Advisors mark what needs action.** Any submission can be marked "Needs advisor action" with a
   note, through `set_submission_needs_action()`; the queue shows it and can list only those. It is
   recorded in the status history and never shown to the prospect.
@@ -40,11 +46,21 @@ US-5.3 asks for. Who may open what is in `docs/ADVISOR_ACCESS.md`, and the terms
   them.
 - **Every Submission is worked.** There is no qualifying step; the status is the team's triage.
 
+## The funnel
+
+`/advisor/funnel` counts, for the intakes started in the last 7, 30 or 90 days or 12 months, how many reached each
+step (started, first answer, a document, a census, ready to certify, a verified email, certified, The Manuscript
+downloaded) and the median time from starting. Each step is a share of the intakes that started. Counts only: the
+record behind it (`intake_milestones`, `advisor_intake_funnel()`) holds no answers, names or addresses, outlives an
+intake that is deleted, and is kept a year.
+
 ## Links
 
 No link that is stored, emailed or logged opens a document.
 
 - The Advisor Alert links to `/advisor/submissions/<intake id>`, which needs advisor sign-in.
+- An information request and a draft reminder link to `/start?session=<intake id>`, which opens only for the intake's
+  owner once they sign in.
 - Uploaded documents and Manuscript versions open through signed links that last 60 seconds. They
   are created when an advisor clicks and are never stored.
 - The prospect's Manuscript page (`/manuscript/<File ID>`, and the older `/manuscript?session=<intake id>`)
@@ -53,14 +69,15 @@ No link that is stored, emailed or logged opens a document.
 
 ## Failures
 
-Nothing syncs, so there is no sync to fail. The emails about a Submission (the Advisor Alert and the
-Confirmation) can fail; they are retried, logged, and shown with a retry button on
+Nothing syncs, so there is no sync to fail. The emails about a Submission (the Advisor Alert, the
+Confirmation and an information request) can fail; they are retried, logged, and shown with a retry button on
 `/advisor/outbox` (`docs/NOTIFICATIONS.md`).
 
 ## Known gap
 
-The console does not show the account's email, which is where the Confirmation goes and the
-address a prospect signed in with. Advisors have it from the Advisor Alert only. The submission page
+The console does not show the account's email, which is where the Confirmation and information requests go and
+the address a prospect signed in with. Advisors have it from the Advisor Alert only; to ask the prospect something,
+they send an information request from the console, which needs no address. The submission page
 shows the phone on file, and says so when the Confirmation bounced.
 
 ## If a CRM is added later

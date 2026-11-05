@@ -56,6 +56,29 @@ describe("useLenoreChat", () => {
     expect(invoke.mock.calls[0][1].body.message).toBe("My SSN is [redacted]");
   });
 
+  it("sends the fields an advisor asked about that the prospect hasn't answered since, and none without a request", async () => {
+    invoke.mockResolvedValue({ data: { extracted: {}, reply: "ok" }, error: null });
+    const request = { message: "Please confirm", fields: ["pay_frequency", "hq_state"] as const, requestedAt: "2026-11-05T12:00:00Z" };
+    const provenance = {
+      // Answered after the request: dropped. Last touched before it: still asked.
+      pay_frequency: { status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "2026-11-05T13:00:00Z" },
+      hq_state: { status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "2026-11-01T09:00:00Z" },
+    };
+    const hook = renderHook(() =>
+      useLenoreChat({
+        chamberData: EMPTY_CHAMBER_DATA, provenance, informationRequest: { ...request, fields: [...request.fields] },
+        addUserMessage: (text) => ({ id: "m1", text }), addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted: vi.fn(),
+      }),
+    );
+    await act(async () => { await hook.result.current.send("hello"); });
+    expect(invoke.mock.calls[0][1].body.requested).toEqual(["hq_state"]);
+
+    invoke.mockClear();
+    const { result } = setup();
+    await act(async () => { await result.current.send("hello"); });
+    expect(invoke.mock.calls[0][1].body).not.toHaveProperty("requested");
+  });
+
   it("keeps the roster out of what it sends to the model", async () => {
     invoke.mockResolvedValue({ data: { extracted: {}, reply: "ok" }, error: null });
     const { result } = setup();
