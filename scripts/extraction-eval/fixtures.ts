@@ -5,6 +5,7 @@
 // checks that, and that every expected value is one the intake would store as written.
 
 import type { FieldKey, FieldStatus } from "@/data/provenance";
+import { CLAIMS_COMPLETE } from "../../supabase/functions/chamber-extract/reply.ts";
 import { FIELDS } from "../../supabase/functions/chamber-extract/schema.ts";
 
 export interface ExpectedField {
@@ -39,10 +40,13 @@ export interface Fixture {
 /** Lenore names the census template and where to get it (the Upload tab). */
 export const CENSUS_TEMPLATE_REPLY: ReplyCheck = { template: /\btemplate\b/i, upload_tab: /\bupload/i };
 
-/** Lenore keeps going: she asks something, and doesn't say the intake is finished (QA F4). */
+/**
+ * Lenore keeps going: she asks something, and doesn't say the intake is finished (QA F4). "Finished" is the handler's own
+ * pattern (CLAIMS_COMPLETE), so the eval and the guard agree on what counts as claiming completion.
+ */
 export const KEEPS_ASKING_REPLY: ReplyCheck = {
   asks: /\?/,
-  not_finished: /^(?![\s\S]*\b(?:that(?:'|\u2019)?s everything|that is everything|is complete|have everything|nothing more)\b)/i,
+  not_finished: new RegExp(`^(?![\\s\\S]*(?:${CLAIMS_COMPLETE.source}))`, CLAIMS_COMPLETE.flags),
 };
 
 export const FIXTURES: Fixture[] = [

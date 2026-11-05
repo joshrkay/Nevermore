@@ -60,6 +60,11 @@ describe("extraction eval fixtures", () => {
     expect(passes("Bi-weekly, noted. How many days before payday do you fund payroll?")).toBe(true);
     expect(passes("Thank you. That's everything The Manuscript needs. Anything else?")).toBe(false);
     expect(passes("Thank you, the intake is complete.")).toBe(false);
+    // The two completion claims the eval's own pattern once let through (code review): it now uses the handler's.
+    expect(passes("Thank you, that is all I need. Anything else?")).toBe(false);
+    expect(passes("I've got everything I need. Anything else?")).toBe(false);
+    // An answer to the prospect's own question isn't a completion claim.
+    expect(passes("An experience mod compares your claims with similar businesses; that's all it measures. Do you know yours?")).toBe(true);
     expect(passes("Noted.")).toBe(false);
   });
 

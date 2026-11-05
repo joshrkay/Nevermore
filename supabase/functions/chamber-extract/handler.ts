@@ -19,6 +19,7 @@ import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts
 import { redactSensitive } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
 import { buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn } from "./prompt.ts";
+import { guardReply } from "./reply.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, FIELD_QUESTION, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
@@ -33,6 +34,7 @@ const corsHeaders = {
 // conversation (D22).
 export const MAX_MESSAGE_CHARS = MAX_CHAT_MESSAGE_CHARS;
 export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES, NEXT_FIELDS };
+export { CLAIMS_COMPLETE, guardReply, STOPPING_REPLY, WRAP_UP_REPLY } from "./reply.ts";
 
 const SCHEMA_KEYS = new Set(Object.keys(INTAKE_SCHEMA.properties as object));
 
@@ -70,28 +72,6 @@ function readStatuses(raw: unknown): { ok: true; statuses: Record<string, string
     }
   }
   return { ok: true, statuses: raw as Record<string, string> };
-}
-
-// A reply that tells the prospect the intake is finished. Only true once nothing is left to ask (QA F4: "That's
-// everything The Manuscript needs" after two answers, with some 35 still to ask).
-const CLAIMS_COMPLETE =
-  /\b(?:that(?:'|\u2019)?s|that is) (?:everything|all)\b|\b(?:intake|manuscript|interview) is (?:now )?(?:complete|done|finished)\b|\b(?:have|got) everything\b|\bnothing (?:more|else) (?:to ask|i need)\b|\beverything (?:i|we|the manuscript) needs?\b/i;
-
-export const WRAP_UP_REPLY = "Thank you. That is everything I need: you can review your intake on the Review tab.";
-export const STOPPING_REPLY = "Of course. Your answers are saved: come back any time to carry on, or review them on the Review tab.";
-
-/**
- * Lenore's reply as sent (US-2.3a, QA F4). With a field still to ask about (`next`, its question) and the prospect not
- * stopping, it always asks something and never says the intake is finished: a reply claiming completion is replaced by
- * the next question, and one that asks nothing gets it added. With nothing left, or the prospect stopping, the model's
- * reply stands. No reply of the model's own: the next question, or the wrap-up. `reason` says when the reply was changed.
- */
-export function guardReply(reply: string | null, next: string | null, stopping: boolean): { reply: string; reason: "claimed_complete" | "asked_nothing" | null } {
-  if (!reply) return { reply: !next ? WRAP_UP_REPLY : stopping ? STOPPING_REPLY : `Thank you, I've noted that. ${next}`, reason: null };
-  if (!next || stopping) return { reply, reason: null };
-  if (CLAIMS_COMPLETE.test(reply)) return { reply: `Thank you, I've noted that. ${next}`, reason: "claimed_complete" };
-  if (!reply.includes("?")) return { reply: `${reply.trim()} ${next}`, reason: "asked_nothing" };
-  return { reply, reason: null };
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -259,7 +239,8 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
       return await fail(aiError("invalid_response"));
     }
 
-    const { stopping, doubted_unknown: doubted, ...shaped } = shapeExtraction(result.args, message);
+    // The field Lenore was asking about is the first one not yet settled (the prompt tells her to ask it).
+    const { stopping, doubted_unknown: doubted, ...shaped } = shapeExtraction(result.args, message, unsettled[0]?.key);
     // The next field this message didn't settle. An incomplete answer is still to settle, so it is asked about
     // again; "don't know" (an unknown the prospect's own words support) settles a field.
     const answered = new Set([

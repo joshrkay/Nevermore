@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyExtraction, quotesMessage, saysNotKnown, shapeExtraction } from "./extraction";
+import { emptyExtraction, MAX_UNKNOWN_PER_MESSAGE, quotesMessage, saysNotKnown, shapeExtraction } from "./extraction";
 import { INTAKE_SCHEMA, LIMITS } from "../_shared/intakeSchema";
 import { EXTRACT_TOOL, FIELD_GUIDE, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 
@@ -196,10 +196,31 @@ describe("shapeExtraction: evidence and unknown fields", () => {
 
   it.each([
     ["I don't know", true], ["no idea", true], ["not sure yet", true], ["dunno", true], ["Nope, can't say", true], ["let me check", true],
-    ["I'll find out", true], ["beats me", true], ["haven't a clue", true], ["Bi-weekly", false], ["We have 12 employees", false],
-    ["we use a small local payroll provider", false], ["Larkspur Plumbing", false],
+    ["I'll find out", true], ["beats me", true], ["haven't a clue", true], ["I'd have to ask our bookkeeper", true], ["I'll double-check", true],
+    ["I don't have it handy", true], ["not off the top of my head", true], ["we haven't decided", true],
+    ["Bi-weekly", false], ["We have 12 employees", false], ["we use a small local payroll provider", false], ["Larkspur Plumbing", false],
+    // Answers that hold a bare "no", "none", "not", "check" or "ask" (code review: these settled every field).
+    ["all paid hourly, no contractors", false], ["none of them salaried", false], ["no union", false], ["not counting the owners", false],
+    ["We pay by check every two weeks", false], ["ask about our benefits later", false],
   ])("reads %j as not knowing: %s", (quote, expected) => {
     expect(saysNotKnown(quote)).toBe(expected);
+  });
+
+  // More than a section's worth of "unknown" in one message is the model marking fields wholesale (QA F4).
+  it("keeps at most a section's worth of unknowns from one message, and past that only the field Lenore was asking about", () => {
+    const fields = ["funding_days", "fein_count", "start_month", "current_carrier", "renewal_date", "hris_system"];
+    const args = { field_status: Object.fromEntries(fields.map((f) => [f, "unknown"])), evidence: Object.fromEntries(fields.map((f) => [f, "No idea, sorry"])) };
+    const asked = shape(args, "No idea, sorry.");
+    expect(shapeExtraction(args, "No idea, sorry.", "funding_days").field_status).toEqual({ funding_days: "unknown" });
+    expect(asked.field_status).toEqual({});
+    expect(asked.doubted_unknown).toEqual(fields);
+    const wc = ["wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium"];
+    expect(wc).toHaveLength(MAX_UNKNOWN_PER_MESSAGE);
+    const section = shape(
+      { field_status: Object.fromEntries(wc.map((f) => [f, "unknown"])), evidence: Object.fromEntries(wc.map((f) => [f, "no idea about any of our workers' comp"])) },
+      "Honestly, no idea about any of our workers' comp.",
+    );
+    expect(Object.keys(section.field_status)).toEqual(wc);
   });
 
   it("says the prospect is stopping only when the model says so outright", () => {

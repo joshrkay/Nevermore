@@ -71,14 +71,21 @@ export function quotesMessage(quote: string, message: string): boolean {
   return parts.length > 0 && parts.every((p) => said.includes(p));
 }
 
-// Words that say the prospect doesn't know or can't say yet. An "unknown" needs its quote to contain one: a message
+// Phrases that say the prospect doesn't know or can't say yet. An "unknown" needs its quote to contain one: a message
 // that simply doesn't mention a field never does (QA F4: after "Bi-weekly. We have 12 employees, all paid hourly...",
-// every other field came back "unknown", so Lenore stopped asking). A miss only means Lenore asks again.
+// every other field came back "unknown", so Lenore stopped asking). Whole phrases, never a bare "no", "not", "check" or
+// "ask": "no contractors", "none of them salaried" and "we pay by check" are answers, not "I don't know". A phrase this
+// misses only means Lenore asks again.
 const NOT_KNOWN = new RegExp(
   [
-    "\\b(?:don'?t|do not|doesn'?t|does not|didn'?t|did not|not|no|nope|none|never|unsure|unknown|uncertain|unclear|idk|dunno|tbd)\\b",
-    "\\b(?:can'?t|cannot|couldn'?t|haven'?t|have not|won'?t|forget|forgot|remember|beats me)\\b",
-    "\\b(?:check|ask|find out|look (?:it |that )?up|get back|later|skip|pass)\\b",
+    "\\b(?:don'?t|do not|didn'?t|did not) (?:really |actually )?(?:know|remember|recall)\\b",
+    "\\b(?:not|never) (?:sure|certain)\\b|\\b(?:unsure|uncertain|idk|dunno|tbd)\\b",
+    "\\b(?:no|not a|haven'?t a|haven'?t got a) (?:idea|clue)\\b|\\bbeats me\\b",
+    "\\b(?:can'?t|cannot|couldn'?t) (?:say|tell|remember|recall)\\b|\\bforg[eo]t\\b",
+    "\\bnot (?:off|from) the top of my head\\b|\\b(?:don'?t|do not) have (?:it|that|those|the \\w+) (?:handy|to hand|with me)\\b",
+    "\\b(?:i'?ll|i will|let me|i'?d|i would|i need to|i have to|i'?d have to|need to|have to) (?:double[- ])?check\\b|\\bcheck with\\b",
+    "\\b(?:i'?ll|i will|i'?d|i would|i need to|i have to|i'?d have to|need to|have to) ask\\b|\\bask (?:my|our|the) \\w+",
+    "\\b(?:find out|look (?:it |that |them )?up|get back to you)\\b|\\b(?:haven'?t|have not|not yet) decided\\b",
   ].join("|"),
   "i",
 );
@@ -87,10 +94,19 @@ const NOT_KNOWN = new RegExp(
 export const saysNotKnown = (quote: string): boolean => NOT_KNOWN.test(normalize(quote));
 
 /**
- * The model's tool arguments as the browser's response. `message` is the prospect's message the model read: evidence
- * must quote it.
+ * The most fields one message may mark "unknown": a section the prospect disclaims at once (workers' comp has four).
+ * More is the model marking fields wholesale (QA F4: some 35 at once), and then only the field Lenore was asking about
+ * keeps it. Lenore asks about the others again: the cost of a cap is a repeated question, never a field settled that the
+ * prospect didn't speak to.
  */
-export function shapeExtraction(args: Record<string, unknown>, message: string): Extraction {
+export const MAX_UNKNOWN_PER_MESSAGE = 4;
+
+/**
+ * The model's tool arguments as the browser's response. `message` is the prospect's message the model read: evidence
+ * must quote it. `asking` is the field Lenore was asking about (the first field not yet settled), which keeps its
+ * "unknown" when a message marks more than MAX_UNKNOWN_PER_MESSAGE.
+ */
+export function shapeExtraction(args: Record<string, unknown>, message: string, asking?: string): Extraction {
   // Keep known fields only, without null/empty values, and only values the schema accepts as sent: a
   // value is not repaired (no trimming, upper-casing or splitting), so the browser never receives an
   // answer the database would refuse, and what was refused is reported rather than guessed at.
@@ -113,6 +129,7 @@ export function shapeExtraction(args: Record<string, unknown>, message: string):
   const field_status: Record<string, string> = {};
   const doubted_unknown: string[] = [];
   const refused = rejectedFields(rejected);
+  const unknown: string[] = [];
   if (typeof args.field_status === "object" && args.field_status !== null) {
     for (const [k, v] of Object.entries(args.field_status)) {
       if (typeof v !== "string" || !FIELD_STATUSES.includes(v)) continue;
@@ -120,10 +137,16 @@ export function shapeExtraction(args: Record<string, unknown>, message: string):
         if (v !== "unknown") field_status[k] = v;
       } else if (v === "unknown" && FIELDS.includes(k) && !(k in refused)) {
         const quote = rawEvidence[k];
-        if (quoted(quote) && saysNotKnown(quote)) field_status[k] = v;
+        if (quoted(quote) && saysNotKnown(quote)) unknown.push(k);
         else doubted_unknown.push(k);
       }
     }
+  }
+  // Wholesale: only the field Lenore was asking about keeps it.
+  const wholesale = unknown.length > MAX_UNKNOWN_PER_MESSAGE;
+  for (const k of unknown) {
+    if (!wholesale || k === asking) field_status[k] = "unknown";
+    else doubted_unknown.push(k);
   }
   const evidence = Object.fromEntries(
     Object.entries(pickPerField(rawEvidence, { ...extracted, ...field_status }, quoted)).map(([k, v]) => [k, v.trim().slice(0, MAX_EVIDENCE_CHARS)]),

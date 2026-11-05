@@ -12,7 +12,7 @@ import { redactSensitive } from "@/data/sensitive";
 import { callModel, type ModelRequest, type ModelResult } from "../../supabase/functions/_shared/ai/model.ts";
 import { selectAdapter } from "../../supabase/functions/_shared/ai/providers.ts";
 import { shapeExtraction } from "../../supabase/functions/chamber-extract/extraction.ts";
-import { buildUserPrompt } from "../../supabase/functions/chamber-extract/prompt.ts";
+import { buildUserPrompt, unsettledForTurn } from "../../supabase/functions/chamber-extract/prompt.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, PROMPT_VERSION, SYSTEM_PROMPT } from "../../supabase/functions/chamber-extract/schema.ts";
 import { FIXTURES, type Fixture } from "./fixtures";
 import { describeCell, diffBaseline, formatBaseline, formatTable, parseBaseline, scoreFixture, type Baseline, type Cells } from "./scoring";
@@ -66,13 +66,8 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
     // removes sensitive numbers from the recent conversation again (readRecent), Lenore's lines included.
     const body = JSON.parse(JSON.stringify(chatRequestBody(message, state.data, state.provenance, transcript)));
     const recent = body.recent.map((m: { sender: "user" | "lenore"; text: string }) => ({ ...m, text: redactSensitive(m.text) }));
-    const user = buildUserPrompt({
-      message: body.message,
-      context: body.context,
-      statuses: body.statuses,
-      recent,
-      census: { rows: body.census.rows, workStates: body.census.work_states },
-    });
+    const sent = { context: body.context, statuses: body.statuses, recent, census: { rows: body.census.rows, workStates: body.census.work_states } };
+    const user = buildUserPrompt({ message: body.message, ...sent });
 
     const result = await model({ system: SYSTEM_PROMPT, user });
     if (!result.ok) {
@@ -81,7 +76,8 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
     // The tool call is forced, so the handler answers a reply without one as invalid_response (US-2.4a).
     if (!result.args) return { state, replies, error: `turn ${i + 1}: the model made no tool call (invalid_response)` };
     // What the handler returns, as the browser parses it.
-    const { stopping: _stopping, doubted_unknown: _doubted, ...shaped } = shapeExtraction(result.args, body.message);
+    // As the handler does: the field Lenore was asking about is the first one not yet settled.
+    const { stopping: _stopping, doubted_unknown: _doubted, ...shaped } = shapeExtraction(result.args, body.message, unsettledForTurn(sent)[0]?.key);
     const response = JSON.parse(JSON.stringify(shaped));
     // ChamberPage's onExtracted for a chat message.
     if (response.extracted) state = applyExtraction(state, response.extracted, transcriptExtraction(message, response));

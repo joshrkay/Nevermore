@@ -371,6 +371,44 @@ describe("chamber-extract handler: what is sent to the model", () => {
     ]);
   });
 
+  // Code review: the QA shape again, with an answer that holds a bare "no", "none", "not" or "check", and a short
+  // "No idea" that the model applies to every field.
+  it.each([
+    "Bi-weekly. We have 12 employees, all paid hourly, no contractors.",
+    "Bi-weekly. We have 12 employees, none of them salaried.",
+    "Bi-weekly. We have 12 employees, not counting the owners.",
+    "We pay by check every two weeks, 12 employees.",
+  ])("settles nothing the prospect didn't speak to, and keeps asking, after %j", async (message) => {
+    const others = FIELDS.filter((f) => f !== "company_name");
+    const t = setup({
+      responses: [gatewayReply({
+        field_status: Object.fromEntries(others.map((f) => [f, "unknown"])),
+        evidence: Object.fromEntries(others.map((f) => [f, message])),
+        reply: "Thank you. That's everything The Manuscript needs.",
+      })],
+    });
+    const { body } = await read(await handleRequest(post({ message, context: { company_name: "Larkspur Plumbing" }, session_id: INTAKE }), t.deps));
+    expect(body.field_status).toEqual({});
+    expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
+    expect(t.logs[0]).toBe(`LENORE_REPLY_GUARDED request=${REQUEST} session=${INTAKE} reason=claimed_complete next=states`);
+    expect(t.logs[1]).toMatch(/^EXTRACTION_UNKNOWN_DOUBTED /);
+  });
+
+  it("keeps only the asked field's unknown when the model applies one \"No idea\" to every field", async () => {
+    const others = FIELDS.filter((f) => f !== "company_name");
+    const t = setup({
+      responses: [gatewayReply({
+        field_status: Object.fromEntries(others.map((f) => [f, "unknown"])),
+        evidence: Object.fromEntries(others.map((f) => [f, "No idea, sorry"])),
+        reply: "No matter. That's everything I need.",
+      })],
+    });
+    const { body } = await read(await handleRequest(post({ message: "No idea, sorry.", context: { company_name: "Larkspur Plumbing" }, session_id: INTAKE }), t.deps));
+    // States is the first field not yet settled, so the one Lenore was asking about.
+    expect(body.field_status).toEqual({ states: "unknown" });
+    expect(body.reply).toBe("Thank you, I've noted that. How often do you run payroll?");
+  });
+
   it("lets Lenore wrap up when the prospect asks to stop, with fields still to ask", async () => {
     const reply = "Of course. Your answers are saved; come back whenever you like.";
     const t = setup({ responses: [gatewayReply({ prospect_stopping: true, reply })] });
@@ -616,6 +654,12 @@ describe("guardReply", () => {
     "I have everything I need now.",
   ])("replaces a reply that says the intake is finished while fields are left: %j", (reply) => {
     expect(guardReply(reply, NEXT, false)).toEqual({ reply: `Thank you, I've noted that. ${NEXT}`, reason: "claimed_complete" });
+  });
+
+  // Code review: her answer to the prospect's own question was replaced because it held "that's all".
+  it("keeps an answer to the prospect's question that only uses the words \"that's all\"", () => {
+    const reply = "An experience mod compares your claims with similar businesses; that's all it measures. Do you know yours?";
+    expect(guardReply(reply, NEXT, false)).toEqual({ reply, reason: null });
   });
 
   it("adds the next question to a reply that asks nothing, keeping what it said", () => {

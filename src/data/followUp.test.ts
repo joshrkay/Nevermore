@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createChatMessage } from "./chat";
+import { CLAIMS_COMPLETE } from "../../supabase/functions/chamber-extract/reply.ts";
 import { hasAnnouncedReady, READY_MESSAGE, shouldAnnounceReady } from "./followUp";
 
 describe("READY_MESSAGE", () => {
@@ -7,7 +8,9 @@ describe("READY_MESSAGE", () => {
   it("tells the prospect they can certify without saying the intake is finished", () => {
     expect(READY_MESSAGE).toMatch(/certify/);
     expect(READY_MESSAGE).toMatch(/keep going/);
-    expect(READY_MESSAGE).not.toMatch(/that's everything|that is everything|is complete|have everything/i);
+    // The handler's own test for a completion claim (supabase/functions/chamber-extract/reply.ts).
+    expect(READY_MESSAGE).not.toMatch(CLAIMS_COMPLETE);
+    expect("That's everything The Manuscript needs.").toMatch(CLAIMS_COMPLETE);
   });
 
   it("counts Lenore's earlier words for it, so an intake that heard them doesn't hear it again", () => {
