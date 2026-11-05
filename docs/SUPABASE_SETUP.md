@@ -109,8 +109,10 @@ most 60 seconds). If the scanner can't answer then, the file waits in quarantine
 again 10 minutes after the upload (so within 15 minutes), then backs off; after six attempts it is marked
 `failed` and alerted.
 
-`scripts/supabase-setup.mjs` doesn't apply this rule yet: it warns on an unset `MALWARE_SCANNER` and
-accepts `none` whatever `APP_ENV` says. Treat either as a stop on a production project.
+`scripts/supabase-setup.mjs` applies the same rule before it changes anything: `MALWARE_SCANNER=none`
+without a non-production `APP_ENV`, or an `APP_ENV` that isn't one of `development`, `demo`, `staging` or
+`production`, stops it. An unset `MALWARE_SCANNER` is a warning, not a stop, so the rest of the setup isn't
+held up while the scanner is chosen (D13); production refuses uploads, the census included, until it is set.
 
 Whichever scanner is chosen sees every uploaded file, census and payroll included: it needs the same
 data-processing terms as the AI provider (`docs/LEGAL_REVIEW.md`). After setting it, run the EICAR check in

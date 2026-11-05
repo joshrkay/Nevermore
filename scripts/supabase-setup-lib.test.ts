@@ -114,10 +114,14 @@ describe("checkSecrets", () => {
     expect(FUNCTIONS).toEqual(expect.arrayContaining(["document-upload", "document-scan"]));
   });
 
-  it("checks the malware scanner's settings: unset holds uploads, an incomplete one stops the setup", () => {
+  it("checks the malware scanner's settings: unset refuses uploads, an incomplete one stops the setup", () => {
     const base = { ...goodEnv };
     delete (base as Record<string, string>).MALWARE_SCANNER;
-    expect(checkSecrets(base).warnings.some((w) => /Uploads are held/.test(w))).toBe(true);
+    // A warning, not a stop: the scanner is the owner's choice, and the rest of the setup shouldn't wait for it.
+    expect(checkSecrets(base).errors).toEqual([]);
+    expect(checkSecrets(base).warnings.some((w) => /census included, are refused until MALWARE_SCANNER is set/.test(w))).toBe(true);
+    expect(checkSecrets(base).warnings.some((w) => /or none on this/.test(w))).toBe(false);
+    expect(checkSecrets({ ...base, APP_ENV: "staging" }).warnings.some((w) => /or none on this staging project/.test(w))).toBe(true);
     expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "clamscan" }).errors).toEqual([expect.stringMatching(/clamav, http or none/)]);
     expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "clamav", CLAMAV_HOST: "" }).errors).toEqual([expect.stringMatching(/CLAMAV_HOST/)]);
     expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "clamav", CLAMAV_HOST: "scan.example.com" }).errors).toEqual([]);
@@ -125,7 +129,18 @@ describe("checkSecrets", () => {
       .toEqual([expect.stringMatching(/MALWARE_SCANNER_TOKEN/)]);
     expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "http", MALWARE_SCANNER_URL: "http://scan.example.com", MALWARE_SCANNER_TOKEN: "t" }).errors)
       .toEqual([expect.stringMatching(/https/)]);
-    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none" }).warnings.some((w) => /not scanned/.test(w))).toBe(true);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none", APP_ENV: "demo" }).warnings.some((w) => /not scanned/.test(w))).toBe(true);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none", APP_ENV: "demo" }).errors).toEqual([]);
+  });
+
+  // QA H4, ADR 0002: production never runs unscanned, and the functions won't honour none there.
+  it("stops on MALWARE_SCANNER=none unless APP_ENV names a non-production project, and on an APP_ENV it doesn't know", () => {
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none" }).errors).toEqual([expect.stringMatching(/MALWARE_SCANNER=none is allowed only when APP_ENV is development, demo, staging.*unset \(production\)/)]);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none", APP_ENV: "production" }).errors).toEqual([expect.stringMatching(/"production"/)]);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none", APP_ENV: " Staging " }).errors).toEqual([]);
+    const typo = checkSecrets({ ...goodEnv, APP_ENV: "prod" }).errors;
+    expect(typo).toEqual([expect.stringMatching(/APP_ENV must be development, demo, staging, production or unset/)]);
+    expect(checkSecrets({ ...goodEnv, APP_ENV: "production" }).errors).toEqual([]);
   });
 
     it("warns, without stopping, when email secrets are missing", () => {

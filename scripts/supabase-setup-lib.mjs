@@ -5,6 +5,10 @@ export const FUNCTIONS = ["chamber-extract", "document-upload", "document-extrac
 
 /** What MALWARE_SCANNER may be (supabase/functions/_shared/malwareScan.ts). */
 export const MALWARE_SCANNERS = ["clamav", "http", "none"];
+// APP_ENV values (docs/adr/0002-uploads-need-a-scanner-in-production.md): unset is production. Only the non-production
+// ones allow MALWARE_SCANNER=none; supabase/functions/_shared/malwareScan.ts reads the same names.
+export const UNSCANNED_ENVIRONMENTS = ["development", "demo", "staging"];
+export const APP_ENVIRONMENTS = [...UNSCANNED_ENVIRONMENTS, "production"];
 
 /** Secrets the email notifications need. Without them emails wait in the queue; nothing is lost. */
 export const EMAIL_SECRETS = ["RESEND_API_KEY", "EMAIL_FROM", "ADVISORY_NOTIFY_EMAIL", "SUPPORT_EMAIL", "PROSPECT_RESPONSE_TIME"];
@@ -83,10 +87,20 @@ export function checkSecrets(env) {
     warnings.push("Bounces and spam complaints are not processed until RESEND_WEBHOOK_SECRET is set: the signing secret of a Resend webhook pointed at the resend-webhook function (docs/NOTIFICATIONS.md)");
   }
 
-  // The malware scanner (E-4.3, decision D13). Unset holds every upload; set but incomplete is a mistake.
+  // The environment (ADR 0002): unset is production. A misspelt one would be read as production by the functions, so
+  // MALWARE_SCANNER=none would silently stop working; say so here instead.
+  const appEnv = set("APP_ENV") ? env.APP_ENV.trim().toLowerCase() : "production";
+  if (!APP_ENVIRONMENTS.includes(appEnv)) errors.push(`APP_ENV must be ${APP_ENVIRONMENTS.join(", ")} or unset (production), not "${env.APP_ENV}"`);
+  const production = !UNSCANNED_ENVIRONMENTS.includes(appEnv);
+
+  // The malware scanner (E-4.3, decision D13, ADR 0002). Unset refuses every upload, the census included; set but
+  // incomplete is a mistake. Unset stays a warning, not a stop: the scanner is the owner's choice (D13), and the rest
+  // of the setup shouldn't wait for it. `none` on production is a stop: the functions won't honour it (QA H4).
   const scanner = set("MALWARE_SCANNER") ? env.MALWARE_SCANNER.trim().toLowerCase() : null;
   if (scanner === null) {
-    warnings.push("Uploads are held, unreadable, until MALWARE_SCANNER is set: clamav (CLAMAV_HOST), http (MALWARE_SCANNER_URL and MALWARE_SCANNER_TOKEN), or none for the internal demo only (docs/RUNBOOK.md)");
+    warnings.push(
+      `Uploads, the census included, are refused until MALWARE_SCANNER is set: clamav (CLAMAV_HOST) or http (MALWARE_SCANNER_URL and MALWARE_SCANNER_TOKEN)${production ? "" : `, or none on this ${appEnv} project`}. Each refused upload alerts (docs/SUPABASE_SETUP.md, "Malware scanning")`,
+    );
   } else if (!MALWARE_SCANNERS.includes(scanner)) {
     errors.push(`MALWARE_SCANNER must be clamav, http or none, not "${env.MALWARE_SCANNER}"`);
   } else if (scanner === "clamav" && !set("CLAMAV_HOST")) {
@@ -95,8 +109,10 @@ export function checkSecrets(env) {
     errors.push("MALWARE_SCANNER_URL and MALWARE_SCANNER_TOKEN are required when MALWARE_SCANNER=http");
   } else if (scanner === "http" && !/^https:\/\//.test(env.MALWARE_SCANNER_URL.trim())) {
     errors.push("MALWARE_SCANNER_URL must be an https:// address");
+  } else if (scanner === "none" && production) {
+    errors.push(`MALWARE_SCANNER=none is allowed only when APP_ENV is ${UNSCANNED_ENVIRONMENTS.join(", ")}, and this file's APP_ENV is ${set("APP_ENV") ? `"${env.APP_ENV}"` : "unset (production)"}: the functions would refuse every upload. Set clamav or http`);
   } else if (scanner === "none") {
-    warnings.push("MALWARE_SCANNER=none: uploads are not scanned for malware. Fine for the internal demo, not for prospects' files (docs/RUNBOOK.md)");
+    warnings.push(`MALWARE_SCANNER=none: uploads are not scanned for malware on this ${appEnv} project. Never for real prospects' files (docs/adr/0002-uploads-need-a-scanner-in-production.md)`);
   }
 
   return { errors, warnings };
