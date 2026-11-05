@@ -193,13 +193,38 @@ describe("document-scan: settling pending uploads", () => {
     expect(t.steps).not.toContain("record_document_scan");
   });
 
-  it("holds everything, claims nothing and records an alertable event when no scanner is set up", async () => {
+  it("holds everything, claims nothing, records an alertable event and answers 503 when no scanner is set up", async () => {
     const t = setup({ env: { MALWARE_SCANNER: undefined }, claims: [claim()] });
-    const { body } = await run(t);
-    expect(body).toMatchObject({ claimed: 0 });
+    const { status, body } = await run(t);
+    expect(status).toBe(503);
+    expect(body).toMatchObject({ error: "scanner_not_configured", scanner_problem: expect.stringMatching(/^MALWARE_SCANNER is not set/), claimed: 0 });
     expect(t.rpcs.map((r) => r.fn)).toEqual(["record_ops_event", "document_scan_orphans"]);
-    expect(t.rpcs[0].args).toEqual({ p_kind: "scan_failed", p_source: "document-scan", p_code: "config_missing" });
+    expect(t.rpcs[0].args).toEqual({
+      p_kind: "scan_failed",
+      p_source: "document-scan",
+      p_code: "config_missing",
+      p_detail: expect.stringMatching(/^MALWARE_SCANNER is not set/),
+    });
     expect(t.scanFetch).not.toHaveBeenCalled();
+    expect(t.logs[0]).toMatch(/^SCAN_CONFIG_MISSING: MALWARE_SCANNER is not set .*; held uploads stay unreadable and new ones are refused/);
+  });
+
+  it("treats 'none' in production as no scanner, and releases nothing", async () => {
+    const t = setup({ env: { MALWARE_SCANNER: "none" }, claims: [claim()] });
+    const { status } = await run(t);
+    expect(status).toBe(503);
+    expect(t.steps).not.toContain("claim_document_scans");
+  });
+
+  it("releases what it held once a scanner is set: the next run scans the pending file and moves it out of quarantine", async () => {
+    const held = setup({ env: { MALWARE_SCANNER: undefined }, claims: [claim()], files: { quarantine: { [PATH]: CLEAN } } });
+    expect((await run(held)).status).toBe(503);
+    const t = setup({ claims: [claim()], files: { quarantine: { [PATH]: CLEAN } } });
+    const { status, body } = await run(t);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ claimed: 1, clean: 1 });
+    expect(body).not.toHaveProperty("scanner_problem");
+    expect(t.steps.slice(0, 7)).toEqual(["claim_document_scans", "download:quarantine", "scan", "upload:documents", "intake_accepts_files", "record_document_scan", "remove:quarantine"]);
   });
 
   it("removes quarantined copies nothing holds any more", async () => {

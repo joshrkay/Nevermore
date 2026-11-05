@@ -22,6 +22,9 @@ const KNOWN = {
     4: "560743bff947177c3d747a7b67f0dab8c77dc9d9d18e2f0dd93211626927245b",
     // 5: Lenore points to the census template on the Upload tab whenever the roster comes up (US-2.3d).
     5: "2773869d220805289bddade61199df5b03010e1140e24841de36a685e9a4977c",
+    // 6: "unknown" only on the prospect's own words of not knowing; never claims the intake is finished while a field is
+    // unsettled; re-asks an unanswered question; prospect_stopping (QA F4, F11).
+    6: "bae67521577c29fa4c236450d5ae9c4fd65dcd3f4e2bd45fd7decd429920520b",
   } as Record<number, string>,
   "document-extract": { 1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526" } as Record<number, string>,
 };
@@ -49,6 +52,8 @@ const USER_TURN_KNOWN: Record<number, string> = {
   4: "9b021814414e815258f2934dc7ee157aa9642ca343c3c9be222c618a5c63746d",
   // 5: unchanged from 4 (US-2.3d changed only the system prompt).
   5: "9b021814414e815258f2934dc7ee157aa9642ca343c3c9be222c618a5c63746d",
+  // 6: unchanged from 5 (QA F4 and F11 changed the system prompt and the tool).
+  6: "9b021814414e815258f2934dc7ee157aa9642ca343c3c9be222c618a5c63746d",
 };
 
 describe("prompt versions", () => {

@@ -11,6 +11,7 @@ import { EMPTY_CHAMBER_DATA, type ChamberData } from "../../../src/data/chamberT
 import { createChatMessage, openingMessage, type ChatMessage } from "../../../src/data/chat";
 import { censusSummary, isReadyToCertify, READY_MESSAGE, shouldAnnounceReady, statusesOf } from "../../../src/data/followUp";
 import { applyExtraction, applyFieldAction, transcriptExtraction, type IntakeState } from "../../../src/data/provenance";
+import { buildManuscript, rowSourceLine } from "../../../src/data/manuscript";
 import { voiceContextUpdate } from "../../../src/data/voiceAgent";
 import { chatContext } from "../_shared/chatContext";
 import { INTAKE_FIELDS } from "../_shared/intakeSchema";
@@ -68,11 +69,11 @@ function functionWith(args: Record<string, unknown>) {
     }),
   };
   const deps: HandlerDeps = {
-    env: (name) => ({ SUPABASE_URL: "https://project.test", SUPABASE_ANON_KEY: "anon", SUPABASE_SERVICE_ROLE_KEY: "service", IP_HASH_SECRET: "ip", LOVABLE_API_KEY: "key" })[name],
+    env: (name) => ({ SUPABASE_URL: "https://project.test", SUPABASE_ANON_KEY: "anon", SUPABASE_SERVICE_ROLE_KEY: "service", IP_HASH_SECRET: "ip", ANTHROPIC_API_KEY: "key" })[name],
     createClient: () => client,
     fetch: vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      prompt = JSON.parse(init!.body as string).messages[1].content;
-      return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: JSON.stringify(args) } }] } }] }), { status: 200 });
+      prompt = JSON.parse(init!.body as string).messages[0].content;
+      return new Response(JSON.stringify({ stop_reason: "tool_use", content: [{ type: "tool_use", name: "extract_chamber_data", input: args }] }), { status: 200 });
     }) as unknown as typeof fetch,
     sleep: async () => {},
     now: () => 0,
@@ -229,7 +230,7 @@ describe("golden transcripts", () => {
   });
 
   it("records what the prospect doesn't know, and Lenore stops asking about it", async () => {
-    await run([
+    const { state } = await run([
       {
         prospect: "We're Acme, all in California, paid bi-weekly.",
         model: { company_name: "Acme", states: ["CA"], pay_frequency: "bi-weekly", field_status: { company_name: "confirmed", states: "confirmed", pay_frequency: "confirmed" }, reply: "How many employees?" },
@@ -246,6 +247,55 @@ describe("golden transcripts", () => {
         expect: { notNamed: ["employee_count"], next: ["industry"] },
       },
     ]);
+    // Not known yet holds no answer, so nothing is quoted for it (QA F11); the message it was said in is still named.
+    expect(state.provenance.employee_count?.source).toEqual({ kind: "transcript", message_id: expect.any(String), prompt_version: expect.any(Number) });
+  });
+
+  // QA F4 and F11 (EAA-2026-0001): two short answers, and the model marks every field the prospect never mentioned
+  // "unknown", quoting the message, and says it has everything. None of that may reach the intake or the prospect.
+  it("keeps asking after two short answers, and the Manuscript quotes only what they answered", async () => {
+    const answer = "Bi-weekly. We have 12 employees, all paid hourly, and we use a small local payroll provider.";
+    const unmentioned = INTAKE_FIELDS.map((f) => f.key).filter((k) => !["census", "company_name", "pay_frequency", "employee_count", "has_nonexempt"].includes(k));
+    const { state, transcript } = await run([
+      {
+        prospect: "Larkspur Plumbing.",
+        model: { ...said("company_name", "Larkspur Plumbing", "confirmed", "Larkspur Plumbing"), reply: "A fine name. How many days before payday do you fund payroll?" },
+        expect: { ready: false, announced: false },
+      },
+      {
+        prospect: answer,
+        model: {
+          pay_frequency: "bi-weekly",
+          employee_count: 12,
+          has_nonexempt: true,
+          field_status: { pay_frequency: "confirmed", employee_count: "confirmed", has_nonexempt: "inferred", ...Object.fromEntries(unmentioned.map((k) => [k, "unknown"])) },
+          evidence: { pay_frequency: "Bi-weekly", ...Object.fromEntries(unmentioned.map((k) => [k, answer])) },
+          reply: "Thank you. That's everything The Manuscript needs.",
+        },
+        // Nothing the message didn't speak to is settled: funding lead time, which it didn't answer, is still to ask.
+        expect: { ready: false, announced: false, statuses: { fein_count: undefined, funding_days: undefined, start_month: undefined, current_carrier: undefined } },
+      },
+    ]);
+    // Lenore never said she had everything, and asked something every time.
+    const lenore = transcript.filter((m) => m.sender === "lenore").slice(1);
+    expect(lenore.map((m) => m.text)).toEqual([
+      "A fine name. How many days before payday do you fund payroll?",
+      "Thank you, I've noted that. Which states do your employees work in?",
+    ]);
+    expect(transcript.some((m) => m.text === READY_MESSAGE)).toBe(false);
+    expect(Object.values(state.provenance).filter((p) => p?.status === "unknown")).toEqual([]);
+
+    // The Manuscript (and so its PDF, which prints no sources) quotes nothing but the fields answered.
+    const m = buildManuscript(state.data, { fileId: "EAA-2026-0001", provenance: state.provenance });
+    const rows = [...m.companyRows, ...m.workforceRows, ...m.locationRows, ...m.payrollRows, ...m.benefitsRows, ...m.workersCompRows, ...m.operationsRows];
+    const quoted = rows.flatMap((row) => {
+      const line = rowSourceLine(row, m);
+      return line?.startsWith("From the conversation") ? [{ field: row[2], line }] : [];
+    });
+    const filled = new Set(INTAKE_FIELDS.map((f) => f.key).filter((k) => isSettled(state.data[k as keyof ChamberData], undefined)));
+    expect(quoted.map((q) => q.field).sort()).toEqual(["company_name", "employee_count", "has_nonexempt", "pay_frequency"]);
+    for (const q of quoted) expect(filled.has(q.field!), q.line).toBe(true);
+    expect(quoted.find((q) => q.field === "pay_frequency")?.line).toBe("From the conversation: “Bi-weekly”");
   });
 
   it("doesn't count an incomplete answer as settled", async () => {

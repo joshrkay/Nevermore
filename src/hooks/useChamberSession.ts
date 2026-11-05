@@ -15,6 +15,8 @@ import { cleanPeoName } from "@/data/peoCatalog";
 import { describeRequiredKeys } from "@/data/readiness";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { readVerifiedFields } from "@/lib/verifiedFields";
+import { errorDetail, isUnanswered, reportFailure } from "@/lib/monitoring";
+import { ensureSignerToken, isGuestCertificationRefusal } from "@/lib/signerToken";
 import {
   certificationFromRow,
   NO_CERTIFICATION,
@@ -34,7 +36,14 @@ export type SaveStatus = "idle" | "saving" | "saved" | "failed" | "conflict" | "
 /** Why a submission wasn't recorded, in words for the prospect. Plain `false` means a retry may work. */
 export interface SubmitFailure {
   message: string;
+  /** The prospect has to verify their email before certifying: offer them the way to (QA F2). */
+  verifyEmail?: boolean;
+  /** For a failure nothing else explains: the error code logged and reported with it, which the message quotes. */
+  errorCode?: string;
 }
+
+/** What the prospect is told when certification needs a verified email (block_guest_submission). */
+export const VERIFY_EMAIL_MESSAGE = "Certifying needs a verified email. Verify your email first, then certify again.";
 
 type ServerRow = Pick<
   Database["public"]["Tables"]["chamber_sessions"]["Row"],
@@ -160,6 +169,22 @@ const CONFLICTING_CODE = "EA008";
 // Archiving an intake that is already archived, or isn't this person's: either way it is out of the Chamber.
 // (PostgREST answers this SQLSTATE with HTTP 404.)
 const NOT_FOUND_CODE = "PT404";
+
+/**
+ * A certification that failed for a reason nothing else explains: logged as one line (never a bare object, QA F2) and
+ * reported with an error code, which the prospect is shown, so what they quote can be found (reportFailure). A request
+ * that never reached the server says so instead.
+ */
+function unexplainedFailure(error: unknown, sessionId: string): SubmitFailure {
+  const dbCode = typeof (error as { code?: unknown } | null)?.code === "string" && (error as { code: string }).code ? (error as { code: string }).code : null;
+  const errorCode = reportFailure(`Failed to submit session${dbCode ? `, database code ${dbCode}` : ""}`, error, { code: `certify_failed:${dbCode ?? "none"}`, sessionId });
+  return {
+    errorCode,
+    message: !dbCode && isUnanswered(error)
+      ? `We couldn't reach our server, so your certification wasn't sent. Check your connection and try again (error code ${errorCode}).`
+      : `Something went wrong on our side (error code ${errorCode}). Please try again; if it keeps happening, contact us and quote that code.`,
+  };
+}
 const ROW_COLUMNS =
   "id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo, created_at, file_id";
 // What a certification reads back: the submission as the database stamped it (its File ID, version and
@@ -321,6 +346,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const savingRef = useRef(false);
   // True after a write failed without a clear answer (see unconfirmedRef), until a write settles it.
   const outcomeUnknownRef = useRef(false);
+  // Why the last save failed for a reason worth retrying: a certification that couldn't save first reports it.
+  const lastSaveFailureRef = useRef<unknown>(null);
   const unconfirmedRef = useRef<Unconfirmed | null>(null);
   // The version of the saved row this tab last saw. Every write is conditional on it.
   const versionRef = useRef<number | null>(null);
@@ -541,7 +568,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     dirtyRef.current = true;
     outcomeUnknownRef.current = true;
     clearBlock();
-    console.error("Failed to save session:", reason);
+    lastSaveFailureRef.current = reason;
+    // One line, never a bare object (QA F2).
+    console.error(`Failed to save session: ${errorDetail(reason)}`);
     report("failed");
     // Retry later so a transient failure isn't lost when no further edits arrive.
     if (mountedRef.current && !saveTimerRef.current) {
@@ -556,7 +585,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     conflictRef.current = null;
     blockRef.current = "invalid";
     const path = error.details ?? /Invalid [a-z]+ data at ([^:]+):/.exec(error.message ?? "")?.[1];
-    console.error("Failed to save session: the server refused an answer:", error);
+    console.error(`Failed to save session: the server refused an answer: ${errorDetail(error)}`);
     if (mountedRef.current) setInvalidField(describeInvalidPath(path));
     report("invalid");
   }, [report, settleOutcome]);
@@ -1271,7 +1300,15 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     const sid = sessionIdRef.current;
     if (!sid) return false;
     if (stopsSaving(blockRef.current)) return blockedMessage();
-    if (!(await saveNow())) return blockedMessage();
+    lastSaveFailureRef.current = null;
+    if (!(await saveNow())) {
+      // A save the prospect has to act on says why; one that failed for a reason worth retrying gets an error code they
+      // can quote, as any other unexplained failure does (QA F2), not the bare generic message.
+      return blockedMessage() || unexplainedFailure(lastSaveFailureRef.current ?? "the save before certifying failed", sid);
+    }
+    // A token minted before the prospect verified their email (in another tab, say) is still a guest's, which the
+    // database refuses: refresh it first. Still a guest's after that, they have to verify (QA F2).
+    if ((await ensureSignerToken(supabase.auth)) === "guest") return { message: VERIFY_EMAIL_MESSAGE, verifyEmail: true };
     // Answers edited while the autosave was finishing were not what the prospect signed.
     if (signedDataKey !== undefined && JSON.stringify(dataRef.current) !== signedDataKey) return false;
     const version = versionRef.current;
@@ -1341,12 +1378,14 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       // As definite as a missing answer: nothing changed.
       const conflicting = describeRequiredKeys(error.details);
       return { message: `Choose one answer for ${conflicting.length > 0 ? conflicting.join(", ").toLowerCase() : "each answer given twice"} on the Review tab, then certify.` };
+    } else if (isGuestCertificationRefusal(error)) {
+      // As definite: nothing changed. The database still calls this sign-in a guest's, even after the refresh above.
+      return { message: VERIFY_EMAIL_MESSAGE, verifyEmail: true };
     } else if (error) {
       // It may have landed anyway; a later write has to be able to tell.
       rememberUnconfirmed(version, { submitted: submission, chamber_data: storedData }, isOwnSubmission);
       outcomeUnknownRef.current = true;
-      console.error("Failed to submit session:", error);
-      return false;
+      return unexplainedFailure(error, sid);
     } else if (outcome?.kind === "own" || outcome?.kind === "earlier") {
       adoptVersion(sid, outcome.row.data_version);
       // The certification on record, as the database stamped it: for a lost response, that is the one to show.
@@ -1366,8 +1405,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       return blockedMessage();
     } else {
       outcomeUnknownRef.current = true;
-      console.error("Failed to submit session:", outcome?.kind === "unreadable" ? outcome.error : "no row was updated");
-      return false;
+      return unexplainedFailure(outcome?.kind === "unreadable" ? outcome.error : "no row was updated", sid);
     }
     const certified: CertificationState = { status: "certified", submission: certifiedSubmission ?? { ...sent, file_id: assigned ?? "" } };
     certificationRef.current = certified;

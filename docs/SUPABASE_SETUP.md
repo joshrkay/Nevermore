@@ -18,11 +18,13 @@ front end that uses it is deployed.
 
 | Step | How | Done by hand instead |
 |---|---|---|
-| Auth: guest sign-in on, email confirmation on, Site URL and Redirect URLs (below), the sign-up, email-change and sign-in (magic-link) messages (below), sign-in emails through Resend's SMTP. First, so a later failure can't leave sign-up links broken | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
-| Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push` | SQL editor, file by file |
-| Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set` from a private temporary file | Edge Functions → Secrets |
-| Deploy `chamber-extract`, `document-upload`, `document-extract`, `document-scan`, `dispatch-outbox`, `resend-webhook`, `purge-intakes`, `ops-monitor` | `supabase functions deploy` | (CLI only) |
+| Check this machine and the secrets file before anything changes: the secrets (a key with a space or text after it stops the run), the Supabase CLI and its version, Docker running, and `RESEND_API_KEY` tried on Resend (below). A missing piece stops the run here, not partway | The secrets file, `supabase --version`, `docker info`, `POST https://api.resend.com/emails` with an empty email | |
+| Auth: guest sign-in on, email confirmation on, Site URL and Redirect URLs (below), the sign-up, email-change and sign-in (magic-link) messages (below), sign-in emails through Resend's SMTP with `RESEND_API_KEY` as the password (it says whether the stored password matched, when Supabase shows it). First, so a later failure can't leave sign-up links broken | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
+| Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push --remote --yes` (CLI 3; CLI 2: `supabase db push`) | SQL editor, file by file |
+| Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set --remote=<ref> --yes` from a private temporary file | Edge Functions → Secrets |
+| Deploy `chamber-extract`, `document-upload`, `document-extract`, `document-scan`, `dispatch-outbox`, `resend-webhook`, `purge-intakes`, `ops-monitor` | `supabase functions deploy <name> --remote=<ref> --yes`, bundled with Docker | (CLI only) |
 | Schedules: `pg_cron`, `pg_net`, the service-role key in Vault, and the five jobs in "Schedules" below | Management API SQL endpoint | SQL editor: the statements in "Schedules" below |
+| Print a summary: the migrations applied (by file), the secrets set (names only, never values) and the functions deployed. A step that fails prints what was done before it | | |
 | Check all of the above, and that each function boots | SQL counts, the public auth settings, the auth config (Site URL, Redirect URLs, templates), a signed-out call to each function (a deployed one answers its own 401) | |
 
 ### Schedules
@@ -87,18 +89,36 @@ It must be https (http only for localhost).
 Every upload goes through `document-upload`, which checks the file's bytes, scans it, and stores it: in the
 `documents` bucket once the scan passed, in the private `quarantine` bucket otherwise. Nobody signed in can
 read a quarantined file, and Lenore and advisors can open a file only once its scan passed. The scanner is
-chosen by the `MALWARE_SCANNER` secret (decision D13 is still open):
+chosen by the `MALWARE_SCANNER` secret. Production uses Scanii (decision D13):
 
 | `MALWARE_SCANNER` | Also set | Use |
 |---|---|---|
+| `scanii` (production) | `SCANII_API_KEY`, `SCANII_API_SECRET`; `SCANII_API_URL` only for a region other than the US | Scanii's hosted API. In the Scanii dashboard, create an API key in the US region (`api-us1`) and set its key and secret here; the secret is shown once. Files are scanned in Virginia and their contents deleted after the scan. Sign Scanii's DPA before real prospects' files go through it |
 | `clamav` | `CLAMAV_HOST`, and `CLAMAV_PORT` if not 3310 | A clamd daemon reachable from Supabase's edge functions over TLS (clamd itself speaks plain TCP, so put stunnel or a TLS proxy in front). Raise clamd's `StreamMaxLength` to at least 21 MB |
 | `http` | `MALWARE_SCANNER_URL` (https), `MALWARE_SCANNER_TOKEN` | Any scanning service, or a thin wrapper around one, that takes the file as `POST` `application/octet-stream` with `Authorization: Bearer <token>` and answers `{"verdict":"clean"}` or `{"verdict":"infected","signature":"<name>"}` |
-| `none` | | No scanning: every file is recorded `skipped` and is readable. The internal demo (M1) only |
-| unset | | Every upload is held in quarantine, unreadable, and `document-scan` raises a `scan_failed` alert every hour until a scanner is set |
+| `none` | `APP_ENV=development`, `demo` or `staging` | No scanning: every file is recorded `skipped` and is readable. Only on a project that isn't production: with `APP_ENV` unset or anything else, `none` counts as unset |
+| unset | | Uploads are refused: `document-upload` stores nothing, logs `SCAN_CONFIG_MISSING` naming the setting, and the prospect is told uploads are paused while virus checking is set up. `document-scan` answers 503 on every run and records a `scan_failed` event, so `ops-monitor` alerts within five minutes, then hourly |
 
-Whichever scanner is chosen sees every uploaded file, census and payroll included: it needs the same
-data-processing terms as the AI provider (`docs/LEGAL_REVIEW.md`). After setting it, run the EICAR check in
-`docs/RUNBOOK.md` ("Malware detected").
+The rule and why are in `docs/adr/0002-uploads-need-a-scanner-in-production.md`. `APP_ENV` names the
+environment: leave it unset on production (unset means production), and set `demo`, `staging` or
+`development` only on a project that holds no real prospects' files. Files held while no scanner was set
+are scanned, and the clean ones released, on `document-scan`'s first run after one is set (within five
+minutes).
+
+A clean file is readable as soon as its upload finishes when the scanner answers at upload (one scan, at
+most 60 seconds). If the scanner can't answer then, the file waits in quarantine and `document-scan` tries
+again 10 minutes after the upload (so within 15 minutes), then backs off; after six attempts it is marked
+`failed` and alerted.
+
+`scripts/supabase-setup.mjs` applies the same rule before it changes anything: `MALWARE_SCANNER=none`
+without a non-production `APP_ENV`, an `APP_ENV` that isn't one of `development`, `demo`, `staging` or
+`production`, or `scanii` without `SCANII_API_KEY` and `SCANII_API_SECRET`, stops it. An unset
+`MALWARE_SCANNER` is a warning, not a stop, so the rest of the setup isn't held up while Scanii's account is
+opened; production refuses uploads, the census included, until it is set.
+
+Scanii sees every uploaded file, census and payroll included: it needs the same data-processing terms as the
+AI provider (`docs/LEGAL_REVIEW.md`). After setting it, run the EICAR check in `docs/RUNBOOK.md` ("Malware
+detected").
 
 The `documents` and `quarantine` buckets take only `application/octet-stream` up to 20 MB: every document is
 stored with that type, so a browser always downloads it rather than showing it (the type its bytes showed is in
@@ -139,6 +159,25 @@ verifies:
 Deploy the front end with `/auth/callback` before installing the sign-up template: an older
 front end ignores the token in the link.
 
+### The Resend key
+
+A wrong `RESEND_API_KEY` breaks every email at once: Supabase Auth answers a code request with 500
+("Error sending email change email", the 2026-11-05 QA outage), and the advisor alerts and
+confirmations fail in `dispatch-outbox`. So before changing anything the script sends Resend an
+empty email with the key. Resend refuses an empty email only after reading the key, so nothing is
+sent: 422 (or 400) means the key works; 401 or 403 means Resend refused it, and the run stops with
+nothing changed. Anything else (no answer, a rate limit) is printed as a warning and the run goes on.
+`--check` tries the key in the secrets file the same way ("Resend key").
+
+The same key is Supabase Auth's SMTP password, so the script sets it there on every run (Supabase
+doesn't return the stored password to compare; when it does, the script says whether it matched).
+If it can't set it (no `EMAIL_FROM`), it reminds you the SMTP password must be the same key. After
+rotating the key in Resend, rerun the script so both copies change together.
+
+A value with a space in it stops the run before anything else: the file has no comments after a
+value, so `RESEND_API_KEY=re_... # prod` would be stored whole and refused on every call. The same
+goes for any other `*_API_KEY`, `*_SECRET` or `*_TOKEN`.
+
 Sign-in emails matter for submissions, not just convenience: a guest certifies only after confirming
 an email with a 6-digit code, a returning prospect on another browser signs back in with one (the
 magic-link template), and Supabase's built-in mailer only delivers to your own team's
@@ -147,23 +186,37 @@ Resend (`smtp.resend.com`). It leaves SMTP alone if another provider is already 
 
 ## Before you run it
 
-1. **Node 20 or later** and the **Supabase CLI 2.x** (`brew install supabase/tap/supabase`, or see
-   the CLI docs for other systems). To use a CLI installed some other way, point
-   `SETUP_SUPABASE_BIN` at it.
-2. **A personal access token**: Supabase dashboard → Account → Access Tokens. Open the dashboard
+1. **Node 20 or later** and the **Supabase CLI 3.x** (`brew install supabase/tap/supabase`, or see
+   the CLI docs for other systems; 2.x still works). To use a CLI installed some other way, point
+   `SETUP_SUPABASE_BIN` at it. The script reads the version and uses the flags that version needs:
+   CLI 3 pushes to the local database unless told `--remote`, and refuses a change to a hosted
+   project in a non-interactive run without `--yes`. The script asks once (the project ref typed
+   back, or its own `--yes`), then passes `--yes` to each CLI call, so the run finishes unattended.
+2. **Docker, running.** `supabase functions deploy` bundles the functions with it. Without Docker the
+   CLI falls back to Supabase's server-side bundler, which can't fetch `document-extract`'s SheetJS
+   import from `cdn.sheetjs.com`, so the script checks `docker info` first and stops, with nothing
+   changed, if Docker isn't running. (Vendoring SheetJS into `supabase/functions/document-extract`
+   would remove the need: the exact `xlsx-0.20.3` build checked in, and `read.ts` pointed at it. Not
+   done yet.) To use a Docker installed some other way, point `SETUP_DOCKER_BIN` at it.
+3. **A personal access token**: Supabase dashboard → Account → Access Tokens. Open the dashboard
    from Vercel (Storage → the Supabase store → Open in Supabase) if you signed up through Vercel.
-3. **The database password.** The CLI asks for it when linking. The Vercel integration stored it as
+4. **The database password.** The CLI may ask for it when linking or pushing. The Vercel integration stored it as
    `POSTGRES_PASSWORD` (Vercel → Project → Settings → Environment Variables); or reset it in the
    Supabase dashboard (Project Settings → Database). Set `SUPABASE_DB_PASSWORD` to skip the prompt.
-4. **The secrets file:**
+5. **The secrets file:**
 
    ```sh
    cp supabase/env.production.example supabase/.env.production
    ```
 
-   Fill it in. `supabase/.env.production` is git-ignored. Required: an AI key (`LOVABLE_API_KEY`, or
-   `AI_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`) and `APP_BASE_URL`. Needed to accept
-   submissions: the email settings, with `EMAIL_FROM` on a domain verified in Resend.
+   Fill it in. `supabase/.env.production` is git-ignored. Required: `ANTHROPIC_API_KEY` (Anthropic
+   is the only AI provider, decision D11; `AI_PROVIDER` may stay empty or say `anthropic`, and
+   anything else stops the setup) and `APP_BASE_URL`. Needed to accept submissions: the email
+   settings, with `EMAIL_FROM` on a domain verified in Resend. A `LOVABLE_API_KEY` left in the file
+   from before is unused: the setup warns, and you can delete it here and from the project
+   (`supabase secrets unset LOVABLE_API_KEY`). `--check` fails a project whose secrets don't hold
+   `ANTHROPIC_API_KEY`, so a project still set up for the old Lovable gateway is caught before
+   Lenore and document reading go unavailable.
 
 ## Run it
 
@@ -172,10 +225,16 @@ read -rs SUPABASE_ACCESS_TOKEN && export SUPABASE_ACCESS_TOKEN   # paste the tok
 npm run setup:supabase -- --project-ref dvfwrjpkltqdkfudbahe
 ```
 
-It shows the project's name and status, asks you to type the project ref back, then runs each step
-and prints the checks:
+It shows the project's name and status, the CLI version and whether Resend accepted the key, asks you
+to type the project ref back, then runs each step, prints a summary and the checks:
 
 ```
+→ Summary
+  Migrations applied: 2 (20261104133000_queue_hides_empty_guest_drafts.sql, ...)
+  Secrets set (names only): 9 (ADVISORY_NOTIFY_EMAIL, APP_BASE_URL, EMAIL_FROM, ...)
+  Functions deployed: 8 (chamber-extract, document-upload, document-extract, ...)
+
+→ Checking the project
   ✓ Migrations applied: N of N   (N = the files in supabase/migrations)
   ✓ Guest (anonymous) sign-in: anonymous_users=true
   ✓ Email links return to the site: Site URL https://nevermorepeo.com, redirects allowed under it
@@ -250,7 +309,7 @@ Sessions are stored per address, so anyone signed in on the old address signs in
 
 ## Reruns
 
-A rerun applies new migrations, sets the secrets again (an existing `IP_HASH_SECRET` is kept),
+A rerun applies new migrations (the summary names only those), sets the secrets again (an existing `IP_HASH_SECRET` is kept),
 redeploys the functions, re-sends the Resend SMTP settings (so a rotated key is picked up), replaces
 the Vault copy of the service-role key and re-creates each schedule under the same name. It doesn't
 remove redirect URLs or replace an email template that already sends the code (for sign-up: the

@@ -5,7 +5,7 @@ import { categoryInfo } from "./documentCategories";
 import { documentStatusInfo } from "./documentStatus";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
-import { FIELD_LABELS, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
+import { describeSource, FIELD_LABELS, showsSource, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
 import { isRequiredField } from "./readiness";
 import { NO_VERIFIED_FIELDS } from "./requiredItems";
 import { describeOpenItem, openItems } from "./openItems";
@@ -319,6 +319,19 @@ export function rowProvenance([, , field, alsoFrom = []]: ManuscriptRow, provena
   return fields.map((f) => provenance[f]).find((p) => p?.status === "conflicting") ?? (field ? provenance[field] : undefined);
 }
 
+/**
+ * The source line a row shows under its value ("From the conversation: …"), or null. Only a row whose field holds an
+ * answer has one (`answered`, from `showsSource`; a row built from the census, the census): "Not provided" and "Not
+ * applicable" show their status alone, however the field's provenance was recorded, so no quote ever stands beside a
+ * field the prospect didn't answer (QA F11).
+ */
+export function rowSourceLine(row: ManuscriptRow, m: Pick<Manuscript, "provenance" | "answered">): string | null {
+  const [, , field, alsoFrom = []] = row;
+  const entry = rowProvenance(row, m.provenance);
+  if (!entry || !(field ? [field] : alsoFrom).some((f) => m.answered.has(f))) return null;
+  return describeSource(entry.source);
+}
+
 export interface ManuscriptDocument {
   name: string;
   category: string;
@@ -358,6 +371,8 @@ export interface Manuscript {
   open: string[];
   /** Status and source of each field, as shown beside its row. */
   provenance: ProvenanceMap;
+  /** The fields that hold an answer (`showsSource`): only their rows show a source (`rowSourceLine`). */
+  answered: ReadonlySet<FieldKey>;
   signer: ManuscriptSigner | null;
   /** Present on a packet an advisor generated: its version and the corrections it applies. */
   advisorReview: ManuscriptAdvisorReview | null;
@@ -579,6 +594,7 @@ export function buildManuscript(
       ...(opts.advisor?.followUps ?? []),
     ],
     provenance: settleVerified(provenance, verified),
+    answered: new Set((Object.keys(FIELD_LABELS) as FieldKey[]).filter((field) => showsSource(data[field]))),
     signer: opts.submission
       ? {
           name: opts.submission.signer_name,

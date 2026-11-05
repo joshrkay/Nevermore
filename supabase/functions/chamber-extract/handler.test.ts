@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handleRequest, NEXT_FIELDS, type HandlerDeps, type SupabaseLike } from "./handler";
+import { guardReply, handleRequest, NEXT_FIELDS, STOPPING_REPLY, WRAP_UP_REPLY, type HandlerDeps, type SupabaseLike } from "./handler";
 import { EXTRACT_TOOL, FIELD_TYPES, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema";
 
@@ -14,16 +14,12 @@ const ENV: Record<string, string | undefined> = {
   SUPABASE_ANON_KEY: "anon-key",
   SUPABASE_SERVICE_ROLE_KEY: "service-key",
   IP_HASH_SECRET: "ip-secret",
-  LOVABLE_API_KEY: "lovable-key",
+  ANTHROPIC_API_KEY: "anthropic-key",
 };
 
-// The gateway sends the tool's arguments as a JSON string, which the model can garble.
-const gatewayArguments = (args: string) =>
-  new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: args } }] } }] }), { status: 200 });
-const gatewayReply = (args: Record<string, unknown>) => gatewayArguments(JSON.stringify(args));
+// Anthropic's Messages API answers with the forced tool's input (decision D11: the only provider).
 const anthropicReply = (input: Record<string, unknown>, stopReason = "tool_use") =>
   new Response(JSON.stringify({ stop_reason: stopReason, content: [{ type: "tool_use", name: "extract_chamber_data", input }] }), { status: 200 });
-const ANTHROPIC = { AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "anthropic-key", LOVABLE_API_KEY: undefined };
 const providerError = (status: number, body = "provider says no") => new Response(body, { status });
 
 interface Setup {
@@ -46,7 +42,7 @@ const setup = (opts: Setup = {}) => {
   const rpcCalls: Array<{ key: string; fn: string; args: Record<string, unknown> }> = [];
   const events: Array<{ key: string; row: Record<string, unknown> }> = [];
   const intakes = opts.intakes ?? { [INTAKE]: USER, [SOMEONE_ELSES_INTAKE]: OTHER_USER };
-  const queue = [...(opts.responses ?? [gatewayReply({ reply: "Noted." })])];
+  const queue = [...(opts.responses ?? [anthropicReply({ reply: "Noted. Which states do your employees work in?" })])];
   const fetchFn = vi.fn(async (_url: string, _init?: RequestInit) => {
     steps.push("model");
     const next = queue.shift();
@@ -208,12 +204,12 @@ describe("chamber-extract handler: the intake must be the caller's", () => {
 
 describe("chamber-extract handler: configuration and budget", () => {
   it("logs the missing provider key, tells the browser only that Lenore is unavailable, and spends no budget", async () => {
-    const t = setup({ env: { LOVABLE_API_KEY: undefined } });
+    const t = setup({ env: { ANTHROPIC_API_KEY: undefined } });
     const { status, body } = await read(await handleRequest(post({ message: "hi", session_id: INTAKE }), t.deps));
     expect(status).toBe(503);
     expect(body.code).toBe("unavailable");
-    expect(JSON.stringify(body)).not.toContain("LOVABLE_API_KEY");
-    expect(t.logs).toEqual(["AI_CONFIG_MISSING: LOVABLE_API_KEY is not set"]);
+    expect(JSON.stringify(body)).not.toContain("ANTHROPIC_API_KEY");
+    expect(t.logs).toEqual(["AI_CONFIG_MISSING: ANTHROPIC_API_KEY is not set"]);
     expect(t.rpcCalls).toEqual([]);
     expect(t.fetchFn).not.toHaveBeenCalled();
     expect(t.event()).toMatchObject({ error_code: "unavailable", http_status: 503 });
@@ -272,13 +268,14 @@ describe("chamber-extract handler: what is sent to the model", () => {
     await handleRequest(post({ message: 'We have 40 "full time" people', context: { company_name: "Acme" }, session_id: INTAKE }), t.deps);
     expect(t.fetchFn).toHaveBeenCalledTimes(1);
     const [url, init] = t.fetchFn.mock.calls[0];
-    expect(url).toBe("https://ai.gateway.lovable.dev/v1/chat/completions");
-    expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer lovable-key");
+    expect(url).toBe("https://api.anthropic.com/v1/messages");
+    expect((init?.headers as Record<string, string>)["x-api-key"]).toBe("anthropic-key");
     const sent = JSON.parse(init?.body as string);
-    expect(sent.messages[0]).toEqual({ role: "system", content: SYSTEM_PROMPT });
-    expect(sent.tools).toEqual([{ type: "function", function: EXTRACT_TOOL }]);
-    expect(sent.tool_choice).toEqual({ type: "function", function: { name: "extract_chamber_data" } });
-    const user = sent.messages[1].content as string;
+    expect(sent.system).toBe(SYSTEM_PROMPT);
+    expect(sent.tools).toEqual([{ name: EXTRACT_TOOL.name, description: EXTRACT_TOOL.description, input_schema: EXTRACT_TOOL.parameters }]);
+    expect(sent.tool_choice).toEqual({ type: "tool", name: "extract_chamber_data" });
+    expect(sent.messages).toHaveLength(1);
+    const user = sent.messages[0].content as string;
     expect(user).toContain(`Captured so far (answers): {"company_name":"Acme"}`);
     expect(user.endsWith(`New user message: ${JSON.stringify('We have 40 "full time" people')}`)).toBe(true);
     expect(JSON.stringify(sent)).not.toContain(INTAKE);
@@ -287,7 +284,7 @@ describe("chamber-extract handler: what is sent to the model", () => {
   it("sends empty context, every unsettled field it can ask about, and the quoted message when nothing is captured", async () => {
     const t = setup();
     await handleRequest(post({ message: "hello" }), t.deps);
-    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[0].content as string;
     expect(user).toContain("Captured so far (answers): {}");
     expect(user).toContain("Field statuses: {}");
     expect(user).toContain("Recent conversation, oldest first: []");
@@ -307,7 +304,7 @@ describe("chamber-extract handler: what is sent to the model", () => {
       statuses: { company_name: "conflicting", pay_frequency: "confirmed", employee_count: "inferred", industry: "incomplete", hq_state: "unknown", current_carrier: "not_applicable" },
       recent: [{ sender: "lenore", text: "Which states do your people work in?" }],
     }), t.deps);
-    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[0].content as string;
     const next = /Not yet settled, most important first: (.*)/.exec(user)![1].split(", ").map((f) => f.split(" ")[0]);
     // In conflict, or incomplete: unsettled. An answer, 0 included, or "unknown" or "doesn't apply": settled.
     expect(next.slice(0, 3)).toEqual(["company_name", "states", "industry"]);
@@ -318,41 +315,116 @@ describe("chamber-extract handler: what is sent to the model", () => {
   it("says whether the intake is ready to certify and whether a census is in, counting its work states for states", async () => {
     const t = setup();
     await handleRequest(post({ message: "hi", context: { company_name: "Acme", pay_frequency: "weekly", states: [] }, census: { rows: 4, work_states: true } }), t.deps);
-    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[0].content as string;
     expect(user).toContain("Ready to certify: yes");
     expect(user).toContain("Employee census: uploaded, 4 rows");
     expect(/Not yet settled, most important first: (.*)/.exec(user)![1]).not.toContain("states");
     const bare = setup();
     await handleRequest(post({ message: "hi" }), bare.deps);
-    const empty = JSON.parse(bare.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    const empty = JSON.parse(bare.fetchFn.mock.calls[0][1]?.body as string).messages[0].content as string;
     expect(empty).toContain("Ready to certify: no");
     expect(empty).toContain("Employee census: not uploaded");
   });
 
   it("asks about the next field the message didn't settle when the model gives no reply, and wraps up when none is left", async () => {
-    const t = setup({ responses: [gatewayReply({ company_name: "Acme", field_status: { company_name: "confirmed" } })] });
+    const t = setup({ responses: [anthropicReply({ company_name: "Acme", field_status: { company_name: "confirmed" } })] });
     const { body } = await read(await handleRequest(post({ message: "We're Acme" }), t.deps));
     expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
     expect(body.reply).not.toContain("team");
   });
 
   it("asks again about an answer the model marked incomplete, rather than moving on or wrapping up", async () => {
-    const t = setup({ responses: [gatewayReply({ states: ["CA", "OR"], field_status: { states: "incomplete" } })] });
+    const t = setup({ responses: [anthropicReply({ states: ["CA", "OR"], field_status: { states: "incomplete" } })] });
     const { body } = await read(await handleRequest(post({ message: "CA, OR and some others", context: { company_name: "Acme" } }), t.deps));
     expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
+  });
+
+  // QA F4 and F11: after "Bi-weekly. We have 12 employees...", the model marked every other field unknown and said
+  // there was nothing left to ask, so Lenore closed the intake with some 35 fields unasked.
+  it("doesn't let a message that never mentions a field settle it, and asks the next question instead of closing", async () => {
+    const message = "Bi-weekly. We have 12 employees, all paid hourly, and we use a small local payroll provider.";
+    const others = FIELDS.filter((f) => !["company_name", "pay_frequency", "employee_count", "has_nonexempt"].includes(f));
+    const t = setup({
+      responses: [anthropicReply({
+        pay_frequency: "bi-weekly",
+        employee_count: 12,
+        has_nonexempt: true,
+        field_status: { pay_frequency: "confirmed", employee_count: "confirmed", has_nonexempt: "confirmed", ...Object.fromEntries(others.map((f) => [f, "unknown"])) },
+        evidence: Object.fromEntries(others.map((f) => [f, message])),
+        reply: "Thank you. That's everything The Manuscript needs: you can review your answers on the Review tab.",
+      })],
+    });
+    const recent = [{ sender: "lenore", text: "How many days before payday do you fund payroll?" }];
+    const { status, body } = await read(await handleRequest(post({ message, context: { company_name: "Larkspur Plumbing" }, recent, session_id: INTAKE }), t.deps));
+    expect(status).toBe(200);
+    expect(body.field_status).toEqual({ pay_frequency: "confirmed", employee_count: "confirmed", has_nonexempt: "confirmed" });
+    expect(Object.keys(body.evidence)).toEqual([]);
+    expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
+    expect(body).not.toHaveProperty("doubted_unknown");
+    expect(body).not.toHaveProperty("stopping");
+    expect(t.logs).toEqual([
+      `LENORE_REPLY_GUARDED request=${REQUEST} session=${INTAKE} reason=claimed_complete next=states`,
+      `EXTRACTION_UNKNOWN_DOUBTED request=${REQUEST} session=${INTAKE} fields=${others.join(",")}`,
+    ]);
+  });
+
+  // Code review: the QA shape again, with an answer that holds a bare "no", "none", "not" or "check", and a short
+  // "No idea" that the model applies to every field.
+  it.each([
+    "Bi-weekly. We have 12 employees, all paid hourly, no contractors.",
+    "Bi-weekly. We have 12 employees, none of them salaried.",
+    "Bi-weekly. We have 12 employees, not counting the owners.",
+    "We pay by check every two weeks, 12 employees.",
+  ])("settles nothing the prospect didn't speak to, and keeps asking, after %j", async (message) => {
+    const others = FIELDS.filter((f) => f !== "company_name");
+    const t = setup({
+      responses: [anthropicReply({
+        field_status: Object.fromEntries(others.map((f) => [f, "unknown"])),
+        evidence: Object.fromEntries(others.map((f) => [f, message])),
+        reply: "Thank you. That's everything The Manuscript needs.",
+      })],
+    });
+    const { body } = await read(await handleRequest(post({ message, context: { company_name: "Larkspur Plumbing" }, session_id: INTAKE }), t.deps));
+    expect(body.field_status).toEqual({});
+    expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
+    expect(t.logs[0]).toBe(`LENORE_REPLY_GUARDED request=${REQUEST} session=${INTAKE} reason=claimed_complete next=states`);
+    expect(t.logs[1]).toMatch(/^EXTRACTION_UNKNOWN_DOUBTED /);
+  });
+
+  it("keeps only the asked field's unknown when the model applies one \"No idea\" to every field", async () => {
+    const others = FIELDS.filter((f) => f !== "company_name");
+    const t = setup({
+      responses: [anthropicReply({
+        field_status: Object.fromEntries(others.map((f) => [f, "unknown"])),
+        evidence: Object.fromEntries(others.map((f) => [f, "No idea, sorry"])),
+        reply: "No matter. That's everything I need.",
+      })],
+    });
+    const { body } = await read(await handleRequest(post({ message: "No idea, sorry.", context: { company_name: "Larkspur Plumbing" }, session_id: INTAKE }), t.deps));
+    // States is the first field not yet settled, so the one Lenore was asking about.
+    expect(body.field_status).toEqual({ states: "unknown" });
+    expect(body.reply).toBe("Thank you, I've noted that. How often do you run payroll?");
+  });
+
+  it("lets Lenore wrap up when the prospect asks to stop, with fields still to ask", async () => {
+    const reply = "Of course. Your answers are saved; come back whenever you like.";
+    const t = setup({ responses: [anthropicReply({ prospect_stopping: true, reply })] });
+    const { body } = await read(await handleRequest(post({ message: "That's all I have time for today.", context: { company_name: "Acme" } }), t.deps));
+    expect(body.reply).toBe(reply);
+    expect(t.logs).toEqual([]);
   });
 
   it("removes Social Security and account numbers from the recent conversation it passes on", async () => {
     const t = setup();
     await handleRequest(post({ message: "ok", recent: [{ sender: "user", text: "my SSN is 123-45-6789" }] }), t.deps);
-    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[1].content as string;
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[0].content as string;
     expect(user).not.toContain("123-45-6789");
     expect(user).toContain("[redacted]");
   });
 
-  it("goes to Anthropic when AI_PROVIDER says so", async () => {
+  it("goes to Anthropic, the only provider, with AI_PROVIDER saying so and AI_MODEL choosing the model", async () => {
     const t = setup({
-      env: { AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "anthropic-key", LOVABLE_API_KEY: undefined, AI_MODEL: "claude-haiku-5-5" },
+      env: { AI_PROVIDER: "anthropic", AI_MODEL: "claude-haiku-5-5" },
       responses: [new Response(JSON.stringify({ content: [{ type: "tool_use", name: "extract_chamber_data", input: { company_name: "Acme" } }] }), { status: 200 })],
     });
     const { status, body } = await read(await handleRequest(post({ message: "hi" }), t.deps));
@@ -384,7 +456,7 @@ describe("chamber-extract handler: what is sent to the model", () => {
       corrected_fields: [],
       reply: "x".repeat(400),
     };
-    const t = setup({ env: ANTHROPIC, responses: [anthropicReply({})] });
+    const t = setup({ responses: [anthropicReply({})] });
     await handleRequest(post({ message: "hi" }), t.deps);
     const sent = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string);
     expect(sent.max_tokens).toBeGreaterThanOrEqual(Math.ceil(JSON.stringify(answer).length / 3));
@@ -394,7 +466,7 @@ describe("chamber-extract handler: what is sent to the model", () => {
 describe("chamber-extract handler: the answer", () => {
   it("returns what the model extracted with its status, evidence, corrections, reply, the contract version and the request id", async () => {
     const t = setup({
-      responses: [gatewayReply({
+      responses: [anthropicReply({
         employee_count: 45,
         field_status: { employee_count: "confirmed" },
         evidence: { employee_count: "actually it's 45 people" },
@@ -429,15 +501,15 @@ describe("chamber-extract handler: the answer", () => {
       refused_paths: [],
       prompt_version: PROMPT_VERSION,
       contract_version: INTAKE_SCHEMA_VERSION,
-      provider: "lovable",
-      model: "google/gemini-3-flash-preview",
+      provider: "anthropic",
+      model: "claude-haiku-5-5",
       attempts: 1,
       latency_ms: 0,
     });
   });
 
   it("refuses an extracted value the intake schema doesn't accept, and logs and records its path but not the value", async () => {
-    const t = setup({ responses: [gatewayReply({ company_name: "Acme", hq_state: "New York", reply: "Noted." })] });
+    const t = setup({ responses: [anthropicReply({ company_name: "Acme", hq_state: "New York", reply: "Noted. Which state is that in?" })] });
     const { status, body } = await read(await handleRequest(post({ message: "we're Acme in New York", session_id: INTAKE }), t.deps));
     expect(status).toBe(200);
     expect(body.extracted).toEqual({ company_name: "Acme" });
@@ -448,11 +520,11 @@ describe("chamber-extract handler: the answer", () => {
   });
 
   it("treats an answer with no tool call as invalid_response, not as 'nothing to extract'", async () => {
-    const t = setup({ responses: [new Response(JSON.stringify({ choices: [{ message: { content: "hello" } }] }), { status: 200 })] });
+    const t = setup({ responses: [new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: "hello" }] }), { status: 200 })] });
     const { status, body } = await read(await handleRequest(post({ message: "hi", session_id: INTAKE }), t.deps));
     expect(status).toBe(502);
     expect(body).toMatchObject({ code: "invalid_response", request_id: REQUEST });
-    expect(t.logs).toEqual([`AI_NO_TOOL_CALL request=${REQUEST} session=${INTAKE} provider=lovable`]);
+    expect(t.logs).toEqual([`AI_NO_TOOL_CALL request=${REQUEST} session=${INTAKE} provider=anthropic`]);
     expect(t.event()).toMatchObject({ error_code: "invalid_response", attempts: 1 });
   });
 
@@ -466,7 +538,7 @@ describe("chamber-extract handler: the answer", () => {
 
 describe("chamber-extract handler: when the provider fails", () => {
   it("retries once on a provider 429 and then succeeds", async () => {
-    const t = setup({ responses: [providerError(429), gatewayReply({ company_name: "Acme" })] });
+    const t = setup({ responses: [providerError(429), anthropicReply({ company_name: "Acme" })] });
     const { status, body } = await read(await handleRequest(post({ message: "hi" }), t.deps));
     expect(status).toBe(200);
     expect(body.extracted).toEqual({ company_name: "Acme" });
@@ -488,23 +560,23 @@ describe("chamber-extract handler: when the provider fails", () => {
     const { status, body } = await read(await handleRequest(post({ message: "our payroll is 12345", session_id: INTAKE }), t.deps));
     expect(status).toBe(502);
     expect(body).toEqual({ error: "Lenore couldn't respond. Please try again.", code: "provider_error", request_id: REQUEST });
-    expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=${INTAKE} provider=lovable kind=provider_error status=500 attempts=2 latency_ms=0`]);
+    expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=${INTAKE} provider=anthropic kind=provider_error status=500 attempts=2 latency_ms=0`]);
     expect(t.event()).toMatchObject({ error_code: "provider_error", http_status: 502, attempts: 2 });
     expect(JSON.stringify(body) + t.logs.join("\n") + JSON.stringify(t.events)).not.toMatch(new RegExp(`${leak}|12345`));
   });
 
   // Nothing is kept from a reply that can't be read: the browser offers Try again and Continue manually.
-  it("answers tool arguments that aren't JSON with a 502 to try again, logging neither them nor the message", async () => {
-    const t = setup({ responses: [gatewayArguments('{"company_name": "Acme')] });
+  it("answers a reply body that isn't JSON with a 502 to try again, logging neither it nor the message", async () => {
+    const t = setup({ responses: [new Response('{"stop_reason":"tool_use","content":[{"type":"tool_use","input":{"company_name": "Acme', { status: 200 })] });
     const { status, body } = await read(await handleRequest(post({ message: "we're Acme" }), t.deps));
     expect(status).toBe(502);
     expect(body).toEqual({ error: "Lenore's answer didn't come through. Please try again.", code: "invalid_response", request_id: REQUEST });
-    expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=- provider=lovable kind=invalid_response status=200 attempts=1 latency_ms=0`]);
+    expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=- provider=anthropic kind=invalid_response status=200 attempts=1 latency_ms=0`]);
   });
 
   // A reply cut off at its token cap has lost answers, and the tool input it holds may be partial.
   it("answers an Anthropic reply cut off at its token cap with a 502 to try again, keeping none of it", async () => {
-    const t = setup({ env: ANTHROPIC, responses: [anthropicReply({ company_name: "Acme" }, "max_tokens")] });
+    const t = setup({ responses: [anthropicReply({ company_name: "Acme" }, "max_tokens")] });
     const { status, body } = await read(await handleRequest(post({ message: "we're Acme" }), t.deps));
     expect(status).toBe(502);
     expect(body).toEqual({ error: "Lenore's answer didn't come through. Please try again.", code: "invalid_response", request_id: REQUEST });
@@ -562,5 +634,46 @@ describe("chamber-extract handler: unexpected errors", () => {
     expect(body.code).toBe("internal");
     expect(t.fetchFn).not.toHaveBeenCalled();
     expect(t.event()).toMatchObject({ error_code: "internal", session_id: null });
+  });
+});
+
+describe("guardReply", () => {
+  const NEXT = "How many days before payday do you fund payroll?";
+
+  it("keeps a reply that asks something, with fields left", () => {
+    expect(guardReply("Bi-weekly, noted. How many employees?", NEXT, false)).toEqual({ reply: "Bi-weekly, noted. How many employees?", reason: null });
+  });
+
+  it.each([
+    "That's everything The Manuscript needs.",
+    "Thank you, that is all I need. Anything else?",
+    "Splendid: the intake is complete.",
+    "I have everything I need now.",
+  ])("replaces a reply that says the intake is finished while fields are left: %j", (reply) => {
+    expect(guardReply(reply, NEXT, false)).toEqual({ reply: `Thank you, I've noted that. ${NEXT}`, reason: "claimed_complete" });
+  });
+
+  // Code review: her answer to the prospect's own question was replaced because it held "that's all".
+  it("keeps an answer to the prospect's question that only uses the words \"that's all\"", () => {
+    const reply = "An experience mod compares your claims with similar businesses; that's all it measures. Do you know yours?";
+    expect(guardReply(reply, NEXT, false)).toEqual({ reply, reason: null });
+  });
+
+  it("adds the next question to a reply that asks nothing, keeping what it said", () => {
+    expect(guardReply("An experience mod compares your claims with similar businesses.", NEXT, false)).toEqual({
+      reply: `An experience mod compares your claims with similar businesses. ${NEXT}`,
+      reason: "asked_nothing",
+    });
+  });
+
+  it("lets the reply stand when nothing is left to ask, or the prospect is stopping", () => {
+    expect(guardReply("That's everything. Review it on the Review tab.", null, false)).toEqual({ reply: "That's everything. Review it on the Review tab.", reason: null });
+    expect(guardReply("Of course, your answers are saved.", NEXT, true)).toEqual({ reply: "Of course, your answers are saved.", reason: null });
+  });
+
+  it("answers for a model that gave no reply: the next question, the wrap-up, or the goodbye", () => {
+    expect(guardReply(null, NEXT, false)).toEqual({ reply: `Thank you, I've noted that. ${NEXT}`, reason: null });
+    expect(guardReply(null, null, false)).toEqual({ reply: WRAP_UP_REPLY, reason: null });
+    expect(guardReply(null, NEXT, true)).toEqual({ reply: STOPPING_REPLY, reason: null });
   });
 });

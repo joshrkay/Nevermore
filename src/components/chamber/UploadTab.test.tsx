@@ -2,7 +2,7 @@
 // again: never while reading again can't help (the daily cap, a Lenore that isn't set up), B-3.2. And the census
 // template it offers (US-2.3d).
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import UploadTab from "./UploadTab";
 import { CENSUS_TEMPLATE_COLUMNS, CENSUS_TEMPLATE_GUIDE, censusTemplateCsv } from "@/data/census";
 import { DOCUMENT_FAILURE_MESSAGES, type AiFailureKind } from "@/data/aiFailure";
@@ -110,5 +110,26 @@ describe("UploadTab: the virus check", () => {
     renderTab({ ...doc("uploaded", null), scan_verdict: verdict });
     expect(screen.getByRole("button", { name: "Read it" })).toBeInTheDocument();
     expect(screen.queryByText(/viruses/)).not.toBeInTheDocument();
+  });
+});
+
+describe("UploadTab: uploads refused for want of a virus scanner", () => {
+  it("tells the prospect uploads are paused, not that the file failed", async () => {
+    const { toast } = await import("sonner");
+    const error = vi.spyOn(toast, "error").mockImplementation(() => "");
+    const upload = vi.fn(async () => ({ saved: 0, failed: [], rejected: [{ name: "census.csv", reason: "scanning_paused" as const }] }));
+    const documents: UseSessionDocumentsReturn = {
+      docs: [], isLoading: false, uploading: false, upload, remove: vi.fn(), setCategory: vi.fn(), markApplied: vi.fn(), extract: vi.fn(),
+    };
+    const { container } = render(<UploadTab documents={documents} sessionId="s1" data={EMPTY_CHAMBER_DATA} />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [new File(["a,b"], "census.csv", { type: "text/csv" })] } });
+    });
+    await vi.waitFor(() => expect(upload).toHaveBeenCalled());
+    await vi.waitFor(() =>
+      expect(error).toHaveBeenCalledWith(expect.stringMatching(/^census\.csv wasn't uploaded: uploads are paused while we finish setting up virus checking/)));
+    expect(error).not.toHaveBeenCalledWith(expect.stringMatching(/Failed to upload/));
+    error.mockRestore();
   });
 });

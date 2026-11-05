@@ -26,6 +26,8 @@ const REJECTION_MESSAGES: Record<UploadRejection, (name: string) => string> = {
   too_large: (name) => `${name} is over 20 MB.`,
   duplicate: (name) => `${name} is already uploaded to this intake.`,
   limit: (name) => `${name} wasn't uploaded: an intake holds up to ${MAX_DOCUMENTS_PER_INTAKE} files.`,
+  scanning_paused: (name) =>
+    `${name} wasn't uploaded: uploads are paused while we finish setting up virus checking. Our team has been told. You can keep going with Lenore and upload it later.`,
 };
 
 interface UploadTabProps {

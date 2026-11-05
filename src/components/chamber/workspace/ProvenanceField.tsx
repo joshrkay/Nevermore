@@ -7,6 +7,7 @@ import {
   canMarkNotApplicable,
   FIELD_KINDS,
   formatFieldValue,
+  showsSource,
   type FieldAction,
   type FieldKind,
   type FieldKey,
@@ -182,7 +183,8 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
         <p className="text-xs text-muted-foreground/50 italic">Lenore will fill this in...</p>
       )}
 
-      {!editing && onAction && provenance && display && (
+      {/* Only an answer has a source (showsSource): a field the prospect hasn't answered is never quoted (QA F11). */}
+      {!editing && onAction && provenance && display && showsSource(raw) && (
         <p className="text-[10px] text-muted-foreground mt-0.5 break-words">{sourceLine(provenance.source)}</p>
       )}
 

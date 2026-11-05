@@ -33,3 +33,6 @@ supabase/.temp/
 supabase/.branches/
 # End-to-end test output: the app build, Playwright results and report (see e2e/)
 e2e/.output/
+
+# Local git worktrees that Claude Code agents work in; never part of the repository
+.claude/worktrees/

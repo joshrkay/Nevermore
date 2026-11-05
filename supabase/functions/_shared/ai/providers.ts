@@ -1,3 +1,5 @@
+// The AI provider the functions call (chamber-extract, document-extract): Anthropic's Messages API, forcing each
+// function's extraction tool. Anthropic is the only provider (decision D11); the Lovable AI gateway adapter was removed.
 import type { ExtractionTool, ProviderAdapter } from "./model.ts";
 
 const asObject = (value: unknown): Record<string, unknown> => {
@@ -10,33 +12,6 @@ interface AdapterOptions {
   model: string;
   /** The tool the model is forced to call; each function brings its own. */
   tool: ExtractionTool;
-}
-
-/** The Lovable AI gateway (OpenAI-style chat completions), which is how the functions worked originally. */
-export function createLovableAdapter(opts: AdapterOptions): ProviderAdapter {
-  return {
-    name: "lovable",
-    model: opts.model,
-    buildRequest: ({ system, user }) => ({
-      url: "https://ai.gateway.lovable.dev/v1/chat/completions",
-      headers: { Authorization: `Bearer ${opts.apiKey}`, "Content-Type": "application/json" },
-      body: {
-        model: opts.model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-        tools: [{ type: "function", function: opts.tool }],
-        tool_choice: { type: "function", function: { name: opts.tool.name } },
-      },
-    }),
-    parseResponse: (json) => {
-      const choices = (json as { choices?: { message?: { tool_calls?: { function?: { arguments?: string } }[] } }[] }).choices;
-      const args = choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
-      if (args === undefined) return null;
-      return asObject(JSON.parse(args));
-    },
-  };
 }
 
 const DEFAULT_MAX_TOKENS = 1024;
@@ -72,32 +47,27 @@ export function createAnthropicAdapter(opts: AdapterOptions & { maxTokens?: numb
   };
 }
 
-const DEFAULT_MODELS = { lovable: "google/gemini-3-flash-preview", anthropic: "claude-haiku-5-5" } as const;
+/** The model used unless AI_MODEL names another. */
+export const DEFAULT_MODEL = "claude-haiku-5-5";
 
 export type AdapterChoice = { ok: true; adapter: ProviderAdapter } | { ok: false; problem: string };
 
 /**
- * Picks the provider from function secrets, shared by every function that calls the model.
- * Defaults to the existing gateway so nothing changes until the owner sets AI_PROVIDER, e.g. after
- * signing the provider's data-processing terms.
+ * The provider every function that calls the model uses: Anthropic, the only one (decision D11, 2026-11-05; the Lovable
+ * AI gateway adapter was removed). AI_PROVIDER may be left unset or say "anthropic"; anything else is a mistake in the
+ * secrets, reported rather than guessed at. AI_MODEL overrides the model.
  */
 export function selectAdapter(
   env: (name: string) => string | undefined,
   tool: ExtractionTool,
   options: { maxTokens?: number } = {},
 ): AdapterChoice {
-  const provider = env("AI_PROVIDER") || "lovable";
-  if (provider !== "lovable" && provider !== "anthropic") {
-    return { ok: false, problem: `AI_PROVIDER "${provider}" is not supported` };
+  const provider = env("AI_PROVIDER");
+  if (provider && provider !== "anthropic") {
+    return { ok: false, problem: `AI_PROVIDER "${provider}" is not supported: Anthropic is the only AI provider (D11)` };
   }
-  const keyName = provider === "anthropic" ? "ANTHROPIC_API_KEY" : "LOVABLE_API_KEY";
-  const apiKey = env(keyName);
-  if (!apiKey) return { ok: false, problem: `${keyName} is not set` };
-  const model = env("AI_MODEL") || DEFAULT_MODELS[provider];
-  return {
-    ok: true,
-    adapter: provider === "anthropic"
-      ? createAnthropicAdapter({ apiKey, model, tool, maxTokens: options.maxTokens })
-      : createLovableAdapter({ apiKey, model, tool }),
-  };
+  const apiKey = env("ANTHROPIC_API_KEY");
+  if (!apiKey) return { ok: false, problem: "ANTHROPIC_API_KEY is not set" };
+  const model = env("AI_MODEL") || DEFAULT_MODEL;
+  return { ok: true, adapter: createAnthropicAdapter({ apiKey, model, tool, maxTokens: options.maxTokens }) };
 }

@@ -75,6 +75,16 @@ const CANNED: Record<string, Record<string, unknown> | null> = {
   "What's the easiest way to get you our employee list?": {
     reply: "Our census template: download it on the Upload tab, add one row per employee, and upload it there.",
   },
+  // QA F4: two short answers, and Lenore keeps asking.
+  "We're Larkspur Plumbing.": {
+    company_name: "Larkspur Plumbing", field_status: confirmed("company_name"),
+    reply: "A fine name. Which states do your employees work in?",
+  },
+  "Bi-weekly. We have 12 employees, all paid hourly, and we use a small local payroll provider.": {
+    pay_frequency: "bi-weekly", employee_count: 12, has_nonexempt: true,
+    field_status: confirmed("pay_frequency", "employee_count", "has_nonexempt"),
+    reply: "Bi-weekly, noted. How many days before payday do you fund payroll?",
+  },
 };
 
 // buildUserPrompt ends with the JSON-quoted message.
@@ -208,9 +218,9 @@ describe("runFixtures", () => {
 describe("connectProvider", () => {
   it("picks the provider and model chamber-extract would, without calling it", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const lovable = connectProvider((name) => ({ LOVABLE_API_KEY: "k" })[name]);
+    const plain = connectProvider((name) => ({ ANTHROPIC_API_KEY: "k" })[name]);
     // The default model itself is providers.test.ts's business; here it only has to be named.
-    expect(lovable).toMatchObject({ ok: true, provider: "lovable", model: expect.stringMatching(/^(?!undefined$)\S+$/) });
+    expect(plain).toMatchObject({ ok: true, provider: "anthropic", model: expect.stringMatching(/^(?!undefined$)\S+$/) });
     const anthropic = connectProvider((name) => ({ AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "k", AI_MODEL: "claude-other" })[name]);
     expect(anthropic).toMatchObject({ ok: true, provider: "anthropic", model: "claude-other" });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -218,7 +228,7 @@ describe("connectProvider", () => {
   });
 
   it("names the missing key", () => {
-    expect(connectProvider(() => undefined)).toEqual({ ok: false, problem: "LOVABLE_API_KEY is not set" });
+    expect(connectProvider(() => undefined)).toEqual({ ok: false, problem: "ANTHROPIC_API_KEY is not set" });
   });
 
   it("gives Anthropic the reply budget chamber-extract gives it", async () => {
@@ -265,8 +275,8 @@ describe("main", () => {
   it("refuses to run without a provider key, with the variables to set", async () => {
     const t = setup({ connect: connectProvider });
     expect(await main(t.deps)).toBe(1);
-    expect(t.output()).toContain("LOVABLE_API_KEY is not set");
-    expect(t.output()).toContain("AI_PROVIDER");
+    expect(t.output()).toContain("ANTHROPIC_API_KEY is not set");
+    expect(t.output()).toContain("Set ANTHROPIC_API_KEY");
   });
 
   it("prints the table and how to record a baseline when there is none, and exits cleanly", async () => {

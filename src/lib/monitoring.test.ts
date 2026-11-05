@@ -8,8 +8,11 @@ const {
   cleanCode,
   errorDetail,
   installGlobalErrorReporting,
+  isUnanswered,
   MAX_REPORTS_PER_PAGE,
+  newErrorCode,
   redactForReport,
+  reportFailure,
   reportOpsEvent,
   REPEAT_WINDOW_MS,
   resetMonitoringForTests,
@@ -67,6 +70,67 @@ describe("cleanCode and errorDetail", () => {
     expect(errorDetail(new TypeError("Cannot read x of pat@example.com"))).toBe("TypeError: Cannot read x of [email]");
     expect(errorDetail("plain text 12345")).toBe("plain text [number]");
     expect(errorDetail({ weird: true })).toBe("unknown");
+  });
+
+  // QA F2: a PostgREST or auth error is a plain object, which a console printed as `Object`.
+  it("reads a database or auth error that isn't an Error by its code and message", () => {
+    // A five-digit SQLSTATE goes as any run of digits does; report it as the event's code.
+    expect(errorDetail({ code: "EA003", message: "permission denied for pat@example.com", details: null })).toBe("EA003: permission denied for [email]");
+    expect(errorDetail({ status: 500, message: "Error sending email change email" })).toBe("500: Error sending email change email");
+    expect(errorDetail({ message: "no code" })).toBe("no code");
+    expect(errorDetail({ message: "TypeError: fetch failed", details: "", hint: "", code: "" })).toBe("TypeError: fetch failed");
+    expect(errorDetail(Object.assign(new Error("Error sending email change email"), { name: "AuthApiError", code: "unexpected_failure", status: 500 }))).toBe(
+      "AuthApiError (unexpected_failure): Error sending email change email",
+    );
+  });
+});
+
+describe("newErrorCode", () => {
+  it("is eight letters that redaction keeps, from random bytes", () => {
+    const code = newErrorCode();
+    expect(code).toMatch(/^[A-Z]{8}$/);
+    expect(code).not.toMatch(/[OIL]/);
+    expect(redactForReport(`error code ${code}`)).toBe(`error code ${code}`);
+    expect(newErrorCode(() => new Uint8Array([0, 1, 2, 3, 22, 23, 24, 255]))).toBe("ABCDZABC");
+  });
+});
+
+describe("isUnanswered", () => {
+  it("tells a request that got no answer from one that was answered no", () => {
+    expect(isUnanswered(new TypeError("Failed to fetch"))).toBe(true);
+    expect(isUnanswered({ message: "TypeError: NetworkError when attempting to fetch resource.", code: "" })).toBe(true);
+    expect(isUnanswered(Object.assign(new Error("Failed to fetch"), { name: "AuthRetryableFetchError", status: 0 }))).toBe(true);
+    expect(isUnanswered("Load failed")).toBe(true);
+    // What supabase-js handed back for a stopped server in the verify harness (Node's fetch).
+    expect(isUnanswered({ message: "TypeError: fetch failed", details: "", hint: "", code: "" })).toBe(true);
+    expect(isUnanswered({ code: "XX000", message: "internal error" })).toBe(false);
+    expect(isUnanswered(Object.assign(new Error("Error sending email change email"), { status: 500 }))).toBe(false);
+    expect(isUnanswered(null)).toBe(false);
+  });
+});
+
+// One way to show, log and report a failure's error code, wherever a person is told one (code review: three copies, and
+// the Reckoning's never reported).
+describe("reportFailure", () => {
+  beforeEach(() => {
+    resetMonitoringForTests();
+    rpc.mockClear();
+    rpc.mockImplementation(async () => ({ error: null }));
+  });
+
+  it("logs one line with the error code and reports it as an app_error, then returns the code", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = reportFailure("Failed to submit session", { code: "XX000", message: "internal error for pat@example.com" }, { code: "certify_failed:XX000", sessionId: "s1" });
+    expect(code).toMatch(/^[A-Z]{8}$/);
+    expect(consoleError).toHaveBeenCalledWith(`Failed to submit session (error code ${code}): XX000: internal error for [email]`);
+    await settle();
+    expect(rpc).toHaveBeenCalledWith("report_client_event", expect.objectContaining({
+      p_kind: "app_error",
+      p_code: "certify_failed:XX000",
+      p_detail: `error code ${code}: XX000: internal error for [email]`,
+      p_session_id: "s1",
+    }));
+    consoleError.mockRestore();
   });
 });
 

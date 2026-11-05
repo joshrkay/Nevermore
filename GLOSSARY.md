@@ -138,7 +138,8 @@ Where a field's current answer came from: something the prospect said (with the 
 _Avoid_: origin, provenance (provenance is the source and the field status together)
 
 **Evidence quote**:
-The prospect's own words that an extracted answer rests on, kept short.
+The prospect's own words, from the message an extracted answer came from, that the answer rests on, kept short. Only an answer has one: a field the prospect never answered, or said they don't know, is never quoted.
+_Avoid_: source quote, citation
 
 ### Field status
 

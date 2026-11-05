@@ -36,8 +36,11 @@ export interface SessionDocument {
   readIssue?: AiFailureKind | null;
 }
 
-/** Why a file wasn't uploaded, before or as it was stored. */
-export type UploadRejection = "empty" | "mismatch" | "too_large" | "duplicate" | "limit";
+/**
+ * Why a file wasn't uploaded, before or as it was stored. `scanning_paused`: the deployment has no malware scanner
+ * set up, so document-upload takes no files (it has recorded that for engineering already).
+ */
+export type UploadRejection = "empty" | "mismatch" | "too_large" | "duplicate" | "limit" | "scanning_paused";
 
 export interface UploadOutcome {
   saved: number;
@@ -102,7 +105,9 @@ async function uploadRefusal(error: unknown): Promise<{ code: string | null; sta
   }
 }
 
-// document-upload's refusals that are about the file, as the prospect's reasons.
+// document-upload's refusals that have their own words for the prospect: about the file, or (scanner_missing)
+// uploads being paused. None is reported as a failure: a refused file isn't one, and document-upload records a
+// missing scanner itself.
 const REFUSALS: Record<string, UploadRejection> = {
   empty: "empty",
   mismatch: "mismatch",
@@ -111,6 +116,7 @@ const REFUSALS: Record<string, UploadRejection> = {
   too_large: "too_large",
   duplicate: "duplicate",
   limit: "limit",
+  scanner_missing: "scanning_paused",
 };
 // Refusals that are about the intake's state (closed, being deleted, no agreement yet), not a failure.
 const STATE_REFUSALS = new Set(["closed", "consent", "not_found", "unauthorized"]);

@@ -33,8 +33,8 @@ describe("eventRow", () => {
       refusedPaths: ["states[1]", "census[0].dependents[2].relationship"],
       promptVersion: 1,
       contractVersion: 2,
-      provider: "lovable",
-      model: "google/gemini-3-flash-preview",
+      provider: "anthropic",
+      model: "claude-haiku-5-5",
       attempts: 1,
       latencyMs: 840.4,
     })).toEqual({
@@ -51,8 +51,8 @@ describe("eventRow", () => {
       refused_paths: ["states[1]", "census[0].dependents[2].relationship"],
       prompt_version: 1,
       contract_version: 2,
-      provider: "lovable",
-      model: "google/gemini-3-flash-preview",
+      provider: "anthropic",
+      model: "claude-haiku-5-5",
       attempts: 1,
       latency_ms: 840,
     });

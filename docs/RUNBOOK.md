@@ -11,18 +11,21 @@ Related: `docs/NOTIFICATIONS.md` (the email outbox, its own alerts and recovery 
 ## Escalation contacts
 
 Fill in every row before launch, and check them at each quarterly access review. An alert with nobody on the
-other end is not monitoring.
+other end is not monitoring. For now the owner holds the incident lead, engineering on call and engineering backup
+roles (decided 2026-11-05); name someone else in a row as soon as there is someone, so a page has a second person to
+go to.
 
 | Role | Responsible for | Name | How to reach (in order) | Backup |
 |---|---|---|---|---|
-| Incident lead | Runs every SEV-1 and SEV-2: decides severity, owns the incident log, calls in the others | _to fill_ | _phone, then chat_ | _to fill_ |
-| Engineering on call | Alerts, diagnosis, fixes, deploys and rollbacks, restores | _to fill_ | _phone, then chat_ | _to fill_ |
+| Incident lead | Runs every SEV-1 and SEV-2: decides severity, owns the incident log, calls in the others | The owner | _owner's phone, then chat: to fill_ | The owner (no second person yet) |
+| Engineering on call | Alerts, diagnosis, fixes, deploys and rollbacks, restores | The owner | _owner's phone, then chat: to fill_ | The owner (engineering backup, until someone else is named) |
 | Advisory lead | Advisor access, prospect communication, pausing intake work | _to fill_ | _to fill_ | _to fill_ |
 | Privacy and legal counsel | Whether an incident is a reportable breach, notices to prospects and regulators | _to fill_ | _to fill_ | _to fill_ |
 | Supabase | Database, storage, auth, edge functions | Support ticket from the dashboard (plan-dependent priority) | status.supabase.com | |
 | Vercel | Web hosting | Support from the dashboard | vercel-status.com | |
 | Resend | Email delivery | Support from the dashboard | resend-status.com | |
-| AI model provider (D11) | Lenore and document reading | _the chosen provider's support_ | _its status page_ | |
+| Anthropic (D11) | Lenore and document reading | Support from the Anthropic Console | status.anthropic.com | |
+| Scanii (D13) | Malware scanning of every upload | Support from the Scanii dashboard | _Scanii's status page: to fill_ | |
 | ElevenLabs | Voice (opt-in beta) | Support from the dashboard | status.elevenlabs.io | |
 
 ## What is monitored
@@ -40,7 +43,7 @@ answers, file names, messages, addresses or links.
 | `deletion_failed` | `fail_intake_deletion` when a deletion has used every attempt, and `claim_intake_deletions` when a worker died on the last one | `storage_remove:<status>`, `files_remain:<n>`, `rpc_files:<code>`, `rpc_complete:<code>`, `unexpected`, `worker_lost` |
 | `voice_failed` | The browser, when a voice call with Lenore (ElevenLabs) fails on our side or the service's (`src/hooks/useLenoreVoice.ts`, `docs/VOICE_ISSUES.md`). A microphone the prospect blocked or doesn't have is shown to them and not reported | `voice_connect_timeout` (no connection 15 seconds after the microphone was ready), `voice_connect_failed` (the connection was refused), `voice_dropped:<close code>` (a call under way closed with an error), `voice_error` (the service reported an error during a call that carried on) |
 | `malware_detected` | `record_document_scan` (from `document-upload` or `document-scan`) when the scanner names a signature in an upload | `malware:<signature>` |
-| `scan_failed` | `fail_document_scan` when an upload couldn't be scanned after every attempt, `claim_document_scans` when a worker died on the last one, and `document-scan` on every run while no scanner is set up | `config_missing`, `unreachable`, `timeout`, `http:<status>`, `invalid_response`, `clamd_error`, `clamd_size_limit`, `clamd_no_reply`, `file_missing`, `storage_download:<code>`, `storage_release:<code>`, `rpc_record:<code>`, `worker_lost` |
+| `scan_failed` | `fail_document_scan` when an upload couldn't be scanned after every attempt, `claim_document_scans` when a worker died on the last one, and, while no scanner is set up (or `none` on production), `document-scan` on every run (`document-upload` only logs each upload it refuses) | `config_missing`, `unreachable`, `timeout`, `scanii:<status>`, `http:<status>`, `invalid_response`, `clamd_error`, `clamd_size_limit`, `clamd_no_reply`, `file_missing`, `storage_download:<code>`, `storage_release:<code>`, `rpc_record:<code>`, `worker_lost` |
 
 The browser's reports go through `public.report_client_event`, which drops reports past 30 an hour per
 account, 200 an hour for all signed-out visitors together and 2,000 an hour overall, so a broken page or
@@ -79,7 +82,8 @@ Log lines to know (fixed fields only, never names, paths, messages or provider t
 | Line | From | Means |
 |---|---|---|
 | `OPS_ALERT kind=… count=… window=…m threshold=… codes=…` | `ops-monitor` | A kind crossed its threshold; `OPS_ALERT_UNDELIVERED kind=…` if the webhook refused it |
-| `OPS_CONFIG_MISSING: …` | `ops-monitor` | The webhook is unset or not an https URL, so alerts are only logged |
+| `OPS_CONFIG_MISSING: …` | `ops-monitor` | The webhook is unset or not an https URL, so alerts are only logged. Logged on every run (every five minutes) until it is fixed |
+| `OPS_TEST delivered`, `OPS_TEST_UNDELIVERED` | `ops-monitor` | Someone sent a test alert ([Sending a test alert](#sending-a-test-alert)); the receiver took it, or refused it |
 | `OPS_MONITOR_ERROR: …` | `ops-monitor` | It couldn't claim alerts (`rpc_claim:<code>`) or failed unexpectedly |
 | `DELETION_DONE deletion=… intake=… files=… rows=…` | `purge-intakes` | A deletion finished. Keep these: "After a restore" needs them |
 | `DELETION_RETRY deletion=… intake=… attempt=… reason=… retry_in=…s` | `purge-intakes` | An attempt failed; tried again after 5 minutes, 30 minutes, 2 hours, then 6 hours |
@@ -91,15 +95,17 @@ Log lines to know (fixed fields only, never names, paths, messages or provider t
 | `UPLOAD_RECORD_FAILED …`, `UPLOAD_STORE_FAILED …`, `UPLOAD_ERROR …`, `UPLOAD_CONFIG_MISSING: …` | `document-upload` | The row or the file couldn't be saved (`code=<sqlstate or status>`); a stored file's row is removed again (`undo=` if that failed too) |
 | `SCAN_DEFERRED document=… engine=… reason=…` | `document-upload` | The scanner gave no verdict at upload; the file waits in quarantine and `document-scan` retries it |
 | `SCAN_RETRY document=… attempt=… reason=… retry_in=…s` | `document-scan` | A scan didn't settle; tried again after 5 minutes, 15 minutes, 1 hour, 4 hours, then 12 hours |
-| `SCAN_CONFIG_MISSING: …` | `document-upload`, `document-scan` | `MALWARE_SCANNER` (or its settings) is unset or unusable: every upload is held in quarantine |
+| `SCAN_CONFIG_MISSING: …` | `document-upload`, `document-scan` | `MALWARE_SCANNER` (or its settings) is unset or unusable, or is `none` on production: uploads are refused (`UPLOAD_REFUSED … reason=scanner_missing`) and files already held stay unreadable. The line names the setting to fix ([Scan failed](#scan-failed)) |
 | `SCAN_NOT_RECORDED …`, `SCAN_ERROR …`, `SCAN_QUARANTINE_NOT_REMOVED …`, `SCAN_QUARANTINE_MOVE_FAILED …`, `SCAN_ORPHANS_ERROR …`, `SCAN_RUN_ERROR: …` | `document-upload`, `document-scan` | A step after the scan failed; the file stays unreadable and the next run settles it |
 
 ### How alerts reach people
 
 - **The webhook.** Set `ENGINEERING_ALERT_WEBHOOK_URL` (a Slack or Teams incoming webhook, https) in the
   function secrets. `dispatch-outbox`, `purge-intakes`, `document-upload`, `document-scan` and `ops-monitor`
-  all post to it. Without it, alerts
-  are only log lines, and `ops-monitor` logs `OPS_CONFIG_MISSING` to say so.
+  all post to it. Without it, alerts are only log lines: `ops-monitor` logs `OPS_CONFIG_MISSING` on every run
+  (every five minutes) and answers `"webhook": "missing"` (or `"invalid"`) to its schedule, which
+  `select status_code, content from net._http_response order by created desc limit 5;` shows. After setting
+  it, [send a test alert](#sending-a-test-alert).
 - **The log lines.** Every alert is also a fixed-field log line (`OPS_ALERT`, `OUTBOX_DEAD`, `DELETION_FAILED`).
   As a second path, set up a Supabase log alert or a log drain on them, so a broken webhook doesn't silence
   everything.
@@ -107,8 +113,95 @@ Log lines to know (fixed fields only, never names, paths, messages or provider t
   direct API calls, failed sign-ins, Auth rate limits) are in Supabase's API and Auth logs, not in
   `ops_events`. Check them in every authorization incident, and weekly until launch (Logs Explorer: API logs
   filtered on status 401 and 403; Auth logs filtered on failed sign-in).
-- **Uptime.** Add an external uptime check on the site's home page and `/start`. Nothing in the repository
-  does this.
+- **Uptime.** Nothing inside the project can say the project is down, so an outside monitor watches it
+  ([Uptime check](#uptime-check)).
+
+### Who gets paged
+
+The alert channel is the page. Every webhook alert lands in one channel (for example Slack `#eaa-alerts`), and
+the uptime monitor pages by its own app or text message. There is no paging service yet; if one is added
+(PagerDuty, Opsgenie), point the uptime monitor and the channel at it and update this table.
+
+| Alert | Start at | Paged | If nobody acknowledges |
+|---|---|---|---|
+| Uptime check down (site or function) | SEV-1 | Engineering on call (the monitor's push and text), and the channel | Engineering backup after 15 minutes, then the incident lead |
+| `MALWARE_DETECTED`, `OPS_ALERT kind=malware_detected` | SEV-2 | Engineering on call (channel), who calls the incident lead | Engineering backup after 1 hour in working hours |
+| `OPS_ALERT kind=auth_denied` | SEV-2 (SEV-1 if data was read) | Engineering on call and the incident lead (channel) | Engineering backup after 1 hour |
+| `DELETION_FAILED`, `OUTBOX_DEAD`, `SCAN_FAILED`, and `OPS_ALERT` for `deletion_failed`, `scan_failed`, `upload_failed`, `ai_failed`, `voice_failed` or `app_error` | SEV-2, or SEV-3 if it is one prospect | Engineering on call (channel) | Engineering backup the next working morning |
+| `OPS_TEST` | none | Nobody: it is a test | |
+
+What that needs from people, before launch:
+
+- The names and numbers in [Escalation contacts](#escalation-contacts) are filled in.
+- Engineering on call (and the backup) set the alert channel to notify on every new message, on their phones
+  too, and leave it unmuted. Muting the channel silences every alert, not just the noisy one; silence one
+  alert as below instead.
+- Whoever takes an alert says so in the channel ([Responding to an incident](#responding-to-an-incident),
+  step 1), so the others can stand down.
+
+### Sending a test alert
+
+`ops-monitor` sends one test message when asked, without claiming any real alert. Do it after setting or
+changing the webhook, after rotating the service-role key, and once a month. Use the service-role key
+(Supabase: Settings → API Keys) from a terminal, in an environment variable; don't paste it into chat.
+
+```bash
+curl -sS -X POST "https://<project-ref>.supabase.co/functions/v1/ops-monitor" -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "Content-Type: application/json" -d '{"test": true}'
+```
+
+| Answer | Means |
+|---|---|
+| `200 {"test":true,"webhook":"set","delivered":true}` | The receiver took it. `OPS_TEST: a test alert from ops-monitor…` should be in the channel within a minute; if it isn't, the webhook points at another channel |
+| `503 {"test":true,"webhook":"missing","delivered":false}` (or `"invalid"`) | `ENGINEERING_ALERT_WEBHOOK_URL` is unset, or not an https URL |
+| `502 {"test":true,"webhook":"set","delivered":false}` | The receiver refused it (a revoked Slack webhook answers 403 or 404): make a new webhook and set it |
+| `401` | Wrong key |
+
+To test the whole path, from an event to the channel, record a test event as well
+([Checking the monitoring itself](#checking-the-monitoring-itself)).
+
+### Silencing an alert
+
+Fix the cause if you can. Silence only to stop repeats while someone is already working on it, and say so in
+the channel.
+
+- **An `OPS_ALERT` kind.** It repeats at most once per cooldown (an hour). To keep one kind quiet longer, record
+  a placeholder alert dated ahead, as the service role in the SQL editor. The kind stays quiet until the
+  placeholder's time plus its cooldown; every other kind still alerts.
+
+  ```sql
+  -- Quiet OPS_ALERT kind=scan_failed for about four hours (three, plus its one-hour cooldown).
+  insert into public.ops_alerts (kind, event_count, window_minutes, threshold, top_codes, raised_at)
+  values ('scan_failed', 0, 0, 0, 'silenced: <incident id or reason>', now() + interval '3 hours');
+
+  -- Lift it early.
+  delete from public.ops_alerts where kind = 'scan_failed' and top_codes like 'silenced:%';
+  ```
+
+  To change when a kind alerts for good, change `public.ops_alert_rules()` in a migration and the
+  [thresholds table](#alert-thresholds) with it (`src/data/schemaSync.test.ts` checks they agree).
+- **`MALWARE_DETECTED`, `SCAN_FAILED`, `DELETION_FAILED`, `OUTBOX_DEAD`.** One message per event, and each needs
+  someone to act, so there is no switch for them. If one source floods the channel, fix or contain it (requeue,
+  revoke the intake, rotate the key) rather than muting.
+- **`OPS_CONFIG_MISSING` and `SCAN_CONFIG_MISSING`.** These are log lines, not channel messages; they stop once
+  the setting is fixed.
+- **The uptime monitor.** Pause it in its own dashboard for planned maintenance, and unpause it after.
+
+### Uptime check
+
+An outside monitor (any hosted uptime service: Better Stack, UptimeRobot, Checkly or similar) watches two
+URLs from more than one region, and pages as in [Who gets paged](#who-gets-paged) after two failed checks in a
+row. The account belongs to the team, not to one person, and its contacts are the engineering on-call rows.
+
+| Check | Request | Healthy when | Every |
+|---|---|---|---|
+| The site | `GET https://nevermorepeo.com/` | Status 200 | 1 minute |
+| An edge function (Lenore's) | `POST https://dvfwrjpkltqdkfudbahe.supabase.co/functions/v1/chamber-extract`, headers `apikey: <anon key>` and `Authorization: Bearer <anon key>`, body `{}` | Status 401 and the body contains `"code":"unauthorized"` | 5 minutes |
+
+The function check uses the anon key, which is public by design (it ships in the site's JavaScript). The
+function answers it itself: it finds no signed-in prospect and refuses before recording anything or calling the
+AI provider, so the check costs nothing and spends no quota. A 401 *without* `"code":"unauthorized"` in the
+body is the gateway refusing the key, not the function answering, so the check fails, as it should. The
+project ref is production's (`docs/SUPABASE_SETUP.md`); change it if the project changes.
 
 ### Looking at the numbers
 
@@ -137,7 +230,8 @@ select status_code, created from net._http_response order by created desc limit 
 ```
 
 The HTTP-calling jobs do nothing until Vault holds `project_url` and `service_role_key`
-(`docs/SUPABASE_SETUP.md`). Once a month, record one test event and watch the alert arrive:
+(`docs/SUPABASE_SETUP.md`). Once a month, [send a test alert](#sending-a-test-alert), then record one test
+event and watch the alert arrive, which tests the whole path from an event to the channel:
 
 ```sql
 select public.record_ops_event('deletion_failed', 'runbook-test', 'test');   -- as the service role (SQL editor)
@@ -283,8 +377,8 @@ SEV-2 until step 2 says otherwise.
 1. Which one: `select id, user_id, session_id, scan_signature, scanned_at, file_sha256 from public.documents
    where scan_verdict = 'infected' order by scanned_at desc;` The alert names the document and intake ids;
    look the intake up in the advisor console for who it is.
-2. Is it real? `Eicar-Signature` / `Win.Test.EICAR_HDB-1` is the standard test file (someone testing the
-   scanner, see below). For anything else, the SHA-256 identifies the sample: look it up in your threat
+2. Is it real? A signature naming EICAR (Scanii reports a `content.malicious.…` finding; clamd says
+   `Win.Test.EICAR_HDB-1`) is the standard test file (someone testing the scanner, see below). For anything else, the SHA-256 identifies the sample: look it up in your threat
    intelligence source. Treat a real detection from a prospect as a compromised machine on their side, not
    an attack on us: the advisory lead tells the prospect, without forwarding the file, that a file they sent
    was flagged and set aside, and asks them to send a clean copy.
@@ -297,20 +391,31 @@ SEV-2 until step 2 says otherwise.
    is probing the upload. Revoke the intake (`revoke_chamber_session`) and treat it under
    [Authorization failures](#authorization-failures).
 
-Testing it (once a month, and after changing the scanner): upload the EICAR test file (the 68-character
-string from eicar.org, saved as `eicar.csv`) to a test intake. Within seconds the Upload tab says "Blocked",
-the channel shows `MALWARE_DETECTED`, and `OPS_ALERT kind=malware_detected` follows within five minutes.
+Testing it (once a month, after changing the scanner or its keys, and once Scanii is first set up): upload
+the EICAR test file (the 68-character string from eicar.org, saved as `eicar.csv`) to a test intake. Within
+seconds the Upload tab says "Blocked", the channel shows `MALWARE_DETECTED` with Scanii's
+`content.malicious.…` finding as the signature, and `OPS_ALERT kind=malware_detected` follows within five
+minutes. Then upload any ordinary CSV: it should be readable as soon as the upload finishes. A
+`SCAN_DEFERRED … engine=scanii reason=scanii:401` log line instead means Scanii refused the key and secret.
 
 ### Scan failed
 
-`OPS_ALERT kind=scan_failed` or `SCAN_FAILED`. Uploads are not being scanned, so they are held: prospects see
-"Checking for viruses" and nobody can open their files. Nothing unsafe is exposed; this is a SEV-2 because
-uploads are stuck.
+`OPS_ALERT kind=scan_failed` or `SCAN_FAILED`. Uploads are not being scanned: either they are held
+(prospects see "Checking for viruses" and nobody can open their files), or, with no scanner set up at all,
+refused (prospects are told uploads are paused). Nothing unsafe is exposed; this is a SEV-2 because uploads
+are stuck.
 
-1. By code: `config_missing`: `MALWARE_SCANNER` (or `CLAMAV_HOST`, `MALWARE_SCANNER_URL`,
-   `MALWARE_SCANNER_TOKEN`) is unset or wrong in the function secrets (`docs/SUPABASE_SETUP.md`).
-   `unreachable`, `timeout`, `http:<status>`, `clamd_*`: the scanner is down, refusing us, or rejecting the
-   file (`clamd_size_limit`: raise clamd's `StreamMaxLength` above 20 MB). `file_missing`: the document has no
+1. By code: `config_missing`: `MALWARE_SCANNER` (or `SCANII_API_KEY`, `SCANII_API_SECRET`, `SCANII_API_URL`,
+   `CLAMAV_HOST`, `MALWARE_SCANNER_URL`, `MALWARE_SCANNER_TOKEN`) is unset or wrong in the function secrets,
+   or is `none` on a project whose `APP_ENV` isn't `development`, `demo` or `staging`
+   (`docs/SUPABASE_SETUP.md`, "Malware scanning"; `docs/adr/0002-uploads-need-a-scanner-in-production.md`).
+   `document-scan` records it on every run; the `SCAN_CONFIG_MISSING` log line names which setting.
+   Meanwhile uploads are refused (prospects are told uploads are paused) rather than held; files held before
+   are scanned on `document-scan`'s first run after the setting is fixed, within five minutes. Until Scanii's
+   secrets are set, silence the repeats as in [Silencing an alert](#silencing-an-alert).
+   `unreachable`, `timeout`, `scanii:<status>`, `http:<status>`, `clamd_*`: the scanner is down, refusing us,
+   or rejecting the file (`scanii:401` or `scanii:403`: Scanii refused the key and secret, so check them in
+   the Scanii dashboard; `clamd_size_limit`: raise clamd's `StreamMaxLength` above 20 MB). `file_missing`: the document has no
    stored file (its upload failed half way); the prospect should remove it and upload again.
    `storage_*`, `rpc_*`: Supabase Storage or the database (function logs). `worker_lost`: the function was
    stopped mid-scan on its last attempt.

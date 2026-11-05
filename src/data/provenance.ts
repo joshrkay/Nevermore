@@ -266,6 +266,12 @@ const withNotes = (entry: FieldProvenance, notes: FieldCandidate[] | undefined):
   return notes ? { ...rest, also_heard: notes } : rest;
 };
 
+const withoutQuote = (source: FieldSource): FieldSource => {
+  if (source.kind !== "transcript") return source;
+  const { quote: _quote, ...rest } = source;
+  return rest;
+};
+
 // What a field holds: the competing values while it is conflicting, otherwise its value.
 const heldValues = (entry: FieldProvenance, value: unknown): FieldCandidate[] =>
   entry.status === "conflicting" && entry.candidates?.length ? entry.candidates : [{ value, source: entry.source }];
@@ -381,10 +387,10 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
     if (prev?.source.kind === "prospect_edit" || prev?.status === "not_applicable") continue;
     // An answer already given stands: "I don't know" about it is for the prospect to settle in Review.
     if (!isEmpty(data[field])) continue;
-    const quote = opts.evidence?.[field];
-    const source: FieldSource =
-      quote && opts.source.kind === "transcript" ? { ...opts.source, quote: clip(quote) } : opts.source;
-    provenance[field] = { status: "unknown", source, updated_at };
+    // No quote: a field with no answer has nothing a quote could be evidence for, and the message's own words (the
+    // fallback quote) are evidence of what it did answer, not of this field (QA F11). The message id still says
+    // where the prospect said it.
+    provenance[field] = { status: "unknown", source: withoutQuote(opts.source), updated_at };
   }
 
   return { data, provenance };
@@ -517,6 +523,14 @@ export function formatFieldValue(value: unknown): string {
   }
   return String(value);
 }
+
+/**
+ * Whether a field's source is shown beside it: only when it holds an answer. A field with no answer (not known yet,
+ * doesn't apply, or never asked) has nothing a source could vouch for, so the Manuscript, the Review tab and the
+ * advisor's review show its status alone. Intakes saved before unknown fields stopped keeping a quote still carry
+ * one (QA F11: every unknown field quoted the same unrelated message); this keeps it from being shown.
+ */
+export const showsSource = (value: unknown): boolean => !isEmpty(value);
 
 export function describeSource(source: FieldSource): string {
   switch (source.kind) {

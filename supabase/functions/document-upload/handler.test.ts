@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DOCUMENT_CATEGORIES as APP_CATEGORIES } from "../../../src/data/documentCategories";
 import { EICAR } from "../_shared/eicar";
 import { STORED_CONTENT_TYPE } from "../_shared/fileSignature";
-import { DOCUMENT_CATEGORIES, handleUploadRequest, type UploadClient, type UploadDeps } from "./handler";
+import { DOCUMENT_CATEGORIES, handleUploadRequest, SCANNER_MISSING_MESSAGE, type UploadClient, type UploadDeps } from "./handler";
 
 const USER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const INTAKE = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -291,17 +291,51 @@ describe("document-upload: storing and scanning (E-4.3)", () => {
     expect(t.logs).toEqual([`SCAN_DEFERRED request=${REQUEST} document=${DOC} engine=http reason=http:503`]);
   });
 
-  it("holds every file when no scanner is set up, and says so", async () => {
+  it("refuses every file when no scanner is set up: nothing stored or recorded, the prospect told, the setting logged", async () => {
     const t = setup({ env: { MALWARE_SCANNER: undefined } });
-    const { body } = await read(await handleUploadRequest(upload(CSV, "a.csv"), t.deps));
-    expect(body.document.scan_verdict).toBe("pending");
-    expect(t.stored.map((s) => s.bucket)).toEqual(["quarantine"]);
+    const { status, body } = await read(await handleUploadRequest(upload(CSV, "a.csv"), t.deps));
+    expect(status).toBe(503);
+    expect(body).toEqual({ error: SCANNER_MISSING_MESSAGE, code: "scanner_missing", request_id: REQUEST });
+    expect(t.inserts).toEqual([]);
+    expect(t.stored).toEqual([]);
     expect(t.scanFetch).not.toHaveBeenCalled();
-    expect(t.logs[0]).toMatch(/^SCAN_CONFIG_MISSING: MALWARE_SCANNER is not set/);
+    // document-scan records the alertable event every five minutes; here it would be one row per request.
+    expect(t.rpcs).toEqual([]);
+    expect(t.logs[0]).toMatch(/^SCAN_CONFIG_MISSING: MALWARE_SCANNER is not set .*; uploads are refused until it is fixed/);
+    expect(t.logs[1]).toBe(`UPLOAD_REFUSED request=${REQUEST} user=${USER} reason=scanner_missing`);
   });
 
-  it("records a file as skipped, and readable, when the deployment runs without a scanner on purpose", async () => {
+  // Review finding (2026-11-05): the refusal comes before the intake or the body is checked, so recording an event per
+  // refusal let any signed-in guest write unlimited ops_events rows.
+  it("writes nothing however many times a refused upload is repeated", async () => {
+    const t = setup({ env: { MALWARE_SCANNER: undefined } });
+    for (let i = 0; i < 50; i++) {
+      const empty = new Request("https://project.test/functions/v1/document-upload", { method: "POST", headers: { Authorization: "Bearer t" } });
+      expect((await handleUploadRequest(empty, t.deps)).status).toBe(503);
+    }
+    expect(t.rpcs).toEqual([]);
+    expect(t.inserts).toEqual([]);
+    expect(t.stored).toEqual([]);
+  });
+
+  it("refuses 'none' in production (APP_ENV unset) as if no scanner were set", async () => {
     const t = setup({ env: { MALWARE_SCANNER: "none" } });
+    const { status, body } = await read(await handleUploadRequest(upload(CSV, "a.csv"), t.deps));
+    expect(status).toBe(503);
+    expect(body.code).toBe("scanner_missing");
+    expect(t.stored).toEqual([]);
+    expect(t.logs[0]).toMatch(/^SCAN_CONFIG_MISSING: MALWARE_SCANNER=none is allowed only when APP_ENV is development, demo or staging/);
+  });
+
+  it("checks who is uploading before it says anything about the scanner", async () => {
+    const t = setup({ env: { MALWARE_SCANNER: undefined }, user: null });
+    expect((await handleUploadRequest(upload(CSV, "a.csv"), t.deps)).status).toBe(401);
+    expect(t.rpcs).toEqual([]);
+    expect(t.logs).toEqual([]);
+  });
+
+  it("records a file as skipped, and readable, when a non-production deployment runs without a scanner on purpose", async () => {
+    const t = setup({ env: { MALWARE_SCANNER: "none", APP_ENV: "demo" } });
     const { body } = await read(await handleUploadRequest(upload(CSV, "a.csv"), t.deps));
     expect(body.document.scan_verdict).toBe("skipped");
     expect(t.stored.map((s) => s.bucket)).toEqual(["documents"]);

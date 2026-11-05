@@ -21,7 +21,7 @@ complete, every page that shows this copy says it is a draft pending legal revie
 These make claims that only counsel can stand behind. They are not part of the pages above, and none has been changed:
 
 - **The Manuscript's data note.** Both the page (`src/pages/ManuscriptPage.tsx`) and the PDF (`src/lib/manuscriptPdf.ts`) print: "Information collected here constitutes employer HR records, not Protected Health Information under HIPAA. PHI protections apply upon enrollment submission to a health plan carrier." That is a legal characterization of the data. The landing page made a similar claim ("It's not health data until it goes to a carrier"), which has been removed.
-- **The Manuscript's "Prepared by" line** names `edgar-allan-advisory.lovable.app`, a preview domain, not the production domain (plan J-1.2).
+- **The Manuscript's "Prepared by" line** now names the production domain, `nevermorepeo.com` (`SITE_DOMAIN` in `src/data/site.ts`), where it named a `lovable.app` preview domain (QA F12, plan J-1.2). Nothing else on it changed.
 - **"For PEO Partners"**, the label of a landing-page section and of a navigation link (`src/pages/LandingPage.tsx`, `src/components/Navbar.tsx`). It addresses PEO underwriters who receive packets. Confirm it doesn't read as a claim of partnership.
 - **"We don't sell your information"** appears in the intake consent, the Privacy Policy and the landing page.
 
@@ -30,8 +30,8 @@ These make claims that only counsel can stand behind. They are not part of the p
 | Placeholder | Where | What it needs |
 |---|---|---|
 | Privacy contact | `PRIVACY_CONTACT` in `src/data/legal.ts` (null). The pages say the address "will be published here before launch" | A monitored role address for privacy questions and deletion requests, never a person's own inbox |
-| AI model provider | `SERVICE_PROVIDERS` in `src/data/legal.ts` ("An AI model provider") | The provider chosen under D11 (Lovable AI gateway or Anthropic), named, with its data terms reviewed |
-| Malware scanner | `SERVICE_PROVIDERS` in `src/data/legal.ts` ("A malware-scanning service") | The scanner chosen under D13 (a ClamAV daemon or an HTTPS scanning service), named, with its data terms reviewed: it receives every uploaded file in full |
+| AI model provider | `SERVICE_PROVIDERS` in `src/data/legal.ts` ("An AI model provider") | Decided under D11 (2026-11-05): Anthropic, the only provider for Lenore and document reading; voice uses ElevenLabs. The pages stay generic until counsel names them, with their data terms reviewed |
+| Malware scanner | `SERVICE_PROVIDERS` in `src/data/legal.ts` ("A malware-scanning service") | Decided under D13 (2026-11-05): Scanii, processing in its US region (Virginia) and deleting file contents after the scan; it offers a DPA, and a BAA as an add-on. To name, with its data terms reviewed: it receives every uploaded file in full |
 | Disclaimers | `src/pages/TermsPage.tsx` (`COUNSEL_PLACEHOLDER`) | Counsel's text |
 | Limitation of liability | `src/pages/TermsPage.tsx` (`COUNSEL_PLACEHOLDER`) | Counsel's text |
 | Governing law | `src/pages/TermsPage.tsx` (`COUNSEL_PLACEHOLDER`) | Counsel's text |

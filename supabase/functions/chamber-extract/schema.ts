@@ -138,8 +138,10 @@ const perField = (schema: unknown) => ({
 // it. Raise it with any change to them: _shared/ai/promptVersion.test.ts fails until you do. See
 // "Extraction contract version and eval" in docs/intake-schema.md. Version 2 named two contracts built at
 // the same time (US-2.1b and B-1.1); 3 is the two merged; 4 adds how Lenore replies and the user turn's ready and
-// census lines (US-2.3a); 5 has her point to the census template whenever the roster comes up (US-2.3d).
-export const PROMPT_VERSION = 5;
+// census lines (US-2.3a); 5 has her point to the census template whenever the roster comes up (US-2.3d); 6 marks
+// "unknown" only on the prospect's own words of not knowing, never claims the intake is finished while a field is
+// unsettled, re-asks a question the message didn't answer, and adds prospect_stopping (QA F4, F11).
+export const PROMPT_VERSION = 6;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 
@@ -162,12 +164,15 @@ For every field you return, also report:
 - evidence: the short phrase from the prospect's message that supports it (at most ${MAX_EVIDENCE_CHARS} characters, quoted verbatim).
 - corrected_fields: list a field only when the prospect explicitly corrects a value already captured ("actually it's 45 people, not 40").
 
-When the prospect says they don't know a field's answer, or can't say yet, give that field no value: set its field_status to "unknown" and its evidence to the phrase where they said so. Never mark a field "unknown" because the message simply doesn't mention it.
+When the prospect says they don't know a field's answer, or can't say yet, give that field no value: set its field_status to "unknown" and its evidence to the phrase where they said so, quoted verbatim. Mark only the fields they said they don't know. Never mark a field "unknown" because the message simply doesn't mention it: a field the message doesn't speak to gets no status at all, and Lenore asks about it later. An "unknown" without the prospect's own words of not knowing is discarded.
 
 How Lenore replies (the reply field):
 - Ask about exactly one thing: the first field in "Not yet settled" that the new message didn't just answer. Never ask about a field that isn't in that list, and never ask about two at once.
+- When the new message doesn't answer the question Lenore asked last, that field is still first in "Not yet settled": ask it again, kindly, perhaps in other words.
 - When the prospect doesn't know an answer, accept it kindly and move on to the next field.
+- While "Not yet settled" names any field the new message didn't answer, never say the intake is complete, that you have everything, or that nothing is left: ask the next question.
 - When "Not yet settled" is "none", ask nothing more: thank them, tell them the intake is complete, and that they can review it on the Review tab.
+- When the prospect asks to stop, pause or finish for now, set prospect_stopping to true and ask nothing more: tell them their answers are saved, that they can come back to carry on, and that they can review them on the Review tab.
 - When no employee census is uploaded and the next fields aren't required ones, you may invite them to share one with the census template: they download it on the Upload tab, fill in one row per employee and upload it there.
 - Whenever the prospect brings up their employees' details, their roster or census, or starts listing employees, point them to the census template on the Upload tab instead of taking the details in chat, then carry on with the next field. Never ask for Social Security or bank numbers: the template has no place for them.
 - Don't tell them the intake is ready to certify: the Chamber says so itself when it is.
@@ -183,6 +188,7 @@ export const EXTRACT_TOOL = {
       field_status: perField({ type: "string", enum: FIELD_STATUSES }),
       evidence: perField({ type: "string" }),
       corrected_fields: { type: "array", items: { type: "string", enum: FIELDS } },
+      prospect_stopping: { type: "boolean", description: "true only when the prospect asks to stop, pause or finish for now" },
       reply: { type: "string", description: "Lenore's reply, the gothic HR advisor: intelligent, warm and slightly literary. It acknowledges the answer and asks about the first field in \"Not yet settled\" the message didn't answer, or, when none is left, wraps up." },
     },
     additionalProperties: false,

@@ -19,6 +19,7 @@ import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts
 import { redactSensitive } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
 import { buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn } from "./prompt.ts";
+import { guardReply } from "./reply.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, FIELD_QUESTION, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 
 const corsHeaders = {
@@ -33,6 +34,7 @@ const corsHeaders = {
 // conversation (D22).
 export const MAX_MESSAGE_CHARS = MAX_CHAT_MESSAGE_CHARS;
 export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES, NEXT_FIELDS };
+export { CLAIMS_COMPLETE, guardReply, STOPPING_REPLY, WRAP_UP_REPLY } from "./reply.ts";
 
 const SCHEMA_KEYS = new Set(Object.keys(INTAKE_SCHEMA.properties as object));
 
@@ -237,22 +239,29 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
       return await fail(aiError("invalid_response"));
     }
 
-    const shaped = shapeExtraction(result.args);
-    // No reply of the model's own: ask about the next field this message didn't settle, or wrap up (US-2.3a).
-    if (!shaped.reply) {
-      // An incomplete answer is still to settle, so it is asked about again; "don't know" settles a field.
-      const answered = new Set([
-        ...Object.keys(shaped.extracted).filter((k) => shaped.field_status[k] !== "incomplete"),
-        ...Object.entries(shaped.field_status).flatMap(([k, v]) => (v === "unknown" ? [k] : [])),
-      ]);
-      const ask = unsettled.find((f) => !answered.has(f.key));
-      shaped.reply = ask ? `Thank you, I've noted that. ${FIELD_QUESTION[ask.key]}` : "Thank you. That is everything I need: you can review your intake on the Review tab.";
+    // The field Lenore was asking about is the first one not yet settled (the prompt tells her to ask it).
+    const { stopping, doubted_unknown: doubted, ...shaped } = shapeExtraction(result.args, message, unsettled[0]?.key);
+    // The next field this message didn't settle. An incomplete answer is still to settle, so it is asked about
+    // again; "don't know" (an unknown the prospect's own words support) settles a field.
+    const answered = new Set([
+      ...Object.keys(shaped.extracted).filter((k) => shaped.field_status[k] !== "incomplete"),
+      ...Object.entries(shaped.field_status).flatMap(([k, v]) => (v === "unknown" ? [k] : [])),
+    ]);
+    const ask = unsettled.find((f) => !answered.has(f.key));
+    const guarded = guardReply(shaped.reply, ask ? FIELD_QUESTION[ask.key] : null, stopping);
+    if (guarded.reason) {
+      deps.logError(`LENORE_REPLY_GUARDED request=${requestId} session=${event.sessionId ?? "-"} reason=${guarded.reason} next=${ask?.key ?? "-"}`);
     }
+    shaped.reply = guarded.reply;
     event.fields = Object.keys(shaped.extracted);
     event.refusedPaths = shaped.rejected.map((issue) => issue.path);
     // Paths only: the refused values are the prospect's words.
     if (shaped.rejected.length > 0) {
       deps.logError(`EXTRACTION_REFUSED request=${requestId} session=${event.sessionId ?? "-"} paths=${event.refusedPaths.join(",")}`);
+    }
+    // Field names only. The model marked these unknown though the message doesn't say the prospect doesn't know them.
+    if (doubted.length > 0) {
+      deps.logError(`EXTRACTION_UNKNOWN_DOUBTED request=${requestId} session=${event.sessionId ?? "-"} fields=${doubted.join(",")}`);
     }
     return await finish({ ...shaped }, 200, null);
   } catch (e) {

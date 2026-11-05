@@ -131,7 +131,7 @@ BEGIN
   INSERT INTO public.ai_extraction_events (request_id, function_name, user_id, session_id, outcome, http_status, fields, refused_paths,
       prompt_version, contract_version, provider, model, attempts, latency_ms)
     VALUES (gen_random_uuid(), 'chamber-extract', owner, sid, 'ok', 200, '{company_name,states}', '{states[1],census[0].dependents[2].relationship}',
-      1, 2, 'lovable', 'google/gemini-3-flash-preview', 1, 840);
+      1, 2, 'anthropic', 'claude-haiku-5-5', 1, 840);
   INSERT INTO public.ai_extraction_events (request_id, function_name, user_id, session_id, document_id, outcome, error_code, http_status, document_status)
     VALUES (gen_random_uuid(), 'document-extract', owner, sid, gen_random_uuid(), 'error', 'timeout', 200, 'failed');
   EXECUTE format(ins, 'chamber-extract', 'error', 'rate_limited', 429, '{}', '{}');

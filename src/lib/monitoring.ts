@@ -40,11 +40,58 @@ export function cleanCode(code: string | null | undefined): string | null {
   return clean || null;
 }
 
-/** "TypeError: x is undefined", redacted: what kind of error, without what it was about. */
+/**
+ * "TypeError: x is undefined", redacted: what kind of error, without what it was about. A database or auth error
+ * that isn't an Error (a PostgREST error is a plain object) reads as its code and message, never "[object Object]".
+ */
 export function errorDetail(error: unknown): string {
-  if (error instanceof Error) return redactForReport(`${error.name}: ${error.message}`);
+  if (error instanceof Error) {
+    // supabase-js's errors carry the server's code ("unexpected_failure"), which says more than their name.
+    const code = (error as { code?: unknown }).code;
+    return redactForReport(typeof code === "string" && code ? `${error.name} (${code}): ${error.message}` : `${error.name}: ${error.message}`);
+  }
   if (typeof error === "string") return redactForReport(error);
+  if (typeof error === "object" && error !== null) {
+    const { code, status, message } = error as { code?: unknown; status?: unknown; message?: unknown };
+    // supabase-js gives a request that got no answer an empty code: no label then, not a bare ": ".
+    const label = [code, status].find((v) => (typeof v === "string" && v !== "") || typeof v === "number");
+    if (typeof message === "string" && message) return redactForReport(label !== undefined ? `${label}: ${message}` : message);
+  }
   return "unknown";
+}
+
+// No 0/O or 1/I/L to misread, and letters only, so redaction (which takes runs of digits) keeps it whole.
+const ERROR_CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ";
+
+/**
+ * A short error code for one failure, shown to the person and logged and reported with it, so what they quote can be
+ * found (QA F2: a failed certification said only "We couldn't save your submission", and the console said `Object`).
+ * Called an error code, never a reference: the File ID is the intake's reference (GLOSSARY.md).
+ */
+export function newErrorCode(random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))): string {
+  return Array.from(random(8), (b) => ERROR_CODE_LETTERS[b % ERROR_CODE_LETTERS.length]).join("");
+}
+
+// The words for a request that got no answer at all (offline, blocked, dropped): Chrome's, Firefox's, Safari's, React
+// Native's, and Node's and Deno's fetch (seen through supabase-js against a stopped server).
+const UNANSWERED = /failed to fetch|networkerror|load failed|network request failed|fetch failed|error sending request/i;
+
+/** Whether a failed call got no answer at all, rather than an answer saying no: supabase-js's status 0, or a browser's fetch failure. */
+export function isUnanswered(error: unknown): boolean {
+  const { status, name, message } = (error ?? {}) as { status?: unknown; name?: unknown; message?: unknown };
+  return status === 0 || name === "AuthRetryableFetchError" || (typeof message === "string" && UNANSWERED.test(message)) || (typeof error === "string" && UNANSWERED.test(error));
+}
+
+/**
+ * A failure the person is told about with an error code: logged as one line (never a bare object) and reported as an
+ * app_error carrying the code, so the team can find what they quote. Returns the error code to show them.
+ */
+export function reportFailure(what: string, error: unknown, report: { code: string; sessionId?: string | null }): string {
+  const errorCode = newErrorCode();
+  const detail = errorDetail(error);
+  console.error(`${what} (error code ${errorCode}): ${detail}`);
+  reportOpsEvent("app_error", { code: report.code, detail: `error code ${errorCode}: ${detail}`, sessionId: report.sessionId ?? null });
+  return errorCode;
 }
 
 /**

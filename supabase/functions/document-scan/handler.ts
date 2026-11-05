@@ -1,7 +1,7 @@
 // document-scan settles every document whose malware scan is still pending (E-4.3; migration
 // 20261104130000_document_scanning.sql): one document-upload couldn't scan when it was uploaded (the scanner
-// was unreachable or not set up), one whose verdict didn't get recorded, and every document uploaded before
-// scanning existed. It runs every five minutes, from the database's schedule, and:
+// was unreachable), one whose verdict didn't get recorded, and every document uploaded before scanning existed
+// (or held while no scanner was set). It runs every five minutes, from the database's schedule, and:
 //
 //   claim_document_scans ─► download from the bucket the file is in ─► scan
 //     clean / skipped ─► copy into documents (from quarantine) ─► record_document_scan ─► drop the quarantined copy
@@ -74,6 +74,8 @@ interface Claimed {
 }
 
 export interface ScanSummary {
+  /** Set when no scanner is usable (MALWARE_SCANNER unset or wrong): nothing was claimed, and the run answers 503. */
+  scanner_problem?: string;
   claimed: number;
   clean: number;
   skipped: number;
@@ -229,9 +231,12 @@ export async function runScans(client: ScanClient, deps: ScanDeps): Promise<Scan
 
   const choice = selectScanner(deps.env, deps.scanner);
   if (!choice.ok) {
-    // Nothing is claimed, so no attempt is spent; pending files stay unreadable until a scanner is set.
-    deps.log(`SCAN_CONFIG_MISSING: ${choice.problem}`);
-    const { error } = await client.rpc("record_ops_event", { p_kind: "scan_failed", p_source: "document-scan", p_code: "config_missing" });
+    // Nothing is claimed, so no attempt is spent: files already held stay unreadable, and are scanned on the first
+    // run after a scanner is set. document-upload refuses new files meanwhile. Loud on every run: the log line, an
+    // event ops-monitor alerts on, and a 503 the schedule's HTTP log keeps (net._http_response).
+    summary.scanner_problem = choice.problem;
+    deps.log(`SCAN_CONFIG_MISSING: ${choice.problem}; held uploads stay unreadable and new ones are refused until it is fixed (docs/SUPABASE_SETUP.md, "Malware scanning")`);
+    const { error } = await client.rpc("record_ops_event", { p_kind: "scan_failed", p_source: "document-scan", p_code: "config_missing", p_detail: choice.problem });
     if (error) deps.log(`SCAN_ERROR record=rpc_event:${errorCode(error)}`);
   } else {
     while (summary.claimed < MAX_PER_RUN && deps.now() - started < TIME_BUDGET_MS) {
@@ -270,7 +275,8 @@ export async function handleScanRequest(req: Request, deps: ScanDeps): Promise<R
     // Only the schedule. Nobody signed in can move a file out of quarantine.
     if (!isServiceCall(req.headers.get("Authorization"), serviceRoleKey)) return json({ error: "Unauthorized" }, 401);
 
-    return json(await runScans(deps.createClient(supabaseUrl, serviceRoleKey), deps));
+    const summary = await runScans(deps.createClient(supabaseUrl, serviceRoleKey), deps);
+    return json(summary.scanner_problem ? { error: "scanner_not_configured", ...summary } : summary, summary.scanner_problem ? 503 : 200);
   } catch (e) {
     deps.log(`SCAN_RUN_ERROR: ${e instanceof Error && /^rpc_/.test(e.message) ? e.message : "unexpected"}`);
     return json({ error: "Internal error" }, 500);

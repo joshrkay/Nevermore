@@ -369,6 +369,37 @@ describe("ManuscriptPage", () => {
     expect(wc).toHaveTextContent("Doesn't apply");
   });
 
+  // QA F11: EAA-2026-0001 was saved with the same unrelated message quoted beside every "Not known yet" field.
+  it("shows no source line beside a field with no answer, whatever its stored provenance quotes", async () => {
+    const at = "2026-11-05T12:00:00Z";
+    const said = { kind: "transcript", message_id: "m2", quote: "Bi-weekly. We have 12 employees, all paid hourly, and we use a small local payroll provider." };
+    row = certified({
+      submission: {
+        signer_name: "Jo Doe",
+        signer_title: "CEO",
+        signed_at: at,
+        file_id: "EAA-2026-0001",
+        chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Larkspur Plumbing", pay_frequency: "bi-weekly" },
+        field_provenance: {
+          company_name: { status: "confirmed", source: { kind: "transcript", message_id: "m1", quote: "Larkspur Plumbing" }, updated_at: at },
+          pay_frequency: { status: "confirmed", source: { ...said, quote: "Bi-weekly" }, updated_at: at },
+          fein_count: { status: "unknown", source: said, updated_at: at },
+          start_month: { status: "unknown", source: said, updated_at: at },
+          current_carrier: { status: "unknown", source: said, updated_at: at },
+          wc_carrier: { status: "not_applicable", source: said, updated_at: at },
+        },
+      },
+    });
+    renderAt("/manuscript/EAA-2026-0001");
+    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(screen.getByText("From the conversation: “Larkspur Plumbing”")).toBeInTheDocument();
+    expect(screen.getByText("From the conversation: “Bi-weekly”")).toBeInTheDocument();
+    // Their status still shows; the quote doesn't.
+    expect(screen.getAllByText("Not known yet").length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByText(/From the conversation: “Bi-weekly\. We have 12 employees/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/^From the conversation/)).toHaveLength(2);
+  });
+
   it("drops the fields an advisor has verified since from the open items", async () => {
     const at = "2026-05-01T12:00:00Z";
     row = {

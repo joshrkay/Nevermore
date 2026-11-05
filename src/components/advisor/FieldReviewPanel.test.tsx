@@ -57,3 +57,30 @@ describe("FieldReviewPanel: what else was heard", () => {
     expect(screen.queryByText(/Also heard/)).not.toBeInTheDocument();
   });
 });
+
+// QA F11: a field with no answer shows its status alone, never a quote, whatever its stored provenance says.
+describe("FieldReviewPanel: a field with no answer", () => {
+  it("shows its status without a source or a link to the transcript", () => {
+    render(
+      <FieldReviewPanel
+        sessionId="s1"
+        data={{ ...EMPTY_CHAMBER_DATA, employee_count: 40 }}
+        storedAnswers={{}}
+        provenance={{
+          employee_count: { status: "confirmed", source: said, updated_at: at },
+          fein_count: { status: "unknown", source: { ...said, quote: "Bi-weekly. We have 12 employees." }, updated_at: at },
+        }}
+        reviews={{}}
+        messageIds={new Set(["m1"])}
+        onShowMessage={() => {}}
+        onChanged={() => {}}
+      />,
+    );
+    const answered = screen.getByTestId("field-employee_count");
+    expect(within(answered).getByText("From the conversation: “about 40 of us”")).toBeInTheDocument();
+    const unanswered = screen.getByTestId("field-fein_count");
+    expect(within(unanswered).getByText("Not known yet")).toBeInTheDocument();
+    expect(within(unanswered).queryByText(/From the conversation/)).not.toBeInTheDocument();
+    expect(within(unanswered).queryByRole("button", { name: "View in transcript" })).not.toBeInTheDocument();
+  });
+});

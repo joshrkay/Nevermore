@@ -23,8 +23,6 @@ const CORS_HEADERS = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const AI_PROVIDERS = ["lovable", "anthropic"];
-
 /** Node's request as a fetch Request, with the peer address as the last X-Forwarded-For hop, as Supabase's edge adds it. */
 function toRequest(req, origin, pathAndQuery, body) {
   const headers = new Headers();
@@ -52,9 +50,6 @@ const jsonResponse = (body, status = 200) => Response.json(body, { status, heade
  * @returns {{ handle: (req, res, url: URL, body: Buffer) => Promise<void> }}
  */
 export function createFunctions({ supabaseUrl, anonKey, serviceRoleKey, log = (line) => console.error(`[functions] ${line}`) }) {
-  const provider = process.env.E2E_AI_PROVIDER || "lovable";
-  if (!AI_PROVIDERS.includes(provider)) throw new Error(`E2E_AI_PROVIDER must be one of ${AI_PROVIDERS.join(", ")}, got "${provider}"`);
-
   const fakeAi = createFakeAi({ log });
 
   // Only what chamber-extract reads. The ceilings are high so repeated runs never meet them; the
@@ -64,8 +59,7 @@ export function createFunctions({ supabaseUrl, anonKey, serviceRoleKey, log = (l
     SUPABASE_ANON_KEY: anonKey,
     SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
     IP_HASH_SECRET: "e2e-ip-hash-secret",
-    AI_PROVIDER: provider,
-    LOVABLE_API_KEY: "e2e-fake-lovable-key",
+    // Anthropic is the only AI provider (decision D11); the fake answers as it does.
     ANTHROPIC_API_KEY: "e2e-fake-anthropic-key",
     AI_IP_PER_MINUTE: "100000",
     AI_IP_PER_DAY: "1000000",

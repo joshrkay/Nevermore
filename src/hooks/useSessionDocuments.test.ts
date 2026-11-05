@@ -220,6 +220,7 @@ describe("useSessionDocuments", () => {
     ["empty", 422, "empty"],
     ["too_large", 413, "too_large"],
     ["limit", 409, "limit"],
+    ["scanner_missing", 503, "scanning_paused"],
   ] as const)("explains the server's %s refusal as %s", async (code, status, reason) => {
     uploadResult = refusedWith(code, status);
     const { result } = renderHook(() => useSessionDocuments("s1"));

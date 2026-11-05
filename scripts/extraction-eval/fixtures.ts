@@ -5,6 +5,7 @@
 // checks that, and that every expected value is one the intake would store as written.
 
 import type { FieldKey, FieldStatus } from "@/data/provenance";
+import { CLAIMS_COMPLETE } from "../../supabase/functions/chamber-extract/reply.ts";
 import { FIELDS } from "../../supabase/functions/chamber-extract/schema.ts";
 
 export interface ExpectedField {
@@ -38,6 +39,15 @@ export interface Fixture {
 
 /** Lenore names the census template and where to get it (the Upload tab). */
 export const CENSUS_TEMPLATE_REPLY: ReplyCheck = { template: /\btemplate\b/i, upload_tab: /\bupload/i };
+
+/**
+ * Lenore keeps going: she asks something, and doesn't say the intake is finished (QA F4). "Finished" is the handler's own
+ * pattern (CLAIMS_COMPLETE), so the eval and the guard agree on what counts as claiming completion.
+ */
+export const KEEPS_ASKING_REPLY: ReplyCheck = {
+  asks: /\?/,
+  not_finished: new RegExp(`^(?![\\s\\S]*(?:${CLAIMS_COMPLETE.source}))`, CLAIMS_COMPLETE.flags),
+};
 
 export const FIXTURES: Fixture[] = [
   {
@@ -184,6 +194,21 @@ export const FIXTURES: Fixture[] = [
       employee_count: { value: 12 },
       states: { value: ["OR"] },
     },
+  },
+  {
+    id: "two-short-answers",
+    description: "Two short answers leave most of the intake to ask (QA F4): Lenore asks the next question instead of closing, and nothing the prospect didn't mention is marked unknown.",
+    turns: [
+      { message: "We're Larkspur Plumbing.", reply: KEEPS_ASKING_REPLY },
+      { message: "Bi-weekly. We have 12 employees, all paid hourly, and we use a small local payroll provider.", reply: KEEPS_ASKING_REPLY },
+    ],
+    expected: {
+      company_name: { value: "Larkspur Plumbing" },
+      pay_frequency: { value: "bi-weekly" },
+      employee_count: { value: 12 },
+      has_nonexempt: { value: true },
+    },
+    absent: ["fein_count", "start_month", "current_carrier", "renewal_date", "funding_days"],
   },
   {
     id: "roster-question",

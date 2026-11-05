@@ -4,13 +4,22 @@
 export const FUNCTIONS = ["chamber-extract", "document-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "purge-intakes", "ops-monitor"];
 
 /** What MALWARE_SCANNER may be (supabase/functions/_shared/malwareScan.ts). */
-export const MALWARE_SCANNERS = ["clamav", "http", "none"];
+export const MALWARE_SCANNERS = ["scanii", "clamav", "http", "none"];
+// APP_ENV values (docs/adr/0002-uploads-need-a-scanner-in-production.md): unset is production. Only the non-production
+// ones allow MALWARE_SCANNER=none; supabase/functions/_shared/malwareScan.ts reads the same names.
+export const UNSCANNED_ENVIRONMENTS = ["development", "demo", "staging"];
+export const APP_ENVIRONMENTS = [...UNSCANNED_ENVIRONMENTS, "production"];
 
 /** Secrets the email notifications need. Without them emails wait in the queue; nothing is lost. */
 export const EMAIL_SECRETS = ["RESEND_API_KEY", "EMAIL_FROM", "ADVISORY_NOTIFY_EMAIL", "SUPPORT_EMAIL", "PROSPECT_RESPONSE_TIME"];
 
 /** Supabase sets these for every function itself, and refuses to let you set names starting with SUPABASE_. */
 const PLATFORM_PREFIX = "SUPABASE_";
+
+/** Secrets that are a single token (API keys, signing secrets), so whitespace in one is always a mistake. */
+const SECRET_NAME = /_(API_KEY|SECRET|TOKEN)$/;
+/** What a Resend API key looks like: re_ and a run of letters, digits and underscores. */
+const RESEND_KEY_SHAPE = /^re_[A-Za-z0-9_]+$/;
 
 export function isProjectRef(ref) {
   return typeof ref === "string" && /^[a-z]{20}$/.test(ref);
@@ -46,10 +55,13 @@ export function checkSecrets(env) {
     if (name.startsWith(PLATFORM_PREFIX)) errors.push(`${name}: Supabase provides SUPABASE_* values itself; remove it from the file`);
   }
 
-  const provider = set("AI_PROVIDER") ? env.AI_PROVIDER : "lovable";
-  if (provider !== "lovable" && provider !== "anthropic") errors.push(`AI_PROVIDER must be "lovable" or "anthropic", not "${provider}"`);
-  else if (provider === "anthropic" && !set("ANTHROPIC_API_KEY")) errors.push("ANTHROPIC_API_KEY is required when AI_PROVIDER=anthropic");
-  else if (provider === "lovable" && !set("LOVABLE_API_KEY")) errors.push("LOVABLE_API_KEY is required (or set AI_PROVIDER=anthropic and ANTHROPIC_API_KEY)");
+  // Anthropic is the only AI provider (decision D11): the functions refuse any other AI_PROVIDER, and a leftover Lovable
+  // key does nothing.
+  if (set("AI_PROVIDER") && env.AI_PROVIDER.trim() !== "anthropic") {
+    errors.push(`AI_PROVIDER must be "anthropic" or unset (Anthropic is the only AI provider), not "${env.AI_PROVIDER}"`);
+  }
+  if (!set("ANTHROPIC_API_KEY")) errors.push("ANTHROPIC_API_KEY is required (Anthropic is the only AI provider)");
+  if (set("LOVABLE_API_KEY")) warnings.push("LOVABLE_API_KEY is no longer used (Anthropic is the only AI provider): delete it from the file, and from the project's secrets with `supabase secrets unset LOVABLE_API_KEY`");
 
   if (!set("APP_BASE_URL")) errors.push("APP_BASE_URL is required (the site's address, e.g. https://nevermorepeo.com)");
   else {
@@ -60,6 +72,17 @@ export function checkSecrets(env) {
     else if (url.pathname !== "/" || url.search || url.hash) errors.push("APP_BASE_URL must be just the site's origin, with no path");
   }
 
+  // A key with a space in it is a key with something pasted after it (an inline comment, a second word): the
+  // file has no comments after a value. The function secret would hold all of it, so every call fails (QA H5).
+  for (const name of Object.keys(env)) {
+    if (SECRET_NAME.test(name) && set(name) && /\s/.test(env[name])) {
+      errors.push(`${name} has a space or other whitespace in it: keep only the key on its line, with nothing after it (a # comment isn't allowed after a value)`);
+    }
+  }
+  if (set("RESEND_API_KEY") && !/\s/.test(env.RESEND_API_KEY) && !RESEND_KEY_SHAPE.test(env.RESEND_API_KEY)) {
+    warnings.push("RESEND_API_KEY doesn't look like a Resend API key (re_ followed by letters, digits and underscores); the check against Resend says whether it works");
+  }
+
   const missingEmail = EMAIL_SECRETS.filter((name) => !set(name));
   if (missingEmail.length > 0) warnings.push(`Emails stay queued until these are set: ${missingEmail.join(", ")}`);
   // Sending works without it, so it is not one of the email secrets; only the bounces are lost.
@@ -67,20 +90,38 @@ export function checkSecrets(env) {
     warnings.push("Bounces and spam complaints are not processed until RESEND_WEBHOOK_SECRET is set: the signing secret of a Resend webhook pointed at the resend-webhook function (docs/NOTIFICATIONS.md)");
   }
 
-  // The malware scanner (E-4.3, decision D13). Unset holds every upload; set but incomplete is a mistake.
+  // The environment (ADR 0002): unset is production. A misspelt one would be read as production by the functions, so
+  // MALWARE_SCANNER=none would silently stop working; say so here instead.
+  const appEnv = set("APP_ENV") ? env.APP_ENV.trim().toLowerCase() : "production";
+  if (!APP_ENVIRONMENTS.includes(appEnv)) errors.push(`APP_ENV must be ${APP_ENVIRONMENTS.join(", ")} or unset (production), not "${env.APP_ENV}"`);
+  const production = !UNSCANNED_ENVIRONMENTS.includes(appEnv);
+
+  // The malware scanner (E-4.3, decision D13: Scanii, ADR 0002). Unset refuses every upload, the census included;
+  // set but incomplete is a mistake. Unset stays a warning, not a stop, so the rest of the setup isn't held up while
+  // the scanner's account is opened. `none` on production is a stop: the functions won't honour it (QA H4).
   const scanner = set("MALWARE_SCANNER") ? env.MALWARE_SCANNER.trim().toLowerCase() : null;
   if (scanner === null) {
-    warnings.push("Uploads are held, unreadable, until MALWARE_SCANNER is set: clamav (CLAMAV_HOST), http (MALWARE_SCANNER_URL and MALWARE_SCANNER_TOKEN), or none for the internal demo only (docs/RUNBOOK.md)");
+    warnings.push(
+      `Uploads, the census included, are refused until MALWARE_SCANNER is set: scanii (SCANII_API_KEY and SCANII_API_SECRET), clamav (CLAMAV_HOST) or http (MALWARE_SCANNER_URL and MALWARE_SCANNER_TOKEN)${production ? "" : `, or none on this ${appEnv} project`}. document-scan alerts every five minutes until it is set (docs/SUPABASE_SETUP.md, "Malware scanning")`,
+    );
   } else if (!MALWARE_SCANNERS.includes(scanner)) {
-    errors.push(`MALWARE_SCANNER must be clamav, http or none, not "${env.MALWARE_SCANNER}"`);
+    errors.push(`MALWARE_SCANNER must be scanii, clamav, http or none, not "${env.MALWARE_SCANNER}"`);
+  } else if (scanner === "scanii" && (!set("SCANII_API_KEY") || !set("SCANII_API_SECRET"))) {
+    errors.push("SCANII_API_KEY and SCANII_API_SECRET are required when MALWARE_SCANNER=scanii (Scanii's API key and its secret)");
+  } else if (scanner === "scanii" && env.SCANII_API_KEY.includes(":")) {
+    errors.push("SCANII_API_KEY can't hold a colon: it is the user name of HTTP Basic auth");
+  } else if (scanner === "scanii" && set("SCANII_API_URL") && !/^https:\/\//.test(env.SCANII_API_URL.trim())) {
+    errors.push("SCANII_API_URL must be an https:// address (leave it unset for Scanii's US region)");
   } else if (scanner === "clamav" && !set("CLAMAV_HOST")) {
     errors.push("CLAMAV_HOST is required when MALWARE_SCANNER=clamav");
   } else if (scanner === "http" && (!set("MALWARE_SCANNER_URL") || !set("MALWARE_SCANNER_TOKEN"))) {
     errors.push("MALWARE_SCANNER_URL and MALWARE_SCANNER_TOKEN are required when MALWARE_SCANNER=http");
   } else if (scanner === "http" && !/^https:\/\//.test(env.MALWARE_SCANNER_URL.trim())) {
     errors.push("MALWARE_SCANNER_URL must be an https:// address");
+  } else if (scanner === "none" && production) {
+    errors.push(`MALWARE_SCANNER=none is allowed only when APP_ENV is ${UNSCANNED_ENVIRONMENTS.join(", ")}, and this file's APP_ENV is ${set("APP_ENV") ? `"${env.APP_ENV}"` : "unset (production)"}: the functions would refuse every upload. Set scanii, clamav or http`);
   } else if (scanner === "none") {
-    warnings.push("MALWARE_SCANNER=none: uploads are not scanned for malware. Fine for the internal demo, not for prospects' files (docs/RUNBOOK.md)");
+    warnings.push(`MALWARE_SCANNER=none: uploads are not scanned for malware on this ${appEnv} project. Never for real prospects' files (docs/adr/0002-uploads-need-a-scanner-in-production.md)`);
   }
 
   return { errors, warnings };
@@ -113,6 +154,69 @@ export function envFileLine(name, value) {
   if (!v.includes("'")) return `${name}='${v}'`;
   if (!/["$\\]/.test(v)) return `${name}="${v}"`;
   throw new Error(`${name} has both a single quote and one of " $ \\; set it in the dashboard instead`);
+}
+
+// ---- The Supabase CLI ----------------------------------------------------------------------------
+
+/** The CLI's version from `supabase --version` (the first x.y.z in it), as [major, minor, patch], or null. */
+export function parseCliVersion(text) {
+  const m = String(text ?? "").match(/(\d+)\.(\d+)\.(\d+)/);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/**
+ * The CLI calls the setup makes, for the installed version. CLI 3 changed two things the setup relies on (QA H3):
+ * `db push` targets the local database unless given `--remote`, and a change to a hosted project is refused in a
+ * non-interactive run unless it carries `--yes`. The script asks once (the project ref typed back, or its own --yes)
+ * before any of these run, so they all carry `--yes` and the run finishes unattended. `db push` uses the linked
+ * project (`supabase link` runs first) so it connects the way the link set up; the others name the project. An
+ * unreadable version is taken as current. CLI 2 keeps the calls it was run with before.
+ */
+export function cliCommands(version, ref) {
+  const legacy = Array.isArray(version) && version[0] < 3;
+  if (legacy) {
+    return {
+      link: ["link", "--project-ref", ref],
+      dbPush: ["db", "push"],
+      secretsSet: (file) => ["secrets", "set", "--env-file", file, "--project-ref", ref],
+      deploy: (fn) => ["functions", "deploy", fn, "--project-ref", ref],
+    };
+  }
+  const target = `--remote=${ref}`;
+  return {
+    link: ["link", "--project-ref", ref],
+    dbPush: ["db", "push", "--remote", "--yes"],
+    secretsSet: (file) => ["secrets", "set", "--env-file", file, target, "--yes"],
+    // Bundled with Docker (no --use-api): Supabase's server-side bundler can't fetch document-extract's SheetJS
+    // import from cdn.sheetjs.com.
+    deploy: (fn) => ["functions", "deploy", fn, target, "--yes"],
+  };
+}
+
+/** Why the setup needs Docker, for the message that stops it before anything changes when Docker isn't running. */
+export const DOCKER_NEEDED =
+  "Docker isn't running. `supabase functions deploy` bundles the functions with it: document-extract imports SheetJS from cdn.sheetjs.com, " +
+  "which Supabase's server-side bundler (--use-api) can't fetch. Start Docker (Docker Desktop, or the docker service) and run this again; nothing was changed.";
+
+// ---- Resend ------------------------------------------------------------------------------------
+
+/**
+ * What Resend's answer to an empty send says about RESEND_API_KEY (QA H5). The setup posts `{}` to /emails with the
+ * key: 422 (or 400) is Resend refusing the empty email, so it read the key and accepted it; 401 or 403 is the key
+ * refused, which would break sign-in codes and every app email, so the setup stops. Anything else (no answer, a rate
+ * limit, Resend down) leaves the key unverified: `ok` is null and the setup goes on with a warning. `name` is Resend's
+ * error code; nothing else from the answer is shown.
+ */
+export function resendKeyVerdict({ status, name }) {
+  const code = typeof name === "string" && /^[a-z_]{1,40}$/.test(name) ? ` ${name}` : "";
+  if (status === 422 || status === 400) return { ok: true, detail: "Resend accepted the key" };
+  if (status === 401 || status === 403) {
+    return {
+      ok: false,
+      detail: `Resend refused the key (${status}${code}): sign-in codes and every app email fail with it. Create a key with sending access at resend.com/api-keys, put it in the secrets file and run this again`,
+    };
+  }
+  return { ok: null, detail: status ? `Resend answered ${status}${code}, so the key wasn't verified` : "Resend couldn't be reached, so the key wasn't verified" };
 }
 
 /** `Edgar Allan Advisory <intake@mail.example.com>` or a bare address, as the sender name and address. */
@@ -252,6 +356,30 @@ export function authConfigPatch(current, env) {
   return { patch, notes };
 }
 
+/**
+ * Whether Supabase Auth's SMTP password is RESEND_API_KEY, as it must be: sign-in codes go out through Resend's SMTP
+ * with the key as the password, and the app's own emails through Resend's API with the same key, so after a rotation
+ * one can work while the other fails (QA H5). `patch` is authConfigPatch's. The Management API may hide the stored
+ * password; a value that isn't a Resend key (missing, masked) can't be compared, and then this says what was done or
+ * what to check. Null when there is nothing to say: no Resend key, or another provider's SMTP (authConfigPatch's note
+ * covers both). Never includes either key.
+ */
+export function smtpKeyNote(current, patch, resendKey) {
+  const key = (resendKey ?? "").trim();
+  const c = current ?? {};
+  if (!key) return null;
+  if (!patch.smtp_pass && c.smtp_host !== RESEND_SMTP_HOST) return null;
+  const stored = typeof c.smtp_pass === "string" ? c.smtp_pass.trim() : "";
+  const readable = stored.startsWith("re_");
+  if (patch.smtp_pass === key) {
+    if (!readable) return "Supabase Auth's SMTP password is set to RESEND_API_KEY (Supabase doesn't return the stored one to compare, so it is set on every run)";
+    return stored === key ? "Supabase Auth's SMTP password is RESEND_API_KEY" : "Supabase Auth's SMTP password was a different Resend key; it now uses RESEND_API_KEY";
+  }
+  if (readable && stored === key) return "Supabase Auth's SMTP password is RESEND_API_KEY";
+  if (readable) return "Supabase Auth's SMTP password is a different Resend key from RESEND_API_KEY, so sign-in codes and the app's emails use different keys. Set EMAIL_FROM and run this again, or change it under Authentication → Emails → SMTP Settings";
+  return "Supabase Auth's SMTP password couldn't be read: it must be RESEND_API_KEY, or sign-in codes fail while the app's emails work. Set EMAIL_FROM and run this again, or set it under Authentication → Emails → SMTP Settings";
+}
+
 /** A SQL string literal. Single quotes are doubled, so any value is safe to embed. */
 export function sqlLiteral(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
@@ -360,6 +488,50 @@ export const STATUS_QUERIES = {
   role_grants: "select count(*)::int as n from public.user_roles;",
 };
 
+/** The versions of the migrations applied to the project; read before and after `db push` for the summary. */
+export const APPLIED_MIGRATIONS_SQL = "select version from supabase_migrations.schema_migrations order by version;";
+
+/** The applied versions from APPLIED_MIGRATIONS_SQL's rows. */
+export function migrationVersions(rows) {
+  return rows.flatMap((r) => (r && (typeof r.version === "string" || typeof r.version === "number") ? [String(r.version)] : []));
+}
+
+/**
+ * The migration files `db push` applied: versions in `after` that weren't in `before`, as the local file that has
+ * each version (a version with no local file is shown as it is). Null when either read failed, so the summary says
+ * it doesn't know rather than "none".
+ */
+export function newMigrations(before, after, localFiles) {
+  if (!before || !after) return null;
+  const had = new Set(before);
+  return after.filter((v) => !had.has(v)).map((v) => localFiles.find((f) => f.startsWith(`${v}_`)) ?? v);
+}
+
+/** A list for the summary: every item up to `max`, otherwise the first and the last (the count is shown beside it). */
+function listed(items, max = 10) {
+  if (items.length <= max) return items.join(", ");
+  return `${items[0]} … ${items[items.length - 1]}`;
+}
+
+/**
+ * The summary the setup prints when it ends, or stops (QA H3): the migrations it applied, the secrets it set (names
+ * only, never values) and the functions it deployed. `done` holds what it got through: `migrations` is null when
+ * that step didn't run or couldn't be read back, `secrets` and `functions` empty when nothing was done.
+ */
+export function summaryLines(done) {
+  const m = done.migrations;
+  const migrations = m === undefined
+    ? "not run"
+    : m === null
+      ? "pushed, but the migration history couldn't be read to list them"
+      : m.length === 0
+        ? "none new (the project was up to date)"
+        : `${m.length} (${listed(m)})`;
+  const secrets = done.secrets.length > 0 ? `${done.secrets.length} (${[...done.secrets].sort().join(", ")})` : "none";
+  const functions = done.functions.length > 0 ? `${done.functions.length} (${done.functions.join(", ")})` : "none";
+  return [`Migrations applied: ${migrations}`, `Secrets set (names only): ${secrets}`, `Functions deployed: ${functions}`];
+}
+
 /** The Management API's query endpoint returns rows; accept the shapes it might wrap them in. */
 export function rowsFrom(body) {
   if (Array.isArray(body)) return body;
@@ -400,8 +572,8 @@ export function authUrlProblems(authConfig, appBaseUrl) {
 
 /**
  * Turns everything the checks saw into lines. `seen` holds the status counts, the public auth
- * settings, the Management API's auth config, each function's probe and the secret names, any of
- * which may be missing. A check marked
+ * settings, the Management API's auth config, each function's probe, the secret names and Resend's
+ * verdict on the secrets file's key (resendKeyVerdict), any of which may be missing. A check marked
  * `required: false` is a to-do (emails, advisor accounts), not a failed setup.
  */
 export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
@@ -460,17 +632,21 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
     add(`Function ${fn}`, ok, p ? `answered ${p.status}${p.ourError ? " from the function itself" : ""}` : "not probed");
   }
 
+  // Only when the secrets file has a key to try: a refused key breaks every email, so it fails the setup (QA H5).
+  if (seen.resend) add("Resend key", seen.resend.ok === true, seen.resend.detail, seen.resend.ok === false);
+
   const names = seen.secretNames ?? null;
   if (names) {
     const missing = ["IP_HASH_SECRET", "APP_BASE_URL"].filter((n) => !names.includes(n));
-    if (!names.includes("LOVABLE_API_KEY") && !names.includes("ANTHROPIC_API_KEY")) missing.push("an AI provider key");
-    add("Function secrets", missing.length === 0, missing.length === 0 ? "AI key, IP_HASH_SECRET and APP_BASE_URL set" : `missing: ${missing.join(", ")}`);
+    // Anthropic is the only AI provider: a project that still holds only a Lovable key has Lenore unavailable.
+    if (!names.includes("ANTHROPIC_API_KEY")) missing.push("ANTHROPIC_API_KEY");
+    add("Function secrets", missing.length === 0, missing.length === 0 ? "ANTHROPIC_API_KEY, IP_HASH_SECRET and APP_BASE_URL set" : `missing: ${missing.join(", ")}`);
     const emailMissing = EMAIL_SECRETS.filter((n) => !names.includes(n));
     add("Email secrets", emailMissing.length === 0, emailMissing.length === 0 ? "all set" : `missing: ${emailMissing.join(", ")} (emails wait in the queue)`, false);
     const alerts = names.includes("ENGINEERING_ALERT_WEBHOOK_URL");
     add("Engineering alerts", alerts, alerts ? "ENGINEERING_ALERT_WEBHOOK_URL set" : "ENGINEERING_ALERT_WEBHOOK_URL not set: dead emails, failed deletions, malware detections and failure spikes are only logged", false);
     const scanner = names.includes("MALWARE_SCANNER");
-    add("Malware scanner", scanner, scanner ? "MALWARE_SCANNER set" : "MALWARE_SCANNER not set: every upload is held, unreadable, until it is (clamav, http, or none for the internal demo)", false);
+    add("Malware scanner", scanner, scanner ? "MALWARE_SCANNER set" : "MALWARE_SCANNER not set: every upload is refused until it is (scanii in production; none only on a demo, staging or development project)", false);
   } else {
     add("Function secrets", false, "could not list secret names");
   }

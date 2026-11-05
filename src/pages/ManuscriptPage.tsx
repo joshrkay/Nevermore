@@ -9,11 +9,12 @@ import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
 import { CONSENT_DRAFT_LABEL } from "@/data/certification";
-import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
-import { describeSource, parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
+import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, rowSourceLine, type ChamberSubmission, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
+import { parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { readVerifiedFields } from "@/lib/verifiedFields";
+import { SITE_DOMAIN } from "@/data/site";
 import { downloadBlob } from "@/lib/downloadFile";
 import { finalManuscriptUrl } from "@/lib/advisorApi";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
@@ -45,8 +46,8 @@ const showsStatus = (value: string, provenance?: FieldProvenance): provenance is
   Boolean(provenance) &&
   (value !== NOT_PROVIDED || provenance!.status === "conflicting" || provenance!.status === "unknown" || provenance!.status === "not_applicable");
 
-// Shows whether a value was confirmed or only inferred, and where it came from.
-const DataRow = ({ label, value, provenance }: { label: string; value: string; provenance?: FieldProvenance }) => (
+// Shows whether a value was confirmed or only inferred, and where it came from (an answered row only: rowSourceLine).
+const DataRow = ({ label, value, provenance, source }: { label: string; value: string; provenance?: FieldProvenance; source: string | null }) => (
   <div className="py-2 border-b border-border last:border-0">
     <div className="flex justify-between gap-4">
       <span className="text-muted-foreground text-sm">{label}</span>
@@ -59,14 +60,14 @@ const DataRow = ({ label, value, provenance }: { label: string; value: string; p
         )}
       </span>
     </div>
-    {showsStatus(value, provenance) && (
-      <p className="text-[11px] text-muted-foreground text-right mt-0.5">{describeSource(provenance.source)}</p>
-    )}
+    {source && <p className="text-[11px] text-muted-foreground text-right mt-0.5">{source}</p>}
   </div>
 );
 
-const renderRows = (rows: ManuscriptRow[], provenance: ProvenanceMap) =>
-  rows.map((row) => <DataRow key={row[0]} label={row[0]} value={row[1]} provenance={rowProvenance(row, provenance)} />);
+const renderRows = (rows: ManuscriptRow[], m: Pick<Manuscript, "provenance" | "answered">) =>
+  rows.map((row) => (
+    <DataRow key={row[0]} label={row[0]} value={row[1]} provenance={rowProvenance(row, m.provenance)} source={rowSourceLine(row, m)} />
+  ));
 
 const Card = ({ children }: { children: React.ReactNode }) => <div className="bg-card border border-border rounded-xl p-6">{children}</div>;
 
@@ -434,12 +435,12 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         <section>
           <SectionHeader>1 — Company Profile</SectionHeader>
-          <Card>{renderRows(d.companyRows, d.provenance)}</Card>
+          <Card>{renderRows(d.companyRows, d)}</Card>
         </section>
 
         <section>
           <SectionHeader>2 — Workforce Summary</SectionHeader>
-          <Card>{renderRows(d.workforceRows, d.provenance)}</Card>
+          <Card>{renderRows(d.workforceRows, d)}</Card>
         </section>
 
         <section>
@@ -512,7 +513,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         <section>
           <SectionHeader>5 — Locations</SectionHeader>
           <div className="grid md:grid-cols-2 gap-6">
-            <Card>{renderRows(d.locationRows, d.provenance)}</Card>
+            <Card>{renderRows(d.locationRows, d)}</Card>
             <Card>
               <p className="text-xs text-muted-foreground font-mono mb-3">STATE BREAKDOWN</p>
               {d.states.length === 0 ? (
@@ -537,22 +538,22 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         <section>
           <SectionHeader>6 — Payroll &amp; Time</SectionHeader>
-          <Card>{renderRows(d.payrollRows, d.provenance)}</Card>
+          <Card>{renderRows(d.payrollRows, d)}</Card>
         </section>
 
         <section>
           <SectionHeader>7 — Current Benefits</SectionHeader>
-          <Card>{renderRows(d.benefitsRows, d.provenance)}</Card>
+          <Card>{renderRows(d.benefitsRows, d)}</Card>
         </section>
 
         <section>
           <SectionHeader>8 — Workers' Compensation</SectionHeader>
-          <Card>{renderRows(d.workersCompRows, d.provenance)}</Card>
+          <Card>{renderRows(d.workersCompRows, d)}</Card>
         </section>
 
         <section>
           <SectionHeader>9 — Operations &amp; HR</SectionHeader>
-          <Card>{renderRows(d.operationsRows, d.provenance)}</Card>
+          <Card>{renderRows(d.operationsRows, d)}</Card>
         </section>
 
         <section>
@@ -667,7 +668,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               </div>
               <div className="border-t border-border pt-4">
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Prepared by: Edgar Allan Advisory · edgar-allan-advisory.lovable.app
+                  Prepared by: Edgar Allan Advisory · {SITE_DOMAIN}
                 </p>
                 <p className="text-xs text-muted-foreground leading-relaxed mt-1">
                   Data note: Information collected here constitutes employer HR records,

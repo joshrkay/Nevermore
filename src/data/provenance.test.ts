@@ -629,10 +629,14 @@ describe("a field the prospect doesn't know (unknown, D23)", () => {
   const source = { kind: "transcript" as const, message_id: "m9" };
   const state = (over: Partial<IntakeState> = {}): IntakeState => ({ data: { ...EMPTY_CHAMBER_DATA }, provenance: {}, ...over });
 
-  it("records it as unknown, with the prospect's words and no answer", () => {
-    const next = applyExtraction(state(), {}, { source, unknown: ["wc_experience_mod"], evidence: { wc_experience_mod: "no idea" } });
+  // QA F11: a field with no answer has nothing to quote. Neither the model's quote nor the message (the fallback quote,
+  // which in EAA-2026-0001 put one unrelated message beside some 35 unanswered fields) is kept; the message id is.
+  it("records it as unknown, with the message it was said in, no quote and no answer", () => {
+    const quoted = { ...source, quote: "Bi-weekly. We have 12 employees, all paid hourly." };
+    const next = applyExtraction(state(), {}, { source: quoted, unknown: ["wc_experience_mod", "fein_count"], evidence: { wc_experience_mod: "no idea" } });
     expect(next.data.wc_experience_mod).toBeNull();
-    expect(next.provenance.wc_experience_mod).toMatchObject({ status: "unknown", source: { kind: "transcript", message_id: "m9", quote: "no idea" } });
+    expect(next.provenance.wc_experience_mod).toEqual({ status: "unknown", source: { kind: "transcript", message_id: "m9" }, updated_at: expect.any(String) });
+    expect(next.provenance.fein_count?.source).toEqual({ kind: "transcript", message_id: "m9" });
     expect(fieldOpenItems(next.provenance)).toContainEqual({ field: "wc_experience_mod", label: FIELD_LABELS.wc_experience_mod, reason: "Prospect to provide" });
   });
 

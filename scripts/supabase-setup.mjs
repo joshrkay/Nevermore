@@ -17,22 +17,28 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  advisorSql, authConfigPatch, checkSecrets, envFileLine, EXPIRY_SCHEDULE_SQL, EXTENSIONS_SQL, FUNCTIONS, functionScheduleSql,
-  interpretChecks, isProjectRef, parseEnvFile, publicKeyFrom, RETENTION_SCHEDULE_SQL, rowsFrom, SCHEDULED_FUNCTIONS, serviceRoleKeyFrom,
-  setupComplete, STATUS_QUERIES, vaultSecretSql,
+  advisorSql, APPLIED_MIGRATIONS_SQL, authConfigPatch, checkSecrets, cliCommands, DOCKER_NEEDED, envFileLine, EXPIRY_SCHEDULE_SQL,
+  EXTENSIONS_SQL, FUNCTIONS, functionScheduleSql, interpretChecks, isProjectRef, migrationVersions, newMigrations, parseCliVersion,
+  parseEnvFile, publicKeyFrom, resendKeyVerdict, RETENTION_SCHEDULE_SQL, rowsFrom, SCHEDULED_FUNCTIONS, serviceRoleKeyFrom,
+  setupComplete, smtpKeyNote, STATUS_QUERIES, summaryLines, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Overridable so the script can be exercised against stand-ins; real runs leave these unset.
 const API_URL = process.env.SETUP_API_URL ?? "https://api.supabase.com";
 const SUPABASE_BIN = process.env.SETUP_SUPABASE_BIN ?? "supabase";
+const DOCKER_BIN = process.env.SETUP_DOCKER_BIN ?? "docker";
+const RESEND_URL = process.env.SETUP_RESEND_URL ?? "https://api.resend.com";
 
 const USAGE = `Usage: SUPABASE_ACCESS_TOKEN=... node scripts/supabase-setup.mjs --project-ref <ref> [options]
 
   --check                 Only check the project; change nothing
   --grant-advisor <email> Give an existing account the advisor role, then check
   --secrets-file <path>   Function secrets (default supabase/.env.production; see supabase/env.production.example)
-  --yes                   Don't ask before changing the project`;
+  --yes                   Don't ask before changing the project
+
+Needs the Supabase CLI (3.x; 2.x still works) and, to change the project, Docker running: the CLI bundles the
+functions with it.`;
 
 class StepError extends Error {}
 
@@ -102,6 +108,32 @@ function parseJson(text) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
+/** Whether the Docker daemon answers. `functions deploy` bundles with it (DOCKER_NEEDED says why). */
+function dockerRunning() {
+  const r = spawnSync(DOCKER_BIN, ["info"], { stdio: "ignore", timeout: 30_000 });
+  return !r.error && r.status === 0;
+}
+
+// ---- Resend ------------------------------------------------------------------------------------
+
+/**
+ * Tries RESEND_API_KEY on Resend with an empty email, which Resend refuses after reading the key, so nothing is sent
+ * (resendKeyVerdict reads the answer). Only the status and Resend's error code are kept: never the key.
+ */
+async function tryResendKey(key) {
+  try {
+    const res = await fetch(`${RESEND_URL}/emails`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(20_000),
+    });
+    return resendKeyVerdict({ status: res.status, name: parseJson(await res.text())?.name });
+  } catch {
+    return resendKeyVerdict({ status: 0 });
+  }
+}
+
 // ---- Steps -------------------------------------------------------------------------------------
 
 async function apiKeys(call, ref) {
@@ -123,20 +155,46 @@ async function runSql(call, ref, query) {
   return await call("POST", `/v1/projects/${ref}/database/query`, { query });
 }
 
+/** The applied migration versions, [] on a project that has none yet, or null when they can't be read. */
+async function appliedMigrations(call, ref) {
+  const res = await runSql(call, ref, APPLIED_MIGRATIONS_SQL);
+  if (res.ok) return migrationVersions(rowsFrom(res.body));
+  // A new project has no migration history table until the first push.
+  return /does not exist/i.test(String(res.message ?? "")) ? [] : null;
+}
+
 /** Writes the secrets to a private temporary file for `supabase secrets set`, and removes it afterwards. */
-function setSecrets(ref, secrets) {
+function setSecrets(cli, secrets) {
   const dir = mkdtempSync(path.join(tmpdir(), "supabase-setup-"));
   const file = path.join(dir, "secrets.env");
   try {
     const lines = Object.entries(secrets).map(([name, value]) => envFileLine(name, value));
     writeFileSync(file, `${lines.join("\n")}\n`, { mode: 0o600 });
-    return cliInteractive(["secrets", "set", "--env-file", file, "--project-ref", ref]);
+    return cliInteractive(cli.secretsSet(file));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-async function setup(call, ref, secretsFile, env) {
+/** Prints what the setup applied, set and deployed (secret names only). */
+function printSummary(title, done) {
+  step(title);
+  for (const line of summaryLines(done)) say(`  ${line}`);
+}
+
+/** Runs the setup steps, then prints the summary; when a step fails, prints what was done before it and stops. */
+async function setup(call, ref, secretsFile, env, cli) {
+  const done = { migrations: undefined, secrets: [], functions: [] };
+  try {
+    await setupSteps(call, ref, secretsFile, env, cli, done);
+  } catch (e) {
+    if (e instanceof StepError) printSummary("Done before it stopped", done);
+    throw e;
+  }
+  printSummary("Summary", done);
+}
+
+async function setupSteps(call, ref, secretsFile, env, cli, done) {
   // First, because it needs only the Management API: a failure in a later step (database password,
   // migration, Docker) must not leave the Site URL at Supabase's default, which breaks every sign-up link.
   step("Auth: guest sign-in, email confirmation, Site URL and redirects, the sign-up, email-change and sign-in messages, sign-in email delivery");
@@ -151,12 +209,18 @@ async function setup(call, ref, secretsFile, env) {
     say(`  Updated: ${Object.keys(patch).filter((k) => k !== "smtp_pass").join(", ")}`);
   }
   for (const note of notes) say(`  Note: ${note}`);
+  const smtpNote = smtpKeyNote(current.body, patch, env.RESEND_API_KEY);
+  if (smtpNote) say(`  ${smtpNote}.`);
 
   step("Linking this folder to the project (the CLI may ask for the database password)");
-  if (!cliInteractive(["link", "--project-ref", ref])) fail("`supabase link` failed. Reset the database password in the dashboard (Project Settings → Database) if you don't have it, or set SUPABASE_DB_PASSWORD.");
+  if (!cliInteractive(cli.link)) fail("`supabase link` failed. Reset the database password in the dashboard (Project Settings → Database) if you don't have it, or set SUPABASE_DB_PASSWORD.");
 
   step("Applying database migrations");
-  if (!cliInteractive(["db", "push"])) fail("`supabase db push` failed; nothing after it was changed. Fix the error above and run the script again.");
+  const before = await appliedMigrations(call, ref);
+  if (!cliInteractive(cli.dbPush)) fail("`supabase db push` failed; nothing after it was changed. Fix the error above and run the script again.");
+  const after = await appliedMigrations(call, ref);
+  const localFiles = readdirSync(path.join(ROOT, "supabase", "migrations")).filter((f) => f.endsWith(".sql")).sort();
+  done.migrations = newMigrations(before, after, localFiles);
 
   step(`Setting function secrets from ${path.relative(ROOT, secretsFile)}`);
   const secrets = Object.fromEntries(Object.entries(env).filter(([, v]) => v.trim() !== ""));
@@ -165,11 +229,13 @@ async function setup(call, ref, secretsFile, env) {
     secrets.IP_HASH_SECRET = randomBytes(32).toString("hex");
     say("  Generated IP_HASH_SECRET (used to hash caller addresses for the AI limits).");
   }
-  if (!setSecrets(ref, secrets)) fail("`supabase secrets set` failed.");
+  if (!setSecrets(cli, secrets)) fail("`supabase secrets set` failed.");
+  done.secrets = Object.keys(secrets);
 
   for (const fn of FUNCTIONS) {
     step(`Deploying ${fn}`);
-    if (!cliInteractive(["functions", "deploy", fn, "--project-ref", ref])) fail(`Deploying ${fn} failed. If the CLI asked for Docker, update it or run \`supabase functions deploy ${fn} --use-api --project-ref ${ref}\`, then run this again.`);
+    if (!cliInteractive(cli.deploy(fn))) fail(`Deploying ${fn} failed. Check Docker is still running (the CLI bundles the functions with it), then run this again.`);
+    done.functions.push(fn);
   }
 
   step("Schedules: pg_cron, pg_net, the service-role key in Vault, dispatch-outbox every minute, purge-intakes hourly, ops-monitor every five minutes, draft expiry hourly and retention daily");
@@ -202,7 +268,7 @@ async function grantAdvisor(call, ref, email) {
   else say("  They already had it.");
 }
 
-async function check(call, ref, appBaseUrl) {
+async function check(call, ref, appBaseUrl, resend) {
   step("Checking the project");
   const status = {};
   for (const [name, query] of Object.entries(STATUS_QUERIES)) {
@@ -245,6 +311,7 @@ async function check(call, ref, appBaseUrl) {
     authConfig: authConfigRes.ok ? authConfigRes.body : null,
     functions,
     secretNames: await secretNames(call, ref),
+    resend,
   }, { localMigrations, appBaseUrl });
 
   for (const c of checks) say(`  ${c.ok ? "✓" : c.required ? "✗" : "…"} ${c.name}: ${c.detail}`);
@@ -277,6 +344,11 @@ async function main() {
   const secretsFile = path.resolve(ROOT, opts["secrets-file"]);
   // --check reads the file too when it is there, to compare the auth Site URL with APP_BASE_URL.
   const env = existsSync(secretsFile) ? parseEnvFile(readFileSync(secretsFile, "utf8")) : null;
+  // Tried once, before anything changes, and reported again with the checks. Not with whitespace in it: checkSecrets
+  // stops the setup on that, and the check would only say Resend refused it.
+  const resendKey = env?.RESEND_API_KEY ?? "";
+  const resend = resendKey.trim() && !/\s/.test(resendKey) && !opts["grant-advisor"] ? await tryResendKey(resendKey) : undefined;
+  let version = null;
   if (writes && !opts["grant-advisor"]) {
     if (!env) {
       console.error(`No secrets file at ${path.relative(ROOT, secretsFile)}. Copy supabase/env.production.example there and fill it in.`);
@@ -290,7 +362,17 @@ async function main() {
       try { envFileLine(name, value); } catch (e) { errors.push(e.message); }
     }
     if (errors.length > 0) { for (const e of errors) console.error(`✗ ${e}`); return 2; }
-    if (!cliCapture(["--version"])) { console.error(`The Supabase CLI isn't installed (\`${SUPABASE_BIN} --version\` failed). See docs/SUPABASE_SETUP.md.`); return 2; }
+    // Everything the run needs on this machine is checked now, so a missing piece stops it before any change
+    // rather than partway (QA H3).
+    const versionText = cliCapture(["--version"]);
+    if (!versionText) { console.error(`The Supabase CLI isn't installed (\`${SUPABASE_BIN} --version\` failed). See docs/SUPABASE_SETUP.md.`); return 2; }
+    version = parseCliVersion(versionText);
+    say(`Supabase CLI ${version ? version.join(".") : "(version unreadable; using the current CLI's flags)"}`);
+    if (!dockerRunning()) { console.error(`✗ ${DOCKER_NEEDED}`); return 2; }
+    // A refused key would be stored as the function secret and the SMTP password, and break every email (QA H5).
+    if (resend?.ok === false) { console.error(`✗ RESEND_API_KEY: ${resend.detail}. Nothing was changed.`); return 2; }
+    if (resend?.ok === null) say(`Warning: RESEND_API_KEY: ${resend.detail}. Emails fail if it is wrong; run --check once Resend answers.`);
+    else if (resend?.ok) say("RESEND_API_KEY: Resend accepted it.");
 
     if (!opts.yes) {
       say(`\nThis applies migrations, sets secrets, deploys ${FUNCTIONS.join(", ")}, changes auth settings and schedules email delivery, deletions, retention and alerts on ${ref}.`);
@@ -299,12 +381,12 @@ async function main() {
       rl.close();
       if (answer !== ref) { say("Stopped; nothing was changed."); return 1; }
     }
-    await setup(call, ref, secretsFile, env);
+    await setup(call, ref, secretsFile, env, cliCommands(version, ref));
   } else if (writes) {
     await grantAdvisor(call, ref, opts["grant-advisor"]);
   }
 
-  const checks = await check(call, ref, env?.APP_BASE_URL?.trim() || null);
+  const checks = await check(call, ref, env?.APP_BASE_URL?.trim() || null, resend);
   if (setupComplete(checks)) {
     say("\nThe project is set up. Items marked … are optional to-dos.");
     return 0;

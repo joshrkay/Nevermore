@@ -266,6 +266,39 @@ describe("ReckoningTab certification", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
+  // QA F2: the database refused a guest's certification and the page said only "We couldn't save your submission".
+  it("says certifying needs a verified email when that is why it was refused, and offers the verification there", async () => {
+    auth.requestEmailCode = vi.fn().mockResolvedValue({ error: null, emailInUse: false });
+    onSubmit.mockResolvedValue({ message: "Certifying needs a verified email. Verify your email first, then certify again.", verifyEmail: true });
+    mount();
+    checkAll();
+    fillSigner();
+    sign();
+    fireEvent.click(submitButton());
+    const alert = await screen.findByRole("alert", { name: "Submission not saved" });
+    expect(alert).toHaveTextContent("Verify your email first, then certify again.");
+    expect(screen.getByRole("heading", { name: "Verify your email to certify" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Work email"), { target: { value: "jo@acme.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+    await waitFor(() => expect(auth.requestEmailCode).toHaveBeenCalledWith("jo@acme.com"));
+  });
+
+  it("logs a save that threw as one line with an error code, and shows the prospect that code", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    onSubmit.mockRejectedValue({ code: "XX000", message: "internal error" });
+    mount();
+    checkAll();
+    fillSigner();
+    sign();
+    fireEvent.click(submitButton());
+    const alert = await screen.findByRole("alert", { name: "Submission not saved" });
+    const errorCode = /error code ([A-Z]{8})/.exec(alert.textContent ?? "")?.[1];
+    expect(errorCode).toBeDefined();
+    expect(consoleError).toHaveBeenCalledWith(`Failed to submit session (error code ${errorCode}): XX000: internal error`);
+    expect(screen.queryByRole("heading", { name: "Verify your email to certify" })).not.toBeInTheDocument();
+    consoleError.mockRestore();
+  });
+
   it("passes the signed answers to the save, and doesn't confirm if they changed while it was pending", async () => {
     let finish!: (ok: boolean) => void;
     onSubmit.mockImplementation(() => new Promise<boolean>((r) => { finish = r; }));

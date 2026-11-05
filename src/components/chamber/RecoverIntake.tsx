@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { authRateLimit, authRateLimitMessage } from "@/data/authRateLimit";
+import { authCodeFailureMessage } from "@/lib/authCodeFailure";
 
 const inputClass =
   "w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors";
@@ -31,8 +31,7 @@ const RecoverIntake = ({ idPrefix = "recover" }: { idPrefix?: string }) => {
     const { error } = await requestSignInCode(address);
     setBusy(false);
     if (error) {
-      const limit = authRateLimit(error);
-      setMessage(limit ? authRateLimitMessage(limit) : "We couldn't send a code just now. Check the address and try again.");
+      setMessage(authCodeFailureMessage(error, "send", "sign_in"));
       return;
     }
     setSentTo(address);
@@ -44,7 +43,7 @@ const RecoverIntake = ({ idPrefix = "recover" }: { idPrefix?: string }) => {
     setMessage(null);
     const { error } = await verifySignInCode(sentTo, code.trim());
     setBusy(false);
-    if (error) setMessage("That code didn't work. Check it and try again, or send a new one.");
+    if (error) setMessage(authCodeFailureMessage(error, "check", "sign_in"));
   };
 
   return (

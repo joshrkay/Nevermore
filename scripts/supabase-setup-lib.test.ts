@@ -2,16 +2,16 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, FUNCTIONS, functionScheduleSql, interpretChecks,
-  MIN_AUTH_EMAILS_PER_HOUR, RETENTION_SCHEDULE_SQL, SCHEDULED_FUNCTIONS,
-  isProjectRef, parseEnvFile, parseSender, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete,
+  advisorSql, authConfigPatch, authUrlProblems, checkSecrets, cliCommands, cronScheduleSql, envFileLine, EXPIRY_SCHEDULE_SQL, FUNCTIONS, functionScheduleSql, interpretChecks,
+  MIN_AUTH_EMAILS_PER_HOUR, migrationVersions, newMigrations, parseCliVersion, resendKeyVerdict, RETENTION_SCHEDULE_SQL, SCHEDULED_FUNCTIONS,
+  isProjectRef, parseEnvFile, parseSender, publicKeyFrom, rowsFrom, serviceRoleKeyFrom, setupComplete, smtpKeyNote, summaryLines,
   sqlLiteral, vaultSecretSql,
 } from "./supabase-setup-lib.mjs";
 
 const REF = "dvfwrjpkltqdkfudbahe";
 
 const goodEnv = {
-  LOVABLE_API_KEY: "lov_key",
+  ANTHROPIC_API_KEY: "sk-ant-key",
   APP_BASE_URL: "https://nevermorepeo.com",
   RESEND_API_KEY: "re_key",
   EMAIL_FROM: "Edgar Allan Advisory <intake@mail.example.com>",
@@ -57,11 +57,21 @@ describe("checkSecrets", () => {
     expect(checkSecrets({ ...goodEnv, SUPABASE_SERVICE_ROLE_KEY: "x" }).errors[0]).toMatch(/SUPABASE_SERVICE_ROLE_KEY/);
   });
 
-  it("needs the key for the chosen AI provider", () => {
-    expect(checkSecrets({ ...goodEnv, LOVABLE_API_KEY: "" }).errors[0]).toMatch(/LOVABLE_API_KEY/);
-    expect(checkSecrets({ ...goodEnv, AI_PROVIDER: "anthropic" }).errors[0]).toMatch(/ANTHROPIC_API_KEY/);
-    expect(checkSecrets({ ...goodEnv, AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk" }).errors).toEqual([]);
-    expect(checkSecrets({ ...goodEnv, AI_PROVIDER: "openai" }).errors[0]).toMatch(/AI_PROVIDER/);
+  // Decision D11: Anthropic is the only AI provider.
+  it("needs ANTHROPIC_API_KEY, and refuses any AI_PROVIDER but anthropic", () => {
+    expect(checkSecrets({ ...goodEnv, ANTHROPIC_API_KEY: "" }).errors).toEqual(["ANTHROPIC_API_KEY is required (Anthropic is the only AI provider)"]);
+    expect(checkSecrets({ ...goodEnv, AI_PROVIDER: "anthropic" }).errors).toEqual([]);
+    for (const provider of ["openai", "lovable"]) {
+      expect(checkSecrets({ ...goodEnv, AI_PROVIDER: provider }).errors).toEqual([expect.stringMatching(/^AI_PROVIDER must be "anthropic" or unset/)]);
+    }
+  });
+
+  it("says a leftover LOVABLE_API_KEY is unused, without stopping, and doesn't take it for the AI key", () => {
+    const { errors, warnings } = checkSecrets({ ...goodEnv, LOVABLE_API_KEY: "lov_key" });
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([expect.stringMatching(/^LOVABLE_API_KEY is no longer used/)]);
+    const { ANTHROPIC_API_KEY: _ant, ...lovableOnly } = goodEnv;
+    expect(checkSecrets({ ...lovableOnly, LOVABLE_API_KEY: "lov_key" }).errors).toEqual(["ANTHROPIC_API_KEY is required (Anthropic is the only AI provider)"]);
   });
 
   it("needs APP_BASE_URL as an https origin", () => {
@@ -74,8 +84,8 @@ describe("checkSecrets", () => {
   it("reads the template as a valid file that only lacks its keys", () => {
     const template = parseEnvFile(readFileSync(path.resolve(__dirname, "../supabase/env.production.example"), "utf8"));
     const { errors, warnings } = checkSecrets(template);
-    expect(errors).toEqual(["LOVABLE_API_KEY is required (or set AI_PROVIDER=anthropic and ANTHROPIC_API_KEY)"]);
-    // Emails stay queued, and uploads are held until a malware scanner is chosen.
+    expect(errors).toEqual(["ANTHROPIC_API_KEY is required (Anthropic is the only AI provider)"]);
+    // Emails stay queued, and uploads are refused until a malware scanner is set.
     expect(warnings).toHaveLength(2);
   });
 
@@ -86,7 +96,24 @@ describe("checkSecrets", () => {
     expect(warnings[0]).toMatch(/RESEND_WEBHOOK_SECRET/);
     expect(warnings[0]).toMatch(/Bounces and spam complaints/);
     // Not a second warning on top of "emails stay queued" when sending itself is not set up.
-    expect(checkSecrets({ LOVABLE_API_KEY: "k", APP_BASE_URL: "https://example.com", MALWARE_SCANNER: "clamav", CLAMAV_HOST: "h" }).warnings).toHaveLength(1);
+    expect(checkSecrets({ ANTHROPIC_API_KEY: "k", APP_BASE_URL: "https://example.com", MALWARE_SCANNER: "clamav", CLAMAV_HOST: "h" }).warnings).toHaveLength(1);
+  });
+
+  it("stops on a key with something pasted after it, which would be stored whole and refused on every call", () => {
+    // The QA outage: a Resend key that Resend refused. A comment after the value is part of the value in this file.
+    expect(checkSecrets({ ...goodEnv, RESEND_API_KEY: "re_key # prod" }).errors).toEqual([expect.stringMatching(/^RESEND_API_KEY has a space/)]);
+    expect(checkSecrets({ ...goodEnv, RESEND_API_KEY: "re_key " }).errors).toEqual([expect.stringMatching(/^RESEND_API_KEY has a space/)]);
+    expect(checkSecrets({ ...goodEnv, AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk-ant key" }).errors).toEqual([expect.stringMatching(/^ANTHROPIC_API_KEY has a space/)]);
+    expect(checkSecrets({ ...goodEnv, RESEND_WEBHOOK_SECRET: "whsec_a\tb" }).errors).toEqual([expect.stringMatching(/^RESEND_WEBHOOK_SECRET/)]);
+    // Text values may hold spaces.
+    expect(checkSecrets({ ...goodEnv, PROSPECT_RESPONSE_TIME: "two business days" }).errors).toEqual([]);
+  });
+
+  it("warns, without stopping, when RESEND_API_KEY doesn't look like a Resend key; Resend itself has the last word", () => {
+    const { errors, warnings } = checkSecrets({ ...goodEnv, RESEND_API_KEY: "sk_live_123" });
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([expect.stringMatching(/doesn't look like a Resend API key/)]);
+    expect(checkSecrets({ ...goodEnv, RESEND_API_KEY: "re_AbC_123" }).warnings).toEqual([]);
   });
 
   it("lists the webhook function among those it deploys and checks", () => {
@@ -97,10 +124,14 @@ describe("checkSecrets", () => {
     expect(FUNCTIONS).toEqual(expect.arrayContaining(["document-upload", "document-scan"]));
   });
 
-  it("checks the malware scanner's settings: unset holds uploads, an incomplete one stops the setup", () => {
+  it("checks the malware scanner's settings: unset refuses uploads, an incomplete one stops the setup", () => {
     const base = { ...goodEnv };
     delete (base as Record<string, string>).MALWARE_SCANNER;
-    expect(checkSecrets(base).warnings.some((w) => /Uploads are held/.test(w))).toBe(true);
+    // A warning, not a stop: the scanner is the owner's choice, and the rest of the setup shouldn't wait for it.
+    expect(checkSecrets(base).errors).toEqual([]);
+    expect(checkSecrets(base).warnings.some((w) => /census included, are refused until MALWARE_SCANNER is set/.test(w))).toBe(true);
+    expect(checkSecrets(base).warnings.some((w) => /or none on this/.test(w))).toBe(false);
+    expect(checkSecrets({ ...base, APP_ENV: "staging" }).warnings.some((w) => /or none on this staging project/.test(w))).toBe(true);
     expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "clamscan" }).errors).toEqual([expect.stringMatching(/clamav, http or none/)]);
     expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "clamav", CLAMAV_HOST: "" }).errors).toEqual([expect.stringMatching(/CLAMAV_HOST/)]);
     expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "clamav", CLAMAV_HOST: "scan.example.com" }).errors).toEqual([]);
@@ -108,11 +139,37 @@ describe("checkSecrets", () => {
       .toEqual([expect.stringMatching(/MALWARE_SCANNER_TOKEN/)]);
     expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "http", MALWARE_SCANNER_URL: "http://scan.example.com", MALWARE_SCANNER_TOKEN: "t" }).errors)
       .toEqual([expect.stringMatching(/https/)]);
-    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none" }).warnings.some((w) => /not scanned/.test(w))).toBe(true);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none", APP_ENV: "demo" }).warnings.some((w) => /not scanned/.test(w))).toBe(true);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none", APP_ENV: "demo" }).errors).toEqual([]);
+  });
+
+  // D13: production scans with Scanii (ADR 0002). Its key and secret are HTTP Basic auth's user and password.
+  it("needs Scanii's key and secret with MALWARE_SCANNER=scanii, and an https SCANII_API_URL when one is set", () => {
+    const scanii = { ...goodEnv, MALWARE_SCANNER: "scanii", SCANII_API_KEY: "0123abcd", SCANII_API_SECRET: "s3cret" };
+    expect(checkSecrets(scanii)).toMatchObject({ errors: [] });
+    expect(checkSecrets({ ...scanii, MALWARE_SCANNER: " Scanii " }).errors).toEqual([]);
+    expect(checkSecrets({ ...scanii, SCANII_API_SECRET: "" }).errors).toEqual([expect.stringMatching(/SCANII_API_KEY and SCANII_API_SECRET are required/)]);
+    expect(checkSecrets({ ...scanii, SCANII_API_KEY: "" }).errors).toEqual([expect.stringMatching(/SCANII_API_KEY and SCANII_API_SECRET are required/)]);
+    expect(checkSecrets({ ...scanii, SCANII_API_KEY: "ab:cd" }).errors).toEqual([expect.stringMatching(/can't hold a colon/)]);
+    expect(checkSecrets({ ...scanii, SCANII_API_URL: "http://api-eu1.scanii.com" }).errors).toEqual([expect.stringMatching(/SCANII_API_URL must be an https/)]);
+    expect(checkSecrets({ ...scanii, SCANII_API_URL: "https://api-eu1.scanii.com" }).errors).toEqual([]);
+    // A secret with a space in it is a secret with something pasted after it (QA H5).
+    expect(checkSecrets({ ...scanii, SCANII_API_SECRET: "s3cret # prod" }).errors).toEqual([expect.stringMatching(/^SCANII_API_SECRET has a space/)]);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "clamscan" }).errors).toEqual([expect.stringMatching(/scanii, clamav, http or none/)]);
+  });
+
+  // QA H4, ADR 0002: production never runs unscanned, and the functions won't honour none there.
+  it("stops on MALWARE_SCANNER=none unless APP_ENV names a non-production project, and on an APP_ENV it doesn't know", () => {
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none" }).errors).toEqual([expect.stringMatching(/MALWARE_SCANNER=none is allowed only when APP_ENV is development, demo, staging.*unset \(production\)/)]);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none", APP_ENV: "production" }).errors).toEqual([expect.stringMatching(/"production"/)]);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none", APP_ENV: " Staging " }).errors).toEqual([]);
+    const typo = checkSecrets({ ...goodEnv, APP_ENV: "prod" }).errors;
+    expect(typo).toEqual([expect.stringMatching(/APP_ENV must be development, demo, staging, production or unset/)]);
+    expect(checkSecrets({ ...goodEnv, APP_ENV: "production" }).errors).toEqual([]);
   });
 
     it("warns, without stopping, when email secrets are missing", () => {
-    const { errors, warnings } = checkSecrets({ LOVABLE_API_KEY: "k", APP_BASE_URL: "https://example.com" });
+    const { errors, warnings } = checkSecrets({ ANTHROPIC_API_KEY: "k", APP_BASE_URL: "https://example.com" });
     expect(errors).toEqual([]);
     expect(warnings[0]).toMatch(/RESEND_API_KEY, EMAIL_FROM/);
   });
@@ -255,6 +312,117 @@ describe("authConfigPatch", () => {
   });
 });
 
+describe("smtpKeyNote", () => {
+  const resendSmtp = { smtp_host: "smtp.resend.com" };
+
+  it("says the key was set when Supabase doesn't return the stored password", () => {
+    const { patch } = authConfigPatch({}, goodEnv);
+    expect(smtpKeyNote({}, patch, "re_key")).toMatch(/is set to RESEND_API_KEY \(Supabase doesn't return the stored one/);
+    // A masked value can't be compared either.
+    expect(smtpKeyNote({ ...resendSmtp, smtp_pass: "********" }, patch, "re_key")).toMatch(/is set to RESEND_API_KEY/);
+  });
+
+  it("compares a readable password with the key, and says when it replaced a different one", () => {
+    const { patch } = authConfigPatch(resendSmtp, goodEnv);
+    expect(smtpKeyNote({ ...resendSmtp, smtp_pass: "re_key" }, patch, "re_key")).toBe("Supabase Auth's SMTP password is RESEND_API_KEY");
+    expect(smtpKeyNote({ ...resendSmtp, smtp_pass: "re_old" }, patch, "re_key")).toMatch(/was a different Resend key; it now uses RESEND_API_KEY/);
+  });
+
+  it("reminds that it must match when the setup can't set it (no sender), and warns when it can see it differs", () => {
+    const noSender = { ...goodEnv, EMAIL_FROM: "" };
+    const { patch } = authConfigPatch(resendSmtp, noSender);
+    expect(patch).not.toHaveProperty("smtp_pass");
+    expect(smtpKeyNote(resendSmtp, patch, "re_key")).toMatch(/couldn't be read: it must be RESEND_API_KEY/);
+    expect(smtpKeyNote({ ...resendSmtp, smtp_pass: "re_old" }, patch, "re_key")).toMatch(/different Resend key from RESEND_API_KEY/);
+    expect(smtpKeyNote({ ...resendSmtp, smtp_pass: "re_key" }, patch, "re_key")).toBe("Supabase Auth's SMTP password is RESEND_API_KEY");
+  });
+
+  it("has nothing to say without a Resend key or for another provider's SMTP, and never repeats a key", () => {
+    expect(smtpKeyNote({}, {}, "")).toBeNull();
+    const other = { smtp_host: "smtp.sendgrid.net", smtp_pass: "SG.secret" };
+    expect(smtpKeyNote(other, authConfigPatch(other, goodEnv).patch, "re_key")).toBeNull();
+    for (const note of [smtpKeyNote({ ...resendSmtp, smtp_pass: "re_old" }, {}, "re_key"), smtpKeyNote({}, { smtp_pass: "re_key" }, "re_key")]) {
+      expect(note).not.toContain("re_key");
+      expect(note).not.toContain("re_old");
+    }
+  });
+});
+
+describe("the Supabase CLI", () => {
+  it("reads the version from `supabase --version`, whatever surrounds it", () => {
+    expect(parseCliVersion("3.0.0\n")).toEqual([3, 0, 0]);
+    expect(parseCliVersion("2.33.7\nA new version of Supabase CLI is available: v3.0.0")).toEqual([2, 33, 7]);
+    expect(parseCliVersion("")).toBeNull();
+    expect(parseCliVersion(null)).toBeNull();
+  });
+
+  it("pushes to the remote project with CLI 3, which targets the local database otherwise, and confirms every change", () => {
+    const cli = cliCommands([3, 0, 0], REF);
+    expect(cli.link).toEqual(["link", "--project-ref", REF]);
+    expect(cli.dbPush).toEqual(["db", "push", "--remote", "--yes"]);
+    expect(cli.secretsSet("/tmp/s.env")).toEqual(["secrets", "set", "--env-file", "/tmp/s.env", `--remote=${REF}`, "--yes"]);
+    // Bundled with Docker: Supabase's server-side bundler can't fetch document-extract's SheetJS import.
+    expect(cli.deploy("document-extract")).toEqual(["functions", "deploy", "document-extract", `--remote=${REF}`, "--yes"]);
+    expect(cli.deploy("document-extract")).not.toContain("--use-api");
+    // An unreadable version is taken as the current CLI.
+    expect(cliCommands(null, REF)).toEqual(expect.objectContaining({ dbPush: cli.dbPush }));
+  });
+
+  it("keeps CLI 2's calls", () => {
+    const cli = cliCommands([2, 33, 7], REF);
+    expect(cli.dbPush).toEqual(["db", "push"]);
+    expect(cli.secretsSet("/tmp/s.env")).toEqual(["secrets", "set", "--env-file", "/tmp/s.env", "--project-ref", REF]);
+    expect(cli.deploy("chamber-extract")).toEqual(["functions", "deploy", "chamber-extract", "--project-ref", REF]);
+  });
+});
+
+describe("resendKeyVerdict", () => {
+  it("takes Resend refusing the empty email as the key accepted", () => {
+    expect(resendKeyVerdict({ status: 422, name: "missing_required_field" })).toEqual({ ok: true, detail: "Resend accepted the key" });
+    expect(resendKeyVerdict({ status: 400, name: "validation_error" }).ok).toBe(true);
+  });
+
+  it("refuses a key Resend refuses, naming its code", () => {
+    const refused = resendKeyVerdict({ status: 401, name: "invalid_api_key" });
+    expect(refused.ok).toBe(false);
+    expect(refused.detail).toMatch(/^Resend refused the key \(401 invalid_api_key\): sign-in codes and every app email fail with it/);
+    expect(resendKeyVerdict({ status: 403, name: "restricted_api_key" }).ok).toBe(false);
+  });
+
+  it("leaves the key unverified when Resend can't say, and shows only a code-shaped name", () => {
+    expect(resendKeyVerdict({ status: 429, name: "rate_limit_exceeded" })).toEqual({ ok: null, detail: "Resend answered 429 rate_limit_exceeded, so the key wasn't verified" });
+    expect(resendKeyVerdict({ status: 0 })).toEqual({ ok: null, detail: "Resend couldn't be reached, so the key wasn't verified" });
+    expect(resendKeyVerdict({ status: 500, name: "Bearer re_secret <b>" }).detail).toBe("Resend answered 500, so the key wasn't verified");
+  });
+});
+
+describe("the summary", () => {
+  const files = ["20261001000000_a.sql", "20261002000000_b.sql", "20261003000000_c.sql"];
+
+  it("names the migration files the push applied", () => {
+    expect(migrationVersions([{ version: "20261001000000" }, { version: 20261002000000 }, { other: 1 }])).toEqual(["20261001000000", "20261002000000"]);
+    expect(newMigrations(["20261001000000"], ["20261001000000", "20261002000000", "20261003000000"], files)).toEqual(["20261002000000_b.sql", "20261003000000_c.sql"]);
+    expect(newMigrations([], ["20261001000000", "20269999000000"], files)).toEqual(["20261001000000_a.sql", "20269999000000"]);
+    expect(newMigrations(null, ["20261001000000"], files)).toBeNull();
+  });
+
+  it("lists migrations, secret names (sorted) and functions, and says what wasn't run or can't be known", () => {
+    expect(summaryLines({ migrations: ["20261002000000_b.sql"], secrets: ["RESEND_API_KEY", "APP_BASE_URL"], functions: ["chamber-extract"] })).toEqual([
+      "Migrations applied: 1 (20261002000000_b.sql)",
+      "Secrets set (names only): 2 (APP_BASE_URL, RESEND_API_KEY)",
+      "Functions deployed: 1 (chamber-extract)",
+    ]);
+    expect(summaryLines({ migrations: [], secrets: [], functions: [] })[0]).toBe("Migrations applied: none new (the project was up to date)");
+    expect(summaryLines({ migrations: null, secrets: [], functions: [] })[0]).toMatch(/couldn't be read/);
+    expect(summaryLines({ migrations: undefined, secrets: [], functions: [] })).toEqual(["Migrations applied: not run", "Secrets set (names only): none", "Functions deployed: none"]);
+  });
+
+  it("shortens a long migration list to the first and the last", () => {
+    const many = Array.from({ length: 12 }, (_, i) => `2026100${String(i).padStart(2, "0")}_m.sql`);
+    expect(summaryLines({ migrations: many, secrets: [], functions: [] })[0]).toBe(`Migrations applied: 12 (${many[0]} … ${many[11]})`);
+  });
+});
+
 describe("API keys", () => {
   const keys = [
     { name: "anon", api_key: "eyJanon", type: "legacy" },
@@ -352,7 +520,7 @@ describe("interpretChecks", () => {
       mailer_templates_confirmation_content: "{{ .Token }} {{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email",
     },
     functions: Object.fromEntries(FUNCTIONS.map((fn) => [fn, { status: 401, ourError: true }])),
-    secretNames: ["LOVABLE_API_KEY", "IP_HASH_SECRET", "APP_BASE_URL"],
+    secretNames: ["ANTHROPIC_API_KEY", "IP_HASH_SECRET", "APP_BASE_URL"],
   };
 
   it("passes a finished project, leaving emails and advisors as to-dos", () => {
@@ -360,6 +528,24 @@ describe("interpretChecks", () => {
     expect(setupComplete(checks)).toBe(true);
     expect(checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["Email secrets", "Engineering alerts", "Malware scanner", "Advisor accounts"]);
     expect(checks.find((c) => c.name === "Advisor accounts")?.detail).toContain("--grant-advisor");
+  });
+
+  // Decision D11: a project still holding only the Lovable key has Lenore and document reading unavailable.
+  it("fails a project whose secrets hold no ANTHROPIC_API_KEY, a leftover Lovable key included", () => {
+    const checks = interpretChecks({ ...allSet, secretNames: ["LOVABLE_API_KEY", "IP_HASH_SECRET", "APP_BASE_URL"] }, { localMigrations: 16 });
+    expect(setupComplete(checks)).toBe(false);
+    expect(checks.find((c) => c.name === "Function secrets")).toMatchObject({ ok: false, detail: "missing: ANTHROPIC_API_KEY" });
+  });
+
+  it("fails the setup on a Resend key Resend refused, lists an unverified one as a to-do, and says nothing without one", () => {
+    const refused = interpretChecks({ ...allSet, resend: resendKeyVerdict({ status: 401 }) }, { localMigrations: 16 });
+    expect(setupComplete(refused)).toBe(false);
+    expect(refused.find((c) => c.name === "Resend key")).toMatchObject({ ok: false, required: true });
+    const unverified = interpretChecks({ ...allSet, resend: resendKeyVerdict({ status: 0 }) }, { localMigrations: 16 });
+    expect(setupComplete(unverified)).toBe(true);
+    expect(unverified.find((c) => c.name === "Resend key")).toMatchObject({ ok: false, required: false });
+    expect(interpretChecks({ ...allSet, resend: resendKeyVerdict({ status: 422 }) }, { localMigrations: 16 }).find((c) => c.name === "Resend key")?.ok).toBe(true);
+    expect(interpretChecks(allSet, { localMigrations: 16 }).some((c) => c.name === "Resend key")).toBe(false);
   });
 
   it("fails an empty project on every required check", () => {
