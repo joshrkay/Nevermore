@@ -69,11 +69,11 @@ function functionWith(args: Record<string, unknown>) {
     }),
   };
   const deps: HandlerDeps = {
-    env: (name) => ({ SUPABASE_URL: "https://project.test", SUPABASE_ANON_KEY: "anon", SUPABASE_SERVICE_ROLE_KEY: "service", IP_HASH_SECRET: "ip", LOVABLE_API_KEY: "key" })[name],
+    env: (name) => ({ SUPABASE_URL: "https://project.test", SUPABASE_ANON_KEY: "anon", SUPABASE_SERVICE_ROLE_KEY: "service", IP_HASH_SECRET: "ip", ANTHROPIC_API_KEY: "key" })[name],
     createClient: () => client,
     fetch: vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      prompt = JSON.parse(init!.body as string).messages[1].content;
-      return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: JSON.stringify(args) } }] } }] }), { status: 200 });
+      prompt = JSON.parse(init!.body as string).messages[0].content;
+      return new Response(JSON.stringify({ stop_reason: "tool_use", content: [{ type: "tool_use", name: "extract_chamber_data", input: args }] }), { status: 200 });
     }) as unknown as typeof fetch,
     sleep: async () => {},
     now: () => 0,

@@ -10,14 +10,15 @@ const sections: TextSection[] = [
   { label: "Page 2", text: "Paid bi-weekly via ADP" },
 ];
 
-const gatewayReply = (args: unknown) =>
-  new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: JSON.stringify(args) } }] } }] }), { status: 200 });
+// Anthropic's Messages API answers with the forced tool's input (decision D11: the only provider).
+const anthropicReply = (input: unknown) =>
+  new Response(JSON.stringify({ stop_reason: "tool_use", content: [{ type: "tool_use", name: "report_document_fields", input }] }), { status: 200 });
 const providerError = (status: number, body = "provider says no") => new Response(body, { status });
 
 // Uses the real adapters, selected the way index.ts selects them; only the provider and the clock are fake.
 const setup = (opts: { env?: Record<string, string>; responses?: Array<Response | Error> } = {}) => {
-  const env: Record<string, string> = { LOVABLE_API_KEY: "lovable-key", ...opts.env };
-  const queue = [...(opts.responses ?? [gatewayReply({ fields: [] })])];
+  const env: Record<string, string> = { ANTHROPIC_API_KEY: "anthropic-key", ...opts.env };
+  const queue = [...(opts.responses ?? [anthropicReply({ fields: [] })])];
   const fetchFn = vi.fn(async (_url: string, _init?: RequestInit) => {
     const next = queue.shift();
     if (!next) throw new Error("fetch called more times than expected");
@@ -37,25 +38,25 @@ const setup = (opts: { env?: Record<string, string>; responses?: Array<Response 
 };
 
 describe("askForCandidates: the request", () => {
-  it("sends the document prompt, the numbered text in a quoted slot, and the report tool, with the gateway key", async () => {
+  it("sends the document prompt, the numbered text in a quoted slot, and the report tool to Anthropic, with its key", async () => {
     const t = setup();
     await askForCandidates(sections, t.deps);
     expect(t.fetchFn).toHaveBeenCalledTimes(1);
     const [url, init] = t.fetchFn.mock.calls[0];
-    expect(url).toBe("https://ai.gateway.lovable.dev/v1/chat/completions");
-    expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer lovable-key");
+    expect(url).toBe("https://api.anthropic.com/v1/messages");
+    expect((init?.headers as Record<string, string>)["x-api-key"]).toBe("anthropic-key");
     const sent = JSON.parse(init?.body as string);
-    expect(sent.messages[0]).toEqual({ role: "system", content: SYSTEM_PROMPT });
+    expect(sent.system).toBe(SYSTEM_PROMPT);
     // The quotes inside the document stay escaped, so the text reads as data, not instructions.
-    expect(sent.messages[1].content).toBe(`Document text: ${JSON.stringify(buildPromptText(sections))}`);
-    expect(sent.tools).toEqual([{ type: "function", function: REPORT_TOOL }]);
-    expect(sent.tool_choice).toEqual({ type: "function", function: { name: "report_document_fields" } });
-    expect(sent.model).toBe("google/gemini-3-flash-preview");
+    expect(sent.messages).toEqual([{ role: "user", content: `Document text: ${JSON.stringify(buildPromptText(sections))}` }]);
+    expect(sent.tools).toEqual([{ name: REPORT_TOOL.name, description: REPORT_TOOL.description, input_schema: REPORT_TOOL.parameters }]);
+    expect(sent.tool_choice).toEqual({ type: "tool", name: "report_document_fields" });
+    expect(sent.model).toBe("claude-haiku-5-5");
   });
 
-  it("goes to Anthropic when AI_PROVIDER says so, with room for a long list of fields", async () => {
+  it("goes to Anthropic with AI_PROVIDER saying so too, with room for a long list of fields", async () => {
     const t = setup({
-      env: { AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "anthropic-key" },
+      env: { AI_PROVIDER: "anthropic" },
       responses: [new Response(JSON.stringify({ content: [{ type: "tool_use", name: "report_document_fields", input: { fields: [{ field: "current_carrier", value: "Aetna", section: 1 }] } }] }), { status: 200 })],
     });
     const candidates = await askForCandidates(sections, t.deps);
@@ -72,7 +73,7 @@ describe("askForCandidates: the request", () => {
 describe("askForCandidates: the answer", () => {
   it("turns the model's fields into candidates that point at the page they came from", async () => {
     const t = setup({
-      responses: [gatewayReply({ fields: [
+      responses: [anthropicReply({ fields: [
         { field: "current_carrier", value: "Aetna", section: 1 },
         { field: "pay_frequency", value: "Bi-weekly", section: 2 },
         { field: "has_401k", value: "yes", section: 2 },
@@ -86,12 +87,12 @@ describe("askForCandidates: the answer", () => {
   });
 
   it("drops fields it never asked for, such as individual employee details", async () => {
-    const t = setup({ responses: [gatewayReply({ fields: [{ field: "ssn", value: "123-45-6789", section: 1 }, { field: "employees", value: "[...]", section: 1 }] })] });
+    const t = setup({ responses: [anthropicReply({ fields: [{ field: "ssn", value: "123-45-6789", section: 1 }, { field: "employees", value: "[...]", section: 1 }] })] });
     expect(await askForCandidates(sections, t.deps)).toEqual([]);
   });
 
   it("finds nothing, without an error, when the model made no tool call", async () => {
-    const t = setup({ responses: [new Response(JSON.stringify({ choices: [{ message: { content: "no facts here" } }] }), { status: 200 })] });
+    const t = setup({ responses: [new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: "no facts here" }] }), { status: 200 })] });
     expect(await askForCandidates(sections, t.deps)).toEqual([]);
     expect(t.logs).toEqual([]);
   });
@@ -99,7 +100,7 @@ describe("askForCandidates: the answer", () => {
 
 describe("askForCandidates: when the provider fails", () => {
   it("retries once on a provider 429 and then succeeds", async () => {
-    const t = setup({ responses: [providerError(429), gatewayReply({ fields: [{ field: "industry", value: "Retail", section: 1 }] })] });
+    const t = setup({ responses: [providerError(429), anthropicReply({ fields: [{ field: "industry", value: "Retail", section: 1 }] })] });
     expect(await askForCandidates(sections, t.deps)).toEqual([{ field: "industry", value: "Retail", location: "Page 1" }]);
     expect(t.fetchFn).toHaveBeenCalledTimes(2);
   });
@@ -107,7 +108,7 @@ describe("askForCandidates: when the provider fails", () => {
   it("treats a persistent provider rate limit like our own: the document stays ready to read later", async () => {
     const t = setup({ responses: [providerError(429), providerError(429)] });
     await expect(askForCandidates(sections, t.deps)).rejects.toBeInstanceOf(AiQuotaError);
-    expect(t.logs).toEqual(["AI_CALL_FAILED request=req-doc session=- provider=lovable kind=rate_limited status=429 attempts=2 latency_ms=0"]);
+    expect(t.logs).toEqual(["AI_CALL_FAILED request=req-doc session=- provider=anthropic kind=rate_limited status=429 attempts=2 latency_ms=0"]);
   });
 
   it("fails with a generic error, and neither logs nor throws the provider's body, which can echo the document", async () => {
@@ -117,7 +118,7 @@ describe("askForCandidates: when the provider fails", () => {
     expect(failure).toBeInstanceOf(Error);
     expect(failure).not.toBeInstanceOf(AiQuotaError);
     expect((failure as Error).message).toBe("AI extraction failed");
-    expect(t.logs).toEqual(["AI_CALL_FAILED request=req-doc session=- provider=lovable kind=provider_error status=500 attempts=2 latency_ms=0"]);
+    expect(t.logs).toEqual(["AI_CALL_FAILED request=req-doc session=- provider=anthropic kind=provider_error status=500 attempts=2 latency_ms=0"]);
     expect(t.logs.join("\n") + (failure as Error).message).not.toContain(leak);
   });
 
@@ -131,7 +132,7 @@ describe("askForCandidates: when the provider fails", () => {
   });
 
   it("fails when the model's arguments aren't what the tool asked for", async () => {
-    const t = setup({ responses: [new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: "[1,2]" } }] } }] }), { status: 200 })] });
+    const t = setup({ responses: [new Response(JSON.stringify({ stop_reason: "tool_use", content: [{ type: "tool_use", name: "report_document_fields", input: [1, 2] }] }), { status: 200 })] });
     const failure = await askForCandidates(sections, t.deps).catch((e) => e);
     expect(failure).toBeInstanceOf(AiCallError);
     expect(failure.code).toBe("invalid_response");
@@ -208,7 +209,7 @@ describe("askWithinBudget", () => {
   const allowed: AllowanceResult = { allowed: true };
 
   it("spends the budget first, then reads the document", async () => {
-    const t = setup({ responses: [gatewayReply({ fields: [{ field: "industry", value: "Retail", section: 1 }] })] });
+    const t = setup({ responses: [anthropicReply({ fields: [{ field: "industry", value: "Retail", section: 1 }] })] });
     const order: string[] = [];
     const checkBudget = vi.fn(async () => { order.push("budget"); return allowed; });
     const fetchFn = t.deps.model.fetch;

@@ -153,7 +153,7 @@ describe("failureLogLine", () => {
   });
 
   it("shows a dash when there was no HTTP status", () => {
-    const line = failureLogLine({ requestId: "r", provider: "lovable", result: { ...failed, kind: "timeout", httpStatus: null } });
+    const line = failureLogLine({ requestId: "r", provider: "anthropic", result: { ...failed, kind: "timeout", httpStatus: null } });
     expect(line).toContain("status=-");
   });
 

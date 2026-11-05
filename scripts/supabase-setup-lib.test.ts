@@ -11,7 +11,7 @@ import {
 const REF = "dvfwrjpkltqdkfudbahe";
 
 const goodEnv = {
-  LOVABLE_API_KEY: "lov_key",
+  ANTHROPIC_API_KEY: "sk-ant-key",
   APP_BASE_URL: "https://nevermorepeo.com",
   RESEND_API_KEY: "re_key",
   EMAIL_FROM: "Edgar Allan Advisory <intake@mail.example.com>",
@@ -57,11 +57,21 @@ describe("checkSecrets", () => {
     expect(checkSecrets({ ...goodEnv, SUPABASE_SERVICE_ROLE_KEY: "x" }).errors[0]).toMatch(/SUPABASE_SERVICE_ROLE_KEY/);
   });
 
-  it("needs the key for the chosen AI provider", () => {
-    expect(checkSecrets({ ...goodEnv, LOVABLE_API_KEY: "" }).errors[0]).toMatch(/LOVABLE_API_KEY/);
-    expect(checkSecrets({ ...goodEnv, AI_PROVIDER: "anthropic" }).errors[0]).toMatch(/ANTHROPIC_API_KEY/);
-    expect(checkSecrets({ ...goodEnv, AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk" }).errors).toEqual([]);
-    expect(checkSecrets({ ...goodEnv, AI_PROVIDER: "openai" }).errors[0]).toMatch(/AI_PROVIDER/);
+  // Decision D11: Anthropic is the only AI provider.
+  it("needs ANTHROPIC_API_KEY, and refuses any AI_PROVIDER but anthropic", () => {
+    expect(checkSecrets({ ...goodEnv, ANTHROPIC_API_KEY: "" }).errors).toEqual(["ANTHROPIC_API_KEY is required (Anthropic is the only AI provider)"]);
+    expect(checkSecrets({ ...goodEnv, AI_PROVIDER: "anthropic" }).errors).toEqual([]);
+    for (const provider of ["openai", "lovable"]) {
+      expect(checkSecrets({ ...goodEnv, AI_PROVIDER: provider }).errors).toEqual([expect.stringMatching(/^AI_PROVIDER must be "anthropic" or unset/)]);
+    }
+  });
+
+  it("says a leftover LOVABLE_API_KEY is unused, without stopping, and doesn't take it for the AI key", () => {
+    const { errors, warnings } = checkSecrets({ ...goodEnv, LOVABLE_API_KEY: "lov_key" });
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([expect.stringMatching(/^LOVABLE_API_KEY is no longer used/)]);
+    const { ANTHROPIC_API_KEY: _ant, ...lovableOnly } = goodEnv;
+    expect(checkSecrets({ ...lovableOnly, LOVABLE_API_KEY: "lov_key" }).errors).toEqual(["ANTHROPIC_API_KEY is required (Anthropic is the only AI provider)"]);
   });
 
   it("needs APP_BASE_URL as an https origin", () => {
@@ -74,8 +84,8 @@ describe("checkSecrets", () => {
   it("reads the template as a valid file that only lacks its keys", () => {
     const template = parseEnvFile(readFileSync(path.resolve(__dirname, "../supabase/env.production.example"), "utf8"));
     const { errors, warnings } = checkSecrets(template);
-    expect(errors).toEqual(["LOVABLE_API_KEY is required (or set AI_PROVIDER=anthropic and ANTHROPIC_API_KEY)"]);
-    // Emails stay queued, and uploads are held until a malware scanner is chosen.
+    expect(errors).toEqual(["ANTHROPIC_API_KEY is required (Anthropic is the only AI provider)"]);
+    // Emails stay queued, and uploads are refused until a malware scanner is set.
     expect(warnings).toHaveLength(2);
   });
 
@@ -86,7 +96,7 @@ describe("checkSecrets", () => {
     expect(warnings[0]).toMatch(/RESEND_WEBHOOK_SECRET/);
     expect(warnings[0]).toMatch(/Bounces and spam complaints/);
     // Not a second warning on top of "emails stay queued" when sending itself is not set up.
-    expect(checkSecrets({ LOVABLE_API_KEY: "k", APP_BASE_URL: "https://example.com", MALWARE_SCANNER: "clamav", CLAMAV_HOST: "h" }).warnings).toHaveLength(1);
+    expect(checkSecrets({ ANTHROPIC_API_KEY: "k", APP_BASE_URL: "https://example.com", MALWARE_SCANNER: "clamav", CLAMAV_HOST: "h" }).warnings).toHaveLength(1);
   });
 
   it("stops on a key with something pasted after it, which would be stored whole and refused on every call", () => {
@@ -159,7 +169,7 @@ describe("checkSecrets", () => {
   });
 
     it("warns, without stopping, when email secrets are missing", () => {
-    const { errors, warnings } = checkSecrets({ LOVABLE_API_KEY: "k", APP_BASE_URL: "https://example.com" });
+    const { errors, warnings } = checkSecrets({ ANTHROPIC_API_KEY: "k", APP_BASE_URL: "https://example.com" });
     expect(errors).toEqual([]);
     expect(warnings[0]).toMatch(/RESEND_API_KEY, EMAIL_FROM/);
   });
@@ -510,7 +520,7 @@ describe("interpretChecks", () => {
       mailer_templates_confirmation_content: "{{ .Token }} {{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email",
     },
     functions: Object.fromEntries(FUNCTIONS.map((fn) => [fn, { status: 401, ourError: true }])),
-    secretNames: ["LOVABLE_API_KEY", "IP_HASH_SECRET", "APP_BASE_URL"],
+    secretNames: ["ANTHROPIC_API_KEY", "IP_HASH_SECRET", "APP_BASE_URL"],
   };
 
   it("passes a finished project, leaving emails and advisors as to-dos", () => {
@@ -518,6 +528,13 @@ describe("interpretChecks", () => {
     expect(setupComplete(checks)).toBe(true);
     expect(checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["Email secrets", "Engineering alerts", "Malware scanner", "Advisor accounts"]);
     expect(checks.find((c) => c.name === "Advisor accounts")?.detail).toContain("--grant-advisor");
+  });
+
+  // Decision D11: a project still holding only the Lovable key has Lenore and document reading unavailable.
+  it("fails a project whose secrets hold no ANTHROPIC_API_KEY, a leftover Lovable key included", () => {
+    const checks = interpretChecks({ ...allSet, secretNames: ["LOVABLE_API_KEY", "IP_HASH_SECRET", "APP_BASE_URL"] }, { localMigrations: 16 });
+    expect(setupComplete(checks)).toBe(false);
+    expect(checks.find((c) => c.name === "Function secrets")).toMatchObject({ ok: false, detail: "missing: ANTHROPIC_API_KEY" });
   });
 
   it("fails the setup on a Resend key Resend refused, lists an unverified one as a to-do, and says nothing without one", () => {

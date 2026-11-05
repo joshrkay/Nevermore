@@ -14,7 +14,7 @@ const MIGRATIONS = MIGRATION_FILES.length;
 const VERSIONS = MIGRATION_FILES.map((f) => f.split("_")[0]);
 const SERVICE_KEY = "eyJservice-role-secret";
 const SECRETS = {
-  LOVABLE_API_KEY: "lov_secret_value",
+  ANTHROPIC_API_KEY: "sk-ant-secret-value",
   RESEND_API_KEY: "re_secret_value",
 };
 
@@ -154,7 +154,7 @@ beforeEach(async () => {
   chmodSync(path.join(dir, "docker"), 0o755);
   writeFileSync(path.join(dir, "secrets.env"), [
     "# test secrets",
-    `LOVABLE_API_KEY=${SECRETS.LOVABLE_API_KEY}`,
+    `ANTHROPIC_API_KEY=${SECRETS.ANTHROPIC_API_KEY}`,
     "APP_BASE_URL=https://app.example.com",
     `RESEND_API_KEY=${SECRETS.RESEND_API_KEY}`,
     'EMAIL_FROM="Edgar Allan Advisory <intake@mail.example.com>"',
@@ -211,13 +211,13 @@ describe("supabase-setup", () => {
 
     // The summary: every migration (a new project), the secret names (no values) and the functions.
     expect(out).toContain(`Migrations applied: ${MIGRATIONS} (${MIGRATION_FILES[0]} … ${MIGRATION_FILES[MIGRATIONS - 1]})`);
-    expect(out).toContain("Secrets set (names only): 9 (ADVISORY_NOTIFY_EMAIL, APP_BASE_URL, EMAIL_FROM, IP_HASH_SECRET, LOVABLE_API_KEY, PROSPECT_RESPONSE_TIME, RESEND_API_KEY, RESEND_WEBHOOK_SECRET, SUPPORT_EMAIL)");
+    expect(out).toContain("Secrets set (names only): 9 (ADVISORY_NOTIFY_EMAIL, ANTHROPIC_API_KEY, APP_BASE_URL, EMAIL_FROM, IP_HASH_SECRET, PROSPECT_RESPONSE_TIME, RESEND_API_KEY, RESEND_WEBHOOK_SECRET, SUPPORT_EMAIL)");
     expect(out).toContain("Functions deployed: 8 (chamber-extract, document-upload, document-extract, document-scan, dispatch-outbox, resend-webhook, purge-intakes, ops-monitor)");
 
     const secretsCall = cliCalls().find((c) => c.secrets);
     expect(secretsCall.mode).toBe(0o600);
     expect(existsSync(secretsCall.envFile)).toBe(false);
-    expect(secretsCall.secrets).toContain(`LOVABLE_API_KEY='${SECRETS.LOVABLE_API_KEY}'`);
+    expect(secretsCall.secrets).toContain(`ANTHROPIC_API_KEY='${SECRETS.ANTHROPIC_API_KEY}'`);
     expect(secretsCall.secrets).toContain("EMAIL_FROM='Edgar Allan Advisory <intake@mail.example.com>'");
     expect(secretsCall.secrets).not.toContain("AI_MODEL");
     const ipHashSecret = secretsCall.secrets.match(/IP_HASH_SECRET='([0-9a-f]{64})'/)?.[1];
@@ -236,7 +236,7 @@ describe("supabase-setup", () => {
     }
     expect(fake.queries.some((q) => q.includes("cron.schedule('run-retention'"))).toBe(true);
 
-    for (const secret of [SERVICE_KEY, SECRETS.LOVABLE_API_KEY, SECRETS.RESEND_API_KEY, ipHashSecret!, "sbp_token"]) {
+    for (const secret of [SERVICE_KEY, SECRETS.ANTHROPIC_API_KEY, SECRETS.RESEND_API_KEY, ipHashSecret!, "sbp_token"]) {
       expect(out).not.toContain(secret);
     }
   });
@@ -385,11 +385,11 @@ describe("supabase-setup", () => {
     const { code, out } = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"]);
 
     expect(code).toBe(2);
-    expect(out).toContain("LOVABLE_API_KEY is required");
+    expect(out).toContain("ANTHROPIC_API_KEY is required");
     expect(out).toContain("no path");
     expect(cliCalls()).toEqual([]);
 
-    writeFileSync(path.join(dir, "secrets.env"), `LOVABLE_API_KEY=k\nAPP_BASE_URL=https://app.example.com\nSUPPORT_EMAIL=it's $HOME\n`);
+    writeFileSync(path.join(dir, "secrets.env"), `ANTHROPIC_API_KEY=k\nAPP_BASE_URL=https://app.example.com\nSUPPORT_EMAIL=it's $HOME\n`);
     const unwritable = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"]);
     expect(unwritable.code).toBe(2);
     expect(unwritable.out).toContain("SUPPORT_EMAIL has both a single quote");

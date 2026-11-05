@@ -324,8 +324,8 @@ Lenore's reply is checked before it is sent (`guardReply` in `chamber-extract/re
 The extraction eval (`scripts/extraction-eval`) sends 13 synthetic transcripts through the path a chat message takes in production: the browser's redaction and context, the handler's prompt, the shared provider adapter, `shapeExtraction`, then `applyExtraction` as the Chamber merges a reply. It scores each asserted field's final value (strings ignoring case and surrounding space, lists as sets) and, where the fixture names one, its status (where it names none, a field left `conflicting` fails); fields that must stay empty; digits (an SSN) that must never be stored; and, where a turn names them, what Lenore's reply to it says (a reply check: each named pattern must match the model's own reply, cell `<fixture>/reply<turn>:<name>`; the function's fallback question, asked when the model gives none, fails it). Two fixtures check the census template rule (US-2.3d): `roster-in-chat`, where the prospect starts listing employees, and `roster-question`, where they ask how to send the list; Lenore's reply must name the template and the Upload tab. `two-short-answers` checks the QA F4 rule: after two short answers her reply still asks something and doesn't say the intake is finished (by the guard's own `CLAIMS_COMPLETE`), and fields the prospect never mentioned stay empty. It calls a real model, so it runs on demand and never in CI:
 
 ```sh
-LOVABLE_API_KEY=… npm run eval:extraction                            # the default provider
-AI_PROVIDER=anthropic ANTHROPIC_API_KEY=… npm run eval:extraction
+ANTHROPIC_API_KEY=… npm run eval:extraction                          # Anthropic, the only provider
+AI_MODEL=claude-other ANTHROPIC_API_KEY=… npm run eval:extraction    # another model
 npm run eval:extraction -- --only contradiction                      # one fixture
 npm run eval:extraction -- --update-baseline                         # record baseline.json
 ```

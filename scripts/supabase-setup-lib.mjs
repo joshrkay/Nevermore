@@ -55,10 +55,13 @@ export function checkSecrets(env) {
     if (name.startsWith(PLATFORM_PREFIX)) errors.push(`${name}: Supabase provides SUPABASE_* values itself; remove it from the file`);
   }
 
-  const provider = set("AI_PROVIDER") ? env.AI_PROVIDER : "lovable";
-  if (provider !== "lovable" && provider !== "anthropic") errors.push(`AI_PROVIDER must be "lovable" or "anthropic", not "${provider}"`);
-  else if (provider === "anthropic" && !set("ANTHROPIC_API_KEY")) errors.push("ANTHROPIC_API_KEY is required when AI_PROVIDER=anthropic");
-  else if (provider === "lovable" && !set("LOVABLE_API_KEY")) errors.push("LOVABLE_API_KEY is required (or set AI_PROVIDER=anthropic and ANTHROPIC_API_KEY)");
+  // Anthropic is the only AI provider (decision D11): the functions refuse any other AI_PROVIDER, and a leftover Lovable
+  // key does nothing.
+  if (set("AI_PROVIDER") && env.AI_PROVIDER.trim() !== "anthropic") {
+    errors.push(`AI_PROVIDER must be "anthropic" or unset (Anthropic is the only AI provider), not "${env.AI_PROVIDER}"`);
+  }
+  if (!set("ANTHROPIC_API_KEY")) errors.push("ANTHROPIC_API_KEY is required (Anthropic is the only AI provider)");
+  if (set("LOVABLE_API_KEY")) warnings.push("LOVABLE_API_KEY is no longer used (Anthropic is the only AI provider): delete it from the file, and from the project's secrets with `supabase secrets unset LOVABLE_API_KEY`");
 
   if (!set("APP_BASE_URL")) errors.push("APP_BASE_URL is required (the site's address, e.g. https://nevermorepeo.com)");
   else {
@@ -635,8 +638,9 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
   const names = seen.secretNames ?? null;
   if (names) {
     const missing = ["IP_HASH_SECRET", "APP_BASE_URL"].filter((n) => !names.includes(n));
-    if (!names.includes("LOVABLE_API_KEY") && !names.includes("ANTHROPIC_API_KEY")) missing.push("an AI provider key");
-    add("Function secrets", missing.length === 0, missing.length === 0 ? "AI key, IP_HASH_SECRET and APP_BASE_URL set" : `missing: ${missing.join(", ")}`);
+    // Anthropic is the only AI provider: a project that still holds only a Lovable key has Lenore unavailable.
+    if (!names.includes("ANTHROPIC_API_KEY")) missing.push("ANTHROPIC_API_KEY");
+    add("Function secrets", missing.length === 0, missing.length === 0 ? "ANTHROPIC_API_KEY, IP_HASH_SECRET and APP_BASE_URL set" : `missing: ${missing.join(", ")}`);
     const emailMissing = EMAIL_SECRETS.filter((n) => !names.includes(n));
     add("Email secrets", emailMissing.length === 0, emailMissing.length === 0 ? "all set" : `missing: ${emailMissing.join(", ")} (emails wait in the queue)`, false);
     const alerts = names.includes("ENGINEERING_ALERT_WEBHOOK_URL");

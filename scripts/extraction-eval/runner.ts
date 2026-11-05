@@ -158,7 +158,7 @@ export async function main(deps: MainDeps): Promise<number> {
   const connection = (deps.connect ?? connectProvider)(deps.env);
   if (!connection.ok) {
     log(`Cannot run the extraction eval: ${connection.problem}.`);
-    log("Set AI_PROVIDER (lovable, the default, or anthropic) and its key, LOVABLE_API_KEY or ANTHROPIC_API_KEY; AI_MODEL overrides the default model.");
+    log("Set ANTHROPIC_API_KEY (Anthropic is the only AI provider; AI_PROVIDER may be left unset); AI_MODEL overrides the default model.");
     return 1;
   }
 

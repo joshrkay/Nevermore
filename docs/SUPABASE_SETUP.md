@@ -209,9 +209,14 @@ Resend (`smtp.resend.com`). It leaves SMTP alone if another provider is already 
    cp supabase/env.production.example supabase/.env.production
    ```
 
-   Fill it in. `supabase/.env.production` is git-ignored. Required: an AI key (`LOVABLE_API_KEY`, or
-   `AI_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`) and `APP_BASE_URL`. Needed to accept
-   submissions: the email settings, with `EMAIL_FROM` on a domain verified in Resend.
+   Fill it in. `supabase/.env.production` is git-ignored. Required: `ANTHROPIC_API_KEY` (Anthropic
+   is the only AI provider, decision D11; `AI_PROVIDER` may stay empty or say `anthropic`, and
+   anything else stops the setup) and `APP_BASE_URL`. Needed to accept submissions: the email
+   settings, with `EMAIL_FROM` on a domain verified in Resend. A `LOVABLE_API_KEY` left in the file
+   from before is unused: the setup warns, and you can delete it here and from the project
+   (`supabase secrets unset LOVABLE_API_KEY`). `--check` fails a project whose secrets don't hold
+   `ANTHROPIC_API_KEY`, so a project still set up for the old Lovable gateway is caught before
+   Lenore and document reading go unavailable.
 
 ## Run it
 

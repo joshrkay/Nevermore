@@ -74,8 +74,8 @@ npm run test:e2e
 ```
 
 Playwright starts the gateway on port 54399 and a production build of the app (`vite build`, then
-`vite preview`) on 4180; `E2E_GATEWAY_PORT` and `E2E_APP_PORT` change them. `E2E_AI_PROVIDER`
-selects which AI provider the scripted fake answers as (`lovable`, the default, or `anthropic`).
+`vite preview`) on 4180; `E2E_GATEWAY_PORT` and `E2E_APP_PORT` change them. The scripted fake AI
+answers as Anthropic, the only AI provider.
 Locally it reuses a server already running on either port, so stop a stale one. A machine whose
 Chromium is not the build Playwright expects points `PLAYWRIGHT_CHROMIUM_EXECUTABLE` at its own.
 

@@ -18,11 +18,12 @@ const ENV: Record<string, string | undefined> = {
   SUPABASE_ANON_KEY: "anon-key",
   SUPABASE_SERVICE_ROLE_KEY: "service-key",
   IP_HASH_SECRET: "ip-secret",
-  LOVABLE_API_KEY: "lovable-key",
+  ANTHROPIC_API_KEY: "anthropic-key",
 };
 
-const gatewayReply = (args: Record<string, unknown>) =>
-  new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: JSON.stringify(args) } }] } }] }), { status: 200 });
+// Anthropic's Messages API answers with the forced tool's input (decision D11: the only provider).
+const anthropicReply = (input: Record<string, unknown>) =>
+  new Response(JSON.stringify({ stop_reason: "tool_use", content: [{ type: "tool_use", name: "report_document_fields", input }] }), { status: 200 });
 
 type Reader = (bytes: Uint8Array, fileName: string, ask: AskModel) => Promise<Outcome>;
 // A text document: the reader asks the model about its one section.
@@ -54,7 +55,7 @@ const setup = (opts: Setup = {}) => {
   const doc = opts.doc === undefined
     ? { id: DOC, user_id: USER, session_id: INTAKE, file_name: "benefits.pdf", storage_path: `${USER}/${INTAKE}/benefits.pdf`, size_bytes: 1000, status: "uploaded", category: "benefits_summary", file_sha256: null, scan_verdict: "clean" }
     : opts.doc;
-  const queue = [...(opts.responses ?? [gatewayReply({ fields: [{ field: "current_carrier", value: "Pinnacle Mutual", section: 1 }] })])];
+  const queue = [...(opts.responses ?? [anthropicReply({ fields: [{ field: "current_carrier", value: "Pinnacle Mutual", section: 1 }] })])];
   const fetchFn = vi.fn(async () => {
     steps.push("model");
     const next = queue.shift();
@@ -222,12 +223,12 @@ describe("document-extract handler: reading", () => {
     expect(t.updates[0]).toEqual({ status: "processing", processing_started_at: NOW });
     expect(t.event()).toMatchObject({
       outcome: "ok", document_status: "extracted", fields: ["current_carrier"],
-      provider: "lovable", model: "google/gemini-3-flash-preview", attempts: 1, latency_ms: 0,
+      provider: "anthropic", model: "claude-haiku-5-5", attempts: 1, latency_ms: 0,
     });
   });
 
   it("files a read with nothing in it as no_data", async () => {
-    const t = setup({ responses: [gatewayReply({ fields: [] })] });
+    const t = setup({ responses: [anthropicReply({ fields: [] })] });
     const { body } = await read(await handleDocumentRequest(post({ document_id: DOC }), t.deps));
     expect(body.status).toBe("no_data");
     expect(t.event()).toMatchObject({ outcome: "ok", document_status: "no_data", fields: [] });
@@ -246,7 +247,7 @@ describe("document-extract handler: reading later", () => {
   it.each([
     ["the caller's rate limit", 429, "rate_limited", { quota: { user: false } }],
     ["the daily ceiling", 503, "daily_cap", { quota: { global: false } }],
-    ["a missing provider key", 503, "unavailable", { env: { LOVABLE_API_KEY: undefined } }],
+    ["a missing provider key", 503, "unavailable", { env: { ANTHROPIC_API_KEY: undefined } }],
   ] as const)("%s: leaves the document ready to read again, answers %i %s, and never asks the model", async (_label, status, code, opts) => {
     const t = setup(opts);
     const { status: answered, body } = await read(await handleDocumentRequest(post({ document_id: DOC }), t.deps));
@@ -265,7 +266,7 @@ describe("document-extract handler: failed reads", () => {
     expect(status).toBe(200);
     expect(body).toEqual({ status: "failed", code: "provider_error", request_id: REQUEST });
     expect(t.finalStatus()).toBe("failed");
-    expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=${INTAKE} provider=lovable kind=provider_error status=500 attempts=2 latency_ms=0`]);
+    expect(t.logs).toEqual([`AI_CALL_FAILED request=${REQUEST} session=${INTAKE} provider=anthropic kind=provider_error status=500 attempts=2 latency_ms=0`]);
     expect(t.event()).toMatchObject({ outcome: "error", error_code: "provider_error", http_status: 200, document_status: "failed", attempts: 2 });
   });
 

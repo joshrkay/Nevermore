@@ -218,9 +218,9 @@ describe("runFixtures", () => {
 describe("connectProvider", () => {
   it("picks the provider and model chamber-extract would, without calling it", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const lovable = connectProvider((name) => ({ LOVABLE_API_KEY: "k" })[name]);
+    const plain = connectProvider((name) => ({ ANTHROPIC_API_KEY: "k" })[name]);
     // The default model itself is providers.test.ts's business; here it only has to be named.
-    expect(lovable).toMatchObject({ ok: true, provider: "lovable", model: expect.stringMatching(/^(?!undefined$)\S+$/) });
+    expect(plain).toMatchObject({ ok: true, provider: "anthropic", model: expect.stringMatching(/^(?!undefined$)\S+$/) });
     const anthropic = connectProvider((name) => ({ AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "k", AI_MODEL: "claude-other" })[name]);
     expect(anthropic).toMatchObject({ ok: true, provider: "anthropic", model: "claude-other" });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -228,7 +228,7 @@ describe("connectProvider", () => {
   });
 
   it("names the missing key", () => {
-    expect(connectProvider(() => undefined)).toEqual({ ok: false, problem: "LOVABLE_API_KEY is not set" });
+    expect(connectProvider(() => undefined)).toEqual({ ok: false, problem: "ANTHROPIC_API_KEY is not set" });
   });
 
   it("gives Anthropic the reply budget chamber-extract gives it", async () => {
@@ -275,8 +275,8 @@ describe("main", () => {
   it("refuses to run without a provider key, with the variables to set", async () => {
     const t = setup({ connect: connectProvider });
     expect(await main(t.deps)).toBe(1);
-    expect(t.output()).toContain("LOVABLE_API_KEY is not set");
-    expect(t.output()).toContain("AI_PROVIDER");
+    expect(t.output()).toContain("ANTHROPIC_API_KEY is not set");
+    expect(t.output()).toContain("Set ANTHROPIC_API_KEY");
   });
 
   it("prints the table and how to record a baseline when there is none, and exits cleanly", async () => {
