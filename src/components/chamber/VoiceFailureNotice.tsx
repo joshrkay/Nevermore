@@ -15,7 +15,7 @@ interface VoiceFailureNoticeProps {
 const VoiceFailureNotice = ({ failure, onRetry, onContinueInText }: VoiceFailureNoticeProps) => {
   const { title, body } = VOICE_FAILURE_MESSAGES[failure];
   return (
-    <div role="alert" className="mx-4 mb-4 max-w-md rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-left">
+    <div role="alert" className="max-w-md rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-left">
       <p className="flex items-center gap-1.5 font-medium text-foreground">
         <MicOff className="w-3.5 h-3.5 shrink-0 text-warning" aria-hidden="true" />
         {title}

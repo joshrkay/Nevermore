@@ -273,7 +273,9 @@ const ChamberPage = () => {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-background">
+    // h-dvh: on a phone, h-screen is taller than what shows once the browser's own bars are up, which would push the
+    // bottom of the form out of sight. The page scrolls (rather than squeezing the form) if the notices above it pile up.
+    <div className="h-screen h-dvh flex flex-col overflow-y-auto bg-background">
       {/* Top bar */}
       <div className="min-h-12 py-2 border-b border-border flex items-center px-4 gap-3 flex-shrink-0">
         <a href="/" className="font-display text-sm text-foreground hover:text-primary transition-colors">
@@ -340,7 +342,8 @@ const ChamberPage = () => {
       />
 
       {/* Transcript & Workspace */}
-      <div className="flex-1 flex overflow-hidden border-t border-border">
+      {/* min-h: the form is what gets filled in, so it keeps a usable height however much sits above it. */}
+      <div className="flex-1 flex min-h-[26rem] overflow-hidden border-t border-border">
         {/* Transcript panel */}
         <div className={`${isMobile ? "hidden" : "w-[30%] min-w-[280px]"}`}>
           <TranscriptPanel

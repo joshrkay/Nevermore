@@ -98,15 +98,16 @@
   animation: pulse-glow 2s ease-in-out infinite;
 }
 
-/* Voice Orb States */
+/* Voice Orb States. The orb is a small one beside Lenore's line, so the glows are sized for it: a bigger glow
+   would wash over the text next to it and the band's edges. */
 .orb-idle {
-  box-shadow: 0 0 40px 10px rgba(196, 30, 58, 0.3);
+  box-shadow: 0 0 20px 4px rgba(196, 30, 58, 0.3);
   animation: orb-idle-pulse 3s ease-in-out infinite;
 }
 
 @keyframes orb-idle-pulse {
-  0%, 100% { box-shadow: 0 0 40px 10px rgba(196, 30, 58, 0.3); }
-  50% { box-shadow: 0 0 60px 20px rgba(196, 30, 58, 0.5); }
+  0%, 100% { box-shadow: 0 0 20px 4px rgba(196, 30, 58, 0.3); }
+  50% { box-shadow: 0 0 30px 8px rgba(196, 30, 58, 0.5); }
 }
 
 .orb-listening {
@@ -115,7 +116,7 @@
 
 @keyframes orb-listen {
   0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(196, 30, 58, 0.6); }
-  50% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(196, 30, 58, 0); }
+  50% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(196, 30, 58, 0); }
 }
 
 .orb-speaking {
@@ -123,23 +124,23 @@
 }
 
 @keyframes orb-speak {
-  0%, 100% { box-shadow: 0 0 30px 5px rgba(196, 30, 58, 0.4), 0 0 60px 20px rgba(107, 70, 193, 0.2); }
-  33% { box-shadow: 0 0 50px 15px rgba(196, 30, 58, 0.6), 0 0 80px 30px rgba(107, 70, 193, 0.3); }
-  66% { box-shadow: 0 0 35px 8px rgba(196, 30, 58, 0.5), 0 0 65px 22px rgba(107, 70, 193, 0.25); }
+  0%, 100% { box-shadow: 0 0 15px 2px rgba(196, 30, 58, 0.4), 0 0 30px 8px rgba(107, 70, 193, 0.2); }
+  33% { box-shadow: 0 0 25px 6px rgba(196, 30, 58, 0.6), 0 0 40px 12px rgba(107, 70, 193, 0.3); }
+  66% { box-shadow: 0 0 18px 3px rgba(196, 30, 58, 0.5), 0 0 32px 9px rgba(107, 70, 193, 0.25); }
 }
 
 .orb-thinking {
-  box-shadow: 0 0 40px 10px rgba(196, 30, 58, 0.2);
+  box-shadow: 0 0 20px 4px rgba(196, 30, 58, 0.2);
 }
 
 .orb-disabled {
-  box-shadow: 0 0 40px 10px rgba(217, 169, 50, 0.2);
+  box-shadow: 0 0 20px 4px rgba(217, 169, 50, 0.2);
   animation: orb-disabled-pulse 3s ease-in-out infinite;
 }
 
 @keyframes orb-disabled-pulse {
-  0%, 100% { box-shadow: 0 0 40px 10px rgba(217, 169, 50, 0.2); }
-  50% { box-shadow: 0 0 60px 20px rgba(217, 169, 50, 0.35); }
+  0%, 100% { box-shadow: 0 0 20px 4px rgba(217, 169, 50, 0.2); }
+  50% { box-shadow: 0 0 30px 8px rgba(217, 169, 50, 0.35); }
 }
 
 /* Parsing pulse dot */
