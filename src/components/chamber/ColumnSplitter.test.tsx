@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import ColumnSplitter from "./ColumnSplitter";
 import { MIN_COLUMN, COLUMN_KEY_STEP, COLUMN_KEY_STEP_LARGE, maxColumn } from "@/data/columnLayout";
@@ -19,11 +19,15 @@ beforeAll(() => {
 });
 
 const originalWidth = window.innerWidth;
-beforeEach(() => Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 }));
-afterEach(() => Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }));
+const setWindowWidth = (value: number) => Object.defineProperty(window, "innerWidth", { configurable: true, value });
+beforeEach(() => setWindowWidth(1440));
+afterEach(() => setWindowWidth(originalWidth));
 
-/** `measured` is what the column measures when nothing was chosen: the page gives it a share of the window. */
-const renderSplitter = (width: number | null, measured = 432) => {
+/**
+ * `measured` is the column's width on screen. By default it is what was kept, or, when nothing was chosen, the
+ * share of the window the page gives it; it differs from what was kept when the window has shrunk since.
+ */
+const renderSplitter = (width: number | null, measured: number = width ?? 432) => {
   const onChange = vi.fn();
   const columnRef = createRef<HTMLDivElement>();
   render(
@@ -51,6 +55,19 @@ describe("ColumnSplitter", () => {
     expect(handle).toHaveAttribute("tabindex", "0");
   });
 
+  it("says what is true after the window is resized, not what it was when the page opened", () => {
+    const { handle } = renderSplitter(700);
+    expect(handle).toHaveAttribute("aria-valuenow", "700");
+    expect(handle).toHaveAttribute("aria-valuemax", String(maxColumn(1440)));
+    act(() => {
+      setWindowWidth(1000);
+      window.dispatchEvent(new Event("resize"));
+    });
+    // The column is capped at 60% of the window now, and the divider says so.
+    expect(handle).toHaveAttribute("aria-valuemax", "600");
+    expect(handle).toHaveAttribute("aria-valuenow", "600");
+  });
+
   it("reads the default width as what the page gives the column before a choice", () => {
     const { handle } = renderSplitter(null);
     expect(handle).toHaveAttribute("aria-valuenow", "432");
@@ -68,6 +85,23 @@ describe("ColumnSplitter", () => {
       expect(onChange).toHaveBeenLastCalledWith(560);
       pointer(handle, "pointerMove", 420);
       expect(onChange).toHaveBeenLastCalledWith(420);
+    });
+
+    it("starts from the width on screen, not the one kept, when the window has shrunk since it was chosen", () => {
+      // 700 px was chosen on a wide window; on a 1000 px one the stylesheet shows 600 (60%).
+      setWindowWidth(1000);
+      const { onChange, handle } = renderSplitter(700, 600);
+      pointer(handle, "pointerDown", 600);
+      pointer(handle, "pointerMove", 540);
+      // From 600 it is 540, and the handle stays under the pointer; from the kept 700 it would be 640, capped to 600.
+      expect(onChange).toHaveBeenLastCalledWith(540);
+    });
+
+    it("falls back to what was kept when the column measures nothing", () => {
+      const { onChange, handle } = renderSplitter(500, 0);
+      pointer(handle, "pointerDown", 500);
+      pointer(handle, "pointerMove", 530);
+      expect(onChange).toHaveBeenLastCalledWith(530);
     });
 
     it("starts from what the column measures when nothing was chosen, since its default is a share of the window", () => {
@@ -131,6 +165,14 @@ describe("ColumnSplitter", () => {
       const { onChange, handle } = renderSplitter(null, 432);
       press(handle, "ArrowRight");
       expect(onChange).toHaveBeenLastCalledWith(432 + COLUMN_KEY_STEP);
+    });
+
+    it("moves the first key press when the window has shrunk, since it steps from the width on screen", () => {
+      setWindowWidth(1000);
+      const { onChange, handle } = renderSplitter(700, 600);
+      press(handle, "ArrowLeft");
+      // From the kept 700 the step would be 684, capped to 600: a press that changes nothing the prospect can see.
+      expect(onChange).toHaveBeenLastCalledWith(600 - COLUMN_KEY_STEP);
     });
 
     it("goes to the narrowest on Home and the widest on End", () => {

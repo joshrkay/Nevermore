@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent, type RefObject } from "react";
+import { useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent, type RefObject } from "react";
 import {
   MIN_COLUMN,
   clampColumn,
@@ -12,16 +12,25 @@ interface ColumnSplitterProps {
   width: number | null;
   /** A width, or null to go back to the default. */
   onChange: (width: number | null) => void;
-  /** The column this divider sizes, measured when a drag starts since its default width is a share of the window. */
+  /** The column this divider sizes, measured when a drag or key press starts: its width on screen is not always the one kept. */
   columnRef: RefObject<HTMLElement>;
   /** The id of the column. */
   controls: string;
 }
 
+const subscribeToResize = (notify: () => void) => {
+  window.addEventListener("resize", notify);
+  return () => window.removeEventListener("resize", notify);
+};
+
+/** The window's width, kept current so what the divider announces is true after the window is resized. */
+const useViewportWidth = () => useSyncExternalStore(subscribeToResize, () => window.innerWidth, () => 1280);
+
 /**
  * The divider between the conversation's column and the workspace: drag it to give either side more room, use the
  * arrow keys (Shift for bigger steps; Home and End for the narrowest and widest), or double-click to go back to
- * the default. Touching it never starts a drag on anything else: it has its own hit area, just right of the line.
+ * the default. It has its own hit area, six pixels from the line to the right: the column's scrollbar, at the line's
+ * left, is never caught by it.
  */
 const ColumnSplitter = ({ width, onChange, columnRef, controls }: ColumnSplitterProps) => {
   // Where a drag began and how wide the column was, so each move is measured from the start.
@@ -29,7 +38,10 @@ const ColumnSplitter = ({ width, onChange, columnRef, controls }: ColumnSplitter
   const [dragging, setDragging] = useState(false);
 
   const viewport = () => window.innerWidth;
-  const current = () => width ?? columnRef.current?.getBoundingClientRect().width ?? defaultColumn(viewport());
+  // The width on screen, which is not always the one kept: a width chosen on a wide window shows capped on a
+  // narrower one, and a drag or key press has to start from what the prospect sees. A column that measures nothing
+  // (not laid out) falls back to what was kept, then to the default.
+  const current = () => columnRef.current?.getBoundingClientRect().width || (width ?? defaultColumn(viewport()));
 
   const endDrag = () => {
     drag.current = null;
@@ -72,7 +84,8 @@ const ColumnSplitter = ({ width, onChange, columnRef, controls }: ColumnSplitter
     e.preventDefault();
   };
 
-  const now = Math.round(width === null ? defaultColumn(viewport()) : clampColumn(width, viewport()));
+  const viewportWidth = useViewportWidth();
+  const now = Math.round(width === null ? defaultColumn(viewportWidth) : clampColumn(width, viewportWidth));
 
   return (
     // The visible line takes one pixel of the row; the hit area around it, wider, doesn't take any.
@@ -83,7 +96,7 @@ const ColumnSplitter = ({ width, onChange, columnRef, controls }: ColumnSplitter
         aria-label="Resize the conversation"
         aria-controls={controls}
         aria-valuemin={MIN_COLUMN}
-        aria-valuemax={maxColumn(viewport())}
+        aria-valuemax={maxColumn(viewportWidth)}
         aria-valuenow={now}
         aria-valuetext={`${now} pixels wide`}
         title="Drag to resize. Double-click to reset."
@@ -97,11 +110,11 @@ const ColumnSplitter = ({ width, onChange, columnRef, controls }: ColumnSplitter
         onLostPointerCapture={endDrag}
         onDoubleClick={() => onChange(null)}
         onKeyDown={onKeyDown}
-        className="group absolute inset-y-0 -left-0.5 z-10 w-2.5 cursor-col-resize touch-none select-none focus-visible:outline-none"
+        className="group absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none select-none focus-visible:outline-none"
       >
         <span
           aria-hidden="true"
-          className="absolute inset-y-0 left-0.5 w-0.5 bg-transparent transition-colors group-hover:bg-primary/40 group-focus-visible:bg-primary group-data-[dragging]:bg-primary"
+          className="absolute inset-y-0 left-0 w-0.5 bg-transparent transition-colors group-hover:bg-primary/40 group-focus-visible:bg-primary group-data-[dragging]:bg-primary"
         />
       </div>
     </div>

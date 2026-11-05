@@ -472,6 +472,12 @@ describe("ChamberPage", () => {
       expect(column()).toContainElement(screen.getByTestId("transcript"));
     });
 
+    it("is capped at the widest, or 60% of the window, by the stylesheet, so it holds when the window shrinks after a choice", () => {
+      localStorage.setItem("eaa.chamber.column.v1", JSON.stringify({ width: 700 }));
+      renderPage();
+      expect(column().style.maxWidth).toBe("min(720px, 60%)");
+    });
+
     it("takes the width the prospect chose last time", () => {
       localStorage.setItem("eaa.chamber.column.v1", JSON.stringify({ width: 520 }));
       renderPage();

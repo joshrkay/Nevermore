@@ -174,7 +174,7 @@ const VoiceOrb = ({
                 >
                   <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                   <span className={label}>Connecting...</span>
-                  </button>
+                </button>
                 <button
                   type="button"
                   onClick={onEndVoice}
@@ -219,7 +219,9 @@ const VoiceOrb = ({
         </motion.div>
       )}
 
-      {/* Last spoken text. Two lines (three in a column) whatever its length, so a longer reply doesn't move what is below. */}
+      {/* Last spoken text. It keeps room for two lines (three in a column) so a short reply doesn't leave a gap, and a
+          longer one grows to fit: on a phone this is the only caption, so it is never cut. The page already trims it to
+          120 characters, which is at most four lines on a phone and five in the narrowest column; the clamp is a guard. */}
       <motion.p
         key={lastSpokenText}
         initial={{ opacity: 0, y: 10 }}
@@ -227,7 +229,7 @@ const VoiceOrb = ({
         exit={{ opacity: 0 }}
         title={lastSpokenText}
         className={`font-display italic text-foreground/80 text-center mb-3 ${
-          narrow ? "text-base leading-6 px-5 min-h-[4.5rem] line-clamp-3" : "text-base md:text-lg leading-[1.625rem] max-w-xl px-6 min-h-[3.25rem] line-clamp-2"
+          narrow ? "text-base leading-6 px-5 min-h-[4.5rem] line-clamp-6" : "text-base md:text-lg leading-[1.625rem] max-w-xl px-6 min-h-[3.25rem] line-clamp-6"
         }`}
       >
         {lastSpokenText && `"${lastSpokenText}"`}

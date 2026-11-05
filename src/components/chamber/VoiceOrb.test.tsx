@@ -84,15 +84,22 @@ describe("VoiceOrb", () => {
     expect(screen.getByTestId("voice-orb").parentElement).toHaveStyle({ width: "100px", height: "100px" });
   });
 
-  it("keeps the two lines of her words to the same height however long they are", () => {
+  it("keeps room for two lines of her words so a short reply leaves no gap, and lets a longer one grow rather than cutting it", () => {
     renderOrb({ status: "idle", attempt: 0 }, true, { lastSpokenText: "Who carries your health coverage today?" });
-    expect(screen.getByText(/Who carries/)).toHaveClass("line-clamp-2", "min-h-[3.25rem]");
+    const words = screen.getByText(/Who carries/);
+    expect(words).toHaveClass("min-h-[3.25rem]");
+    // On a phone this is the only caption: a clamp at two or three lines hid the end of a 120-character reply.
+    expect(words).not.toHaveClass("line-clamp-2");
+    expect(words).not.toHaveClass("line-clamp-3");
   });
 
   describe("in the conversation's column", () => {
-    it("gives her words a third line instead of a wider measure", () => {
+    it("keeps room for a third line instead of a wider measure, and still doesn't cut a longer reply", () => {
       renderOrb({ status: "idle", attempt: 0 }, true, { narrow: true, lastSpokenText: "Who carries your health coverage today?" });
-      expect(screen.getByText(/Who carries/)).toHaveClass("line-clamp-3", "min-h-[4.5rem]");
+      const words = screen.getByText(/Who carries/);
+      expect(words).toHaveClass("min-h-[4.5rem]");
+      expect(words).not.toHaveClass("line-clamp-2");
+      expect(words).not.toHaveClass("line-clamp-3");
     });
 
     it("folds into a bar whose voice button is an icon, with the same name", () => {
