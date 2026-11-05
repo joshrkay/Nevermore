@@ -53,7 +53,26 @@ const InformationRequestPanel = ({
 }: InformationRequestPanelProps) => {
   const followUps = useMemo(() => followUpFieldsOf(reviews), [reviews]);
   const [message, setMessage] = useState("");
-  const [fields, setFields] = useState<FieldKey[]>(followUps);
+  // The selection follows the follow-up marks as the advisor changes them on this page, keeping what the advisor
+  // chose here: a follow-up they took out stays out, and an answer they added stays in.
+  const [removed, setRemoved] = useState<ReadonlySet<FieldKey>>(new Set());
+  const [added, setAdded] = useState<FieldKey[]>([]);
+  const fields = useMemo(
+    () => [...followUps.filter((f) => !removed.has(f)), ...added.filter((f) => !followUps.includes(f))],
+    [followUps, removed, added],
+  );
+  const remove = (f: FieldKey) => {
+    setRemoved((current) => new Set(current).add(f));
+    setAdded((current) => current.filter((x) => x !== f));
+  };
+  const add = (f: FieldKey) => {
+    setRemoved((current) => {
+      const next = new Set(current);
+      next.delete(f);
+      return next;
+    });
+    setAdded((current) => (current.includes(f) ? current : [...current, f]));
+  };
   const [saving, setSaving] = useState(false);
   const allowed = canRequestInformation(status, certifiedOnce, intakeStatus);
   const others = REQUESTABLE_FIELDS.filter((f) => !fields.includes(f));
@@ -112,7 +131,7 @@ const InformationRequestPanel = ({
                     {labelOf(f)}
                     <button
                       type="button"
-                      onClick={() => setFields((current) => current.filter((x) => x !== f))}
+                      onClick={() => remove(f)}
                       aria-label={`Remove ${labelOf(f)}`}
                       className="rounded-full p-0.5 hover:bg-background"
                     >
@@ -132,7 +151,7 @@ const InformationRequestPanel = ({
                   value=""
                   onChange={(e) => {
                     const f = e.target.value as FieldKey;
-                    if (f) setFields((current) => (current.includes(f) ? current : [...current, f]));
+                    if (f) add(f);
                   }}
                   className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
                 >

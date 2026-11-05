@@ -14,7 +14,9 @@
 --   owner has a verified email and asked for reminders, that holds something the prospect did (public.intake_holds_nothing), and that has
 --   none queued for its current closing time. Any change moves the closing time, so a draft left idle again gets
 --   another reminder for its new one; never two for the same. Hourly, from pg_cron, at 29 past.
--- * The outbox learns the new kind, and it counts as reaching the prospect, so suppression applies to it.
+-- * The outbox learns the new kind, and it counts as reaching the prospect, so suppression applies to it. A due
+--   reminder whose reason has gone (reminders stopped, or the draft's closing time moved or ended) is cancelled
+--   before it is claimed (claim_outbox_events).
 --
 -- The email carries the company name, the closing time, a link, and how to stop (the profile's box, or a reply);
 -- never an answer. Counsel to confirm the wording and the stop mechanism (docs/LEGAL_REVIEW.md).
@@ -48,6 +50,67 @@ ALTER TABLE public.outbox_events
     'advisor_notification', 'prospect_confirmation', 'information_request', 'draft_expiry_reminder'
     -- sync:end outbox_kinds
   ));
+
+-- ---------- A reminder that no longer holds is not sent ----------
+
+-- Unchanged from 20261105090000_information_requests.sql except that, before claiming, a due draft reminder is
+-- cancelled (marked 'suppressed', and why) when its owner has stopped reminders or the draft no longer closes when the
+-- reminder says. Queued and sent are a minute apart when all is well, but a reminder can wait longer (the provider
+-- down, a setting missing), and unticking the box must stop it.
+CREATE OR REPLACE FUNCTION public.claim_outbox_events(
+  p_kinds text[],
+  p_batch integer,
+  p_max_attempts integer,
+  p_lock_seconds integer DEFAULT 600
+)
+RETURNS SETOF public.outbox_events
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  UPDATE public.outbox_events e
+  SET status = 'suppressed', last_error = left('suppressed: ' || s.reason, 200),
+      claimed_at = NULL, locked_until = NULL, pending_send = NULL
+  FROM public.email_suppressions s
+  WHERE public.outbox_kind_reaches_prospect(e.kind) AND e.status = 'pending' AND e.next_attempt_at <= now()
+    AND s.address = lower(btrim(e.payload ->> 'recipient_email'));
+
+  -- A draft reminder whose reason has gone is not sent: its owner stopped reminders, or the draft no longer closes
+  -- when it says (a change moved the closing time; certifying, archiving or expiry ended it).
+  UPDATE public.outbox_events e
+  SET status = 'suppressed',
+      last_error = CASE WHEN p.draft_reminders_at IS NULL THEN 'cancelled: reminders turned off' ELSE 'cancelled: the draft changed' END,
+      claimed_at = NULL, locked_until = NULL, pending_send = NULL
+  FROM public.chamber_sessions s
+  LEFT JOIN public.profiles p ON p.user_id = s.user_id
+  WHERE e.kind = 'draft_expiry_reminder' AND e.status = 'pending' AND e.next_attempt_at <= now()
+    AND s.id = e.session_id
+    AND (p.draft_reminders_at IS NULL
+         OR s.status <> 'in_progress'
+         OR s.expires_at IS NULL
+         OR to_char(s.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') IS DISTINCT FROM e.payload ->> 'expires_at');
+
+  RETURN QUERY
+  UPDATE public.outbox_events e
+  SET status = 'claimed', attempts = e.attempts + 1, claimed_at = now(),
+      locked_until = now() + make_interval(secs => p_lock_seconds)
+  WHERE e.id IN (
+    SELECT o.id
+    FROM public.outbox_events o
+    WHERE o.kind = ANY (p_kinds)
+      AND o.attempts < p_max_attempts
+      AND ((o.status = 'pending' AND o.next_attempt_at <= now()) OR (o.status = 'claimed' AND o.locked_until < now()))
+    ORDER BY o.next_attempt_at, o.created_at
+    LIMIT p_batch
+    FOR UPDATE SKIP LOCKED
+  )
+  RETURNING e.*;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.claim_outbox_events(text[], integer, integer, integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_outbox_events(text[], integer, integer, integer) TO service_role;
 
 -- ---------- Who asked to be reminded ----------
 

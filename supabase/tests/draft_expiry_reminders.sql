@@ -5,8 +5,9 @@
 -- for a draft inside the week before it closes, whose owner has a verified email and asked for reminders, and which
 -- holds something the prospect did; never for a guest, an owner who didn't ask, an empty draft, a certified intake, a
 -- closed one or one further off; the server stamps when the owner asked, and clearing it stops them; a draft that
--- changes and goes idle again gets one for its new closing time; suppression holds it back; only the service role
--- may queue them.
+-- changes and goes idle again gets one for its new closing time; one already queued is cancelled, not sent, once
+-- its owner stops reminders or the draft no longer closes when it says; suppression holds it back; only the service
+-- role may queue them.
 \set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
@@ -203,6 +204,42 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.outbox_events WHERE kind = 'draft_expiry_reminder' AND session_id IN (guest, later, empty, gone, certified, unasked)) THEN
     RAISE EXCEPTION 'FAIL: a reminder was queued for a draft that isn''t due';
   END IF;
+
+  -- ---------- A queued reminder whose reason has gone is cancelled, not sent ----------
+  DECLARE
+    stopping uuid := pg_temp.draft(answers, interval '25 days');
+    editing uuid := pg_temp.draft(answers, interval '25 days');
+    stopper uuid := (SELECT user_id FROM public.chamber_sessions WHERE id = stopping);
+  BEGIN
+    n := pg_temp.queue();
+    IF n <> 2 THEN RAISE EXCEPTION 'FAIL: expected two new reminders, queued %', n; END IF;
+    -- One owner stops reminders; the other draft changes, so it no longer closes when its reminder says.
+    PERFORM pg_temp.as_user(stopper);
+    SET LOCAL ROLE authenticated;
+    UPDATE public.profiles SET draft_reminders_at = NULL WHERE user_id = stopper;
+    RESET ROLE;
+    UPDATE public.chamber_sessions SET last_activity_at = now() WHERE id = editing;
+    IF (SELECT count(*) FROM public.claim_outbox_events(ARRAY['draft_expiry_reminder'], 10, 5, 600)) <> 0 THEN
+      RAISE EXCEPTION 'FAIL: a reminder whose reason had gone was claimed';
+    END IF;
+    IF (SELECT last_error FROM public.outbox_events WHERE kind = 'draft_expiry_reminder' AND session_id = stopping AND status = 'suppressed')
+       IS DISTINCT FROM 'cancelled: reminders turned off' THEN
+      RAISE EXCEPTION 'FAIL: a reminder its owner stopped wasn''t cancelled as such';
+    END IF;
+    IF (SELECT last_error FROM public.outbox_events WHERE kind = 'draft_expiry_reminder' AND session_id = editing AND status = 'suppressed')
+       IS DISTINCT FROM 'cancelled: the draft changed' THEN
+      RAISE EXCEPTION 'FAIL: a reminder for a draft that changed wasn''t cancelled as such';
+    END IF;
+  END;
+  -- A reminder that still holds is claimed as before.
+  DECLARE
+    holding uuid := pg_temp.draft(answers, interval '25 days');
+  BEGIN
+    IF pg_temp.queue() <> 1 THEN RAISE EXCEPTION 'FAIL: the reminder that holds wasn''t queued'; END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.claim_outbox_events(ARRAY['draft_expiry_reminder'], 10, 5, 600) c WHERE c.session_id = holding) THEN
+      RAISE EXCEPTION 'FAIL: a reminder that still holds wasn''t claimed';
+    END IF;
+  END;
 
   RAISE NOTICE 'draft_expiry_reminders: all cases passed';
 END $$;

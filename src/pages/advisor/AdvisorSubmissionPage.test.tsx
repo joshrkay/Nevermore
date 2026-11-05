@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { Manuscript } from "@/data/manuscript";
@@ -219,6 +219,35 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.click(send);
     await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", "Which payroll vendor, and how often do you pay?", ["pay_frequency", "payroll_vendor"]));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+  });
+
+  it("adds an answer marked Needs follow-up after the page loaded, keeping the advisor's own choices and message", async () => {
+    const review = (field: string, state: string) => ({
+      field, review_state: state, has_correction: false, corrected_value: null, reason: null, updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z",
+    });
+    api.loadSubmission.mockResolvedValue(detail({ reviews: { pay_frequency: review("pay_frequency", "follow_up") } as SubmissionDetail["reviews"] }));
+    api.reviewField.mockResolvedValue(undefined);
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    const chosen = () => within(within(panel).getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent);
+    fireEvent.change(within(panel).getByLabelText("What do you need from them?"), { target: { value: "Two things, please." } });
+    fireEvent.change(within(panel).getByLabelText("Add an answer"), { target: { value: "payroll_vendor" } });
+    expect(chosen()).toEqual(["Pay frequency", "Payroll vendor"]);
+
+    // The advisor marks HQ state for follow-up in the field review; the page reloads the submission.
+    api.loadSubmission.mockResolvedValue(detail({
+      reviews: { pay_frequency: review("pay_frequency", "follow_up"), hq_state: review("hq_state", "follow_up") } as SubmissionDetail["reviews"],
+    }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Remove Pay frequency" }));
+    await act(async () => {
+      // Any change that reloads the page: the Status panel's update does.
+      const status = (screen.getByRole("heading", { name: "Status" })).closest("section")!;
+      api.setStatus.mockResolvedValue(undefined);
+      fireEvent.change(within(status).getByLabelText("Change status to"), { target: { value: "under_review" } });
+      fireEvent.click(within(status).getByRole("button", { name: "Update status" }));
+    });
+    await waitFor(() => expect(chosen()).toEqual(["HQ state", "Payroll vendor"]));
+    expect(within(panel).getByLabelText("What do you need from them?")).toHaveValue("Two things, please.");
   });
 
   it("says why a request can't be sent, and offers no form", async () => {

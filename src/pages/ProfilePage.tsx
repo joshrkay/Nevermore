@@ -176,9 +176,10 @@ const ProfilePage = () => {
                 Save Changes
               </Button>
 
-              {/* Saved as soon as it changes, apart from the fields above. */}
+              {/* Saved as soon as it changes, apart from the fields above. A guest (a reminder's stop link opened in
+                  another browser) is offered the sign-in that gets to the setting. */}
               <div className="pt-4 border-t border-border">
-                <DraftReminderToggle id="profile-draft-reminders" />
+                <DraftReminderToggle id="profile-draft-reminders" offerSignIn />
               </div>
             </CardContent>
           </Card>

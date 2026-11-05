@@ -78,9 +78,12 @@ a follow-up campaign) needs consent and a way to stop first. Of the emails above
 - **The draft reminder** is not a receipt, so it is opt-in. It goes only to an account that ticked "Email me before
   an unfinished intake closes" (in the Chamber's "Save your progress", once the email is verified, or on the
   profile page). The database stamps when they asked (`profiles.draft_reminders_at`, server time); unticking clears
-  it and stops reminders. Each reminder says why it was sent and how to stop: untick the box on the profile page, or
-  reply (the reply goes to `SUPPORT_EMAIL`, and support clears the setting or adds the address to
-  `email_suppressions`). One per closing time: a draft that changes and goes idle again can get another. Counsel to
+  it and stops reminders, including one already queued: before claiming, `claim_outbox_events` cancels a due reminder
+  whose owner stopped them or whose draft no longer closes when it says (status `suppressed`, `last_error`
+  `cancelled: reminders turned off` or `cancelled: the draft changed`). Each reminder says why it was sent and how to
+  stop: untick the box on the profile page (in a browser that isn't signed in, the page offers a sign-in with an
+  emailed code first), or reply (the reply goes to `SUPPORT_EMAIL`, and support clears the setting or adds the address
+  to `email_suppressions`). One per closing time: a draft that changes and goes idle again can get another. Counsel to
   confirm the wording and that a reply-to-stop meets the rules that apply (`docs/LEGAL_REVIEW.md`).
 
 Nothing here sends a newsletter or a campaign.

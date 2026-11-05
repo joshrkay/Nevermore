@@ -3,13 +3,17 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { DRAFT_REMINDER_HINT, DRAFT_REMINDER_SETTING } from "@/data/draftReminders";
 import { readDraftReminders, setDraftReminders } from "@/lib/draftReminders";
+import RecoverIntake from "@/components/chamber/RecoverIntake";
 
 /**
  * Asking to be emailed before an unfinished intake closes, or stopping it. Off until the prospect ticks it: a
  * reminder isn't a receipt for something they just did, so it needs their consent (docs/NOTIFICATIONS.md). Only an
  * account with a verified email has somewhere to send it.
+ *
+ * With `offerSignIn` (the profile page, where a reminder's stop link lands), a guest is offered the emailed-code
+ * sign-in instead: opened in another browser, the link arrives as a fresh guest, who would otherwise see no setting.
  */
-const DraftReminderToggle = ({ id = "draft-reminders" }: { id?: string }) => {
+const DraftReminderToggle = ({ id = "draft-reminders", offerSignIn = false }: { id?: string; offerSignIn?: boolean }) => {
   const { user, isAnonymous } = useAuth();
   const userId = !isAnonymous ? user?.id ?? null : null;
   const [on, setOn] = useState<boolean | null>(null);
@@ -26,7 +30,18 @@ const DraftReminderToggle = ({ id = "draft-reminders" }: { id?: string }) => {
     };
   }, [userId]);
 
-  if (!userId) return null;
+  if (!userId) {
+    if (!offerSignIn || !user || !isAnonymous) return null;
+    return (
+      <div className="space-y-2 text-sm">
+        <p className="font-medium">{DRAFT_REMINDER_SETTING}</p>
+        <p className="text-xs text-muted-foreground">
+          To turn reminders on or off, sign in with the email our reminders go to. We'll email you a code.
+        </p>
+        <RecoverIntake idPrefix={`${id}-sign-in`} />
+      </div>
+    );
+  }
 
   const change = async (next: boolean) => {
     setSaving(true);

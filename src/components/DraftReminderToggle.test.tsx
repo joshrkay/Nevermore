@@ -46,6 +46,15 @@ describe("DraftReminderToggle", () => {
     expect(box).toBeChecked();
   });
 
+  it("offers a guest on the profile page the sign-in that gets to the setting", () => {
+    auth.isAnonymous = true;
+    render(<DraftReminderToggle offerSignIn />);
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.getByText(/sign in with the email our reminders go to/)).toBeInTheDocument();
+    expect(screen.getByLabelText("The email you verified")).toBeInTheDocument();
+    expect(readDraftReminders).not.toHaveBeenCalled();
+  });
+
   it("offers nothing to a guest, who has no verified email to write to", () => {
     auth.isAnonymous = true;
     render(<DraftReminderToggle />);

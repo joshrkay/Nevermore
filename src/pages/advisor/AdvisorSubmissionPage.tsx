@@ -172,7 +172,8 @@ const Detail = ({
             onChanged={reload}
           />
           <InformationRequestPanel
-            // A sent request starts the next one afresh, from the fields marked Needs follow-up.
+            // A sent request starts the next one afresh, from the fields marked Needs follow-up; until then the
+            // panel follows the marks as they change.
             key={`${detail.informationRequests.length}`}
             sessionId={detail.id}
             prospectUserId={detail.userId}
