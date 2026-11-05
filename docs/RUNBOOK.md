@@ -11,18 +11,21 @@ Related: `docs/NOTIFICATIONS.md` (the email outbox, its own alerts and recovery 
 ## Escalation contacts
 
 Fill in every row before launch, and check them at each quarterly access review. An alert with nobody on the
-other end is not monitoring.
+other end is not monitoring. For now the owner holds the incident lead, engineering on call and engineering backup
+roles (decided 2026-11-05); name someone else in a row as soon as there is someone, so a page has a second person to
+go to.
 
 | Role | Responsible for | Name | How to reach (in order) | Backup |
 |---|---|---|---|---|
-| Incident lead | Runs every SEV-1 and SEV-2: decides severity, owns the incident log, calls in the others | _to fill_ | _phone, then chat_ | _to fill_ |
-| Engineering on call | Alerts, diagnosis, fixes, deploys and rollbacks, restores | _to fill_ | _phone, then chat_ | _to fill_ |
+| Incident lead | Runs every SEV-1 and SEV-2: decides severity, owns the incident log, calls in the others | The owner | _owner's phone, then chat: to fill_ | The owner (no second person yet) |
+| Engineering on call | Alerts, diagnosis, fixes, deploys and rollbacks, restores | The owner | _owner's phone, then chat: to fill_ | The owner (engineering backup, until someone else is named) |
 | Advisory lead | Advisor access, prospect communication, pausing intake work | _to fill_ | _to fill_ | _to fill_ |
 | Privacy and legal counsel | Whether an incident is a reportable breach, notices to prospects and regulators | _to fill_ | _to fill_ | _to fill_ |
 | Supabase | Database, storage, auth, edge functions | Support ticket from the dashboard (plan-dependent priority) | status.supabase.com | |
 | Vercel | Web hosting | Support from the dashboard | vercel-status.com | |
 | Resend | Email delivery | Support from the dashboard | resend-status.com | |
-| AI model provider (D11) | Lenore and document reading | _the chosen provider's support_ | _its status page_ | |
+| Anthropic (D11) | Lenore and document reading | Support from the Anthropic Console | status.anthropic.com | |
+| Scanii (D13) | Malware scanning of every upload | Support from the Scanii dashboard | _Scanii's status page: to fill_ | |
 | ElevenLabs | Voice (opt-in beta) | Support from the dashboard | status.elevenlabs.io | |
 
 ## What is monitored
