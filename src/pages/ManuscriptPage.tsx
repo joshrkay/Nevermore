@@ -14,6 +14,7 @@ import { parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, ty
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { readVerifiedFields } from "@/lib/verifiedFields";
+import { SITE_DOMAIN } from "@/data/site";
 import { downloadBlob } from "@/lib/downloadFile";
 import { finalManuscriptUrl } from "@/lib/advisorApi";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
@@ -667,7 +668,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               </div>
               <div className="border-t border-border pt-4">
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Prepared by: Edgar Allan Advisory · edgar-allan-advisory.lovable.app
+                  Prepared by: Edgar Allan Advisory · {SITE_DOMAIN}
                 </p>
                 <p className="text-xs text-muted-foreground leading-relaxed mt-1">
                   Data note: Information collected here constitutes employer HR records,

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 // Public-facing copy must stay PEO-neutral: no named PEO implies an affiliation or
@@ -85,6 +85,38 @@ describe("public copy", () => {
     for (const file of ["src/components/chamber/ReckoningTab.tsx", "supabase/functions/dispatch-outbox/messages.ts"]) {
       expect(readFileSync(file, "utf8")).not.toMatch(ON_BEHALF);
     }
+  });
+});
+
+// QA F12: the Manuscript footer named edgar-allan-advisory.lovable.app and the social preview image came from an r2.dev
+// preview bucket. What prospects and PEOs see names the production domain (src/data/site.ts) and nothing else.
+describe("production domain", () => {
+  const PREVIEW_HOSTS = /lovable\.app|lovableproject|r2\.dev|gptengineer|gpt-eng\.com/i;
+  const SHOWN_FILES = [
+    "index.html",
+    "src/pages/ManuscriptPage.tsx",
+    "src/lib/manuscriptPdf.ts",
+    "src/data/legal.ts",
+    "supabase/functions/dispatch-outbox/messages.ts",
+  ];
+
+  it.each(SHOWN_FILES)("%s names no preview or builder domain", (file) => {
+    expect(readFileSync(file, "utf8")).not.toMatch(PREVIEW_HOSTS);
+  });
+
+  it("points the canonical link and social previews at the site, with an image the site serves", async () => {
+    const { SITE_ORIGIN } = await import("@/data/site");
+    const html = readFileSync("index.html", "utf8");
+    const urls = [...html.matchAll(/<(?:meta|link)\b[^>]*(?:property="og:(?:image|url)"|name="twitter:image"|rel="canonical")[^>]*>/g)].map(
+      ([tag]) => /(?:content|href)="([^"]+)"/.exec(tag)![1],
+    );
+    expect(urls).toHaveLength(4);
+    for (const url of urls) expect(url.startsWith(`${SITE_ORIGIN}/`), url).toBe(true);
+    for (const url of urls.filter((u) => u.endsWith(".png"))) expect(existsSync(`public${new URL(url).pathname}`), url).toBe(true);
+  });
+
+  it("names the site in the Manuscript's footer", () => {
+    expect(readFileSync("src/pages/ManuscriptPage.tsx", "utf8")).toMatch(/Prepared by: Edgar Allan Advisory · \{SITE_DOMAIN\}/);
   });
 });
 

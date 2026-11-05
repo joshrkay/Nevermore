@@ -1235,7 +1235,7 @@ Four parent stories, delivered as nine child stories. Each child ships alone, mi
 
 #### J-1.2 Production domain, HTTPS, canonical URL, and sender domain
 - **Status:** **NOT STARTED** · **Size:** S · **Priority:** High · **Owner:** OPS · **Depends:** J-1.1, D7, D-2.1 · **Milestone:** M3
-- **Built:** `index.html` has no canonical link. `vercel.json` holds only the SPA rewrite and an asset cache header. The Manuscript footer hardcodes a `lovable.app` URL. The sender-domain item in `docs/NOTIFICATIONS.md` is unchecked.
+- **Built:** `index.html` has a canonical link and `og:url` for `https://nevermorepeo.com/`, and its social image is `public/og-image.png` served from the site (it was an `r2.dev` preview screenshot). The Manuscript footer names `nevermorepeo.com` (`src/data/site.ts`), not the `lovable.app` preview it hardcoded. `src/copy.guard.test.ts` fails on a preview or builder domain in `index.html`, the Manuscript, its PDF, the legal copy or the emails (QA F12). The canonical link covers the single-page app's one `index.html`, so every route shares it. `vercel.json` holds only the SPA rewrite and an asset cache header. The sender-domain item in `docs/NOTIFICATIONS.md` is unchecked.
 - *Scope, AC and tests (from v1.0):*
   - **Scope:** Connect the production domain. Enforce HTTPS and redirects. Set canonical URLs. Verify the sender domain.
   - **AC:**
