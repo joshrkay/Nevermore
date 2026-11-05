@@ -12,7 +12,7 @@ const REF = "dvfwrjpkltqdkfudbahe";
 
 const goodEnv = {
   LOVABLE_API_KEY: "lov_key",
-  APP_BASE_URL: "https://nevermore-gamma.vercel.app",
+  APP_BASE_URL: "https://nevermorepeo.com",
   RESEND_API_KEY: "re_key",
   EMAIL_FROM: "Edgar Allan Advisory <intake@mail.example.com>",
   ADVISORY_NOTIFY_EMAIL: "advisors@example.com",
@@ -148,8 +148,8 @@ describe("authConfigPatch", () => {
     expect(patch).toMatchObject({
       external_anonymous_users_enabled: true,
       mailer_autoconfirm: false,
-      site_url: "https://nevermore-gamma.vercel.app",
-      uri_allow_list: "https://nevermore-gamma.vercel.app/**",
+      site_url: "https://nevermorepeo.com",
+      uri_allow_list: "https://nevermorepeo.com/**",
       mailer_otp_length: 6,
       smtp_host: "smtp.resend.com",
       smtp_port: "465",
@@ -206,7 +206,7 @@ describe("authConfigPatch", () => {
       smtp_host: "smtp.sendgrid.net",
     };
     const { patch, notes } = authConfigPatch(current, goodEnv);
-    expect(patch.uri_allow_list).toBe("https://preview.example.com/**,https://nevermore-gamma.vercel.app/**");
+    expect(patch.uri_allow_list).toBe("https://preview.example.com/**,https://nevermorepeo.com/**");
     expect(patch).not.toHaveProperty("mailer_templates_email_change_content");
     expect(patch).not.toHaveProperty("mailer_templates_magic_link_content");
     expect(patch).not.toHaveProperty("smtp_host");
@@ -348,7 +348,7 @@ describe("interpretChecks", () => {
     authConfig: {
       mailer_otp_length: 6, mailer_templates_email_change_content: "{{ .Token }}", mailer_templates_magic_link_content: "{{ .Token }}", smtp_host: "smtp.resend.com",
       rate_limit_email_sent: MIN_AUTH_EMAILS_PER_HOUR,
-      site_url: "https://nevermore-gamma.vercel.app", uri_allow_list: "https://nevermore-gamma.vercel.app/**",
+      site_url: "https://nevermorepeo.com", uri_allow_list: "https://nevermorepeo.com/**",
       mailer_templates_confirmation_content: "{{ .Token }} {{ .RedirectTo }}#token_hash={{ .TokenHash }}&type=email",
     },
     functions: Object.fromEntries(FUNCTIONS.map((fn) => [fn, { status: 401, ourError: true }])),
@@ -460,13 +460,13 @@ describe("interpretChecks", () => {
   });
 
   it("compares the Site URL with APP_BASE_URL when it is known", () => {
-    expect(setupComplete(interpretChecks(allSet, { localMigrations: 16, appBaseUrl: "https://nevermore-gamma.vercel.app" }))).toBe(true);
+    expect(setupComplete(interpretChecks(allSet, { localMigrations: 16, appBaseUrl: "https://nevermorepeo.com" }))).toBe(true);
     expect(setupComplete(interpretChecks(allSet, { localMigrations: 16, appBaseUrl: "https://intake.example.com" }))).toBe(false);
   });
 });
 
 describe("authUrlProblems", () => {
-  const site = "https://nevermore-gamma.vercel.app";
+  const site = "https://nevermorepeo.com";
 
   it("accepts the site as Site URL, with or without a Redirect URLs entry for it", () => {
     expect(authUrlProblems({ site_url: site, uri_allow_list: `http://localhost:8080/**, ${site}/**` }, site)).toEqual([]);
@@ -497,8 +497,8 @@ describe("authUrlProblems", () => {
   });
 
   it("says so when APP_BASE_URL can't be compared, instead of passing quietly", () => {
-    expect(authUrlProblems({ site_url: "https://old-preview.lovable.app", uri_allow_list: "" }, "nevermore-gamma.vercel.app")).toEqual([
-      "APP_BASE_URL (nevermore-gamma.vercel.app) isn't a URL, so the Site URL wasn't compared with it",
+    expect(authUrlProblems({ site_url: "https://old-preview.lovable.app", uri_allow_list: "" }, "nevermorepeo.com")).toEqual([
+      "APP_BASE_URL (nevermorepeo.com) isn't a URL, so the Site URL wasn't compared with it",
     ]);
   });
 });
