@@ -81,7 +81,8 @@ export async function runFixture(fixture: Fixture, model: ModelCall): Promise<Fi
     // The tool call is forced, so the handler answers a reply without one as invalid_response (US-2.4a).
     if (!result.args) return { state, replies, error: `turn ${i + 1}: the model made no tool call (invalid_response)` };
     // What the handler returns, as the browser parses it.
-    const response = JSON.parse(JSON.stringify(shapeExtraction(result.args)));
+    const { stopping: _stopping, doubted_unknown: _doubted, ...shaped } = shapeExtraction(result.args, body.message);
+    const response = JSON.parse(JSON.stringify(shaped));
     // ChamberPage's onExtracted for a chat message.
     if (response.extracted) state = applyExtraction(state, response.extracted, transcriptExtraction(message, response));
     // Her own reply is what a reply check scores: the handler's fallback question, asked when there is none, never

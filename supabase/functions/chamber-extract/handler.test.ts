@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handleRequest, NEXT_FIELDS, type HandlerDeps, type SupabaseLike } from "./handler";
+import { guardReply, handleRequest, NEXT_FIELDS, STOPPING_REPLY, WRAP_UP_REPLY, type HandlerDeps, type SupabaseLike } from "./handler";
 import { EXTRACT_TOOL, FIELD_TYPES, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema";
 
@@ -46,7 +46,7 @@ const setup = (opts: Setup = {}) => {
   const rpcCalls: Array<{ key: string; fn: string; args: Record<string, unknown> }> = [];
   const events: Array<{ key: string; row: Record<string, unknown> }> = [];
   const intakes = opts.intakes ?? { [INTAKE]: USER, [SOMEONE_ELSES_INTAKE]: OTHER_USER };
-  const queue = [...(opts.responses ?? [gatewayReply({ reply: "Noted." })])];
+  const queue = [...(opts.responses ?? [gatewayReply({ reply: "Noted. Which states do your employees work in?" })])];
   const fetchFn = vi.fn(async (_url: string, _init?: RequestInit) => {
     steps.push("model");
     const next = queue.shift();
@@ -342,6 +342,43 @@ describe("chamber-extract handler: what is sent to the model", () => {
     expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
   });
 
+  // QA F4 and F11: after "Bi-weekly. We have 12 employees...", the model marked every other field unknown and said
+  // there was nothing left to ask, so Lenore closed the intake with some 35 fields unasked.
+  it("doesn't let a message that never mentions a field settle it, and asks the next question instead of closing", async () => {
+    const message = "Bi-weekly. We have 12 employees, all paid hourly, and we use a small local payroll provider.";
+    const others = FIELDS.filter((f) => !["company_name", "pay_frequency", "employee_count", "has_nonexempt"].includes(f));
+    const t = setup({
+      responses: [gatewayReply({
+        pay_frequency: "bi-weekly",
+        employee_count: 12,
+        has_nonexempt: true,
+        field_status: { pay_frequency: "confirmed", employee_count: "confirmed", has_nonexempt: "confirmed", ...Object.fromEntries(others.map((f) => [f, "unknown"])) },
+        evidence: Object.fromEntries(others.map((f) => [f, message])),
+        reply: "Thank you. That's everything The Manuscript needs: you can review your answers on the Review tab.",
+      })],
+    });
+    const recent = [{ sender: "lenore", text: "How many days before payday do you fund payroll?" }];
+    const { status, body } = await read(await handleRequest(post({ message, context: { company_name: "Larkspur Plumbing" }, recent, session_id: INTAKE }), t.deps));
+    expect(status).toBe(200);
+    expect(body.field_status).toEqual({ pay_frequency: "confirmed", employee_count: "confirmed", has_nonexempt: "confirmed" });
+    expect(Object.keys(body.evidence)).toEqual([]);
+    expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
+    expect(body).not.toHaveProperty("doubted_unknown");
+    expect(body).not.toHaveProperty("stopping");
+    expect(t.logs).toEqual([
+      `LENORE_REPLY_GUARDED request=${REQUEST} session=${INTAKE} reason=claimed_complete next=states`,
+      `EXTRACTION_UNKNOWN_DOUBTED request=${REQUEST} session=${INTAKE} fields=${others.join(",")}`,
+    ]);
+  });
+
+  it("lets Lenore wrap up when the prospect asks to stop, with fields still to ask", async () => {
+    const reply = "Of course. Your answers are saved; come back whenever you like.";
+    const t = setup({ responses: [gatewayReply({ prospect_stopping: true, reply })] });
+    const { body } = await read(await handleRequest(post({ message: "That's all I have time for today.", context: { company_name: "Acme" } }), t.deps));
+    expect(body.reply).toBe(reply);
+    expect(t.logs).toEqual([]);
+  });
+
   it("removes Social Security and account numbers from the recent conversation it passes on", async () => {
     const t = setup();
     await handleRequest(post({ message: "ok", recent: [{ sender: "user", text: "my SSN is 123-45-6789" }] }), t.deps);
@@ -437,7 +474,7 @@ describe("chamber-extract handler: the answer", () => {
   });
 
   it("refuses an extracted value the intake schema doesn't accept, and logs and records its path but not the value", async () => {
-    const t = setup({ responses: [gatewayReply({ company_name: "Acme", hq_state: "New York", reply: "Noted." })] });
+    const t = setup({ responses: [gatewayReply({ company_name: "Acme", hq_state: "New York", reply: "Noted. Which state is that in?" })] });
     const { status, body } = await read(await handleRequest(post({ message: "we're Acme in New York", session_id: INTAKE }), t.deps));
     expect(status).toBe(200);
     expect(body.extracted).toEqual({ company_name: "Acme" });
@@ -562,5 +599,40 @@ describe("chamber-extract handler: unexpected errors", () => {
     expect(body.code).toBe("internal");
     expect(t.fetchFn).not.toHaveBeenCalled();
     expect(t.event()).toMatchObject({ error_code: "internal", session_id: null });
+  });
+});
+
+describe("guardReply", () => {
+  const NEXT = "How many days before payday do you fund payroll?";
+
+  it("keeps a reply that asks something, with fields left", () => {
+    expect(guardReply("Bi-weekly, noted. How many employees?", NEXT, false)).toEqual({ reply: "Bi-weekly, noted. How many employees?", reason: null });
+  });
+
+  it.each([
+    "That's everything The Manuscript needs.",
+    "Thank you, that is all I need. Anything else?",
+    "Splendid: the intake is complete.",
+    "I have everything I need now.",
+  ])("replaces a reply that says the intake is finished while fields are left: %j", (reply) => {
+    expect(guardReply(reply, NEXT, false)).toEqual({ reply: `Thank you, I've noted that. ${NEXT}`, reason: "claimed_complete" });
+  });
+
+  it("adds the next question to a reply that asks nothing, keeping what it said", () => {
+    expect(guardReply("An experience mod compares your claims with similar businesses.", NEXT, false)).toEqual({
+      reply: `An experience mod compares your claims with similar businesses. ${NEXT}`,
+      reason: "asked_nothing",
+    });
+  });
+
+  it("lets the reply stand when nothing is left to ask, or the prospect is stopping", () => {
+    expect(guardReply("That's everything. Review it on the Review tab.", null, false)).toEqual({ reply: "That's everything. Review it on the Review tab.", reason: null });
+    expect(guardReply("Of course, your answers are saved.", NEXT, true)).toEqual({ reply: "Of course, your answers are saved.", reason: null });
+  });
+
+  it("answers for a model that gave no reply: the next question, the wrap-up, or the goodbye", () => {
+    expect(guardReply(null, NEXT, false)).toEqual({ reply: `Thank you, I've noted that. ${NEXT}`, reason: null });
+    expect(guardReply(null, null, false)).toEqual({ reply: WRAP_UP_REPLY, reason: null });
+    expect(guardReply(null, NEXT, true)).toEqual({ reply: STOPPING_REPLY, reason: null });
   });
 });

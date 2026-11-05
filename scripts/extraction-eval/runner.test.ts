@@ -75,6 +75,16 @@ const CANNED: Record<string, Record<string, unknown> | null> = {
   "What's the easiest way to get you our employee list?": {
     reply: "Our census template: download it on the Upload tab, add one row per employee, and upload it there.",
   },
+  // QA F4: two short answers, and Lenore keeps asking.
+  "We're Larkspur Plumbing.": {
+    company_name: "Larkspur Plumbing", field_status: confirmed("company_name"),
+    reply: "A fine name. Which states do your employees work in?",
+  },
+  "Bi-weekly. We have 12 employees, all paid hourly, and we use a small local payroll provider.": {
+    pay_frequency: "bi-weekly", employee_count: 12, has_nonexempt: true,
+    field_status: confirmed("pay_frequency", "employee_count", "has_nonexempt"),
+    reply: "Bi-weekly, noted. How many days before payday do you fund payroll?",
+  },
 };
 
 // buildUserPrompt ends with the JSON-quoted message.

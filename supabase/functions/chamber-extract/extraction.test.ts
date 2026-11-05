@@ -1,18 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { emptyExtraction, shapeExtraction } from "./extraction";
+import { emptyExtraction, quotesMessage, saysNotKnown, shapeExtraction } from "./extraction";
 import { INTAKE_SCHEMA, LIMITS } from "../_shared/intakeSchema";
 import { EXTRACT_TOOL, FIELD_GUIDE, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 
+// Most cases are about the arguments, not the message: evidence is checked against `message` where it matters.
+const shape = (args: Record<string, unknown>, message = "") => shapeExtraction(args, message);
+
 describe("shapeExtraction", () => {
   it("keeps the fields the model extracted, with their status, evidence and corrections", () => {
-    const shaped = shapeExtraction({
+    const shaped = shape({
       employee_count: 45,
       states: ["CA", "TX"],
       field_status: { employee_count: "confirmed", states: "incomplete" },
       evidence: { employee_count: "actually it's 45", states: "mainly CA and TX" },
       corrected_fields: ["employee_count"],
       reply: "Thank you.",
-    });
+    }, "Actually it's 45 people now, mainly CA and TX.");
     expect(shaped).toEqual({
       extracted: { employee_count: 45, states: ["CA", "TX"] },
       field_status: { employee_count: "confirmed", states: "incomplete" },
@@ -21,13 +24,15 @@ describe("shapeExtraction", () => {
       reply: "Thank you.",
       rejected: [],
       prompt_version: PROMPT_VERSION,
+      stopping: false,
+      doubted_unknown: [],
     });
   });
 
   // Strict: a value the intake schema refuses is not repaired and not passed on. The browser would
   // otherwise have to guess, and the database would refuse the save.
   it("refuses a value the intake schema doesn't accept as sent, and says which and why", () => {
-    const shaped = shapeExtraction({
+    const shaped = shape({
       company_name: "Acme",
       hq_state: "ca",
       states: ["CA", "XX"],
@@ -73,70 +78,134 @@ describe("shapeExtraction", () => {
   });
 
   it("refuses a count that isn't a whole number of 0 or more, and a list sent as one string", () => {
-    const shaped = shapeExtraction({ fein_count: -1, ancillary_benefits: "Dental, Vision", funding_days: 2.5, uses_mobile_app: "yes", hris_system: "Thistledown HR" });
+    const shaped = shape({ fein_count: -1, ancillary_benefits: "Dental, Vision", funding_days: 2.5, uses_mobile_app: "yes", hris_system: "Thistledown HR" });
     expect(shaped.extracted).toEqual({ hris_system: "Thistledown HR" });
     expect(shaped.rejected.map((issue) => issue.path)).toEqual(["fein_count", "ancillary_benefits", "funding_days", "uses_mobile_app"]);
   });
 
   it("never echoes a refused value in its reasons", () => {
-    const { rejected } = shapeExtraction({ hq_state: "Secret Street 12", employee_count: "forty" });
+    const { rejected } = shape({ hq_state: "Secret Street 12", employee_count: "forty" });
     expect(JSON.stringify(rejected)).not.toMatch(/Secret|forty/);
   });
 
   it("drops fields we don't collect, and null or empty values", () => {
-    const { extracted } = shapeExtraction({ company_name: "Acme", ssn: "123-45-6789", industry: "", hq_state: null, key_challenges: undefined });
+    const { extracted } = shape({ company_name: "Acme", ssn: "123-45-6789", industry: "", hq_state: null, key_challenges: undefined });
     expect(extracted).toEqual({ company_name: "Acme" });
   });
 
   it("keeps a false or zero answer: those are answers, not blanks", () => {
-    const { extracted } = shapeExtraction({ virgin_medical: false, employee_count: 0, has_401k: false });
+    const { extracted } = shape({ virgin_medical: false, employee_count: 0, has_401k: false });
     expect(extracted).toEqual({ virgin_medical: false, employee_count: 0, has_401k: false });
   });
 
   it("keeps a status, evidence or correction only for a field that was extracted", () => {
-    const shaped = shapeExtraction({
+    const shaped = shape({
       company_name: "Acme",
       field_status: { company_name: "confirmed", industry: "confirmed" },
       evidence: { company_name: "we are Acme", industry: "retail" },
       corrected_fields: ["company_name", "industry"],
-    });
+    }, "We are Acme, in retail.");
     expect(shaped.field_status).toEqual({ company_name: "confirmed" });
     expect(shaped.evidence).toEqual({ company_name: "we are Acme" });
     expect(shaped.corrected_fields).toEqual(["company_name"]);
   });
 
   it("refuses a status the client doesn't know", () => {
-    const { field_status } = shapeExtraction({ company_name: "Acme", field_status: { company_name: "certain" } });
+    const { field_status } = shape({ company_name: "Acme", field_status: { company_name: "certain" } });
     expect(field_status).toEqual({});
   });
 
   it("trims evidence, caps its length, and drops a blank quote", () => {
     const long = "x".repeat(MAX_EVIDENCE_CHARS + 50);
-    const { evidence } = shapeExtraction({
+    const { evidence } = shape({
       company_name: "Acme",
       industry: "Retail",
       hq_state: "CA",
       evidence: { company_name: `  ${long}  `, industry: "   ", hq_state: " in California " },
-    });
+    }, `${long} in California`);
     expect(evidence.company_name).toHaveLength(MAX_EVIDENCE_CHARS);
     expect(evidence).not.toHaveProperty("industry");
     expect(evidence.hq_state).toBe("in California");
   });
 
   it("ignores status, evidence and corrections that aren't the shape we asked for", () => {
-    const shaped = shapeExtraction({ company_name: "Acme", field_status: "confirmed", evidence: ["a quote"], corrected_fields: "company_name" });
+    const shaped = shape({ company_name: "Acme", field_status: "confirmed", evidence: ["a quote"], corrected_fields: "company_name" });
     expect(shaped).toMatchObject({ field_status: {}, evidence: {}, corrected_fields: [] });
   });
 
   it("stamps the contract version, whatever the model sent for it", () => {
-    expect(shapeExtraction({ company_name: "Acme" }).prompt_version).toBe(PROMPT_VERSION);
-    expect(shapeExtraction({ company_name: "Acme", prompt_version: "1999-01-01.1" }).prompt_version).toBe(PROMPT_VERSION);
+    expect(shape({ company_name: "Acme" }).prompt_version).toBe(PROMPT_VERSION);
+    expect(shape({ company_name: "Acme", prompt_version: "1999-01-01.1" }).prompt_version).toBe(PROMPT_VERSION);
   });
 
   it("returns no reply when the model sent none or a blank or non-text one", () => {
-    expect(shapeExtraction({ company_name: "Acme" }).reply).toBeNull();
-    expect(shapeExtraction({ reply: "   " }).reply).toBeNull();
-    expect(shapeExtraction({ reply: 42 }).reply).toBeNull();
+    expect(shape({ company_name: "Acme" }).reply).toBeNull();
+    expect(shape({ reply: "   " }).reply).toBeNull();
+    expect(shape({ reply: 42 }).reply).toBeNull();
+  });
+});
+
+// QA F11 and F4: a quote stands only as the prospect's own words, and "unknown" only on their words of not knowing.
+describe("shapeExtraction: evidence and unknown fields", () => {
+  const QA_MESSAGE = "Bi-weekly. We have 12 employees, all paid hourly, and we use a small local payroll provider.";
+
+  it("drops a quote that isn't the prospect's own words, keeping the answer", () => {
+    const shaped = shape(
+      { company_name: "Acme", industry: "Retail", field_status: { company_name: "confirmed", industry: "inferred" }, evidence: { company_name: "We're Acme", industry: "they run a shop" } },
+      "We\u2019re  ACME, and we sell shoes.",
+    );
+    expect(shaped.extracted).toEqual({ company_name: "Acme", industry: "Retail" });
+    expect(shaped.evidence).toEqual({ company_name: "We're Acme" });
+  });
+
+  it("reads a quote as the message's whatever its case, curly quotes, spacing, end punctuation or ellipsis", () => {
+    const said = "Honestly? We\u2019re  in CA,   mainly. A few others too!";
+    expect(quotesMessage("we're in ca", said)).toBe(true);
+    expect(quotesMessage("\u201cWe're in CA, mainly.\u201d", said)).toBe(true);
+    expect(quotesMessage("in CA ... a few others too", said)).toBe(true);
+    expect(quotesMessage("in CA \u2026 several others", said)).toBe(false);
+    expect(quotesMessage("in Oregon", said)).toBe(false);
+    expect(quotesMessage(" ... ", said)).toBe(false);
+  });
+
+  it("marks nothing unknown that the message doesn't say the prospect doesn't know (the QA conversation)", () => {
+    const untouched = ["fein_count", "start_month", "current_carrier", "renewal_date", "funding_days", "hris_system"];
+    const args = {
+      pay_frequency: "bi-weekly",
+      employee_count: 12,
+      has_nonexempt: true,
+      field_status: { pay_frequency: "confirmed", employee_count: "confirmed", has_nonexempt: "inferred", ...Object.fromEntries(untouched.map((f) => [f, "unknown"])) },
+    };
+    // With no quote, with the whole message as the quote, and with a quote the message doesn't hold.
+    for (const evidence of [{}, Object.fromEntries(untouched.map((f) => [f, QA_MESSAGE])), Object.fromEntries(untouched.map((f) => [f, "I don't know"]))]) {
+      const shaped = shape({ ...args, evidence }, QA_MESSAGE);
+      expect(shaped.field_status).toEqual({ pay_frequency: "confirmed", employee_count: "confirmed", has_nonexempt: "inferred" });
+      expect(shaped.doubted_unknown).toEqual(untouched);
+      for (const f of untouched) expect(shaped.evidence).not.toHaveProperty(f);
+    }
+  });
+
+  it("keeps an unknown whose quote is the prospect saying they don't know", () => {
+    const shaped = shape(
+      { field_status: { funding_days: "unknown", fein_count: "unknown" }, evidence: { funding_days: "I'd have to check with our bookkeeper", fein_count: "Bi-weekly" } },
+      "Bi-weekly. I'd have to check with our bookkeeper on the funding.",
+    );
+    expect(shaped.field_status).toEqual({ funding_days: "unknown" });
+    expect(shaped.doubted_unknown).toEqual(["fein_count"]);
+  });
+
+  it.each([
+    ["I don't know", true], ["no idea", true], ["not sure yet", true], ["dunno", true], ["Nope, can't say", true], ["let me check", true],
+    ["I'll find out", true], ["beats me", true], ["haven't a clue", true], ["Bi-weekly", false], ["We have 12 employees", false],
+    ["we use a small local payroll provider", false], ["Larkspur Plumbing", false],
+  ])("reads %j as not knowing: %s", (quote, expected) => {
+    expect(saysNotKnown(quote)).toBe(expected);
+  });
+
+  it("says the prospect is stopping only when the model says so outright", () => {
+    expect(shape({ prospect_stopping: true }).stopping).toBe(true);
+    expect(shape({ prospect_stopping: "true" }).stopping).toBe(false);
+    expect(shape({}).stopping).toBe(false);
   });
 });
 
@@ -150,6 +219,8 @@ describe("emptyExtraction", () => {
       reply: null,
       rejected: [],
       prompt_version: PROMPT_VERSION,
+      stopping: false,
+      doubted_unknown: [],
     });
   });
 
@@ -247,7 +318,7 @@ describe("the extraction contract", () => {
 
   it.each(Object.keys(PROPERTIES).filter((k) => k !== "census"))("takes an answer for %s, with its status and evidence", (key) => {
     const value = sample(key);
-    const shaped = shapeExtraction({ [key]: value, field_status: { [key]: "confirmed" }, evidence: { [key]: "as they said" } });
+    const shaped = shape({ [key]: value, field_status: { [key]: "confirmed" }, evidence: { [key]: "as they said" } }, "That's as they said.");
     expect(shaped.extracted).toEqual({ [key]: value });
     expect(shaped.field_status).toEqual({ [key]: "confirmed" });
     expect(shaped.evidence).toEqual({ [key]: "as they said" });
@@ -255,24 +326,24 @@ describe("the extraction contract", () => {
   });
 
   it("never takes the census from chat", () => {
-    const shaped = shapeExtraction({ census: [{ id: "1", first_name: "Ada" }], field_status: { census: "unknown" } });
+    const shaped = shape({ census: [{ id: "1", first_name: "Ada" }], field_status: { census: "unknown" } });
     expect(shaped.extracted).toEqual({});
     expect(shaped.field_status).toEqual({});
   });
 
   it("records a field the prospect doesn't know as unknown, with its evidence and no answer", () => {
-    const shaped = shapeExtraction({
+    const shaped = shape({
       field_status: { wc_experience_mod: "unknown", renewal_date: "unknown" },
       evidence: { wc_experience_mod: "no idea what our mod is", renewal_date: "not sure when it renews" },
       reply: "No matter.",
-    });
+    }, "Honestly, no idea what our mod is, and I'm not sure when it renews.");
     expect(shaped.extracted).toEqual({});
     expect(shaped.field_status).toEqual({ wc_experience_mod: "unknown", renewal_date: "unknown" });
     expect(shaped.evidence).toEqual({ wc_experience_mod: "no idea what our mod is", renewal_date: "not sure when it renews" });
   });
 
   it("doesn't call an answer unknown, or a refused answer unknown", () => {
-    const shaped = shapeExtraction({
+    const shaped = shape({
       employee_count: 12,
       hq_state: "new york",
       field_status: { employee_count: "unknown", hq_state: "unknown", made_up_field: "unknown" },
@@ -284,7 +355,7 @@ describe("the extraction contract", () => {
   });
 
   it("never takes conflicting or not applicable from the model: only a disagreement or the prospect sets those", () => {
-    const shaped = shapeExtraction({
+    const shaped = shape({
       industry: "Print",
       field_status: { industry: "conflicting", hq_state: "not_applicable" },
     });

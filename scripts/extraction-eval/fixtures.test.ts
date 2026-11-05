@@ -5,12 +5,12 @@ import { sanitizeChamberPatch } from "@/data/chamberValidation";
 import { FIELD_STATUSES } from "@/data/provenance";
 import { redactSensitive } from "@/data/sensitive";
 import { FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
-import { CENSUS_TEMPLATE_REPLY, FIXTURES } from "./fixtures";
+import { CENSUS_TEMPLATE_REPLY, FIXTURES, KEEPS_ASKING_REPLY } from "./fixtures";
 import { replyChecks } from "./scoring";
 
 describe("extraction eval fixtures", () => {
-  it("are twelve, with unique ids that are safe in a baseline key", () => {
-    expect(FIXTURES).toHaveLength(12);
+  it("are thirteen, with unique ids that are safe in a baseline key", () => {
+    expect(FIXTURES).toHaveLength(13);
     const ids = FIXTURES.map((f) => f.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of ids) expect(id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
@@ -51,6 +51,16 @@ describe("extraction eval fixtures", () => {
     expect(passes("The easiest way is our census template: download it on the Upload tab, add one row per person and upload it there.")).toBe(true);
     expect(passes("Thank you. How often do you run payroll?")).toBe(false);
     expect(passes("You can upload a spreadsheet on the Upload tab.")).toBe(false);
+  });
+
+  // QA F4: after two short answers Lenore keeps asking instead of saying she has everything.
+  it("check that Lenore keeps asking after two short answers", () => {
+    const passes = (reply: string) => Object.values(KEEPS_ASKING_REPLY).every((p) => p.test(reply));
+    expect(FIXTURES.find((f) => f.id === "two-short-answers")!.turns.every((t) => t.reply === KEEPS_ASKING_REPLY)).toBe(true);
+    expect(passes("Bi-weekly, noted. How many days before payday do you fund payroll?")).toBe(true);
+    expect(passes("Thank you. That's everything The Manuscript needs. Anything else?")).toBe(false);
+    expect(passes("Thank you, the intake is complete.")).toBe(false);
+    expect(passes("Noted.")).toBe(false);
   });
 
   it("only forbid digits a message actually contains, and that redaction removes", () => {

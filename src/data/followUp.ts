@@ -30,14 +30,20 @@ export const isReadyToCertify = (data: ChamberData, provenance: ProvenanceMap, v
 
 /**
  * What Lenore says, once per intake, when it first becomes ready to certify (D29). It is recognised by its words,
- * as greetings are, so nothing more is stored. Then she carries on with the recommended questions.
+ * as greetings are, so nothing more is stored. Then she carries on with the recommended questions, so it never says
+ * she has everything: being ready to certify needs three answers, and most of the intake is still to ask (QA F4).
  */
 export const READY_MESSAGE =
-  "That's everything The Manuscript needs. You can review your answers and certify now on the Review tab. If you have a few more minutes, I have some questions that help underwriters.";
+  "You've given every answer certification needs, so you can review and certify on the Review tab whenever you're ready. The Manuscript is stronger with more, so if you have a few more minutes, let's keep going with the questions that help underwriters.";
 
-/** Whether Lenore has already said the intake is ready. */
+/** Lenore's earlier words for READY_MESSAGE, still in older transcripts: they count as having said it. */
+const EARLIER_READY_MESSAGES: readonly string[] = [
+  "That's everything The Manuscript needs. You can review your answers and certify now on the Review tab. If you have a few more minutes, I have some questions that help underwriters.",
+];
+
+/** Whether Lenore has already said the intake is ready, in today's words or earlier ones. */
 export const hasAnnouncedReady = (messages: readonly ChatMessage[]): boolean =>
-  messages.some((m) => m.sender === "lenore" && m.text === READY_MESSAGE);
+  messages.some((m) => m.sender === "lenore" && (m.text === READY_MESSAGE || EARLIER_READY_MESSAGES.includes(m.text)));
 
 /**
  * Whether to say it now: the intake has just become ready (it wasn't at `before`), Lenore isn't in the middle of an
