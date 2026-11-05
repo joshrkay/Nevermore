@@ -40,7 +40,7 @@ answers, file names, messages, addresses or links.
 | `deletion_failed` | `fail_intake_deletion` when a deletion has used every attempt, and `claim_intake_deletions` when a worker died on the last one | `storage_remove:<status>`, `files_remain:<n>`, `rpc_files:<code>`, `rpc_complete:<code>`, `unexpected`, `worker_lost` |
 | `voice_failed` | The browser, when a voice call with Lenore (ElevenLabs) fails on our side or the service's (`src/hooks/useLenoreVoice.ts`, `docs/VOICE_ISSUES.md`). A microphone the prospect blocked or doesn't have is shown to them and not reported | `voice_connect_timeout` (no connection 15 seconds after the microphone was ready), `voice_connect_failed` (the connection was refused), `voice_dropped:<close code>` (a call under way closed with an error), `voice_error` (the service reported an error during a call that carried on) |
 | `malware_detected` | `record_document_scan` (from `document-upload` or `document-scan`) when the scanner names a signature in an upload | `malware:<signature>` |
-| `scan_failed` | `fail_document_scan` when an upload couldn't be scanned after every attempt, `claim_document_scans` when a worker died on the last one, and, while no scanner is set up (or `none` on production), `document-scan` on every run and `document-upload` on every upload it refused | `config_missing`, `unreachable`, `timeout`, `http:<status>`, `invalid_response`, `clamd_error`, `clamd_size_limit`, `clamd_no_reply`, `file_missing`, `storage_download:<code>`, `storage_release:<code>`, `rpc_record:<code>`, `worker_lost` |
+| `scan_failed` | `fail_document_scan` when an upload couldn't be scanned after every attempt, `claim_document_scans` when a worker died on the last one, and, while no scanner is set up (or `none` on production), `document-scan` on every run (`document-upload` only logs each upload it refuses) | `config_missing`, `unreachable`, `timeout`, `scanii:<status>`, `http:<status>`, `invalid_response`, `clamd_error`, `clamd_size_limit`, `clamd_no_reply`, `file_missing`, `storage_download:<code>`, `storage_release:<code>`, `rpc_record:<code>`, `worker_lost` |
 
 The browser's reports go through `public.report_client_event`, which drops reports past 30 an hour per
 account, 200 an hour for all signed-out visitors together and 2,000 an hour overall, so a broken page or
@@ -374,8 +374,8 @@ SEV-2 until step 2 says otherwise.
 1. Which one: `select id, user_id, session_id, scan_signature, scanned_at, file_sha256 from public.documents
    where scan_verdict = 'infected' order by scanned_at desc;` The alert names the document and intake ids;
    look the intake up in the advisor console for who it is.
-2. Is it real? `Eicar-Signature` / `Win.Test.EICAR_HDB-1` is the standard test file (someone testing the
-   scanner, see below). For anything else, the SHA-256 identifies the sample: look it up in your threat
+2. Is it real? A signature naming EICAR (Scanii reports a `content.malicious.…` finding; clamd says
+   `Win.Test.EICAR_HDB-1`) is the standard test file (someone testing the scanner, see below). For anything else, the SHA-256 identifies the sample: look it up in your threat
    intelligence source. Treat a real detection from a prospect as a compromised machine on their side, not
    an attack on us: the advisory lead tells the prospect, without forwarding the file, that a file they sent
    was flagged and set aside, and asks them to send a clean copy.
@@ -388,9 +388,12 @@ SEV-2 until step 2 says otherwise.
    is probing the upload. Revoke the intake (`revoke_chamber_session`) and treat it under
    [Authorization failures](#authorization-failures).
 
-Testing it (once a month, and after changing the scanner): upload the EICAR test file (the 68-character
-string from eicar.org, saved as `eicar.csv`) to a test intake. Within seconds the Upload tab says "Blocked",
-the channel shows `MALWARE_DETECTED`, and `OPS_ALERT kind=malware_detected` follows within five minutes.
+Testing it (once a month, after changing the scanner or its keys, and once Scanii is first set up): upload
+the EICAR test file (the 68-character string from eicar.org, saved as `eicar.csv`) to a test intake. Within
+seconds the Upload tab says "Blocked", the channel shows `MALWARE_DETECTED` with Scanii's
+`content.malicious.…` finding as the signature, and `OPS_ALERT kind=malware_detected` follows within five
+minutes. Then upload any ordinary CSV: it should be readable as soon as the upload finishes. A
+`SCAN_DEFERRED … engine=scanii reason=scanii:401` log line instead means Scanii refused the key and secret.
 
 ### Scan failed
 
@@ -399,15 +402,17 @@ the channel shows `MALWARE_DETECTED`, and `OPS_ALERT kind=malware_detected` foll
 refused (prospects are told uploads are paused). Nothing unsafe is exposed; this is a SEV-2 because uploads
 are stuck.
 
-1. By code: `config_missing`: `MALWARE_SCANNER` (or `CLAMAV_HOST`, `MALWARE_SCANNER_URL`,
-   `MALWARE_SCANNER_TOKEN`) is unset or wrong in the function secrets, or is `none` on a project whose
-   `APP_ENV` isn't `development`, `demo` or `staging` (`docs/SUPABASE_SETUP.md`, "Malware scanning";
-   `docs/adr/0002-uploads-need-a-scanner-in-production.md`). The `SCAN_CONFIG_MISSING` log line names which.
+1. By code: `config_missing`: `MALWARE_SCANNER` (or `SCANII_API_KEY`, `SCANII_API_SECRET`, `SCANII_API_URL`,
+   `CLAMAV_HOST`, `MALWARE_SCANNER_URL`, `MALWARE_SCANNER_TOKEN`) is unset or wrong in the function secrets,
+   or is `none` on a project whose `APP_ENV` isn't `development`, `demo` or `staging`
+   (`docs/SUPABASE_SETUP.md`, "Malware scanning"; `docs/adr/0002-uploads-need-a-scanner-in-production.md`).
+   `document-scan` records it on every run; the `SCAN_CONFIG_MISSING` log line names which setting.
    Meanwhile uploads are refused (prospects are told uploads are paused) rather than held; files held before
-   are scanned on `document-scan`'s first run after the setting is fixed, within five minutes. Until the
-   scanner decision (D13) is made, silence the repeats as in [Silencing an alert](#silencing-an-alert).
-   `unreachable`, `timeout`, `http:<status>`, `clamd_*`: the scanner is down, refusing us, or rejecting the
-   file (`clamd_size_limit`: raise clamd's `StreamMaxLength` above 20 MB). `file_missing`: the document has no
+   are scanned on `document-scan`'s first run after the setting is fixed, within five minutes. Until Scanii's
+   secrets are set, silence the repeats as in [Silencing an alert](#silencing-an-alert).
+   `unreachable`, `timeout`, `scanii:<status>`, `http:<status>`, `clamd_*`: the scanner is down, refusing us,
+   or rejecting the file (`scanii:401` or `scanii:403`: Scanii refused the key and secret, so check them in
+   the Scanii dashboard; `clamd_size_limit`: raise clamd's `StreamMaxLength` above 20 MB). `file_missing`: the document has no
    stored file (its upload failed half way); the prospect should remove it and upload again.
    `storage_*`, `rpc_*`: Supabase Storage or the database (function logs). `worker_lost`: the function was
    stopped mid-scan on its last attempt.

@@ -89,14 +89,15 @@ It must be https (http only for localhost).
 Every upload goes through `document-upload`, which checks the file's bytes, scans it, and stores it: in the
 `documents` bucket once the scan passed, in the private `quarantine` bucket otherwise. Nobody signed in can
 read a quarantined file, and Lenore and advisors can open a file only once its scan passed. The scanner is
-chosen by the `MALWARE_SCANNER` secret (decision D13 is still open):
+chosen by the `MALWARE_SCANNER` secret. Production uses Scanii (decision D13):
 
 | `MALWARE_SCANNER` | Also set | Use |
 |---|---|---|
+| `scanii` (production) | `SCANII_API_KEY`, `SCANII_API_SECRET`; `SCANII_API_URL` only for a region other than the US | Scanii's hosted API. In the Scanii dashboard, create an API key in the US region (`api-us1`) and set its key and secret here; the secret is shown once. Files are scanned in Virginia and their contents deleted after the scan. Sign Scanii's DPA before real prospects' files go through it |
 | `clamav` | `CLAMAV_HOST`, and `CLAMAV_PORT` if not 3310 | A clamd daemon reachable from Supabase's edge functions over TLS (clamd itself speaks plain TCP, so put stunnel or a TLS proxy in front). Raise clamd's `StreamMaxLength` to at least 21 MB |
 | `http` | `MALWARE_SCANNER_URL` (https), `MALWARE_SCANNER_TOKEN` | Any scanning service, or a thin wrapper around one, that takes the file as `POST` `application/octet-stream` with `Authorization: Bearer <token>` and answers `{"verdict":"clean"}` or `{"verdict":"infected","signature":"<name>"}` |
 | `none` | `APP_ENV=development`, `demo` or `staging` | No scanning: every file is recorded `skipped` and is readable. Only on a project that isn't production: with `APP_ENV` unset or anything else, `none` counts as unset |
-| unset | | Uploads are refused: `document-upload` stores nothing and the prospect is told uploads are paused while virus checking is set up. Each refusal logs `SCAN_CONFIG_MISSING` naming the setting and records a `scan_failed` event; `document-scan` answers 503 on every run; `ops-monitor` alerts within five minutes, then hourly |
+| unset | | Uploads are refused: `document-upload` stores nothing, logs `SCAN_CONFIG_MISSING` naming the setting, and the prospect is told uploads are paused while virus checking is set up. `document-scan` answers 503 on every run and records a `scan_failed` event, so `ops-monitor` alerts within five minutes, then hourly |
 
 The rule and why are in `docs/adr/0002-uploads-need-a-scanner-in-production.md`. `APP_ENV` names the
 environment: leave it unset on production (unset means production), and set `demo`, `staging` or
@@ -110,13 +111,14 @@ again 10 minutes after the upload (so within 15 minutes), then backs off; after 
 `failed` and alerted.
 
 `scripts/supabase-setup.mjs` applies the same rule before it changes anything: `MALWARE_SCANNER=none`
-without a non-production `APP_ENV`, or an `APP_ENV` that isn't one of `development`, `demo`, `staging` or
-`production`, stops it. An unset `MALWARE_SCANNER` is a warning, not a stop, so the rest of the setup isn't
-held up while the scanner is chosen (D13); production refuses uploads, the census included, until it is set.
+without a non-production `APP_ENV`, an `APP_ENV` that isn't one of `development`, `demo`, `staging` or
+`production`, or `scanii` without `SCANII_API_KEY` and `SCANII_API_SECRET`, stops it. An unset
+`MALWARE_SCANNER` is a warning, not a stop, so the rest of the setup isn't held up while Scanii's account is
+opened; production refuses uploads, the census included, until it is set.
 
-Whichever scanner is chosen sees every uploaded file, census and payroll included: it needs the same
-data-processing terms as the AI provider (`docs/LEGAL_REVIEW.md`). After setting it, run the EICAR check in
-`docs/RUNBOOK.md` ("Malware detected").
+Scanii sees every uploaded file, census and payroll included: it needs the same data-processing terms as the
+AI provider (`docs/LEGAL_REVIEW.md`). After setting it, run the EICAR check in `docs/RUNBOOK.md` ("Malware
+detected").
 
 The `documents` and `quarantine` buckets take only `application/octet-stream` up to 20 MB: every document is
 stored with that type, so a browser always downloads it rather than showing it (the type its bytes showed is in
