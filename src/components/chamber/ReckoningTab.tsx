@@ -18,6 +18,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import type { ProvenanceMap } from "@/data/provenance";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
+import { errorDetail, failureReference } from "@/lib/monitoring";
 import VerifyEmailGate from "./VerifyEmailGate";
 
 interface ReckoningTabProps {
@@ -62,8 +63,9 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
   const [signedDataKey, setSignedDataKey] = useState<string | null>(null);
   const [needsRecertify, setNeedsRecertify] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  // Why the last attempt didn't go through, kept on screen until the next attempt or a change.
-  const [failure, setFailure] = useState<string | null>(null);
+  // Why the last attempt didn't go through, kept on screen until the next attempt or a change. One that needs a
+  // verified email offers the verification with it (QA F2).
+  const [failure, setFailure] = useState<SubmitFailure | null>(null);
   const [submitted, setSubmitted] = useState<{ name: string; title: string; at: Date } | null>(null);
   // A second click while the first is still saving must not send a second certification.
   const submittingRef = useRef(false);
@@ -161,8 +163,10 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
     try {
       result = await onSubmit(submission, signedKey);
     } catch (error) {
-      console.error("Failed to submit session:", error);
-      result = false;
+      // One line with a reference the prospect is shown, never a bare object (QA F2).
+      const reference = failureReference();
+      console.error(`Failed to submit session (reference ${reference}): ${errorDetail(error)}`);
+      result = { message: `Something went wrong on our side (reference ${reference}). Please try again.`, reference };
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -177,9 +181,9 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
       setSubmitted({ name: signerName.trim(), title: signerTitle.trim(), at: signedAt });
       toast.success("Your certification was recorded and your submission is saved.");
     } else {
-      const message = typeof result === "object" ? result.message : GENERIC_FAILURE;
-      setFailure(message);
-      toast.error(message);
+      const reason = typeof result === "object" ? result : { message: GENERIC_FAILURE };
+      setFailure(reason);
+      toast.error(reason.message);
     }
   };
 
@@ -357,10 +361,12 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
             <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" aria-hidden="true" />
             <div>
               <p className="font-medium">Your submission wasn't saved.</p>
-              <p className="text-muted-foreground">{failure} Nothing has been recorded; your signature is still here.</p>
+              <p className="text-muted-foreground">{failure.message} Nothing has been recorded; your signature is still here.</p>
             </div>
           </div>
         )}
+        {/* The database still calls this sign-in a guest's: the way to verify, here, rather than a dead end (QA F2). */}
+        {failure?.verifyEmail && !submitting && <VerifyEmailGate />}
 
         <button
           onClick={handleSubmit}

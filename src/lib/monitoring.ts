@@ -40,11 +40,34 @@ export function cleanCode(code: string | null | undefined): string | null {
   return clean || null;
 }
 
-/** "TypeError: x is undefined", redacted: what kind of error, without what it was about. */
+/**
+ * "TypeError: x is undefined", redacted: what kind of error, without what it was about. A database or auth error
+ * that isn't an Error (a PostgREST error is a plain object) reads as its code and message, never "[object Object]".
+ */
 export function errorDetail(error: unknown): string {
-  if (error instanceof Error) return redactForReport(`${error.name}: ${error.message}`);
+  if (error instanceof Error) {
+    // supabase-js's errors carry the server's code ("unexpected_failure"), which says more than their name.
+    const code = (error as { code?: unknown }).code;
+    return redactForReport(typeof code === "string" && code ? `${error.name} (${code}): ${error.message}` : `${error.name}: ${error.message}`);
+  }
   if (typeof error === "string") return redactForReport(error);
+  if (typeof error === "object" && error !== null) {
+    const { code, status, message } = error as { code?: unknown; status?: unknown; message?: unknown };
+    const label = [code, status].find((v) => typeof v === "string" || typeof v === "number");
+    if (typeof message === "string" && message) return redactForReport(label !== undefined ? `${label}: ${message}` : message);
+  }
   return "unknown";
+}
+
+// No 0/O or 1/I/L to misread, and letters only, so redaction (which takes runs of digits) keeps it whole.
+const REFERENCE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ";
+
+/**
+ * A short reference for one failure, shown to the person and logged and reported with it, so what they quote can be
+ * found (QA F2: a failed certification said only "We couldn't save your submission", and the console said `Object`).
+ */
+export function failureReference(random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))): string {
+  return Array.from(random(8), (b) => REFERENCE_LETTERS[b % REFERENCE_LETTERS.length]).join("");
 }
 
 /**

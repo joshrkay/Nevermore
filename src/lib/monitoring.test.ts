@@ -7,6 +7,7 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: (...args: un
 const {
   cleanCode,
   errorDetail,
+  failureReference,
   installGlobalErrorReporting,
   MAX_REPORTS_PER_PAGE,
   redactForReport,
@@ -67,6 +68,27 @@ describe("cleanCode and errorDetail", () => {
     expect(errorDetail(new TypeError("Cannot read x of pat@example.com"))).toBe("TypeError: Cannot read x of [email]");
     expect(errorDetail("plain text 12345")).toBe("plain text [number]");
     expect(errorDetail({ weird: true })).toBe("unknown");
+  });
+
+  // QA F2: a PostgREST or auth error is a plain object, which a console printed as `Object`.
+  it("reads a database or auth error that isn't an Error by its code and message", () => {
+    // A five-digit SQLSTATE goes as any run of digits does; report it as the event's code.
+    expect(errorDetail({ code: "EA003", message: "permission denied for pat@example.com", details: null })).toBe("EA003: permission denied for [email]");
+    expect(errorDetail({ status: 500, message: "Error sending email change email" })).toBe("500: Error sending email change email");
+    expect(errorDetail({ message: "no code" })).toBe("no code");
+    expect(errorDetail(Object.assign(new Error("Error sending email change email"), { name: "AuthApiError", code: "unexpected_failure", status: 500 }))).toBe(
+      "AuthApiError (unexpected_failure): Error sending email change email",
+    );
+  });
+});
+
+describe("failureReference", () => {
+  it("is eight letters that redaction keeps, from random bytes", () => {
+    const ref = failureReference();
+    expect(ref).toMatch(/^[A-Z]{8}$/);
+    expect(ref).not.toMatch(/[OIL]/);
+    expect(redactForReport(`reference ${ref}`)).toBe(`reference ${ref}`);
+    expect(failureReference(() => new Uint8Array([0, 1, 2, 3, 22, 23, 24, 255]))).toBe("ABCDZABC");
   });
 });
 

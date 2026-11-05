@@ -36,6 +36,12 @@ let rpcResult: { data: unknown; error: MockError | null } = { data: "archived", 
 // While set, reading the verified fields waits until a test answers it (in the order the reads were made).
 let deferVerifiedRead = false;
 const pendingVerifiedReads: ((value: { data: unknown; error: MockError | null }) => void)[] = [];
+// The sign-in this browser holds, and what refreshing it gives (QA F2): access tokens whose is_anonymous claim says
+// guest or not. None by default, so certifying goes straight to the database as before.
+let heldToken: string | null = null;
+let refreshedToken: string | null = null;
+let refreshes = 0;
+const token = (isAnonymous: boolean) => `header.${btoa(JSON.stringify({ sub: "u1", is_anonymous: isAnonymous })).replace(/=+$/, "")}.signature`;
 
 // Who is signed in. A test can switch it and rerender, as signing in with an emailed code does.
 let authUserId = "u1";
@@ -43,6 +49,14 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: authUserId }, 
 vi.mock("@/lib/dispatchOutbox", () => ({ dispatchOutbox: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
+    auth: {
+      getSession: async () => ({ data: { session: heldToken ? { access_token: heldToken } : null } }),
+      refreshSession: async () => {
+        refreshes += 1;
+        if (refreshedToken) heldToken = refreshedToken;
+        return refreshedToken ? { data: { session: { access_token: refreshedToken } }, error: null } : { data: { session: null }, error: { message: "refresh failed" } };
+      },
+    },
     rpc: (fn: string, args: Record<string, unknown>) => {
       rpcCalls.push({ fn, args });
       if (deferVerifiedRead && fn === "session_verified_fields") return new Promise((resolve) => { pendingVerifiedReads.push(resolve as never); });
@@ -116,7 +130,7 @@ vi.mock("@/integrations/supabase/client", () => ({
   },
 }));
 
-const { useChamberSession, describeInvalidPath } = await import("./useChamberSession");
+const { useChamberSession, describeInvalidPath, VERIFY_EMAIL_MESSAGE } = await import("./useChamberSession");
 const { dispatchOutbox } = await import("@/lib/dispatchOutbox");
 const { applyExtraction } = await import("@/data/provenance");
 const { parseChamberData } = await import("@/data/chamberValidation");
@@ -126,7 +140,10 @@ const { readBackup, writeBackup } = await import("@/data/intakeBackup");
 // Lets queued promise callbacks run while fake timers are active (waitFor would hang).
 const drain = () => act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
 
-type SubmitResult = boolean | { message: string };
+type SubmitResult = boolean | { message: string; verifyEmail?: boolean; reference?: string };
+
+// A failure nothing else explains: it carries a reference the message quotes (QA F2).
+const UNEXPLAINED = expect.objectContaining({ reference: expect.stringMatching(/^[A-Z]{8}$/), message: expect.stringMatching(/reference [A-Z]{8}/) });
 
 /**
  * Waits for the hook to finish looking for an intake, then has the prospect start one (A-1: nothing is created
@@ -176,6 +193,9 @@ describe("useChamberSession", () => {
     pendingVerifiedReads.length = 0;
     rpcResult = { data: "archived", error: null };
     authUserId = "u1";
+    heldToken = null;
+    refreshedToken = null;
+    refreshes = 0;
     localStorage.clear();
     vi.mocked(dispatchOutbox).mockClear();
   });
@@ -468,7 +488,7 @@ describe("useChamberSession", () => {
       await act(async () => { updates[0].resolve({ error: null }); });
       await drain();
       await act(async () => { updates[1].resolve({ error: { message: "boom" } }); await pending; });
-      expect(ok).toBe(false);
+      expect(ok).toEqual(UNEXPLAINED);
       expect(dispatchOutbox).not.toHaveBeenCalled();
     });
 
@@ -924,7 +944,7 @@ describe("useChamberSession", () => {
       const pending = result.current.submit(submission).then((r) => { ok = r; });
       await waitFor(() => expect(updates).toHaveLength(1));
       await act(async () => { updates[0].resolve({ error: null, data: [] }); await pending; });
-      expect(ok).toBe(false);
+      expect(ok).toEqual(UNEXPLAINED);
       expect(result.current.certification.status).not.toBe("certified");
     });
 
@@ -1651,7 +1671,7 @@ describe("useChamberSession", () => {
             submission: { ...sent.submission, certified_at: certifiedAt, data_sha256: "abc" },
           });
           updates[0].resolve({ error: networkError });
-          expect(await first).toBe(false);
+          expect(await first).toEqual(UNEXPLAINED);
           expect(hook.result.current.certification.status).toBe("none");
         };
 
@@ -1719,7 +1739,7 @@ describe("useChamberSession", () => {
             submission: { ...sent.submission, certified_at: "2026-10-27T00:00:00Z", data_sha256: "abc" },
           });
           updates[0].resolve({ error: networkError });
-          expect(await first).toBe(false);
+          expect(await first).toEqual(UNEXPLAINED);
           expect(hook.result.current.certification.status).toBe("none");
           change(hook);
           await autosave();
@@ -2493,6 +2513,80 @@ describe("useChamberSession", () => {
       const { result } = renderHook(() => useChamberSession("s9"));
       await waitFor(() => expect(result.current.sessionId).toBe("s9"));
       expect(result.current.restoredThrough).toBeNull();
+    });
+  });
+
+  // QA F2: the database refused a certification sent with a guest's token, and the page said only "We couldn't save
+  // your submission" while the console logged `Object`.
+  describe("certifying with a guest's token", () => {
+    // Starts an intake, saves an answer and certifies: updates[0] is the autosave, updates[1] the certification.
+    const certify = async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await startIntake(result);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      let ok: SubmitResult | undefined;
+      const pending = result.current.submit(submission).then((r) => { ok = r; });
+      await drain();
+      await act(async () => { updates[0].resolve({ error: null }); });
+      await drain();
+      return { result, pending, ok: () => ok };
+    };
+
+    it("refreshes a token minted before the prospect verified (in another tab), then certifies with it", async () => {
+      heldToken = token(true);
+      refreshedToken = token(false);
+      const { result, pending, ok } = await certify();
+      expect(refreshes).toBe(1);
+      expect(updates).toHaveLength(2);
+      await act(async () => { updates[1].resolve({ error: null }); await pending; });
+      expect(ok()).toBe(true);
+      expect(result.current.certification.status).toBe("certified");
+    });
+
+    it("doesn't refresh a token that is already a verified account's", async () => {
+      heldToken = token(false);
+      const { pending, ok } = await certify();
+      expect(refreshes).toBe(0);
+      await act(async () => { updates[1].resolve({ error: null }); await pending; });
+      expect(ok()).toBe(true);
+    });
+
+    it("asks the prospect to verify, sending nothing, when the sign-in is still a guest's after a refresh", async () => {
+      heldToken = token(true);
+      refreshedToken = token(true);
+      const { pending, ok } = await certify();
+      await act(async () => { await pending; });
+      expect(updates).toHaveLength(1);
+      expect(ok()).toEqual({ message: VERIFY_EMAIL_MESSAGE, verifyEmail: true });
+    });
+
+    it("says why when the database refuses a guest's certification", async () => {
+      const { pending, ok } = await certify();
+      await act(async () => {
+        updates[1].resolve({ error: { code: "42501", message: "An email-verified account is required to certify an intake" } });
+        await pending;
+      });
+      expect(ok()).toEqual({ message: VERIFY_EMAIL_MESSAGE, verifyEmail: true });
+    });
+
+    it("logs any other refusal as one line with a reference, and shows the prospect that reference", async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { pending, ok } = await certify();
+      await act(async () => { updates[1].resolve({ error: { code: "XX000", message: "internal error" } }); await pending; });
+      const result = ok() as { message: string; reference: string };
+      expect(result).toEqual(UNEXPLAINED);
+      expect(result.message).toContain("Something went wrong on our side");
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error.mock.calls[0]).toEqual([`Failed to submit session (reference ${result.reference}, code XX000): XX000: internal error`]);
+      error.mockRestore();
+    });
+
+    it("says the server couldn't be reached when the request never got there", async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { pending, ok } = await certify();
+      await act(async () => { updates[1].resolve({ error: networkError }); await pending; });
+      expect((ok() as { message: string }).message).toMatch(/^We couldn't reach our server/);
+      error.mockRestore();
     });
   });
 
