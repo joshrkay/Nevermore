@@ -12,6 +12,11 @@ export const EMAIL_SECRETS = ["RESEND_API_KEY", "EMAIL_FROM", "ADVISORY_NOTIFY_E
 /** Supabase sets these for every function itself, and refuses to let you set names starting with SUPABASE_. */
 const PLATFORM_PREFIX = "SUPABASE_";
 
+/** Secrets that are a single token (API keys, signing secrets), so whitespace in one is always a mistake. */
+const SECRET_NAME = /_(API_KEY|SECRET|TOKEN)$/;
+/** What a Resend API key looks like: re_ and a run of letters, digits and underscores. */
+const RESEND_KEY_SHAPE = /^re_[A-Za-z0-9_]+$/;
+
 export function isProjectRef(ref) {
   return typeof ref === "string" && /^[a-z]{20}$/.test(ref);
 }
@@ -58,6 +63,17 @@ export function checkSecrets(env) {
     const local = url && (url.hostname === "localhost" || url.hostname === "127.0.0.1");
     if (!url || (url.protocol !== "https:" && !(local && url.protocol === "http:"))) errors.push("APP_BASE_URL must be an https:// address");
     else if (url.pathname !== "/" || url.search || url.hash) errors.push("APP_BASE_URL must be just the site's origin, with no path");
+  }
+
+  // A key with a space in it is a key with something pasted after it (an inline comment, a second word): the
+  // file has no comments after a value. The function secret would hold all of it, so every call fails (QA H5).
+  for (const name of Object.keys(env)) {
+    if (SECRET_NAME.test(name) && set(name) && /\s/.test(env[name])) {
+      errors.push(`${name} has a space or other whitespace in it: keep only the key on its line, with nothing after it (a # comment isn't allowed after a value)`);
+    }
+  }
+  if (set("RESEND_API_KEY") && !/\s/.test(env.RESEND_API_KEY) && !RESEND_KEY_SHAPE.test(env.RESEND_API_KEY)) {
+    warnings.push("RESEND_API_KEY doesn't look like a Resend API key (re_ followed by letters, digits and underscores); the check against Resend says whether it works");
   }
 
   const missingEmail = EMAIL_SECRETS.filter((name) => !set(name));
@@ -113,6 +129,69 @@ export function envFileLine(name, value) {
   if (!v.includes("'")) return `${name}='${v}'`;
   if (!/["$\\]/.test(v)) return `${name}="${v}"`;
   throw new Error(`${name} has both a single quote and one of " $ \\; set it in the dashboard instead`);
+}
+
+// ---- The Supabase CLI ----------------------------------------------------------------------------
+
+/** The CLI's version from `supabase --version` (the first x.y.z in it), as [major, minor, patch], or null. */
+export function parseCliVersion(text) {
+  const m = String(text ?? "").match(/(\d+)\.(\d+)\.(\d+)/);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/**
+ * The CLI calls the setup makes, for the installed version. CLI 3 changed two things the setup relies on (QA H3):
+ * `db push` targets the local database unless given `--remote`, and a change to a hosted project is refused in a
+ * non-interactive run unless it carries `--yes`. The script asks once (the project ref typed back, or its own --yes)
+ * before any of these run, so they all carry `--yes` and the run finishes unattended. `db push` uses the linked
+ * project (`supabase link` runs first) so it connects the way the link set up; the others name the project. An
+ * unreadable version is taken as current. CLI 2 keeps the calls it was run with before.
+ */
+export function cliCommands(version, ref) {
+  const legacy = Array.isArray(version) && version[0] < 3;
+  if (legacy) {
+    return {
+      link: ["link", "--project-ref", ref],
+      dbPush: ["db", "push"],
+      secretsSet: (file) => ["secrets", "set", "--env-file", file, "--project-ref", ref],
+      deploy: (fn) => ["functions", "deploy", fn, "--project-ref", ref],
+    };
+  }
+  const target = `--remote=${ref}`;
+  return {
+    link: ["link", "--project-ref", ref],
+    dbPush: ["db", "push", "--remote", "--yes"],
+    secretsSet: (file) => ["secrets", "set", "--env-file", file, target, "--yes"],
+    // Bundled with Docker (no --use-api): Supabase's server-side bundler can't fetch document-extract's SheetJS
+    // import from cdn.sheetjs.com.
+    deploy: (fn) => ["functions", "deploy", fn, target, "--yes"],
+  };
+}
+
+/** Why the setup needs Docker, for the message that stops it before anything changes when Docker isn't running. */
+export const DOCKER_NEEDED =
+  "Docker isn't running. `supabase functions deploy` bundles the functions with it: document-extract imports SheetJS from cdn.sheetjs.com, " +
+  "which Supabase's server-side bundler (--use-api) can't fetch. Start Docker (Docker Desktop, or the docker service) and run this again; nothing was changed.";
+
+// ---- Resend ------------------------------------------------------------------------------------
+
+/**
+ * What Resend's answer to an empty send says about RESEND_API_KEY (QA H5). The setup posts `{}` to /emails with the
+ * key: 422 (or 400) is Resend refusing the empty email, so it read the key and accepted it; 401 or 403 is the key
+ * refused, which would break sign-in codes and every app email, so the setup stops. Anything else (no answer, a rate
+ * limit, Resend down) leaves the key unverified: `ok` is null and the setup goes on with a warning. `name` is Resend's
+ * error code; nothing else from the answer is shown.
+ */
+export function resendKeyVerdict({ status, name }) {
+  const code = typeof name === "string" && /^[a-z_]{1,40}$/.test(name) ? ` ${name}` : "";
+  if (status === 422 || status === 400) return { ok: true, detail: "Resend accepted the key" };
+  if (status === 401 || status === 403) {
+    return {
+      ok: false,
+      detail: `Resend refused the key (${status}${code}): sign-in codes and every app email fail with it. Create a key with sending access at resend.com/api-keys, put it in the secrets file and run this again`,
+    };
+  }
+  return { ok: null, detail: status ? `Resend answered ${status}${code}, so the key wasn't verified` : "Resend couldn't be reached, so the key wasn't verified" };
 }
 
 /** `Edgar Allan Advisory <intake@mail.example.com>` or a bare address, as the sender name and address. */
@@ -252,6 +331,30 @@ export function authConfigPatch(current, env) {
   return { patch, notes };
 }
 
+/**
+ * Whether Supabase Auth's SMTP password is RESEND_API_KEY, as it must be: sign-in codes go out through Resend's SMTP
+ * with the key as the password, and the app's own emails through Resend's API with the same key, so after a rotation
+ * one can work while the other fails (QA H5). `patch` is authConfigPatch's. The Management API may hide the stored
+ * password; a value that isn't a Resend key (missing, masked) can't be compared, and then this says what was done or
+ * what to check. Null when there is nothing to say: no Resend key, or another provider's SMTP (authConfigPatch's note
+ * covers both). Never includes either key.
+ */
+export function smtpKeyNote(current, patch, resendKey) {
+  const key = (resendKey ?? "").trim();
+  const c = current ?? {};
+  if (!key) return null;
+  if (!patch.smtp_pass && c.smtp_host !== RESEND_SMTP_HOST) return null;
+  const stored = typeof c.smtp_pass === "string" ? c.smtp_pass.trim() : "";
+  const readable = stored.startsWith("re_");
+  if (patch.smtp_pass === key) {
+    if (!readable) return "Supabase Auth's SMTP password is set to RESEND_API_KEY (Supabase doesn't return the stored one to compare, so it is set on every run)";
+    return stored === key ? "Supabase Auth's SMTP password is RESEND_API_KEY" : "Supabase Auth's SMTP password was a different Resend key; it now uses RESEND_API_KEY";
+  }
+  if (readable && stored === key) return "Supabase Auth's SMTP password is RESEND_API_KEY";
+  if (readable) return "Supabase Auth's SMTP password is a different Resend key from RESEND_API_KEY, so sign-in codes and the app's emails use different keys. Set EMAIL_FROM and run this again, or change it under Authentication → Emails → SMTP Settings";
+  return "Supabase Auth's SMTP password couldn't be read: it must be RESEND_API_KEY, or sign-in codes fail while the app's emails work. Set EMAIL_FROM and run this again, or set it under Authentication → Emails → SMTP Settings";
+}
+
 /** A SQL string literal. Single quotes are doubled, so any value is safe to embed. */
 export function sqlLiteral(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
@@ -360,6 +463,50 @@ export const STATUS_QUERIES = {
   role_grants: "select count(*)::int as n from public.user_roles;",
 };
 
+/** The versions of the migrations applied to the project; read before and after `db push` for the summary. */
+export const APPLIED_MIGRATIONS_SQL = "select version from supabase_migrations.schema_migrations order by version;";
+
+/** The applied versions from APPLIED_MIGRATIONS_SQL's rows. */
+export function migrationVersions(rows) {
+  return rows.flatMap((r) => (r && (typeof r.version === "string" || typeof r.version === "number") ? [String(r.version)] : []));
+}
+
+/**
+ * The migration files `db push` applied: versions in `after` that weren't in `before`, as the local file that has
+ * each version (a version with no local file is shown as it is). Null when either read failed, so the summary says
+ * it doesn't know rather than "none".
+ */
+export function newMigrations(before, after, localFiles) {
+  if (!before || !after) return null;
+  const had = new Set(before);
+  return after.filter((v) => !had.has(v)).map((v) => localFiles.find((f) => f.startsWith(`${v}_`)) ?? v);
+}
+
+/** A list for the summary: every item up to `max`, otherwise the first and the last (the count is shown beside it). */
+function listed(items, max = 10) {
+  if (items.length <= max) return items.join(", ");
+  return `${items[0]} … ${items[items.length - 1]}`;
+}
+
+/**
+ * The summary the setup prints when it ends, or stops (QA H3): the migrations it applied, the secrets it set (names
+ * only, never values) and the functions it deployed. `done` holds what it got through: `migrations` is null when
+ * that step didn't run or couldn't be read back, `secrets` and `functions` empty when nothing was done.
+ */
+export function summaryLines(done) {
+  const m = done.migrations;
+  const migrations = m === undefined
+    ? "not run"
+    : m === null
+      ? "pushed, but the migration history couldn't be read to list them"
+      : m.length === 0
+        ? "none new (the project was up to date)"
+        : `${m.length} (${listed(m)})`;
+  const secrets = done.secrets.length > 0 ? `${done.secrets.length} (${[...done.secrets].sort().join(", ")})` : "none";
+  const functions = done.functions.length > 0 ? `${done.functions.length} (${done.functions.join(", ")})` : "none";
+  return [`Migrations applied: ${migrations}`, `Secrets set (names only): ${secrets}`, `Functions deployed: ${functions}`];
+}
+
 /** The Management API's query endpoint returns rows; accept the shapes it might wrap them in. */
 export function rowsFrom(body) {
   if (Array.isArray(body)) return body;
@@ -400,8 +547,8 @@ export function authUrlProblems(authConfig, appBaseUrl) {
 
 /**
  * Turns everything the checks saw into lines. `seen` holds the status counts, the public auth
- * settings, the Management API's auth config, each function's probe and the secret names, any of
- * which may be missing. A check marked
+ * settings, the Management API's auth config, each function's probe, the secret names and Resend's
+ * verdict on the secrets file's key (resendKeyVerdict), any of which may be missing. A check marked
  * `required: false` is a to-do (emails, advisor accounts), not a failed setup.
  */
 export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
@@ -459,6 +606,9 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
     const ok = !!p && p.status === 401 && p.ourError === true;
     add(`Function ${fn}`, ok, p ? `answered ${p.status}${p.ourError ? " from the function itself" : ""}` : "not probed");
   }
+
+  // Only when the secrets file has a key to try: a refused key breaks every email, so it fails the setup (QA H5).
+  if (seen.resend) add("Resend key", seen.resend.ok === true, seen.resend.detail, seen.resend.ok === false);
 
   const names = seen.secretNames ?? null;
   if (names) {

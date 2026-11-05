@@ -91,7 +91,8 @@ starting the stack, restore the config from git.
 
 `npm run setup:supabase -- --project-ref <ref>` applies the migrations, sets function secrets,
 deploys the edge functions, configures auth and schedules email delivery on a Supabase project, then
-checks the result. What it needs and what to do after: `docs/SUPABASE_SETUP.md`.
+checks the result. It needs the Supabase CLI and Docker running, and tries the Resend key before
+changing anything. What it needs and what to do after: `docs/SUPABASE_SETUP.md`.
 
 ## Advisors
 

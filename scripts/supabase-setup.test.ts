@@ -9,7 +9,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 const ROOT = path.resolve(__dirname, "..");
 const SCRIPT = path.join(ROOT, "scripts", "supabase-setup.mjs");
 const REF = "abcdefghijklmnopqrst";
-const MIGRATIONS = readdirSync(path.join(ROOT, "supabase", "migrations")).filter((f) => f.endsWith(".sql")).length;
+const MIGRATION_FILES = readdirSync(path.join(ROOT, "supabase", "migrations")).filter((f) => f.endsWith(".sql")).sort();
+const MIGRATIONS = MIGRATION_FILES.length;
+const VERSIONS = MIGRATION_FILES.map((f) => f.split("_")[0]);
 const SERVICE_KEY = "eyJservice-role-secret";
 const SECRETS = {
   LOVABLE_API_KEY: "lov_secret_value",
@@ -24,6 +26,11 @@ interface Fake {
   patches: Record<string, unknown>[];
   deployed: Set<string>;
   setUp: boolean;
+  /** Migration versions the project has before `db push`; unset, it has no migration history table yet. */
+  migrationsBefore?: string[];
+  /** When set, Resend answers every key with this status. */
+  resendStatus?: number;
+  resendCalls: number;
 }
 
 let dir: string;
@@ -31,7 +38,8 @@ let server: Server;
 let url: string;
 let fake: Fake;
 
-// The fake CLI logs each call; `secrets set` copies the file it was given, since the script deletes it.
+// The fake CLI logs each call; `secrets set` copies the file it was given, since the script deletes it. It reports
+// FAKE_CLI_VERSION, and fails a call that starts with FAKE_CLI_FAIL.
 const FAKE_CLI = `#!/usr/bin/env node
 const fs = require("fs");
 const args = process.argv.slice(2);
@@ -39,7 +47,13 @@ const entry = { args };
 const i = args.indexOf("--env-file");
 if (i >= 0) { entry.envFile = args[i + 1]; entry.secrets = fs.readFileSync(args[i + 1], "utf8"); entry.mode = fs.statSync(args[i + 1]).mode & 0o777; }
 fs.appendFileSync(process.env.FAKE_CLI_LOG, JSON.stringify(entry) + "\\n");
-if (args[0] === "--version") console.log("2.0.0");
+if (args[0] === "--version") console.log(process.env.FAKE_CLI_VERSION || "3.0.0");
+if (process.env.FAKE_CLI_FAIL && args.join(" ").startsWith(process.env.FAKE_CLI_FAIL)) process.exit(1);
+`;
+
+// The fake Docker answers "docker info" with FAKE_DOCKER_EXIT (0, running, by default).
+const FAKE_DOCKER = `#!/bin/sh
+exit \${FAKE_DOCKER_EXIT:-0}
 `;
 
 const cliCalls = () =>
@@ -80,9 +94,22 @@ function handle(req: IncomingMessage, body: string, res: ServerResponse) {
     }
     return send(200, fake.auth);
   }
+  if (p === "/emails") {
+    fake.resendCalls += 1;
+    if (fake.resendStatus) return send(fake.resendStatus, { name: fake.resendStatus === 401 ? "invalid_api_key" : "validation_error", message: "API key is invalid" });
+    return req.headers.authorization === `Bearer ${SECRETS.RESEND_API_KEY}`
+      ? send(422, { name: "missing_required_field", message: "Missing `to` field." })
+      : send(401, { name: "invalid_api_key", message: "API key is invalid" });
+  }
   if (p === `/v1/projects/${REF}/database/query`) {
     const { query } = JSON.parse(body);
     fake.queries.push(query);
+    if (query.startsWith("select version from supabase_migrations.schema_migrations")) {
+      // The fake CLI can't reach this process, so a logged push stands for the migrations it applied.
+      if (cliCalls().some((c) => c.args[0] === "db" && c.args[1] === "push")) return send(201, VERSIONS.map((version) => ({ version })));
+      if (fake.migrationsBefore) return send(201, fake.migrationsBefore.map((version) => ({ version })));
+      return send(400, { message: 'ERROR: 42P01: relation "supabase_migrations.schema_migrations" does not exist' });
+    }
     if (query.includes("insert into public.user_roles")) return send(201, [{ accounts: 1, newly_granted: 1 }]);
     if (query.includes("vault.create_secret") || query.includes("cron.schedule")) fake.setUp = true;
     return send(201, query.startsWith("select count(*)") || query.includes("::int as n") ? [{ n: countFor(query) }] : []);
@@ -95,7 +122,7 @@ function handle(req: IncomingMessage, body: string, res: ServerResponse) {
   send(404, { message: "unknown route" });
 }
 
-function run(args: string[], input = "") {
+function run(args: string[], input = "", extraEnv: Record<string, string> = {}) {
   return new Promise<{ code: number | null; out: string }>((resolve) => {
     const child = spawn(process.execPath, [SCRIPT, ...args], {
       cwd: ROOT,
@@ -104,8 +131,11 @@ function run(args: string[], input = "") {
         SUPABASE_ACCESS_TOKEN: "sbp_token",
         SETUP_API_URL: url,
         SETUP_PROJECT_URL: url,
+        SETUP_RESEND_URL: url,
         SETUP_SUPABASE_BIN: path.join(dir, "supabase"),
+        SETUP_DOCKER_BIN: path.join(dir, "docker"),
         FAKE_CLI_LOG: path.join(dir, "cli.log"),
+        ...extraEnv,
       },
     });
     let out = "";
@@ -120,6 +150,8 @@ beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), "setup-test-"));
   writeFileSync(path.join(dir, "supabase"), FAKE_CLI);
   chmodSync(path.join(dir, "supabase"), 0o755);
+  writeFileSync(path.join(dir, "docker"), FAKE_DOCKER);
+  chmodSync(path.join(dir, "docker"), 0o755);
   writeFileSync(path.join(dir, "secrets.env"), [
     "# test secrets",
     `LOVABLE_API_KEY=${SECRETS.LOVABLE_API_KEY}`,
@@ -132,7 +164,7 @@ beforeEach(async () => {
     "RESEND_WEBHOOK_SECRET=whsec_c2VjcmV0",
     "AI_MODEL=",
   ].join("\n"));
-  fake = { auth: {}, queries: [], patches: [], deployed: new Set(), setUp: false };
+  fake = { auth: {}, queries: [], patches: [], deployed: new Set(), setUp: false, resendCalls: 0 };
   server = createServer((req, res) => {
     let body = "";
     req.on("data", (d) => (body += d));
@@ -159,21 +191,28 @@ describe("supabase-setup", () => {
     expect(out).toContain("The project is set up.");
     expect(code).toBe(0);
 
-    const calls = cliCalls().map((c) => c.args.slice(0, 3).join(" "));
-    expect(calls).toEqual([
-      "--version",
-      `link --project-ref ${REF}`,
-      "db push",
-      `secrets set --env-file`,
-      `functions deploy chamber-extract`,
-      `functions deploy document-upload`,
-      `functions deploy document-extract`,
-      `functions deploy document-scan`,
-      `functions deploy dispatch-outbox`,
-      `functions deploy resend-webhook`,
-      `functions deploy purge-intakes`,
-      `functions deploy ops-monitor`,
+    // CLI 3: the push targets the linked project (not the local database), and every change carries --yes so the
+    // run finishes unattended once the script itself has asked. Functions bundle with Docker (no --use-api).
+    const secretsFile = cliCalls().find((c) => c.secrets).envFile;
+    expect(cliCalls().map((c) => c.args)).toEqual([
+      ["--version"],
+      ["link", "--project-ref", REF],
+      ["db", "push", "--remote", "--yes"],
+      ["secrets", "set", "--env-file", secretsFile, `--remote=${REF}`, "--yes"],
+      ...["chamber-extract", "document-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "purge-intakes", "ops-monitor"]
+        .map((fn) => ["functions", "deploy", fn, `--remote=${REF}`, "--yes"]),
     ]);
+
+    // Resend was asked about the key once, before anything changed, and accepted it.
+    expect(fake.resendCalls).toBe(1);
+    expect(out).toContain("RESEND_API_KEY: Resend accepted it.");
+    expect(out).toContain("✓ Resend key: Resend accepted the key");
+    expect(out).toContain("Supabase Auth's SMTP password is set to RESEND_API_KEY");
+
+    // The summary: every migration (a new project), the secret names (no values) and the functions.
+    expect(out).toContain(`Migrations applied: ${MIGRATIONS} (${MIGRATION_FILES[0]} … ${MIGRATION_FILES[MIGRATIONS - 1]})`);
+    expect(out).toContain("Secrets set (names only): 9 (ADVISORY_NOTIFY_EMAIL, APP_BASE_URL, EMAIL_FROM, IP_HASH_SECRET, LOVABLE_API_KEY, PROSPECT_RESPONSE_TIME, RESEND_API_KEY, RESEND_WEBHOOK_SECRET, SUPPORT_EMAIL)");
+    expect(out).toContain("Functions deployed: 8 (chamber-extract, document-upload, document-extract, document-scan, dispatch-outbox, resend-webhook, purge-intakes, ops-monitor)");
 
     const secretsCall = cliCalls().find((c) => c.secrets);
     expect(secretsCall.mode).toBe(0o600);
@@ -200,6 +239,81 @@ describe("supabase-setup", () => {
     for (const secret of [SERVICE_KEY, SECRETS.LOVABLE_API_KEY, SECRETS.RESEND_API_KEY, ipHashSecret!, "sbp_token"]) {
       expect(out).not.toContain(secret);
     }
+  });
+
+  it("names only the migrations a rerun applied", async () => {
+    fake.migrationsBefore = VERSIONS.slice(0, -2);
+    const { code, out } = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"]);
+
+    expect(code).toBe(0);
+    expect(out).toContain(`Migrations applied: 2 (${MIGRATION_FILES.slice(-2).join(", ")})`);
+  });
+
+  it("keeps CLI 2's calls, which already push to the linked project", async () => {
+    const { code } = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"], "", { FAKE_CLI_VERSION: "2.33.0" });
+
+    expect(code).toBe(0);
+    const calls = cliCalls().map((c) => c.args);
+    expect(calls[2]).toEqual(["db", "push"]);
+    expect(calls[3].slice(-2)).toEqual(["--project-ref", REF]);
+    expect(calls[4]).toEqual(["functions", "deploy", "chamber-extract", "--project-ref", REF]);
+  });
+
+  it("stops before changing anything when Docker isn't running", async () => {
+    const { code, out } = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"], "", { FAKE_DOCKER_EXIT: "1" });
+
+    expect(code).toBe(2);
+    expect(out).toContain("Docker isn't running");
+    expect(out).toContain("cdn.sheetjs.com");
+    expect(out).toContain("nothing was changed");
+    expect(cliCalls().map((c) => c.args[0])).toEqual(["--version"]);
+    expect(fake.patches).toEqual([]);
+    expect(fake.queries).toEqual([]);
+  });
+
+  it("stops before changing anything when Resend refuses the key, without printing it", async () => {
+    fake.resendStatus = 401;
+    const { code, out } = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"]);
+
+    expect(code).toBe(2);
+    expect(out).toContain("✗ RESEND_API_KEY: Resend refused the key (401 invalid_api_key)");
+    expect(out).toContain("Nothing was changed.");
+    expect(out).not.toContain(SECRETS.RESEND_API_KEY);
+    expect(cliCalls().map((c) => c.args[0])).toEqual(["--version"]);
+    expect(fake.patches).toEqual([]);
+    expect(fake.queries).toEqual([]);
+  });
+
+  it("goes on with a warning when Resend can't say", async () => {
+    fake.resendStatus = 503;
+    const { code, out } = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"]);
+
+    expect(out).toContain("Warning: RESEND_API_KEY: Resend answered 503 validation_error, so the key wasn't verified");
+    expect(out).toContain("… Resend key: Resend answered 503");
+    expect(code).toBe(0);
+  });
+
+  it("refuses a key with text pasted after it, before asking Resend", async () => {
+    const file = readFileSync(path.join(dir, "secrets.env"), "utf8").replace(`RESEND_API_KEY=${SECRETS.RESEND_API_KEY}`, `RESEND_API_KEY=${SECRETS.RESEND_API_KEY} # prod key`);
+    writeFileSync(path.join(dir, "secrets.env"), file);
+    const { code, out } = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"]);
+
+    expect(code).toBe(2);
+    expect(out).toContain("RESEND_API_KEY has a space or other whitespace in it");
+    expect(fake.resendCalls).toBe(0);
+    expect(cliCalls()).toEqual([]);
+  });
+
+  it("says what it had done when a step fails partway", async () => {
+    const { code, out } = await run(["--project-ref", REF, "--secrets-file", path.join(dir, "secrets.env"), "--yes"], "", { FAKE_CLI_FAIL: "functions deploy document-extract" });
+
+    expect(code).toBe(1);
+    expect(out).toContain("Done before it stopped");
+    expect(out).toContain(`Migrations applied: ${MIGRATIONS} (`);
+    expect(out).toContain("Secrets set (names only): 9 (");
+    expect(out).toContain("Functions deployed: 2 (chamber-extract, document-upload)");
+    expect(out).toContain("Deploying document-extract failed. Check Docker is still running");
+    expect(out).not.toContain(SECRETS.RESEND_API_KEY);
   });
 
   it("changes nothing unless the project ref is typed back", async () => {
@@ -233,6 +347,16 @@ describe("supabase-setup", () => {
     expect(out).toContain("✗ Email links return to the site: Site URL is https://old-preview.example.com, not https://app.example.com");
     expect(out).toContain("Redirect URLs lack https://app.example.com/**");
     expect(fake.patches).toEqual([]);
+    expect(cliCalls()).toEqual([]);
+  });
+
+  it("--check fails a Resend key Resend refuses", async () => {
+    fake.resendStatus = 403;
+    const { code, out } = await run(["--project-ref", REF, "--check", "--secrets-file", path.join(dir, "secrets.env")]);
+
+    expect(code).toBe(1);
+    expect(out).toContain("✗ Resend key: Resend refused the key (403 validation_error)");
+    expect(out).not.toContain(SECRETS.RESEND_API_KEY);
     expect(cliCalls()).toEqual([]);
   });
 

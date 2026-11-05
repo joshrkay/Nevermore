@@ -18,11 +18,13 @@ front end that uses it is deployed.
 
 | Step | How | Done by hand instead |
 |---|---|---|
-| Auth: guest sign-in on, email confirmation on, Site URL and Redirect URLs (below), the sign-up, email-change and sign-in (magic-link) messages (below), sign-in emails through Resend's SMTP. First, so a later failure can't leave sign-up links broken | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
-| Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push` | SQL editor, file by file |
-| Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set` from a private temporary file | Edge Functions → Secrets |
-| Deploy `chamber-extract`, `document-upload`, `document-extract`, `document-scan`, `dispatch-outbox`, `resend-webhook`, `purge-intakes`, `ops-monitor` | `supabase functions deploy` | (CLI only) |
+| Check this machine and the secrets file before anything changes: the secrets (a key with a space or text after it stops the run), the Supabase CLI and its version, Docker running, and `RESEND_API_KEY` tried on Resend (below). A missing piece stops the run here, not partway | The secrets file, `supabase --version`, `docker info`, `POST https://api.resend.com/emails` with an empty email | |
+| Auth: guest sign-in on, email confirmation on, Site URL and Redirect URLs (below), the sign-up, email-change and sign-in (magic-link) messages (below), sign-in emails through Resend's SMTP with `RESEND_API_KEY` as the password (it says whether the stored password matched, when Supabase shows it). First, so a later failure can't leave sign-up links broken | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
+| Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push --remote --yes` (CLI 3; CLI 2: `supabase db push`) | SQL editor, file by file |
+| Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set --remote=<ref> --yes` from a private temporary file | Edge Functions → Secrets |
+| Deploy `chamber-extract`, `document-upload`, `document-extract`, `document-scan`, `dispatch-outbox`, `resend-webhook`, `purge-intakes`, `ops-monitor` | `supabase functions deploy <name> --remote=<ref> --yes`, bundled with Docker | (CLI only) |
 | Schedules: `pg_cron`, `pg_net`, the service-role key in Vault, and the five jobs in "Schedules" below | Management API SQL endpoint | SQL editor: the statements in "Schedules" below |
+| Print a summary: the migrations applied (by file), the secrets set (names only, never values) and the functions deployed. A step that fails prints what was done before it | | |
 | Check all of the above, and that each function boots | SQL counts, the public auth settings, the auth config (Site URL, Redirect URLs, templates), a signed-out call to each function (a deployed one answers its own 401) | |
 
 ### Schedules
@@ -139,6 +141,25 @@ verifies:
 Deploy the front end with `/auth/callback` before installing the sign-up template: an older
 front end ignores the token in the link.
 
+### The Resend key
+
+A wrong `RESEND_API_KEY` breaks every email at once: Supabase Auth answers a code request with 500
+("Error sending email change email", the 2026-11-05 QA outage), and the advisor alerts and
+confirmations fail in `dispatch-outbox`. So before changing anything the script sends Resend an
+empty email with the key. Resend refuses an empty email only after reading the key, so nothing is
+sent: 422 (or 400) means the key works; 401 or 403 means Resend refused it, and the run stops with
+nothing changed. Anything else (no answer, a rate limit) is printed as a warning and the run goes on.
+`--check` tries the key in the secrets file the same way ("Resend key").
+
+The same key is Supabase Auth's SMTP password, so the script sets it there on every run (Supabase
+doesn't return the stored password to compare; when it does, the script says whether it matched).
+If it can't set it (no `EMAIL_FROM`), it reminds you the SMTP password must be the same key. After
+rotating the key in Resend, rerun the script so both copies change together.
+
+A value with a space in it stops the run before anything else: the file has no comments after a
+value, so `RESEND_API_KEY=re_... # prod` would be stored whole and refused on every call. The same
+goes for any other `*_API_KEY`, `*_SECRET` or `*_TOKEN`.
+
 Sign-in emails matter for submissions, not just convenience: a guest certifies only after confirming
 an email with a 6-digit code, a returning prospect on another browser signs back in with one (the
 magic-link template), and Supabase's built-in mailer only delivers to your own team's
@@ -147,15 +168,24 @@ Resend (`smtp.resend.com`). It leaves SMTP alone if another provider is already 
 
 ## Before you run it
 
-1. **Node 20 or later** and the **Supabase CLI 2.x** (`brew install supabase/tap/supabase`, or see
-   the CLI docs for other systems). To use a CLI installed some other way, point
-   `SETUP_SUPABASE_BIN` at it.
-2. **A personal access token**: Supabase dashboard → Account → Access Tokens. Open the dashboard
+1. **Node 20 or later** and the **Supabase CLI 3.x** (`brew install supabase/tap/supabase`, or see
+   the CLI docs for other systems; 2.x still works). To use a CLI installed some other way, point
+   `SETUP_SUPABASE_BIN` at it. The script reads the version and uses the flags that version needs:
+   CLI 3 pushes to the local database unless told `--remote`, and refuses a change to a hosted
+   project in a non-interactive run without `--yes`. The script asks once (the project ref typed
+   back, or its own `--yes`), then passes `--yes` to each CLI call, so the run finishes unattended.
+2. **Docker, running.** `supabase functions deploy` bundles the functions with it. Without Docker the
+   CLI falls back to Supabase's server-side bundler, which can't fetch `document-extract`'s SheetJS
+   import from `cdn.sheetjs.com`, so the script checks `docker info` first and stops, with nothing
+   changed, if Docker isn't running. (Vendoring SheetJS into `supabase/functions/document-extract`
+   would remove the need: the exact `xlsx-0.20.3` build checked in, and `read.ts` pointed at it. Not
+   done yet.) To use a Docker installed some other way, point `SETUP_DOCKER_BIN` at it.
+3. **A personal access token**: Supabase dashboard → Account → Access Tokens. Open the dashboard
    from Vercel (Storage → the Supabase store → Open in Supabase) if you signed up through Vercel.
-3. **The database password.** The CLI asks for it when linking. The Vercel integration stored it as
+4. **The database password.** The CLI may ask for it when linking or pushing. The Vercel integration stored it as
    `POSTGRES_PASSWORD` (Vercel → Project → Settings → Environment Variables); or reset it in the
    Supabase dashboard (Project Settings → Database). Set `SUPABASE_DB_PASSWORD` to skip the prompt.
-4. **The secrets file:**
+5. **The secrets file:**
 
    ```sh
    cp supabase/env.production.example supabase/.env.production
@@ -172,10 +202,16 @@ read -rs SUPABASE_ACCESS_TOKEN && export SUPABASE_ACCESS_TOKEN   # paste the tok
 npm run setup:supabase -- --project-ref dvfwrjpkltqdkfudbahe
 ```
 
-It shows the project's name and status, asks you to type the project ref back, then runs each step
-and prints the checks:
+It shows the project's name and status, the CLI version and whether Resend accepted the key, asks you
+to type the project ref back, then runs each step, prints a summary and the checks:
 
 ```
+→ Summary
+  Migrations applied: 2 (20261104133000_queue_hides_empty_guest_drafts.sql, ...)
+  Secrets set (names only): 9 (ADVISORY_NOTIFY_EMAIL, APP_BASE_URL, EMAIL_FROM, ...)
+  Functions deployed: 8 (chamber-extract, document-upload, document-extract, ...)
+
+→ Checking the project
   ✓ Migrations applied: N of N   (N = the files in supabase/migrations)
   ✓ Guest (anonymous) sign-in: anonymous_users=true
   ✓ Email links return to the site: Site URL https://nevermorepeo.com, redirects allowed under it
@@ -250,7 +286,7 @@ Sessions are stored per address, so anyone signed in on the old address signs in
 
 ## Reruns
 
-A rerun applies new migrations, sets the secrets again (an existing `IP_HASH_SECRET` is kept),
+A rerun applies new migrations (the summary names only those), sets the secrets again (an existing `IP_HASH_SECRET` is kept),
 redeploys the functions, re-sends the Resend SMTP settings (so a rotated key is picked up), replaces
 the Vault copy of the service-role key and re-creates each schedule under the same name. It doesn't
 remove redirect URLs or replace an email template that already sends the code (for sign-up: the
