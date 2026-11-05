@@ -135,13 +135,20 @@ states plus census work states), employee count, File ID, certification date, pi
 status and completeness. The list carries no census, payroll, DOB, EIN, phone, email or transcript
 content; those are on the detail page, behind the same checks.
 
+Empty guest drafts are left out (migration `20261104133000`): a guest's intake, never certified, with
+nothing the prospect did in it (no answer, provenance, PEO choice, document, or transcript message but
+Lenore's). Since A-1 no new intake is created that way, so these are rows from before then. They are
+still stored and open by their link; a verified prospect's empty draft is still listed.
+
 - **Order**: certified submissions first, newest certification first; intakes not (or no longer)
   certified follow, most recently active first; session id breaks ties so the order never shuffles.
 - **Status filter**, **Needs advisor action only**, **search** (company, contact, File ID; every word
   must match, any case) and **paging** (25 a page, with the total) all run in the database; the
   function reads as its owner after its advisor check, so a large table doesn't run the row-security
-  check per row. Search starts once typing pauses. All four live in the URL (`?status=`, `?action=1`,
-  `?q=`, `?page=`); changing a filter or the search returns to the first page.
+  check per row. Search starts once typing pauses and at least 3 characters other than spaces are
+  typed; below that the box says so and the queue lists every submission, as it does for a link with a
+  shorter search. All four live in the URL (`?status=`, `?action=1`, `?q=`, `?page=`); changing a
+  filter or the search returns to the first page.
 - A submission marked **Needs advisor action** carries that badge and the advisor's note under its
   status.
 - **Completeness** describes what the advisor reviews: a certified intake is described from its

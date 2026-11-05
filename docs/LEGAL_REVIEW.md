@@ -10,7 +10,7 @@ complete, every page that shows this copy says it is a draft pending legal revie
 | Item | Where it lives | Version | What to check |
 |---|---|---|---|
 | Privacy Policy (`/privacy`) | `src/pages/PrivacyPage.tsx`. Its data classes and retention table are rendered from `src/data/dataPolicy.ts`, its service providers from `src/data/legal.ts` | `PRIVACY_POLICY_VERSION` `2026-11-draft-1` | Accuracy against the product, every commitment it makes, the retention windows, the provider list |
-| Terms of Use (`/terms`) | `src/pages/TermsPage.tsx` | `TERMS_VERSION` `2026-11-draft-1` | Role and what we don't do, eligibility, accuracy, acceptable use, ownership of the packet; write the three bracketed sections (below) |
+| Terms of Use (`/terms`) | `src/pages/TermsPage.tsx` | `TERMS_VERSION` `2026-11-draft-1` | Role and what we don't do, eligibility, accuracy, acceptable use, ownership of the packet; write the four bracketed sections (below) |
 | Intake consent (shown before the Chamber opens) | `src/data/intakeConsent.ts`, rendered by `src/components/chamber/IntakeConsentGate.tsx` | `INTAKE_CONSENT_VERSION` `2026-11-draft-1`, also `public.intake_consent_version()` in `supabase/migrations/20261104090000_intake_consent.sql` | Who we are, what is shared, how it's used, how long it's kept, and the agreement line (authority to share employee data). The exact text is stored with every agreement (`intake_consents`) |
 | Certification consent (The Reckoning, then printed on the Manuscript page and its PDF) | `src/data/certification.ts`, the only definition | `CONSENT_TEXT_VERSION` `2026-10-draft-1` | The three statements and the signing statement (D3), and the draft mark's wording, `CONSENT_DRAFT_LABEL` |
 | Retention windows | `src/data/dataPolicy.ts` (`RETENTION`), enforced by the database functions it names | D4 | Draft 30 days after last change; closed drafts deleted 30 days after closing; submitted records reviewed for deletion 3 years after the latest certification; email delivery events 365 days; monitoring events 90 days; rate-limit records 1 day; browser backup 7 days |
@@ -31,9 +31,11 @@ These make claims that only counsel can stand behind. They are not part of the p
 |---|---|---|
 | Privacy contact | `PRIVACY_CONTACT` in `src/data/legal.ts` (null). The pages say the address "will be published here before launch" | A monitored role address for privacy questions and deletion requests, never a person's own inbox |
 | AI model provider | `SERVICE_PROVIDERS` in `src/data/legal.ts` ("An AI model provider") | The provider chosen under D11 (Lovable AI gateway or Anthropic), named, with its data terms reviewed |
+| Malware scanner | `SERVICE_PROVIDERS` in `src/data/legal.ts` ("A malware-scanning service") | The scanner chosen under D13 (a ClamAV daemon or an HTTPS scanning service), named, with its data terms reviewed: it receives every uploaded file in full |
 | Disclaimers | `src/pages/TermsPage.tsx` (`COUNSEL_PLACEHOLDER`) | Counsel's text |
 | Limitation of liability | `src/pages/TermsPage.tsx` (`COUNSEL_PLACEHOLDER`) | Counsel's text |
 | Governing law | `src/pages/TermsPage.tsx` (`COUNSEL_PLACEHOLDER`) | Counsel's text |
+| Disputes and arbitration | `src/pages/TermsPage.tsx` (`COUNSEL_PLACEHOLDER`) | Counsel's text: whether disputes go to arbitration and on what terms (forum, rules, class-action waiver, opt-out), or, if not, how they are resolved. If counsel decides against arbitration, rename the section and its test (`TermsPage.test.tsx`) to match |
 | Approval record | `LEGAL_APPROVAL` in `src/data/legal.ts` (all null) | Filled in when approved (below) |
 
 ## Questions for counsel
@@ -62,8 +64,8 @@ These make claims that only counsel can stand behind. They are not part of the p
    ElevenLabs, Cloudflare, and the malware scanner under D13, which is sent every uploaded file) adequate, and
    must the Privacy Policy say more about them (location, sub-processors, whether the AI provider keeps or trains
    on what it reads, whether the scanner keeps the files it checks)?
-9. **Terms.** Write the disclaimers, limitation of liability and governing law; confirm the rest (acceptable use,
-   suspension, ownership of the packet, the change clause).
+9. **Terms.** Write the disclaimers, limitation of liability, governing law, and disputes and arbitration;
+   confirm the rest (acceptable use, suspension, ownership of the packet, the change clause).
 10. **Contact address** for privacy and deletion requests (see placeholders).
 
 ## Approval record
@@ -84,9 +86,9 @@ One row per item and version. A changed wording is a new version and needs a new
 Copy counsel changed goes in first, then:
 
 1. **Privacy Policy and Terms.** Set the approved versions in `PRIVACY_POLICY_VERSION` and `TERMS_VERSION`, update
-   `LEGAL_LAST_UPDATED`, fill `PRIVACY_CONTACT` and the AI provider in `SERVICE_PROVIDERS`, replace each
-   `COUNSEL_PLACEHOLDER`, then set `LEGAL_APPROVAL` (who, when, version) and `LEGAL_COPY_APPROVED = true` in
-   `src/data/legal.ts`. The draft notice on both pages disappears.
+   `LEGAL_LAST_UPDATED`, fill `PRIVACY_CONTACT` and name the AI provider and the malware scanner in
+   `SERVICE_PROVIDERS`, replace each `COUNSEL_PLACEHOLDER`, then set `LEGAL_APPROVAL` (who, when, version) and
+   `LEGAL_COPY_APPROVED = true` in `src/data/legal.ts`. The draft notice on both pages disappears.
 2. **Intake consent.** If the wording changed, give it a new version in `INTAKE_CONSENT_VERSION` and, in a new
    migration, in `public.intake_consent_version()` (`src/data/schemaSync.test.ts` fails until the two agree).
    Every account is then asked to agree again. Set `INTAKE_CONSENT_IS_DRAFT = false`.

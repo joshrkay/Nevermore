@@ -9,6 +9,8 @@ import {
   NEEDS_ACTION_LABEL,
   PIPELINE_LABELS,
   PIPELINE_STATUSES,
+  QUEUE_SEARCH_MIN_CHARS,
+  queueSearchTerm,
   referenceOf,
   type Completeness,
   type PipelineStatus,
@@ -49,6 +51,8 @@ const AdvisorDashboardPage = () => {
   const param = searchParams.get("status");
   const status: PipelineStatus | null = isPipelineStatus(param) ? param : null;
   const query = searchParams.get("q") ?? "";
+  // What the database searches for: nothing until the search is long enough (a short link counts as none).
+  const search = queueSearchTerm(query);
   // Only the submissions an advisor marked as needing advisor action (F-4.3).
   const needsAction = searchParams.get("action") === "1";
   const pageParam = Number(searchParams.get("page"));
@@ -72,11 +76,11 @@ const AdvisorDashboardPage = () => {
   useEffect(() => {
     let cancelled = false;
     setLoad({ kind: "loading" });
-    listSubmissions({ status, search: query, page, needsAction })
+    listSubmissions({ status, search, page, needsAction })
       .then((result) => !cancelled && setLoad({ kind: "ready", ...result }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => { cancelled = true; };
-  }, [status, query, page, needsAction, attempt]);
+  }, [status, search, page, needsAction, attempt]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
@@ -103,17 +107,19 @@ const AdvisorDashboardPage = () => {
   const setParam = (key: "status" | "q" | "action", value: string) => setParams({ [key]: value });
 
   // Follow the URL when it changes from outside (Back, a shared link), but not when it only caught up
-  // with what's being typed: that would drop a space typed just before a pause.
-  useEffect(() => setTyped((t) => (t.trim() === query.trim() ? t : query)), [query]);
+  // with what's being typed: that would drop a space typed just before a pause, or a search still too short.
+  useEffect(() => setTyped((t) => (queueSearchTerm(t) === query.trim() ? t : query)), [query]);
   useEffect(() => {
-    if (typed.trim() === query.trim()) return;
-    const timer = setTimeout(() => setParams({ q: typed.trim() }), SEARCH_DELAY_MS);
+    if (queueSearchTerm(typed) === query.trim()) return;
+    const timer = setTimeout(() => setParams({ q: queueSearchTerm(typed) }), SEARCH_DELAY_MS);
     return () => clearTimeout(timer);
   }, [typed, query, setParams]);
+  // Typed, but not enough to search on yet.
+  const tooShort = typed.trim() !== "" && queueSearchTerm(typed) === "";
 
   const rows = load.kind === "ready" ? load.rows : [];
   const total = load.kind === "ready" ? load.total : 0;
-  const searching = query.trim() !== "";
+  const searching = search !== "";
   // How the filters read in an empty or no-match message: "under review submissions that need advisor action".
   const filtered = `${status ? `${PIPELINE_LABELS[status].toLowerCase()} ` : ""}submissions${needsAction ? " that need advisor action" : ""}`;
   const firstShown = (page - 1) * QUEUE_PAGE_SIZE + 1;
@@ -137,7 +143,7 @@ const AdvisorDashboardPage = () => {
               Certified submissions first, newest first; intakes not yet certified follow, most recently active first.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-6">
             <div className="relative">
               <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
               <label htmlFor="queue-search" className="sr-only">Search</label>
@@ -147,8 +153,12 @@ const AdvisorDashboardPage = () => {
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
                 placeholder="Company, contact or File ID"
+                aria-describedby="queue-search-hint"
                 className="bg-muted border border-border rounded-md pl-9 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground w-64"
               />
+              <p id="queue-search-hint" aria-live="polite" className="absolute left-0 top-full mt-1 text-xs text-muted-foreground whitespace-nowrap">
+                {tooShort ? `Type at least ${QUEUE_SEARCH_MIN_CHARS} characters to search.` : ""}
+              </p>
             </div>
             <label htmlFor="status-filter" className="text-sm text-muted-foreground">Status</label>
             <select
@@ -225,7 +235,7 @@ const AdvisorDashboardPage = () => {
           <div className="border border-dashed border-border rounded-xl p-12 text-center">
             <SearchX className="w-8 h-8 text-muted-foreground mx-auto mb-3" aria-hidden="true" />
             <p className="font-medium">
-              No {filtered} match “{query.trim()}”.
+              No {filtered} match “{search}”.
             </p>
             <p className="text-sm text-muted-foreground mt-1">
               Search covers company, contact and File ID.{" "}
@@ -238,8 +248,8 @@ const AdvisorDashboardPage = () => {
           <>
             <p className="text-xs text-muted-foreground mb-2" aria-live="polite">
               {total <= QUEUE_PAGE_SIZE && page === 1
-                ? `${total} submission${total === 1 ? "" : "s"}${searching ? ` match “${query.trim()}”` : ""}`
-                : `${firstShown}–${lastShown} of ${total} submissions${searching ? ` matching “${query.trim()}”` : ""}`}
+                ? `${total} submission${total === 1 ? "" : "s"}${searching ? ` match “${search}”` : ""}`
+                : `${firstShown}–${lastShown} of ${total} submissions${searching ? ` matching “${search}”` : ""}`}
             </p>
             <div className="border border-border rounded-xl overflow-hidden">
               <Table>

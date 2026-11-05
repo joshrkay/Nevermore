@@ -107,6 +107,11 @@ const TermsPage = () => (
       <p>{COUNSEL_PLACEHOLDER}</p>
     </section>
 
+    <section aria-labelledby="terms-disputes">
+      <h2 id="terms-disputes">Disputes and arbitration</h2>
+      <p>{COUNSEL_PLACEHOLDER}</p>
+    </section>
+
     <section aria-labelledby="terms-changes">
       <h2 id="terms-changes">Changes to these terms</h2>
       <p>
