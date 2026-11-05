@@ -441,7 +441,7 @@ describe("ChamberPage", () => {
       const orb = screen.getByTestId("orb");
       const column = orb.parentElement!;
       expect(hooks.orb?.narrow).toBe(true);
-      expect(column).toContainElement(screen.getByRole("separator"));
+      expect(column).toContainElement(screen.getByRole("separator", { name: "Resize Lenore's panel" }));
       expect(column).toContainElement(screen.getByTestId("transcript"));
       // Above the conversation, not below it.
       expect(orb.compareDocumentPosition(screen.getByTestId("transcript")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -451,15 +451,48 @@ describe("ChamberPage", () => {
       mobile = true;
       renderPage();
       expect(hooks.orb?.narrow).toBe(false);
-      expect(screen.getByRole("separator")).toBeInTheDocument();
+      expect(screen.getByRole("separator", { name: "Resize Lenore's panel" })).toBeInTheDocument();
       expect(screen.queryByTestId("transcript")).not.toBeInTheDocument();
     });
 
     it("names the stage the handle resizes", () => {
       renderPage();
-      const stageId = screen.getByRole("separator").getAttribute("aria-controls");
+      const stageId = screen.getByRole("separator", { name: "Resize Lenore's panel" }).getAttribute("aria-controls");
       expect(stageId).toBeTruthy();
       expect(hooks.orb).toMatchObject({ id: stageId });
+    });
+  });
+
+  describe("the conversation column's width", () => {
+    const column = () => document.getElementById(screen.getByRole("separator", { name: "Resize the conversation" }).getAttribute("aria-controls")!)!;
+
+    it("is a share of the window until the prospect drags it, never narrower than the narrowest", () => {
+      renderPage();
+      expect(column()).toHaveStyle({ width: "30%", minWidth: "280px" });
+      expect(column()).toContainElement(screen.getByTestId("transcript"));
+    });
+
+    it("takes the width the prospect chose last time", () => {
+      localStorage.setItem("eaa.chamber.column.v1", JSON.stringify({ width: 520 }));
+      renderPage();
+      expect(column()).toHaveStyle({ width: "520px" });
+    });
+
+    it("follows the divider, keeps the choice, and goes back to the default on a double click", () => {
+      renderPage();
+      const handle = screen.getByRole("separator", { name: "Resize the conversation" });
+      fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
+      expect(column().style.width).toMatch(/px$/);
+      expect(localStorage.getItem("eaa.chamber.column.v1")).not.toBeNull();
+      fireEvent.doubleClick(handle);
+      expect(column()).toHaveStyle({ width: "30%" });
+      expect(localStorage.getItem("eaa.chamber.column.v1")).toBeNull();
+    });
+
+    it("is not there on a phone, which has no column", () => {
+      mobile = true;
+      renderPage();
+      expect(screen.queryByRole("separator", { name: "Resize the conversation" })).not.toBeInTheDocument();
     });
   });
 

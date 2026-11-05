@@ -1,6 +1,7 @@
 // How much of the top of The Chamber Lenore's orb takes (the stage), and the rules for changing it. The orb is
 // a hero for a prospect who talks, and dead weight for one who types, so the prospect can drag it smaller or
 // fold it into a slim bar. Pure rules here; the pointer and keyboard live in StageSplitter.
+import { readPref, writePref } from "@/lib/displayPrefs";
 
 /** The prospect's own choice, kept per browser. It is a display preference, not part of an intake. */
 export interface StageLayout {
@@ -69,28 +70,11 @@ export function stepStage(layout: StageLayout, direction: 1 | -1): StageLayout {
 
 export const toggleStage = (layout: StageLayout): StageLayout => ({ ...layout, collapsed: !layout.collapsed });
 
-function storage(): Storage | null {
-  try {
-    return typeof window === "undefined" ? null : window.localStorage;
-  } catch {
-    // Some browsers throw on the property itself when site data is blocked.
-    return null;
-  }
-}
-
 export function readStoredStage(): StageLayout | null {
-  try {
-    return parseStageLayout(storage()?.getItem(STAGE_STORAGE_KEY) ?? null);
-  } catch {
-    return null;
-  }
+  return parseStageLayout(readPref(STAGE_STORAGE_KEY));
 }
 
 /** Best effort: a browser that won't keep it just opens on the default next time. */
 export function storeStage(layout: StageLayout): void {
-  try {
-    storage()?.setItem(STAGE_STORAGE_KEY, JSON.stringify(layout));
-  } catch {
-    // Blocked or full.
-  }
+  writePref(STAGE_STORAGE_KEY, JSON.stringify(layout));
 }
