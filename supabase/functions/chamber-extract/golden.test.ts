@@ -289,7 +289,7 @@ describe("golden transcripts", () => {
     const m = buildManuscript(state.data, { fileId: "EAA-2026-0001", provenance: state.provenance });
     const rows = [...m.companyRows, ...m.workforceRows, ...m.locationRows, ...m.payrollRows, ...m.benefitsRows, ...m.workersCompRows, ...m.operationsRows];
     const quoted = rows.flatMap((row) => {
-      const line = rowSourceLine(row, state.provenance);
+      const line = rowSourceLine(row, m);
       return line?.startsWith("From the conversation") ? [{ field: row[2], line }] : [];
     });
     const filled = new Set(INTAKE_FIELDS.map((f) => f.key).filter((k) => isSettled(state.data[k as keyof ChamberData], undefined)));

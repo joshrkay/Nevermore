@@ -104,13 +104,14 @@ describe("production domain", () => {
     expect(readFileSync(file, "utf8")).not.toMatch(PREVIEW_HOSTS);
   });
 
-  it("points the canonical link and social previews at the site, with an image the site serves", async () => {
+  it("points the social previews at the site, with an image the site serves", async () => {
     const { SITE_ORIGIN } = await import("@/data/site");
     const html = readFileSync("index.html", "utf8");
-    const urls = [...html.matchAll(/<(?:meta|link)\b[^>]*(?:property="og:(?:image|url)"|name="twitter:image"|rel="canonical")[^>]*>/g)].map(
-      ([tag]) => /(?:content|href)="([^"]+)"/.exec(tag)![1],
-    );
-    expect(urls).toHaveLength(4);
+    const urls = [...html.matchAll(/<meta\b[^>]*(?:property="og:(?:image|url)"|name="twitter:image")[^>]*>/g)].map(([tag]) => /content="([^"]+)"/.exec(tag)![1]);
+    expect(urls).toHaveLength(3);
+    // No canonical link: the app serves this one file for every route, so one would name the home page as the canonical
+    // address of /privacy, /terms and /start too (code review).
+    expect(html).not.toMatch(/rel="canonical"/);
     for (const url of urls) expect(url.startsWith(`${SITE_ORIGIN}/`), url).toBe(true);
     for (const url of urls.filter((u) => u.endsWith(".png"))) expect(existsSync(`public${new URL(url).pathname}`), url).toBe(true);
   });

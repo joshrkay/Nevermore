@@ -9,7 +9,7 @@ import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
 import { CONSENT_DRAFT_LABEL } from "@/data/certification";
-import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, rowSourceLine, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
+import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, rowSourceLine, type ChamberSubmission, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
 import { parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
@@ -64,9 +64,9 @@ const DataRow = ({ label, value, provenance, source }: { label: string; value: s
   </div>
 );
 
-const renderRows = (rows: ManuscriptRow[], provenance: ProvenanceMap) =>
+const renderRows = (rows: ManuscriptRow[], m: Pick<Manuscript, "provenance" | "answered">) =>
   rows.map((row) => (
-    <DataRow key={row[0]} label={row[0]} value={row[1]} provenance={rowProvenance(row, provenance)} source={rowSourceLine(row, provenance)} />
+    <DataRow key={row[0]} label={row[0]} value={row[1]} provenance={rowProvenance(row, m.provenance)} source={rowSourceLine(row, m)} />
   ));
 
 const Card = ({ children }: { children: React.ReactNode }) => <div className="bg-card border border-border rounded-xl p-6">{children}</div>;
@@ -435,12 +435,12 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         <section>
           <SectionHeader>1 — Company Profile</SectionHeader>
-          <Card>{renderRows(d.companyRows, d.provenance)}</Card>
+          <Card>{renderRows(d.companyRows, d)}</Card>
         </section>
 
         <section>
           <SectionHeader>2 — Workforce Summary</SectionHeader>
-          <Card>{renderRows(d.workforceRows, d.provenance)}</Card>
+          <Card>{renderRows(d.workforceRows, d)}</Card>
         </section>
 
         <section>
@@ -513,7 +513,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         <section>
           <SectionHeader>5 — Locations</SectionHeader>
           <div className="grid md:grid-cols-2 gap-6">
-            <Card>{renderRows(d.locationRows, d.provenance)}</Card>
+            <Card>{renderRows(d.locationRows, d)}</Card>
             <Card>
               <p className="text-xs text-muted-foreground font-mono mb-3">STATE BREAKDOWN</p>
               {d.states.length === 0 ? (
@@ -538,22 +538,22 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         <section>
           <SectionHeader>6 — Payroll &amp; Time</SectionHeader>
-          <Card>{renderRows(d.payrollRows, d.provenance)}</Card>
+          <Card>{renderRows(d.payrollRows, d)}</Card>
         </section>
 
         <section>
           <SectionHeader>7 — Current Benefits</SectionHeader>
-          <Card>{renderRows(d.benefitsRows, d.provenance)}</Card>
+          <Card>{renderRows(d.benefitsRows, d)}</Card>
         </section>
 
         <section>
           <SectionHeader>8 — Workers' Compensation</SectionHeader>
-          <Card>{renderRows(d.workersCompRows, d.provenance)}</Card>
+          <Card>{renderRows(d.workersCompRows, d)}</Card>
         </section>
 
         <section>
           <SectionHeader>9 — Operations &amp; HR</SectionHeader>
-          <Card>{renderRows(d.operationsRows, d.provenance)}</Card>
+          <Card>{renderRows(d.operationsRows, d)}</Card>
         </section>
 
         <section>
