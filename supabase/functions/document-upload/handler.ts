@@ -16,6 +16,11 @@
 //      but the service role can read. A detection is recorded (malware_detected) and alerted at once;
 //   4. a scan that couldn't run now leaves the document pending in quarantine, and document-scan retries it.
 //
+// With no usable scanner (MALWARE_SCANNER unset or wrong, or `none` outside a named non-production APP_ENV;
+// docs/adr/0002-uploads-need-a-scanner-in-production.md) nothing is checked, stored or recorded: the file is
+// refused with `scanner_missing`, which the browser shows as uploads being paused, and a scan_failed event
+// (config_missing) is recorded so ops-monitor alerts. A file is never taken in with no way out of quarantine.
+//
 // Every file is stored as application/octet-stream (fileSignature.ts says why); the row records the type
 // its bytes showed. Answers carry a code the browser maps to its message, and a request id. Logs carry ids,
 // codes and failure kinds only, never file names, contents or the signed-in user's token.
@@ -85,7 +90,11 @@ export interface UploadDeps {
 
 export type UploadErrorCode =
   | "bad_request" | "unauthorized" | "too_large" | "empty" | "mismatch" | "executable" | "unsupported"
-  | "duplicate" | "limit" | "closed" | "consent" | "not_found" | "storage" | "unavailable" | "internal";
+  | "duplicate" | "limit" | "closed" | "consent" | "not_found" | "storage" | "unavailable" | "scanner_missing" | "internal";
+
+/** What the prospect is told when uploads are refused for want of a scanner (the browser has its own words for it). */
+export const SCANNER_MISSING_MESSAGE =
+  "Uploads are paused while we finish setting up virus checking. Our team has been told; you can upload this file later.";
 
 const errorCode = (error: unknown): string => {
   const e = error as { code?: unknown; statusCode?: unknown; status?: unknown } | null;
@@ -165,6 +174,23 @@ export async function handleUploadRequest(req: Request, deps: UploadDeps): Promi
       return refuse(status, code, message);
     };
 
+    // 0. A scanner to check the file with. Without one a file would sit in quarantine with nothing to release
+    // it, so it is refused before anything is stored, loudly: a log line naming the setting, and an event
+    // ops-monitor alerts on (scan_failed, at the first in an hour).
+    const choice = selectScanner(deps.env, deps.scanner);
+    if (!choice.ok) {
+      deps.log(`SCAN_CONFIG_MISSING: ${choice.problem}; uploads are refused until it is fixed (docs/SUPABASE_SETUP.md, "Malware scanning")`);
+      const { error: eventError } = await deps.createClient(supabaseUrl, serviceRoleKey).rpc("record_ops_event", {
+        p_kind: "scan_failed",
+        p_source: "document-upload",
+        p_code: "config_missing",
+        p_detail: choice.problem,
+        p_user_id: userId,
+      });
+      if (eventError) deps.log(`SCAN_ERROR request=${requestId} record=rpc_event:${errorCode(eventError)}`);
+      return refused(503, "scanner_missing", SCANNER_MISSING_MESSAGE);
+    }
+
     // 1. The bytes, before anything is stored.
     const body = await readCapped(req, MAX_UPLOAD_BYTES + FORM_OVERHEAD_BYTES);
     if (!body) return refused(413, "too_large", "Files can be up to 20 MB.");
@@ -222,11 +248,7 @@ export async function handleUploadRequest(req: Request, deps: UploadDeps): Promi
     const admin = deps.createClient(supabaseUrl, serviceRoleKey);
 
     // 3. The scan, then the file: in documents once it passed, otherwise in quarantine.
-    const choice = selectScanner(deps.env, deps.scanner);
-    if (!choice.ok) deps.log(`SCAN_CONFIG_MISSING: ${choice.problem}`);
-    const scan: ScanResult = choice.ok
-      ? await choice.scanner.scan(bytes)
-      : { verdict: "unavailable", engine: "unset", reason: "config_missing" };
+    const scan: ScanResult = await choice.scanner.scan(bytes);
     const bucket = isReleased(scan.verdict) ? "documents" : "quarantine";
 
     const { error: storeError } = await admin.storage.from(bucket).upload(storagePath, bytes, { contentType: STORED_CONTENT_TYPE, upsert: false });

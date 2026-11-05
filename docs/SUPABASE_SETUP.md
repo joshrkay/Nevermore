@@ -95,8 +95,22 @@ chosen by the `MALWARE_SCANNER` secret (decision D13 is still open):
 |---|---|---|
 | `clamav` | `CLAMAV_HOST`, and `CLAMAV_PORT` if not 3310 | A clamd daemon reachable from Supabase's edge functions over TLS (clamd itself speaks plain TCP, so put stunnel or a TLS proxy in front). Raise clamd's `StreamMaxLength` to at least 21 MB |
 | `http` | `MALWARE_SCANNER_URL` (https), `MALWARE_SCANNER_TOKEN` | Any scanning service, or a thin wrapper around one, that takes the file as `POST` `application/octet-stream` with `Authorization: Bearer <token>` and answers `{"verdict":"clean"}` or `{"verdict":"infected","signature":"<name>"}` |
-| `none` | | No scanning: every file is recorded `skipped` and is readable. The internal demo (M1) only |
-| unset | | Every upload is held in quarantine, unreadable, and `document-scan` raises a `scan_failed` alert every hour until a scanner is set |
+| `none` | `APP_ENV=development`, `demo` or `staging` | No scanning: every file is recorded `skipped` and is readable. Only on a project that isn't production: with `APP_ENV` unset or anything else, `none` counts as unset |
+| unset | | Uploads are refused: `document-upload` stores nothing and the prospect is told uploads are paused while virus checking is set up. Each refusal logs `SCAN_CONFIG_MISSING` naming the setting and records a `scan_failed` event; `document-scan` answers 503 on every run; `ops-monitor` alerts within five minutes, then hourly |
+
+The rule and why are in `docs/adr/0002-uploads-need-a-scanner-in-production.md`. `APP_ENV` names the
+environment: leave it unset on production (unset means production), and set `demo`, `staging` or
+`development` only on a project that holds no real prospects' files. Files held while no scanner was set
+are scanned, and the clean ones released, on `document-scan`'s first run after one is set (within five
+minutes).
+
+A clean file is readable as soon as its upload finishes when the scanner answers at upload (one scan, at
+most 60 seconds). If the scanner can't answer then, the file waits in quarantine and `document-scan` tries
+again 10 minutes after the upload (so within 15 minutes), then backs off; after six attempts it is marked
+`failed` and alerted.
+
+`scripts/supabase-setup.mjs` doesn't apply this rule yet: it warns on an unset `MALWARE_SCANNER` and
+accepts `none` whatever `APP_ENV` says. Treat either as a stop on a production project.
 
 Whichever scanner is chosen sees every uploaded file, census and payroll included: it needs the same
 data-processing terms as the AI provider (`docs/LEGAL_REVIEW.md`). After setting it, run the EICAR check in
