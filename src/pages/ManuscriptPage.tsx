@@ -244,8 +244,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
       // A link that works for a minute, issued only to this intake's owner (storage checks it).
       // Named as the advisor's own download of that version is (src/components/advisor/ManuscriptPanel.tsx).
       const filename = manuscriptFilename(d.fileId, d.companyName, { version: d.version, date: d.certifiedAt, suffix: `advisor-v${finalVersion.version}` });
-      if (sessionId) recordManuscriptDownload(sessionId);
       window.location.assign(await finalManuscriptUrl(finalVersion.storage_path, filename));
+      // Only once the link was issued: a failed fetch is not a download (the funnel counts the first one for good).
+      if (sessionId) recordManuscriptDownload(sessionId);
     } catch (err) {
       console.error("Failed to open the final manuscript:", err);
       toast.error("We couldn't download the final Manuscript. Please try again.");

@@ -33,6 +33,8 @@ vi.mock("@/integrations/supabase/client", () => ({
   },
 }));
 
+const recordManuscriptDownload = vi.fn();
+vi.mock("@/lib/milestones", () => ({ recordManuscriptDownload: (...a: unknown[]) => recordManuscriptDownload(...a) }));
 const downloadBlob = vi.fn();
 vi.mock("@/lib/downloadFile", () => ({ downloadBlob: (...args: unknown[]) => downloadBlob(...args) }));
 // Real generator, observed: the page decides masking, the generator draws it.
@@ -287,8 +289,11 @@ describe("ManuscriptPage", () => {
       const finals = screen.getAllByRole("button", { name: /Download the final Manuscript \(PDF\)/ });
       expect(finals.length).toBe(2);
       expect(screen.queryByRole("button", { name: /Download The Manuscript \(PDF\)/ })).not.toBeInTheDocument();
+      recordManuscriptDownload.mockClear();
       fireEvent.click(finals[0]);
       await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/final"));
+      // The funnel hears of the download once the link was issued.
+      expect(recordManuscriptDownload).toHaveBeenCalledWith("s1");
       expect(createSignedUrl).toHaveBeenCalledWith("s1/v2-x.pdf", 60, { download: expect.stringMatching(/^The_Manuscript_EAA-1_Signed_Co_.*advisor-v2\.pdf$/) });
       // The prospect's own copy is still there, as the certified copy.
       expect(screen.getByRole("button", { name: /As certified \(PDF\)/ })).toBeInTheDocument();
@@ -302,8 +307,11 @@ describe("ManuscriptPage", () => {
       const { toast } = await import("sonner");
       const error = vi.spyOn(toast, "error");
       renderAt("/manuscript?session=s1");
+      recordManuscriptDownload.mockClear();
       fireEvent.click((await screen.findAllByRole("button", { name: /Download the final Manuscript \(PDF\)/ }))[0]);
       await waitFor(() => expect(error).toHaveBeenCalledWith("We couldn't download the final Manuscript. Please try again."));
+      // A link that couldn't be issued is not a download.
+      expect(recordManuscriptDownload).not.toHaveBeenCalled();
       error.mockRestore();
       finalVersions = [];
     });
