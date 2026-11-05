@@ -283,7 +283,7 @@ describe("ReckoningTab certification", () => {
     await waitFor(() => expect(auth.requestEmailCode).toHaveBeenCalledWith("jo@acme.com"));
   });
 
-  it("logs a save that threw as one line with a reference, and shows the prospect that reference", async () => {
+  it("logs a save that threw as one line with an error code, and shows the prospect that code", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     onSubmit.mockRejectedValue({ code: "XX000", message: "internal error" });
     mount();
@@ -292,9 +292,9 @@ describe("ReckoningTab certification", () => {
     sign();
     fireEvent.click(submitButton());
     const alert = await screen.findByRole("alert", { name: "Submission not saved" });
-    const reference = /reference ([A-Z]{8})/.exec(alert.textContent ?? "")?.[1];
-    expect(reference).toBeDefined();
-    expect(consoleError).toHaveBeenCalledWith(`Failed to submit session (reference ${reference}): XX000: internal error`);
+    const errorCode = /error code ([A-Z]{8})/.exec(alert.textContent ?? "")?.[1];
+    expect(errorCode).toBeDefined();
+    expect(consoleError).toHaveBeenCalledWith(`Failed to submit session (error code ${errorCode}): XX000: internal error`);
     expect(screen.queryByRole("heading", { name: "Verify your email to certify" })).not.toBeInTheDocument();
     consoleError.mockRestore();
   });

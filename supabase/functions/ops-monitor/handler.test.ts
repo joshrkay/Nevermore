@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { alertLogLine, alertText, handleRequest, PLAYBOOKS, testAlertText, type MonitorDeps, type OpsAlert } from "./handler";
+import { alertLogLine, alertText, handleRequest, PLAYBOOKS, type MonitorDeps, type OpsAlert } from "./handler";
 
 const ENV: Record<string, string | undefined> = {
   SUPABASE_URL: "https://project.test",
@@ -144,7 +144,8 @@ describe("ops-monitor: a test alert", () => {
     const [url, init] = t.fetchFn.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://hooks.example.com/x");
     expect(JSON.parse(init.body as string)).toEqual({
-      text: testAlertText("2026-11-05T15:04:05.000Z"),
+      // Spelled out, not built with testAlertText: docs/RUNBOOK.md tells the operator to look for these words (code review).
+      text: "OPS_TEST: a test alert from ops-monitor, sent by an operator at 2026-11-05T15:04:05.000Z. If you can read this, engineering alerts reach this channel. Nothing needs doing.",
       source: "ops-monitor",
       alert: "OPS_TEST",
       sent_at: "2026-11-05T15:04:05.000Z",

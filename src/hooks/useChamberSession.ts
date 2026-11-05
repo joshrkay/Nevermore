@@ -15,7 +15,7 @@ import { cleanPeoName } from "@/data/peoCatalog";
 import { describeRequiredKeys } from "@/data/readiness";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { readVerifiedFields } from "@/lib/verifiedFields";
-import { errorDetail, failureReference, reportOpsEvent } from "@/lib/monitoring";
+import { errorDetail, isUnanswered, reportFailure } from "@/lib/monitoring";
 import { ensureSignerToken, isGuestCertificationRefusal } from "@/lib/signerToken";
 import {
   certificationFromRow,
@@ -38,8 +38,8 @@ export interface SubmitFailure {
   message: string;
   /** The prospect has to verify their email before certifying: offer them the way to (QA F2). */
   verifyEmail?: boolean;
-  /** For a failure nothing else explains: the reference logged and reported with it, which the message quotes. */
-  reference?: string;
+  /** For a failure nothing else explains: the error code logged and reported with it, which the message quotes. */
+  errorCode?: string;
 }
 
 /** What the prospect is told when certification needs a verified email (block_guest_submission). */
@@ -172,21 +172,17 @@ const NOT_FOUND_CODE = "PT404";
 
 /**
  * A certification that failed for a reason nothing else explains: logged as one line (never a bare object, QA F2) and
- * reported with a reference, which the prospect is shown, so what they quote can be found. A request that never
- * reached the server says so instead.
+ * reported with an error code, which the prospect is shown, so what they quote can be found (reportFailure). A request
+ * that never reached the server says so instead.
  */
 function unexplainedFailure(error: unknown, sessionId: string): SubmitFailure {
-  const reference = failureReference();
-  const code = typeof (error as { code?: unknown } | null)?.code === "string" ? (error as { code: string }).code : null;
-  const detail = errorDetail(error);
-  console.error(`Failed to submit session (reference ${reference}, code ${code ?? "none"}): ${detail}`);
-  reportOpsEvent("app_error", { code: `certify_failed:${code ?? "none"}`, detail: `reference ${reference}: ${detail}`, sessionId });
-  const unreachable = !code && /failed to fetch|networkerror|load failed|network request failed/i.test(detail);
+  const dbCode = typeof (error as { code?: unknown } | null)?.code === "string" && (error as { code: string }).code ? (error as { code: string }).code : null;
+  const errorCode = reportFailure(`Failed to submit session${dbCode ? `, database code ${dbCode}` : ""}`, error, { code: `certify_failed:${dbCode ?? "none"}`, sessionId });
   return {
-    reference,
-    message: unreachable
-      ? `We couldn't reach our server, so your certification wasn't sent. Check your connection and try again (reference ${reference}).`
-      : `Something went wrong on our side (reference ${reference}). Please try again; if it keeps happening, contact us and quote that reference.`,
+    errorCode,
+    message: !dbCode && isUnanswered(error)
+      ? `We couldn't reach our server, so your certification wasn't sent. Check your connection and try again (error code ${errorCode}).`
+      : `Something went wrong on our side (error code ${errorCode}). Please try again; if it keeps happening, contact us and quote that code.`,
   };
 }
 const ROW_COLUMNS =
@@ -350,6 +346,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const savingRef = useRef(false);
   // True after a write failed without a clear answer (see unconfirmedRef), until a write settles it.
   const outcomeUnknownRef = useRef(false);
+  // Why the last save failed for a reason worth retrying: a certification that couldn't save first reports it.
+  const lastSaveFailureRef = useRef<unknown>(null);
   const unconfirmedRef = useRef<Unconfirmed | null>(null);
   // The version of the saved row this tab last saw. Every write is conditional on it.
   const versionRef = useRef<number | null>(null);
@@ -570,7 +568,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     dirtyRef.current = true;
     outcomeUnknownRef.current = true;
     clearBlock();
-    console.error("Failed to save session:", reason);
+    lastSaveFailureRef.current = reason;
+    // One line, never a bare object (QA F2).
+    console.error(`Failed to save session: ${errorDetail(reason)}`);
     report("failed");
     // Retry later so a transient failure isn't lost when no further edits arrive.
     if (mountedRef.current && !saveTimerRef.current) {
@@ -585,7 +585,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     conflictRef.current = null;
     blockRef.current = "invalid";
     const path = error.details ?? /Invalid [a-z]+ data at ([^:]+):/.exec(error.message ?? "")?.[1];
-    console.error("Failed to save session: the server refused an answer:", error);
+    console.error(`Failed to save session: the server refused an answer: ${errorDetail(error)}`);
     if (mountedRef.current) setInvalidField(describeInvalidPath(path));
     report("invalid");
   }, [report, settleOutcome]);
@@ -1300,7 +1300,12 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     const sid = sessionIdRef.current;
     if (!sid) return false;
     if (stopsSaving(blockRef.current)) return blockedMessage();
-    if (!(await saveNow())) return blockedMessage();
+    lastSaveFailureRef.current = null;
+    if (!(await saveNow())) {
+      // A save the prospect has to act on says why; one that failed for a reason worth retrying gets an error code they
+      // can quote, as any other unexplained failure does (QA F2), not the bare generic message.
+      return blockedMessage() || unexplainedFailure(lastSaveFailureRef.current ?? "the save before certifying failed", sid);
+    }
     // A token minted before the prospect verified their email (in another tab, say) is still a guest's, which the
     // database refuses: refresh it first. Still a guest's after that, they have to verify (QA F2).
     if ((await ensureSignerToken(supabase.auth)) === "guest") return { message: VERIFY_EMAIL_MESSAGE, verifyEmail: true };

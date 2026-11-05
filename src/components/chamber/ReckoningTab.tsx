@@ -18,7 +18,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import type { ProvenanceMap } from "@/data/provenance";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
-import { errorDetail, failureReference } from "@/lib/monitoring";
+import { reportFailure } from "@/lib/monitoring";
 import VerifyEmailGate from "./VerifyEmailGate";
 
 interface ReckoningTabProps {
@@ -163,10 +163,9 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
     try {
       result = await onSubmit(submission, signedKey);
     } catch (error) {
-      // One line with a reference the prospect is shown, never a bare object (QA F2).
-      const reference = failureReference();
-      console.error(`Failed to submit session (reference ${reference}): ${errorDetail(error)}`);
-      result = { message: `Something went wrong on our side (reference ${reference}). Please try again.`, reference };
+      // Logged as one line and reported with an error code the prospect is shown, never a bare object (QA F2).
+      const errorCode = reportFailure("Failed to submit session", error, { code: "certify_threw", sessionId });
+      result = { message: `Something went wrong on our side (error code ${errorCode}). Please try again.`, errorCode };
     } finally {
       submittingRef.current = false;
       setSubmitting(false);

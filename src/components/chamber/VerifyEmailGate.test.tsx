@@ -43,7 +43,7 @@ describe("VerifyEmailGate", () => {
     render(<VerifyEmailGate />);
     sendCode();
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/We couldn't send the email right now\. Try again in a minute\. \(Reference [A-Z]{8}\.\)/);
+    expect(alert).toHaveTextContent(/We couldn't send the email right now\. Try again in a minute\. \(Error code [A-Z]{8}\.\)/);
     expect(alert).not.toHaveTextContent("Check the address");
     expect(screen.getByLabelText("Work email")).toBeInTheDocument();
     consoleError.mockRestore();

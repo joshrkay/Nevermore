@@ -140,10 +140,10 @@ const { readBackup, writeBackup } = await import("@/data/intakeBackup");
 // Lets queued promise callbacks run while fake timers are active (waitFor would hang).
 const drain = () => act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
 
-type SubmitResult = boolean | { message: string; verifyEmail?: boolean; reference?: string };
+type SubmitResult = boolean | { message: string; verifyEmail?: boolean; errorCode?: string };
 
-// A failure nothing else explains: it carries a reference the message quotes (QA F2).
-const UNEXPLAINED = expect.objectContaining({ reference: expect.stringMatching(/^[A-Z]{8}$/), message: expect.stringMatching(/reference [A-Z]{8}/) });
+// A failure nothing else explains: it carries an error code the message quotes (QA F2).
+const UNEXPLAINED = expect.objectContaining({ errorCode: expect.stringMatching(/^[A-Z]{8}$/), message: expect.stringMatching(/error code [A-Z]{8}/) });
 
 /**
  * Waits for the hook to finish looking for an intake, then has the prospect start one (A-1: nothing is created
@@ -242,9 +242,16 @@ describe("useChamberSession", () => {
     // The failed write is retried as part of submit rather than skipped.
     expect(updates).toHaveLength(2);
     expect(updates[1].payload).toHaveProperty("chamber_data");
-    await act(async () => { updates[1].resolve({ error: { message: "offline" } }); await pending; });
-    expect(submitted).toBe(false);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    await act(async () => { updates[1].resolve({ error: { code: "57014", message: "canceling statement due to statement timeout" } }); await pending; });
     expect(updates.some((u) => u.payload.status === "submitted")).toBe(false);
+    // Code review (QA F2): a certification the save before it blocked gets an error code, not the bare generic message,
+    // and every line logged is text, never an object.
+    expect(submitted).toEqual(UNEXPLAINED);
+    expect((submitted as { message: string }).message).toMatch(/^Something went wrong on our side \(error code [A-Z]{8}\)/);
+    for (const call of consoleError.mock.calls) expect(call.every((arg) => typeof arg === "string"), JSON.stringify(call)).toBe(true);
+    expect(consoleError.mock.calls.map(([line]) => line)).toContainEqual(expect.stringMatching(/^Failed to submit session, database code 57014 \(error code [A-Z]{8}\): \[number\]: canceling statement/));
+    consoleError.mockRestore();
   });
 
   it("snapshots the signed data on submission", async () => {
@@ -2569,15 +2576,15 @@ describe("useChamberSession", () => {
       expect(ok()).toEqual({ message: VERIFY_EMAIL_MESSAGE, verifyEmail: true });
     });
 
-    it("logs any other refusal as one line with a reference, and shows the prospect that reference", async () => {
+    it("logs any other refusal as one line with an error code, and shows the prospect that code", async () => {
       const error = vi.spyOn(console, "error").mockImplementation(() => {});
       const { pending, ok } = await certify();
       await act(async () => { updates[1].resolve({ error: { code: "XX000", message: "internal error" } }); await pending; });
-      const result = ok() as { message: string; reference: string };
+      const result = ok() as { message: string; errorCode: string };
       expect(result).toEqual(UNEXPLAINED);
       expect(result.message).toContain("Something went wrong on our side");
       expect(error).toHaveBeenCalledTimes(1);
-      expect(error.mock.calls[0]).toEqual([`Failed to submit session (reference ${result.reference}, code XX000): XX000: internal error`]);
+      expect(error.mock.calls[0]).toEqual([`Failed to submit session, database code XX000 (error code ${result.errorCode}): XX000: internal error`]);
       error.mockRestore();
     });
 

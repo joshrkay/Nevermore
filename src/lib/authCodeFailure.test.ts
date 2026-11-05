@@ -32,16 +32,16 @@ describe("authCodeFailureMessage", () => {
   afterEach(() => consoleError.mockRestore());
 
   // QA F3: the email service failed (500), and the prospect was told to check the address.
-  it("says a failure to send is ours, with a reference that is logged and reported", async () => {
+  it("says a failure to send is ours, with an error code that is logged and reported", async () => {
     const message = authCodeFailureMessage(SEND_FAILED, "send", "verify_email");
-    expect(message).toMatch(/^We couldn't send the email right now\. Try again in a minute\. \(Reference [A-Z]{8}\.\)$/);
+    expect(message).toMatch(/^We couldn't send the email right now\. Try again in a minute\. \(Error code [A-Z]{8}\.\)$/);
     expect(message).not.toMatch(/address/);
-    const reference = /Reference ([A-Z]{8})/.exec(message)![1];
-    expect(consoleError).toHaveBeenCalledWith(`Couldn't send a verify_email code (reference ${reference}, status 500): Error (unexpected_failure): Error sending email change email`);
+    const errorCode = /Error code ([A-Z]{8})/.exec(message)![1];
+    expect(consoleError).toHaveBeenCalledWith(`Couldn't send a verify_email code (status 500) (error code ${errorCode}): Error (unexpected_failure): Error sending email change email`);
     await vi.waitFor(() => expect(rpc).toHaveBeenCalledWith("report_client_event", expect.objectContaining({
       p_kind: "app_error",
       p_code: "send_code:verify_email:500",
-      p_detail: `reference ${reference}: Error (unexpected_failure): Error sending email change email`,
+      p_detail: `error code ${errorCode}: Error (unexpected_failure): Error sending email change email`,
     })));
   });
 
@@ -63,7 +63,7 @@ describe("authCodeFailureMessage", () => {
       "That code didn't work. Check it and try again, or send a new one.",
     );
     expect(authCodeFailureMessage(authError("Database error", { status: 500 }), "check", "sign_in")).toMatch(
-      /^We couldn't check the code right now\. Try again in a minute\. \(Reference [A-Z]{8}\.\)$/,
+      /^We couldn't check the code right now\. Try again in a minute\. \(Error code [A-Z]{8}\.\)$/,
     );
   });
 });

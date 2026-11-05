@@ -68,3 +68,11 @@ describe("how long to wait", () => {
     expect(authRateLimitMessage("requests")).toContain("wait a few minutes");
   });
 });
+
+// Code review: authErrorMessage (the sign-up, sign-in and resend pages) passes the seconds through; nothing checked it.
+describe("authErrorMessage", () => {
+  it("says how many seconds to wait when Supabase gives them", () => {
+    const cooldown = authError("For security purposes, you can only request this after 12 seconds", { code: "over_email_send_rate_limit", status: 429 });
+    expect(authErrorMessage(cooldown)).toBe("We just sent an email to that address. Please wait 12 seconds before asking for another.");
+  });
+});
