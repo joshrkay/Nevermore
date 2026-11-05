@@ -48,7 +48,7 @@ const hooks = {
     onOrbStateChange: (state: OrbState) => void;
     readIntake?: unknown;
   },
-  orb: null as null | { orbState: OrbState; voice: VoiceState; onTypeInstead: () => void },
+  orb: null as null | { orbState: OrbState; voice: VoiceState; onTypeInstead: () => void; compact?: boolean; orbSize?: number; id?: string; narrow?: boolean },
 };
 const voice = {
   isConnected: false,
@@ -84,12 +84,12 @@ vi.mock("@/hooks/useLenoreVoice", () => ({
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => mobile }));
 // The orb shows what Lenore last said, and is handed the orb state; the workspace panes are not what these tests are about.
 vi.mock("@/components/chamber/VoiceOrb", () => ({
-  default: (props: { lastSpokenText: string; orbState: OrbState; voice: VoiceState; onTypeInstead: () => void }) => {
+  default: (props: { lastSpokenText: string; orbState: OrbState; voice: VoiceState; onTypeInstead: () => void; compact?: boolean; orbSize?: number; id?: string; narrow?: boolean }) => {
     hooks.orb = props;
     return <p data-testid="orb">{props.lastSpokenText}</p>;
   },
 }));
-vi.mock("@/components/chamber/TranscriptPanel", () => ({ default: () => null }));
+vi.mock("@/components/chamber/TranscriptPanel", () => ({ default: () => <div data-testid="transcript" /> }));
 vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
   default: (props: typeof hooks.workspace) => {
     hooks.workspace = props;
@@ -127,6 +127,8 @@ describe("ChamberPage", () => {
     auth.isAnonymous = true;
     storageWorks = true;
     mobile = false;
+    // What the prospect chose for the orb's size is kept in the browser, so it must not carry over between tests.
+    localStorage.clear();
     voice.state = { status: "idle", attempt: 0 };
     voice.dismissFailure.mockClear();
     for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges, session.restoreBackup, session.discardBackup, session.updateIntake]) {
@@ -408,6 +410,98 @@ describe("ChamberPage", () => {
     });
   });
 
+  describe("the orb's size", () => {
+    it("opens the orb, and the prospect can fold it into a bar with the handle's button and open it again", () => {
+      renderPage();
+      expect(hooks.orb?.compact).toBe(false);
+      fireEvent.click(screen.getByRole("button", { name: "Hide the orb" }));
+      expect(hooks.orb?.compact).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name: "Show the orb" }));
+      expect(hooks.orb?.compact).toBe(false);
+    });
+
+    it("folds the orb on \"Type instead\", so the conversation has the room", () => {
+      renderPage();
+      act(() => hooks.orb!.onTypeInstead());
+      expect(hooks.orb?.compact).toBe(true);
+      expect(voice.dismissFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the prospect's choice for the next visit", () => {
+      const first = renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "Hide the orb" }));
+      first.unmount();
+      renderPage();
+      expect(hooks.orb?.compact).toBe(true);
+      expect(screen.getByRole("button", { name: "Show the orb" })).toBeInTheDocument();
+    });
+
+    it("sits at the top of the conversation's column on a wide screen, so the workspace has the whole height", () => {
+      renderPage();
+      const orb = screen.getByTestId("orb");
+      const column = orb.parentElement!;
+      expect(hooks.orb?.narrow).toBe(true);
+      expect(column).toContainElement(screen.getByRole("separator", { name: "Resize Lenore's panel" }));
+      expect(column).toContainElement(screen.getByTestId("transcript"));
+      // Above the conversation, not below it.
+      expect(orb.compareDocumentPosition(screen.getByTestId("transcript")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("runs across the top on a phone, which has no column, and the conversation is in its sheet", () => {
+      mobile = true;
+      renderPage();
+      expect(hooks.orb?.narrow).toBe(false);
+      expect(screen.getByRole("separator", { name: "Resize Lenore's panel" })).toBeInTheDocument();
+      expect(screen.queryByTestId("transcript")).not.toBeInTheDocument();
+    });
+
+    it("names the stage the handle resizes", () => {
+      renderPage();
+      const stageId = screen.getByRole("separator", { name: "Resize Lenore's panel" }).getAttribute("aria-controls");
+      expect(stageId).toBeTruthy();
+      expect(hooks.orb).toMatchObject({ id: stageId });
+    });
+  });
+
+  describe("the conversation column's width", () => {
+    const column = () => document.getElementById(screen.getByRole("separator", { name: "Resize the conversation" }).getAttribute("aria-controls")!)!;
+
+    it("is a share of the window until the prospect drags it, never narrower than the narrowest", () => {
+      renderPage();
+      expect(column()).toHaveStyle({ width: "30%", minWidth: "280px" });
+      expect(column()).toContainElement(screen.getByTestId("transcript"));
+    });
+
+    it("is capped at the widest, or 60% of the window, by the stylesheet, so it holds when the window shrinks after a choice", () => {
+      localStorage.setItem("eaa.chamber.column.v1", JSON.stringify({ width: 700 }));
+      renderPage();
+      expect(column().style.maxWidth).toBe("min(720px, 60%)");
+    });
+
+    it("takes the width the prospect chose last time", () => {
+      localStorage.setItem("eaa.chamber.column.v1", JSON.stringify({ width: 520 }));
+      renderPage();
+      expect(column()).toHaveStyle({ width: "520px" });
+    });
+
+    it("follows the divider, keeps the choice, and goes back to the default on a double click", () => {
+      renderPage();
+      const handle = screen.getByRole("separator", { name: "Resize the conversation" });
+      fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
+      expect(column().style.width).toMatch(/px$/);
+      expect(localStorage.getItem("eaa.chamber.column.v1")).not.toBeNull();
+      fireEvent.doubleClick(handle);
+      expect(column()).toHaveStyle({ width: "30%" });
+      expect(localStorage.getItem("eaa.chamber.column.v1")).toBeNull();
+    });
+
+    it("is not there on a phone, which has no column", () => {
+      mobile = true;
+      renderPage();
+      expect(screen.queryByRole("separator", { name: "Resize the conversation" })).not.toBeInTheDocument();
+    });
+  });
+
   describe("on a phone", () => {
     beforeEach(() => {
       mobile = true;
@@ -425,6 +519,8 @@ describe("ChamberPage", () => {
       act(() => hooks.orb!.onTypeInstead());
       expect(voice.dismissFailure).toHaveBeenCalledTimes(1);
       expect(screen.getByPlaceholderText("Message Lenore...")).toHaveFocus();
+      // The orb folds too, so the workspace has the room the keyboard leaves.
+      expect(hooks.orb?.compact).toBe(true);
     });
   });
 

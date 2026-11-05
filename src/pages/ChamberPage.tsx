@@ -6,8 +6,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { useLenoreVoice } from "@/hooks/useLenoreVoice";
 import { useLenoreChat } from "@/hooks/useLenoreChat";
 import { useChamberSession } from "@/hooks/useChamberSession";
+import { useStageLayout } from "@/hooks/useStageLayout";
+import { useColumnWidth } from "@/hooks/useColumnWidth";
 import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
+import StageSplitter from "@/components/chamber/StageSplitter";
+import ColumnSplitter from "@/components/chamber/ColumnSplitter";
 import TranscriptPanel from "@/components/chamber/TranscriptPanel";
 import MobileTranscript from "@/components/chamber/MobileTranscript";
 import ChatFailureNotice from "@/components/chamber/ChatFailureNotice";
@@ -19,6 +23,7 @@ import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import LegalLinks from "@/components/LegalLinks";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { createChatMessage } from "@/data/chat";
+import { COLUMN_DEFAULT_CSS, COLUMN_MAX_CSS, MIN_COLUMN } from "@/data/columnLayout";
 import { isReadyToCertify, READY_MESSAGE, shouldAnnounceReady } from "@/data/followUp";
 import { browserStorageWorks } from "@/data/intakeBackup";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
@@ -26,6 +31,8 @@ import { applyExtraction, applyFieldAction, transcriptExtraction, type FieldActi
 import { voiceContextUpdate } from "@/data/voiceAgent";
 import { orbForVoice } from "@/data/voiceSession";
 
+const STAGE_ID = "lenore-stage";
+const COLUMN_ID = "conversation-column";
 const spokenLine = (text: string) => (text.length > 120 ? text.slice(0, 120) + "..." : text);
 const primaryButton = "bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors";
 const secondaryButton = "border border-border font-medium px-5 py-2.5 rounded-lg hover:bg-muted transition-colors";
@@ -51,6 +58,12 @@ const ChamberPage = () => {
   const chatInputRef = useRef<HTMLInputElement>(null);
   // Checked once: whether this browser keeps site data, which is what lets the prospect come back.
   const [storageWorks] = useState(browserStorageWorks);
+  // How much of the top Lenore's orb takes. The prospect drags it smaller or folds it into a bar, and the
+  // conversation and workspace below take the room.
+  const stage = useStageLayout();
+  // How wide the conversation's column is, which the prospect drags to give either side more room.
+  const column = useColumnWidth();
+  const columnRef = useRef<HTMLDivElement>(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const {
@@ -200,9 +213,11 @@ const ChamberPage = () => {
 
   const orbState = orbForVoice(voice) ?? chatOrbState;
 
-  // "Type instead", and "Continue in text" after a voice failure: the notice goes, and the cursor is in the input.
+  // "Type instead", and "Continue in text" after a voice failure: the notice goes, the orb folds away so the
+  // conversation has the room, and the cursor is in the input.
   const handleTypeInstead = () => {
     dismissVoiceFailure();
+    stage.collapse();
     chatInputRef.current?.focus();
   };
 
@@ -272,15 +287,36 @@ const ChamberPage = () => {
     );
   }
 
+  const stageNodes = (
+    <>
+      <VoiceOrb
+        id={STAGE_ID}
+        compact={stage.layout.collapsed}
+        orbSize={stage.layout.size}
+        narrow={!isMobile}
+        orbState={orbState}
+        lastSpokenText={lastSpokenText}
+        voice={voice}
+        hasAgentId={hasAgentId}
+        onStartVoice={startVoice}
+        onEndVoice={endVoice}
+        onTypeInstead={handleTypeInstead}
+      />
+      <StageSplitter layout={stage.layout} onChange={stage.change} controls={STAGE_ID} />
+    </>
+  );
+
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Top bar */}
-      <div className="min-h-12 py-2 border-b border-border flex items-center px-4 gap-3 flex-shrink-0">
-        <a href="/" className="font-display text-sm text-foreground hover:text-primary transition-colors">
+      {/* Wraps rather than overflows: on a phone, the "Ready" badge made it wider than the screen, which widened the
+          page and pushed the fixed chat bar below the fold. */}
+      <div className="min-h-12 py-2 border-b border-border flex flex-wrap items-center px-4 gap-x-3 gap-y-1 flex-shrink-0">
+        <a href="/" className="font-display text-sm text-foreground hover:text-primary transition-colors whitespace-nowrap">
           Edgar Allan Advisory
         </a>
         <span className="text-muted-foreground">/</span>
-        <span className="text-sm text-muted-foreground">The Chamber</span>
+        <span className="text-sm text-muted-foreground whitespace-nowrap">The Chamber</span>
         {isAnonymous && !messages.some((m) => m.sender === "user") && (
           // A guest on a fresh intake may be someone back from another browser: offer them their own.
           <Dialog>
@@ -328,33 +364,39 @@ const ChamberPage = () => {
         </div>
       )}
 
-      {/* Voice Orb */}
-      <VoiceOrb
-        orbState={orbState}
-        lastSpokenText={lastSpokenText}
-        voice={voice}
-        hasAgentId={hasAgentId}
-        onStartVoice={startVoice}
-        onEndVoice={endVoice}
-        onTypeInstead={handleTypeInstead}
-      />
+      {/* Lenore's orb, open or folded into a bar, with the handle under it that resizes it. On a wide screen it
+          sits at the top of the conversation's column, so the workspace beside it has the whole height whatever
+          the orb is doing; on a phone there is no column, so it runs across the top. */}
+      {isMobile && stageNodes}
 
-      {/* Transcript & Workspace */}
-      <div className="flex-1 flex overflow-hidden border-t border-border">
-        {/* Transcript panel */}
-        <div className={`${isMobile ? "hidden" : "w-[30%] min-w-[280px]"}`}>
-          <TranscriptPanel
-            messages={messages}
-            onSendMessage={handleSendMessage}
-            inputRef={chatInputRef}
-            notice={failureNotice}
-            restoredThrough={restoredThrough}
-          />
-        </div>
+      {/* Conversation & Workspace */}
+      <div className="flex-1 min-h-0 flex overflow-hidden">
+        {!isMobile && (
+          <>
+            <div
+              id={COLUMN_ID}
+              ref={columnRef}
+              className="shrink-0 flex flex-col"
+              style={{ width: column.width ?? COLUMN_DEFAULT_CSS, minWidth: MIN_COLUMN, maxWidth: COLUMN_MAX_CSS }}
+            >
+              {stageNodes}
+              <div className="flex-1 min-h-0">
+                <TranscriptPanel
+                  messages={messages}
+                  onSendMessage={handleSendMessage}
+                  inputRef={chatInputRef}
+                  notice={failureNotice}
+                  restoredThrough={restoredThrough}
+                />
+              </div>
+            </div>
+            <ColumnSplitter width={column.width} onChange={column.change} columnRef={columnRef} controls={COLUMN_ID} />
+          </>
+        )}
 
         {/* Live workspace */}
         {/* On mobile, keep the workspace clear of the fixed chat bar so its last button stays tappable. */}
-        <div className={`${isMobile ? "w-full pb-16" : "flex-1"}`}>
+        <div className={`${isMobile ? "w-full pb-16" : "flex-1 min-w-0"}`}>
           <LiveWorkspace
             data={chamberData}
             isDemo={false}
