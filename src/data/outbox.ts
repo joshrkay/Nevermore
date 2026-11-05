@@ -33,6 +33,8 @@ export const STALLED_AFTER_MINUTES = 10;
 export const OUTBOX_KIND_LABELS: Record<string, string> = {
   advisor_notification: "Advisor alert",
   prospect_confirmation: "Prospect confirmation",
+  information_request: "Request for information",
+  draft_expiry_reminder: "Draft expiry reminder",
 };
 
 export const outboxKindLabel = (kind: string) => OUTBOX_KIND_LABELS[kind] ?? kind;

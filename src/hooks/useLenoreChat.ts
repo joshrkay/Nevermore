@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { describeInvokeError, type AiFailureKind } from "@/data/aiFailure";
 import type { ChamberData } from "@/data/chamberTypes";
 import { CHAT_FALLBACK_REPLY, chatRequestBody, type ChatMessage } from "@/data/chat";
+import { outstandingRequestedFields, type InformationRequest } from "@/data/informationRequest";
 import type { IntakeState, ProvenanceMap } from "@/data/provenance";
 import { MAX_CHAT_MESSAGE_CHARS } from "../../supabase/functions/_shared/chatContext.ts";
 import { redactSensitive } from "@/data/sensitive";
@@ -66,6 +67,11 @@ interface UseLenoreChatOptions {
    */
   onExtracted: (extracted: Partial<ChamberData>, response: unknown, message: { id: string; text: string; spoken?: boolean }) => void;
   /**
+   * An advisor's open request for information: the fields it names that the prospect hasn't answered since go with
+   * each call, so Lenore asks about them first (outstandingRequestedFields).
+   */
+  informationRequest?: InformationRequest | null;
+  /**
    * Which conversation this is (useChamberSession's `conversationEpoch`). When it changes, an answer still
    * on its way belongs to the old conversation: it is dropped, and so is a failure notice about it.
    */
@@ -76,7 +82,7 @@ interface UseLenoreChatOptions {
  * Sends the prospect's messages to Lenore. When she can't answer we say so and keep the message,
  * rather than replying as though she understood it.
  */
-export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance, messages, readIntake, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, epoch }: UseLenoreChatOptions) {
+export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance, messages, readIntake, addUserMessage, addLenoreMessage, onOrbStateChange, onExtracted, informationRequest = null, epoch }: UseLenoreChatOptions) {
   const [failure, setFailure] = useState<ChatFailure | null>(null);
   // How many calls are out: typed and spoken ones can overlap.
   const [inFlight, setInFlight] = useState(0);
@@ -89,6 +95,8 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
   messagesRef.current = messages;
   const readIntakeRef = useRef(readIntake);
   readIntakeRef.current = readIntake;
+  const requestRef = useRef(informationRequest);
+  requestRef.current = informationRequest;
   const intakeIdRef = useRef(intakeId);
   intakeIdRef.current = intakeId;
   const ensureIntakeRef = useRef(ensureIntake);
@@ -139,6 +147,8 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
           latest?.messages ?? messagesRef.current ?? [],
         ),
       };
+      const requested = outstandingRequestedFields(requestRef.current, latest ? latest.provenance : provenanceRef.current);
+      if (requested.length > 0) body.requested = requested;
       const sessionId = intakeIdRef.current ?? (ensureIntakeRef.current ? await ensureIntakeRef.current() : null);
       if (sessionId) body.session_id = sessionId;
       const { data, error } = await supabase.functions.invoke("chamber-extract", { body, signal: controller.signal });

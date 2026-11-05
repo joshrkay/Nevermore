@@ -264,6 +264,22 @@ export type Database = {
           },
         ]
       }
+      // An advisor's request for more information (20261105090000). Written only by advisor_request_information,
+      // read by advisors; never changed.
+      information_requests: {
+        Row: {
+          fields: string[]
+          id: number
+          message: string
+          requested_at: string
+          requested_by: string | null
+          requested_by_email: string | null
+          session_id: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       intake_consents: {
         // One per account and consent version (src/data/intakeConsent.ts). Read-only from the browser:
         // written only through record_intake_consent().
@@ -306,6 +322,8 @@ export type Database = {
           company_name: string | null
           contact_name: string | null
           created_at: string
+          // When the account asked to be emailed before an unfinished intake closes (server time); null for no.
+          draft_reminders_at: string | null
           employee_count: number | null
           id: string
           phone: string | null
@@ -316,6 +334,7 @@ export type Database = {
           company_name?: string | null
           contact_name?: string | null
           created_at?: string
+          draft_reminders_at?: string | null
           employee_count?: number | null
           id?: string
           phone?: string | null
@@ -326,6 +345,7 @@ export type Database = {
           company_name?: string | null
           contact_name?: string | null
           created_at?: string
+          draft_reminders_at?: string | null
           employee_count?: number | null
           id?: string
           phone?: string | null
@@ -389,6 +409,11 @@ export type Database = {
           since: string
         }[]
       }
+      // The pilot funnel (20261105092000): each step, how many intakes started in the period reached it, the median minutes.
+      advisor_intake_funnel: {
+        Args: { p_from: string; p_to: string }
+        Returns: { step: number; milestone: string; intakes: number; median_minutes: number | null }[]
+      }
       advisor_list_outbox_events: {
         Args: { p_limit?: number; p_status?: string | null }
         Returns: {
@@ -444,6 +469,10 @@ export type Database = {
           status: string
         }[]
       }
+      advisor_request_information: {
+        Args: { p_fields?: string[]; p_message: string; p_session_id: string }
+        Returns: Json
+      }
       advisor_requeue_outbox_event: {
         Args: { event_id: string; rebuild_payload?: boolean }
         Returns: boolean
@@ -472,6 +501,11 @@ export type Database = {
         Args: { p_limit?: number }
         Returns: number
       }
+      // The latest request on the caller's own intake while the pipeline waits on them: { message, fields, requested_at }.
+      prospect_information_request: {
+        Args: { p_session_id: string }
+        Returns: Json | null
+      }
       prospect_submission_status: {
         Args: { p_session_id: string }
         Returns: string | null
@@ -484,6 +518,11 @@ export type Database = {
         Args: { p_text: string; p_version: string }
         // When the server received the agreement (the first one, when agreeing again).
         Returns: string
+      }
+      // The prospect downloaded The Manuscript of their own certified intake; true the first time.
+      record_manuscript_download: {
+        Args: { p_session_id: string }
+        Returns: boolean
       }
       record_manuscript_version: {
         Args: {

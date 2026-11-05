@@ -74,6 +74,18 @@ function readStatuses(raw: unknown): { ok: true; statuses: Record<string, string
   return { ok: true, statuses: raw as Record<string, string> };
 }
 
+/** The most fields an advisor's request can name (public.information_requests). */
+const MAX_REQUESTED = 40;
+
+/** The fields an advisor asked about, as sent, or why they aren't acceptable: intake fields, each once. */
+function readRequested(raw: unknown): { ok: true; requested: string[] } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true, requested: [] };
+  if (!Array.isArray(raw) || raw.length > MAX_REQUESTED || raw.some((k) => typeof k !== "string" || !SCHEMA_KEYS.has(k)) || new Set(raw).size !== raw.length) {
+    return { ok: false, message: `requested must list at most ${MAX_REQUESTED} intake fields, each once` };
+  }
+  return { ok: true, requested: raw as string[] };
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Result<T> = PromiseLike<{ data: T; error: { message?: string; code?: string } | null }>;
@@ -162,7 +174,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     } catch {
       return await fail(aiError("bad_request", { message: "The request body must be JSON." }));
     }
-    const { message, context, statuses: rawStatuses, recent: rawRecent, census: rawCensus, session_id: sessionId } = isObject(body) ? body : ({} as Record<string, unknown>);
+    const { message, context, statuses: rawStatuses, recent: rawRecent, census: rawCensus, requested: rawRequested, session_id: sessionId } = isObject(body) ? body : ({} as Record<string, unknown>);
     if (typeof message !== "string" || !message.trim()) {
       return await fail(aiError("bad_request", { message: "message is required" }));
     }
@@ -178,8 +190,10 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (!recent.ok) return await fail(aiError("bad_request", { message: recent.message }));
     const census = readCensus(rawCensus);
     if (!census.ok) return await fail(aiError("bad_request", { message: census.message }));
+    const requested = readRequested(rawRequested);
+    if (!requested.ok) return await fail(aiError("bad_request", { message: requested.message }));
     // The same serialisation is measured here and sent to the model (prompt.ts, shared with the eval).
-    const turn = { context, statuses: statuses.statuses, recent: recent.messages, census: census.census };
+    const turn = { context, statuses: statuses.statuses, recent: recent.messages, census: census.census, requested: requested.requested };
     const { contextJson, statusesJson, recentJson } = serializeTurn(turn);
     if (contextJson.length + statusesJson.length + recentJson.length > MAX_CONTEXT_CHARS) {
       return await fail(aiError("bad_request", { status: 413, message: "context too large" }));

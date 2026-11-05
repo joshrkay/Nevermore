@@ -18,6 +18,7 @@ import {
 } from "@/data/provenance";
 import { isRequiredField } from "@/data/readiness";
 import { useVerifiedFields } from "./VerifiedFieldsContext";
+import { useRequestedFields } from "./RequestedFieldsContext";
 
 const BADGES: Record<FieldProvenance["status"], { text: string; color: string }> = {
   confirmed: { text: "Confirmed", color: "bg-success/15 text-success" },
@@ -107,6 +108,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
 
   const status = provenance?.status;
   const verifiedByAdvisor = useVerifiedFields().has(field);
+  const requestedByAdvisor = useRequestedFields().has(field);
   // A required answer in conflict still blocks certification whoever verified it, so it keeps its rival answers.
   const settledByAdvisor = verifiedByAdvisor && verificationSettles(status, required);
   // A value the prospect confirmed or typed says so, apart from one Lenore heard stated outright (B-2).
@@ -123,6 +125,9 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
         {label}
         {required && (
           <span className="ml-1.5 normal-case tracking-normal font-medium text-primary">Required</span>
+        )}
+        {requestedByAdvisor && (
+          <span className="ml-1.5 normal-case tracking-normal font-medium text-warning">Your advisor asked about this</span>
         )}
       </p>
 

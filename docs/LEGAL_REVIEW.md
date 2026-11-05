@@ -67,6 +67,19 @@ These make claims that only counsel can stand behind. They are not part of the p
 9. **Terms.** Write the disclaimers, limitation of liability, governing law, and disputes and arbitration;
    confirm the rest (acceptable use, suspension, ownership of the packet, the change clause).
 10. **Contact address** for privacy and deletion requests (see placeholders).
+11. **Emails beyond the receipt (2026-11-05).** Two new emails go to the prospect's own address
+    (`docs/NOTIFICATIONS.md`, "Consent and preferences"). An *information request* carries an advisor's own message
+    about the submission the prospect certified: is it a transactional or relationship message that needs no
+    opt-in, as built? A *draft reminder* goes a week before an unfinished intake closes, only to an account that
+    ticked "Email me before an unfinished intake closes" (the time is recorded); it says why it was sent and how to
+    stop (untick on the profile page, which needs sign-in, or reply). Is that consent and that way to stop enough,
+    or does it need a one-click unsubscribe? Review the wording of both in
+    `supabase/functions/dispatch-outbox/messages.ts`.
+12. **The pilot funnel (2026-11-05).** The database records which steps each intake reached and when
+    (`intake_milestones`): no answers, names or addresses, kept a year, and kept unattached after the intake is
+    deleted. It is first-party and uses no cookie or tracker. Does the Privacy Policy's new line about it (rendered
+    from `src/data/dataPolicy.ts`) say enough, and does keeping unattached rows after a deletion request fit the
+    deletion commitment?
 
 ## Approval record
 

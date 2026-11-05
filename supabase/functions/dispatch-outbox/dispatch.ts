@@ -1,6 +1,6 @@
 // Sends claimed outbox events and records what happened to each. Pure orchestration: the edge
-// function supplies the database and provider calls. No imports beyond sibling modules, so it
-// runs under Deno and Vitest alike.
+// function supplies the database and provider calls. No imports beyond sibling modules (fieldLabels reads the
+// shared intake schema, which imports nothing), so it runs under Deno and Vitest alike.
 //
 // The email an event sends is written to the event (frozen, with its idempotency key) before the
 // first send and reused byte for byte by every retry, so a settings change between an ambiguous
@@ -8,10 +8,15 @@
 // freeze is cleared, which the database does for a definitive rejection of the first send.
 
 import type { BlockedKind, DispatchConfig } from "./config.ts";
+import { fieldLabels } from "./fieldLabels.ts";
 import {
   parseAdvisorNotification,
+  parseDraftExpiryReminder,
+  parseInformationRequest,
   parseProspectConfirmation,
   renderAdvisorNotification,
+  renderDraftExpiryReminder,
+  renderInformationRequest,
   renderProspectConfirmation,
   type OutboxKind,
 } from "./messages.ts";
@@ -130,6 +135,31 @@ function buildMessage(row: OutboxRow, config: DispatchConfig): Built {
     return {
       ok: true,
       message: { from, to: [c.recipientEmail], replyTo: supportEmail, ...renderProspectConfirmation(c, { supportEmail, responseTime }) },
+    };
+  }
+  if (row.kind === "information_request" || row.kind === "draft_expiry_reminder") {
+    if (!config.prospectLink.ok) return { ok: false, reason: "not_configured", final: false };
+    const { from, supportEmail, appBaseUrl } = config.prospectLink;
+    const intakeUrl = `${appBaseUrl}/start?session=${encodeURIComponent(row.session_id)}`;
+    if (row.kind === "information_request") {
+      const r = parseInformationRequest(row.payload);
+      if (!r) return { ok: false, reason: "invalid_payload", final: true };
+      return {
+        ok: true,
+        message: {
+          from, to: [r.recipientEmail], replyTo: supportEmail,
+          ...renderInformationRequest(r, { supportEmail, intakeUrl, fieldLabels: fieldLabels(r.fields) }),
+        },
+      };
+    }
+    const d = parseDraftExpiryReminder(row.payload);
+    if (!d) return { ok: false, reason: "invalid_payload", final: true };
+    return {
+      ok: true,
+      message: {
+        from, to: [d.recipientEmail], replyTo: supportEmail,
+        ...renderDraftExpiryReminder(d, { supportEmail, intakeUrl, profileUrl: `${appBaseUrl}/profile` }),
+      },
     };
   }
   return { ok: false, reason: "unknown_kind", final: true };
@@ -269,6 +299,7 @@ export function sendableKinds(config: DispatchConfig): OutboxKind[] {
   const kinds: OutboxKind[] = [];
   if (config.advisor.ok) kinds.push("advisor_notification");
   if (config.prospect.ok) kinds.push("prospect_confirmation");
+  if (config.prospectLink.ok) kinds.push("information_request", "draft_expiry_reminder");
   return kinds;
 }
 

@@ -1,12 +1,15 @@
 # Submission notifications
 
 When a prospect certifies an intake (which submits it), two emails are queued in the same database
-transaction and sent by the `dispatch-outbox` edge function:
+transaction and sent by the `dispatch-outbox` edge function. Two more go through the same outbox: an advisor's
+request for information, and the reminder before a draft closes for a prospect who asked for it.
 
 | Email | To | Contains |
 |---|---|---|
 | Advisor alert (G-1) | `ADVISORY_NOTIFY_EMAIL` | Company legal name, primary signer, title, work email, phone, employee count, HQ state, File ID, when it was certified (UTC), link to the secure advisor review. Subject `New Intake Certified: <company> (<File ID>)`, or `Updated Intake: ...` when changed answers were certified again |
 | Prospect confirmation (G-2) | The signed-in account's own email | Company, File ID, what happens next, expected response time, support address |
+| Information request | The account's own email | The advisor's message, the labels of the answers it is about, the File ID, a link to the intake (sign-in required) and the support address. Subject `Your advisor needs a little more information (<File ID>)`. Queued by `advisor_request_information()` in the transaction that records the request (migration `20261105090000`) |
+| Draft reminder | The account's own email, only if it asked for reminders | The company, the day the draft closes (UTC), a link back to it, why it was sent and how to stop. Subject `Your intake for <company> closes on <day>`. Queued hourly by `queue_draft_expiry_reminders()` a week before an uncertified draft closes (migration `20261105091000`) |
 
 Both emails call the intake's identifier its **File ID**, as the app and the signed Manuscript do (`GLOSSARY.md`); the queued payload keeps the field name `reference`. Neither email contains census, payroll, benefits or document content. Every listed detail is always shown on the advisor alert, as "Not provided" when empty, so a blank is never mistaken for an omission. The email is a complete HTML document (title, phone-width layout, row headers for the details) with a plain-text twin. The queue row itself never
 holds them: `enqueue_certification_notifications()` (which the trigger calls) copies only named
@@ -67,7 +70,20 @@ same File ID. That is intended: it tells the prospect the update arrived. Certif
 again sends nothing.
 
 Sending anything that is not a receipt for something the prospect just did (a reminder, a newsletter,
-a follow-up campaign) would need consent and an unsubscribe first. Nothing here sends one.
+a follow-up campaign) needs consent and a way to stop first. Of the emails above:
+
+- **The information request** is part of working the submission the prospect certified: their advisor asking about
+  it, as the confirmation said might happen ("will follow up by email if we need anything else"). It goes only to
+  the account's own address, at most once per request an advisor sends. Counsel to confirm (`docs/LEGAL_REVIEW.md`).
+- **The draft reminder** is not a receipt, so it is opt-in. It goes only to an account that ticked "Email me before
+  an unfinished intake closes" (in the Chamber's "Save your progress", once the email is verified, or on the
+  profile page). The database stamps when they asked (`profiles.draft_reminders_at`, server time); unticking clears
+  it and stops reminders. Each reminder says why it was sent and how to stop: untick the box on the profile page, or
+  reply (the reply goes to `SUPPORT_EMAIL`, and support clears the setting or adds the address to
+  `email_suppressions`). One per closing time: a draft that changes and goes idle again can get another. Counsel to
+  confirm the wording and that a reply-to-stop meets the rules that apply (`docs/LEGAL_REVIEW.md`).
+
+Nothing here sends a newsletter or a campaign.
 
 ## Delivery guarantee
 
@@ -105,8 +121,8 @@ Set with `supabase secrets set` or the dashboard. Secrets never go in `VITE_*` v
 | `RESEND_API_KEY` | both | Provider key. `EMAIL_PROVIDER` defaults to `resend`; to switch provider, add an adapter in `providers.ts`. |
 | `EMAIL_FROM` | both | e.g. `Edgar Allan Advisory <intake@mail.example.com>`. **Must be on a domain verified with the provider (SPF and DKIM)**; no default on purpose. |
 | `ADVISORY_NOTIFY_EMAIL` | advisor alert | The advisory distribution list. Comma-separated for several. |
-| `APP_BASE_URL` | advisor alert | e.g. `https://app.example.com`. https only (http allowed for localhost). Builds the `/advisor/submissions/<id>` link. |
-| `SUPPORT_EMAIL` | prospect | Shown in the email and used as Reply-To. |
+| `APP_BASE_URL` | advisor alert, information request, draft reminder | e.g. `https://app.example.com`. https only (http allowed for localhost). Builds the `/advisor/submissions/<id>` link, and the prospect's `/start?session=<id>` and `/profile` links. |
+| `SUPPORT_EMAIL` | prospect | Shown in each prospect email and used as Reply-To. |
 | `PROSPECT_RESPONSE_TIME` | prospect | A phrase that follows "within", e.g. `2 business days`. This is a commitment shown to every prospect, so there is no default. |
 | `RESEND_WEBHOOK_SECRET` | bounces | The signing secret (`whsec_...`) of the Resend webhook that points at the `resend-webhook` function (see "Bounces and complaints"). Sending works without it; bounces and complaints are then not processed and a bounced address is mailed again. |
 | `ENGINEERING_ALERT_WEBHOOK_URL` | optional | An https URL (Slack-style incoming webhook: it reads a `text` field; the same facts also arrive as JSON fields). Called when an event goes `dead`, with the event id, kind, attempt count and failure kind only: no addresses, names or message content. Unset means log only. One that is set but is not an https URL is logged as `OUTBOX_CONFIG_MISSING`. |
@@ -178,6 +194,8 @@ $$);
 select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
 select vault.create_secret('<service role key>', 'service_role_key');
 ```
+
+The draft reminders have their own hourly job, `remind-idle-intakes` at 29 past (`select public.queue_draft_expiry_reminders();`, created by `20261105091000_draft_expiry_reminders.sql` where `pg_cron` exists). It only queues; the job above sends.
 
 An existing job is never replaced by the migration: `scripts/supabase-setup.mjs` schedules one on the project's own URL, and that one stays. Without `pg_cron` the migration logs a notice and does nothing; it never fails the deploy. Check with `select jobname, schedule from cron.job;`.
 
@@ -263,7 +281,7 @@ Resend tells the product what became of a message by webhook. The `resend-webhoo
 | anything else (delivered, opened, contacts, domains...) | Acknowledged and dropped |
 
 - **Idempotent.** The provider retries a delivery with the same `svix-id`; each is kept once (`email_delivery_events`), and a replay changes nothing. The function answers 200 to a replay, 401 to a bad signature (it never says why), and 500 when the database fails, so the provider retries.
-- **A suppressed address is never emailed again.** The claim marks a due confirmation to it `suppressed` instead of handing it to the worker, so a re-certification, a retry or a requeue cannot send to it, and a confirmation already waiting is held back the moment the bounce is recorded. The Outbox page has a **Suppressed** tab showing why. Only the prospect's confirmation is held back: the email goes to the account's own address, and nobody else's.
+- **A suppressed address is never emailed again.** The claim marks a due confirmation to it `suppressed` instead of handing it to the worker, so a re-certification, a retry or a requeue cannot send to it, and a confirmation already waiting is held back the moment the bounce is recorded. The Outbox page has a **Suppressed** tab showing why. Every email to the prospect is held back (the confirmation, an information request, a draft reminder: `public.outbox_kind_reaches_prospect`): each goes to the account's own address, and nobody else's.
 - **A bounce flags the submission.** `advisor_email_problems()` lists the submissions whose confirmation bounced, was reported as spam, or is blocked by the provider; the advisor queue shows an "Email bounced" / "Reported as spam" badge and the submission page a banner saying to reach the prospect another way. It is read beside the queue, so a failure of that check never takes the queue down.
 - **The advisory team is never suppressed.** `ADVISORY_NOTIFY_EMAIL` is protected, and so is any message the queue shows was sent to the team. A bounce on one is recorded as `protected` and logged as `WEBHOOK_ADVISOR_BOUNCE`.
 - **Only what was emailed is suppressed.** Resend reports every recipient of a message; for a confirmation (one recipient) only the address the queue sent it to is suppressed. A message that is not in the queue at all (the sign-in codes go through the same Resend account) concerns the recipients as reported: those addresses are suppressed here, which only matters to the confirmations.
@@ -392,6 +410,9 @@ included.
 - [ ] The migration `20261027090001_outbox_operations.sql` was applied, and `ENGINEERING_ALERT_WEBHOOK_URL` points at a channel someone watches (kill the provider key in a test project and check the push arrives).
 - [ ] An advisor has opened `/advisor/outbox` and retried a dead test event.
 - [ ] The Resend webhook exists, points at `resend-webhook`, and `RESEND_WEBHOOK_SECRET` is set. Send a test confirmation to one of Resend's test addresses that simulates a bounce (their docs list them; this was not checked from the build environment, which cannot reach resend.com) and check that the address appears in `email_suppressions`, the submission shows "Email bounced" in the advisor queue, and a second confirmation to it is held back (`suppressed`).
+- [ ] An advisor has sent a test information request from a submission page: it arrived at the prospect's address with the right File ID and a link that opens the intake after sign-in, and the request shows in The Chamber.
+- [ ] `remind-idle-intakes` is in `cron.job`; a test draft whose owner ticked the reminder box, back-dated to 24 days idle (`update public.chamber_sessions set last_activity_at = now() - interval '24 days' where id = '<id>';`), gets one reminder at the next run, and none once the box is unticked.
+- [ ] Counsel has approved the information request and draft reminder wording and the reply-to-stop (`docs/LEGAL_REVIEW.md`).
 - [ ] The unqueued-certifications query above returns no rows.
 - [ ] Test submissions removed from `outbox_events`.
 - [ ] `OUTBOX_DEAD`, `OUTBOX_ENQUEUE_FAILED`, `OUTBOX_RECONCILE_ERROR` and `OUTBOX_REAP_ERROR` have an

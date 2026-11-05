@@ -452,6 +452,12 @@ export function cronScheduleSql(projectRef) {
 export const EXPIRY_SCHEDULE_SQL = "select cron.schedule('expire-idle-intakes', '17 * * * *', 'select public.expire_idle_intakes();');";
 
 /**
+ * Queues the draft reminder hourly, for owners who asked for it (migration 20261105091000). Scheduled by the
+ * migration the same way as draft expiry; this covers a project that only gets pg_cron from this script.
+ */
+export const REMINDER_SCHEDULE_SQL = "select cron.schedule('remind-idle-intakes', '29 * * * *', 'select public.queue_draft_expiry_reminders();');";
+
+/**
  * The daily retention job (US-6.1, migration 20261104092000): queues closed drafts for deletion and prunes
  * operational, email and AI rate-limit records. Scheduled by the migration the same way as draft expiry;
  * this covers a project that only gets pg_cron from this script.
@@ -481,6 +487,7 @@ export const STATUS_QUERIES = {
   vault_secret: "select count(*)::int as n from vault.secrets where name = 'service_role_key';",
   schedule: "select count(*)::int as n from cron.job where jobname = 'dispatch-outbox' and schedule = '* * * * *';",
   expiry_schedule: "select count(*)::int as n from cron.job where jobname = 'expire-idle-intakes';",
+  reminder_schedule: "select count(*)::int as n from cron.job where jobname = 'remind-idle-intakes';",
   purge_schedule: "select count(*)::int as n from cron.job where jobname = 'purge-intakes';",
   monitor_schedule: "select count(*)::int as n from cron.job where jobname = 'ops-monitor';",
   scan_schedule: "select count(*)::int as n from cron.job where jobname = 'document-scan';",
@@ -592,6 +599,7 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
     add(job.label, ok, ok ? `${job.fn} ${job.every}` : job.missing);
   }
   add("Draft expiry schedule", s.expiry_schedule === 1, s.expiry_schedule === 1 ? "expire-idle-intakes hourly" : "not scheduled: idle drafts never expire");
+  add("Draft reminder schedule", s.reminder_schedule === 1, s.reminder_schedule === 1 ? "remind-idle-intakes hourly" : "not scheduled: nobody who asked is reminded before a draft closes");
   add("Retention schedule", s.retention_schedule === 1, s.retention_schedule === 1 ? "run-retention daily" : "not scheduled: closed drafts are never deleted and old records are never pruned");
 
   const auth = seen.auth;

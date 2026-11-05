@@ -15,6 +15,7 @@ const api = {
   listEmailProblems: vi.fn(),
   setStatus: vi.fn(),
   setNeedsAction: vi.fn(),
+  requestInformation: vi.fn(),
   addNote: vi.fn(),
   reviewField: vi.fn(),
   saveManuscriptVersion: vi.fn(),
@@ -80,6 +81,7 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
     { id: "d1", file_name: "census.xlsx", file_size: "12 KB", category: "employee_census", status: "uploaded", storage_path: "prospect-1/x_census.xlsx", created_at: "2026-10-01T00:00:00Z" },
   ],
   documentEvents: [],
+  informationRequests: [],
   ...over,
 });
 
@@ -188,6 +190,54 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "lost", "Went with incumbent"));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
     expect(within(panel).queryByRole("option", { name: "Draft" })).not.toBeInTheDocument();
+  });
+
+  it("asks the prospect for information about the answers marked Needs follow-up, and lists what was asked", async () => {
+    const review = (field: string, state: string) => ({
+      field, review_state: state, has_correction: false, corrected_value: null, reason: null, updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z",
+    });
+    api.loadSubmission.mockResolvedValue(detail({
+      reviews: { pay_frequency: review("pay_frequency", "follow_up"), census: review("census", "follow_up"), company_name: review("company_name", "verified") } as SubmissionDetail["reviews"],
+      informationRequests: [
+        { id: 1, session_id: "s1", message: "Is the HQ still in New York?", fields: ["hq_state"], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-10-03T09:00:00Z" },
+      ],
+    }));
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    // The follow-ups start selected, in Review's order (the census with Workforce, before Payroll).
+    expect(within(within(panel).getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent))
+      .toEqual(["Employee census", "Pay frequency"]);
+    expect(within(panel).getByText("Is the HQ still in New York?")).toBeInTheDocument();
+    expect(within(panel).getByText("About: HQ state")).toBeInTheDocument();
+
+    const send = within(panel).getByRole("button", { name: "Send request" });
+    expect(send).toBeDisabled();
+    fireEvent.click(within(panel).getByRole("button", { name: "Remove Employee census" }));
+    fireEvent.change(within(panel).getByLabelText("Add an answer"), { target: { value: "payroll_vendor" } });
+    fireEvent.change(within(panel).getByLabelText("What do you need from them?"), { target: { value: "Which payroll vendor, and how often do you pay?" } });
+    api.requestInformation.mockResolvedValue(undefined);
+    fireEvent.click(send);
+    await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", "Which payroll vendor, and how often do you pay?", ["pay_frequency", "payroll_vendor"]));
+    await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+  });
+
+  it("says why a request can't be sent, and offers no form", async () => {
+    api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "won" }));
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    expect(within(panel).getByText("A submission at Won can't move to Information requested.")).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Send request" })).not.toBeInTheDocument();
+  });
+
+  it("shows the database's refusal and keeps the message", async () => {
+    api.loadSubmission.mockResolvedValue(detail());
+    api.requestInformation.mockRejectedValue(new Error("The prospect's account has no email address to send this to"));
+    renderPage();
+    const panel = (await screen.findByRole("heading", { name: "Ask the prospect" })).closest("section")!;
+    fireEvent.change(within(panel).getByLabelText("What do you need from them?"), { target: { value: "Send the register" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("The prospect's account has no email address to send this to"));
+    expect(within(panel).getByLabelText("What do you need from them?")).toHaveValue("Send the register");
   });
 
   it("offers only Archived for an intake the prospect has never certified", async () => {

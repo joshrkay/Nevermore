@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildUserPrompt, NEXT_FIELDS, serializeTurn } from "./prompt";
+import { ADVISOR_ASKED, buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn } from "./prompt";
 
 describe("serializeTurn", () => {
   it("is each part as JSON: the context, or nothing when the browser sent none, and empty statuses and conversation", () => {
@@ -71,5 +71,20 @@ describe("buildUserPrompt", () => {
     // The message is one JSON string, with its line breaks escaped, ending the prompt.
     expect(last.split("\n")).toHaveLength(1);
     expect(JSON.parse(last)).toBe(attack);
+  });
+});
+
+describe("fields an advisor asked about", () => {
+  it("come first, in the request's order, each once, marked; not the census, which chat can't take", () => {
+    const turn = { context: { company_name: "Acme", pay_frequency: "weekly" }, statuses: { company_name: "confirmed", pay_frequency: "confirmed" }, requested: ["pay_frequency", "census", "company_name"] };
+    expect(unsettledForTurn(turn).slice(0, 3).map((f) => f.key)).toEqual(["pay_frequency", "company_name", "states"]);
+    const next = /Not yet settled, most important first: (.*)/.exec(buildUserPrompt({ message: "hi", ...turn }))![1];
+    expect(next).toContain(`pay_frequency (Pay frequency) ${ADVISOR_ASKED}, company_name (Company legal name) ${ADVISOR_ASKED}, states (States of operation), `);
+    expect(next.match(/\[your advisor asked\]/g)).toHaveLength(2);
+  });
+
+  it("change nothing when there are none", () => {
+    expect(buildUserPrompt({ message: "hi", requested: [] })).toBe(buildUserPrompt({ message: "hi" }));
+    expect(buildUserPrompt({ message: "hi" })).not.toContain(ADVISOR_ASKED);
   });
 });

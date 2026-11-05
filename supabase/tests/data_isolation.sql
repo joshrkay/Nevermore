@@ -86,6 +86,9 @@
 \i supabase/migrations/20261104131000_certification_file_id_check.sql
 \i supabase/migrations/20261104132000_needs_advisor_action.sql
 \i supabase/migrations/20261104133000_queue_hides_empty_guest_drafts.sql
+\i supabase/migrations/20261105090000_information_requests.sql
+\i supabase/migrations/20261105091000_draft_expiry_reminders.sql
+\i supabase/migrations/20261105092000_intake_milestones.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -312,6 +315,8 @@ BEGIN
   PERFORM public.set_submission_status(pa_cert, 'under_review', 'Picked up');
   INSERT INTO public.advisor_notes (session_id, body) VALUES (pa_cert, 'Loss runs look thin');
   PERFORM public.review_submission_field(pa_cert, 'company_name', 'verified');
+  -- A request for information on prospect B's submission (20261105090000), so its table has a row to protect.
+  PERFORM public.advisor_request_information(pb_cert, 'Please confirm the pay frequency', ARRAY['pay_frequency']);
   SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = pa_cert;
   INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', pa_cert || '/v1-matrix.pdf');
   PERFORM public.record_manuscript_version(pa_cert, 1, pa_cert || '/v1-matrix.pdf', repeat('c', 64), latest, 0, false,
@@ -390,6 +395,11 @@ INSERT INTO matrix VALUES
   ('public.manuscript_versions',                        '{"advisor":"all","admin":"all"}'),
   -- Who added, removed, renamed or re-categorised each document, and when: the advisors' audit trail.
   ('public.document_events',                            '{"advisor":"all","admin":"all"}'),
+  -- What advisors asked prospects for (20261105090000): the prospect reads their own open request only through
+  -- prospect_information_request(), never the table.
+  ('public.information_requests',                       '{"advisor":"all","admin":"all"}'),
+  -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
+  ('public.intake_milestones',                          '{}'),
   ('public.intake_lifecycle_events',                    '{"advisor":"all","admin":"all"}'),
   ('public.intake_deletions',                           '{"advisor":"all","admin":"all"}'),
   -- Monitoring is the admin's: advisors don't need failure codes, routes or account ids.
@@ -647,6 +657,8 @@ INSERT INTO callable VALUES
   ('archive_chamber_session(p_session_id uuid)', 'own',   NULL, 'the prospect''s Start over; PT404 for anyone else''s intake'),
   ('record_intake_consent(p_version text, p_text text)', 'own', NULL, 'records the caller''s own agreement'),
   ('prospect_submission_status(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s shared status; null for anyone else''s'),
+  ('prospect_information_request(p_session_id uuid)', 'own', NULL, 'the advisor''s open request on the caller''s own intake; null for anyone else''s'),
+  ('record_manuscript_download(p_session_id uuid)', 'own', NULL, 'records a download of the caller''s own certified intake''s Manuscript; nothing for anyone else''s'),
   ('prospect_final_manuscript(p_session_id uuid)', 'own', NULL, 'the caller''s own certified intake''s final Manuscript (latest version, current certification); nothing for anyone else''s'),
   ('is_own_final_manuscript(p_name text)',     'helper',  NULL, 'the manuscripts read policy calls it as the caller; true only for the file of the caller''s own final Manuscript'),
   ('is_certified_evidence(p_name text)',       'helper',  NULL, 'the documents delete policy calls it as the caller; answers only about the caller''s own certified intakes'),
@@ -685,6 +697,10 @@ INSERT INTO callable VALUES
   ('record_manuscript_version(p_session_id uuid, p_version integer, p_storage_path text, p_pdf_sha256 text, p_review_event_id bigint, p_corrections_applied integer, p_sensitive_revealed boolean, p_certified_data_hash text, p_certified_at timestamp with time zone)', 'advisor',
                                                                      'SELECT public.record_manuscript_version(%1$L, 2, %1$L || ''/probe.pdf'', repeat(''d'', 64), 0, 0, false, NULL, NULL)', 'storing a Manuscript version'),
   ('retention_review_due(p_limit integer)',    'advisor', 'SELECT count(*) FROM public.retention_review_due(10)', 'submitted records due for review'),
+  ('advisor_request_information(p_session_id uuid, p_message text, p_fields text[])', 'advisor',
+                                                                     'SELECT public.advisor_request_information(%1$L, ''probe'', ''{}'')', 'asking the prospect for information'),
+  ('advisor_intake_funnel(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
+                                                                     'SELECT count(*) FROM public.advisor_intake_funnel(now() - interval ''1 day'', now())', 'the pilot funnel'),
   ('revoke_chamber_session(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.revoke_chamber_session(%2$L, ''probe'')', 'closing a draft for good'),
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
   ('retry_intake_deletion(p_deletion_id uuid)', 'admin',  'SELECT public.retry_intake_deletion(%2$L)', 'retrying a failed deletion'),
@@ -726,6 +742,7 @@ BEGIN
     'SELECT public.record_ops_event(''ai_failed'', ''probe'', NULL, NULL, NULL, NULL)',
     'SELECT count(*) FROM public.claim_ops_alerts()',
     'SELECT public.run_retention()',
+    'SELECT public.queue_draft_expiry_reminders(1)',
     'SELECT public.queue_retention_deletions(1)',
     'SELECT count(*) FROM public.claim_intake_deletions(1, 600)',
     'SELECT count(*) FROM public.claim_document_scans(1, 60)',

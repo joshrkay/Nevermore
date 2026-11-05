@@ -1,11 +1,12 @@
 // The user turn the extraction model reads (US-2.1b, US-2.3a): the answers captured so far, each field's status,
-// the fields not yet settled (most important first), whether the intake is ready to certify and whether a census
+// the fields not yet settled (most important first, the ones an advisor asked about before the rest), whether the intake is ready to certify and whether a census
 // is in, the recent conversation and the prospect's new message. The handler and the extraction eval
 // (scripts/extraction-eval) both build it here, so the eval measures the prompt production sends (B-1.4).
 // Relative imports only, so it runs under Deno and Vitest alike.
 
 import type { RecentMessage } from "../_shared/chatContext.ts";
 import { readyToCertify, unsettledFields, type CensusSummary, type FieldInfo } from "../_shared/followUp.ts";
+import { INTAKE_FIELDS } from "../_shared/intakeSchema.ts";
 
 /** How many unsettled fields the prompt names, most important first. */
 export const NEXT_FIELDS = 8;
@@ -23,7 +24,15 @@ export interface UserTurn {
   recent?: readonly RecentMessage[];
   /** What the browser says of the census, never its rows: how many there are, and whether any names a work state. */
   census?: CensusSummary;
+  /**
+   * The fields an advisor's open request for information is about that the prospect hasn't answered since it was
+   * made, by key. Lenore asks about them first, even when they hold an answer: the advisor wants it checked.
+   */
+  requested?: readonly string[];
 }
+
+/** Marks a field the advisor asked about in "Not yet settled". */
+export const ADVISOR_ASKED = "[your advisor asked]";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -43,7 +52,18 @@ export function serializeTurn(turn: Omit<UserTurn, "message">): { contextJson: s
  */
 export function unsettledForTurn(turn: Omit<UserTurn, "message">): FieldInfo[] {
   const answers = isObject(turn.context) ? turn.context : {};
-  return unsettledFields(answers, turn.statuses ?? {}, { exclude: CHAT_EXCLUDES, census: turn.census ?? NO_CENSUS });
+  const asked = requestedForTurn(turn);
+  const askedKeys = new Set(asked.map((f) => f.key));
+  const rest = unsettledFields(answers, turn.statuses ?? {}, { exclude: CHAT_EXCLUDES, census: turn.census ?? NO_CENSUS });
+  return [...asked, ...rest.filter((f) => !askedKeys.has(f.key))];
+}
+
+/** The fields the advisor asked about that chat can take, in the request's order: first in "Not yet settled". */
+export function requestedForTurn(turn: Pick<UserTurn, "requested">): FieldInfo[] {
+  return (turn.requested ?? []).flatMap((key) => {
+    const field = INTAKE_FIELDS.find((f) => f.key === key);
+    return field && !CHAT_EXCLUDES.has(key) ? [field] : [];
+  });
 }
 
 export function buildUserPrompt(turn: UserTurn): string {
@@ -51,12 +71,13 @@ export function buildUserPrompt(turn: UserTurn): string {
   const answers = isObject(turn.context) ? turn.context : {};
   const census = turn.census ?? NO_CENSUS;
   const next = unsettledForTurn(turn).slice(0, NEXT_FIELDS);
+  const asked = new Set(requestedForTurn(turn).map((f) => f.key));
   const ready = readyToCertify(answers, turn.statuses ?? {}, census);
   // JSON.stringify quotes and escapes what the prospect wrote so it can't break out of its slot.
   return [
     `Captured so far (answers): ${contextJson || "{}"}`,
     `Field statuses: ${statusesJson}`,
-    `Not yet settled, most important first: ${next.length > 0 ? next.map((f) => `${f.key} (${f.label})`).join(", ") : "none"}`,
+    `Not yet settled, most important first: ${next.length > 0 ? next.map((f) => `${f.key} (${f.label})${asked.has(f.key) ? ` ${ADVISOR_ASKED}` : ""}`).join(", ") : "none"}`,
     `Ready to certify: ${ready ? "yes" : "no"}`,
     `Employee census: ${census.rows > 0 ? `uploaded, ${census.rows} rows` : "not uploaded"}`,
     `Recent conversation, oldest first: ${recentJson}`,

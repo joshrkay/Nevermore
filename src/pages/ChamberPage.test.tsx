@@ -41,7 +41,7 @@ const session = {
 
 // What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
 const hooks = {
-  workspace: null as null | { verified?: ReadonlySet<string> },
+  workspace: null as null | { verified?: ReadonlySet<string>; requested?: ReadonlySet<string> },
   voice: null as null | { onSpokenMessage: (message: ChatMessage) => unknown; context: string },
   chat: null as null | {
     onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string; spoken?: boolean }) => void;
@@ -58,6 +58,9 @@ const voice = {
 let mobile = false;
 const auth = {
   isAnonymous: true,
+  user: null as null | { email?: string },
+  requestEmailCode: vi.fn(async () => ({ error: null, emailInUse: false })),
+  verifyEmailCode: vi.fn(async () => ({ error: null })),
   requestSignInCode: vi.fn(async () => ({ error: null, noAccount: false })),
   verifySignInCode: vi.fn(async () => ({ error: null })),
 };
@@ -67,6 +70,8 @@ let storageWorks = true;
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 vi.mock("@/hooks/useChamberSession", () => ({ useChamberSession: () => session }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
+let informationRequest: null | { message: string; fields: string[]; requestedAt: string } = null;
+vi.mock("@/hooks/useInformationRequest", () => ({ useInformationRequest: () => informationRequest }));
 vi.mock("@/data/intakeBackup", () => ({ browserStorageWorks: () => storageWorks }));
 vi.mock("@/hooks/useLenoreVoice", () => ({
   useLenoreVoice: (options: typeof hooks.voice) => {
@@ -123,8 +128,13 @@ describe("ChamberPage", () => {
     session.messages = [];
     session.certification = { status: "none" };
     session.verifiedFields = new Set();
+    session.chamberData = { ...EMPTY_CHAMBER_DATA };
+    session.provenance = {};
     session.startOver.mockReset().mockResolvedValue(true);
     auth.isAnonymous = true;
+    auth.user = null;
+    informationRequest = null;
+    sessionStorage.clear();
     storageWorks = true;
     mobile = false;
     // What the prospect chose for the orb's size is kept in the browser, so it must not carry over between tests.
@@ -598,6 +608,71 @@ describe("ChamberPage", () => {
       session.provenance = { company_name: { status: "conflicting", source: { kind: "transcript", message_id: "m1" }, updated_at: "2026-11-04T00:00:00Z" } };
       render(page());
       expect(screen.queryByText("Ready for your review")).not.toBeInTheDocument();
+    });
+  });
+  describe("saving progress before certifying", () => {
+    const readyData = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY"], pay_frequency: "weekly" } as ChamberData;
+
+    it("offers a guest with an intake to save their progress with an email, in a dialog", async () => {
+      session.sessionId = "s1";
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "Save your progress" }));
+      expect(await screen.findByRole("dialog", { name: "Save your progress" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Work email")).toBeInTheDocument();
+    });
+
+    it("offers nothing before there is an intake, or to an account that already verified an email", () => {
+      renderPage();
+      expect(screen.queryByRole("button", { name: "Save your progress" })).not.toBeInTheDocument();
+    });
+
+    it("nudges once the required answers are in, until the guest says not now", () => {
+      session.sessionId = "s1";
+      session.chamberData = readyData;
+      const { unmount } = renderPage();
+      expect(screen.getByText(/Your required answers are in/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+      expect(screen.queryByText(/Your required answers are in/)).not.toBeInTheDocument();
+      unmount();
+      // Put off for this intake for the rest of the visit.
+      renderPage();
+      expect(screen.queryByText(/Your required answers are in/)).not.toBeInTheDocument();
+    });
+
+    it("doesn't nudge a verified prospect, or before the required answers are in", () => {
+      session.sessionId = "s1";
+      renderPage();
+      expect(screen.queryByText(/Your required answers are in/)).not.toBeInTheDocument();
+    });
+
+    it("says where saving left them once the email is verified", async () => {
+      session.sessionId = "s1";
+      const { rerender } = renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "Save your progress" }));
+      await screen.findByRole("dialog");
+      auth.isAnonymous = false;
+      auth.user = { email: "jo@acme.example" };
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      expect(await screen.findByRole("dialog", { name: "Your progress is saved" })).toHaveTextContent("Sign in with jo@acme.example");
+    });
+  });
+
+  describe("an advisor's request for information", () => {
+    it("shows the request and hands its fields to the workspace and to Lenore", () => {
+      session.sessionId = "s1";
+      session.certification = { status: "certified" };
+      informationRequest = { message: "Please confirm your pay frequency.", fields: ["pay_frequency"], requestedAt: "2026-11-05T12:00:00Z" };
+      renderPage();
+      expect(screen.getByText("Please confirm your pay frequency.")).toBeInTheDocument();
+      expect([...(hooks.workspace?.requested ?? [])]).toEqual(["pay_frequency"]);
+      expect((hooks.chat as unknown as { informationRequest: unknown }).informationRequest).toBe(informationRequest);
+    });
+
+    it("shows nothing without one", () => {
+      session.sessionId = "s1";
+      renderPage();
+      expect(screen.queryByText(/Your advisor asked/)).not.toBeInTheDocument();
+      expect(hooks.workspace?.requested?.size).toBe(0);
     });
   });
 });

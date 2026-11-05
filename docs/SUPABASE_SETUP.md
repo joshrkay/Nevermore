@@ -42,7 +42,8 @@ its own 401.
 | `ops-monitor` | every five minutes | Alerts when errors, failed uploads, AI failures, refused access, failed deletions, malware detections or failed scans cross their thresholds (`docs/RUNBOOK.md`) | Failures are recorded, nobody is told |
 | `document-scan` | every five minutes | Scans uploads that weren't settled when they arrived (the scanner was down or not set up, and every file uploaded before scanning existed), moves clean ones out of quarantine and removes quarantined files whose document is gone (`docs/RUNBOOK.md`, "Scan failed") | Those uploads stay unreadable |
 | `expire-idle-intakes` | hourly, at :17 | Expires uncertified drafts idle for 30 days | Idle drafts never expire |
-| `run-retention` | daily, 03:41 UTC | Queues closed drafts for deletion 30 days after they closed; prunes monitoring events (90 days), email delivery events (365 days) and AI rate-limit records (1 day) | Nothing is queued for deletion or pruned |
+| `remind-idle-intakes` | hourly, at :29 | Queues the draft reminder a week before an uncertified draft closes, for owners who asked for it (`docs/NOTIFICATIONS.md`) | No reminders |
+| `run-retention` | daily, 03:41 UTC | Queues closed drafts for deletion 30 days after they closed; prunes monitoring events (90 days), email delivery events (365 days), AI rate-limit records (1 day) and the funnel's milestones (365 days from each intake's start) | Nothing is queued for deletion or pruned |
 
 To schedule one by hand (SQL editor), with your project ref in the URL:
 
@@ -58,6 +59,7 @@ select cron.schedule('purge-intakes', '23 * * * *', $job$
 $job$);
 -- The same for ops-monitor and document-scan ('*/5 * * * *') and dispatch-outbox ('* * * * *').
 select cron.schedule('expire-idle-intakes', '17 * * * *', 'select public.expire_idle_intakes();');
+select cron.schedule('remind-idle-intakes', '29 * * * *', 'select public.queue_draft_expiry_reminders();');
 select cron.schedule('run-retention', '41 3 * * *', 'select public.run_retention();');
 ```
 

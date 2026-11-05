@@ -6,12 +6,26 @@ import { authCodeFailureMessage } from "@/lib/authCodeFailure";
 const inputClass =
   "w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors";
 
+/** What the verification is for: certifying (The Reckoning), or saving progress to come back from anywhere. */
+export type VerifyPurpose = "certify" | "save";
+
+const COPY: Record<VerifyPurpose, { title: string; body: string }> = {
+  certify: {
+    title: "Verify your email to certify",
+    body: "Your answers are saved. To sign and generate The Manuscript, confirm an email so we know who certified it.",
+  },
+  save: {
+    title: "Save your progress",
+    body: "Your answers are saved in this browser. Verify your email to come back to this intake from any device by signing in with it, and we'll email you before it closes.",
+  },
+};
+
 /**
- * Guests can fill in the whole intake; certifying needs an identified signer, so a guest
- * attaches and verifies an email here. Verification upgrades the same user in place, so
- * everything entered so far stays theirs.
+ * Guests can fill in the whole intake; certifying needs an identified signer, so a guest attaches and verifies an
+ * email here, at The Reckoning or earlier to save their progress. Verification upgrades the same user in place, so
+ * everything entered so far stays theirs, and the email is their way back from another device (RecoverIntake).
  */
-const VerifyEmailGate = () => {
+const VerifyEmailGate = ({ purpose = "certify", framed = true }: { purpose?: VerifyPurpose; framed?: boolean }) => {
   const { requestEmailCode, verifyEmailCode } = useAuth();
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -49,20 +63,20 @@ const VerifyEmailGate = () => {
   };
 
   return (
-    <div className="border border-border rounded-xl p-6 space-y-4">
-      <div>
-        <h3 className="font-display text-xl font-bold mb-1">Verify your email to certify</h3>
-        <p className="text-sm text-muted-foreground">
-          Your answers are saved. To sign and generate The Manuscript, confirm an email so we know who certified it.
-        </p>
-      </div>
+    <div className={framed ? "border border-border rounded-xl p-6 space-y-4" : "space-y-4"}>
+      {framed && (
+        <div>
+          <h3 className="font-display text-xl font-bold mb-1">{COPY[purpose].title}</h3>
+          <p className="text-sm text-muted-foreground">{COPY[purpose].body}</p>
+        </div>
+      )}
 
       {!codeSent ? (
         <div className="space-y-3">
-          <label htmlFor="gate-email" className="text-sm text-muted-foreground block">Work email</label>
+          <label htmlFor={`gate-email-${purpose}`} className="text-sm text-muted-foreground block">Work email</label>
           <div className="flex gap-2">
             <input
-              id="gate-email"
+              id={`gate-email-${purpose}`}
               type="email"
               autoComplete="email"
               value={email}
@@ -81,10 +95,10 @@ const VerifyEmailGate = () => {
       ) : (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">We sent a code to {email}.</p>
-          <label htmlFor="gate-code" className="text-sm text-muted-foreground block">6-digit code</label>
+          <label htmlFor={`gate-code-${purpose}`} className="text-sm text-muted-foreground block">6-digit code</label>
           <div className="flex gap-2">
             <input
-              id="gate-code"
+              id={`gate-code-${purpose}`}
               inputMode="numeric"
               autoComplete="one-time-code"
               maxLength={6}

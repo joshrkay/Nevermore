@@ -8,6 +8,7 @@ import { useLenoreChat } from "@/hooks/useLenoreChat";
 import { useChamberSession } from "@/hooks/useChamberSession";
 import { useStageLayout } from "@/hooks/useStageLayout";
 import { useColumnWidth } from "@/hooks/useColumnWidth";
+import { useInformationRequest } from "@/hooks/useInformationRequest";
 import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import StageSplitter from "@/components/chamber/StageSplitter";
@@ -19,6 +20,8 @@ import SaveStatus from "@/components/chamber/SaveStatus";
 import BackupNotice from "@/components/chamber/BackupNotice";
 import RecoverIntake from "@/components/chamber/RecoverIntake";
 import StartOverButton from "@/components/chamber/StartOverButton";
+import InformationRequestNotice from "@/components/chamber/InformationRequestNotice";
+import { SaveProgressButton, SaveProgressDialog, SaveProgressNudge } from "@/components/chamber/SaveProgress";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import LegalLinks from "@/components/LegalLinks";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -32,6 +35,15 @@ import { voiceContextUpdate } from "@/data/voiceAgent";
 import { orbForVoice } from "@/data/voiceSession";
 
 const STAGE_ID = "lenore-stage";
+// The intake whose save-progress nudge the prospect put off with "Not now", for this tab's life.
+const NUDGE_DISMISSED_KEY = "eaa.saveProgressNudgeDismissed";
+const readNudgeDismissed = (): string | null => {
+  try {
+    return window.sessionStorage.getItem(NUDGE_DISMISSED_KEY);
+  } catch {
+    return null;
+  }
+};
 const COLUMN_ID = "conversation-column";
 const spokenLine = (text: string) => (text.length > 120 ? text.slice(0, 120) + "..." : text);
 const primaryButton = "bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors";
@@ -102,6 +114,22 @@ const ChamberPage = () => {
     invalidField,
   } = useChamberSession(searchParams.get("session"));
 
+  // Saving progress before certifying (verifying an email): the dialog, and the nudge put off for which intake.
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [nudgeDismissedFor, setNudgeDismissedFor] = useState(readNudgeDismissed);
+  const dismissNudge = useCallback(() => {
+    setNudgeDismissedFor(sessionId);
+    try {
+      if (sessionId) window.sessionStorage.setItem(NUDGE_DISMISSED_KEY, sessionId);
+    } catch {
+      // A browser that keeps nothing still hides it for this visit.
+    }
+  }, [sessionId]);
+
+  // An advisor's open request for more information, until certifying again answers it.
+  const informationRequest = useInformationRequest(sessionId, certification);
+  const requestedFields = useMemo(() => new Set<string>(informationRequest?.fields ?? []), [informationRequest]);
+
   // Keep the session in the URL so a refresh or "Back to Review" resumes it.
   useEffect(() => {
     if (sessionId && searchParams.get("session") !== sessionId) {
@@ -146,6 +174,7 @@ const ChamberPage = () => {
     },
     addLenoreMessage,
     onOrbStateChange: setChatOrbState,
+    informationRequest,
     // Typed and spoken alike, every value cites the message it came from; a spoken one is never stored as confirmed
     // (transcriptExtraction, D33).
     onExtracted: (extracted, response, message) =>
@@ -337,6 +366,7 @@ const ChamberPage = () => {
             </DialogContent>
           </Dialog>
         )}
+        {isAnonymous && sessionId && <SaveProgressButton onOpen={() => setSaveOpen(true)} />}
         {sessionId && <StartOverButton onStartOver={startOver} certifiedBefore={certification.status !== "none"} />}
         {ready && certification.status !== "certified" && (
           <span role="status" className="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success">
@@ -356,11 +386,17 @@ const ChamberPage = () => {
       </div>
 
       {backupOffer && <BackupNotice offer={backupOffer} onRestore={restoreBackup} onDiscard={discardBackup} />}
+      {isAnonymous && sessionId && ready && certification.status === "none" && nudgeDismissedFor !== sessionId && (
+        <SaveProgressNudge onSave={() => setSaveOpen(true)} onDismiss={dismissNudge} />
+      )}
+      {informationRequest && (
+        <InformationRequestNotice request={informationRequest} onOpenReview={() => setReviewRequest((n) => n + 1)} />
+      )}
       {!storageWorks && (
         <div role="alert" className="flex items-center gap-1.5 border-b border-border bg-warning/10 px-4 py-2 text-xs">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-warning" aria-hidden="true" />
           This browser isn't keeping site data, so you won't be able to come back to this intake after closing the
-          tab. Allow site data for this site, or verify your email before you leave.
+          tab. Allow site data for this site, or save your progress with your email before you leave.
         </div>
       )}
 
@@ -405,6 +441,7 @@ const ChamberPage = () => {
             onSubmit={submit}
             provenance={provenance}
             verified={verifiedFields}
+            requested={requestedFields}
             onFieldAction={handleFieldAction}
             certification={certification}
             updateIntake={updateIntake}
@@ -415,6 +452,8 @@ const ChamberPage = () => {
           />
         </div>
       </div>
+
+      <SaveProgressDialog open={saveOpen} onOpenChange={setSaveOpen} />
 
       {/* Mobile: floating chat input, and the whole conversation a tap away (the transcript panel has no room) */}
       {isMobile && (

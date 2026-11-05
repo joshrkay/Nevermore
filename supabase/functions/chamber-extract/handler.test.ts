@@ -149,6 +149,9 @@ describe("chamber-extract handler: the request is checked before anything is spe
     ["a recent message over 2,000 characters", { message: "hi", recent: [{ sender: "user", text: "x".repeat(2001) }], session_id: INTAKE }, 400],
     ["a census summary that isn't one", { message: "hi", census: { rows: -1, work_states: true }, session_id: INTAKE }, 400],
     ["a census summary with its rows in it", { message: "hi", census: [{ first_name: "Ada" }], session_id: INTAKE }, 400],
+    ["requested fields that aren't a list", { message: "hi", requested: "pay_frequency", session_id: INTAKE }, 400],
+    ["a requested field the intake doesn't have", { message: "hi", requested: ["favourite_colour"], session_id: INTAKE }, 400],
+    ["a requested field twice", { message: "hi", requested: ["pay_frequency", "pay_frequency"], session_id: INTAKE }, 400],
     ["answers, statuses and messages over 20,000 characters together", {
       message: "hi",
       context: { key_challenges: "x".repeat(9000), business_goals: "y".repeat(9000) },
@@ -294,6 +297,21 @@ describe("chamber-extract handler: what is sent to the model", () => {
     expect(next.startsWith("company_name (Company legal name), states (States of operation), pay_frequency (Pay frequency), employee_count")).toBe(true);
     expect(next).not.toContain("census");
     expect(next.split(", ")).toHaveLength(NEXT_FIELDS);
+  });
+
+  it("asks first about the fields an advisor asked about, marked, even one already settled", async () => {
+    const t = setup();
+    await handleRequest(post({
+      message: "hello",
+      context: { pay_frequency: "weekly" },
+      statuses: { pay_frequency: "confirmed" },
+      requested: ["pay_frequency", "census", "hq_state"],
+    }), t.deps);
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[0].content as string;
+    const next = /Not yet settled, most important first: (.*)/.exec(user)![1];
+    expect(next.startsWith("pay_frequency (Pay frequency) [your advisor asked], hq_state (HQ state) [your advisor asked], company_name (Company legal name)")).toBe(true);
+    // The census still comes only from an upload, whoever asks.
+    expect(next).not.toContain("census");
   });
 
   it("tells the model what is settled and what isn't, from the answers and their field statuses", async () => {

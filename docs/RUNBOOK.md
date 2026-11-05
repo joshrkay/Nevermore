@@ -222,7 +222,7 @@ select * from public.ops_alerts order by raised_at desc limit 20;
 ```sql
 select jobname, schedule, active from cron.job order by jobname;
 -- expect dispatch-outbox (every minute), ops-monitor (*/5), document-scan (*/5), purge-intakes (:23 hourly),
--- expire-idle-intakes (:17 hourly) and run-retention (03:41 daily)
+-- expire-idle-intakes (:17 hourly), remind-idle-intakes (:29 hourly) and run-retention (03:41 daily)
 select jobname, status, return_message, start_time
 from cron.job_run_details join cron.job using (jobid)
 order by start_time desc limit 20;

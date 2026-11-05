@@ -17,7 +17,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  advisorSql, APPLIED_MIGRATIONS_SQL, authConfigPatch, checkSecrets, cliCommands, DOCKER_NEEDED, envFileLine, EXPIRY_SCHEDULE_SQL,
+  advisorSql, APPLIED_MIGRATIONS_SQL, authConfigPatch, checkSecrets, cliCommands, DOCKER_NEEDED, envFileLine, EXPIRY_SCHEDULE_SQL, REMINDER_SCHEDULE_SQL,
   EXTENSIONS_SQL, FUNCTIONS, functionScheduleSql, interpretChecks, isProjectRef, migrationVersions, newMigrations, parseCliVersion,
   parseEnvFile, publicKeyFrom, resendKeyVerdict, RETENTION_SCHEDULE_SQL, rowsFrom, SCHEDULED_FUNCTIONS, serviceRoleKeyFrom,
   setupComplete, smtpKeyNote, STATUS_QUERIES, summaryLines, vaultSecretSql,
@@ -238,7 +238,7 @@ async function setupSteps(call, ref, secretsFile, env, cli, done) {
     done.functions.push(fn);
   }
 
-  step("Schedules: pg_cron, pg_net, the service-role key in Vault, dispatch-outbox every minute, purge-intakes hourly, ops-monitor every five minutes, draft expiry hourly and retention daily");
+  step("Schedules: pg_cron, pg_net, the service-role key in Vault, dispatch-outbox every minute, purge-intakes hourly, ops-monitor every five minutes, draft expiry and reminders hourly and retention daily");
   const ext = await runSql(call, ref, EXTENSIONS_SQL);
   if (!ext.ok) fail(`Enabling pg_cron and pg_net failed (${ext.status}): ${ext.message}`);
   const keys = await apiKeys(call, ref);
@@ -253,6 +253,8 @@ async function setupSteps(call, ref, secretsFile, env, cli, done) {
   }
   const expiry = await runSql(call, ref, EXPIRY_SCHEDULE_SQL);
   if (!expiry.ok) fail(`Scheduling expire-idle-intakes failed (${expiry.status}): ${expiry.message}`);
+  const reminders = await runSql(call, ref, REMINDER_SCHEDULE_SQL);
+  if (!reminders.ok) fail(`Scheduling remind-idle-intakes failed (${reminders.status}): ${reminders.message}`);
   const retention = await runSql(call, ref, RETENTION_SCHEDULE_SQL);
   if (!retention.ok) fail(`Scheduling run-retention failed (${retention.status}): ${retention.message}`);
   say("  Scheduled.");

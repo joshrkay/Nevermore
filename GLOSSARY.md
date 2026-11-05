@@ -64,8 +64,12 @@ A test of the intake's answers against what a PEO accepts, such as minimum headc
 _Avoid_: requirement, open item
 
 **Advisor follow-up**:
-A field an advisor has marked as needing more from the prospect. It belongs to the advisor's review, not to the prospect's open items.
+A field an advisor has marked as needing more from the prospect. It belongs to the advisor's review, not to the prospect's open items. It reaches the prospect only through an information request, which starts out naming the fields marked this way.
 _Avoid_: open item, flag
+
+**Information request**:
+An advisor's message asking the prospect for more, naming the answers it is about (or none, for something no answer holds, such as a document). Sending one emails the prospect, shows it in The Chamber with "Your advisor asked about this" on each answer it names, has Lenore ask about those answers first, and moves the pipeline stage to information requested. Certifying again answers it, as does the advisor moving the stage on. The record of each is kept with the intake and never changed.
+_Avoid_: follow-up, RFI, query
 
 **Needs advisor action**:
 A submission an advisor has marked because someone on the team has to act on it, with an optional note saying what. It shows on the queue, which can list only these, until an advisor clears it, and stays through pipeline stage changes. It belongs to the whole submission, where an advisor follow-up belongs to one field, and the prospect never sees it.
@@ -117,11 +121,23 @@ _Avoid_: internal notification, new-submission notification
 The transactional email a prospect receives after each certification, saying what was received and what happens next. It is a receipt, not marketing, so it needs no opt-in.
 _Avoid_: receipt, acknowledgement
 
+**Draft reminder**:
+The email a week before an uncertified draft closes, saying when and linking back to it. Sent only to a prospect with a verified email who asked for it ("Email me before an unfinished intake closes", in "Save your progress" or on their profile), and each one says how to stop them.
+_Avoid_: nudge, expiry warning
+
 ### Advisors
 
 **Advisor Console**:
 The advisory team's operating workflow: every submission with its pipeline stage, notes and history. The team works submissions here, not in a separate CRM.
 _Avoid_: CRM, admin queue
+
+**Milestone**:
+A step an intake reached, recorded the first time it does: started, answered, a document uploaded, a census provided, ready to certify, an email verified, certified, The Manuscript downloaded. A milestone holds the step and its times, never an answer, name or address, and stays (unlinked) when its intake is deleted.
+_Avoid_: event, analytics event, conversion
+
+**Funnel**:
+The advisors' count, for the intakes started in a period, of how many reached each milestone and how long it took. Each step is counted against the intakes that started, since prospects don't all take them in the same order.
+_Avoid_: analytics, report, conversion rate
 
 ### Where an answer came from
 

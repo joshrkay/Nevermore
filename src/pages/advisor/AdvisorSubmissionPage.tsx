@@ -6,6 +6,7 @@ import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import AuditTrail from "@/components/advisor/AuditTrail";
 import DocumentsPanel from "@/components/advisor/DocumentsPanel";
 import FieldReviewPanel from "@/components/advisor/FieldReviewPanel";
+import InformationRequestPanel from "@/components/advisor/InformationRequestPanel";
 import ManuscriptPanel from "@/components/advisor/ManuscriptPanel";
 import NeedsActionPanel from "@/components/advisor/NeedsActionPanel";
 import NotesPanel from "@/components/advisor/NotesPanel";
@@ -168,6 +169,18 @@ const Detail = ({
             sessionId={detail.id}
             prospectUserId={detail.userId}
             needsAction={detail.needsAction}
+            onChanged={reload}
+          />
+          <InformationRequestPanel
+            // A sent request starts the next one afresh, from the fields marked Needs follow-up.
+            key={`${detail.informationRequests.length}`}
+            sessionId={detail.id}
+            prospectUserId={detail.userId}
+            status={detail.pipelineStatus}
+            certifiedOnce={!!detail.submission?.signer_name}
+            intakeStatus={detail.intakeStatus}
+            reviews={detail.reviews}
+            requests={detail.informationRequests}
             onChanged={reload}
           />
           <StatusPanel

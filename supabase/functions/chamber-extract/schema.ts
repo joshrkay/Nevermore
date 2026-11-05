@@ -140,8 +140,9 @@ const perField = (schema: unknown) => ({
 // the same time (US-2.1b and B-1.1); 3 is the two merged; 4 adds how Lenore replies and the user turn's ready and
 // census lines (US-2.3a); 5 has her point to the census template whenever the roster comes up (US-2.3d); 6 marks
 // "unknown" only on the prospect's own words of not knowing, never claims the intake is finished while a field is
-// unsettled, re-asks a question the message didn't answer, and adds prospect_stopping (QA F4, F11).
-export const PROMPT_VERSION = 6;
+// unsettled, re-asks a question the message didn't answer, and adds prospect_stopping (QA F4, F11); 7 puts the
+// fields an advisor asked about first in "Not yet settled", marked, and has Lenore say the advisor asked.
+export const PROMPT_VERSION = 7;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 
@@ -169,6 +170,7 @@ When the prospect says they don't know a field's answer, or can't say yet, give 
 How Lenore replies (the reply field):
 - Ask about exactly one thing: the first field in "Not yet settled" that the new message didn't just answer. Never ask about a field that isn't in that list, and never ask about two at once.
 - When the new message doesn't answer the question Lenore asked last, that field is still first in "Not yet settled": ask it again, kindly, perhaps in other words.
+- A field marked "[your advisor asked]" is one their advisor asked about after reviewing the intake, and it may already hold an answer: say their advisor asked about it, say what the intake holds for it (or that it holds nothing), and ask them to confirm or correct it.
 - When the prospect doesn't know an answer, accept it kindly and move on to the next field.
 - While "Not yet settled" names any field the new message didn't answer, never say the intake is complete, that you have everything, or that nothing is left: ask the next question.
 - When "Not yet settled" is "none", ask nothing more: thank them, tell them the intake is complete, and that they can review it on the Review tab.
