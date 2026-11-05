@@ -8,6 +8,13 @@
 //
 // An alert carries the kind, the count, the window, the threshold and the most frequent failure codes,
 // nothing else: the events themselves hold no intake content, and none is fetched here.
+//
+// Two more things, so an alert path nobody can hear is never silent:
+//   - every run says whether the webhook is set (`webhook` in the answer: set, missing or invalid), and logs
+//     OPS_CONFIG_MISSING when it isn't, whether or not anything is due;
+//   - a POST with {"test": true} sends one OPS_TEST alert and claims nothing, so an operator can check that a
+//     message reaches the channel (docs/RUNBOOK.md, "Sending a test alert"). It answers 200 when the receiver
+//     took it, 503 when no webhook is set and 502 when the receiver refused it.
 
 import { parseAlertWebhook, postAlert } from "../_shared/alertWebhook.ts";
 import { isServiceCall } from "../_shared/serviceAuth.ts";
@@ -30,6 +37,8 @@ export interface MonitorDeps {
   createClient: (url: string, key: string) => MonitorClient;
   fetch: typeof fetch;
   log: (line: string) => void;
+  /** The clock, for a test alert's time; Date.now when absent. */
+  now?: () => number;
 }
 
 /** One row of public.claim_ops_alerts(). */
@@ -75,6 +84,24 @@ const errorCode = (error: unknown): string => {
   return typeof code === "string" ? code : "error";
 };
 
+/** Whether the webhook is set, as the answer reports it. */
+export type WebhookState = "set" | "missing" | "invalid";
+
+/** The line a person reads in the channel for a test alert. */
+export function testAlertText(at: string): string {
+  return `OPS_TEST: a test alert from ops-monitor, sent by an operator at ${at}. If you can read this, engineering alerts reach this channel. Nothing needs doing.`;
+}
+
+/** Whether the request asks for a test alert: a JSON body with "test": true. Anything else is a scheduled run. */
+async function isTestRequest(req: Request): Promise<boolean> {
+  try {
+    const body = await req.json();
+    return typeof body === "object" && body !== null && (body as { test?: unknown }).test === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function handleRequest(req: Request, deps: MonitorDeps): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -86,8 +113,26 @@ export async function handleRequest(req: Request, deps: MonitorDeps): Promise<Re
       deps.log("OPS_CONFIG_MISSING: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must both be set");
       return json({ error: "Unavailable" }, 503);
     }
-    // Only the schedule: claiming an alert records it, so a stray caller would swallow a real one.
+    // Only the schedule (and an operator with the same key, for a test): claiming an alert records it, so a
+    // stray caller would swallow a real one.
     if (!isServiceCall(req.headers.get("Authorization"), serviceRoleKey)) return json({ error: "Unauthorized" }, 401);
+
+    const webhook = parseAlertWebhook(deps.env("ENGINEERING_ALERT_WEBHOOK_URL"));
+    const webhookState: WebhookState = webhook.url !== null ? "set" : webhook.problem ? "invalid" : "missing";
+    // Every run, not only when something is due: a missing webhook is found before the first real alert is lost.
+    if (webhook.url === null) {
+      deps.log(webhook.problem
+        ? `OPS_CONFIG_MISSING: ${webhook.problem}; alerts are only logged`
+        : "OPS_CONFIG_MISSING: ENGINEERING_ALERT_WEBHOOK_URL is not set; alerts are only logged");
+    }
+
+    if (await isTestRequest(req)) {
+      if (!webhook.url) return json({ test: true, webhook: webhookState, delivered: false }, 503);
+      const at = new Date(deps.now?.() ?? Date.now()).toISOString();
+      const ok = await postAlert(webhook.url, { text: testAlertText(at), source: "ops-monitor", alert: "OPS_TEST", sent_at: at }, { fetch: deps.fetch });
+      deps.log(ok ? "OPS_TEST delivered" : "OPS_TEST_UNDELIVERED");
+      return json({ test: true, webhook: webhookState, delivered: ok }, ok ? 200 : 502);
+    }
 
     const { data, error } = await deps.createClient(supabaseUrl, serviceRoleKey).rpc("claim_ops_alerts", {});
     if (error) {
@@ -95,13 +140,6 @@ export async function handleRequest(req: Request, deps: MonitorDeps): Promise<Re
       return json({ error: "Internal error" }, 500);
     }
     const alerts = (Array.isArray(data) ? data : []) as OpsAlert[];
-
-    const webhook = parseAlertWebhook(deps.env("ENGINEERING_ALERT_WEBHOOK_URL"));
-    if (alerts.length > 0 && webhook.url === null) {
-      deps.log(webhook.problem
-        ? `OPS_CONFIG_MISSING: ${webhook.problem}; alerts are only logged`
-        : "OPS_CONFIG_MISSING: ENGINEERING_ALERT_WEBHOOK_URL is not set; alerts are only logged");
-    }
 
     let delivered = 0;
     for (const a of alerts) {
@@ -126,7 +164,7 @@ export async function handleRequest(req: Request, deps: MonitorDeps): Promise<Re
       // The alert is already recorded as raised, so its cooldown has started either way; the log line stands.
       else deps.log(`OPS_ALERT_UNDELIVERED kind=${a.kind}`);
     }
-    return json({ alerts: alerts.length, delivered });
+    return json({ alerts: alerts.length, delivered, webhook: webhookState });
   } catch {
     deps.log("OPS_MONITOR_ERROR: unexpected");
     return json({ error: "Internal error" }, 500);
