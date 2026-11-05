@@ -22,6 +22,9 @@ interface VoiceOrbProps {
   orbSize?: number;
   /** The id the stage's handle points at. */
   id?: string;
+  /** It sits in the conversation's column, not across the page: her words get a third line instead of a wider
+   * measure, and the folded bar's voice button is an icon. */
+  narrow?: boolean;
 }
 
 /** What the line above Lenore's words says while a call is starting or under way. */
@@ -104,6 +107,7 @@ const VoiceOrb = ({
   compact = false,
   orbSize = DEFAULT_ORB_SIZE,
   id,
+  narrow = false,
 }: VoiceOrbProps) => {
   const connecting = voice.status === "connecting";
   const inCall = voice.status === "active";
@@ -119,7 +123,9 @@ const VoiceOrb = ({
   if (compact) {
     // One row. Voice is offered only when it is set up, and the words on its buttons fold into their icons when
     // there is no room; they stay as the buttons' names.
-    const label = "max-sm:sr-only";
+    const label = narrow ? "sr-only" : "max-sm:sr-only";
+    // An icon alone is a square-ish pill; with its words (wide screens) it is a longer one.
+    const pill = narrow ? "px-3" : "px-3 sm:px-4";
     return (
       <div id={id} className="w-full" style={{ background: "#07080D" }}>
         <div className="flex items-center gap-3 px-4 py-2">
@@ -132,10 +138,10 @@ const VoiceOrb = ({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 role="status"
-                className="flex items-center gap-2 truncate text-xs text-primary/80"
+                className="flex items-center gap-2 text-xs text-primary/80"
               >
                 <span className="w-2 h-2 shrink-0 rounded-full bg-primary animate-pulse" />
-                <span className="truncate">{statusLine}</span>
+                <span className={narrow ? "line-clamp-2" : "truncate"}>{statusLine}</span>
               </motion.p>
             )}
             <motion.p
@@ -143,7 +149,7 @@ const VoiceOrb = ({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               title={lastSpokenText}
-              className="truncate font-display italic text-sm text-foreground/80"
+              className={`${narrow ? "line-clamp-2" : "truncate"} font-display italic text-sm text-foreground/80`}
             >
               {lastSpokenText && `"${lastSpokenText}"`}
             </motion.p>
@@ -153,7 +159,8 @@ const VoiceOrb = ({
               <button
                 type="button"
                 onClick={onEndVoice}
-                className="shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full font-medium text-sm transition-colors bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                title="End voice call"
+                className={`shrink-0 flex items-center gap-2 ${pill} py-2 rounded-full font-medium text-sm transition-colors bg-destructive text-destructive-foreground hover:bg-destructive/90`}
               >
                 <MicOff className="w-4 h-4" />
                 <span className={label}>End voice call</span>
@@ -163,7 +170,7 @@ const VoiceOrb = ({
                 <button
                   type="button"
                   disabled
-                  className="shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full font-medium text-sm bg-primary/60 text-primary-foreground cursor-wait"
+                  className={`shrink-0 flex items-center gap-2 ${pill} py-2 rounded-full font-medium text-sm bg-primary/60 text-primary-foreground cursor-wait`}
                 >
                   <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                   <span className={label}>Connecting...</span>
@@ -180,7 +187,8 @@ const VoiceOrb = ({
               <button
                 type="button"
                 onClick={onStartVoice}
-                className="shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full font-medium text-sm transition-colors bg-primary text-primary-foreground hover:bg-primary/90"
+                title="Speak with Lenore"
+                className={`shrink-0 flex items-center gap-2 ${pill} py-2 rounded-full font-medium text-sm transition-colors bg-primary text-primary-foreground hover:bg-primary/90`}
               >
                 <Mic className="w-4 h-4" />
                 <span className={label}>Speak with Lenore</span>
@@ -211,14 +219,16 @@ const VoiceOrb = ({
         </motion.div>
       )}
 
-      {/* Last spoken text. Two lines whatever its length, so a longer reply doesn't push the workspace down. */}
+      {/* Last spoken text. Two lines (three in a column) whatever its length, so a longer reply doesn't move what is below. */}
       <motion.p
         key={lastSpokenText}
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0 }}
         title={lastSpokenText}
-        className="font-display italic text-base md:text-lg leading-[1.625rem] text-foreground/80 text-center max-w-xl px-6 mb-3 min-h-[3.25rem] line-clamp-2"
+        className={`font-display italic text-foreground/80 text-center mb-3 ${
+          narrow ? "text-base leading-6 px-5 min-h-[4.5rem] line-clamp-3" : "text-base md:text-lg leading-[1.625rem] max-w-xl px-6 min-h-[3.25rem] line-clamp-2"
+        }`}
       >
         {lastSpokenText && `"${lastSpokenText}"`}
       </motion.p>

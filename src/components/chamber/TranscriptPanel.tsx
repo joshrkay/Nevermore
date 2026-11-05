@@ -62,7 +62,7 @@ const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice, restoredTh
   };
 
   return (
-    <div className="flex flex-col h-full border-r border-border bg-card">
+    <div className="flex flex-col h-full bg-card">
       {/* Header */}
       <div className="px-4 py-3 border-b border-border">
         <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Conversation</p>

@@ -280,6 +280,25 @@ const ChamberPage = () => {
     );
   }
 
+  const stageNodes = (
+    <>
+      <VoiceOrb
+        id={STAGE_ID}
+        compact={stage.layout.collapsed}
+        orbSize={stage.layout.size}
+        narrow={!isMobile}
+        orbState={orbState}
+        lastSpokenText={lastSpokenText}
+        voice={voice}
+        hasAgentId={hasAgentId}
+        onStartVoice={startVoice}
+        onEndVoice={endVoice}
+        onTypeInstead={handleTypeInstead}
+      />
+      <StageSplitter layout={stage.layout} onChange={stage.change} controls={STAGE_ID} />
+    </>
+  );
+
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Top bar */}
@@ -338,37 +357,31 @@ const ChamberPage = () => {
         </div>
       )}
 
-      {/* Voice Orb: open, or folded into a bar. The handle under it resizes it. */}
-      <VoiceOrb
-        id={STAGE_ID}
-        compact={stage.layout.collapsed}
-        orbSize={stage.layout.size}
-        orbState={orbState}
-        lastSpokenText={lastSpokenText}
-        voice={voice}
-        hasAgentId={hasAgentId}
-        onStartVoice={startVoice}
-        onEndVoice={endVoice}
-        onTypeInstead={handleTypeInstead}
-      />
-      <StageSplitter layout={stage.layout} onChange={stage.change} controls={STAGE_ID} />
+      {/* Lenore's orb, open or folded into a bar, with the handle under it that resizes it. On a wide screen it
+          sits at the top of the conversation's column, so the workspace beside it has the whole height whatever
+          the orb is doing; on a phone there is no column, so it runs across the top. */}
+      {isMobile && stageNodes}
 
-      {/* Transcript & Workspace */}
+      {/* Conversation & Workspace */}
       <div className="flex-1 min-h-0 flex overflow-hidden">
-        {/* Transcript panel */}
-        <div className={`${isMobile ? "hidden" : "w-[30%] min-w-[280px]"}`}>
-          <TranscriptPanel
-            messages={messages}
-            onSendMessage={handleSendMessage}
-            inputRef={chatInputRef}
-            notice={failureNotice}
-            restoredThrough={restoredThrough}
-          />
-        </div>
+        {!isMobile && (
+          <div className="w-[30%] min-w-[280px] flex flex-col border-r border-border">
+            {stageNodes}
+            <div className="flex-1 min-h-0">
+              <TranscriptPanel
+                messages={messages}
+                onSendMessage={handleSendMessage}
+                inputRef={chatInputRef}
+                notice={failureNotice}
+                restoredThrough={restoredThrough}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Live workspace */}
         {/* On mobile, keep the workspace clear of the fixed chat bar so its last button stays tappable. */}
-        <div className={`${isMobile ? "w-full pb-16" : "flex-1"}`}>
+        <div className={`${isMobile ? "w-full pb-16" : "flex-1 min-w-0"}`}>
           <LiveWorkspace
             data={chamberData}
             isDemo={false}

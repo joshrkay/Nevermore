@@ -48,7 +48,7 @@ const hooks = {
     onOrbStateChange: (state: OrbState) => void;
     readIntake?: unknown;
   },
-  orb: null as null | { orbState: OrbState; voice: VoiceState; onTypeInstead: () => void; compact?: boolean; orbSize?: number; id?: string },
+  orb: null as null | { orbState: OrbState; voice: VoiceState; onTypeInstead: () => void; compact?: boolean; orbSize?: number; id?: string; narrow?: boolean },
 };
 const voice = {
   isConnected: false,
@@ -84,12 +84,12 @@ vi.mock("@/hooks/useLenoreVoice", () => ({
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => mobile }));
 // The orb shows what Lenore last said, and is handed the orb state; the workspace panes are not what these tests are about.
 vi.mock("@/components/chamber/VoiceOrb", () => ({
-  default: (props: { lastSpokenText: string; orbState: OrbState; voice: VoiceState; onTypeInstead: () => void; compact?: boolean; orbSize?: number; id?: string }) => {
+  default: (props: { lastSpokenText: string; orbState: OrbState; voice: VoiceState; onTypeInstead: () => void; compact?: boolean; orbSize?: number; id?: string; narrow?: boolean }) => {
     hooks.orb = props;
     return <p data-testid="orb">{props.lastSpokenText}</p>;
   },
 }));
-vi.mock("@/components/chamber/TranscriptPanel", () => ({ default: () => null }));
+vi.mock("@/components/chamber/TranscriptPanel", () => ({ default: () => <div data-testid="transcript" /> }));
 vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
   default: (props: typeof hooks.workspace) => {
     hooks.workspace = props;
@@ -434,6 +434,25 @@ describe("ChamberPage", () => {
       renderPage();
       expect(hooks.orb?.compact).toBe(true);
       expect(screen.getByRole("button", { name: "Show the orb" })).toBeInTheDocument();
+    });
+
+    it("sits at the top of the conversation's column on a wide screen, so the workspace has the whole height", () => {
+      renderPage();
+      const orb = screen.getByTestId("orb");
+      const column = orb.parentElement!;
+      expect(hooks.orb?.narrow).toBe(true);
+      expect(column).toContainElement(screen.getByRole("separator"));
+      expect(column).toContainElement(screen.getByTestId("transcript"));
+      // Above the conversation, not below it.
+      expect(orb.compareDocumentPosition(screen.getByTestId("transcript")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("runs across the top on a phone, which has no column, and the conversation is in its sheet", () => {
+      mobile = true;
+      renderPage();
+      expect(hooks.orb?.narrow).toBe(false);
+      expect(screen.getByRole("separator")).toBeInTheDocument();
+      expect(screen.queryByTestId("transcript")).not.toBeInTheDocument();
     });
 
     it("names the stage the handle resizes", () => {

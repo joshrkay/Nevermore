@@ -89,6 +89,29 @@ describe("VoiceOrb", () => {
     expect(screen.getByText(/Who carries/)).toHaveClass("line-clamp-2", "min-h-[3.25rem]");
   });
 
+  describe("in the conversation's column", () => {
+    it("gives her words a third line instead of a wider measure", () => {
+      renderOrb({ status: "idle", attempt: 0 }, true, { narrow: true, lastSpokenText: "Who carries your health coverage today?" });
+      expect(screen.getByText(/Who carries/)).toHaveClass("line-clamp-3", "min-h-[4.5rem]");
+    });
+
+    it("folds into a bar whose voice button is an icon, with the same name", () => {
+      const { onStartVoice } = renderOrb({ status: "idle", attempt: 0 }, true, { narrow: true, compact: true, lastSpokenText: "Who carries your health coverage today?" });
+      const button = screen.getByRole("button", { name: "Speak with Lenore" });
+      // The words stay for a screen reader and a tooltip but take no room.
+      expect(button.querySelector("span")).toHaveClass("sr-only");
+      expect(button).toHaveAttribute("title", "Speak with Lenore");
+      expect(screen.getByText(/Who carries/)).toHaveClass("line-clamp-2");
+      fireEvent.click(button);
+      expect(onStartVoice).toHaveBeenCalledTimes(1);
+    });
+
+    it("lets a long status line wrap to two lines rather than cutting it to one", () => {
+      renderOrb({ status: "connecting", attempt: 1, phase: "microphone" }, true, { narrow: true, compact: true });
+      expect(screen.getByText(/allow access/)).toHaveClass("line-clamp-2");
+    });
+  });
+
   describe("folded into a bar", () => {
     const folded = (voice: VoiceState, hasAgentId = true, extra: Partial<ComponentProps<typeof VoiceOrb>> = {}) =>
       renderOrb(voice, hasAgentId, { compact: true, ...extra });
