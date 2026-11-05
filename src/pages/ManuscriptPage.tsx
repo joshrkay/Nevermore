@@ -9,8 +9,8 @@ import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
 import { CONSENT_DRAFT_LABEL } from "@/data/certification";
-import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
-import { describeSource, parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
+import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, rowSourceLine, type ChamberSubmission, type ManuscriptRow } from "@/data/manuscript";
+import { parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { readVerifiedFields } from "@/lib/verifiedFields";
@@ -45,8 +45,8 @@ const showsStatus = (value: string, provenance?: FieldProvenance): provenance is
   Boolean(provenance) &&
   (value !== NOT_PROVIDED || provenance!.status === "conflicting" || provenance!.status === "unknown" || provenance!.status === "not_applicable");
 
-// Shows whether a value was confirmed or only inferred, and where it came from.
-const DataRow = ({ label, value, provenance }: { label: string; value: string; provenance?: FieldProvenance }) => (
+// Shows whether a value was confirmed or only inferred, and where it came from (an answered row only: rowSourceLine).
+const DataRow = ({ label, value, provenance, source }: { label: string; value: string; provenance?: FieldProvenance; source: string | null }) => (
   <div className="py-2 border-b border-border last:border-0">
     <div className="flex justify-between gap-4">
       <span className="text-muted-foreground text-sm">{label}</span>
@@ -59,14 +59,14 @@ const DataRow = ({ label, value, provenance }: { label: string; value: string; p
         )}
       </span>
     </div>
-    {showsStatus(value, provenance) && (
-      <p className="text-[11px] text-muted-foreground text-right mt-0.5">{describeSource(provenance.source)}</p>
-    )}
+    {source && <p className="text-[11px] text-muted-foreground text-right mt-0.5">{source}</p>}
   </div>
 );
 
 const renderRows = (rows: ManuscriptRow[], provenance: ProvenanceMap) =>
-  rows.map((row) => <DataRow key={row[0]} label={row[0]} value={row[1]} provenance={rowProvenance(row, provenance)} />);
+  rows.map((row) => (
+    <DataRow key={row[0]} label={row[0]} value={row[1]} provenance={rowProvenance(row, provenance)} source={rowSourceLine(row, provenance)} />
+  ));
 
 const Card = ({ children }: { children: React.ReactNode }) => <div className="bg-card border border-border rounded-xl p-6">{children}</div>;
 

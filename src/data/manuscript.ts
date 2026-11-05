@@ -5,7 +5,7 @@ import { categoryInfo } from "./documentCategories";
 import { documentStatusInfo } from "./documentStatus";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
-import { FIELD_LABELS, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
+import { describeSource, FIELD_LABELS, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
 import { isRequiredField } from "./readiness";
 import { NO_VERIFIED_FIELDS } from "./requiredItems";
 import { describeOpenItem, openItems } from "./openItems";
@@ -317,6 +317,17 @@ function settleVerified(provenance: ProvenanceMap, verified: ReadonlySet<string>
 export function rowProvenance([, , field, alsoFrom = []]: ManuscriptRow, provenance: ProvenanceMap): FieldProvenance | undefined {
   const fields = field ? [field, ...alsoFrom] : alsoFrom;
   return fields.map((f) => provenance[f]).find((p) => p?.status === "conflicting") ?? (field ? provenance[field] : undefined);
+}
+
+/**
+ * The source line a row shows under its value ("From the conversation: …"), or null. Only a row that holds an answer
+ * has one (`showsSource`): "Not provided" and "Not applicable" show their status alone, however the field's
+ * provenance was recorded, so no quote ever stands beside a field the prospect didn't answer (QA F11).
+ */
+export function rowSourceLine(row: ManuscriptRow, provenance: ProvenanceMap): string | null {
+  const entry = rowProvenance(row, provenance);
+  if (!entry || row[1] === NOT_PROVIDED || row[1] === NOT_APPLICABLE) return null;
+  return describeSource(entry.source);
 }
 
 export interface ManuscriptDocument {

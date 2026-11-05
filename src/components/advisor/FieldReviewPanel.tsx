@@ -23,6 +23,7 @@ import {
   describeSource,
   FIELD_LABELS,
   formatFieldValue,
+  showsSource,
   STATUS_LABELS,
   type FieldKey,
   type ProvenanceMap,
@@ -216,7 +217,10 @@ const FieldRow = ({
           {badge && <AuditBadgeChip badge={badge} />}
         </div>
         <p className="font-mono text-sm">{formatFieldValue(data[field])}</p>
-        {prov ? (
+        {prov && !showsSource(data[field]) ? (
+          // No answer, so no source: a quote here would stand for nothing the prospect said (QA F11).
+          <p className="text-xs text-muted-foreground mt-1">{STATUS_LABELS[prov.status]}</p>
+        ) : prov ? (
           <p className="text-xs text-muted-foreground mt-1">
             <span className="mr-1">{STATUS_LABELS[prov.status]} ·</span>
             {describeSource(prov.source)}
