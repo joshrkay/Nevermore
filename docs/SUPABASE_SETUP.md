@@ -228,10 +228,11 @@ variables.
 1. **Vercel environment variables.** The new project needs the Supabase URL and publishable key for
    Production and Preview: connect the Supabase integration to it (it sets `NEXT_PUBLIC_SUPABASE_URL` and
    `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, which `vite.config.ts` falls back to), or set
-   `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` by hand. Without them the build still
-   succeeds, but the site is a blank page: `src/integrations/supabase/client.ts` throws
-   `supabaseUrl is required.` when it loads. Vite reads the values at build time, so redeploy after
-   setting them.
+   `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` by hand. Without them a site is a blank page:
+   `src/integrations/supabase/client.ts` throws `supabaseUrl is required.` when it loads. A Vercel build
+   without them stops with a message naming what is missing (`vite.config.ts`, `scripts/buildEnv.ts`), so
+   it never replaces a working deployment; a build elsewhere (CI, your machine) still succeeds. Vite reads
+   the values at build time, so redeploy after setting them.
 2. **Deployment Protection.** Settings → Deployment Protection. Vercel Authentication puts a Vercel
    sign-in in front of every address it covers, and prospects have no Vercel account. Open the production
    domain in a private window and confirm the site loads.

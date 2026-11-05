@@ -3,28 +3,22 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 
-// Vercel's Supabase integration provides the project's URL and publishable key as
-// NEXT_PUBLIC_SUPABASE_*, not the VITE_* names this app reads. Fall back to those two (and only
-// those: they are browser-safe, unlike the SUPABASE_SERVICE_ROLE_KEY and POSTGRES_* variables
-// the integration also sets, which must never reach the bundle).
-const FALLBACKS: Record<string, string[]> = {
-  VITE_SUPABASE_URL: ["NEXT_PUBLIC_SUPABASE_URL"],
-  VITE_SUPABASE_PUBLISHABLE_KEY: ["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"],
-};
+import { missingSupabaseEnvMessage, resolveSupabaseEnv } from "./scripts/buildEnv";
 
-function supabaseEnvFallbacks(mode: string) {
-  const env = loadEnv(mode, process.cwd(), "");
-  const define: Record<string, string> = {};
-  for (const [name, fallbacks] of Object.entries(FALLBACKS)) {
-    if (env[name]) continue;
-    const value = fallbacks.map((key) => env[key]).find(Boolean);
-    if (value) define[`import.meta.env.${name}`] = JSON.stringify(value);
+// The Supabase URL and publishable key the app is built with (scripts/buildEnv.ts takes the
+// NEXT_PUBLIC_SUPABASE_* names Vercel's integration sets as well as the VITE_* ones). Without them
+// the app builds and then shows a blank page, so a Vercel build that has neither fails here, which
+// keeps a broken site from replacing the working one. Other builds (CI, local) are left alone.
+function supabaseEnv(mode: string, command: string) {
+  const { define, missing } = resolveSupabaseEnv(loadEnv(mode, process.cwd(), ""));
+  if (command === "build" && process.env.VERCEL && missing.length > 0) {
+    throw new Error(missingSupabaseEnvMessage(missing));
   }
   return define;
 }
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode, command }) => ({
   server: {
     host: "::",
     port: 8080,
@@ -32,7 +26,7 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
-  define: supabaseEnvFallbacks(mode),
+  define: supabaseEnv(mode, command),
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
     alias: {
