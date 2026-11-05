@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { authCallbackUrl, parseAuthRedirect, safeNext } from "./authRedirect";
 
-const SITE = "https://nevermore-gamma.vercel.app";
+const SITE = "https://nevermorepeo.com";
 
 describe("parseAuthRedirect", () => {
   it("reads the error Supabase puts in the hash when a link is used up or expired", () => {

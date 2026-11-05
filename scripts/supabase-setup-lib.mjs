@@ -51,7 +51,7 @@ export function checkSecrets(env) {
   else if (provider === "anthropic" && !set("ANTHROPIC_API_KEY")) errors.push("ANTHROPIC_API_KEY is required when AI_PROVIDER=anthropic");
   else if (provider === "lovable" && !set("LOVABLE_API_KEY")) errors.push("LOVABLE_API_KEY is required (or set AI_PROVIDER=anthropic and ANTHROPIC_API_KEY)");
 
-  if (!set("APP_BASE_URL")) errors.push("APP_BASE_URL is required (the site's address, e.g. https://nevermore-gamma.vercel.app)");
+  if (!set("APP_BASE_URL")) errors.push("APP_BASE_URL is required (the site's address, e.g. https://nevermorepeo.com)");
   else {
     let url;
     try { url = new URL(env.APP_BASE_URL); } catch { /* reported below */ }

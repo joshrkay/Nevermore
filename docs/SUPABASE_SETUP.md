@@ -4,8 +4,10 @@
 it. Every step is safe to run again. Keys stay on your machine: the script reads them from the
 Supabase API and your secrets file and never prints them.
 
-The production site (Vercel, `nevermore-gamma.vercel.app`) already points at project
-`dvfwrjpkltqdkfudbahe` through the Vercel Supabase integration, so nothing changes on Vercel.
+The production site is `https://nevermorepeo.com`. Its Vercel project takes the Supabase URL and
+publishable key of project `dvfwrjpkltqdkfudbahe` from the Vercel Supabase integration, so nothing
+changes on Vercel while that connection stays. If you move to another domain or Vercel project, see
+"Moving to a new domain or Vercel project" below.
 
 Vercel deploys the front end separately from `supabase db push`, so push first: a front end that
 reads a column the database does not have yet cannot load, create or save an intake. For example,
@@ -112,9 +114,9 @@ the person sees their browser's "can't reach this site" page. The script sets, a
 verifies:
 
 - **Site URL** (Authentication → URL Configuration): `APP_BASE_URL`, e.g.
-  `https://nevermore-gamma.vercel.app`. Supabase falls back to it when the address the app asked for
+  `https://nevermorepeo.com`. Supabase falls back to it when the address the app asked for
   isn't allowed.
-- **Redirect URLs**: `https://nevermore-gamma.vercel.app/**` (the script adds it; with the Site URL
+- **Redirect URLs**: `https://nevermorepeo.com/**` (the script adds it; with the Site URL
   right it isn't strictly needed, and `--check` asks for it only when the Site URL is wrong). The
   script keeps entries already there.
   Every entry is a place Supabase will send sign-in tokens, so list only hosts you control. Don't add
@@ -176,7 +178,7 @@ and prints the checks:
 ```
   ✓ Migrations applied: N of N   (N = the files in supabase/migrations)
   ✓ Guest (anonymous) sign-in: anonymous_users=true
-  ✓ Email links return to the site: Site URL https://nevermore-gamma.vercel.app, redirects allowed under it
+  ✓ Email links return to the site: Site URL https://nevermorepeo.com, redirects allowed under it
   ✓ Sign-up email survives mail scanners: 6-digit code and a link that confirms on a click
   ✓ Function chamber-extract: answered 401 from the function itself
   …
@@ -216,6 +218,34 @@ only rejects a localhost or non-https Site URL.
    up SMTP first. The Resend plan has its own quota, which these emails and the notification emails share.
 5. **The plan.** A Free project pauses after a week without activity and has no downloadable
    backups. Move to Pro before relying on it.
+
+## Moving to a new domain or Vercel project
+
+The front end reads the site's address from the browser (`window.location.origin`), so no code changes.
+The settings around it do, and a new Vercel project starts with none of the old project's environment
+variables.
+
+1. **Vercel environment variables.** The new project needs the Supabase URL and publishable key for
+   Production and Preview: connect the Supabase integration to it (it sets `NEXT_PUBLIC_SUPABASE_URL` and
+   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, which `vite.config.ts` falls back to), or set
+   `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` by hand. Without them the build still
+   succeeds, but the site is a blank page: `src/integrations/supabase/client.ts` throws
+   `supabaseUrl is required.` when it loads. Vite reads the values at build time, so redeploy after
+   setting them.
+2. **Deployment Protection.** Settings → Deployment Protection. Vercel Authentication puts a Vercel
+   sign-in in front of every address it covers, and prospects have no Vercel account. Open the production
+   domain in a private window and confirm the site loads.
+3. **`APP_BASE_URL`** in `supabase/.env.production`: the new origin, no path. It builds the link in the
+   advisor alert email, so until it changes the alert links to the old address.
+4. **Auth Site URL and Redirect URLs.** Rerun `npm run setup:supabase -- --project-ref <ref>`: it sets the
+   Site URL to `APP_BASE_URL`, adds `<origin>/**` to the Redirect URLs, and re-sets the function secrets.
+   `--check` compares the Site URL with `APP_BASE_URL`. Until it is done, sign-up and sign-in emails link
+   to the old address. The script keeps entries already on the Redirect URLs list, so remove the old
+   address there yourself once nothing uses it.
+5. **Try a real intake** on the new address (see "After it passes"): the sign-up email, the 6-digit code
+   and the advisor alert should all point at the new domain.
+
+Sessions are stored per address, so anyone signed in on the old address signs in again on the new one.
 
 ## Reruns
 
