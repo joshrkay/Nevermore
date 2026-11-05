@@ -112,3 +112,13 @@ describe("UploadTab: the virus check", () => {
     expect(screen.queryByText(/viruses/)).not.toBeInTheDocument();
   });
 });
+
+describe("UploadTab: the drop area", () => {
+  it("is a keyboard stop announced as a button with its text and what it takes", () => {
+    renderTab(doc("uploaded", null));
+    const drop = screen.getByRole("button", { name: "Drag & drop files here" });
+    expect(drop).toHaveAttribute("tabindex", "0");
+    expect(drop).toHaveAccessibleDescription(/PDF, Excel, CSV, or Word/);
+    expect(drop).not.toHaveAttribute("aria-disabled");
+  });
+});

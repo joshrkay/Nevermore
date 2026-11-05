@@ -1,4 +1,4 @@
-import { within } from "@testing-library/react";
+import { isInaccessible, within } from "@testing-library/react";
 import { expect } from "vitest";
 
 // The roles a keyboard or screen-reader user operates. Each needs a name, or it is announced as just "button",
@@ -17,7 +17,24 @@ const CONTROL_ROLES = [
   "spinbutton",
 ] as const;
 
-const describe = (el: HTMLElement) => el.outerHTML.slice(0, 160);
+// Whatever the keyboard can reach, whatever its role: a field with no role of its own (a password or file input),
+// or a div made focusable (a drop zone), is a stop the user lands on and hears announced.
+const FOCUSABLE = [
+  "a[href]",
+  "button",
+  "input:not([type='hidden'])",
+  "select",
+  "textarea",
+  "[contenteditable='true']",
+  "[tabindex]",
+].join(", ");
+
+const keyboardStops = (container: HTMLElement) =>
+  Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => el.tabIndex >= 0 && !(el as HTMLButtonElement).disabled && !isInaccessible(el),
+  );
+
+const snippet = (el: HTMLElement) => el.outerHTML.slice(0, 160);
 
 const hasName = (el: HTMLElement) => {
   try {
@@ -28,11 +45,17 @@ const hasName = (el: HTMLElement) => {
   }
 };
 
-/** Fails, listing each one, when any control in `container` has no accessible name. */
+/**
+ * Fails, listing each one, when a control in `container` has no accessible name: every element with a control
+ * role, and every element the keyboard can reach.
+ */
 export function expectEveryControlNamed(container: HTMLElement = document.body): void {
-  const controls = CONTROL_ROLES.flatMap((role) => within(container).queryAllByRole(role));
-  const unnamed = controls.filter((control) => !hasName(control));
+  const controls = new Set([
+    ...CONTROL_ROLES.flatMap((role) => within(container).queryAllByRole(role)),
+    ...keyboardStops(container),
+  ]);
+  const unnamed = [...controls].filter((control) => !hasName(control));
   if (unnamed.length > 0) {
-    throw new Error(`Controls with no accessible name (${unnamed.length}):\n${unnamed.map(describe).join("\n")}`);
+    throw new Error(`Controls with no accessible name (${unnamed.length}):\n${unnamed.map(snippet).join("\n")}`);
   }
 }

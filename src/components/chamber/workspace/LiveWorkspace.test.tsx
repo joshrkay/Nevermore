@@ -85,7 +85,8 @@ describe("LiveWorkspace", () => {
     expect(screen.getByRole("tab", { name: "⑨ The Reckoning" })).toHaveFocus();
     fireEvent.keyDown(screen.getByRole("tab", { name: "⑨ The Reckoning" }), { key: "Home" });
     expect(screen.getByRole("tab", { name: "① Upload" })).toHaveFocus();
-    expect(screen.getByRole("tabpanel", { name: "① Upload" })).toBeInTheDocument();
+    // The panel scrolls on its own, so the keyboard can reach it even on a step with nothing to focus.
+    expect(screen.getByRole("tabpanel", { name: "① Upload" })).toHaveAttribute("tabindex", "0");
   });
 
   it("gives the Your Team tab the census's status and a Confirm button, as every other answer has", () => {

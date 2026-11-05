@@ -424,7 +424,12 @@ describe("ChamberPage", () => {
       renderPage();
       act(() => hooks.orb!.onTypeInstead());
       expect(voice.dismissFailure).toHaveBeenCalledTimes(1);
-      expect(screen.getByPlaceholderText("Message Lenore...")).toHaveFocus();
+      expect(screen.getByRole("textbox", { name: "Message Lenore" })).toHaveFocus();
+    });
+
+    it("names the chat field, not only its placeholder", () => {
+      renderPage();
+      expect(screen.getByRole("textbox", { name: "Message Lenore" })).toHaveAttribute("placeholder", "Message Lenore...");
     });
   });
 

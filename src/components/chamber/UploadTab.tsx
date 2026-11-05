@@ -97,17 +97,24 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
       </div>
 
       <div
-        {...getRootProps()}
-        className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors ${
+        {...getRootProps({
+          // The keyboard stops here and Enter opens the file picker, so it is announced as a button with its text,
+          // not as nothing (react-dropzone's default role is "presentation").
+          role: "button",
+          "aria-labelledby": "upload-drop-label",
+          "aria-describedby": "upload-drop-hint",
+          "aria-disabled": !canUpload || uploading || undefined,
+        })}
+        className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
           !canUpload || uploading ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
         } ${isDragActive ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
       >
         <input {...getInputProps()} />
-        <Upload className="w-10 h-10 text-muted-foreground mx-auto mb-4" />
-        <p className="text-foreground font-medium mb-1">
+        <Upload className="w-10 h-10 text-muted-foreground mx-auto mb-4" aria-hidden="true" />
+        <p id="upload-drop-label" className="text-foreground font-medium mb-1">
           {isDragActive ? "Release to upload..." : uploading ? "Uploading…" : "Drag & drop files here"}
         </p>
-        <p className="text-sm text-muted-foreground">
+        <p id="upload-drop-hint" className="text-sm text-muted-foreground">
           PDF, Excel, CSV, or Word · Max 20 MB · Up to {MAX_DOCUMENTS_PER_INTAKE} files
         </p>
       </div>
