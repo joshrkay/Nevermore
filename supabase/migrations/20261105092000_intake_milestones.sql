@@ -5,7 +5,7 @@
 --
 --   started               the intake was created (the prospect's first change, after the consent gate)
 --   answered              its answers first held something
---   document_uploaded     its first document was uploaded
+--   document_uploaded     its first document's file was stored (document-upload reports it: record_document_uploaded)
 --   census_provided       its answers first held an employee census
 --   ready_to_certify      its required answers were first present with none in conflict (the certification gate's
 --                         own rule: intake_missing_required, intake_conflicting_required)
@@ -154,30 +154,28 @@ CREATE TRIGGER track_intake_milestones
   AFTER INSERT OR UPDATE OF chamber_data, field_provenance ON public.chamber_sessions
   FOR EACH ROW EXECUTE FUNCTION public.track_intake_milestones();
 
-CREATE OR REPLACE FUNCTION public.track_document_milestone()
-RETURNS TRIGGER
+-- An upload counts once its file is stored and kept: document-upload inserts the row first, and deletes it if the file
+-- can't be stored or the intake is being deleted, so the row alone isn't an upload. The function says so once it has
+-- stored the file, with the service role. Returns whether this call recorded it.
+CREATE OR REPLACE FUNCTION public.record_document_uploaded(p_document_id uuid)
+RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  d public.documents;
 BEGIN
-  BEGIN
-    IF NEW.session_id IS NOT NULL THEN
-      PERFORM public.note_intake_milestone(NEW.session_id, 'document_uploaded', NEW.created_at);
-    END IF;
-  EXCEPTION WHEN OTHERS THEN
-    RAISE WARNING 'intake milestones: upload not recorded for % (%)', NEW.session_id, SQLERRM;
-  END;
-  RETURN NULL;
+  SELECT * INTO d FROM public.documents WHERE id = p_document_id;
+  IF NOT FOUND OR d.session_id IS NULL THEN
+    RETURN false;
+  END IF;
+  RETURN public.note_intake_milestone(d.session_id, 'document_uploaded', d.created_at);
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.track_document_milestone() FROM PUBLIC, anon, authenticated;
-
-DROP TRIGGER IF EXISTS track_document_milestone ON public.documents;
-CREATE TRIGGER track_document_milestone
-  AFTER INSERT ON public.documents
-  FOR EACH ROW EXECUTE FUNCTION public.track_document_milestone();
+REVOKE ALL ON FUNCTION public.record_document_uploaded(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.record_document_uploaded(uuid) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.track_certification_milestone()
 RETURNS TRIGGER

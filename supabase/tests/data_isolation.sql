@@ -743,6 +743,7 @@ BEGIN
     'SELECT count(*) FROM public.claim_ops_alerts()',
     'SELECT public.run_retention()',
     'SELECT public.queue_draft_expiry_reminders(1)',
+    format('SELECT public.record_document_uploaded(%L)', nobody),
     'SELECT public.queue_retention_deletions(1)',
     'SELECT count(*) FROM public.claim_intake_deletions(1, 600)',
     'SELECT count(*) FROM public.claim_document_scans(1, 60)',

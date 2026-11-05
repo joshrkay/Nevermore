@@ -36,6 +36,8 @@ interface Setup {
   accepts?: boolean;
   /** What the scanning service answers; by default it flags EICAR and passes everything else. */
   scan?: (body: Uint8Array) => Response | Promise<Response>;
+  /** What record_document_uploaded answers with (the funnel's record of the upload). */
+  milestoneError?: { code?: string };
 }
 
 const setup = (opts: Setup = {}) => {
@@ -45,11 +47,17 @@ const setup = (opts: Setup = {}) => {
   const stored: { bucket: string; path: string; bytes: Uint8Array; options: unknown; key: string }[] = [];
   const deleted: { id: string; key: string }[] = [];
   const rpcs: { fn: string; args: Record<string, unknown>; key: string }[] = [];
+  // The funnel's record of an upload (record_document_uploaded), kept apart from the scan's calls.
+  const milestones: { document: unknown; key: string }[] = [];
   const removed: { bucket: string; paths: string[] }[] = [];
   const createClient = vi.fn((_url: string, key: string, options?: { global?: { headers: Record<string, string> } }): UploadClient => ({
     auth: { getUser: async () => ({ data: { user: opts.user === undefined ? { id: USER } : opts.user } }) },
     rpc: async (fn, args) => {
       if (fn === "intake_accepts_files") return { data: opts.accepts ?? true, error: null };
+      if (fn === "record_document_uploaded") {
+        milestones.push({ document: args.p_document_id, key });
+        return { data: true, error: opts.milestoneError ?? null };
+      }
       rpcs.push({ fn, args, key });
       return { data: args.p_verdict ?? null, error: opts.recordError ?? null };
     },
@@ -105,7 +113,7 @@ const setup = (opts: Setup = {}) => {
     newRequestId: () => REQUEST,
     newId: () => KEY_ID,
   };
-  return { deps, logs, inserts, stored, deleted, removed, rpcs, alerts, scanned, scanFetch };
+  return { deps, logs, inserts, stored, deleted, removed, rpcs, milestones, alerts, scanned, scanFetch };
 };
 
 // A multipart body as a browser sends it, built by hand so it is the same bytes in any test environment.
@@ -356,6 +364,23 @@ describe("document-upload: storing and scanning (E-4.3)", () => {
     expect(body.code).toBe("storage");
     expect(t.deleted).toEqual([{ id: DOC, key: "service-key" }]);
     expect(t.logs.join("\n")).not.toMatch(/secret-name/);
+    // Not an upload: the funnel isn't told of it.
+    expect(t.milestones).toEqual([]);
+  });
+
+  it("tells the funnel of the upload once its file is stored and kept, as the service", async () => {
+    const t = setup();
+    const { status } = await read(await handleUploadRequest(upload(CSV, "a.csv"), t.deps));
+    expect(status).toBe(200);
+    expect(t.milestones).toEqual([{ document: DOC, key: "service-key" }]);
+  });
+
+  it("keeps the upload when the funnel's record of it fails, and says so in the log", async () => {
+    const t = setup({ milestoneError: { code: "57014" } });
+    const { status } = await read(await handleUploadRequest(upload(CSV, "a.csv"), t.deps));
+    expect(status).toBe(200);
+    expect(t.deleted).toEqual([]);
+    expect(t.logs).toContain(`UPLOAD_MILESTONE_NOT_RECORDED request=${REQUEST} document=${DOC} code=57014`);
   });
 
   it("takes back the file and its row when the intake's deletion began while the file was on its way (SR-15)", async () => {
@@ -366,6 +391,7 @@ describe("document-upload: storing and scanning (E-4.3)", () => {
     expect(t.removed).toEqual([{ bucket: "documents", paths: [`${USER}/${INTAKE}/${KEY_ID}_a.csv`] }]);
     expect(t.deleted).toEqual([{ id: DOC, key: "service-key" }]);
     expect(t.rpcs).toEqual([]);
+    expect(t.milestones).toEqual([]);
   });
 
   it.each([

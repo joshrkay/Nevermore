@@ -2,9 +2,9 @@
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh intake_milestones
 -- The pilot funnel (20261105092000_intake_milestones.sql): intakes from before it are backfilled, flagged, from what
--- the database held; each intake records each step once, when it first reaches it (started, answered, a document,
--- a census, ready to certify, a verified email, certified, the Manuscript downloaded, the last from the owner's
--- browser only); rows hold no answers; deleting an intake keeps its rows without the link; the yearly prune takes a
+-- the database held; each intake records each step once, when it first reaches it (started, answered, a document
+-- once document-upload says its file was stored, a census, ready to certify, a verified email, certified, the
+-- Manuscript downloaded, the last from the owner's browser only); rows hold no answers; deleting an intake keeps its rows without the link; the yearly prune takes a
 -- whole cohort; and only advisors read the funnel, which counts each step for intakes started in a period.
 \set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
@@ -138,6 +138,7 @@ DECLARE
   advisor uuid := pg_temp.new_user(false);
   sid uuid;
   draft uuid;
+  doc uuid;
   f record;
   n integer;
 BEGIN
@@ -163,7 +164,25 @@ BEGIN
   RESET ROLE;
   IF pg_temp.reached(sid) <> ARRAY['answered', 'started'] THEN RAISE EXCEPTION 'FAIL: a first answer reached %', pg_temp.reached(sid); END IF;
   INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path, category)
-  VALUES (guest, sid, 'payroll.pdf', '12 KB', guest || '/' || sid || '/payroll.pdf', 'payroll_report');
+  VALUES (guest, sid, 'payroll.pdf', '12 KB', guest || '/' || sid || '/payroll.pdf', 'payroll_report')
+  RETURNING id INTO doc;
+  -- A row alone isn't an upload (document-upload deletes it when the file can't be stored)...
+  IF 'document_uploaded' = ANY (pg_temp.reached(sid)) THEN RAISE EXCEPTION 'FAIL: a document row alone counted as an upload'; END IF;
+  -- ...the function says so once the file is stored, as the service; nobody else may.
+  PERFORM set_config('request.jwt.claims', jsonb_build_object('sub', guest, 'role', 'authenticated', 'is_anonymous', true)::text, false);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    PERFORM public.record_document_uploaded(doc);
+    RAISE EXCEPTION 'FAIL: a prospect could record an upload';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', jsonb_build_object('role', 'service_role')::text, false);
+  SET LOCAL ROLE service_role;
+  IF NOT public.record_document_uploaded(doc) THEN RAISE EXCEPTION 'FAIL: the stored upload wasn''t recorded'; END IF;
+  IF public.record_document_uploaded(doc) THEN RAISE EXCEPTION 'FAIL: the upload was recorded twice'; END IF;
+  IF public.record_document_uploaded(gen_random_uuid()) THEN RAISE EXCEPTION 'FAIL: a missing document recorded an upload'; END IF;
+  RESET ROLE;
   PERFORM pg_temp.as_user(guest, true);
   SET LOCAL ROLE authenticated;
   UPDATE public.chamber_sessions SET chamber_data = '{"company_name":"Acme","states":["CA"],"pay_frequency":"weekly"}' WHERE id = sid;
