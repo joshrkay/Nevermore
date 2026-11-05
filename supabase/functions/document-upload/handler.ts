@@ -18,8 +18,9 @@
 //
 // With no usable scanner (MALWARE_SCANNER unset or wrong, or `none` outside a named non-production APP_ENV;
 // docs/adr/0002-uploads-need-a-scanner-in-production.md) nothing is checked, stored or recorded: the file is
-// refused with `scanner_missing`, which the browser shows as uploads being paused, and a scan_failed event
-// (config_missing) is recorded so ops-monitor alerts. A file is never taken in with no way out of quarantine.
+// refused with `scanner_missing`, which the browser shows as uploads being paused, and the refusal is logged
+// (SCAN_CONFIG_MISSING). document-scan records the scan_failed event (config_missing) that ops-monitor alerts on,
+// once per five-minute run rather than once per upload. A file is never taken in with no way out of quarantine.
 //
 // Every file is stored as application/octet-stream (fileSignature.ts says why); the row records the type
 // its bytes showed. Answers carry a code the browser maps to its message, and a request id. Logs carry ids,
@@ -175,19 +176,12 @@ export async function handleUploadRequest(req: Request, deps: UploadDeps): Promi
     };
 
     // 0. A scanner to check the file with. Without one a file would sit in quarantine with nothing to release
-    // it, so it is refused before anything is stored, loudly: a log line naming the setting, and an event
-    // ops-monitor alerts on (scan_failed, at the first in an hour).
+    // it, so it is refused before anything is stored, with a log line naming the setting. No ops event per
+    // refusal: this runs before the intake or the body is checked, so any signed-in guest could add rows at will,
+    // and document-scan already records the alertable scan_failed (config_missing) on every five-minute run.
     const choice = selectScanner(deps.env, deps.scanner);
     if (!choice.ok) {
       deps.log(`SCAN_CONFIG_MISSING: ${choice.problem}; uploads are refused until it is fixed (docs/SUPABASE_SETUP.md, "Malware scanning")`);
-      const { error: eventError } = await deps.createClient(supabaseUrl, serviceRoleKey).rpc("record_ops_event", {
-        p_kind: "scan_failed",
-        p_source: "document-upload",
-        p_code: "config_missing",
-        p_detail: choice.problem,
-        p_user_id: userId,
-      });
-      if (eventError) deps.log(`SCAN_ERROR request=${requestId} record=rpc_event:${errorCode(eventError)}`);
       return refused(503, "scanner_missing", SCANNER_MISSING_MESSAGE);
     }
 

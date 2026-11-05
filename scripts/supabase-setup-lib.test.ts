@@ -133,6 +133,21 @@ describe("checkSecrets", () => {
     expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none", APP_ENV: "demo" }).errors).toEqual([]);
   });
 
+  // D13: production scans with Scanii (ADR 0002). Its key and secret are HTTP Basic auth's user and password.
+  it("needs Scanii's key and secret with MALWARE_SCANNER=scanii, and an https SCANII_API_URL when one is set", () => {
+    const scanii = { ...goodEnv, MALWARE_SCANNER: "scanii", SCANII_API_KEY: "0123abcd", SCANII_API_SECRET: "s3cret" };
+    expect(checkSecrets(scanii)).toMatchObject({ errors: [] });
+    expect(checkSecrets({ ...scanii, MALWARE_SCANNER: " Scanii " }).errors).toEqual([]);
+    expect(checkSecrets({ ...scanii, SCANII_API_SECRET: "" }).errors).toEqual([expect.stringMatching(/SCANII_API_KEY and SCANII_API_SECRET are required/)]);
+    expect(checkSecrets({ ...scanii, SCANII_API_KEY: "" }).errors).toEqual([expect.stringMatching(/SCANII_API_KEY and SCANII_API_SECRET are required/)]);
+    expect(checkSecrets({ ...scanii, SCANII_API_KEY: "ab:cd" }).errors).toEqual([expect.stringMatching(/can't hold a colon/)]);
+    expect(checkSecrets({ ...scanii, SCANII_API_URL: "http://api-eu1.scanii.com" }).errors).toEqual([expect.stringMatching(/SCANII_API_URL must be an https/)]);
+    expect(checkSecrets({ ...scanii, SCANII_API_URL: "https://api-eu1.scanii.com" }).errors).toEqual([]);
+    // A secret with a space in it is a secret with something pasted after it (QA H5).
+    expect(checkSecrets({ ...scanii, SCANII_API_SECRET: "s3cret # prod" }).errors).toEqual([expect.stringMatching(/^SCANII_API_SECRET has a space/)]);
+    expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "clamscan" }).errors).toEqual([expect.stringMatching(/scanii, clamav, http or none/)]);
+  });
+
   // QA H4, ADR 0002: production never runs unscanned, and the functions won't honour none there.
   it("stops on MALWARE_SCANNER=none unless APP_ENV names a non-production project, and on an APP_ENV it doesn't know", () => {
     expect(checkSecrets({ ...goodEnv, MALWARE_SCANNER: "none" }).errors).toEqual([expect.stringMatching(/MALWARE_SCANNER=none is allowed only when APP_ENV is development, demo, staging.*unset \(production\)/)]);

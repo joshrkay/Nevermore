@@ -291,7 +291,7 @@ describe("document-upload: storing and scanning (E-4.3)", () => {
     expect(t.logs).toEqual([`SCAN_DEFERRED request=${REQUEST} document=${DOC} engine=http reason=http:503`]);
   });
 
-  it("refuses every file when no scanner is set up: nothing stored or recorded, the prospect told, an alertable event", async () => {
+  it("refuses every file when no scanner is set up: nothing stored or recorded, the prospect told, the setting logged", async () => {
     const t = setup({ env: { MALWARE_SCANNER: undefined } });
     const { status, body } = await read(await handleUploadRequest(upload(CSV, "a.csv"), t.deps));
     expect(status).toBe(503);
@@ -299,19 +299,23 @@ describe("document-upload: storing and scanning (E-4.3)", () => {
     expect(t.inserts).toEqual([]);
     expect(t.stored).toEqual([]);
     expect(t.scanFetch).not.toHaveBeenCalled();
-    expect(t.rpcs).toEqual([{
-      fn: "record_ops_event",
-      args: {
-        p_kind: "scan_failed",
-        p_source: "document-upload",
-        p_code: "config_missing",
-        p_detail: expect.stringMatching(/^MALWARE_SCANNER is not set/),
-        p_user_id: USER,
-      },
-      key: "service-key",
-    }]);
+    // document-scan records the alertable event every five minutes; here it would be one row per request.
+    expect(t.rpcs).toEqual([]);
     expect(t.logs[0]).toMatch(/^SCAN_CONFIG_MISSING: MALWARE_SCANNER is not set .*; uploads are refused until it is fixed/);
     expect(t.logs[1]).toBe(`UPLOAD_REFUSED request=${REQUEST} user=${USER} reason=scanner_missing`);
+  });
+
+  // Review finding (2026-11-05): the refusal comes before the intake or the body is checked, so recording an event per
+  // refusal let any signed-in guest write unlimited ops_events rows.
+  it("writes nothing however many times a refused upload is repeated", async () => {
+    const t = setup({ env: { MALWARE_SCANNER: undefined } });
+    for (let i = 0; i < 50; i++) {
+      const empty = new Request("https://project.test/functions/v1/document-upload", { method: "POST", headers: { Authorization: "Bearer t" } });
+      expect((await handleUploadRequest(empty, t.deps)).status).toBe(503);
+    }
+    expect(t.rpcs).toEqual([]);
+    expect(t.inserts).toEqual([]);
+    expect(t.stored).toEqual([]);
   });
 
   it("refuses 'none' in production (APP_ENV unset) as if no scanner were set", async () => {

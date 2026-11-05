@@ -4,7 +4,7 @@
 export const FUNCTIONS = ["chamber-extract", "document-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "purge-intakes", "ops-monitor"];
 
 /** What MALWARE_SCANNER may be (supabase/functions/_shared/malwareScan.ts). */
-export const MALWARE_SCANNERS = ["clamav", "http", "none"];
+export const MALWARE_SCANNERS = ["scanii", "clamav", "http", "none"];
 // APP_ENV values (docs/adr/0002-uploads-need-a-scanner-in-production.md): unset is production. Only the non-production
 // ones allow MALWARE_SCANNER=none; supabase/functions/_shared/malwareScan.ts reads the same names.
 export const UNSCANNED_ENVIRONMENTS = ["development", "demo", "staging"];
@@ -93,16 +93,22 @@ export function checkSecrets(env) {
   if (!APP_ENVIRONMENTS.includes(appEnv)) errors.push(`APP_ENV must be ${APP_ENVIRONMENTS.join(", ")} or unset (production), not "${env.APP_ENV}"`);
   const production = !UNSCANNED_ENVIRONMENTS.includes(appEnv);
 
-  // The malware scanner (E-4.3, decision D13, ADR 0002). Unset refuses every upload, the census included; set but
-  // incomplete is a mistake. Unset stays a warning, not a stop: the scanner is the owner's choice (D13), and the rest
-  // of the setup shouldn't wait for it. `none` on production is a stop: the functions won't honour it (QA H4).
+  // The malware scanner (E-4.3, decision D13: Scanii, ADR 0002). Unset refuses every upload, the census included;
+  // set but incomplete is a mistake. Unset stays a warning, not a stop, so the rest of the setup isn't held up while
+  // the scanner's account is opened. `none` on production is a stop: the functions won't honour it (QA H4).
   const scanner = set("MALWARE_SCANNER") ? env.MALWARE_SCANNER.trim().toLowerCase() : null;
   if (scanner === null) {
     warnings.push(
-      `Uploads, the census included, are refused until MALWARE_SCANNER is set: clamav (CLAMAV_HOST) or http (MALWARE_SCANNER_URL and MALWARE_SCANNER_TOKEN)${production ? "" : `, or none on this ${appEnv} project`}. Each refused upload alerts (docs/SUPABASE_SETUP.md, "Malware scanning")`,
+      `Uploads, the census included, are refused until MALWARE_SCANNER is set: scanii (SCANII_API_KEY and SCANII_API_SECRET), clamav (CLAMAV_HOST) or http (MALWARE_SCANNER_URL and MALWARE_SCANNER_TOKEN)${production ? "" : `, or none on this ${appEnv} project`}. document-scan alerts every five minutes until it is set (docs/SUPABASE_SETUP.md, "Malware scanning")`,
     );
   } else if (!MALWARE_SCANNERS.includes(scanner)) {
-    errors.push(`MALWARE_SCANNER must be clamav, http or none, not "${env.MALWARE_SCANNER}"`);
+    errors.push(`MALWARE_SCANNER must be scanii, clamav, http or none, not "${env.MALWARE_SCANNER}"`);
+  } else if (scanner === "scanii" && (!set("SCANII_API_KEY") || !set("SCANII_API_SECRET"))) {
+    errors.push("SCANII_API_KEY and SCANII_API_SECRET are required when MALWARE_SCANNER=scanii (Scanii's API key and its secret)");
+  } else if (scanner === "scanii" && env.SCANII_API_KEY.includes(":")) {
+    errors.push("SCANII_API_KEY can't hold a colon: it is the user name of HTTP Basic auth");
+  } else if (scanner === "scanii" && set("SCANII_API_URL") && !/^https:\/\//.test(env.SCANII_API_URL.trim())) {
+    errors.push("SCANII_API_URL must be an https:// address (leave it unset for Scanii's US region)");
   } else if (scanner === "clamav" && !set("CLAMAV_HOST")) {
     errors.push("CLAMAV_HOST is required when MALWARE_SCANNER=clamav");
   } else if (scanner === "http" && (!set("MALWARE_SCANNER_URL") || !set("MALWARE_SCANNER_TOKEN"))) {
@@ -110,7 +116,7 @@ export function checkSecrets(env) {
   } else if (scanner === "http" && !/^https:\/\//.test(env.MALWARE_SCANNER_URL.trim())) {
     errors.push("MALWARE_SCANNER_URL must be an https:// address");
   } else if (scanner === "none" && production) {
-    errors.push(`MALWARE_SCANNER=none is allowed only when APP_ENV is ${UNSCANNED_ENVIRONMENTS.join(", ")}, and this file's APP_ENV is ${set("APP_ENV") ? `"${env.APP_ENV}"` : "unset (production)"}: the functions would refuse every upload. Set clamav or http`);
+    errors.push(`MALWARE_SCANNER=none is allowed only when APP_ENV is ${UNSCANNED_ENVIRONMENTS.join(", ")}, and this file's APP_ENV is ${set("APP_ENV") ? `"${env.APP_ENV}"` : "unset (production)"}: the functions would refuse every upload. Set scanii, clamav or http`);
   } else if (scanner === "none") {
     warnings.push(`MALWARE_SCANNER=none: uploads are not scanned for malware on this ${appEnv} project. Never for real prospects' files (docs/adr/0002-uploads-need-a-scanner-in-production.md)`);
   }
@@ -636,7 +642,7 @@ export function interpretChecks(seen, { localMigrations, appBaseUrl = null }) {
     const alerts = names.includes("ENGINEERING_ALERT_WEBHOOK_URL");
     add("Engineering alerts", alerts, alerts ? "ENGINEERING_ALERT_WEBHOOK_URL set" : "ENGINEERING_ALERT_WEBHOOK_URL not set: dead emails, failed deletions, malware detections and failure spikes are only logged", false);
     const scanner = names.includes("MALWARE_SCANNER");
-    add("Malware scanner", scanner, scanner ? "MALWARE_SCANNER set" : "MALWARE_SCANNER not set: every upload is held, unreadable, until it is (clamav, http, or none for the internal demo)", false);
+    add("Malware scanner", scanner, scanner ? "MALWARE_SCANNER set" : "MALWARE_SCANNER not set: every upload is refused until it is (scanii in production; none only on a demo, staging or development project)", false);
   } else {
     add("Function secrets", false, "could not list secret names");
   }
