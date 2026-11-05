@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { authRateLimit, authRateLimitMessage } from "@/data/authRateLimit";
+import { authCodeFailureMessage } from "@/lib/authCodeFailure";
 
 const inputClass =
   "w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors";
@@ -31,9 +31,9 @@ const VerifyEmailGate = () => {
         "That email already has an account. Use a different email for now; we can't yet move your answers into an existing account.",
       );
     } else if (error) {
-      // A rate limit is not the address's fault, and the project-wide quota is not cleared by waiting a minute.
-      const limit = authRateLimit(error);
-      setMessage(limit ? authRateLimitMessage(limit) : "We couldn't send a code. Check the address and try again.");
+      // By what went wrong: a rate limit says how long to wait, a refused address says to check it, and a failure on
+      // our side (Supabase couldn't send the email) says to try again shortly, with a reference (QA F3).
+      setMessage(authCodeFailureMessage(error, "send", "verify_email"));
     } else {
       setEmail(address);
       setCodeSent(true);
@@ -45,7 +45,7 @@ const VerifyEmailGate = () => {
     setMessage(null);
     const { error } = await verifyEmailCode(email, code.trim());
     setBusy(false);
-    if (error) setMessage("That code didn't work. Check it and try again, or send a new one.");
+    if (error) setMessage(authCodeFailureMessage(error, "check", "verify_email"));
   };
 
   return (

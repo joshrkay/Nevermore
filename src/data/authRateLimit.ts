@@ -30,16 +30,34 @@ export function authRateLimit(error: unknown): AuthRateLimit | null {
  */
 export function authErrorMessage(error: Error, fallback = ""): string {
   const limit = authRateLimit(error);
-  return limit ? authRateLimitMessage(limit) : error.message || fallback;
+  return limit ? authRateLimitMessage(limit, authRetryAfterSeconds(error)) : error.message || fallback;
 }
 
-/** What to tell the person, in words that don't blame the address they typed. */
-export function authRateLimitMessage(limit: AuthRateLimit): string {
+/** How many seconds Supabase says to wait before asking again ("only request this after 42 seconds"), when it says. */
+export function authRetryAfterSeconds(error: unknown): number | null {
+  const message = (error as { message?: unknown } | null)?.message;
+  const seconds = typeof message === "string" ? /only request this after (\d+) seconds?/i.exec(message)?.[1] : undefined;
+  return seconds ? Number(seconds) : null;
+}
+
+/** "a minute" (Supabase's usual cooldown, and when it didn't say), "2 minutes", or "45 seconds". */
+function waitWords(seconds: number | null): string {
+  if (!seconds || seconds === 60) return "a minute";
+  if (seconds < 60) return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  const minutes = Math.ceil(seconds / 60);
+  return minutes === 1 ? "a minute" : `${minutes} minutes`;
+}
+
+/**
+ * What to tell the person, in words that don't blame the address they typed, and how long to wait (QA F3): the
+ * seconds Supabase gave for the cooldown when it gave them, the hour the project's email quota runs over.
+ */
+export function authRateLimitMessage(limit: AuthRateLimit, seconds: number | null = null): string {
   switch (limit) {
     case "cooldown":
-      return "We just sent an email to that address. Please wait a minute before asking for another.";
+      return `We just sent an email to that address. Please wait ${waitWords(seconds)} before asking for another.`;
     case "quota":
-      return "We're sending a lot of emails right now and couldn't send yours. Please try again in a little while.";
+      return "We're sending a lot of emails right now and couldn't send yours. Please try again within the hour.";
     case "requests":
       return "Too many attempts from this connection. Please wait a few minutes and try again.";
   }

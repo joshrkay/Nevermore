@@ -36,6 +36,19 @@ describe("VerifyEmailGate", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Check the address and try again");
   });
 
+  // QA F3: Supabase Auth couldn't send the email (its Resend key was refused), and the gate said to check the address.
+  it("says the email couldn't be sent right now, not that the address is wrong, when sending fails on our side", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    auth.requestEmailCode.mockResolvedValue({ error: authError("Error sending email change email", { code: "unexpected_failure", status: 500 }), emailInUse: false });
+    render(<VerifyEmailGate />);
+    sendCode();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/We couldn't send the email right now\. Try again in a minute\. \(Reference [A-Z]{8}\.\)/);
+    expect(alert).not.toHaveTextContent("Check the address");
+    expect(screen.getByLabelText("Work email")).toBeInTheDocument();
+    consoleError.mockRestore();
+  });
+
   it("says to wait a minute when this address was just emailed", async () => {
     auth.requestEmailCode.mockResolvedValue({
       error: authError("For security purposes, you can only request this after 60 seconds", { code: "over_email_send_rate_limit", status: 429 }),

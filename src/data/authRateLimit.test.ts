@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authErrorMessage, authRateLimit, authRateLimitMessage } from "./authRateLimit";
+import { authErrorMessage, authRateLimit, authRateLimitMessage, authRetryAfterSeconds } from "./authRateLimit";
 
 const authError = (message: string, fields: { code?: string; status?: number } = {}) => Object.assign(new Error(message), fields);
 
@@ -47,5 +47,24 @@ describe("authRateLimitMessage", () => {
     expect(authRateLimitMessage("quota")).not.toMatch(/a minute/i);
     expect(authRateLimitMessage("quota")).toMatch(/lot of emails/i);
     expect(authRateLimitMessage("requests")).toMatch(/too many attempts/i);
+  });
+});
+
+// QA F3: a rate limit says how long to wait.
+describe("how long to wait", () => {
+  it("reads the seconds Supabase gives for the cooldown", () => {
+    expect(authRetryAfterSeconds(authError("For security purposes, you can only request this after 12 seconds"))).toBe(12);
+    expect(authRetryAfterSeconds(authError("email rate limit exceeded"))).toBeNull();
+    expect(authRetryAfterSeconds(null)).toBeNull();
+  });
+
+  it("says it in seconds, a minute or minutes, and the hour for the project's email quota", () => {
+    expect(authRateLimitMessage("cooldown", 12)).toBe("We just sent an email to that address. Please wait 12 seconds before asking for another.");
+    expect(authRateLimitMessage("cooldown", 1)).toContain("wait 1 second before");
+    expect(authRateLimitMessage("cooldown", 60)).toContain("wait a minute before");
+    expect(authRateLimitMessage("cooldown", 150)).toContain("wait 3 minutes before");
+    expect(authRateLimitMessage("cooldown")).toContain("wait a minute before");
+    expect(authRateLimitMessage("quota")).toContain("try again within the hour");
+    expect(authRateLimitMessage("requests")).toContain("wait a few minutes");
   });
 });
