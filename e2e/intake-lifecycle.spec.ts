@@ -21,7 +21,7 @@ async function sql<T = Record<string, unknown>>(text: string, values: unknown[] 
 
 /** Opens the Company tab and sets Target Start, the way a prospect does. */
 async function setTargetStart(page: Page, value: string, existing = false) {
-  await page.getByRole("button", { name: "② Company", exact: true }).click();
+  await page.getByRole("tab", { name: "② Company", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Company Profile" })).toBeVisible();
   await page.getByRole("button", { name: `${existing ? "Edit" : "Add"} Target Start`, exact: true }).click();
   await page.getByRole("textbox", { name: "Target Start", exact: true }).fill(value);
@@ -36,9 +36,9 @@ const saved = (page: Page) => page.getByRole("status").getByText("Saved", { exac
 async function openNewIntake(page: Page) {
   await page.goto("/start");
   await agreeToIntakeConsent(page);
-  await expect(page.getByRole("button", { name: "② Company", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "② Company", exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\/start$/);
-  await page.getByRole("button", { name: "② Company", exact: true }).click();
+  await page.getByRole("tab", { name: "② Company", exact: true }).click();
   await page.getByRole("button", { name: "Add Industry", exact: true }).click();
   await page.getByRole("textbox", { name: "Industry", exact: true }).fill("Bookbinding");
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -50,14 +50,14 @@ async function openNewIntake(page: Page) {
 test("opening and reloading the Chamber creates nothing; the first answer creates one intake, which a reload keeps", async ({ page }) => {
   await page.goto("/start");
   await agreeToIntakeConsent(page);
-  await expect(page.getByRole("button", { name: "② Company", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "② Company", exact: true })).toBeVisible();
   // This guest is the one who just agreed (the tests run one at a time).
   const [{ guest }] = await sql<{ guest: string }>("SELECT user_id::text AS guest FROM intake_consents ORDER BY accepted_at DESC LIMIT 1");
   const intakes = async () => (await sql<{ n: number }>("SELECT count(*)::int AS n FROM chamber_sessions WHERE user_id = $1", [guest]))[0].n;
 
   for (let i = 0; i < 2; i++) {
     await page.reload();
-    await expect(page.getByRole("button", { name: "② Company", exact: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "② Company", exact: true })).toBeVisible();
     await expect(page).toHaveURL(/\/start$/);
   }
   expect(await intakes()).toBe(0);
@@ -70,7 +70,7 @@ test("opening and reloading the Chamber creates nothing; the first answer create
 
   await page.reload();
   await expect(page).toHaveURL(`/start?session=${sessionId}`);
-  await page.getByRole("button", { name: "② Company", exact: true }).click();
+  await page.getByRole("tab", { name: "② Company", exact: true }).click();
   await expect(page.getByText("July 2027", { exact: true })).toBeVisible();
   // A bare /start opens it too, rather than starting another.
   await page.goto("/start");
@@ -90,7 +90,7 @@ test("starting over archives the draft, and nothing opens it again", async ({ pa
 
   // A blank intake, and nothing created for it until the prospect starts again: the address names none.
   await expect(page).toHaveURL(/\/start$/);
-  await page.getByRole("button", { name: "② Company", exact: true }).click();
+  await page.getByRole("tab", { name: "② Company", exact: true }).click();
   await expect(page.getByRole("button", { name: "Add Target Start", exact: true })).toBeVisible();
   await setTargetStart(page, "June 2027");
   await expect(page).toHaveURL(SESSION_URL);
@@ -136,7 +136,7 @@ test("an intake left idle past the window expires, says so, and starts fresh", a
     await later.getByRole("button", { name: "Start a new intake", exact: true }).click();
     // A blank intake: the address no longer names the expired one, and nothing new exists until they start.
     await expect(later).toHaveURL(/\/start$/);
-    await expect(later.getByRole("button", { name: "② Company", exact: true })).toBeVisible();
+    await expect(later.getByRole("tab", { name: "② Company", exact: true })).toBeVisible();
   });
 });
 
@@ -158,7 +158,7 @@ test("answers whose save failed survive the tab closing and are offered back", a
 
   await notice.getByRole("button", { name: "Restore my changes", exact: true }).click();
   await expect(notice).toHaveCount(0);
-  await back.getByRole("button", { name: "② Company", exact: true }).click();
+  await back.getByRole("tab", { name: "② Company", exact: true }).click();
   await expect(back.getByText("March 2027", { exact: true })).toBeVisible();
   await expect.poll(async () => (await sql<{ start: string | null }>("SELECT chamber_data ->> 'start_month' AS start FROM chamber_sessions WHERE id = $1", [sessionId]))[0].start).toBe("March 2027");
   await expect(saved(back)).toBeVisible();

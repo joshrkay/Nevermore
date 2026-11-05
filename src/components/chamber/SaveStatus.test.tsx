@@ -70,4 +70,24 @@ describe("SaveStatus", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start a new intake" }));
     expect(onStartNew).toHaveBeenCalledTimes(1);
   });
+
+  describe("offline (I-3.1)", () => {
+    it("alerts the prospect as soon as the connection drops, before any save has failed", () => {
+      render(<SaveStatus status="saved" onRetry={() => {}} offline />);
+      expect(screen.getByRole("alert")).toHaveTextContent("You're offline. Changes will save when you reconnect.");
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+
+    it("says a failed save is down to the connection, and offers no retry that can't work", () => {
+      render(<SaveStatus status="failed" onRetry={() => {}} offline />);
+      expect(screen.getByRole("alert")).toHaveTextContent("Not saved: you're offline. Changes will save when you reconnect.");
+      expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    });
+
+    it("still puts a decision the prospect must make first", () => {
+      render(<SaveStatus status="conflict" onRetry={() => {}} onLoadLatest={() => {}} onKeepMine={() => {}} offline />);
+      expect(screen.getByRole("alert")).toHaveTextContent(/changed in another tab/);
+      expect(screen.getByRole("button", { name: "Keep my changes" })).toBeInTheDocument();
+    });
+  });
 });

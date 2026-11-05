@@ -91,7 +91,7 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
               ) : (
                 <button
                   onClick={() => onSelect(peo.name)}
-                  className="text-xs font-medium px-3 py-1.5 rounded-full border border-border hover:border-primary/40 transition-colors"
+                  className="tap-target shrink-0 text-xs font-medium px-3 py-1.5 rounded-full border border-border hover:border-primary/40 transition-colors"
                 >
                   Choose {peo.name}
                 </button>
@@ -126,12 +126,12 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
               value={otherName}
               onChange={(e) => setOtherName(e.target.value)}
               maxLength={PEO_NAME_MAX}
-              className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm"
+              className="tap-target flex-1 min-w-0 bg-background border border-border rounded-lg px-3 py-2 text-sm"
             />
             <button
               disabled={trimmedOther === ""}
               onClick={() => onSelect(trimmedOther)}
-              className="text-sm font-medium px-4 py-2 rounded-lg border border-border hover:border-primary/40 transition-colors disabled:opacity-40"
+              className="tap-target shrink-0 text-sm font-medium px-4 py-2 rounded-lg border border-border hover:border-primary/40 transition-colors disabled:opacity-40"
             >
               Use this PEO
             </button>

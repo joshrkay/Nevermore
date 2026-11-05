@@ -114,7 +114,7 @@ const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice, restoredTh
           <button
             type="button"
             onClick={() => toLatest(true)}
-            className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full bg-primary text-primary-foreground text-[11px] font-medium px-3 py-1 shadow"
+            className="tap-target absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full bg-primary text-primary-foreground text-[11px] font-medium px-3 py-1 shadow"
           >
             <ArrowDown className="w-3 h-3" aria-hidden="true" /> New message
           </button>
@@ -125,19 +125,26 @@ const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice, restoredTh
 
       {/* Input */}
       <div className="p-2 border-t border-border">
-        <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
+        {/* The pill shows the input's focus ring, so the ring goes around the whole field and not the bare text. */}
+        <div className="flex items-center gap-2 bg-muted rounded-lg pl-3 pr-1 py-1 has-[input:focus-visible]:outline has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-ring">
           <input
             ref={inputRef}
             type="text"
+            aria-label="Message Lenore"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
             placeholder="Type a message..."
             maxLength={2000}
-            className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
+            className="tap-target flex-1 min-w-0 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
           />
-          <button onClick={handleSend} aria-label="Send" className="text-primary hover:text-primary/80 transition-colors">
-            <Send className="w-3.5 h-3.5" />
+          <button
+            type="button"
+            onClick={handleSend}
+            aria-label="Send"
+            className="tap-target shrink-0 flex items-center justify-center rounded-md p-1.5 text-primary hover:text-primary/80 transition-colors"
+          >
+            <Send className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
         </div>
       </div>

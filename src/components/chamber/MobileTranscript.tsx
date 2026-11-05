@@ -22,7 +22,7 @@ const MobileTranscript = ({ messages, onSendMessage, notice, restoredThrough }: 
       <button
         type="button"
         aria-label="Read the conversation"
-        className="shrink-0 flex items-center gap-1 rounded-lg border border-border px-2.5 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        className="tap-target shrink-0 flex items-center gap-1 rounded-lg border border-border px-2.5 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
         <MessagesSquare className="w-4 h-4" aria-hidden="true" />
         Chat

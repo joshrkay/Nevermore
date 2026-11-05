@@ -102,3 +102,30 @@ export function advisorScanNotice(verdict: string | undefined): string | null {
   if (verdict === "failed") return "Not openable: the virus scan couldn't finish. Operations has been alerted.";
   return "Being checked for viruses. It can be opened once the check passes.";
 }
+
+// ---------- Announcements ----------
+
+/** The state a file shows in the Upload tab: its virus check until that passes (not while it uploads), then its processing. */
+export function shownDocumentStatus(status: string, verdict: string | null | undefined) {
+  const scan = status === "uploading" ? null : scanStatusInfo(verdict);
+  return { scan, status: scan ?? documentStatusInfo(status) };
+}
+
+/**
+ * What a screen reader should hear about files whose state changed (I-2.2): a line for each file that is new
+ * since `before`, or whose shown label changed, like "Payroll.xlsx: Reading…". `labels` is what to pass as
+ * `before` next time. A file that went away is not mentioned: the prospect removed it.
+ */
+export function documentStatusChanges(
+  before: ReadonlyMap<string, string>,
+  docs: readonly { id: string; file_name: string; status: string; scan_verdict?: string | null }[],
+): { labels: Map<string, string>; lines: string[] } {
+  const labels = new Map<string, string>();
+  const lines: string[] = [];
+  for (const doc of docs) {
+    const { label } = shownDocumentStatus(doc.status, doc.scan_verdict).status;
+    labels.set(doc.id, label);
+    if (before.get(doc.id) !== label) lines.push(`${doc.file_name}: ${label}`);
+  }
+  return { labels, lines };
+}

@@ -42,11 +42,17 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
 
   // The orb itself starts and ends a call, like the button; while one is starting it does nothing.
   const orbClick = !hasAgentId || connecting ? undefined : inCall ? onEndVoice : onStartVoice;
+  const orbClassName = `w-24 h-24 md:w-44 md:h-44 rounded-full bg-gradient-to-br from-primary/80 to-primary/40 flex items-center justify-center transition-all duration-500 ${orbClasses[orbState]}`;
+  const orbFace = (
+    <span className="w-[4.5rem] h-[4.5rem] md:w-36 md:h-36 rounded-full bg-[#07080D] flex items-center justify-center">
+      <span className={`block w-12 h-12 md:w-28 md:h-28 rounded-full bg-gradient-to-br from-primary/60 to-primary/20 ${orbState === "speaking" ? "animate-pulse" : ""}`} />
+    </span>
+  );
 
   return (
-    <div className="relative w-full flex flex-col items-center justify-center py-8 md:py-12" style={{ background: "#07080D" }}>
-      {/* Orb */}
-      <div className="relative mb-6">
+    <div className="relative w-full flex flex-col items-center justify-center py-4 md:py-12" style={{ background: "#07080D" }}>
+      {/* Orb. Smaller on a phone, so the workspace below keeps room on a short screen (I-1.1). */}
+      <div className="relative mb-3 md:mb-6">
         {/* Thinking rotating arc */}
         {orbState === "thinking" && (
           <div className="absolute inset-[-12px] rounded-full border-2 border-transparent border-t-primary animate-spin" />
@@ -55,15 +61,26 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
         {orbState === "listening" && (
           <div className="absolute inset-[-8px] rounded-full border-2 border-primary/40 animate-ping" />
         )}
-        <div
-          data-testid="voice-orb"
-          className={`w-36 h-36 md:w-44 md:h-44 rounded-full bg-gradient-to-br from-primary/80 to-primary/40 flex items-center justify-center transition-all duration-500 ${orbClick ? "cursor-pointer" : ""} ${orbClasses[orbState]}`}
-          onClick={orbClick}
-        >
-          <div className="w-28 h-28 md:w-36 md:h-36 rounded-full bg-[#07080D] flex items-center justify-center">
-            <div className={`w-20 h-20 md:w-28 md:h-28 rounded-full bg-gradient-to-br from-primary/60 to-primary/20 ${orbState === "speaking" ? "animate-pulse" : ""}`} />
+        {hasAgentId ? (
+          // A toggle for the call, like the buttons below it. While a call is starting it stays focusable but
+          // does nothing (aria-disabled), so a keyboard user's focus isn't dropped.
+          <button
+            type="button"
+            data-testid="voice-orb"
+            aria-label="Voice call with Lenore"
+            aria-pressed={inCall}
+            aria-disabled={connecting || undefined}
+            onClick={orbClick}
+            className={`${orbClassName} ${connecting ? "cursor-wait" : "cursor-pointer"} focus-visible:outline-offset-4`}
+          >
+            {orbFace}
+          </button>
+        ) : (
+          // Without voice the orb is only a picture.
+          <div data-testid="voice-orb" aria-hidden="true" className={orbClassName}>
+            {orbFace}
           </div>
-        </div>
+        )}
       </div>
 
       {/* Status indicator */}
@@ -79,13 +96,13 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
         </motion.div>
       )}
 
-      {/* Last spoken text */}
+      {/* Last spoken text: two lines on a phone, where the whole conversation is a tap away (MobileTranscript). */}
       <motion.p
         key={lastSpokenText}
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0 }}
-        className="font-display italic text-lg md:text-xl text-foreground/80 text-center max-w-lg px-6 mb-6 min-h-[2em]"
+        className="font-display italic text-base md:text-xl text-foreground/80 text-center max-w-lg px-6 mb-3 md:mb-6 min-h-[2em] line-clamp-2 md:line-clamp-none"
       >
         {lastSpokenText && `"${lastSpokenText}"`}
       </motion.p>
@@ -102,7 +119,7 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
             <button
               type="button"
               onClick={onEndVoice}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm transition-colors bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="tap-target flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm transition-colors bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               <MicOff className="w-4 h-4" />
               End voice call
@@ -113,7 +130,7 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
               <button
                 type="button"
                 disabled
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm bg-primary/60 text-primary-foreground cursor-wait"
+                className="tap-target flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm bg-primary/60 text-primary-foreground cursor-wait"
               >
                 <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                 Connecting...
@@ -121,7 +138,7 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
               <button
                 type="button"
                 onClick={onEndVoice}
-                className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors"
+                className="tap-target text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors"
               >
                 Cancel
               </button>
@@ -130,7 +147,7 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
             <button
               type="button"
               onClick={onStartVoice}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm transition-colors bg-primary text-primary-foreground hover:bg-primary/90"
+              className="tap-target flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm transition-colors bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <Mic className="w-4 h-4" />
               Speak with Lenore
@@ -140,7 +157,7 @@ const VoiceOrb = ({ orbState, lastSpokenText, voice = INITIAL_VOICE_STATE, hasAg
         <button
           type="button"
           onClick={onTypeInstead}
-          className="flex items-center gap-2 border border-border text-foreground px-5 py-2.5 rounded-full font-medium text-sm hover:border-primary/40 transition-colors"
+          className="tap-target flex items-center gap-2 border border-border text-foreground px-5 py-2.5 rounded-full font-medium text-sm hover:border-primary/40 transition-colors"
         >
           <MessageSquare className="w-4 h-4" />
           Type instead

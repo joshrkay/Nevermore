@@ -25,7 +25,7 @@ const VoiceFailureNotice = ({ failure, onRetry, onContinueInText }: VoiceFailure
         <button
           type="button"
           onClick={onContinueInText}
-          className="font-medium px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+          className="tap-target font-medium px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
         >
           Continue in text
         </button>
@@ -33,7 +33,7 @@ const VoiceFailureNotice = ({ failure, onRetry, onContinueInText }: VoiceFailure
           <button
             type="button"
             onClick={onRetry}
-            className="font-medium px-3 py-1.5 rounded-md border border-border hover:border-primary/40 transition-colors"
+            className="tap-target font-medium px-3 py-1.5 rounded-md border border-border hover:border-primary/40 transition-colors"
           >
             Try voice again
           </button>

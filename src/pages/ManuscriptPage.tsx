@@ -18,6 +18,7 @@ import { downloadBlob } from "@/lib/downloadFile";
 import { finalManuscriptUrl } from "@/lib/advisorApi";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
 import LegalLinks from "@/components/LegalLinks";
+import LoadingScreen from "@/components/LoadingScreen";
 
 const SAMPLE_FILE_ID = "EAA-SAMPLE";
 const SAMPLE_DATE = new Date("2026-03-02T12:00:00Z");
@@ -251,11 +252,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
   };
 
   if (state.kind === "loading" || (state.kind !== "sample" && authLoading)) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-6 h-6 text-primary animate-spin" />
-      </div>
-    );
+    return <LoadingScreen label="Loading the Manuscript" />;
   }
 
   if (state.kind === "no_session") {

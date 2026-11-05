@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ProvenanceMap } from "@/data/provenance";
@@ -31,7 +31,7 @@ describe("LiveWorkspace", () => {
       </MemoryRouter>,
     );
     for (const [tab, heading] of TABS) {
-      fireEvent.click(screen.getByRole("button", { name: tab }));
+      fireEvent.click(screen.getByRole("tab", { name: tab }));
       expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
     }
   });
@@ -46,7 +46,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} provenance={provenance} onFieldAction={onFieldAction} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑤ Your Team" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑤ Your Team" }));
     expect(screen.getByText("From Roster.xlsx")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm Census" }));
     expect(onFieldAction).toHaveBeenCalledWith({ type: "confirm", field: "census" });
@@ -82,7 +82,7 @@ describe("LiveWorkspace", () => {
         />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑦ Review" }));
     // The required conflict blocks certification whoever verified it, so its rival answers stay choosable.
     expect(screen.getAllByRole("button", { name: /^Use Acme Press for / }).length).toBeGreaterThan(0);
     // The optional answer is settled by the advisor: badged, not offered for confirmation, and its note is shown.
@@ -97,7 +97,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑦ Review" }));
     fireEvent.click(screen.getByRole("button", { name: "See Your PEO Matches →" }));
     expect(screen.getByRole("heading", { name: "PEO Match" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Continue without choosing a PEO →" }));
@@ -110,7 +110,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑧ PEO Match" }));
     fireEvent.click(screen.getByRole("button", { name: "Choose Rippling" }));
     expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("Rippling");
     fireEvent.click(screen.getByRole("button", { name: "Proceed with Rippling →" }));
@@ -125,7 +125,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑧ PEO Match" }));
     fireEvent.change(screen.getByLabelText("Another PEO"), { target: { value: "Acme PEO" } });
     fireEvent.click(screen.getByRole("button", { name: "Use this PEO" }));
     fireEvent.click(screen.getByRole("button", { name: "Proceed with Acme PEO →" }));
@@ -141,11 +141,11 @@ describe("LiveWorkspace", () => {
       </MemoryRouter>,
     );
     // Opened straight on The Reckoning, as after a reload: the saved choice is already there.
-    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑨ The Reckoning" }));
     expect(screen.getByText(/prepared for Insperity/)).toBeInTheDocument();
     expect(screen.getByText(/send to Insperity myself/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑧ PEO Match" }));
     fireEvent.click(screen.getByRole("button", { name: "Choose TriNet" }));
     expect(onChoosePeo).toHaveBeenCalledWith("TriNet");
     // What is shown is what the intake holds, not a copy kept here.
@@ -164,7 +164,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑨ The Reckoning" }));
     fireEvent.click(screen.getByRole("button", { name: "Go to Review" }));
     expect(screen.getByRole("heading", { name: "Review" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Pay frequency");
@@ -181,7 +181,7 @@ describe("LiveWorkspace", () => {
     rerender(view(1));
     expect(screen.getByRole("heading", { name: "Review" })).toHaveFocus();
     // Asking again after moving elsewhere brings it back.
-    fireEvent.click(screen.getByRole("button", { name: "② Company" }));
+    fireEvent.click(screen.getByRole("tab", { name: "② Company" }));
     rerender(view(2));
     expect(screen.getByRole("heading", { name: "Review" })).toHaveFocus();
   });
@@ -192,7 +192,7 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑨ The Reckoning" }));
     expect(screen.getByText(/prepared for your PEO/)).toBeInTheDocument();
     expect(screen.getByText(/send to the PEO I choose myself/)).toBeInTheDocument();
     expect(screen.queryByText(/null|undefined|TriNet|Justworks|Rippling/)).not.toBeInTheDocument();
@@ -208,7 +208,7 @@ describe("LiveWorkspace", () => {
       </MemoryRouter>
     );
     const { rerender } = render(mount());
-    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑦ Review" }));
     expect(screen.getByText("Needs your review — 1 item")).toBeInTheDocument();
     rerender(mount(new Set(["company_name"])));
     expect(screen.queryByText(/^Needs your review/)).not.toBeInTheDocument();
@@ -224,7 +224,7 @@ describe("LiveWorkspace", () => {
       </MemoryRouter>
     );
     const { rerender } = render(mount());
-    fireEvent.click(screen.getByRole("button", { name: "⑦ Review" }));
+    fireEvent.click(screen.getByRole("tab", { name: "⑦ Review" }));
     expect(screen.queryByText("Verified by your advisor")).not.toBeInTheDocument();
     // Listed under Needs your review and in the Company section.
     expect(screen.getAllByRole("button", { name: /^Confirm / })).toHaveLength(2);
@@ -232,5 +232,53 @@ describe("LiveWorkspace", () => {
     // Settled, so it is no longer listed for review, and the Company section's row carries the badge.
     expect(screen.getAllByText("Verified by your advisor")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /^Confirm / })).not.toBeInTheDocument();
+  });
+
+  describe("the tab bar (the ARIA tabs pattern, I-2.1)", () => {
+    const mount = () =>
+      render(
+        <MemoryRouter>
+          <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
+        </MemoryRouter>,
+      );
+
+    it("is a named tab list whose selected tab labels the panel", () => {
+      mount();
+      const list = screen.getByRole("tablist", { name: "Intake sections" });
+      const tabs = within(list).getAllByRole("tab");
+      expect(tabs.map((t) => t.textContent)).toEqual(TABS.map(([name]) => name));
+      expect(screen.getByRole("tab", { name: "① Upload" })).toHaveAttribute("aria-selected", "true");
+      expect(tabs.filter((t) => t.getAttribute("aria-selected") === "true")).toHaveLength(1);
+      fireEvent.click(screen.getByRole("tab", { name: "③ Payroll" }));
+      expect(screen.getByRole("tab", { name: "③ Payroll" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: "① Upload" })).toHaveAttribute("aria-selected", "false");
+      expect(screen.getByRole("tabpanel", { name: "③ Payroll" })).toContainElement(screen.getByRole("heading", { name: "Payroll & Time" }));
+    });
+
+    it("keeps only the selected tab in the Tab order", () => {
+      mount();
+      const tabs = screen.getAllByRole("tab");
+      expect(tabs.map((t) => t.tabIndex)).toEqual(tabs.map((_, i) => (i === 0 ? 0 : -1)));
+    });
+
+    it("moves with the arrow keys, Home and End, wrapping at either end, and opens the tab it reaches", () => {
+      mount();
+      const tab = (name: string) => screen.getByRole("tab", { name });
+      tab("① Upload").focus();
+      fireEvent.keyDown(tab("① Upload"), { key: "ArrowRight" });
+      expect(tab("② Company")).toHaveFocus();
+      expect(tab("② Company")).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("heading", { name: "Company Profile" })).toBeInTheDocument();
+      fireEvent.keyDown(tab("② Company"), { key: "ArrowLeft" });
+      fireEvent.keyDown(tab("① Upload"), { key: "ArrowLeft" });
+      expect(tab("⑨ The Reckoning")).toHaveFocus();
+      fireEvent.keyDown(tab("⑨ The Reckoning"), { key: "ArrowRight" });
+      expect(tab("① Upload")).toHaveFocus();
+      fireEvent.keyDown(tab("① Upload"), { key: "End" });
+      expect(tab("⑨ The Reckoning")).toHaveFocus();
+      fireEvent.keyDown(tab("⑨ The Reckoning"), { key: "Home" });
+      expect(tab("① Upload")).toHaveFocus();
+      expect(tab("① Upload")).toHaveAttribute("aria-selected", "true");
+    });
   });
 });

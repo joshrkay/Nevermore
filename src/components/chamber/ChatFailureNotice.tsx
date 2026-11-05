@@ -22,14 +22,14 @@ const ChatFailureNotice = ({ failure, pending, onRetry, onDismiss }: ChatFailure
         <button
           onClick={onRetry}
           disabled={pending}
-          className="font-medium px-3 py-1.5 rounded-md bg-primary text-primary-foreground disabled:opacity-50 flex items-center gap-1.5"
+          className="tap-target font-medium px-3 py-1.5 rounded-md bg-primary text-primary-foreground disabled:opacity-50 flex items-center gap-1.5"
         >
           {pending && <Loader2 className="w-3 h-3 animate-spin" />} Try again
         </button>
       )}
       <button
         onClick={onDismiss}
-        className="font-medium px-3 py-1.5 rounded-md border border-border hover:border-primary/40 transition-colors"
+        className="tap-target font-medium px-3 py-1.5 rounded-md border border-border hover:border-primary/40 transition-colors"
       >
         Continue manually
       </button>

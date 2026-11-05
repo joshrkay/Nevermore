@@ -29,7 +29,7 @@ async function readIntake(sessionId: string): Promise<SavedIntake> {
 
 /** Opens the Company tab and sets Target Start, the way a prospect does. */
 async function setTargetStart(page: Page, value: string, existing: boolean) {
-  await page.getByRole("button", { name: "② Company", exact: true }).click();
+  await page.getByRole("tab", { name: "② Company", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Company Profile" })).toBeVisible();
   await page.getByRole("button", { name: `${existing ? "Edit" : "Add"} Target Start`, exact: true }).click();
   await page.getByRole("textbox", { name: "Target Start", exact: true }).fill(value);
@@ -43,7 +43,7 @@ test("a tab that is behind is told so and cannot overwrite the other tab's save"
   await page.goto("/start");
   await agreeToIntakeConsent(page);
   // Nothing exists until the prospect starts (A-1): an industry starts this intake.
-  await page.getByRole("button", { name: "② Company", exact: true }).click();
+  await page.getByRole("tab", { name: "② Company", exact: true }).click();
   await page.getByRole("button", { name: "Add Industry", exact: true }).click();
   await page.getByRole("textbox", { name: "Industry", exact: true }).fill("Bookbinding");
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -54,7 +54,7 @@ test("a tab that is behind is told so and cannot overwrite the other tab's save"
   // The same browser, so the same guest (who has agreed already): two tabs of one prospect.
   const stale = await context.newPage();
   await stale.goto(`/start?session=${sessionId}`);
-  await expect(stale.getByRole("button", { name: "② Company", exact: true })).toBeVisible();
+  await expect(stale.getByRole("tab", { name: "② Company", exact: true })).toBeVisible();
   const opened = await readIntake(sessionId);
   expect(opened.start_month).toBeNull();
 

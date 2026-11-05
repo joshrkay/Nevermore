@@ -138,7 +138,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
               aria-label={label}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              className="text-xs bg-background border border-border rounded px-2 py-1"
+              className="tap-target text-xs bg-background border border-border rounded px-2 py-1"
             >
               <option value="">Not sure</option>
               <option value="yes">Yes</option>
@@ -154,13 +154,13 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder={kind === "list" ? "Comma-separated" : undefined}
-              className="text-xs bg-background border border-border rounded px-2 py-1 min-w-0 flex-1"
+              className="tap-target text-xs bg-background border border-border rounded px-2 py-1 min-w-0 flex-1"
             />
           )}
-          <button type="submit" className="text-[10px] font-medium px-2 py-1 rounded bg-primary text-primary-foreground">
+          <button type="submit" className="tap-target text-[10px] font-medium px-2 py-1 rounded bg-primary text-primary-foreground">
             Save
           </button>
-          <button type="button" onClick={() => setEditing(false)} className="text-[10px] px-2 py-1 rounded text-muted-foreground hover:text-foreground">
+          <button type="button" onClick={() => setEditing(false)} className="tap-target text-[10px] px-2 py-1 rounded text-muted-foreground hover:text-foreground">
             Cancel
           </button>
           {invalid && <p role="alert" className="w-full text-[10px] text-destructive">That doesn't look right. Please check the value.</p>}
@@ -179,7 +179,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
       ) : required ? (
         <p className="text-xs text-warning">Not provided yet. Needed before you can certify.</p>
       ) : (
-        <p className="text-xs text-muted-foreground/50 italic">Lenore will fill this in...</p>
+        <p className="text-xs text-muted-foreground italic">Lenore will fill this in...</p>
       )}
 
       {!editing && onAction && provenance && display && (
@@ -202,7 +202,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
                 type="button"
                 onClick={() => onAction({ type: "resolve", field, candidate: i })}
                 aria-label={`Use ${formatFieldValue(c.value)} for ${label}`}
-                className="text-[10px] font-medium px-2 py-0.5 rounded border border-border hover:bg-muted"
+                className="tap-target shrink-0 text-[10px] font-medium px-2 py-0.5 rounded border border-border hover:bg-muted"
               >
                 Use this
               </button>
@@ -218,13 +218,13 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
               type="button"
               onClick={() => onAction({ type: "confirm", field })}
               aria-label={`Confirm ${label}`}
-              className="text-[10px] font-medium text-success hover:underline"
+              className="tap-target text-[10px] font-medium text-success hover:underline"
             >
               Confirm
             </button>
           )}
           {canEdit && (
-            <button type="button" onClick={startEdit} aria-label={`${display ? "Edit" : "Add"} ${label}`} className="text-[10px] text-muted-foreground hover:text-foreground hover:underline">
+            <button type="button" onClick={startEdit} aria-label={`${display ? "Edit" : "Add"} ${label}`} className="tap-target text-[10px] text-muted-foreground hover:text-foreground hover:underline">
               {display ? "Edit" : "Add"}
             </button>
           )}
@@ -234,7 +234,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
               type="button"
               onClick={() => onAction({ type: "not_applicable", field })}
               aria-label={`${label} doesn't apply`}
-              className="text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+              className="tap-target text-[10px] text-muted-foreground hover:text-foreground hover:underline"
             >
               Doesn't apply
             </button>
@@ -244,7 +244,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
               type="button"
               onClick={() => onAction({ type: "reopen", field })}
               aria-label={`Undo: ${label} doesn't apply`}
-              className="text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+              className="tap-target text-[10px] text-muted-foreground hover:text-foreground hover:underline"
             >
               Undo
             </button>

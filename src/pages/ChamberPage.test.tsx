@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
 import type { IntakeState, ProvenanceMap } from "@/data/provenance";
@@ -97,10 +97,11 @@ vi.mock("@/components/chamber/workspace/LiveWorkspace", () => ({
   },
 }));
 const extractSpoken = vi.fn();
+const chatSend = vi.fn();
 vi.mock("@/hooks/useLenoreChat", () => ({
   useLenoreChat: (options: typeof hooks.chat) => {
     hooks.chat = options;
-    return { send: vi.fn(), extractSpoken, retry: vi.fn(), dismissFailure: vi.fn(), failure: null, pending: false };
+    return { send: chatSend, extractSpoken, retry: vi.fn(), dismissFailure: vi.fn(), failure: null, pending: false };
   },
 }));
 
@@ -129,6 +130,7 @@ describe("ChamberPage", () => {
     mobile = false;
     voice.state = { status: "idle", attempt: 0 };
     voice.dismissFailure.mockClear();
+    chatSend.mockClear();
     for (const fn of [session.startNew, session.retryLoad, session.retrySave, session.loadLatest, session.keepMine, session.discardChanges, session.restoreBackup, session.discardBackup, session.updateIntake]) {
       fn.mockClear();
     }
@@ -349,6 +351,44 @@ describe("ChamberPage", () => {
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
       expect(session.retrySave).toHaveBeenCalledTimes(1);
     });
+
+    describe("offline (I-3.1)", () => {
+      afterEach(() => vi.restoreAllMocks());
+      const goOffline = () => {
+        vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+        window.dispatchEvent(new Event("offline"));
+      };
+      const goOnline = () => {
+        vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+        window.dispatchEvent(new Event("online"));
+      };
+
+      it("tells the prospect at once when the connection drops", () => {
+        session.saveStatus = "saved";
+        renderPage();
+        act(goOffline);
+        expect(screen.getByRole("alert")).toHaveTextContent("You're offline. Changes will save when you reconnect.");
+        act(goOnline);
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      });
+
+      it("saves again as soon as the connection is back, when a save failed meanwhile", () => {
+        session.saveStatus = "failed";
+        renderPage();
+        act(goOffline);
+        expect(session.retrySave).not.toHaveBeenCalled();
+        act(goOnline);
+        expect(session.retrySave).toHaveBeenCalledTimes(1);
+      });
+
+      it("doesn't save again on reconnecting when nothing failed", () => {
+        session.saveStatus = "saved";
+        renderPage();
+        act(goOffline);
+        act(goOnline);
+        expect(session.retrySave).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe("what Lenore's voice is told", () => {
@@ -426,6 +466,34 @@ describe("ChamberPage", () => {
       expect(voice.dismissFailure).toHaveBeenCalledTimes(1);
       expect(screen.getByPlaceholderText("Message Lenore...")).toHaveFocus();
     });
+
+    it("names the chat bar's input and sends from its Send button or Enter (I-2.1)", () => {
+      renderPage();
+      const input = screen.getByRole("textbox", { name: "Message Lenore" });
+      fireEvent.change(input, { target: { value: "  We have 12 people  " } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      expect(chatSend).toHaveBeenCalledWith("We have 12 people");
+      expect(input).toHaveValue("");
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      expect(chatSend).toHaveBeenCalledTimes(1);
+      fireEvent.change(input, { target: { value: "Arizona" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(chatSend).toHaveBeenLastCalledWith("Arizona");
+    });
+
+    it("reads Lenore's replies out, since the transcript isn't on screen (I-2.2)", () => {
+      session.messages = [lenore("m1", "Hello, I'm Lenore.")];
+      const { rerender } = renderPage();
+      session.messages = [lenore("m1", "Hello, I'm Lenore."), prospect("m2", "Hi"), lenore("m3", "How many people work for you?")];
+      rerender(<MemoryRouter initialEntries={["/start"]}><ChamberPage /></MemoryRouter>);
+      expect(screen.getByTestId("reply-announcer")).toHaveTextContent("Lenore: How many people work for you?");
+    });
+  });
+
+  it("leaves reading replies out to the transcript on a wide screen", () => {
+    session.messages = [lenore("m1", "Hello, I'm Lenore.")];
+    renderPage();
+    expect(screen.queryByTestId("reply-announcer")).not.toBeInTheDocument();
   });
 
   describe("the address", () => {

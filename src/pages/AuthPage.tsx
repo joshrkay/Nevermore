@@ -159,7 +159,7 @@ const AuthPage = () => {
                     maxLength={6}
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
-                    className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground font-mono tracking-widest outline-none focus:border-primary/50 transition-colors"
+                    className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground font-mono tracking-widest focus:border-primary/50 transition-colors"
                   />
                   <button
                     type="submit"
@@ -199,37 +199,40 @@ const AuthPage = () => {
           <form onSubmit={handleSubmit} className="space-y-4">
             {isSignUp && (
               <div>
-                <label className="block text-xs text-muted-foreground mb-1.5">Company Name</label>
+                <label htmlFor="auth-company" className="block text-xs text-muted-foreground mb-1.5">Company Name</label>
                 <input
+                  id="auth-company"
                   type="text"
                   value={companyName}
                   onChange={(e) => setCompanyName(e.target.value)}
                   placeholder="Your company's legal name"
-                  className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
+                  className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/50 transition-colors"
                 />
               </div>
             )}
             <div>
-              <label className="block text-xs text-muted-foreground mb-1.5">Email</label>
+              <label htmlFor="auth-email" className="block text-xs text-muted-foreground mb-1.5">Email</label>
               <input
+                id="auth-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@company.com"
                 required
-                className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
+                className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/50 transition-colors"
               />
             </div>
             <div>
-              <label className="block text-xs text-muted-foreground mb-1.5">Password</label>
+              <label htmlFor="auth-password" className="block text-xs text-muted-foreground mb-1.5">Password</label>
               <input
+                id="auth-password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 required
                 minLength={6}
-                className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
+                className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/50 transition-colors"
               />
             </div>
 

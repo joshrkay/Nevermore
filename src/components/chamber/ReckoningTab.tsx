@@ -223,7 +223,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
               </>
             )}
             {onReview && (
-              <button type="button" onClick={onReview} className="text-sm font-medium text-primary underline underline-offset-2">
+              <button type="button" onClick={onReview} className="tap-target text-sm font-medium text-primary underline underline-offset-2">
                 Go to Review
               </button>
             )}
@@ -266,8 +266,8 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
               />
               <span
                 aria-hidden="true"
-                className={`w-5 h-5 rounded border-2 flex-shrink-0 mt-0.5 flex items-center justify-center transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary ${
-                  checks[i] ? "bg-primary border-primary" : "border-muted-foreground/40 group-hover:border-primary/60"
+                className={`w-5 h-5 rounded border-2 flex-shrink-0 mt-0.5 flex items-center justify-center transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background ${
+                  checks[i] ? "bg-primary border-primary" : "border-muted-foreground group-hover:border-primary"
                 }`}
               >
                 {checks[i] && (
@@ -309,7 +309,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
                   aria-label="Full name"
                   placeholder="Full name"
                   autoComplete="name"
-                  className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
+                  className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/50 transition-colors"
                 />
                 <input
                   value={signerTitle}
@@ -317,7 +317,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
                   aria-label="Role"
                   placeholder="Role (e.g. CEO)"
                   autoComplete="organization-title"
-                  className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
+                  className="w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/50 transition-colors"
                 />
               </div>
               <button

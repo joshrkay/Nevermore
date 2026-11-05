@@ -9,7 +9,8 @@ interface LegalLinksProps {
   className?: string;
 }
 
-const linkClass = "hover:text-foreground underline-offset-2 hover:underline transition-colors";
+// On a phone each link is a 44 px target (I-1.1); inline-flex lets the minimum size apply to a link.
+const linkClass = "tap-target inline-flex items-center justify-center hover:text-foreground underline-offset-2 hover:underline transition-colors";
 
 /**
  * The Privacy Policy and Terms of Use, reachable from every page (US-6.2). Every page component renders this

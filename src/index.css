@@ -20,13 +20,16 @@
     --secondary-foreground: 30 20% 93%;
 
     --muted: 233 24% 14%;
-    --muted-foreground: 220 9% 46%;
+    /* 4.5:1 or better on background, card and muted, where it is used at 9-12 px (WCAG AA, I-2.3). */
+    --muted-foreground: 220 9% 56%;
 
     --accent: 233 24% 14%;
     --accent-foreground: 30 20% 93%;
 
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 30 20% 93%;
+    /* 4.5:1 or better as text on background, card and muted; light text on it was 3.3:1, so a destructive
+       button takes dark text, as a warning one does (I-2.3). */
+    --destructive: 0 84% 62%;
+    --destructive-foreground: 228 33% 4%;
 
     --success: 160 60% 45%;
     --success-foreground: 30 20% 93%;
@@ -36,7 +39,8 @@
 
     --border: 235 24% 14%;
     --input: 235 24% 14%;
-    --ring: 350 73% 44%;
+    /* Lighter than --primary so a focus ring keeps 3:1 against background, card and muted (WCAG 2.4.11, I-2.3). */
+    --ring: 350 73% 55%;
 
     --radius: 0.5rem;
 
@@ -61,6 +65,13 @@
   h1, h2, h3, h4, h5, h6 {
     @apply font-display;
   }
+
+  /* One visible focus ring for every control the keyboard reaches (I-2.1). An element that draws its own
+     (the shadcn components, a ring on a wrapper) opts out with outline-none. */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
 }
 
 @layer utilities {
@@ -74,6 +85,15 @@
 
   .font-mono {
     font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* At least 44x44 px to tap on a phone or a touch screen (I-1.1). The desktop layout keeps its compact
+     controls. 767px matches useIsMobile's breakpoint. */
+  @media (max-width: 767px), (pointer: coarse) {
+    .tap-target {
+      min-height: 44px;
+      min-width: 44px;
+    }
   }
 }
 

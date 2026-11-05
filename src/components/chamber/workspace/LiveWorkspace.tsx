@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import type { CertificationRequest, CertificationState } from "@/data/manuscript";
 import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance";
@@ -15,9 +15,10 @@ import DependentsTab from "./DependentsTab";
 import ReviewTab from "./ReviewTab";
 import { VerifiedFieldsContext } from "./VerifiedFieldsContext";
 import PEOMatchTab from "../PEOMatchTab";
+import DocumentAnnouncer from "../DocumentAnnouncer";
 import ReckoningTab from "../ReckoningTab";
 
-const WORKSPACE_TABS = [
+const WORKSPACE_TABS: { key: string; label: string }[] = [
   { key: "upload", label: "① Upload" },
   { key: "company", label: "② Company" },
   { key: "payroll", label: "③ Payroll" },
@@ -28,6 +29,16 @@ const WORKSPACE_TABS = [
   { key: "match", label: "⑧ PEO Match" },
   { key: "reckoning", label: "⑨ The Reckoning" },
 ];
+
+/** The tab the arrow keys, Home and End move to from `index` (the ARIA tabs pattern), or null for any other key. */
+function tabForKey(key: string, index: number): number | null {
+  const last = WORKSPACE_TABS.length - 1;
+  if (key === "ArrowRight") return index === last ? 0 : index + 1;
+  if (key === "ArrowLeft") return index === 0 ? last : index - 1;
+  if (key === "Home") return 0;
+  if (key === "End") return last;
+  return null;
+}
 
 interface LiveWorkspaceProps {
   data: ChamberData;
@@ -71,6 +82,19 @@ const LiveWorkspace = ({
 }: LiveWorkspaceProps) => {
   const onAction = isDemo ? undefined : onFieldAction;
   const [activeTab, setActiveTab] = useState("upload");
+  const ids = useId();
+  const tabId = (key: string) => `${ids}-tab-${key}`;
+  const panelId = `${ids}-panel`;
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  // Only the selected tab is in the Tab order; the arrow keys move between tabs and open the one they reach.
+  const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const next = tabForKey(e.key, index);
+    if (next === null) return;
+    e.preventDefault();
+    const { key } = WORKSPACE_TABS[next];
+    setActiveTab(key);
+    tabRefs.current[key]?.focus();
+  };
   useEffect(() => {
     if (openReview > 0) setActiveTab("review");
   }, [openReview]);
@@ -100,25 +124,40 @@ const LiveWorkspace = ({
       </div>
 
       {/* Tab bar */}
-      <div className="border-b border-border flex overflow-x-auto flex-shrink-0">
-        {WORKSPACE_TABS.map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={`px-3 py-2.5 text-xs font-medium whitespace-nowrap transition-colors border-b-2 ${
-              activeTab === tab.key
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div role="tablist" aria-label="Intake sections" className="border-b border-border flex overflow-x-auto flex-shrink-0">
+        {WORKSPACE_TABS.map((tab, index) => {
+          const selected = activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              ref={(el) => {
+                tabRefs.current[tab.key] = el;
+              }}
+              type="button"
+              role="tab"
+              id={tabId(tab.key)}
+              aria-selected={selected}
+              aria-controls={panelId}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setActiveTab(tab.key)}
+              onKeyDown={(e) => onTabKeyDown(e, index)}
+              className={`tap-target shrink-0 px-3 py-2.5 text-xs font-medium whitespace-nowrap transition-colors border-b-2 -outline-offset-2 ${
+                selected
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
+
+      <DocumentAnnouncer docs={documents.docs} loading={documents.isLoading} />
 
       {/* Tab content */}
       <VerifiedFieldsContext.Provider value={verified}>
-        <div className="flex-1 overflow-y-auto">
+        <div role="tabpanel" id={panelId} aria-labelledby={tabId(activeTab)} className="flex-1 overflow-y-auto">
           {activeTab === "upload" && <UploadTab documents={documents} sessionId={documentSessionId} canStart={!isDemo && Boolean(ensureIntake)} data={data} provenance={provenance} onResolveCandidates={handleResolve} />}
           {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
           {activeTab === "payroll" && <PayrollTab data={data} provenance={provenance} onAction={onAction} />}

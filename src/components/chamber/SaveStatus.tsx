@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Loader2 } from "lucide-react";
+import { AlertTriangle, Check, Loader2, WifiOff } from "lucide-react";
 import type { SaveStatus as Status } from "@/hooks/useChamberSession";
 
 interface SaveStatusProps {
@@ -14,12 +14,14 @@ interface SaveStatusProps {
   onStartNew?: () => void;
   /** Invalid: the answer the server refused, in words. */
   invalidField?: string | null;
+  /** The browser has no connection: nothing can be saved until it's back. */
+  offline?: boolean;
 }
 
-const linkButton = "font-medium text-foreground underline underline-offset-2 hover:text-primary transition-colors";
+const linkButton = "tap-target font-medium text-foreground underline underline-offset-2 hover:text-primary transition-colors";
 
 /** Tells the prospect whether their latest answers are saved, and what to do when they aren't. */
-const SaveStatus = ({ status, onRetry, onLoadLatest, onKeepMine, onDiscard, onStartNew, invalidField }: SaveStatusProps) => {
+const SaveStatus = ({ status, onRetry, onLoadLatest, onKeepMine, onDiscard, onStartNew, invalidField, offline = false }: SaveStatusProps) => {
   // These need the prospect's decision, so they interrupt rather than wait politely.
   if (status === "conflict" || status === "invalid" || status === "missing" || status === "expired") {
     return (
@@ -43,6 +45,16 @@ const SaveStatus = ({ status, onRetry, onLoadLatest, onKeepMine, onDiscard, onSt
         {(status === "missing" || status === "expired") && (
           <button type="button" onClick={onStartNew} className={linkButton}>Start a new intake</button>
         )}
+      </div>
+    );
+  }
+  // Offline, every save fails until the connection is back, so the prospect is told at once rather than at the
+  // next failed save. The page retries as soon as it's back (ChamberPage), and the scheduled retry keeps going.
+  if (offline) {
+    return (
+      <div role="alert" className="ml-auto flex items-center gap-1.5 text-xs text-warning">
+        <WifiOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        {status === "failed" ? "Not saved: you're offline." : "You're offline."} Changes will save when you reconnect.
       </div>
     );
   }

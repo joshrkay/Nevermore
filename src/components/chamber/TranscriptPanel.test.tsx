@@ -130,4 +130,12 @@ describe("TranscriptPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(onSendMessage).toHaveBeenCalledWith("And they're all in Texas");
   });
+
+  it("names its input and send button (I-2.1)", () => {
+    const onSendMessage = vi.fn();
+    render(<TranscriptPanel messages={[]} onSendMessage={onSendMessage} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Message Lenore" }), { target: { value: "We have 12 people" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSendMessage).toHaveBeenCalledWith("We have 12 people");
+  });
 });

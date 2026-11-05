@@ -53,7 +53,7 @@ const DocumentCandidates = ({ fileName, extraction, data, provenance, onResolve 
           {onResolve && pendingNew.length > 1 && (
             <button
               onClick={() => onResolve({ type: "apply", candidates: pendingNew.map((p) => p.candidate) })}
-              className="text-xs font-medium text-primary hover:underline"
+              className="tap-target text-xs font-medium text-primary hover:underline"
             >
               Apply all new ({pendingNew.length})
             </button>
@@ -89,7 +89,7 @@ const DocumentCandidates = ({ fileName, extraction, data, provenance, onResolve 
                   kind === "conflict" ? (
                     <button
                       onClick={() => setConflict(candidate)}
-                      className="flex-shrink-0 font-medium hover:underline text-warning"
+                      className="tap-target flex-shrink-0 font-medium hover:underline text-warning"
                       aria-label={`Resolve ${fieldLabel(candidate.field)}`}
                     >
                       Resolve
@@ -97,7 +97,7 @@ const DocumentCandidates = ({ fileName, extraction, data, provenance, onResolve 
                   ) : (
                     <button
                       onClick={() => onResolve({ type: "apply", candidates: [candidate] })}
-                      className="flex-shrink-0 font-medium hover:underline text-primary"
+                      className="tap-target flex-shrink-0 font-medium hover:underline text-primary"
                       aria-label={`Apply ${fieldLabel(candidate.field)}`}
                     >
                       Apply

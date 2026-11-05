@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
-import { Loader2, ShieldAlert } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchIsAdvisor } from "@/lib/advisorApi";
 import { reportOpsEvent } from "@/lib/monitoring";
+import LoadingScreen from "@/components/LoadingScreen";
 
 type Access = "checking" | "allowed" | "denied" | "error" | "ended";
 
@@ -89,12 +90,7 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
   return <>{children}</>;
 };
 
-const Checking = () => (
-  <div className="min-h-screen bg-background flex items-center justify-center" role="status">
-    <Loader2 className="w-6 h-6 text-primary animate-spin" aria-hidden="true" />
-    <span className="sr-only">Checking access…</span>
-  </div>
-);
+const Checking = () => <LoadingScreen label="Checking access…" />;
 
 const Message = ({ title, children }: { title: string; children: ReactNode }) => (
   <div className="min-h-screen bg-background flex items-center justify-center px-6">

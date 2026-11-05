@@ -7,7 +7,7 @@ interface BackupNoticeProps {
   onDiscard: () => void;
 }
 
-const linkButton = "font-medium text-foreground underline underline-offset-2 hover:text-primary transition-colors";
+const linkButton = "tap-target font-medium text-foreground underline underline-offset-2 hover:text-primary transition-colors";
 
 const when = (iso: string) =>
   new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });

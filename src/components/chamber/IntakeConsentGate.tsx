@@ -1,6 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Loader2 } from "lucide-react";
 import { useIntakeConsent } from "@/hooks/useIntakeConsent";
 import {
   INTAKE_CONSENT_AGREEMENT,
@@ -8,6 +7,7 @@ import {
   INTAKE_CONSENT_SECTIONS,
   INTAKE_CONSENT_VERSION,
 } from "@/data/intakeConsent";
+import LoadingScreen from "@/components/LoadingScreen";
 
 const primaryButton =
   "bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
@@ -26,11 +26,7 @@ const IntakeConsentGate = ({ children }: { children: ReactNode }) => {
   if (status === "agreed") return <>{children}</>;
 
   if (status === "checking") {
-    return (
-      <div className="h-screen flex items-center justify-center bg-background" role="status" aria-label="Loading">
-        <Loader2 className="w-6 h-6 text-primary animate-spin" aria-hidden="true" />
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   if (status === "unavailable") {

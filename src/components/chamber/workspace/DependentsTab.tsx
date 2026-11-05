@@ -17,7 +17,7 @@ const DependentsTab = ({ data }: DependentsTabProps) => {
       </div>
 
       {data.census.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground/50 italic text-sm">
+        <div className="text-center py-8 text-muted-foreground italic text-sm">
           Lenore will confirm dependents during conversation.
         </div>
       ) : (
@@ -44,7 +44,7 @@ const DependentsTab = ({ data }: DependentsTabProps) => {
                 <div className="ml-5 space-y-1">
                   {dependents.map((dep, j) => (
                     <div key={j} className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className="text-muted-foreground/30">└─</span>
+                      <span className="text-muted-foreground/30" aria-hidden="true">└─</span>
                       <span className="text-foreground">{dep.first_name} {dep.last_name}</span>
                       <span>|</span>
                       <span className="capitalize">{dep.relationship.replace("_", " ")}</span>
@@ -54,7 +54,7 @@ const DependentsTab = ({ data }: DependentsTabProps) => {
                   ))}
                 </div>
               ) : (
-                <p className="ml-5 text-[10px] text-muted-foreground/40 italic">No dependents confirmed</p>
+                <p className="ml-5 text-[10px] text-muted-foreground italic">No dependents confirmed</p>
               )}
             </motion.div>
             );

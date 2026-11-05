@@ -9,7 +9,7 @@ import type { ChamberData } from "@/data/chamberTypes";
 import { DOCUMENT_CATEGORIES, isDocumentCategory, missingRecommended } from "@/data/documentCategories";
 import type { CandidateResolution } from "@/data/documentCandidates";
 import type { ProvenanceMap } from "@/data/provenance";
-import { canRetryExtraction, documentStatusInfo, scanStatusInfo } from "@/data/documentStatus";
+import { canRetryExtraction, shownDocumentStatus } from "@/data/documentStatus";
 import { DOCUMENT_FAILURE_MESSAGES, retryCanClear } from "@/data/aiFailure";
 import type { SessionDocument, UploadRejection, UseSessionDocumentsReturn } from "@/hooks/useSessionDocuments";
 import { downloadBlob } from "@/lib/downloadFile";
@@ -124,7 +124,7 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
               reads every column. Leave out Social Security and bank numbers — the template has no place for them.
             </p>
           </div>
-          <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={downloadCensusTemplate}>
+          <Button type="button" variant="outline" size="sm" className="tap-target shrink-0" onClick={downloadCensusTemplate}>
             <Download className="w-4 h-4" aria-hidden="true" />
             Download census template (CSV)
           </Button>
@@ -163,7 +163,7 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
                 )}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">{c.guidance}</p>
-              <p className="text-xs text-muted-foreground/80 mt-0.5 italic">e.g. {c.example}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 italic">e.g. {c.example}</p>
             </div>
           ))}
         </div>
@@ -176,8 +176,7 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
           </p>
           {docs.map((doc) => {
             // Until its virus check passes, that is all there is to say about a file (not while it uploads).
-            const scan = doc.status === "uploading" ? null : scanStatusInfo(doc.scan_verdict);
-            const status = scan ?? documentStatusInfo(doc.status);
+            const { scan, status } = shownDocumentStatus(doc.status, doc.scan_verdict);
             // Why the last read in this tab didn't go through, while the file is still unread.
             const readIssue = !scan && doc.readIssue && canRetryExtraction(doc.status) ? doc.readIssue : null;
             // No "Read it" or "Try again" while reading again can't help (the daily cap, a Lenore that isn't set
@@ -222,9 +221,9 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
                     <button
                       onClick={() => handleDelete(doc)}
                       aria-label={`Remove ${doc.file_name}`}
-                      className="text-muted-foreground hover:text-destructive transition-colors"
+                      className="tap-target shrink-0 flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-4 h-4" aria-hidden="true" />
                     </button>
                   )}
                 </div>

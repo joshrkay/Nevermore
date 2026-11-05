@@ -68,7 +68,7 @@ const PayrollTab = ({ data, provenance = {}, onAction }: PayrollTabProps) => {
             <span
               key={m.label}
               className={`px-2 py-1 rounded-full ${
-                m.value === true ? "bg-success/15 text-success" : m.value === false ? "bg-muted text-muted-foreground/40" : "bg-muted text-muted-foreground/40"
+                m.value === true ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"
               }`}
             >
               {m.value === true ? "✓ " : ""}{m.label}

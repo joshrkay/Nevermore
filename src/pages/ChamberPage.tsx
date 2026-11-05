@@ -1,15 +1,17 @@
 import { useState, useRef, useCallback, useEffect, useMemo, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Send } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/hooks/useAuth";
 import { useLenoreVoice } from "@/hooks/useLenoreVoice";
 import { useLenoreChat } from "@/hooks/useLenoreChat";
 import { useChamberSession } from "@/hooks/useChamberSession";
+import { useOnline } from "@/hooks/useOnline";
 import VoiceOrb from "@/components/chamber/VoiceOrb";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 import TranscriptPanel from "@/components/chamber/TranscriptPanel";
 import MobileTranscript from "@/components/chamber/MobileTranscript";
+import ReplyAnnouncer from "@/components/chamber/ReplyAnnouncer";
 import ChatFailureNotice from "@/components/chamber/ChatFailureNotice";
 import SaveStatus from "@/components/chamber/SaveStatus";
 import BackupNotice from "@/components/chamber/BackupNotice";
@@ -17,6 +19,7 @@ import RecoverIntake from "@/components/chamber/RecoverIntake";
 import StartOverButton from "@/components/chamber/StartOverButton";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import LegalLinks from "@/components/LegalLinks";
+import LoadingScreen from "@/components/LoadingScreen";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { createChatMessage } from "@/data/chat";
 import { isReadyToCertify, READY_MESSAGE, shouldAnnounceReady } from "@/data/followUp";
@@ -49,6 +52,8 @@ const ChamberPage = () => {
   // What Lenore last said, under the orb: her latest line in the conversation, or one she just spoke.
   const [lastSpokenText, setLastSpokenText] = useState("");
   const chatInputRef = useRef<HTMLInputElement>(null);
+  // What the prospect is typing in the phone's chat bar.
+  const [mobileDraft, setMobileDraft] = useState("");
   // Checked once: whether this browser keeps site data, which is what lets the prospect come back.
   const [storageWorks] = useState(browserStorageWorks);
 
@@ -88,6 +93,16 @@ const ChamberPage = () => {
     discardChanges,
     invalidField,
   } = useChamberSession(searchParams.get("session"));
+
+  // A save that failed while the connection was down is tried again as soon as it is back, rather than at the
+  // next scheduled retry (I-3.1). SaveStatus says the prospect is offline meanwhile.
+  const online = useOnline();
+  const wasOnlineRef = useRef(online);
+  useEffect(() => {
+    const cameBack = online && !wasOnlineRef.current;
+    wasOnlineRef.current = online;
+    if (cameBack && saveStatus === "failed") retrySave();
+  }, [online, saveStatus, retrySave]);
 
   // Keep the session in the URL so a refresh or "Back to Review" resumes it.
   useEffect(() => {
@@ -200,6 +215,13 @@ const ChamberPage = () => {
 
   const orbState = orbForVoice(voice) ?? chatOrbState;
 
+  const sendMobileDraft = () => {
+    const text = mobileDraft.trim();
+    if (!text) return;
+    handleSendMessage(text);
+    setMobileDraft("");
+  };
+
   // "Type instead", and "Continue in text" after a voice failure: the notice goes, and the cursor is in the input.
   const handleTypeInstead = () => {
     dismissVoiceFailure();
@@ -264,19 +286,14 @@ const ChamberPage = () => {
     );
   }
 
-  if (sessionLoading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-6 h-6 text-primary animate-spin" />
-      </div>
-    );
-  }
+  if (sessionLoading) return <LoadingScreen label="Opening your intake" />;
 
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Top bar */}
-      <div className="min-h-12 py-2 border-b border-border flex items-center px-4 gap-3 flex-shrink-0">
-        <a href="/" className="font-display text-sm text-foreground hover:text-primary transition-colors">
+      {/* Wraps on a narrow phone rather than pushing the page sideways (I-1.1). */}
+      <div className="min-h-12 py-2 border-b border-border flex flex-wrap items-center px-4 gap-x-3 gap-y-1 flex-shrink-0">
+        <a href="/" className="tap-target inline-flex items-center font-display text-sm text-foreground hover:text-primary transition-colors">
           Edgar Allan Advisory
         </a>
         <span className="text-muted-foreground">/</span>
@@ -285,7 +302,7 @@ const ChamberPage = () => {
           // A guest on a fresh intake may be someone back from another browser: offer them their own.
           <Dialog>
             <DialogTrigger asChild>
-              <button type="button" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors">
+              <button type="button" className="tap-target text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors">
                 Continue an earlier intake
               </button>
             </DialogTrigger>
@@ -315,6 +332,7 @@ const ChamberPage = () => {
           onDiscard={discardChanges}
           onStartNew={startNew}
           invalidField={invalidField}
+          offline={!online}
         />
         <LegalLinks compact className="shrink-0" />
       </div>
@@ -354,7 +372,7 @@ const ChamberPage = () => {
 
         {/* Live workspace */}
         {/* On mobile, keep the workspace clear of the fixed chat bar so its last button stays tappable. */}
-        <div className={`${isMobile ? "w-full pb-16" : "flex-1"}`}>
+        <div className={`${isMobile ? "w-full pb-20" : "flex-1"}`}>
           <LiveWorkspace
             data={chamberData}
             isDemo={false}
@@ -385,24 +403,33 @@ const ChamberPage = () => {
               notice={failureNotice}
               restoredThrough={restoredThrough}
             />
-            <div className="flex-1 flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
+            <div className="flex-1 min-w-0 flex items-center gap-1 bg-muted rounded-lg pl-3 pr-1 has-[input:focus-visible]:outline has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-ring">
               <input
                 ref={chatInputRef}
                 type="text"
+                aria-label="Message Lenore"
                 placeholder="Message Lenore..."
                 maxLength={2000}
-                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
-                    handleSendMessage((e.target as HTMLInputElement).value.trim());
-                    (e.target as HTMLInputElement).value = "";
-                  }
-                }}
+                enterKeyHint="send"
+                value={mobileDraft}
+                onChange={(e) => setMobileDraft(e.target.value)}
+                className="tap-target flex-1 min-w-0 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+                onKeyDown={(e) => e.key === "Enter" && sendMobileDraft()}
               />
+              <button
+                type="button"
+                onClick={sendMobileDraft}
+                aria-label="Send"
+                className="tap-target shrink-0 flex items-center justify-center rounded-md text-primary hover:text-primary/80 transition-colors"
+              >
+                <Send className="w-4 h-4" aria-hidden="true" />
+              </button>
             </div>
           </div>
         </div>
       )}
+      {/* The transcript isn't on a phone's screen, so Lenore's replies are read out from here instead. */}
+      {isMobile && <ReplyAnnouncer messages={messages} />}
     </div>
   );
 };

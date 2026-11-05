@@ -24,7 +24,7 @@ const CensusWorkspaceTab = ({ data, isDemo, provenance = {}, onAction }: CensusW
       </div>
 
       {census.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground/50 italic text-sm">
+        <div className="text-center py-8 text-muted-foreground italic text-sm">
           Upload a census on the Upload tab, where you can download a template to fill in with one row per employee. The roster comes only from a file, so Lenore won't ask for it person by person.
         </div>
       ) : (

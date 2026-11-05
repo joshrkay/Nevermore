@@ -314,7 +314,9 @@ describe("ManuscriptPage", () => {
       row = certified();
       sharedStatus = "information_requested";
       renderAt("/manuscript/EAA-2026-0042");
-      expect(await screen.findByRole("status")).toHaveTextContent(/needs a little more information/);
+      // The loading screen is a status region too, so find the shared status by its words.
+      const shared = await screen.findByText(/needs a little more information/);
+      expect(shared.closest('[role="status"]')).not.toBeNull();
       sharedStatus = null;
     });
 

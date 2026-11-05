@@ -209,7 +209,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
                 <span className="font-medium">{item.label}</span>
                 <span className="text-muted-foreground text-xs">{stillNeededNote(item)}</span>
                 {/* A required answer given two ways is settled where it sits, by picking one ("Use this"). */}
-                <button type="button" onClick={() => jumpTo(item.viaCensus ? CENSUS_SPOT : item.readiness)} className="text-xs font-medium text-primary underline underline-offset-2">
+                <button type="button" onClick={() => jumpTo(item.viaCensus ? CENSUS_SPOT : item.readiness)} className="tap-target text-xs font-medium text-primary underline underline-offset-2">
                   {item.state === "conflicting" && !item.viaCensus ? "Choose" : "Go to"} {(item.viaCensus ? "Employee census" : item.label).toLowerCase()}
                 </button>
               </li>
@@ -264,7 +264,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
               <button
                 type="button"
                 onClick={() => jumpTo({ section: key })}
-                className="flex items-center gap-2 text-xs border border-border rounded-full px-3 py-1 hover:bg-muted"
+                className="tap-target flex items-center gap-2 text-xs border border-border rounded-full px-3 py-1 hover:bg-muted"
               >
                 {title}
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[statuses[key]]}`}>{SECTION_STATUS_LABELS[statuses[key]]}</span>

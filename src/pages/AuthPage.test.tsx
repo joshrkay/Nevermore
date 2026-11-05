@@ -200,4 +200,12 @@ describe("AuthPage", () => {
     await waitFor(() => expect(auth.verifySignupCode).toHaveBeenCalledWith("pat@example.com", "654321"));
     expect(await screen.findByText("The Chamber")).toBeInTheDocument();
   });
+
+  it("ties every field to its label (I-2.1)", () => {
+    renderLogin();
+    expect(screen.getByLabelText("Email")).toHaveAttribute("type", "email");
+    expect(screen.getByLabelText("Password")).toHaveAttribute("type", "password");
+    fireEvent.click(screen.getByRole("button", { name: "Create one" }));
+    expect(screen.getByLabelText("Company Name")).toHaveAttribute("type", "text");
+  });
 });

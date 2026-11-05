@@ -77,4 +77,42 @@ describe("VoiceOrb", () => {
     renderOrb({ status: "disconnected", attempt: 1, by: "agent" });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  describe("the orb as a control (I-2.1)", () => {
+    it("is a toggle button for the call, reachable from the keyboard", () => {
+      const { onStartVoice } = renderOrb({ status: "idle", attempt: 0 });
+      const orb = screen.getByRole("button", { name: "Voice call with Lenore" });
+      expect(orb).toBe(screen.getByTestId("voice-orb"));
+      expect(orb.tagName).toBe("BUTTON");
+      expect(orb).toHaveAttribute("aria-pressed", "false");
+      orb.focus();
+      expect(orb).toHaveFocus();
+      fireEvent.click(orb);
+      expect(onStartVoice).toHaveBeenCalledTimes(1);
+    });
+
+    it("is pressed during a call, and ends it", () => {
+      const { onEndVoice } = renderOrb({ status: "active", attempt: 1, speaking: false });
+      const orb = screen.getByRole("button", { name: "Voice call with Lenore" });
+      expect(orb).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(orb);
+      expect(onEndVoice).toHaveBeenCalledTimes(1);
+    });
+
+    it("stays focusable but does nothing while a call is starting", () => {
+      const { onStartVoice, onEndVoice } = renderOrb({ status: "connecting", attempt: 1, phase: "server" });
+      const orb = screen.getByRole("button", { name: "Voice call with Lenore" });
+      expect(orb).toHaveAttribute("aria-disabled", "true");
+      expect(orb).not.toBeDisabled();
+      fireEvent.click(orb);
+      expect(onStartVoice).not.toHaveBeenCalled();
+      expect(onEndVoice).not.toHaveBeenCalled();
+    });
+
+    it("is only a picture, hidden from assistive technology, when voice isn't set up", () => {
+      renderOrb({ status: "idle", attempt: 0 }, false);
+      expect(screen.queryByRole("button", { name: "Voice call with Lenore" })).not.toBeInTheDocument();
+      expect(screen.getByTestId("voice-orb")).toHaveAttribute("aria-hidden", "true");
+    });
+  });
 });

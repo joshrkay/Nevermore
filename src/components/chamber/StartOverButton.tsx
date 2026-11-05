@@ -36,7 +36,7 @@ const StartOverButton = ({ onStartOver, certifiedBefore }: StartOverButtonProps)
   return (
     <AlertDialog open={open} onOpenChange={(next) => { if (!busy) { setOpen(next); setFailed(false); } }}>
       <AlertDialogTrigger asChild>
-        <button type="button" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors">
+        <button type="button" className="tap-target shrink-0 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors">
           Start over
         </button>
       </AlertDialogTrigger>
@@ -61,7 +61,7 @@ const StartOverButton = ({ onStartOver, certifiedBefore }: StartOverButtonProps)
             type="button"
             onClick={confirm}
             disabled={busy}
-            className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            className="tap-target inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
             {busy && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />} Start over
           </button>
