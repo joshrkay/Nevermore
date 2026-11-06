@@ -50,7 +50,7 @@ const spokenLine = (text: string) => (text.length > 120 ? text.slice(0, 120) + "
 const primaryButton = "bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors";
 const secondaryButton = "border border-border font-medium px-5 py-2.5 rounded-lg hover:bg-muted transition-colors";
 
-/** A full-page message in place of the Chamber, when there is no intake to show. */
+/** A full-page message in place of the intake, when there is no intake to show. */
 const Notice = ({ title, children }: { title: string; children: ReactNode }) => (
   <div className="min-h-screen flex items-center justify-center bg-background px-6 py-10">
     <div className="text-center max-w-md w-full">
@@ -344,10 +344,10 @@ const ChamberPage = () => {
           page and pushed the fixed chat bar below the fold. */}
       <div className="min-h-12 py-2 border-b border-border flex flex-wrap items-center px-4 gap-x-3 gap-y-1 flex-shrink-0">
         <a href="/" className="font-display text-sm text-foreground hover:text-primary transition-colors whitespace-nowrap">
-          Edgar Allan Advisory
+          Nevermore
         </a>
         <span className="text-muted-foreground">/</span>
-        <span className="text-sm text-muted-foreground whitespace-nowrap">The Chamber</span>
+        <span className="text-sm text-muted-foreground whitespace-nowrap">Your intake</span>
         {isAnonymous && !messages.some((m) => m.sender === "user") && (
           // A guest on a fresh intake may be someone back from another browser: offer them their own.
           <Dialog>

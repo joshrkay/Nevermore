@@ -105,7 +105,7 @@ describe("IntakeConsentGate", () => {
   it("keeps the Chamber closed when the lookup fails, and tries again on request", async () => {
     lookup = async () => ({ data: null, error: { message: "timeout" } });
     renderGate();
-    expect(await screen.findByRole("heading", { name: "We couldn't open the Chamber" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "We couldn't open your intake" })).toBeInTheDocument();
     lookup = async () => ({ data: { accepted_at: "2026-11-01T00:00:00Z" }, error: null });
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("The Chamber")).toBeInTheDocument();

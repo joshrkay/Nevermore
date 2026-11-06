@@ -120,7 +120,7 @@ describe("buildManuscriptPdf", () => {
   it("sets the file's title, subject and creation date", async () => {
     const { text } = await render();
     expect(text).toMatch(/\/Title /);
-    expect(text).toMatch(/\/Author \(Edgar Allan Advisory\)/);
+    expect(text).toMatch(/\/Author \(Nevermore\)/);
     expect(text).toMatch(/\/CreationDate \(D:20261020/);
   });
 
@@ -200,7 +200,7 @@ describe("buildManuscriptPdf", () => {
 
   it("names the file after the submission, its version, the company and the certified date", async () => {
     const { filename } = await render();
-    expect(filename).toBe(`The_Manuscript_${FILE_ID}_v1_Meridian_Creative_Group_20260501.pdf`);
+    expect(filename).toBe(`Nevermore_Packet_${FILE_ID}_v1_Meridian_Creative_Group_20260501.pdf`);
   });
 
   it("names a packet from the same submission the same way wherever it is generated", async () => {
@@ -250,7 +250,7 @@ describe("buildManuscriptPdf", () => {
 
   it("labels a sample packet as fictional", async () => {
     const { text } = await render(DEMO_CHAMBER_DATA, { sample: true }, null);
-    expect(text).toContain("sample manuscript built from fictional data");
+    expect(text).toContain("sample packet built from fictional data");
     expect(text).toContain("Sample");
   });
 });
@@ -292,7 +292,7 @@ describe("pdfSafe", () => {
     expect(text).toContain("ADVISOR CORRECTIONS");
     expect(text).toContain("Meridian LLC");
     expect(text).toContain("Per W-9");
-    expect(text).toContain("corrected and verified by Edgar Allan Advisory");
+    expect(text).toContain("corrected and verified by Nevermore");
     expect(text).toContain("Employee count");
   });
 
@@ -308,6 +308,6 @@ describe("pdfSafe", () => {
     const advisor = buildManuscript(DEMO_CHAMBER_DATA, { fileId: FILE_ID, submission, advisor: { version: 1, corrections: [], followUps: [] } });
     const advisorText = await readPdf(buildManuscriptPdf(advisor, { generatedOn: GENERATED, compress: false }).blob);
     expect(advisorText).not.toContain("before advisor review");
-    expect(advisorText).toContain("reviewed by Edgar Allan Advisory");
+    expect(advisorText).toContain("reviewed by Nevermore");
   });
 });

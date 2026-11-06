@@ -83,7 +83,7 @@ describe("retention rules shown to prospects", () => {
     ["submitted records", /^Submitted records/],
     ["documents", /^Uploaded documents/],
     ["transcripts", /transcripts/i],
-    ["generated PDFs", /Manuscript PDFs/],
+    ["generated PDFs", /packet PDFs/],
   ])("has a period for %s", (_what, pattern) => {
     const rule = RETENTION_RULES.find((r) => pattern.test(r.record));
     expect(rule, String(pattern)).toBeDefined();

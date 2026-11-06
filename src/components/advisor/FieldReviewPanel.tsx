@@ -100,7 +100,7 @@ const FieldReviewPanel = ({ census, ...props }: FieldReviewPanelProps) => {
           <p className="text-xs text-muted-foreground">
             {verified(FIELDS)} of {FIELDS.length} verified.{" "}
             Prospect values are never changed here. A correction is kept beside the prospect's value and is used in the
-            advisor Manuscript once the field is marked Verified.
+            advisor packet once the field is marked Verified.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Whose values these are">
@@ -109,7 +109,7 @@ const FieldReviewPanel = ({ census, ...props }: FieldReviewPanelProps) => {
           ))}
           <span className="text-xs text-muted-foreground">
             {totals.advisor_overridden > 0
-              ? "An overridden answer is replaced by the advisor's correction in the advisor Manuscript."
+              ? "An overridden answer is replaced by the advisor's correction in the advisor packet."
               : "No advisor correction replaces a prospect's answer."}
           </span>
         </div>
@@ -278,7 +278,7 @@ const FieldRow = ({
               />
             </label>
             <label className="block text-xs text-muted-foreground">
-              Reason (printed in the final Manuscript the prospect receives)
+              Reason (printed in the final packet the prospect receives)
               <input
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}

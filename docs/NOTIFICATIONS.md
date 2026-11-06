@@ -7,9 +7,9 @@ request for information, and the reminder before a draft closes for a prospect w
 | Email | To | Contains |
 |---|---|---|
 | Advisor alert (G-1) | `ADVISORY_NOTIFY_EMAIL` | Company legal name, primary signer, title, work email, phone, employee count, HQ state, File ID, when it was certified (UTC), link to the secure advisor review. Subject `New Intake Certified: <company> (<File ID>)`, or `Updated Intake: ...` when changed answers were certified again |
-| Prospect confirmation (G-2) | The signed-in account's own email | Company, File ID, what happens next, expected response time, support address |
-| Information request | The account's own email | The advisor's message, the labels of the answers it is about, the File ID, a link to the intake (sign-in required) and the support address. Subject `Your advisor needs a little more information (<File ID>)`. Queued by `advisor_request_information()` in the transaction that records the request (migration `20261105090000`) |
-| Draft reminder | The account's own email, only if it asked for reminders | The company, the day the draft closes (UTC), a link back to it, why it was sent and how to stop. Subject `Your intake for <company> closes on <day>`. Queued hourly by `queue_draft_expiry_reminders()` a week before an uncertified draft closes (migration `20261105091000`) |
+| Prospect confirmation (G-2) | The signed-in account's own email | Company, File ID, what happens next, expected response time, support address. Subject `Your Nevermore intake is in (<File ID>)` |
+| Information request | The account's own email | The advisor's message, the labels of the answers it is about, the File ID, a link to the intake (sign-in required) and the support address. Subject `Your advisor needs a bit more info (<File ID>)`. Queued by `advisor_request_information()` in the transaction that records the request (migration `20261105090000`) |
+| Draft reminder | The account's own email, only if it asked for reminders | The company, the day the draft closes (UTC), a link back to it, why it was sent and how to stop. Subject `Heads up: your intake for <company> closes on <day>`. Queued hourly by `queue_draft_expiry_reminders()` a week before an uncertified draft closes (migration `20261105091000`) |
 
 Both emails call the intake's identifier its **File ID**, as the app and the signed Manuscript do (`GLOSSARY.md`); the queued payload keeps the field name `reference`. Neither email contains census, payroll, benefits or document content. Every listed detail is always shown on the advisor alert, as "Not provided" when empty, so a blank is never mistaken for an omission. The email is a complete HTML document (title, phone-width layout, row headers for the details) with a plain-text twin. The queue row itself never
 holds them: `enqueue_certification_notifications()` (which the trigger calls) copies only named
@@ -122,7 +122,7 @@ Set with `supabase secrets set` or the dashboard. Secrets never go in `VITE_*` v
 | Secret | Needed for | Notes |
 |---|---|---|
 | `RESEND_API_KEY` | both | Provider key. `EMAIL_PROVIDER` defaults to `resend`; to switch provider, add an adapter in `providers.ts`. |
-| `EMAIL_FROM` | both | e.g. `Edgar Allan Advisory <intake@mail.example.com>`. **Must be on a domain verified with the provider (SPF and DKIM)**; no default on purpose. |
+| `EMAIL_FROM` | both | e.g. `Nevermore <intake@mail.example.com>`. **Must be on a domain verified with the provider (SPF and DKIM)**; no default on purpose. |
 | `ADVISORY_NOTIFY_EMAIL` | advisor alert | The advisory distribution list. Comma-separated for several. |
 | `APP_BASE_URL` | advisor alert, information request, draft reminder | e.g. `https://app.example.com`. https only (http allowed for localhost). Builds the `/advisor/submissions/<id>` link, and the prospect's `/start?session=<id>` and `/profile` links. |
 | `SUPPORT_EMAIL` | prospect | Shown in each prospect email and used as Reply-To. |

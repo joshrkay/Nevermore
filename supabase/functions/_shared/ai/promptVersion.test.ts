@@ -28,6 +28,9 @@ const KNOWN = {
     // 7: a field an advisor asked about is marked in "Not yet settled", and Lenore says the advisor asked, reads back what
     // the intake holds and asks for a confirmation or correction (information requests).
     7: "d56d02c03a29f8d3992b20279f2ff52c8b9414c0fe210c03c3f7b811f2e1f9ec",
+    // 8: the Nevermore rebrand. Lenore is Nevermore's intake assistant, warm, quick and plain-spoken (no longer the gothic,
+    // literary advisor), and the app, not the Chamber, says when the intake is ready. The extraction rules are unchanged.
+    8: "97b83efde81d83cf10958b734560d4e583396a21dd782fc37a98f2c0f37a4ea7",
   } as Record<number, string>,
   "document-extract": { 1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526" } as Record<number, string>,
 };
@@ -61,6 +64,8 @@ const USER_TURN_KNOWN: Record<number, string> = {
   6: "9b021814414e815258f2934dc7ee157aa9642ca343c3c9be222c618a5c63746d",
   // 7: the fields an advisor asked about first in "Not yet settled", marked. Rendered with a fourth turn that has some.
   7: "720e99e10e619db28c25b43a612ac07584636a08e8ef91a65bc5763fb264bb5b",
+  // 8: unchanged from 7 (the rebrand changed only the system prompt and the tool).
+  8: "720e99e10e619db28c25b43a612ac07584636a08e8ef91a65bc5763fb264bb5b",
 };
 
 describe("prompt versions", () => {

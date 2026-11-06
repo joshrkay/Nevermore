@@ -479,7 +479,7 @@ describe("certification helpers", () => {
 describe("manuscriptFilename", () => {
   it("names the file after the File ID, the certification version, the company and the certified date", () => {
     expect(manuscriptFilename("EAA-2026-0042", "Meridian Creative Group", { version: 2, date: "2026-11-04T23:30:00Z" }))
-      .toBe("The_Manuscript_EAA-2026-0042_v2_Meridian_Creative_Group_20261104.pdf");
+      .toBe("Nevermore_Packet_EAA-2026-0042_v2_Meridian_Creative_Group_20261104.pdf");
   });
 
   it("is the same wherever it is generated, from the same submission", () => {
@@ -489,18 +489,18 @@ describe("manuscriptFilename", () => {
   });
 
   it("leaves the version and date out of a packet that isn't certified, and marks an advisor's version", () => {
-    expect(manuscriptFilename("EAA-2026-AB12", "Meridian Creative Group")).toBe("The_Manuscript_EAA-2026-AB12_Meridian_Creative_Group.pdf");
-    expect(manuscriptFilename("EAA-1", "Acme", { version: 1, date: AT, suffix: "advisor-v3" })).toBe("The_Manuscript_EAA-1_v1_Acme_20260501_advisor-v3.pdf");
+    expect(manuscriptFilename("EAA-2026-AB12", "Meridian Creative Group")).toBe("Nevermore_Packet_EAA-2026-AB12_Meridian_Creative_Group.pdf");
+    expect(manuscriptFilename("EAA-1", "Acme", { version: 1, date: AT, suffix: "advisor-v3" })).toBe("Nevermore_Packet_EAA-1_v1_Acme_20260501_advisor-v3.pdf");
   });
 
   it("strips characters that are unsafe in filenames and folds accents", () => {
-    expect(manuscriptFilename("EAA-1", 'Acme / "Beta" <Co>: Ünïcode Søn?')).toBe("The_Manuscript_EAA-1_Acme_Beta_Co_Unicode_Son.pdf");
+    expect(manuscriptFilename("EAA-1", 'Acme / "Beta" <Co>: Ünïcode Søn?')).toBe("Nevermore_Packet_EAA-1_Acme_Beta_Co_Unicode_Son.pdf");
   });
 
   it("caps very long names and falls back when there is no usable company name", () => {
     expect(manuscriptFilename("EAA-1", "A".repeat(200)).length).toBeLessThan(80);
-    expect(manuscriptFilename("EAA-1", null)).toBe("The_Manuscript_EAA-1_Company.pdf");
-    expect(manuscriptFilename("EAA-1", "株式会社")).toBe("The_Manuscript_EAA-1_Company.pdf");
+    expect(manuscriptFilename("EAA-1", null)).toBe("Nevermore_Packet_EAA-1_Company.pdf");
+    expect(manuscriptFilename("EAA-1", "株式会社")).toBe("Nevermore_Packet_EAA-1_Company.pdf");
   });
 });
 

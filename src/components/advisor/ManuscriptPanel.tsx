@@ -67,7 +67,7 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
           certified_signed_at: detail.submission?.signed_at ?? "",
         }),
       );
-      toast.success(`Manuscript v${version} saved.`);
+      toast.success(`Packet v${version} saved.`);
       onChanged();
     } catch (err) {
       console.error("Failed to generate manuscript:", err);
@@ -76,7 +76,7 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
         toast.error(`${(err as Error).message}. The page now shows the latest answers and review.`);
         onChanged();
       } else {
-        toast.error((err as Error).message || "We couldn't generate the Manuscript.");
+        toast.error((err as Error).message || "We couldn't generate the packet.");
       }
     } finally {
       setGenerating(false);
@@ -96,13 +96,13 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
 
   return (
     <section aria-labelledby="manuscript-heading" className="border border-border rounded-xl p-5 space-y-4">
-      <h2 id="manuscript-heading" className="font-display text-lg font-bold">The Manuscript</h2>
+      <h2 id="manuscript-heading" className="font-display text-lg font-bold">Advisor packet</h2>
 
       {!detail.certified ? (
         <p className="text-sm text-muted-foreground">
           {detail.submission?.signer_name
-            ? "The prospect changed their answers after certifying. A Manuscript can be generated once they certify again."
-            : "Not certified yet. A Manuscript can be generated once the prospect certifies their intake."}
+            ? "The prospect changed their answers after certifying. A packet can be generated once they certify again."
+            : "Not certified yet. A packet can be generated once the prospect certifies their intake."}
         </p>
       ) : (
         <div className="space-y-2">
@@ -130,8 +130,8 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
             </p>
           )}
           <p className="text-xs text-muted-foreground">
-            The latest version is the prospect's final Manuscript: they can download it from their Manuscript page and
-            send it on. Correction reasons are printed in it.
+            The latest version is the prospect's final packet: they can download it from their packet page and send it
+            on. Correction reasons are printed in it.
           </p>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={revealSensitive} onChange={(e) => setRevealSensitive(e.target.checked)} />
@@ -143,13 +143,13 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
             className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 disabled:opacity-50"
           >
             {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-            {latest ? "Regenerate as new version" : "Generate Manuscript"}
+            {latest ? "Regenerate as new version" : "Generate packet"}
           </button>
         </div>
       )}
 
       {detail.versions.length > 0 ? (
-        <ul className="space-y-2" aria-label="Manuscript versions">
+        <ul className="space-y-2" aria-label="Packet versions">
           {detail.versions.map((v) => (
             <li key={v.id} className="flex items-start justify-between gap-3 text-sm border-t border-border pt-2">
               <div>
@@ -161,7 +161,7 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
                   Certified {formatDateTime(v.certified_signed_at)} · {v.corrections_applied} correction
                   {v.corrections_applied === 1 ? "" : "s"} · {v.sensitive_revealed ? "full DOBs" : "DOBs masked"}
                 </p>
-                {v === latest && current(v) && <p className="text-xs text-success">Shared with the prospect as their final Manuscript</p>}
+                {v === latest && current(v) && <p className="text-xs text-success">Shared with the prospect as their final packet</p>}
                 {detail.certified && !current(v) && <p className="text-xs text-warning">Built from an earlier certification</p>}
               </div>
               <button

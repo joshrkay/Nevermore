@@ -23,7 +23,7 @@ export const FUNNEL_LABELS: Record<FunnelStep, string> = {
   ready_to_certify: "Ready to certify",
   email_verified: "Verified an email",
   certified: "Certified",
-  manuscript_downloaded: "Downloaded The Manuscript",
+  manuscript_downloaded: "Downloaded the packet",
 };
 
 /** The periods the page offers, as days back from now. The database answers at most a year at once. */

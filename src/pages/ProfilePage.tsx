@@ -128,7 +128,7 @@ const ProfilePage = () => {
             <CardHeader>
               <CardTitle className="text-foreground">Company Profile</CardTitle>
               <CardDescription className="text-muted-foreground">
-                Update your company information. This data is used when generating PEO proposals.
+                Your company and contact details. An advisor reviewing your intake sees your contact name and phone number.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">

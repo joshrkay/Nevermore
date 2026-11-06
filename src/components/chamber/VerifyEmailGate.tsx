@@ -86,7 +86,7 @@ const VerifyEmailGate = ({ purpose = "certify", framed = true }: { purpose?: Ver
             <button
               onClick={sendCode}
               disabled={busy || email.trim() === ""}
-              className="text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 flex items-center gap-2"
+              className="text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 flex items-center gap-2 whitespace-nowrap shrink-0"
             >
               {busy && <Loader2 className="w-4 h-4 animate-spin" />} Send code
             </button>
@@ -109,7 +109,7 @@ const VerifyEmailGate = ({ purpose = "certify", framed = true }: { purpose?: Ver
             <button
               onClick={verify}
               disabled={busy || code.trim().length < 6}
-              className="text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 flex items-center gap-2"
+              className="text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 flex items-center gap-2 whitespace-nowrap shrink-0"
             >
               {busy && <Loader2 className="w-4 h-4 animate-spin" />} Verify
             </button>

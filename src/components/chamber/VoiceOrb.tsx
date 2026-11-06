@@ -138,7 +138,7 @@ const VoiceOrb = ({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 role="status"
-                className="flex items-center gap-2 text-xs text-primary/80"
+                className="flex items-center gap-2 text-xs text-primary"
               >
                 <span className="w-2 h-2 shrink-0 rounded-full bg-primary animate-pulse" />
                 <span className={narrow ? "line-clamp-2" : "truncate"}>{statusLine}</span>
@@ -149,7 +149,7 @@ const VoiceOrb = ({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               title={lastSpokenText}
-              className={`${narrow ? "line-clamp-2" : "truncate"} font-display italic text-sm text-foreground/80`}
+              className={`${narrow ? "line-clamp-2" : "truncate"} font-display text-sm text-foreground/80`}
             >
               {lastSpokenText && `"${lastSpokenText}"`}
             </motion.p>
@@ -212,7 +212,7 @@ const VoiceOrb = ({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           role="status"
-          className="mb-2 flex items-center gap-2 text-xs text-primary/80 text-center px-6"
+          className="mb-2 flex items-center gap-2 text-xs text-primary text-center px-6"
         >
           <span className="w-2 h-2 shrink-0 rounded-full bg-primary animate-pulse" />
           {statusLine}
@@ -228,7 +228,7 @@ const VoiceOrb = ({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0 }}
         title={lastSpokenText}
-        className={`font-display italic text-foreground/80 text-center mb-3 ${
+        className={`font-display text-foreground/80 text-center mb-3 ${
           narrow ? "text-base leading-6 px-5 min-h-[4.5rem] line-clamp-6" : "text-base md:text-lg leading-[1.625rem] max-w-xl px-6 min-h-[3.25rem] line-clamp-6"
         }`}
       >

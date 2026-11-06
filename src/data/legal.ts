@@ -5,11 +5,13 @@
 // DRAFT: NOT LEGALLY REVIEWED (decision D10). Every page that shows this copy says so until
 // LEGAL_COPY_APPROVED is true and LEGAL_APPROVAL names who approved which version, and when.
 
-export const PRIVACY_POLICY_VERSION = "2026-11-draft-1";
-export const TERMS_VERSION = "2026-11-draft-1";
+// draft-2: the Nevermore name, introduced as a service of Edgar Allan Advisory (who "we" are), and the product's
+// names for the intake and the packet in place of the Chamber's and the Manuscript's.
+export const PRIVACY_POLICY_VERSION = "2026-11-draft-2";
+export const TERMS_VERSION = "2026-11-draft-2";
 
 /** When this wording was last changed, as shown on the pages (YYYY-MM-DD). */
-export const LEGAL_LAST_UPDATED = "2026-11-04";
+export const LEGAL_LAST_UPDATED = "2026-11-06";
 
 export interface LegalApproval {
   /** Who approved the copy for publication (counsel, by name and firm). */
