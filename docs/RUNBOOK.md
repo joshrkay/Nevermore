@@ -26,7 +26,7 @@ go to.
 | Resend | Email delivery | Support from the dashboard | resend-status.com | |
 | Anthropic (D11) | Lenore and document reading | Support from the Anthropic Console | status.anthropic.com | |
 | Scanii (D13) | Malware scanning of every upload | Support from the Scanii dashboard | _Scanii's status page: to fill_ | |
-| ElevenLabs | Voice (opt-in beta) | Support from the dashboard | status.elevenlabs.io | |
+| ElevenLabs | Voice (opt-in beta); the agent's replies come from Claude Haiku 4.5 through ElevenLabs (D42) | Support from the dashboard | status.elevenlabs.io (and status.anthropic.com for the model) | |
 
 ## What is monitored
 
@@ -348,7 +348,10 @@ so with a "Continue in text" button, so this is never a SEV-1 on its own.
    goodbye). Any other close code: the service closed the call itself, and the conversation's history in the
    ElevenLabs dashboard says why. `voice_dropped` with no code: the service ended the call with an error
    message rather than a close (the SDK does this when a call reaches its maximum duration). `voice_error`:
-   errors the service reported during calls that carried on.
+   errors the service reported during calls that carried on. Lenore's spoken replies come from Claude through
+   ElevenLabs (D42), so if calls connect but she stops answering, check status.anthropic.com too (if Anthropic
+   is down, typed chat fails as well, through `chamber-extract`), and look for model errors in the
+   conversation's history in the ElevenLabs dashboard.
 2. The detail and the intake id are in `ops_events`. Each cause found, and its fix, goes in
    `docs/VOICE_ISSUES.md`.
 3. If voice stays broken, unset `VITE_ELEVENLABS_AGENT_ID` and redeploy: the "Speak with Lenore" button goes
