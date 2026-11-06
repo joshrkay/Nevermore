@@ -17,10 +17,12 @@ The next fields follow the same rule, rank order and count (8) as typed chat's p
 
 1. In ElevenLabs, open the agent's settings. Replace its system prompt with **System prompt** below and its first message with **First message**, each exactly as written (the text inside the fence, nothing else).
 2. Remove anything left from an older prompt that asks the agent to write `<extract>` tags. The Chamber strips such tags from what Lenore says and never reads them, so they do no harm, but they cost words.
-3. Note "Lenore voice prompt v1" in the agent's description, so whoever opens the dashboard can tell which version it runs.
-4. Nothing else is needed: no tools, knowledge base or prompt overrides. Contextual updates need no setting.
+3. Set the agent's LLM to Claude Haiku 4.5 (D42).
+4. Note "Lenore voice prompt v1, Claude Haiku 4.5" in the agent's description, so whoever opens the dashboard can tell which version and model it runs.
+5. Make one test call: Lenore asks one question at a time, follows the intake updates, never says the intake is ready, and in her wrap-up says that what was said aloud waits for confirmation in Review.
+6. Nothing else is needed: no tools, knowledge base or prompt overrides. Contextual updates need no setting.
 
-The Chamber doesn't send this prompt itself (no override at call start), so what ElevenLabs runs is whatever was last pasted. Check the agent's description against this file's version after a deploy.
+The Chamber doesn't send this prompt itself (no override at call start), so what ElevenLabs runs is whatever was last pasted. Check the agent's description against this file's version, and its LLM setting against D42, after a deploy.
 
 ## Changing it
 

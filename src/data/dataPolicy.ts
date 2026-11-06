@@ -246,7 +246,7 @@ export const DATA_CLASSES: DataClass[] = [
     stored: {
       tables: ["chamber_sessions", "chamber_certifications"],
       buckets: [],
-      elsewhere: ["The AI provider, for each message Lenore reads (D11)", "ElevenLabs, for voice conversations (opt-in beta)"],
+      elsewhere: ["The AI provider, for each message Lenore reads (D11)", "ElevenLabs, for voice conversations (opt-in beta), and through it Anthropic for Lenore's spoken replies (D42)"],
     },
     retention: WITH_INTAKE,
     deletion: DELETED_WITH_INTAKE,

@@ -30,7 +30,7 @@ These make claims that only counsel can stand behind. They are not part of the p
 | Placeholder | Where | What it needs |
 |---|---|---|
 | Privacy contact | `PRIVACY_CONTACT` in `src/data/legal.ts` (null). The pages say the address "will be published here before launch" | A monitored role address for privacy questions and deletion requests, never a person's own inbox |
-| AI model provider | `SERVICE_PROVIDERS` in `src/data/legal.ts` ("An AI model provider") | Decided under D11 (2026-11-05): Anthropic, the only provider for Lenore and document reading; voice uses ElevenLabs. The pages stay generic until counsel names them, with their data terms reviewed |
+| AI model provider | `SERVICE_PROVIDERS` in `src/data/legal.ts` ("An AI model provider") | Decided under D11 (2026-11-05): Anthropic, the only provider for Lenore and document reading; voice uses ElevenLabs, whose agent's replies come from Claude Haiku 4.5 through ElevenLabs (D42, 2026-11-06), so what a prospect says in a call also reaches Anthropic under ElevenLabs' terms. The pages stay generic until counsel names them, with their data terms reviewed |
 | Malware scanner | `SERVICE_PROVIDERS` in `src/data/legal.ts` ("A malware-scanning service") | Decided under D13 (2026-11-05): Scanii, processing in its US region (Virginia) and deleting file contents after the scan; it offers a DPA, and a BAA as an add-on. To name, with its data terms reviewed: it receives every uploaded file in full |
 | Disclaimers | `src/pages/TermsPage.tsx` (`COUNSEL_PLACEHOLDER`) | Counsel's text |
 | Limitation of liability | `src/pages/TermsPage.tsx` (`COUNSEL_PLACEHOLDER`) | Counsel's text |
@@ -63,7 +63,9 @@ These make claims that only counsel can stand behind. They are not part of the p
 8. **Processors.** Are the service providers' data terms (Supabase, Vercel, Resend, the AI provider under D11,
    ElevenLabs, Cloudflare, and the malware scanner under D13, which is sent every uploaded file) adequate, and
    must the Privacy Policy say more about them (location, sub-processors, whether the AI provider keeps or trains
-   on what it reads, whether the scanner keeps the files it checks)?
+   on what it reads, whether the scanner keeps the files it checks)? Since 2026-11-06 (D42) ElevenLabs passes a
+   voice call's transcript to Anthropic as its own sub-processor: does the Privacy Policy's ElevenLabs entry ("What
+   you say and hear") need to say so, and do ElevenLabs' terms with Anthropic match ours (D11)?
 9. **Terms.** Write the disclaimers, limitation of liability, governing law, and disputes and arbitration;
    confirm the rest (acceptable use, suspension, ownership of the packet, the change clause).
 10. **Contact address** for privacy and deletion requests (see placeholders).

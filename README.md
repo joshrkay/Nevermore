@@ -110,7 +110,8 @@ failure handling and the pre-launch checklist: `docs/NOTIFICATIONS.md`.
 Voice is an opt-in beta: `VITE_ELEVENLABS_AGENT_ID` names the ElevenLabs agent, and without it the Chamber is text
 only. The agent only holds the conversation. What the prospect says in a call goes through `chamber-extract`, as a typed
 message does, and is kept as inferred until they confirm it (ADR 0001). Its prompt is versioned in the repo: paste
-`docs/prompts/voice-agent-v1.md` into the agent as that file says.
+`docs/prompts/voice-agent-v1.md` into the agent as that file says. Its replies come from Claude Haiku 4.5, chosen in
+the agent's LLM setting (D42); ElevenLabs handles the audio.
 
 ## Data handling, privacy and operations
 
