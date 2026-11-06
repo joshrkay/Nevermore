@@ -125,4 +125,5 @@ the agent's LLM setting (D42); ElevenLabs handles the audio.
 
 ## Plan
 
-Backlog and decisions: `docs/PRODUCTION_READINESS_PLAN.md`.
+Backlog and decisions: `docs/PRODUCTION_READINESS_PLAN.md`. Who we sell to, how we reach them and how we measure
+it: `docs/GO_TO_MARKET.md`.
