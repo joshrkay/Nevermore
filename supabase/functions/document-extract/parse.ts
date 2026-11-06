@@ -35,6 +35,17 @@ export function clampSheetRange(range: CellRange): CellRange {
     e: { r: Math.min(range.e.r, range.s.r + MAX_SHEET_ROWS - 1), c: Math.min(range.e.c, range.s.c + MAX_SHEET_COLUMNS - 1) },
   };
 }
+
+/**
+ * Whether rows past the ones read may hold data: the rows read reached MAX_SHEET_ROWS, the last of them isn't
+ * empty, and the sheet declared more. A range inflated by formatting far down a column isn't cut off: SheetJS reads
+ * back only the rows that hold cells.
+ */
+export function sheetCutOff(rows: unknown[][], declaredRows: number): boolean {
+  if (rows.length < MAX_SHEET_ROWS || declaredRows <= rows.length) return false;
+  const last = rows[rows.length - 1] ?? [];
+  return last.some((v) => v !== undefined && v !== null && String(v).trim() !== "");
+}
 export const MAX_PDF_PAGES = 50;
 export const MAX_AI_TEXT_CHARS = 20_000;
 /** Below this much text across the whole PDF, treat it as a scan. */
@@ -250,6 +261,8 @@ export interface CensusResult {
   skipped: number;
   /** Headers of columns that were never read because they hold an SSN or bank details. */
   ignoredColumns: string[];
+  /** The sheet has rows past the ones read (MAX_SHEET_ROWS): the census is only part of the company's. */
+  cutOff?: boolean;
 }
 
 /**
@@ -336,7 +349,12 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
  * MAX_EMPLOYEES people, since the intake can't store more; the headcount, states and contractor
  * facts still cover every row, and the census's location says how many were kept.
  */
-export function censusCandidates({ census, location, facts }: CensusResult): Candidate[] {
+export function censusCandidates({ census, location, facts, cutOff }: CensusResult): Candidate[] {
+  if (cutOff) {
+    // Only part of the company was read: the people read are kept, but a headcount, states or contractor facts
+    // from them would describe part of it as the whole.
+    return [{ field: "census", value: census.slice(0, MAX_EMPLOYEES), location: `${location}; the sheet has more rows than were read`, facts }];
+  }
   const states = [...new Set(census.map((e) => e.work_state).filter(Boolean))].sort();
   const contractors = census.filter((e) => !isW2(e));
   const truncated = census.length > MAX_EMPLOYEES;
@@ -354,8 +372,14 @@ export function censusCandidates({ census, location, facts }: CensusResult): Can
 }
 
 /** What the prospect should know about how a census was read. */
-export function censusNotes({ skipped, ignoredColumns }: CensusResult): string[] {
+export function censusNotes({ skipped, ignoredColumns, cutOff }: CensusResult): string[] {
   const notes: string[] = [];
+  if (cutOff) {
+    notes.push(
+      `This sheet is longer than we read: only its first ${MAX_SHEET_ROWS.toLocaleString("en-US")} rows were read, so the ` +
+        "headcount, states and contractors weren't taken from it. Tell Lenore those, or upload the census in smaller files.",
+    );
+  }
   if (ignoredColumns.length > 0) {
     notes.push(
       `The ${ignoredColumns.join(", ")} column${ignoredColumns.length === 1 ? " wasn't" : "s weren't"} read and ` +
@@ -399,6 +423,8 @@ export interface Grid {
   rows: unknown[][];
   /** Spreadsheet row number of rows[0], so a location reads "rows 3–40". */
   firstRow?: number;
+  /** Rows past these may hold data that wasn't read (sheetCutOff). */
+  cutOff?: boolean;
 }
 
 export interface GridReading {
@@ -418,7 +444,8 @@ export function readGrids(grids: Grid[], now: Date = new Date()): GridReading {
   const textSections: TextSection[] = [];
   let found = false;
   for (const g of grids) {
-    const census = found ? null : findCensus(g.rows, g.label, g.firstRow ?? 1, now);
+    const inSheet = found ? null : findCensus(g.rows, g.label, g.firstRow ?? 1, now);
+    const census = inSheet && g.cutOff ? { ...inSheet, cutOff: true } : inSheet;
     if (census) {
       found = true;
       candidates.push(...censusCandidates(census));

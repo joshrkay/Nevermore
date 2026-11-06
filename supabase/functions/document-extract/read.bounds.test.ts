@@ -20,6 +20,14 @@ describe("read.ts bounds the spreadsheet library's work", () => {
     expect(readSpreadsheet).toMatch(/sheet_to_json<unknown\[\]>\(ws, \{[^}]*range: clampSheetRange\(/);
   });
 
+  it("marks a sheet whose declared rows ran past what was read, so its census isn't taken as the whole company", () => {
+    // SheetJS keeps the declared range in !fullref when sheetRows cuts !ref.
+    expect(readSpreadsheet).toContain('ws["!fullref"]');
+    expect(readSpreadsheet).toMatch(/cutOff: sheetCutOff\(/);
+    // A CSV declares no range (SheetJS leaves !fullref unset): one that filled every row read counts as longer.
+    expect(readSpreadsheet).toMatch(/rows\.length >= MAX_SHEET_ROWS \? Number\.POSITIVE_INFINITY/);
+  });
+
   it("checks how large an .xlsx unzips to before the library unzips it", () => {
     const check = readSpreadsheet.indexOf("unzippedSize(bytes, MAX_XLSX_UNZIPPED_BYTES)");
     expect(check).toBeGreaterThan(-1);

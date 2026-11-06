@@ -28,6 +28,8 @@ declare module "https://esm.sh/@supabase/supabase-js@2.100.0" {
 declare module "https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs" {
   export interface WorkSheet {
     "!ref"?: string;
+    /** The declared range when sheetRows cut "!ref" short. */
+    "!fullref"?: string;
     [cell: string]: unknown;
   }
   export interface WorkBook {

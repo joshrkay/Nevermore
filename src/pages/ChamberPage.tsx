@@ -109,6 +109,7 @@ const ChamberPage = () => {
     choosePeo,
     saveStatus,
     retrySave,
+    saveAll,
     loadLatest,
     keepMine,
     discardChanges,
@@ -383,7 +384,7 @@ const ChamberPage = () => {
           onStartNew={startNew}
           invalidField={invalidField}
         />
-        <SignOutButton className="shrink-0" />
+        <SignOutButton className="shrink-0" saveFirst={saveAll} />
         <LegalLinks compact className="shrink-0" />
       </div>
 

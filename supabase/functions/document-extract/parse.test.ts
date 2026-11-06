@@ -18,6 +18,7 @@ import {
   readGrids,
   sha256Hex,
   shapeAiCandidates,
+  sheetCutOff,
   sheetText,
   sniffFormat,
   US_STATE_CODES,
@@ -319,6 +320,45 @@ describe("the census template", () => {
 
   it("finds no census in the template before it is filled in", () => {
     expect(findCensus(csvRows(censusTemplateCsv()), "CSV", 1, NOW)).toBeNull();
+  });
+});
+
+describe("a census longer than the rows read", () => {
+  // The row bound (MAX_SHEET_ROWS) keeps a read within memory and CPU, so a longer census is read only in part.
+  // The headcount, states and contractor facts would then cover part of the company while reading as the whole.
+  const census = (n: number) => {
+    const rows: string[][] = [["Name", "State", "Title", "Type"]];
+    for (let i = 0; i < n; i++) rows.push([`Person ${i}`, i < 10 ? "NY" : "CA", "Dev", "W-2"]);
+    return rows;
+  };
+
+  it("keeps the rows that were read but takes no headcount, states or contractor facts from them, and says why", () => {
+    const { candidates, notes } = readGrids([{ label: "Sheet Staff", rows: census(MAX_SHEET_ROWS - 1), cutOff: true }], NOW);
+    expect(candidates.map((c) => c.field)).toEqual(["census"]);
+    expect(candidates[0].location).toContain("the sheet has more rows than were read");
+    expect(notes).toContainEqual(expect.stringContaining(`only its first ${MAX_SHEET_ROWS.toLocaleString("en-US")} rows were read`));
+  });
+
+  it("reads a census that wasn't cut off as before", () => {
+    const { candidates } = readGrids([{ label: "Sheet Staff", rows: census(20), cutOff: false }], NOW);
+    expect(candidates.map((c) => c.field)).toEqual(["census", "employee_count", "states"]);
+  });
+
+  // Shapes taken from SheetJS itself with sheetRows: MAX_SHEET_ROWS. A 7,500-person .xlsx reads back 5,050 rows
+  // and declares A1:D7501 in !fullref; the same CSV reads back 5,050 rows and declares nothing; a 100-person
+  // .xlsx whose range formatting inflated to A1:Z1048576 reads back its 101 real rows.
+  it("counts a sheet as cut off when the rows read reached the bound, the last holds data and more were declared", () => {
+    const full = census(MAX_SHEET_ROWS - 1); // header + data fill every row read
+    expect(sheetCutOff(full, 7501)).toBe(true);
+    // A CSV declares no range: one that filled every row read is taken as running past them.
+    expect(sheetCutOff(full, Number.POSITIVE_INFINITY)).toBe(true);
+  });
+
+  it("doesn't count a short census in an inflated range, or one that ends exactly at the bound", () => {
+    expect(sheetCutOff(census(100), 1_048_576)).toBe(false);
+    const padded = [...census(100), ...Array.from({ length: MAX_SHEET_ROWS - 101 }, () => ["", "", "", ""])];
+    expect(sheetCutOff(padded, 1_048_576)).toBe(false);
+    expect(sheetCutOff(census(MAX_SHEET_ROWS - 1), MAX_SHEET_ROWS)).toBe(false);
   });
 });
 

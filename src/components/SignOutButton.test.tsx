@@ -15,12 +15,12 @@ const { default: SignOutButton } = await import("./SignOutButton");
 
 let pathWhenSignedOut: string | null = null;
 const Where = () => <p data-testid="where">{useLocation().pathname}</p>;
-const renderAt = (path: string) =>
+const renderAt = (path: string, saveFirst?: () => Promise<boolean>) =>
   render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/" element={<Where />} />
-        <Route path="/start" element={<SignOutButton />} />
+        <Route path="/start" element={<SignOutButton saveFirst={saveFirst} />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -53,5 +53,36 @@ describe("SignOutButton (prospects)", () => {
     expect(pathWhenSignedOut).toBe("/");
     expect(screen.getByTestId("where")).toHaveTextContent("/");
     expect(toast.success).toHaveBeenCalledWith("You've signed out. Your answers stay with your account.");
+  });
+
+  it("saves the Chamber's pending answers before signing out", async () => {
+    auth.user = { id: "u1", email: "pat@example.com" };
+    const saveFirst = vi.fn().mockResolvedValue(true);
+    renderAt("/start", saveFirst);
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    await waitFor(() => expect(auth.signOut).toHaveBeenCalledTimes(1));
+    expect(saveFirst).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith("You've signed out. Your answers stay with your account.");
+  });
+
+  it("asks before discarding answers that couldn't be saved, since signing out also clears this browser's copy", async () => {
+    auth.user = { id: "u1", email: "pat@example.com" };
+    const saveFirst = vi.fn().mockResolvedValue(false);
+    renderAt("/start", saveFirst);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("couldn't be saved");
+    expect(auth.signOut).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Stay signed in" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(auth.signOut).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("where")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out anyway" }));
+    await waitFor(() => expect(auth.signOut).toHaveBeenCalledTimes(1));
+    expect(pathWhenSignedOut).toBe("/");
+    // Not "your answers stay with your account": the latest ones didn't.
+    expect(toast.success).toHaveBeenCalledWith("You've signed out.");
   });
 });

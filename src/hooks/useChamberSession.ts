@@ -132,6 +132,8 @@ interface UseChamberSessionReturn {
   saveStatus: SaveStatus;
   /** Saves now, or creates the intake again if creating it failed. */
   retrySave: () => void;
+  /** Saves what's pending now; resolves true once everything captured so far is saved (Sign out waits on it). */
+  saveAll: () => Promise<boolean>;
   /**
    * The intake's id, creating the intake first when the prospect hasn't started one yet. No intake exists until
    * the prospect does something with it (a message, an answer, a choice or an upload); any change creates it,
@@ -1453,6 +1455,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     choosePeo,
     saveStatus,
     retrySave,
+    saveAll: flush,
     ensureIntake,
     loadLatest,
     keepMine,

@@ -13,6 +13,7 @@ import {
   MIN_PDF_TEXT_CHARS,
   paragraphSections,
   readGrids,
+  sheetCutOff,
   sniffFormat,
   type Candidate,
   type ExtractionStatus,
@@ -111,15 +112,23 @@ async function readSpreadsheet(bytes: Uint8Array, format: "csv" | "xls" | "xlsx"
     const ws = wb.Sheets[name];
     if (!ws || !ws["!ref"]) continue;
     const range = XLSX.utils.decode_range(ws["!ref"]);
+    // Raw values, so dates arrive as Dates whatever the sheet's display format, then as ISO text. Every
+    // cell in the range is built, empty or not, so the range is clamped: sheetRows bounds the rows, not
+    // the columns (A1:XFD200 is 3.3 million cells).
+    const rows = XLSX.utils
+      .sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: "", blankrows: true, range: clampSheetRange(range) })
+      .map((row) => row.map(cellToText));
+    // sheetRows cuts !ref to the rows read; an .xls or .xlsx keeps its declared range in !fullref. A CSV declares
+    // none, so one that filled every row read counts as running past them.
+    const fullref = ws["!fullref"];
+    const declaredRows = fullref
+      ? XLSX.utils.decode_range(fullref).e.r - range.s.r + 1
+      : rows.length >= MAX_SHEET_ROWS ? Number.POSITIVE_INFINITY : rows.length;
     grids.push({
       label: format === "csv" ? "CSV" : `Sheet ${name}`,
       firstRow: range.s.r + 1,
-      // Raw values, so dates arrive as Dates whatever the sheet's display format, then as ISO text. Every
-      // cell in the range is built, empty or not, so the range is clamped: sheetRows bounds the rows, not
-      // the columns (A1:XFD200 is 3.3 million cells).
-      rows: XLSX.utils
-        .sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: "", blankrows: true, range: clampSheetRange(range) })
-        .map((row) => row.map(cellToText)),
+      rows,
+      cutOff: sheetCutOff(rows, declaredRows),
     });
   }
   return await readTablesAndText(grids, [], ask);
