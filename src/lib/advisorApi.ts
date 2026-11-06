@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database, Json } from "@/integrations/supabase/types";
 import type { ChamberData } from "@/data/chamberTypes";
@@ -198,6 +199,14 @@ export interface SubmissionDetail {
   informationRequests: InformationRequestRow[];
 }
 
+/** The columns of a chamber_certifications row the detail page reads. */
+interface RecordedCertification {
+  file_id: string | null;
+  signed_at: string | null;
+  recorded_at: string | null;
+  chamber_data: Json | null;
+}
+
 export async function loadSubmission(id: string): Promise<SubmissionDetail | null> {
   const [session, workflow, history, notes, reviews, events, versions] = await Promise.all([
     supabase
@@ -223,7 +232,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   // Row security hides sessions the caller may not see; a missing pipeline row means the same.
   if (!row || !workflow.data) return null;
 
-  const [docs, profile, docEvents, requests] = await Promise.all([
+  const [docs, profile, docEvents, requests, lastCertification] = await Promise.all([
     supabase
       .from("documents")
       .select("id, file_name, file_size, category, status, storage_path, created_at, file_sha256, scan_verdict")
@@ -233,8 +242,21 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     supabase.from("profiles").select("contact_name, phone").eq("user_id", row.user_id).maybeSingle(),
     supabase.from("document_events").select("*").eq("session_id", id).order("id", { ascending: false }),
     supabase.from("information_requests").select("*").eq("session_id", id).order("id", { ascending: false }),
+    // The latest certification on record (append-only, written by the database): what a withdrawn
+    // certification covered, and its File ID. Never the intake's own `submission`, which a prospect could
+    // rewrite once their certification was withdrawn before 20261106090000_hardening.sql.
+    // chamber_certifications isn't in the generated types (src/integrations/supabase/types.ts).
+    (supabase as unknown as SupabaseClient)
+      .from("chamber_certifications")
+      .select("file_id, signed_at, recorded_at, chamber_data")
+      .eq("session_id", id)
+      .order("recorded_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
   if (docs.error) fail(docs.error, "Couldn't load uploaded documents.");
+  if (lastCertification.error) fail(lastCertification.error, "Couldn't load the certification on record.");
+  const recorded = lastCertification.data as RecordedCertification | null;
   if (docEvents.error) fail(docEvents.error, "Couldn't load the document history.");
   if (requests.error) fail(requests.error, "Couldn't load the requests sent to the prospect.");
 
@@ -249,7 +271,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   return {
     id: row.id,
     userId: row.user_id,
-    fileId: row.file_id ?? submission?.file_id ?? null,
+    fileId: row.file_id ?? recorded?.file_id ?? null,
     intakeStatus: row.status,
     pipelineStatus: isPipelineStatus(workflow.data.status) ? workflow.data.status : "draft",
     needsAction: {
@@ -267,8 +289,8 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     provenance: parseProvenance(useSnapshot ? submission!.field_provenance : row.field_provenance),
     certified,
     signed:
-      !certified && submission?.signer_name && submission.chamber_data !== undefined && submission.chamber_data !== null
-        ? { data: parseChamberData(submission.chamber_data), signedAt: submission.certified_at ?? submission.signed_at }
+      !certified && recorded && recorded.chamber_data !== null && recorded.chamber_data !== undefined
+        ? { data: parseChamberData(recorded.chamber_data), signedAt: recorded.recorded_at ?? recorded.signed_at }
         : null,
     submission,
     transcript: parseTranscript(certifiedTranscript ?? row.transcript),
