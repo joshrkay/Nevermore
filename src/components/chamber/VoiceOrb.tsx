@@ -170,7 +170,7 @@ const VoiceOrb = ({
                 <button
                   type="button"
                   disabled
-                  className={`shrink-0 flex items-center gap-2 ${pill} py-2 rounded-full font-medium text-sm bg-primary/60 text-primary-foreground cursor-wait`}
+                  className={`shrink-0 flex items-center gap-2 ${pill} py-2 rounded-full font-medium text-sm bg-primary/90 text-primary-foreground cursor-wait`}
                 >
                   <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                   <span className={label}>Connecting...</span>
@@ -256,7 +256,7 @@ const VoiceOrb = ({
               <button
                 type="button"
                 disabled
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm bg-primary/60 text-primary-foreground cursor-wait"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm bg-primary/90 text-primary-foreground cursor-wait"
               >
                 <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                 Connecting...

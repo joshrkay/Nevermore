@@ -1,7 +1,7 @@
-import { useEffect } from "react";
+import { Fragment, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Check, MessageCircle, Paperclip, PenLine, Send } from "lucide-react";
+import { Check, MessageCircle, PenLine, Send } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
 
@@ -67,24 +67,21 @@ const STEPS = [
 ];
 
 // The example in the hero: what the intake looks like while Lenore fills in the packet. Sample data only.
-const PACKET_DONE = ["Company details", "Employees (28)", "Dependents", "Current benefits"];
+const PACKET_DONE = ["Company details", "Workforce", "Locations", "Payroll"];
 
 const IntakePreview = () => (
   <figure className="bg-card border border-border rounded-[28px] shadow-[0_24px_60px_hsl(var(--foreground)/0.08)] p-3 flex flex-wrap gap-3 text-left">
     <figcaption className="sr-only">An example intake: chatting with Lenore while the packet fills in.</figcaption>
     <div className="flex-[999_1_420px] min-w-0 p-4 sm:p-5 flex flex-col gap-4" aria-hidden="true">
-      <LenoreLine>Hi, I'm Lenore. I'll help you put your PEO packet together. Got a census handy? Drop it in, or just tell me about your team.</LenoreLine>
+      <LenoreLine>Hi, I'm Lenore, your intake assistant. Tell me a bit about your business, and drop your census on the Upload tab whenever it's handy.</LenoreLine>
       <div className="flex justify-end">
         <p className="max-w-[85%] bg-foreground text-background px-4 py-3 rounded-[18px] rounded-tr-[4px] leading-relaxed">
-          Here's our census. We're a creative agency, 28 people across California and Texas.
+          We're a creative agency, 28 people across California and Texas, and we pay every two weeks.
         </p>
       </div>
-      <LenoreLine>Thanks! I've added all 28 employees. Quick question: Tom Bradley is marked 1099. Is he a contractor?</LenoreLine>
+      <LenoreLine>Thanks, got it. Who carries your health coverage today?</LenoreLine>
       <div className="mt-1 flex items-center gap-2 border border-border rounded-full pl-5 pr-1.5 py-1.5">
         <span className="flex-1 text-muted-foreground">Type a message...</span>
-        <span className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
-          <Paperclip className="w-5 h-5" />
-        </span>
         <span className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center">
           <Send className="w-4 h-4" />
         </span>
@@ -106,9 +103,9 @@ const IntakePreview = () => (
             {label}
           </li>
         ))}
-        <li className="flex items-center gap-2.5">
+        <li className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
           <span className="w-6 h-6 rounded-full border-2 border-dashed border-warning shrink-0" />
-          <span className="whitespace-nowrap">Workers' comp</span>
+          <span className="whitespace-nowrap">Current benefits</span>
           <span className="ml-auto whitespace-nowrap text-xs font-bold text-warning bg-warning/10 border border-warning/30 px-2 py-0.5 rounded-full">1 question</span>
         </li>
         <li className="flex items-center gap-2.5 text-muted-foreground">
@@ -149,13 +146,13 @@ const LandingPage = () => {
         <div className="mx-auto max-w-3xl text-center">
           <motion.h1
             {...fadeUp(0.1)}
-            className="font-display text-[2.6rem] leading-[1.08] sm:text-6xl md:text-7xl font-extrabold tracking-tight"
+            className="font-display text-[clamp(1.9rem,9.5vw,2.6rem)] leading-[1.08] sm:text-6xl md:text-7xl font-extrabold tracking-tight"
           >
             Never more <span className="bg-highlight text-highlight-foreground rounded-xl px-2.5 whitespace-nowrap">back-and-forth.</span>
           </motion.h1>
           <motion.p {...fadeUp(0.2)} className="text-lg md:text-xl text-muted-foreground max-w-[620px] mx-auto mt-6 leading-relaxed">
             Have a quick chat with Lenore, drop in your census, and leave with a complete underwriting packet for the PEO
-            you choose. No forms to fill in, no <span className="whitespace-nowrap">three-email</span> threads.
+            you choose. Skip the long forms and the <span className="whitespace-nowrap">three-email</span> threads.
           </motion.p>
           <motion.div {...fadeUp(0.3)} className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 mt-9">
             <Link
@@ -169,11 +166,12 @@ const LandingPage = () => {
             </a>
           </motion.div>
           <motion.p {...fadeUp(0.4)} className="mt-6 text-[15px] text-muted-foreground">
+            {/* Each fact stays on one line; the line breaks only at the separators between them. */}
             {["About 15–20 minutes", "Start as a guest", "PEO-neutral", "You approve every answer"].map((fact, i) => (
-              <span key={fact} className="whitespace-nowrap">
+              <Fragment key={fact}>
                 {i > 0 && <span aria-hidden="true"> · </span>}
-                {fact}
-              </span>
+                <span className="whitespace-nowrap">{fact}</span>
+              </Fragment>
             ))}
           </motion.p>
         </div>

@@ -129,7 +129,7 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
  * chamber-extract always replies (when the model doesn't, it asks about the next unsettled field), so this covers
  * a function from before it did.
  */
-export const CHAT_FALLBACK_REPLY = "Thank you, I've noted that.";
+export const CHAT_FALLBACK_REPLY = "Thanks, got it.";
 
 /**
  * The answers as Lenore's chat sends them to chamber-extract. The roster isn't extracted from chat and holds
