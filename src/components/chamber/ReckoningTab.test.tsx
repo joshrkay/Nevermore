@@ -35,7 +35,7 @@ describe("ReckoningTab account gate", () => {
     renderReckoning();
     expect(screen.getByRole("heading", { name: "Verify your email to certify" })).toBeInTheDocument();
     expect(screen.queryByText("Click to sign digitally")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Generate The Manuscript/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Generate your packet/ })).not.toBeInTheDocument();
   });
 
   it("emails a code, then asks for it", async () => {
@@ -72,13 +72,13 @@ describe("ReckoningTab account gate", () => {
     renderReckoning();
     expect(screen.queryByRole("heading", { name: "Verify your email to certify" })).not.toBeInTheDocument();
     expect(screen.getByText("Click to sign digitally")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate your packet/ })).toBeInTheDocument();
   });
 });
 
 describe("ReckoningTab certification", () => {
   const onSubmit = vi.fn();
-  const submitButton = () => screen.getByRole("button", { name: /Generate The Manuscript/ });
+  const submitButton = () => screen.getByRole("button", { name: /Generate your packet/ });
 
   const mount = (data = DEMO_CHAMBER_DATA) => {
     const tree = (d: typeof data) => (
@@ -171,9 +171,10 @@ describe("ReckoningTab certification", () => {
     sign();
     fireEvent.click(submitButton());
     expect(await screen.findByText("Certification recorded")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "You're all set." })).toBeInTheDocument();
     expect(screen.getByText(/Certified by Jo Doe, CEO/)).toBeInTheDocument();
     expect(screen.getByText("File ID: EAA-2026-S1")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Download The Manuscript/ })).toHaveAttribute("href", "/manuscript/EAA-2026-S1");
+    expect(screen.getByRole("link", { name: /Download your packet/ })).toHaveAttribute("href", "/manuscript/EAA-2026-S1");
     expect(toast.success).toHaveBeenCalled();
   });
 
@@ -233,7 +234,7 @@ describe("ReckoningTab certification", () => {
     expect(onSubmit).toHaveBeenCalledTimes(sent + 1);
     expect(screen.getByText("File ID: EAA-2026-0042")).toBeInTheDocument();
     expect(screen.getByText("Meridian Creative Group")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Download The Manuscript/ })).toHaveAttribute("href", "/manuscript/EAA-2026-0042");
+    expect(screen.getByRole("link", { name: /Download your packet/ })).toHaveAttribute("href", "/manuscript/EAA-2026-0042");
   });
 
   it("blocks on a required answer that is conflicting, and says what to do", () => {
@@ -438,17 +439,17 @@ describe("ReckoningTab on an intake that is already certified", () => {
   it("is read-only while nothing has changed, so it can't be certified again by accident", () => {
     mountWith({ status: "certified", submission });
     expect(screen.getByRole("status")).toHaveTextContent(/Certified by Jo Doe, CEO/);
-    expect(screen.getByRole("link", { name: "View The Manuscript" })).toHaveAttribute("href", "/manuscript/EAA-2026-S1");
+    expect(screen.getByRole("link", { name: "View your packet" })).toHaveAttribute("href", "/manuscript/EAA-2026-S1");
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     expect(screen.queryByText("Click to sign digitally")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Generate The Manuscript/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Generate your packet/ })).not.toBeInTheDocument();
   });
 
   it("offers certification again once the answers have changed", () => {
     mountWith({ status: "stale", submission });
     expect(screen.getByRole("status")).toHaveTextContent(/Your answers changed after you certified/);
     expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate your packet/ })).toBeInTheDocument();
   });
 
   it("brings the form back if a signature made this visit is voided, even before the saved state catches up", () => {
@@ -467,7 +468,7 @@ describe("ReckoningTab on an intake that is already certified", () => {
     view.rerender(tree({ ...DEMO_CHAMBER_DATA, employee_count: 99 }, { status: "certified", submission }));
     expect(screen.getByRole("alert")).toHaveTextContent(/changed after you signed/);
     expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Generate your packet/ })).toBeDisabled();
   });
 
   describe("when the chosen PEO changes", () => {
@@ -482,7 +483,7 @@ describe("ReckoningTab on an intake that is already certified", () => {
     it("stays read-only when the same PEO is chosen again", () => {
       mountWith(certifiedFor, "Acme PEO");
       expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
-      expect(screen.queryByRole("button", { name: /Generate The Manuscript/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Generate your packet/ })).not.toBeInTheDocument();
     });
 
     it("asks for certification again when a different PEO is chosen, and says why", () => {
@@ -491,7 +492,7 @@ describe("ReckoningTab on an intake that is already certified", () => {
       expect(screen.getByRole("status")).toHaveTextContent(/Other PEO/);
       expect(screen.queryByText(/Certified by Jo Doe/)).not.toBeInTheDocument();
       expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
-      expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Generate your packet/ })).toBeInTheDocument();
     });
 
     it("asks for certification again when a PEO is chosen for an intake certified without one", () => {
@@ -514,7 +515,7 @@ describe("ReckoningTab on an intake that is already certified", () => {
       fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Jo Doe" } });
       fireEvent.change(screen.getByLabelText("Role"), { target: { value: "CEO" } });
       fireEvent.click(screen.getByText("Click to sign digitally"));
-      fireEvent.click(screen.getByRole("button", { name: /Generate The Manuscript/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Generate your packet/ }));
       await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
       expect(onSubmit.mock.calls[0][0]).toMatchObject({ peo: "Other PEO" });
     });
@@ -523,13 +524,13 @@ describe("ReckoningTab on an intake that is already certified", () => {
   it("offers certification to an intake that has never been certified", () => {
     mountWith({ status: "none" });
     expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: /Generate The Manuscript/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate your packet/ })).toBeInTheDocument();
   });
 });
 
 describe("ReckoningTab required answers", () => {
   const onSubmit = vi.fn();
-  const submitButton = () => screen.getByRole("button", { name: /Generate The Manuscript/ });
+  const submitButton = () => screen.getByRole("button", { name: /Generate your packet/ });
   const signAndTry = () => {
     screen.getAllByRole("checkbox").forEach((c) => fireEvent.click(c));
     fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Jo Doe" } });
@@ -543,14 +544,14 @@ describe("ReckoningTab required answers", () => {
     onSubmit.mockReset().mockResolvedValue(true);
   });
 
-  it("won't generate The Manuscript while a required answer is missing, and says which", () => {
+  it("won't generate the packet while a required answer is missing, and says which", () => {
     render(
       <MemoryRouter>
         <ReckoningTab data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
       </MemoryRouter>,
     );
     const callout = screen.getByRole("alert", { name: "Answers still needed" });
-    expect(callout).toHaveTextContent("Before The Manuscript can be generated, add:");
+    expect(callout).toHaveTextContent("Before your packet can be generated, add:");
     expect(callout).toHaveTextContent("Pay frequency");
     expect(callout).not.toHaveTextContent("Company legal name");
 
@@ -592,14 +593,14 @@ describe("ReckoningTab required answers", () => {
     ],
   };
 
-  it("won't generate The Manuscript while a required answer has two different values, and says which", () => {
+  it("won't generate the packet while a required answer has two different values, and says which", () => {
     render(
       <MemoryRouter>
         <ReckoningTab data={DEMO_CHAMBER_DATA} provenance={{ company_name: conflict, industry: conflict }} peoName={null} sessionId="s1" fileId="EAA-2026-S1" onSubmit={onSubmit} />
       </MemoryRouter>,
     );
     const callout = screen.getByRole("alert", { name: "Answers still needed" });
-    expect(callout).toHaveTextContent("Before The Manuscript can be generated, choose one answer for:");
+    expect(callout).toHaveTextContent("Before your packet can be generated, choose one answer for:");
     expect(callout).toHaveTextContent("Company legal name");
     // A recommended field in conflict is for Review, not a blocker.
     expect(callout).not.toHaveTextContent("Industry");

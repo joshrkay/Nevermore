@@ -2,50 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Nevermore's palette: warm white, espresso text, tomato for actions, peach panels and a sunny highlight.
+   Every text pairing here meets WCAG AA (4.5:1), including status text on its own 15% tint, and the input border
+   meets 3:1 against a card. Re-check contrast when you change a value. */
 @layer base {
   :root {
-    --background: 228 33% 4%;
-    --foreground: 30 20% 93%;
+    --background: 33 100% 98%;
+    --foreground: 21 20% 14%;
 
-    --card: 232 27% 6%;
-    --card-foreground: 30 20% 93%;
+    --card: 0 0% 100%;
+    --card-foreground: 21 20% 14%;
 
-    --popover: 232 27% 6%;
-    --popover-foreground: 30 20% 93%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 21 20% 14%;
 
-    --primary: 350 73% 44%;
-    --primary-foreground: 30 20% 93%;
+    --primary: 6 62% 44%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 263 45% 51%;
-    --secondary-foreground: 30 20% 93%;
+    --secondary: 255 50% 47%;
+    --secondary-foreground: 0 0% 100%;
 
-    --muted: 233 24% 14%;
-    --muted-foreground: 220 9% 46%;
+    --muted: 25 100% 95%;
+    --muted-foreground: 25 11% 35%;
 
-    --accent: 233 24% 14%;
-    --accent-foreground: 30 20% 93%;
+    --accent: 25 86% 92%;
+    --accent-foreground: 21 20% 14%;
 
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 30 20% 93%;
+    --destructive: 358 76% 36%;
+    --destructive-foreground: 0 0% 100%;
 
-    --success: 160 60% 45%;
-    --success-foreground: 30 20% 93%;
+    --success: 150 62% 28%;
+    --success-foreground: 0 0% 100%;
 
-    --warning: 38 92% 50%;
-    --warning-foreground: 228 33% 4%;
+    --warning: 36 100% 27%;
+    --warning-foreground: 0 0% 100%;
 
-    --border: 235 24% 14%;
-    --input: 235 24% 14%;
-    --ring: 350 73% 44%;
+    --highlight: 43 100% 71%;
+    --highlight-foreground: 21 20% 14%;
 
-    --radius: 0.5rem;
+    --border: 27 48% 87%;
+    --input: 24 15% 56%;
+    --ring: 6 62% 44%;
 
-    --surface: 232 27% 6%;
-  }
+    --radius: 0.875rem;
 
-  .dark {
-    --background: 228 33% 4%;
-    --foreground: 30 20% 93%;
+    --surface: 25 100% 95%;
   }
 }
 
@@ -59,54 +60,29 @@
   }
 
   h1, h2, h3, h4, h5, h6 {
-    @apply font-display;
+    @apply font-display tracking-tight;
   }
 }
 
-@layer utilities {
-  .font-display {
-    font-family: 'Playfair Display', serif;
-  }
-
-  .font-body {
-    font-family: 'DM Sans', sans-serif;
-  }
-
-  .font-mono {
-    font-family: 'JetBrains Mono', monospace;
-  }
-}
-
-/* Noise texture overlay */
-.noise-overlay::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  opacity: 0.03;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-  pointer-events: none;
-  z-index: 1;
-}
-
-/* Pulsing glow for Lenore avatar */
+/* Pulsing glow for Lenore's avatar */
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 12px hsl(350 73% 44% / 0.4); }
-  50% { box-shadow: 0 0 24px hsl(350 73% 44% / 0.7); }
+  0%, 100% { box-shadow: 0 0 8px hsl(var(--primary) / 0.25); }
+  50% { box-shadow: 0 0 18px hsl(var(--primary) / 0.45); }
 }
 
 .lenore-glow {
   animation: pulse-glow 2s ease-in-out infinite;
 }
 
-/* Voice Orb States */
+/* Voice orb states. The glows use the theme's colours, so they follow the palette above. */
 .orb-idle {
-  box-shadow: 0 0 40px 10px rgba(196, 30, 58, 0.3);
+  box-shadow: 0 0 36px 8px hsl(var(--primary) / 0.22);
   animation: orb-idle-pulse 3s ease-in-out infinite;
 }
 
 @keyframes orb-idle-pulse {
-  0%, 100% { box-shadow: 0 0 40px 10px rgba(196, 30, 58, 0.3); }
-  50% { box-shadow: 0 0 60px 20px rgba(196, 30, 58, 0.5); }
+  0%, 100% { box-shadow: 0 0 36px 8px hsl(var(--primary) / 0.22); }
+  50% { box-shadow: 0 0 54px 16px hsl(var(--primary) / 0.35); }
 }
 
 .orb-listening {
@@ -114,8 +90,8 @@
 }
 
 @keyframes orb-listen {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(196, 30, 58, 0.6); }
-  50% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(196, 30, 58, 0); }
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 hsl(var(--primary) / 0.5); }
+  50% { transform: scale(1.05); box-shadow: 0 0 0 20px hsl(var(--primary) / 0); }
 }
 
 .orb-speaking {
@@ -123,35 +99,35 @@
 }
 
 @keyframes orb-speak {
-  0%, 100% { box-shadow: 0 0 30px 5px rgba(196, 30, 58, 0.4), 0 0 60px 20px rgba(107, 70, 193, 0.2); }
-  33% { box-shadow: 0 0 50px 15px rgba(196, 30, 58, 0.6), 0 0 80px 30px rgba(107, 70, 193, 0.3); }
-  66% { box-shadow: 0 0 35px 8px rgba(196, 30, 58, 0.5), 0 0 65px 22px rgba(107, 70, 193, 0.25); }
+  0%, 100% { box-shadow: 0 0 30px 5px hsl(var(--primary) / 0.3), 0 0 60px 20px hsl(var(--highlight) / 0.35); }
+  33% { box-shadow: 0 0 50px 15px hsl(var(--primary) / 0.45), 0 0 80px 30px hsl(var(--highlight) / 0.45); }
+  66% { box-shadow: 0 0 35px 8px hsl(var(--primary) / 0.38), 0 0 65px 22px hsl(var(--highlight) / 0.4); }
 }
 
 .orb-thinking {
-  box-shadow: 0 0 40px 10px rgba(196, 30, 58, 0.2);
+  box-shadow: 0 0 36px 8px hsl(var(--primary) / 0.15);
 }
 
 .orb-disabled {
-  box-shadow: 0 0 40px 10px rgba(217, 169, 50, 0.2);
+  box-shadow: 0 0 36px 8px hsl(var(--warning) / 0.18);
   animation: orb-disabled-pulse 3s ease-in-out infinite;
 }
 
 @keyframes orb-disabled-pulse {
-  0%, 100% { box-shadow: 0 0 40px 10px rgba(217, 169, 50, 0.2); }
-  50% { box-shadow: 0 0 60px 20px rgba(217, 169, 50, 0.35); }
+  0%, 100% { box-shadow: 0 0 36px 8px hsl(var(--warning) / 0.18); }
+  50% { box-shadow: 0 0 54px 16px hsl(var(--warning) / 0.3); }
 }
 
 /* The same orb states for a small orb (the folded stage's bar, or an open stage dragged small): the glows above
    would swallow it, so these keep to a few pixels. */
 .orb-small-idle {
-  box-shadow: 0 0 10px 2px rgba(196, 30, 58, 0.3);
+  box-shadow: 0 0 10px 2px hsl(var(--primary) / 0.22);
   animation: orb-small-idle-pulse 3s ease-in-out infinite;
 }
 
 @keyframes orb-small-idle-pulse {
-  0%, 100% { box-shadow: 0 0 10px 2px rgba(196, 30, 58, 0.3); }
-  50% { box-shadow: 0 0 16px 5px rgba(196, 30, 58, 0.5); }
+  0%, 100% { box-shadow: 0 0 10px 2px hsl(var(--primary) / 0.22); }
+  50% { box-shadow: 0 0 16px 5px hsl(var(--primary) / 0.38); }
 }
 
 .orb-small-listening {
@@ -159,8 +135,8 @@
 }
 
 @keyframes orb-small-listen {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(196, 30, 58, 0.6); }
-  50% { transform: scale(1.05); box-shadow: 0 0 0 8px rgba(196, 30, 58, 0); }
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 hsl(var(--primary) / 0.5); }
+  50% { transform: scale(1.05); box-shadow: 0 0 0 8px hsl(var(--primary) / 0); }
 }
 
 .orb-small-speaking {
@@ -168,16 +144,16 @@
 }
 
 @keyframes orb-small-speak {
-  0%, 100% { box-shadow: 0 0 8px 2px rgba(196, 30, 58, 0.4), 0 0 16px 6px rgba(107, 70, 193, 0.2); }
-  50% { box-shadow: 0 0 14px 4px rgba(196, 30, 58, 0.6), 0 0 24px 10px rgba(107, 70, 193, 0.3); }
+  0%, 100% { box-shadow: 0 0 8px 2px hsl(var(--primary) / 0.3), 0 0 16px 6px hsl(var(--highlight) / 0.35); }
+  50% { box-shadow: 0 0 14px 4px hsl(var(--primary) / 0.45), 0 0 24px 10px hsl(var(--highlight) / 0.45); }
 }
 
 .orb-small-thinking {
-  box-shadow: 0 0 10px 2px rgba(196, 30, 58, 0.2);
+  box-shadow: 0 0 10px 2px hsl(var(--primary) / 0.15);
 }
 
 .orb-small-disabled {
-  box-shadow: 0 0 10px 2px rgba(217, 169, 50, 0.25);
+  box-shadow: 0 0 10px 2px hsl(var(--warning) / 0.2);
 }
 
 /* Parsing pulse dot */
@@ -204,9 +180,4 @@
 /* Upload zone dashed border animation */
 @keyframes dash-march {
   to { stroke-dashoffset: -20; }
-}
-
-/* Raven logo tinting — makes the black raven image match the primary crimson */
-.raven-logo-tint {
-  filter: brightness(0) saturate(100%) invert(22%) sepia(95%) saturate(3000%) hue-rotate(340deg) brightness(85%) contrast(95%);
 }

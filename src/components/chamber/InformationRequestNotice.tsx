@@ -30,8 +30,8 @@ const InformationRequestNotice = ({ request, onOpenReview }: InformationRequestN
       </p>
     )}
     <p className="mt-2 text-xs text-muted-foreground">
-      Update your answers, then certify again in The Reckoning; that sends them to your advisor. If nothing needs to
-      change, reply to the email we sent you.{" "}
+      Update your answers, then certify again on the Certify & sign tab; that sends them to your advisor. If nothing
+      needs to change, reply to the email we sent you.{" "}
       <button
         type="button"
         onClick={onOpenReview}

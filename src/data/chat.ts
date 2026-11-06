@@ -4,7 +4,7 @@ import { censusSummary } from "./followUp";
 import type { ProvenanceMap } from "./provenance";
 import { redactSensitive } from "./sensitive";
 
-/** Who a transcript message is from: the prospect, Lenore, or the Chamber itself (a note such as a voice call starting). */
+/** Who a transcript message is from: the prospect, Lenore, or the intake itself (a note such as a voice call starting). */
 export type ChatSender = "lenore" | "user" | "system";
 
 export interface ChatMessage {
@@ -35,11 +35,14 @@ export const MAX_TIMESTAMP_CHARS = 64;
 const clipText = (s: string) => (s.length > MAX_MESSAGE_CHARS ? s.slice(0, MAX_MESSAGE_CHARS).replace(/[\uD800-\uDBFF]$/, "") : s);
 
 /** Lenore's opening line in a new intake. */
-export const OPENING_MESSAGE = "Good evening. I'm Lenore — your guide through The Chamber. As we talk, I'll fill in the workspace beside us, and you can check or correct anything there. Shall we begin with something simple — tell me a little about your business and what you do.";
+export const OPENING_MESSAGE = "Hi, I'm Lenore, your intake assistant. As we talk, I'll fill in your answers in the workspace, and you can check or change any of them there. Let's start simple: tell me a bit about your business and what you do.";
 
-// Openings saved before messages carried `kind`. They are recognised as greetings by their words.
+// Openings saved before messages carried `kind`, and Lenore's earlier words for it: older transcripts still hold
+// them, so they are recognised as greetings by their words. Only matched against what is stored; a new intake never
+// opens with them.
 const KNOWN_OPENINGS: ReadonlySet<string> = new Set([
   OPENING_MESSAGE,
+  "Good evening. I'm Lenore — your guide through The Chamber. As we talk, I'll fill in the workspace beside us, and you can check or correct anything there. Shall we begin with something simple — tell me a little about your business and what you do.",
   "Good evening. I'm Lenore — your guide through The Chamber. Before we begin, I want to be transparent: what you see in the workspace beside us is a demonstration. By the time our conversation is complete, it will hold your company's information instead. Shall we begin with something simple — tell me a little about your business and what you do.",
 ]);
 
@@ -126,7 +129,7 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
  * chamber-extract always replies (when the model doesn't, it asks about the next unsettled field), so this covers
  * a function from before it did.
  */
-export const CHAT_FALLBACK_REPLY = "Thank you, I've noted that.";
+export const CHAT_FALLBACK_REPLY = "Thanks, got it.";
 
 /**
  * The answers as Lenore's chat sends them to chamber-extract. The roster isn't extracted from chat and holds

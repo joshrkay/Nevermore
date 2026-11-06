@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { RavenIcon } from "../RavenLogo";
+import { BrandMark } from "@/components/BrandMark";
 import { AlertTriangle, CheckCircle2, Download, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -190,18 +190,18 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
     <>
       <div className="p-6 space-y-8">
         <div>
-          <h2 className="font-display text-3xl font-bold mb-2">The Reckoning</h2>
+          <h2 className="font-display text-3xl font-bold mb-2">Certify & sign</h2>
           <p className="text-muted-foreground text-sm">
-            Confirm what you've shared before The Manuscript is prepared for {peoName}.
+            Check what you've shared before your packet is prepared for {peoName}.
           </p>
         </div>
 
-        {/* The Manuscript can't be generated without these; the database refuses the certification too, but for the census's states. */}
+        {/* The packet can't be generated without these; the database refuses the certification too, but for the census's states. */}
         {(missingAnswers.length > 0 || conflictingAnswers.length > 0) && !certifiedAndCurrent && (
           <div role="alert" aria-label="Answers still needed" className="border border-destructive/40 bg-destructive/5 rounded-xl p-4 text-sm space-y-2">
             {missingAnswers.length > 0 && (
               <>
-                <p className="font-medium">Before The Manuscript can be generated, add:</p>
+                <p className="font-medium">Before your packet can be generated, add:</p>
                 <ul className="list-disc pl-5 space-y-0.5">
                   {missingAnswers.map((item) => (
                     <li key={item.key}>
@@ -214,7 +214,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
             {conflictingAnswers.length > 0 && (
               <>
                 <p className="font-medium">
-                  {missingAnswers.length > 0 ? "And choose one answer for:" : "Before The Manuscript can be generated, choose one answer for:"}
+                  {missingAnswers.length > 0 ? "And choose one answer for:" : "Before your packet can be generated, choose one answer for:"}
                 </p>
                 <ul className="list-disc pl-5 space-y-0.5">
                   {conflictingAnswers.map((item) => (
@@ -239,13 +239,13 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
             Certified by {certification.submission.signer_name}, {certification.submission.signer_title}, on{" "}
             {formatSigned(certification.submission.signed_at)}. File ID: {certification.submission.file_id}
             {certification.submission.version ? ` (version ${certification.submission.version})` : ""}.{" "}
-            <Link to={manuscriptUrl} className="underline">View The Manuscript</Link>
+            <Link to={manuscriptUrl} className="underline">View your packet</Link>
           </div>
         )}
         {peoChanged && !needsRecertify && !submitted && (
           <div role="status" className="border border-primary/40 bg-primary/5 rounded-xl p-4 text-sm">
             {certifiedPeo ? `You certified for ${certifiedPeo}` : "You certified before choosing a PEO"}, and you've since
-            chosen {chosenPeo}. Certify again so your Manuscript names {chosenPeo}.
+            chosen {chosenPeo}. Certify again so your packet names {chosenPeo}.
           </div>
         )}
         {certification.status === "stale" && !needsRecertify && !submitted && (
@@ -376,7 +376,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
               : "bg-muted text-muted-foreground cursor-not-allowed"
           }`}
         >
-          {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : failure ? "Try again: Generate The Manuscript →" : "Generate The Manuscript →"}
+          {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : failure ? "Try again: Generate your packet →" : "Generate your packet →"}
         </button>
         {blockers.length > 0 && (
           <p className="text-xs text-muted-foreground -mt-4" data-testid="certification-blockers">
@@ -405,7 +405,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
                 animate={{ scale: 1, opacity: 1 }}
                 transition={{ delay: 0.2, type: "spring" }}
               >
-                <RavenIcon className="w-24 h-24 text-primary mx-auto mb-8" />
+                <BrandMark className="w-24 h-24 text-primary mx-auto mb-8" />
               </motion.div>
               <motion.h1
                 initial={{ y: 20, opacity: 0 }}
@@ -414,7 +414,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
                 id="certified-heading"
                 className="font-display text-4xl md:text-5xl font-bold mb-4"
               >
-                The Raven has spoken.
+                You're all set.
               </motion.h1>
               <motion.p
                 initial={{ y: 20, opacity: 0 }}
@@ -422,7 +422,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
                 transition={{ delay: 0.7 }}
                 className="text-muted-foreground leading-relaxed mb-6"
               >
-                Your submission is certified and saved. Your Manuscript is ready.
+                Your answers are certified and saved, and your packet is ready.
               </motion.p>
               <motion.div
                 initial={{ opacity: 0 }}
@@ -454,7 +454,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
               >
                 <p className="text-sm text-muted-foreground mb-3">What's next:</p>
                 <ul className="text-sm text-foreground space-y-2">
-                  <li>• Download The Manuscript below.</li>
+                  <li>• Download your packet below.</li>
                   <li>• Send it to {peoName} yourself.</li>
                   <li>• Ask {peoName} for pricing and how long their review takes.</li>
                 </ul>
@@ -469,13 +469,13 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
                   to={manuscriptUrl}
                   className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors"
                 >
-                  <Download className="w-4 h-4" /> Download The Manuscript
+                  <Download className="w-4 h-4" /> Download your packet
                 </Link>
                 <Link
                   to={manuscriptUrl}
                   className="inline-flex items-center justify-center gap-2 border border-border text-foreground font-medium px-6 py-3 rounded-lg hover:bg-muted transition-colors"
                 >
-                  View Full Manuscript
+                  View the full packet
                 </Link>
               </motion.div>
             </div>

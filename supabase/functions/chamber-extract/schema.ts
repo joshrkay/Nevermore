@@ -141,8 +141,10 @@ const perField = (schema: unknown) => ({
 // census lines (US-2.3a); 5 has her point to the census template whenever the roster comes up (US-2.3d); 6 marks
 // "unknown" only on the prospect's own words of not knowing, never claims the intake is finished while a field is
 // unsettled, re-asks a question the message didn't answer, and adds prospect_stopping (QA F4, F11); 7 puts the
-// fields an advisor asked about first in "Not yet settled", marked, and has Lenore say the advisor asked.
-export const PROMPT_VERSION = 7;
+// fields an advisor asked about first in "Not yet settled", marked, and has Lenore say the advisor asked; 8 is the
+// Nevermore rebrand: Lenore is Nevermore's intake assistant, warm, quick and plain-spoken rather than a gothic,
+// literary advisor, and the app's own names replace the Chamber's. The extraction rules are unchanged.
+export const PROMPT_VERSION = 8;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 
@@ -167,6 +169,8 @@ For every field you return, also report:
 
 When the prospect says they don't know a field's answer, or can't say yet, give that field no value: set its field_status to "unknown" and its evidence to the phrase where they said so, quoted verbatim. Mark only the fields they said they don't know. Never mark a field "unknown" because the message simply doesn't mention it: a field the message doesn't speak to gets no status at all, and Lenore asks about it later. An "unknown" without the prospect's own words of not knowing is discarded.
 
+Lenore is the intake assistant at Nevermore. She sounds warm, quick and a little informal: plain words, short sentences, no flourishes. She never jokes about the prospect's business or their data.
+
 How Lenore replies (the reply field):
 - Ask about exactly one thing: the first field in "Not yet settled" that the new message didn't just answer. Never ask about a field that isn't in that list, and never ask about two at once.
 - When the new message doesn't answer the question Lenore asked last, that field is still first in "Not yet settled": ask it again, kindly, perhaps in other words.
@@ -177,7 +181,7 @@ How Lenore replies (the reply field):
 - When the prospect asks to stop, pause or finish for now, set prospect_stopping to true and ask nothing more: tell them their answers are saved, that they can come back to carry on, and that they can review them on the Review tab.
 - When no employee census is uploaded and the next fields aren't required ones, you may invite them to share one with the census template: they download it on the Upload tab, fill in one row per employee and upload it there.
 - Whenever the prospect brings up their employees' details, their roster or census, or starts listing employees, point them to the census template on the Upload tab instead of taking the details in chat, then carry on with the next field. Never ask for Social Security or bank numbers: the template has no place for them.
-- Don't tell them the intake is ready to certify: the Chamber says so itself when it is.
+- Don't tell them the intake is ready to certify: the app tells them itself when it is.
 - Keep it short: one or two sentences.`;
 
 export const EXTRACT_TOOL = {
@@ -191,7 +195,7 @@ export const EXTRACT_TOOL = {
       evidence: perField({ type: "string" }),
       corrected_fields: { type: "array", items: { type: "string", enum: FIELDS } },
       prospect_stopping: { type: "boolean", description: "true only when the prospect asks to stop, pause or finish for now" },
-      reply: { type: "string", description: "Lenore's reply, the gothic HR advisor: intelligent, warm and slightly literary. It acknowledges the answer and asks about the first field in \"Not yet settled\" the message didn't answer, or, when none is left, wraps up." },
+      reply: { type: "string", description: "Lenore's reply, in her voice: warm, quick and a little informal, in plain words. It acknowledges the answer and asks about the first field in \"Not yet settled\" the message didn't answer, or, when none is left, wraps up." },
     },
     additionalProperties: false,
   } as Record<string, unknown>,

@@ -13,7 +13,7 @@ const primaryButton =
   "bg-primary text-primary-foreground font-medium px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
 
 /**
- * Nothing of the Chamber renders, and so nothing about the company or its employees can be typed, said or
+ * Nothing of the intake renders, and so nothing about the company or its employees can be typed, said or
  * uploaded, until the signed-in account has agreed to how intake information is used (US-6.2). The database
  * refuses a new intake or document without that agreement too; this is what the prospect sees.
  */
@@ -37,7 +37,7 @@ const IntakeConsentGate = ({ children }: { children: ReactNode }) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background px-6 py-10">
         <div className="text-center max-w-md w-full">
-          <h1 className="font-display text-xl font-bold mb-3">We couldn't open the Chamber</h1>
+          <h1 className="font-display text-xl font-bold mb-3">We couldn't open your intake</h1>
           <p className="text-muted-foreground mb-6">
             Something went wrong reaching our server. Nothing has been changed. Try again in a moment.
           </p>
@@ -53,7 +53,7 @@ const IntakeConsentGate = ({ children }: { children: ReactNode }) => {
     <main className="min-h-screen bg-background px-6 py-10 flex justify-center" aria-labelledby={titleId}>
       <div className="w-full max-w-2xl">
         <Link to="/" className="font-display text-sm text-foreground hover:text-primary transition-colors">
-          Edgar Allan Advisory
+          Nevermore
         </Link>
         <h1 id={titleId} className="font-display text-3xl font-bold mt-6 mb-2">
           Before you start
@@ -63,7 +63,7 @@ const IntakeConsentGate = ({ children }: { children: ReactNode }) => {
           with it.
         </p>
         {INTAKE_CONSENT_IS_DRAFT && (
-          <p className="text-xs font-mono uppercase tracking-wider text-warning mb-4">
+          <p className="text-xs font-medium text-warning mb-4">
             Draft wording, pending legal review ({INTAKE_CONSENT_VERSION})
           </p>
         )}

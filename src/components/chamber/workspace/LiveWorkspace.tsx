@@ -28,14 +28,14 @@ const WORKSPACE_TABS = [
   { key: "dependents", label: "⑥ Dependents" },
   { key: "review", label: "⑦ Review" },
   { key: "match", label: "⑧ PEO Match" },
-  { key: "reckoning", label: "⑨ The Reckoning" },
+  { key: "reckoning", label: "⑨ Certify & sign" },
 ];
 
 interface LiveWorkspaceProps {
   data: ChamberData;
   isDemo: boolean;
   sessionId: string | null;
-  /** The intake's File ID, for The Reckoning; null while there is no intake. */
+  /** The intake's File ID, for Certify & sign; null while there is no intake. */
   fileId?: string | null;
   onSubmit: (submission: CertificationRequest, signedDataKey: string) => Promise<boolean | SubmitFailure>;
   provenance?: ProvenanceMap;

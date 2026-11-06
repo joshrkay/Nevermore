@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import { RavenLogo } from "./RavenLogo";
+import { BrandMark, Wordmark } from "@/components/BrandMark";
 import { motion } from "framer-motion";
 import { User, Menu, X } from "lucide-react";
 
@@ -21,7 +21,7 @@ const Navbar = () => {
   const navLinks = [
     { label: "How It Works", href: isLanding ? "#how-it-works" : "/#how-it-works", isAnchor: true },
     { label: "For PEO Partners", href: isLanding ? "#peo-partners" : "/#peo-partners", isAnchor: true },
-    { label: "Sample Manuscript", href: "/manuscript/demo", isAnchor: false },
+    { label: "Sample packet", href: "/manuscript/demo", isAnchor: false },
   ];
 
   return (
@@ -34,20 +34,20 @@ const Navbar = () => {
       }`}
     >
       <div className="container mx-auto px-6 h-16 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-2.5">
-          <RavenLogo className="w-8 h-8 text-primary" />
-          <span className="font-display text-lg text-foreground">Edgar Allan Advisory</span>
+        <Link to="/" className="flex items-center gap-2">
+          <BrandMark className="w-8 h-8 text-primary" />
+          <Wordmark className="text-2xl" />
         </Link>
 
         {/* Desktop */}
         <div className="hidden md:flex items-center gap-8">
           {navLinks.map((link) =>
             link.isAnchor ? (
-              <a key={link.label} href={link.href} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+              <a key={link.label} href={link.href} className="text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors">
                 {link.label}
               </a>
             ) : (
-              <Link key={link.label} to={link.href} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+              <Link key={link.label} to={link.href} className="text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors">
                 {link.label}
               </Link>
             )
@@ -59,9 +59,9 @@ const Navbar = () => {
           ) : null}
           <Link
             to="/start"
-            className="text-sm font-medium bg-primary text-primary-foreground px-5 py-2 rounded-md hover:bg-primary/90 transition-colors"
+            className="text-sm font-bold bg-primary text-primary-foreground px-5 py-2.5 rounded-full hover:bg-primary/90 transition-colors"
           >
-            Begin →
+            Start chatting
           </Link>
         </div>
 
@@ -92,8 +92,8 @@ const Navbar = () => {
               </Link>
             )
           )}
-          <Link to="/start" onClick={() => setMobileOpen(false)} className="block text-sm font-medium text-primary">
-            Begin →
+          <Link to="/start" onClick={() => setMobileOpen(false)} className="block text-sm font-bold text-primary">
+            Start chatting →
           </Link>
         </div>
       )}

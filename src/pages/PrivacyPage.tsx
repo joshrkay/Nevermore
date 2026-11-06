@@ -14,9 +14,9 @@ const PrivacyPage = () => (
     <section aria-labelledby="privacy-who">
       <h2 id="privacy-who">Who we are</h2>
       <p>
-        Edgar Allan Advisory prepares PEO underwriting packets. You tell Lenore, our AI intake assistant, about your
-        company and upload what you have; you review and certify the answers; and you leave with a packet (the
-        Manuscript) to send to the PEO you choose.
+        Nevermore, a service of Edgar Allan Advisory, prepares PEO underwriting packets. In this policy, "we", "us" and
+        "our" mean Edgar Allan Advisory. You tell Lenore, our AI intake assistant, about your company and upload what
+        you have; you review and certify the answers; and you leave with a packet to send to the PEO you choose.
       </p>
       <p className="mt-3">
         We are not a PEO, an insurance carrier or an insurance agency. We don't submit your packet or request a quote
@@ -131,7 +131,7 @@ const PrivacyPage = () => (
       <h2 id="privacy-delete">Deleting your information</h2>
       <ul className="list-disc pl-5 space-y-2">
         <li>
-          Choosing "Start over" in the Chamber closes a draft you haven't certified. It is deleted{" "}
+          Choosing "Start over" in your intake closes a draft you haven't certified. It is deleted{" "}
           {RETENTION.closedDraftDays} days later.
         </li>
         <li>While an intake is open you can remove any document you uploaded.</li>
@@ -157,7 +157,7 @@ const PrivacyPage = () => (
         </li>
         <li>When an advisor opens a file, the link expires after 60 seconds.</li>
         <li>
-          Dates of birth are masked by default on the Manuscript, and our advisors' copies keep them masked unless the
+          Dates of birth are masked by default on your packet, and our advisors' copies keep them masked unless the
           advisor chooses otherwise, which is recorded.
         </li>
         <li>

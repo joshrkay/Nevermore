@@ -89,14 +89,14 @@ describe("ManuscriptPage", () => {
   it("loads a submission by its File ID, and renders the snapshot it froze", async () => {
     row = certified();
     renderAt("/manuscript/EAA-2026-0042");
-    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
     expect(lastQuery).toEqual({ column: "file_id", value: "EAA-2026-0042" });
     expect(screen.getAllByText(/Signed Co/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Edited Later Inc/)).not.toBeInTheDocument();
     expect(screen.getAllByText("EAA-2026-0042").length).toBeGreaterThan(0);
     // The certification's version and data version, so a packet can be matched to its record.
-    expect(screen.getByText("VERSION").parentElement).toHaveTextContent("v2 · data version 17");
-    expect(screen.getByText("CERTIFIED").parentElement).toHaveTextContent("May 1, 2026");
+    expect(screen.getByText("Version").parentElement).toHaveTextContent("v2 · data version 17");
+    expect(screen.getByText("Certified").parentElement).toHaveTextContent("May 1, 2026");
     expect(screen.getAllByRole("link", { name: /Back to Review/ })[0]).toHaveAttribute("href", "/start?session=s1");
   });
 
@@ -116,7 +116,7 @@ describe("ManuscriptPage", () => {
     expect(screen.getByText(/The information I've provided is accurate\./)).toBeInTheDocument();
 
     // The PDF is built from the same packet, with the same mark.
-    fireEvent.click(screen.getAllByRole("button", { name: /Download The Manuscript \(PDF\)/ })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]);
     await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
     expect(vi.mocked(buildManuscriptPdf).mock.calls[0][0].signer).toMatchObject({ consentVersion: "2026-10-draft-1", consentDraft: true });
   });
@@ -129,7 +129,7 @@ describe("ManuscriptPage", () => {
 
   it("puts no draft mark on the unsigned sample", async () => {
     renderAt("/manuscript/demo");
-    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(await screen.findByText("Sample underwriting packet")).toBeInTheDocument();
     expect(screen.queryByText(/DRAFT: NOT LEGALLY REVIEWED/)).not.toBeInTheDocument();
     expect(screen.queryByTestId("consent-draft-watermark")).not.toBeInTheDocument();
   });
@@ -152,12 +152,12 @@ describe("ManuscriptPage", () => {
       created_at: "2026-05-01T00:00:00Z",
     };
     renderAt("/manuscript?session=s1");
-    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
     expect(screen.getAllByText(/Signed Co/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Edited Later Inc/)).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/changed your answers after certifying/);
-    expect(screen.getByText(/Withdrawn Underwriting Packet/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Back to The Chamber/ })).toHaveAttribute("href", "/start?session=s1");
+    expect(screen.getByText(/Certification withdrawn/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Back to your intake/ })).toHaveAttribute("href", "/start?session=s1");
     // Shown for reference only: nothing to download that could pass as a current certification.
     expect(screen.queryByRole("button", { name: /Download/ })).not.toBeInTheDocument();
     expect(buildManuscriptPdf).not.toHaveBeenCalled();
@@ -172,38 +172,38 @@ describe("ManuscriptPage", () => {
     };
     renderAt("/manuscript?session=s1");
     expect(await screen.findByText(/changed after you certified it/)).toBeInTheDocument();
-    expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
+    expect(screen.queryByText("Underwriting packet")).not.toBeInTheDocument();
     expect(screen.queryByText(/Edited Later Inc/)).not.toBeInTheDocument();
   });
 
   it("still opens by intake id, and renders the data as signed, not later edits", async () => {
     row = certified();
     renderAt("/manuscript?session=s1");
-    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
     expect(lastQuery).toEqual({ column: "id", value: "s1" });
     expect(screen.getAllByText(/Signed Co/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Edited Later Inc/)).not.toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     // The packet is prepared for the PEO the prospect chose; nothing says it was submitted to them.
-    expect(screen.getByText("PREPARED FOR").parentElement).toHaveTextContent("PREPARED FORJustworks");
+    expect(screen.getByText("Prepared for").parentElement).toHaveTextContent("Prepared forJustworks");
   });
 
   it("refuses a guessed identifier that isn't a File ID without asking the database, and shows nothing", async () => {
     row = certified();
     renderAt("/manuscript/not-a-file-id");
-    expect(await screen.findByText(/couldn't find that Manuscript/)).toBeInTheDocument();
+    expect(await screen.findByText(/couldn't find that packet/)).toBeInTheDocument();
     expect(lastQuery).toBeNull();
     expect(screen.queryByText(/Signed Co/)).not.toBeInTheDocument();
-    expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
+    expect(screen.queryByText("Underwriting packet")).not.toBeInTheDocument();
   });
 
   it("shows the same safe message for a File ID the database won't return (someone else's, or none)", async () => {
     row = null;
     renderAt("/manuscript/EAA-2026-9999");
-    expect(await screen.findByText(/couldn't find that Manuscript/)).toBeInTheDocument();
+    expect(await screen.findByText(/couldn't find that packet/)).toBeInTheDocument();
     expect(lastQuery).toEqual({ column: "file_id", value: "EAA-2026-9999" });
     expect(screen.getByText(/link may be out of date, or it belongs to a different account/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Go to The Chamber/ })).toHaveAttribute("href", "/start");
+    expect(screen.getByRole("link", { name: /Go to the intake/ })).toHaveAttribute("href", "/start");
     expect(document.body.textContent).not.toMatch(/Signed Co|Jo Doe|EAA-2026-9999/);
   });
 
@@ -215,7 +215,7 @@ describe("ManuscriptPage", () => {
     };
     renderAt("/manuscript?session=s1");
     expect(await screen.findByText(/hasn't been signed yet/)).toBeInTheDocument();
-    expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
+    expect(screen.queryByText("Underwriting packet")).not.toBeInTheDocument();
     expect(screen.queryByText(/Acme/)).not.toBeInTheDocument();
   });
 
@@ -223,15 +223,15 @@ describe("ManuscriptPage", () => {
     row = certified({ chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Gone Co" }, status: "expired" });
     renderAt("/manuscript/EAA-2026-0042");
     expect(await screen.findByText(/This intake has expired/)).toBeInTheDocument();
-    expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
+    expect(screen.queryByText("Underwriting packet")).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/Gone Co|Signed Co|Jo Doe/);
-    expect(screen.getByRole("link", { name: "Go to The Chamber" })).toHaveAttribute("href", "/start");
+    expect(screen.getByRole("link", { name: "Go to the intake" })).toHaveAttribute("href", "/start");
   });
 
   it("shows every section of the packet, with the documents and confirmed facts the certification recorded", async () => {
     row = certified();
     renderAt("/manuscript/EAA-2026-0042");
-    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
     for (const name of [
       "1 — Company Profile", "2 — Workforce Summary", "3 — Employee Census", "4 — Dependent Summary", "5 — Locations",
       "6 — Payroll & Time", "7 — Current Benefits", "8 — Workers' Compensation", "9 — Operations & HR", "10 — Documents",
@@ -255,7 +255,7 @@ describe("ManuscriptPage", () => {
     row = certified({ submission: { signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-2026-0042", chamber_data: signed } });
     renderAt("/manuscript/EAA-2026-0042");
     expect(await screen.findByText(/Documents were not recorded with this certification/)).toBeInTheDocument();
-    expect(screen.getByText("VERSION").parentElement).toHaveTextContent("Not recorded");
+    expect(screen.getByText("Version").parentElement).toHaveTextContent("Not recorded");
   });
 
   describe("the final, advisor-reviewed Manuscript", () => {
@@ -272,8 +272,8 @@ describe("ManuscriptPage", () => {
       renderAt("/manuscript?session=s1");
       expect(await screen.findByText("As certified, before advisor review")).toBeInTheDocument();
       expect(screen.queryByTestId("final-manuscript")).not.toBeInTheDocument();
-      expect(screen.getAllByRole("button", { name: /Download The Manuscript \(PDF\)/ }).length).toBeGreaterThan(0);
-      expect(screen.queryByRole("button", { name: /Download the final Manuscript/ })).not.toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ }).length).toBeGreaterThan(0);
+      expect(screen.queryByRole("button", { name: /Download the final packet/ })).not.toBeInTheDocument();
     });
 
     it("offers the reviewed version as the final packet, through a short-lived link, and keeps the certified copy", async () => {
@@ -286,15 +286,15 @@ describe("ManuscriptPage", () => {
       const note = await screen.findByTestId("final-manuscript");
       expect(note).toHaveTextContent(/prepared version 2, with 1 correction listed in it/);
       // Both download buttons (top bar and bottom) fetch the final version; neither offers the old label.
-      const finals = screen.getAllByRole("button", { name: /Download the final Manuscript \(PDF\)/ });
+      const finals = screen.getAllByRole("button", { name: /Download the final packet \(PDF\)/ });
       expect(finals.length).toBe(2);
-      expect(screen.queryByRole("button", { name: /Download The Manuscript \(PDF\)/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Download the packet \(PDF\)/ })).not.toBeInTheDocument();
       recordManuscriptDownload.mockClear();
       fireEvent.click(finals[0]);
       await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/final"));
       // The funnel hears of the download once the link was issued.
       expect(recordManuscriptDownload).toHaveBeenCalledWith("s1");
-      expect(createSignedUrl).toHaveBeenCalledWith("s1/v2-x.pdf", 60, { download: expect.stringMatching(/^The_Manuscript_EAA-1_Signed_Co_.*advisor-v2\.pdf$/) });
+      expect(createSignedUrl).toHaveBeenCalledWith("s1/v2-x.pdf", 60, { download: expect.stringMatching(/^Nevermore_Packet_EAA-1_Signed_Co_.*advisor-v2\.pdf$/) });
       // The prospect's own copy is still there, as the certified copy.
       expect(screen.getByRole("button", { name: /As certified \(PDF\)/ })).toBeInTheDocument();
       finalVersions = [];
@@ -308,8 +308,8 @@ describe("ManuscriptPage", () => {
       const error = vi.spyOn(toast, "error");
       renderAt("/manuscript?session=s1");
       recordManuscriptDownload.mockClear();
-      fireEvent.click((await screen.findAllByRole("button", { name: /Download the final Manuscript \(PDF\)/ }))[0]);
-      await waitFor(() => expect(error).toHaveBeenCalledWith("We couldn't download the final Manuscript. Please try again."));
+      fireEvent.click((await screen.findAllByRole("button", { name: /Download the final packet \(PDF\)/ }))[0]);
+      await waitFor(() => expect(error).toHaveBeenCalledWith("We couldn't download your final packet. Please try again."));
       // A link that couldn't be issued is not a download.
       expect(recordManuscriptDownload).not.toHaveBeenCalled();
       error.mockRestore();
@@ -330,7 +330,7 @@ describe("ManuscriptPage", () => {
       row = certified();
       sharedStatus = "lost";
       renderAt("/manuscript/EAA-2026-0042");
-      expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+      expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
       await new Promise((r) => setTimeout(r, 0));
       expect(screen.queryByText(/^Status:/)).not.toBeInTheDocument();
       expect(screen.queryByText(/lost/i)).not.toBeInTheDocument();
@@ -364,7 +364,7 @@ describe("ManuscriptPage", () => {
       },
     });
     renderAt("/manuscript/EAA-2026-0042");
-    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
     expect(screen.getAllByText("Entered or confirmed by the prospect").length).toBeGreaterThan(0);
     expect(screen.getByText("From the conversation: “we sell shoes”")).toBeInTheDocument();
     expect(screen.getByText("Inferred")).toBeInTheDocument();
@@ -399,7 +399,7 @@ describe("ManuscriptPage", () => {
       },
     });
     renderAt("/manuscript/EAA-2026-0001");
-    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
     expect(screen.getByText("From the conversation: “Larkspur Plumbing”")).toBeInTheDocument();
     expect(screen.getByText("From the conversation: “Bi-weekly”")).toBeInTheDocument();
     // Their status still shows; the quote doesn't.
@@ -428,7 +428,7 @@ describe("ManuscriptPage", () => {
     };
     verifiedFields = ["industry"];
     renderAt("/manuscript?session=s1");
-    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
     expect(screen.getByText("Company legal name — please confirm")).toBeInTheDocument();
     expect(screen.queryByText("Industry — please confirm")).not.toBeInTheDocument();
     expect(screen.getByText("Pay frequency — not provided")).toBeInTheDocument();
@@ -464,11 +464,11 @@ describe("ManuscriptPage", () => {
     verifiedFields = ["industry"];
     vi.mocked(buildManuscriptPdf).mockClear();
     renderAt("/manuscript?session=s1");
-    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
     // Verified is settled: no red chip, as in the advisor's packet.
     expect(screen.queryByText("Conflicting")).not.toBeInTheDocument();
     expect(screen.queryByText("Industry — conflicting answers")).not.toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: /Download The Manuscript \(PDF\)/ })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]);
     await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
     const m = vi.mocked(buildManuscriptPdf).mock.calls[0][0];
     const industry = m.companyRows.find(([label]) => label === "Industry")!;
@@ -479,16 +479,16 @@ describe("ManuscriptPage", () => {
 
   it("never shows sample data on the live route when no session is given", async () => {
     renderAt("/manuscript");
-    expect(await screen.findByText(/Open your Manuscript from The Reckoning/)).toBeInTheDocument();
+    expect(await screen.findByText(/Your packet opens from the Certify & sign tab/)).toBeInTheDocument();
     expect(screen.queryByText(/Meridian/)).not.toBeInTheDocument();
-    expect(screen.queryByText("THE MANUSCRIPT")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Go to The Chamber/ })).toHaveAttribute("href", "/start");
+    expect(screen.queryByText("Underwriting packet")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Go to the intake/ })).toHaveAttribute("href", "/start");
   });
 
   it("renders the fictional sample only on the demo route, clearly labelled", async () => {
     renderAt("/manuscript/demo");
-    expect(await screen.findByText("THE MANUSCRIPT")).toBeInTheDocument();
-    expect(screen.getByText(/sample manuscript built from fictional data/)).toBeInTheDocument();
+    expect(await screen.findByText("Sample underwriting packet")).toBeInTheDocument();
+    expect(screen.getByText(/sample packet built from fictional data/)).toBeInTheDocument();
     expect(lastQuery).toBeNull();
   });
 
@@ -522,32 +522,32 @@ describe("ManuscriptPage", () => {
 
     it("downloads a PDF named after the submission, its version, the company and the certified date, with sensitive fields masked", async () => {
       renderAt("/manuscript/EAA-2026-0042");
-      fireEvent.click((await screen.findAllByRole("button", { name: /Download The Manuscript \(PDF\)/ }))[0]);
+      fireEvent.click((await screen.findAllByRole("button", { name: /Download the packet \(PDF\)/ }))[0]);
 
       await waitFor(() => expect(downloadBlob).toHaveBeenCalledTimes(1));
       const [blob, filename] = downloadBlob.mock.calls[0];
-      expect(filename).toBe("The_Manuscript_EAA-2026-0042_v2_Signed_Co_20260501.pdf");
+      expect(filename).toBe("Nevermore_Packet_EAA-2026-0042_v2_Signed_Co_20260501.pdf");
       expect((blob as Blob).type).toBe("application/pdf");
       expect(vi.mocked(buildManuscriptPdf).mock.calls[0][1]).toMatchObject({ revealSensitive: false });
     });
 
     it("builds the PDF from the same packet the page shows", async () => {
       renderAt("/manuscript/EAA-2026-0042");
-      fireEvent.click((await screen.findAllByRole("button", { name: /Download The Manuscript \(PDF\)/ }))[0]);
+      fireEvent.click((await screen.findAllByRole("button", { name: /Download the packet \(PDF\)/ }))[0]);
       await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
       const packet = vi.mocked(buildManuscriptPdf).mock.calls[0][0];
       expect(packet).toMatchObject({ fileId: "EAA-2026-0042", version: 2, dataVersion: 17, companyName: "Signed & Co." });
-      expect(screen.getByText("VERSION").parentElement).toHaveTextContent("v2 · data version 17");
+      expect(screen.getByText("Version").parentElement).toHaveTextContent("v2 · data version 17");
     });
 
     it("tells the user when the PDF can't be generated", async () => {
       vi.mocked(buildManuscriptPdf).mockImplementationOnce(() => { throw new Error("boom"); });
       renderAt("/manuscript/EAA-2026-0042");
-      fireEvent.click((await screen.findAllByRole("button", { name: /Download The Manuscript \(PDF\)/ }))[0]);
+      fireEvent.click((await screen.findAllByRole("button", { name: /Download the packet \(PDF\)/ }))[0]);
       await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
       expect(downloadBlob).not.toHaveBeenCalled();
       // The button is usable again for a retry.
-      await waitFor(() => expect(screen.getAllByRole("button", { name: /Download The Manuscript \(PDF\)/ })[0]).toBeEnabled());
+      await waitFor(() => expect(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]).toBeEnabled());
     });
   });
 });

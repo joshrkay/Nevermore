@@ -99,7 +99,7 @@ describe("AuthPage", () => {
 
   it("opens on creating an account for a visitor sent here because guest sessions aren't available", () => {
     renderLogin({ reason: "account_needed", from: { pathname: "/start" } });
-    expect(screen.getByRole("heading", { name: "Enter The Chamber" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Start your intake" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create Account" })).toBeInTheDocument();
   });
 

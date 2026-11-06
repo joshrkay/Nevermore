@@ -32,14 +32,19 @@ const CELL_PAD_X = 1.8;
 const CELL_PAD_Y = 1.6;
 
 type RGB = [number, number, number];
-const INK: RGB = [24, 26, 38];
-const MUTED: RGB = [96, 100, 118];
-const RULE: RGB = [208, 211, 222];
-const ACCENT: RGB = [92, 64, 200];
-const WARN: RGB = [168, 98, 0];
-const OK: RGB = [22, 120, 70];
-const HEAD_FILL: RGB = [240, 241, 247];
-const WATERMARK: RGB = [242, 228, 208]; // WARN, faint on white
+// Nevermore's palette, set for print: warm ink on white, tomato accents. WARN and OK keep at least 4.5:1 on white.
+const INK: RGB = [42, 33, 28];
+const MUTED: RGB = [98, 87, 79];
+const RULE: RGB = [238, 221, 207];
+const ACCENT: RGB = [180, 55, 42];
+const WARN: RGB = [138, 83, 0];
+const OK: RGB = [27, 115, 71];
+const HEAD_FILL: RGB = [255, 240, 229];
+const FLAG_FILL: RGB = [255, 243, 212]; // a census row with a note: pale amber, apart from the peach header fill
+const WATERMARK: RGB = [247, 228, 212]; // a faint warm tint on white
+
+/** The packet's name in the running header of every page. */
+const RUNNING_TITLE = "Underwriting packet";
 
 // jsPDF's built-in fonts only cover Latin-1 and a few Windows-1252 extras. Anything else would
 // print as garbage, so fold accents to ASCII and replace what remains with "?".
@@ -79,10 +84,10 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   const version = versionLine(m, opts.sample === true);
   const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "letter", compress: opts.compress !== false });
   pdf.setProperties({
-    title: pdfSafe(`The Manuscript — ${m.companyName} (${m.fileId}, ${version})`),
+    title: pdfSafe(`${opts.sample ? "Sample underwriting packet" : "Underwriting packet"} — ${m.companyName} (${m.fileId}, ${version})`),
     subject: pdfSafe(`Underwriting packet ${m.fileId} ${version}, certified ${m.date}`),
-    author: "Edgar Allan Advisory",
-    creator: "Edgar Allan Advisory",
+    author: "Nevermore",
+    creator: "Nevermore",
   });
   // The file's own creation date, set explicitly so it is the generation time and not whatever jsPDF defaults to.
   if (typeof (pdf as { setCreationDate?: (d: Date) => unknown }).setCreationDate === "function") {
@@ -196,7 +201,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
         if (showHeader) drawHeader();
       }
       if (opts.flagged?.has(rowIndex)) {
-        pdf.setFillColor(255, 247, 230);
+        pdf.setFillColor(...FLAG_FILL);
         pdf.rect(MARGIN, y, CONTENT_W, h, "F");
       }
       let x = MARGIN;
@@ -237,26 +242,26 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   // ---------- Title block ----------
   font("bold", 22);
   setInk(INK);
-  pdf.text("THE MANUSCRIPT", MARGIN, y + 7);
+  pdf.text(opts.sample ? "Sample underwriting packet" : "Underwriting packet", MARGIN, y + 7);
   y += 11;
   font("normal", 9);
   setInk(MUTED);
-  pdf.text(pdfSafe(`Edgar Allan Advisory · ${opts.sample ? "Sample" : "Certified"} Underwriting Packet`), MARGIN, y + 3);
+  pdf.text(pdfSafe(`Nevermore · ${opts.sample ? "Fictional data" : "Certified"}`), MARGIN, y + 3);
   y += 9;
 
   if (opts.sample) {
-    paragraph("This is a sample manuscript built from fictional data.", 9, "bold", WARN, 3);
+    paragraph("This is a sample packet built from fictional data.", 9, "bold", WARN, 3);
   }
 
   keyValues([
     ...(m.submittedTo ? ([["Prepared For", m.submittedTo]] as [string, string][]) : []),
-    ["Prepared By", "Edgar Allan Advisory · Lenore"],
+    ["Prepared By", "Nevermore · Lenore"],
     [m.signer ? "Certified" : "Date", m.date],
     ["Version", version],
     ["Generated", generated],
     ["File ID", m.fileId],
     ...(m.advisorReview
-      ? ([["Advisor Version", `v${m.advisorReview.version} · reviewed by Edgar Allan Advisory`]] as [string, string][])
+      ? ([["Advisor Version", `v${m.advisorReview.version} · reviewed by Nevermore`]] as [string, string][])
       : opts.sample
         ? []
         : // The prospect's own copy: it can't be mistaken for the advisor-reviewed final version.
@@ -396,7 +401,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     y += 2;
     subheading("Advisor corrections", 24);
     paragraph(
-      "These values were corrected and verified by Edgar Allan Advisory after the prospect certified this submission. The prospect certified the original values shown.",
+      "These values were corrected and verified by Nevermore after the prospect certified this submission. The prospect certified the original values shown.",
       8.5,
       "italic",
       MUTED,
@@ -466,13 +471,13 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     pdf.setPage(p);
     font("bold", 8);
     setInk(MUTED);
-    pdf.text("THE MANUSCRIPT", MARGIN, MARGIN + 4);
+    pdf.text(RUNNING_TITLE, MARGIN, MARGIN + 4);
     font("normal", 8);
     const right = pdfSafe(`File ID ${m.fileId} · ${version}`);
     const rightW = pdf.getTextWidth(right);
     pdf.text(right, PAGE_W - MARGIN, MARGIN + 4, { align: "right" });
     // The company name sits between the title and the reference, shortened before it can run into either.
-    const titleW = pdf.getTextWidth("THE MANUSCRIPT") + 4;
+    const titleW = pdf.getTextWidth(RUNNING_TITLE) + 4;
     let company = pdfSafe(m.companyName);
     const room = CONTENT_W - titleW - rightW - 6;
     while (company.length > 1 && pdf.getTextWidth(company) > room) company = company.slice(0, -2).trimEnd() + "…";
@@ -484,7 +489,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     const footY = PAGE_H - MARGIN;
     pdf.line(MARGIN, footY - 6, PAGE_W - MARGIN, footY - 6);
     font("normal", 7.5);
-    const left = pdfSafe(`Edgar Allan Advisory · ${m.fileId} · ${version} · ${m.companyName} · Generated ${generated}`);
+    const left = pdfSafe(`Nevermore · ${m.fileId} · ${version} · ${m.companyName} · Generated ${generated}`);
     const pageLabel = `Page ${p} of ${pageCount}`;
     const pageW = pdf.getTextWidth(pageLabel);
     const footRoom = CONTENT_W - pageW - 6;

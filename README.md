@@ -1,6 +1,6 @@
-# Edgar Allan Advisory
+# Nevermore
 
-PEO underwriting intake: a prospect talks to Lenore (AI intake assistant) in The Chamber, reviews and certifies the data, and downloads a PEO-neutral packet (The Manuscript).
+PEO underwriting intake at [nevermorepeo.com](https://nevermorepeo.com), operated by Edgar Allan Advisory: a prospect talks to Lenore (the AI intake assistant) in their intake, reviews and certifies the data on the Certify & sign tab, and downloads a PEO-neutral packet. In code these keep their older names: The Chamber, The Reckoning and The Manuscript (see `GLOSSARY.md`).
 
 ## Setup
 

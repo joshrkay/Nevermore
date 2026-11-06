@@ -37,6 +37,8 @@ const OVERPROMISES: [string, RegExp][] = [
   ["submitting the packet", /submitted to|certified submission|sample submission/i],
   ["no account at all", /no account required/i],
   ["no follow-up", /no follow-up required/i],
+  // The census template and the certification are forms, so "no forms" isn't true.
+  ["no forms at all", /no forms to fill/i],
   ["a demonstration workspace", /is a demonstration/i],
 ];
 const PACKET_COPY_FILES = [

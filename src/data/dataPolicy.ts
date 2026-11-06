@@ -31,12 +31,12 @@ export const SENSITIVITY: Record<Sensitivity, SensitivityLevel> = {
   restricted: {
     label: "Restricted",
     meaning:
-      "Personal information about the prospect's employees: who they are, their dates of birth, pay, benefits, dependents and injuries, and anything that holds it (uploaded files, the conversation, the Manuscript).",
+      "Personal information about the prospect's employees: who they are, their dates of birth, pay, benefits, dependents and injuries, and anything that holds it (uploaded files, the conversation, the packet).",
     handling: [
-      "Only the prospect who provided it and Edgar Allan Advisory's advisors can open it, and the database enforces that.",
+      "Only the prospect who provided it and Nevermore's advisors can open it, and the database enforces that.",
       "Never put it in email, chat, tickets, alerts, logs, analytics or a link. Notifications carry named contact fields only.",
       "Stored only in the private database and private storage buckets. Files open through links that expire after 60 seconds.",
-      "Dates of birth are masked unless an advisor reveals them for the task at hand, and a Manuscript generated with them revealed is recorded as such.",
+      "Dates of birth are masked unless an advisor reveals them for the task at hand, and a packet generated with them revealed is recorded as such.",
       "Don't keep downloaded copies. Delete a downloaded file once the task it was opened for is done.",
     ],
   },
@@ -47,7 +47,7 @@ export const SENSITIVITY: Record<Sensitivity, SensitivityLevel> = {
     handling: [
       "Only the prospect and the advisory team can see it.",
       "Internal notification emails may carry the named contact fields (company, signer, title, work email, phone, headcount, state, reference), nothing more.",
-      "Shared outside Edgar Allan Advisory only by the prospect, or with the prospect's permission.",
+      "Shared outside Nevermore only by the prospect, or with the prospect's permission.",
     ],
   },
   internal: {
@@ -61,7 +61,7 @@ export const SENSITIVITY: Record<Sensitivity, SensitivityLevel> = {
   },
   public: {
     label: "Public",
-    meaning: "What the site publishes: marketing copy, the sample Manuscript (invented data) and the sourced PEO catalog.",
+    meaning: "What the site publishes: marketing copy, the sample packet (invented data) and the sourced PEO catalog.",
     handling: ["Anyone may see it. Keep it accurate and free of anything above this level."],
   },
 };
@@ -120,7 +120,7 @@ export const RETENTION_RULES: RetentionRule[] = [
     then: "Deleted with the intake.",
   },
   {
-    record: "Generated Manuscript PDFs",
+    record: "Generated packet PDFs",
     period: "Your download is made in your browser and is not stored by us. Copies our advisors generate are kept as long as the submitted record.",
     then: "Advisor copies are deleted with the submitted record.",
   },
@@ -253,7 +253,7 @@ export const DATA_CLASSES: DataClass[] = [
   },
   {
     id: "manuscripts",
-    label: "Generated Manuscript PDFs",
+    label: "Generated packet PDFs",
     sensitivity: "restricted",
     examples: "The underwriting packet, which carries the census. The prospect's own copy is made in their browser and never stored by us; the advisor-reviewed final version is stored, and the prospect can download it.",
     stored: { tables: ["manuscript_versions"], buckets: ["manuscripts"], elsewhere: ["The prospect's own device (their downloads)"] },
@@ -326,7 +326,7 @@ export const DATA_CLASSES: DataClass[] = [
     id: "funnel",
     label: "Intake progress (the pilot funnel)",
     sensitivity: "internal",
-    examples: "Which steps each intake reached (started, first answer, a document, a census, ready to certify, a verified email, certified, The Manuscript downloaded), when, and when the intake started. Never an answer, a name, an address or a document.",
+    examples: "Which steps each intake reached (started, first answer, a document, a census, ready to certify, a verified email, certified, the packet downloaded), when, and when the intake started. Never an answer, a name, an address or a document.",
     stored: { tables: ["intake_milestones"], buckets: [], elsewhere: [] },
     retention: `${RETENTION.funnelDays} days from the intake's start, a whole start date at once.`,
     deletion: "By the daily retention job. Deleting an intake removes its link to these records; the steps and times stay, unattached, so the funnel still counts it.",

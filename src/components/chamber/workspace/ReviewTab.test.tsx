@@ -274,7 +274,7 @@ describe("ReviewTab sections", () => {
   it("lists what's still needed, says why, and says so once nothing is", () => {
     const { rerender } = render(<ReviewTab data={{ ...complete, pay_frequency: null }} onProceed={() => {}} />);
     const needed = section("Still needed");
-    expect(needed).toHaveTextContent("Still needed before The Manuscript can be generated: 1");
+    expect(needed).toHaveTextContent("Still needed before your packet can be generated: 1");
     expect(needed).toHaveTextContent("Pay frequency");
     expect(needed).toHaveTextContent("How often employees are paid");
     expect(needed).not.toHaveTextContent("Company legal name");
@@ -298,7 +298,7 @@ describe("ReviewTab sections", () => {
     };
     render(<ReviewTab data={complete} provenance={{ company_name: conflict, industry: conflict }} onProceed={() => {}} onAction={() => {}} />);
     const needed = section("Still needed");
-    expect(needed).toHaveTextContent("Still needed before The Manuscript can be generated: 1");
+    expect(needed).toHaveTextContent("Still needed before your packet can be generated: 1");
     expect(needed).toHaveTextContent("Company legal name");
     expect(needed).toHaveTextContent("You've given two different answers");
     // A recommended field in conflict stays in "Needs your review", never in what's needed.

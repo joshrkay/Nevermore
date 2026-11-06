@@ -213,10 +213,18 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-// Brand colours from the app's theme tokens (--primary, --background, --foreground).
-const CRIMSON = "#c21e3a";
-const INK = "#0a0c10";
-const PARCHMENT = "#f1ede8";
+// Nevermore's palette, from the app's theme tokens (--background, --foreground, --muted-foreground, --primary,
+// --border). White on the accent, and the accent and both text colours on the page, all pass WCAG AA.
+const PAGE = "#FFFBF6";
+const TEXT = "#2A211C";
+const MUTED = "#62574F";
+const ACCENT = "#B4372A";
+const BORDER = "#EEDDCF";
+// The app's typeface where the reader has it, then the system's own sans-serif: mail clients load no web fonts.
+const FONT = "'Plus Jakarta Sans',-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+/** The name as every email signs off and shows it in its header. */
+const BRAND = "Nevermore";
+const SIGN_OFF = `The ${BRAND} team`;
 
 /** The shared branded frame. `bodyHtml` must already be escaped; `title` is the subject, as the document's title. */
 function layout(title: string, preheader: string, bodyHtml: string): string {
@@ -228,14 +236,14 @@ function layout(title: string, preheader: string, bodyHtml: string): string {
 <meta name="color-scheme" content="light">
 <title>${escapeHtml(title)}</title>
 </head>
-<body style="margin:0;padding:0;background:#f6f4f1;">
+<body style="margin:0;padding:0;background:${PAGE};">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(preheader)}</div>
-<div style="max-width:560px;margin:0 auto;padding:24px 16px;font-family:Georgia,'Times New Roman',serif;color:#1c1c1f;">
-<div style="background:${INK};color:${PARCHMENT};padding:18px 24px;border-bottom:3px solid ${CRIMSON};font-size:20px;letter-spacing:0.04em;">Edgar Allan Advisory</div>
-<div style="background:#ffffff;padding:24px;font-size:16px;line-height:1.55;">
+<div style="max-width:560px;margin:0 auto;padding:24px 16px;font-family:${FONT};color:${TEXT};">
+<div style="padding:4px 4px 16px;font-size:22px;font-weight:800;letter-spacing:-0.01em;color:${ACCENT};">${BRAND}</div>
+<div style="background:#ffffff;border:1px solid ${BORDER};border-radius:12px;padding:24px;font-size:16px;line-height:1.55;">
 ${bodyHtml}
 </div>
-<div style="padding:16px 24px;font-size:12px;color:#6b6b72;font-family:Arial,Helvetica,sans-serif;">Edgar Allan Advisory</div>
+<div style="padding:16px 4px;font-size:12px;color:${MUTED};">${BRAND}</div>
 </div>
 </body>
 </html>`;
@@ -244,7 +252,12 @@ ${bodyHtml}
 // Label and value pairs are data, so the label is a row header rather than a layout cell: a screen
 // reader announces "Phone: 555-0100" instead of two unrelated cells.
 const row = (label: string, value: string) =>
-  `<tr><th scope="row" style="padding:4px 16px 4px 0;color:#6b6b72;font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:normal;text-align:left;white-space:nowrap;vertical-align:top;">${escapeHtml(label)}</th><td style="padding:4px 0;">${escapeHtml(value)}</td></tr>`;
+  `<tr><th scope="row" style="padding:4px 16px 4px 0;color:${MUTED};font-size:13px;font-weight:normal;text-align:left;white-space:nowrap;vertical-align:top;">${escapeHtml(label)}</th><td style="padding:4px 0;">${escapeHtml(value)}</td></tr>`;
+
+const button = (href: string, label: string) =>
+  `<p style="margin:0 0 20px;"><a href="${escapeHtml(href)}" style="display:inline-block;background:${ACCENT};color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px;font-weight:600;">${escapeHtml(label)}</a></p>`;
+
+const small = (text: string) => `<p style="margin:0;font-size:13px;color:${MUTED};">${escapeHtml(text)}</p>`;
 
 const NO_COMPANY = "Company name not provided";
 
@@ -297,8 +310,8 @@ export function renderAdvisorNotification(n: AdvisorNotification, ctx: AdvisorCo
     `${headline} ${company}, ${n.reference}`,
     `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>
 <table style="border-collapse:collapse;margin:0 0 20px;">${details.map(([l, v]) => row(l, v)).join("")}</table>
-<p style="margin:0 0 20px;"><a href="${escapeHtml(ctx.reviewUrl)}" style="display:inline-block;background:${CRIMSON};color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:4px;font-family:Arial,Helvetica,sans-serif;font-size:14px;">Open the secure review</a></p>
-<p style="margin:0;font-size:13px;color:#6b6b72;font-family:Arial,Helvetica,sans-serif;">Advisor sign-in is required. ${escapeHtml(footnote)}</p>`,
+${button(ctx.reviewUrl, "Open the secure review")}
+${small(`Advisor sign-in is required. ${footnote}`)}`,
   );
   return { subject, text, html };
 }
@@ -312,12 +325,12 @@ export interface ProspectContext {
 /** The prospect's receipt: what we have, the File ID, what happens next. Never intake contents. */
 export function renderProspectConfirmation(c: ProspectConfirmation, ctx: ProspectContext): RenderedEmail {
   const company = c.companyName ?? "your company";
-  const subject = `We received your intake (${c.reference})`;
-  const greeting = c.recipientName ? `Hello ${c.recipientName},` : "Hello,";
-  const received = `Thank you. Edgar Allan Advisory received the intake you certified for ${company}.`;
-  const next = `An Edgar Allan Advisory advisor will review it and follow up by email if we need anything else. We aim to respond within ${ctx.responseTime}.`;
-  const support = `Questions? Reply to this email or write to ${ctx.supportEmail}, and quote your File ID.`;
-  const privacy = "For your security, this email does not include your census, payroll or document details.";
+  const subject = `Your ${BRAND} intake is in (${c.reference})`;
+  const greeting = c.recipientName ? `Hi ${c.recipientName},` : "Hi there,";
+  const received = `Thanks! We've got the intake you certified for ${company}.`;
+  const next = `A ${BRAND} advisor will look it over and email you if we need anything else. We aim to get back to you within ${ctx.responseTime}.`;
+  const support = `Questions? Just reply to this email, or write to ${ctx.supportEmail} and quote your File ID.`;
+  const privacy = "For your security, this email doesn't include your census, payroll or document details.";
 
   const text = [
     greeting,
@@ -333,19 +346,19 @@ export function renderProspectConfirmation(c: ProspectConfirmation, ctx: Prospec
     "",
     privacy,
     "",
-    "Edgar Allan Advisory",
+    SIGN_OFF,
   ].join("\n");
 
   const html = layout(
     subject,
-    `We received your intake for ${company}. File ID ${c.reference}.`,
+    `We've got your intake for ${company}. File ID ${c.reference}.`,
     `<p style="margin:0 0 16px;">${escapeHtml(greeting)}</p>
 <p style="margin:0 0 16px;">${escapeHtml(received)}</p>
 <table style="border-collapse:collapse;margin:0 0 20px;">${row("File ID", c.reference)}</table>
 <p style="margin:0 0 4px;font-weight:bold;">What happens next</p>
 <p style="margin:0 0 16px;">${escapeHtml(next)}</p>
 <p style="margin:0 0 16px;">${escapeHtml(support)}</p>
-<p style="margin:0;font-size:13px;color:#6b6b72;font-family:Arial,Helvetica,sans-serif;">${escapeHtml(privacy)}</p>`,
+${small(privacy)}`,
   );
   return { subject, text, html };
 }
@@ -362,13 +375,7 @@ export interface InformationRequestContext extends ProspectLinkContext {
 }
 
 const SUPPORT_LINE = (supportEmail: string, reference: string | null) =>
-  `Questions? Reply to this email or write to ${supportEmail}${reference ? ", and quote your File ID" : ""}.`;
-
-const button = (href: string, label: string) =>
-  `<p style="margin:0 0 20px;"><a href="${escapeHtml(href)}" style="display:inline-block;background:${CRIMSON};color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:4px;font-family:Arial,Helvetica,sans-serif;font-size:14px;">${escapeHtml(label)}</a></p>`;
-
-const small = (text: string) =>
-  `<p style="margin:0;font-size:13px;color:#6b6b72;font-family:Arial,Helvetica,sans-serif;">${escapeHtml(text)}</p>`;
+  `Questions? Just reply to this email, or write to ${supportEmail}${reference ? " and quote your File ID" : ""}.`;
 
 /**
  * An advisor's request for more information: what they asked, which answers it is about (by label), the File ID,
@@ -376,12 +383,12 @@ const small = (text: string) =>
  */
 export function renderInformationRequest(r: InformationRequest, ctx: InformationRequestContext): RenderedEmail {
   const company = r.companyName ?? "your company";
-  const subject = `Your advisor needs a little more information (${r.reference})`;
-  const greeting = r.recipientName ? `Hello ${r.recipientName},` : "Hello,";
-  const intro = `An Edgar Allan Advisory advisor reviewing the intake you certified for ${company} needs a little more information.`;
-  const howTo = "Open your intake to answer: update your answers there and certify again in The Reckoning. If nothing needs to change, reply to this email instead.";
-  const signIn = "You'll be asked to sign in with the email this was sent to.";
-  const privacy = "For your security, this email does not include your answers, census, payroll or document details.";
+  const subject = `Your advisor needs a bit more info (${r.reference})`;
+  const greeting = r.recipientName ? `Hi ${r.recipientName},` : "Hi there,";
+  const intro = `A ${BRAND} advisor is looking over the intake you certified for ${company} and needs a bit more info.`;
+  const howTo = "To answer, open your intake, update your answers and certify again on the Certify & sign tab. If nothing needs to change, just reply to this email.";
+  const signIn = "You'll sign in with the email address this was sent to.";
+  const privacy = "For your security, this email doesn't include your answers, census, payroll or document details.";
 
   const text = [
     greeting,
@@ -402,17 +409,17 @@ export function renderInformationRequest(r: InformationRequest, ctx: Information
     "",
     privacy,
     "",
-    "Edgar Allan Advisory",
+    SIGN_OFF,
   ].join("\n");
 
   const messageHtml = r.message.map((l) => (l === "" ? "" : escapeHtml(l))).join("<br>");
   const html = layout(
     subject,
-    `Your advisor asked for more information about ${company}. File ID ${r.reference}.`,
+    `Your advisor needs a bit more info about ${company}. File ID ${r.reference}.`,
     `<p style="margin:0 0 16px;">${escapeHtml(greeting)}</p>
 <p style="margin:0 0 16px;">${escapeHtml(intro)}</p>
 <p style="margin:0 0 4px;font-weight:bold;">Their request</p>
-<blockquote style="margin:0 0 16px;padding:8px 16px;border-left:3px solid ${CRIMSON};background:#faf8f6;">${messageHtml}</blockquote>
+<blockquote style="margin:0 0 16px;padding:8px 16px;border-left:3px solid ${ACCENT};background:${PAGE};">${messageHtml}</blockquote>
 ${ctx.fieldLabels.length > 0 ? `<p style="margin:0 0 4px;font-weight:bold;">What it's about</p>
 <ul style="margin:0 0 16px;padding-left:20px;">${ctx.fieldLabels.map((l) => `<li>${escapeHtml(l)}</li>`).join("")}</ul>` : ""}
 <table style="border-collapse:collapse;margin:0 0 20px;">${row("File ID", r.reference)}</table>
@@ -444,14 +451,14 @@ const longDate = (iso: string) => `${Number(iso.slice(8, 10))} ${MONTHS[Number(i
 export function renderDraftExpiryReminder(r: DraftExpiryReminder, ctx: DraftReminderContext): RenderedEmail {
   const company = r.companyName ?? "your company";
   const closes = longDate(r.expiresAt);
-  const subject = `Your intake for ${company} closes on ${closes}`;
-  const greeting = r.recipientName ? `Hello ${r.recipientName},` : "Hello,";
-  const saved = `Your Edgar Allan Advisory intake for ${company} is saved, but it hasn't been certified. Intakes close after a period with no changes, and this one will close on ${closes} (UTC).`;
-  const next = "Pick up where you left off: any change keeps it open. Once it closes, its answers can't be opened again and are deleted later, as our Privacy Policy describes.";
-  const nothing = "If you no longer need it, you don't need to do anything.";
+  const subject = `Heads up: your intake for ${company} closes on ${closes}`;
+  const greeting = r.recipientName ? `Hi ${r.recipientName},` : "Hi there,";
+  const saved = `Your ${BRAND} intake for ${company} is saved, but it hasn't been certified yet. Intakes close after a while with no changes, and this one will close on ${closes} (UTC).`;
+  const next = "Pick up where you left off: any change keeps it open. Once it closes, its answers can't be opened again, and they're deleted later, as our Privacy Policy describes.";
+  const nothing = "If you don't need it anymore, there's nothing you need to do.";
   const why = `You're getting this because you asked us to remind you. To stop these reminders, untick "${DRAFT_REMINDER_SETTING}" on your profile, or reply to this email and ask us to stop.`;
-  const signIn = "You'll be asked to sign in with the email this was sent to.";
-  const privacy = "For your security, this email does not include your answers, census, payroll or document details.";
+  const signIn = "You'll sign in with the email address this was sent to.";
+  const privacy = "For your security, this email doesn't include your answers, census, payroll or document details.";
 
   const text = [
     greeting,
@@ -471,12 +478,12 @@ export function renderDraftExpiryReminder(r: DraftExpiryReminder, ctx: DraftRemi
     "",
     privacy,
     "",
-    "Edgar Allan Advisory",
+    SIGN_OFF,
   ].join("\n");
 
   const html = layout(
     subject,
-    `Your intake for ${company} closes on ${closes}.`,
+    `Your intake for ${company} closes on ${closes}. Any change keeps it open.`,
     `<p style="margin:0 0 16px;">${escapeHtml(greeting)}</p>
 <p style="margin:0 0 16px;">${escapeHtml(saved)}</p>
 <p style="margin:0 0 16px;">${escapeHtml(next)}</p>

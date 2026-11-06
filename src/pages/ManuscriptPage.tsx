@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { RavenIcon } from "@/components/RavenLogo";
+import { BrandMark, Wordmark } from "@/components/BrandMark";
 import { CheckCircle, AlertTriangle, Download, HelpCircle, ArrowLeft, Loader2 } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -93,7 +93,7 @@ type LoadState =
       withdrawn: boolean;
     };
 
-const NOT_FOUND = "We couldn't find that Manuscript. The link may be out of date, or it belongs to a different account.";
+const NOT_FOUND = "We couldn't find that packet. The link may be out of date, or it belongs to a different account.";
 
 const ROW_COLUMNS = "id, file_id, chamber_data, field_provenance, submission, status";
 
@@ -106,7 +106,7 @@ interface FinalManuscript {
 }
 
 /**
- * The Manuscript of one submission. `/manuscript/<File ID>` is the way in once an intake is certified; the
+ * The underwriting packet of one submission. `/manuscript/<File ID>` is the way in once an intake is certified; the
  * older `/manuscript?session=<intake id>` still works. Either way the database's row security decides
  * who can read it (the intake's owner and advisors), so an address alone shows nobody anything, and the
  * page renders the snapshot the certification froze, never the live answers. `demo` renders the fictional
@@ -134,7 +134,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
     }
     if (authLoading) return;
     if (!user) {
-      setState({ kind: "error", message: "Sign in to view this manuscript." });
+      setState({ kind: "error", message: "Sign in to view this packet." });
       return;
     }
     // A File ID that isn't one never reaches the database: the answer is the same as for one that isn't yours.
@@ -249,7 +249,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
       if (sessionId) recordManuscriptDownload(sessionId);
     } catch (err) {
       console.error("Failed to open the final manuscript:", err);
-      toast.error("We couldn't download the final Manuscript. Please try again.");
+      toast.error("We couldn't download your final packet. Please try again.");
     } finally {
       setOpeningFinal(false);
     }
@@ -268,10 +268,10 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
       <div className="min-h-screen bg-background flex items-center justify-center px-6">
         <div className="text-center max-w-md">
           <p className="text-muted-foreground mb-4">
-            Open your Manuscript from The Reckoning, once you've reviewed and signed your submission.
+            Your packet opens from the Certify &amp; sign tab, once you've reviewed and signed your answers.
           </p>
           <Link to="/start" className="text-primary underline hover:text-primary/90">
-            Go to The Chamber
+            Go to the intake
           </Link>
           <LegalLinks className="mt-8" />
         </div>
@@ -284,10 +284,10 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
       <div className="min-h-screen bg-background flex items-center justify-center px-6">
         <div className="text-center max-w-md">
           <p className="text-muted-foreground mb-4">
-            This manuscript hasn't been signed yet. Complete The Reckoning to certify and generate it.
+            This packet hasn't been signed yet. Certify your answers on the Certify &amp; sign tab to create it.
           </p>
           <Link to={`/start?session=${state.sessionId}`} className="text-primary underline hover:text-primary/90">
-            Back to The Chamber
+            Back to your intake
           </Link>
           <LegalLinks className="mt-8" />
         </div>
@@ -300,11 +300,11 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
       <div className="min-h-screen bg-background flex items-center justify-center px-6">
         <div className="text-center max-w-md">
           <p className="text-muted-foreground mb-4">
-            This intake has expired, so it can no longer be certified or made into a Manuscript. Start a new intake
-            in The Chamber to continue.
+            This intake has expired, so it can't be certified or made into a packet anymore. Start a new intake to
+            continue.
           </p>
           <Link to="/start" className="text-primary underline hover:text-primary/90">
-            Go to The Chamber
+            Go to the intake
           </Link>
           <LegalLinks className="mt-8" />
         </div>
@@ -318,10 +318,10 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         <div className="text-center max-w-md">
           <p className="text-muted-foreground mb-4">
             Your information changed after you certified it, so that certification no longer applies. Review it and
-            certify again in The Reckoning to get an up-to-date Manuscript.
+            certify again on the Certify &amp; sign tab to get an up-to-date packet.
           </p>
           <Link to={`/start?session=${state.sessionId}`} className="text-primary underline hover:text-primary/90">
-            Back to The Chamber
+            Back to your intake
           </Link>
           <LegalLinks className="mt-8" />
         </div>
@@ -335,7 +335,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         <div className="text-center">
           <p className="text-muted-foreground mb-4">{state.kind === "error" ? state.message : "Something went wrong."}</p>
           <Link to={user ? "/start" : "/login"} className="text-primary underline hover:text-primary/90">
-            {user ? "Go to The Chamber" : "Sign in"}
+            {user ? "Go to the intake" : "Sign in"}
           </Link>
           <LegalLinks className="mt-8" />
         </div>
@@ -351,7 +351,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
       <div className="sticky top-0 z-40 bg-background/95 backdrop-blur-md border-b border-border">
         <div className="container mx-auto max-w-5xl px-6 h-14 flex items-center justify-between">
           <Link to={backUrl} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition-colors">
-            <ArrowLeft className="w-4 h-4" /> {isSample ? "Start Yours" : "Back to Review"}
+            <ArrowLeft className="w-4 h-4" /> {isSample ? "Start your intake" : "Back to Review"}
           </Link>
           <div className="flex items-center gap-3">
             <span className="text-xs text-muted-foreground hidden sm:inline">Dates of birth masked</span>
@@ -366,7 +366,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
                   className="inline-flex items-center gap-2 text-sm whitespace-nowrap bg-primary text-primary-foreground px-3 sm:px-4 py-1.5 rounded-md hover:bg-primary/90 transition-colors disabled:opacity-60">
                   {openingFinal ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                   <span className="sm:hidden">Final PDF</span>
-                  <span className="hidden sm:inline">Download the final Manuscript (PDF)</span>
+                  <span className="hidden sm:inline">Download the final packet (PDF)</span>
                 </button>
               </>
             ) : (
@@ -374,7 +374,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
                 className="inline-flex items-center gap-2 text-sm whitespace-nowrap bg-primary text-primary-foreground px-3 sm:px-4 py-1.5 rounded-md hover:bg-primary/90 transition-colors disabled:opacity-60">
                 {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 <span className="sm:hidden">Download PDF</span>
-                <span className="hidden sm:inline">Download The Manuscript (PDF)</span>
+                <span className="hidden sm:inline">Download the packet (PDF)</span>
               </button>
             ))}
           </div>
@@ -384,27 +384,27 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
       <div className="container mx-auto max-w-5xl px-6 py-12 space-y-10">
         {isSample && (
           <div className="bg-warning/15 border border-warning/40 rounded-xl p-4 text-sm text-foreground">
-            🪶 This is a sample manuscript built from fictional data. Yours is generated from your conversation with Lenore.
+            This is a sample packet built from fictional data. Yours is built from your conversation with Lenore.
           </div>
         )}
         {withdrawn && (
           <div role="status" className="bg-warning/15 border border-warning/40 rounded-xl p-4 text-sm text-foreground">
             <p>
-              You changed your answers after certifying, so this certification no longer applies. Below is The
-              Manuscript exactly as you signed it{d.signer ? ` on ${d.signer.signedAt}` : ""}, for reference: it can't be
-              downloaded. Certify again in The Reckoning to get an up-to-date Manuscript.
+              You changed your answers after certifying, so this certification no longer applies. Below is your packet
+              exactly as you signed it{d.signer ? ` on ${d.signer.signedAt}` : ""}, for reference. It can't be downloaded.
+              Certify again on the Certify &amp; sign tab to get an up-to-date packet.
             </p>
             <Link to={backUrl} className="inline-block mt-2 text-primary underline hover:text-primary/90">
-              Back to The Chamber
+              Back to your intake
             </Link>
           </div>
         )}
         {state.kind === "ready" && <ProspectStatusNote sessionId={state.sessionId} />}
         {finalVersion && (
           <div className="bg-success/10 border border-success/40 rounded-xl p-4 text-sm text-foreground" data-testid="final-manuscript">
-            <p className="font-medium mb-1">Your final Manuscript is ready.</p>
+            <p className="font-medium mb-1">Your final packet is ready.</p>
             <p className="text-muted-foreground">
-              Edgar Allan Advisory reviewed your intake and prepared version {finalVersion.version}
+              A Nevermore advisor reviewed your intake and prepared version {finalVersion.version}
               {finalVersion.corrections_applied > 0
                 ? `, with ${finalVersion.corrections_applied} correction${finalVersion.corrections_applied === 1 ? "" : "s"} listed in it`
                 : ""}
@@ -416,23 +416,23 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         {/* Header */}
         <div className="bg-card border border-border rounded-xl p-8 md:p-10">
           <div className="flex items-start gap-4 mb-8">
-            <RavenIcon className="w-10 h-10 text-primary flex-shrink-0" />
+            <BrandMark className="w-10 h-10 text-primary flex-shrink-0" />
             <div>
-              <h1 className="font-display text-3xl md:text-4xl font-bold tracking-tight">THE MANUSCRIPT</h1>
-              <p className="text-muted-foreground text-sm mt-1">Edgar Allan Advisory · {isSample ? "Sample" : withdrawn ? "Withdrawn" : "Certified"} Underwriting Packet</p>
+              <h1 className="font-display text-3xl md:text-4xl font-bold tracking-tight">{isSample ? "Sample underwriting packet" : "Underwriting packet"}</h1>
+              <p className="text-muted-foreground text-sm mt-1">Nevermore · {isSample ? "Fictional data" : withdrawn ? "Certification withdrawn" : "Certified"}</p>
             </div>
           </div>
           <div className="border-t border-border pt-6 grid grid-cols-2 md:grid-cols-3 gap-y-4 gap-x-8 text-sm font-mono">
             {d.submittedTo && (
-              <div><span className="text-muted-foreground text-xs block mb-0.5">PREPARED FOR</span>{d.submittedTo}</div>
+              <div><span className="text-muted-foreground text-xs block mb-0.5">Prepared for</span>{d.submittedTo}</div>
             )}
-            <div><span className="text-muted-foreground text-xs block mb-0.5">PREPARED BY</span>Edgar Allan Advisory · Lenore</div>
-            <div><span className="text-muted-foreground text-xs block mb-0.5">{d.signer ? "CERTIFIED" : "DATE"}</span>{d.date}</div>
-            <div><span className="text-muted-foreground text-xs block mb-0.5">FILE ID</span><span className="text-primary">{d.fileId}</span></div>
-            <div><span className="text-muted-foreground text-xs block mb-0.5">VERSION</span>{versionLine}</div>
-            <div><span className="text-muted-foreground text-xs block mb-0.5">PROSPECT</span>{d.companyName}</div>
+            <div><span className="text-muted-foreground text-xs block mb-0.5">Prepared by</span>Nevermore · Lenore</div>
+            <div><span className="text-muted-foreground text-xs block mb-0.5">{d.signer ? "Certified" : "Date"}</span>{d.date}</div>
+            <div><span className="text-muted-foreground text-xs block mb-0.5">File ID</span><span className="text-primary">{d.fileId}</span></div>
+            <div><span className="text-muted-foreground text-xs block mb-0.5">Version</span>{versionLine}</div>
+            <div><span className="text-muted-foreground text-xs block mb-0.5">Prospect</span>{d.companyName}</div>
             {!isSample && (
-              <div><span className="text-muted-foreground text-xs block mb-0.5">REVIEW</span>As certified, before advisor review</div>
+              <div><span className="text-muted-foreground text-xs block mb-0.5">Review</span>As certified, before advisor review</div>
             )}
           </div>
         </div>
@@ -519,7 +519,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           <div className="grid md:grid-cols-2 gap-6">
             <Card>{renderRows(d.locationRows, d)}</Card>
             <Card>
-              <p className="text-xs text-muted-foreground font-mono mb-3">STATE BREAKDOWN</p>
+              <p className="text-xs font-medium text-muted-foreground mb-3">State breakdown</p>
               {d.states.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No states captured yet.</p>
               ) : (
@@ -587,7 +587,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         <section>
           <SectionHeader>11 — Underwriting Readiness</SectionHeader>
           <div className="bg-card border border-border rounded-xl p-6 space-y-3">
-            <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">Confirmed</p>
+            <p className="text-xs font-medium text-muted-foreground mb-4">Confirmed</p>
             {d.resolved.length === 0 && <p className="text-sm text-muted-foreground">Nothing confirmed yet.</p>}
             {d.resolved.map((item) => (
               <div key={item} className="flex items-start gap-2.5">
@@ -595,7 +595,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
                 <span className="text-foreground text-sm">{item}</span>
               </div>
             ))}
-            <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider pt-4">Eligibility checks</p>
+            <p className="text-xs font-medium text-muted-foreground pt-4">Eligibility checks</p>
             {d.checks.map((c) => (
               <div key={c.label} className="flex items-start gap-2.5">
                 {c.status === "pass" && <CheckCircle className="w-4 h-4 text-success flex-shrink-0 mt-0.5" />}
@@ -608,7 +608,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             ))}
             {d.open.length > 0 && (
               <div className="mt-4 bg-warning/10 border border-warning/30 rounded-lg p-4 space-y-2">
-                <p className="text-warning text-xs font-medium mb-1">OPEN ITEMS:</p>
+                <p className="text-warning text-xs font-medium mb-1">Open items</p>
                 {d.open.map((item) => (
                   <p key={item} className="text-foreground text-sm flex items-start gap-2">
                     <AlertTriangle className="w-3.5 h-3.5 text-warning mt-0.5 flex-shrink-0" />
@@ -622,14 +622,14 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Section 12 — Certification */}
         <section>
-          <div className="bg-[hsl(230,25%,8%)] border border-primary/40 rounded-xl overflow-hidden">
+          <div className="bg-card border border-primary/40 rounded-xl overflow-hidden">
             <div className="h-1.5 bg-primary" />
             <div className="p-8 md:p-10">
               <div className="flex items-center gap-3 mb-6">
-                <RavenIcon className="w-8 h-8 text-primary" />
+                <BrandMark className="w-8 h-8 text-primary" />
                 <div>
-                  <p className="font-display font-bold text-foreground text-lg">EDGAR ALLAN ADVISORY</p>
-                  <p className="text-muted-foreground text-xs font-mono">SUBMISSION CERTIFICATION</p>
+                  <Wordmark className="block text-lg" />
+                  <p className="text-muted-foreground text-xs">Certification</p>
                 </div>
               </div>
               <p className="text-muted-foreground text-sm mb-8">
@@ -686,8 +686,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* Footer on every page */}
         <div className="text-center border-t border-border pt-6 text-xs text-muted-foreground">
-          <p>Edgar Allan Advisory · {d.fileId} · {versionLine} · {d.companyName} · {d.date}</p>
-          <p className="font-display italic mt-1">"Nevermore will HR slow you down."</p>
+          <p>Nevermore · {d.fileId} · {versionLine} · {d.companyName} · {d.date}</p>
         </div>
 
         {/* Bottom Actions */}
@@ -695,17 +694,17 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           {!withdrawn && (finalVersion ? (
             <button onClick={() => void openFinal()} disabled={openingFinal}
               className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-60">
-              {openingFinal ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download the final Manuscript (PDF)
+              {openingFinal ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download the final packet (PDF)
             </button>
           ) : (
             <button onClick={handleDownloadPDF} disabled={downloading}
               className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-60">
-              {downloading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download The Manuscript (PDF)
+              {downloading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download the packet (PDF)
             </button>
           ))}
           <Link to={backUrl}
             className="inline-flex items-center justify-center gap-2 border border-border text-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-muted transition-colors">
-            <ArrowLeft className="w-5 h-5" /> {isSample ? "Start Yours" : "Back to Review"}
+            <ArrowLeft className="w-5 h-5" /> {isSample ? "Start your intake" : "Back to Review"}
           </Link>
         </div>
 

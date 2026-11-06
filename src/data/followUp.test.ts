@@ -8,6 +8,9 @@ describe("READY_MESSAGE", () => {
   it("tells the prospect they can certify without saying the intake is finished", () => {
     expect(READY_MESSAGE).toMatch(/certify/);
     expect(READY_MESSAGE).toMatch(/keep going/);
+    // It names the tab where certifying happens, in today's words.
+    expect(READY_MESSAGE).toMatch(/Certify & sign tab/);
+    expect(READY_MESSAGE).not.toMatch(/Manuscript|Reckoning/);
     // The handler's own test for a completion claim (supabase/functions/chamber-extract/reply.ts).
     expect(READY_MESSAGE).not.toMatch(CLAIMS_COMPLETE);
     expect("That's everything The Manuscript needs.").toMatch(CLAIMS_COMPLETE);
@@ -20,6 +23,12 @@ describe("READY_MESSAGE", () => {
     );
     expect(hasAnnouncedReady([earlier])).toBe(true);
     expect(shouldAnnounceReady(false, true, false, [earlier])).toBe(false);
+    const before = createChatMessage(
+      "lenore",
+      "You've given every answer certification needs, so you can review and certify on the Review tab whenever you're ready. The Manuscript is stronger with more, so if you have a few more minutes, let's keep going with the questions that help underwriters.",
+    );
+    expect(hasAnnouncedReady([before])).toBe(true);
+    expect(shouldAnnounceReady(false, true, false, [before])).toBe(false);
     expect(hasAnnouncedReady([createChatMessage("lenore", READY_MESSAGE)])).toBe(true);
     // Only Lenore says it: the prospect quoting it doesn't count.
     expect(hasAnnouncedReady([createChatMessage("user", READY_MESSAGE)])).toBe(false);

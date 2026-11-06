@@ -66,12 +66,12 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
             </span>
           )}
           {data.has_1099 && (
-            <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-amber-500/15 text-amber-400">
+            <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-warning/15 text-warning">
               <Zap className="w-3 h-3" /> Has 1099 Contractors
             </span>
           )}
           {data.multiple_entities && (
-            <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-blue-500/15 text-blue-400">
+            <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-secondary/15 text-secondary">
               <Users className="w-3 h-3" /> Multi-Entity
             </span>
           )}

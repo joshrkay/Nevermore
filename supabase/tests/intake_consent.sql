@@ -42,6 +42,7 @@
 \i supabase/migrations/20261104091000_ops_monitoring.sql
 \i supabase/migrations/20261104092000_data_retention_and_deletion.sql
 \i supabase/migrations/20261104093000_security_review_fixes.sql
+\i supabase/migrations/20261107090000_intake_consent_v2.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -112,7 +113,7 @@ END $$;
 -- ---------- the version in force ----------
 DO $$
 BEGIN
-  PERFORM pg_temp.check(public.intake_consent_version() = '2026-11-draft-1', 'intake_consent_version');
+  PERFORM pg_temp.check(public.intake_consent_version() = '2026-11-draft-2', 'intake_consent_version');
   PERFORM pg_temp.check((SELECT intake_consent_id IS NULL FROM public.chamber_sessions WHERE id = (SELECT id FROM fx WHERE name = 'legacy')),
     'an intake written by a privileged role gets no agreement');
   RAISE NOTICE 'intake_consent: version cases passed';
@@ -129,7 +130,7 @@ BEGIN
   SET LOCAL ROLE authenticated;
   PERFORM pg_temp.check(pg_temp.state_of(format('INSERT INTO public.chamber_sessions (user_id) VALUES (%L)', guest)) = 'EA004',
     'a guest with no agreement starts an intake');
-  PERFORM pg_temp.check(pg_temp.detail_of(format('INSERT INTO public.chamber_sessions (user_id) VALUES (%L)', guest)) = '2026-11-draft-1',
+  PERFORM pg_temp.check(pg_temp.detail_of(format('INSERT INTO public.chamber_sessions (user_id) VALUES (%L)', guest)) = '2026-11-draft-2',
     'EA004 names the version needed');
   RESET ROLE;
 
@@ -169,11 +170,11 @@ DECLARE
 BEGIN
   PERFORM pg_temp.signed_out();
   SET LOCAL ROLE anon;
-  PERFORM pg_temp.check(pg_temp.state_of($q$SELECT public.record_intake_consent('2026-11-draft-1', 'I agree')$q$) = '42501',
+  PERFORM pg_temp.check(pg_temp.state_of($q$SELECT public.record_intake_consent('2026-11-draft-2', 'I agree')$q$) = '42501',
     'anon cannot call record_intake_consent');
   RESET ROLE;
   SET LOCAL ROLE authenticated;
-  PERFORM pg_temp.check(pg_temp.state_of($q$SELECT public.record_intake_consent('2026-11-draft-1', 'I agree')$q$) = '42501',
+  PERFORM pg_temp.check(pg_temp.state_of($q$SELECT public.record_intake_consent('2026-11-draft-2', 'I agree')$q$) = '42501',
     'signed out');
   RESET ROLE;
 
@@ -181,21 +182,21 @@ BEGIN
   SET LOCAL ROLE authenticated;
   PERFORM pg_temp.check(pg_temp.state_of($q$SELECT public.record_intake_consent('2026-10-draft-0', 'I agree')$q$) = 'EA005',
     'an older wording is refused');
-  PERFORM pg_temp.check(pg_temp.detail_of($q$SELECT public.record_intake_consent('2026-10-draft-0', 'I agree')$q$) = '2026-11-draft-1',
+  PERFORM pg_temp.check(pg_temp.detail_of($q$SELECT public.record_intake_consent('2026-10-draft-0', 'I agree')$q$) = '2026-11-draft-2',
     'EA005 names the version in force');
   PERFORM pg_temp.check(pg_temp.state_of($q$SELECT public.record_intake_consent(NULL, 'I agree')$q$) = 'EA005', 'no version');
-  PERFORM pg_temp.check(pg_temp.state_of($q$SELECT public.record_intake_consent('2026-11-draft-1', '   ')$q$) = '22023', 'no wording');
-  PERFORM pg_temp.check(pg_temp.state_of(format('SELECT public.record_intake_consent(%L, %L)', '2026-11-draft-1', repeat('x', 20001))) = '22023',
+  PERFORM pg_temp.check(pg_temp.state_of($q$SELECT public.record_intake_consent('2026-11-draft-2', '   ')$q$) = '22023', 'no wording');
+  PERFORM pg_temp.check(pg_temp.state_of(format('SELECT public.record_intake_consent(%L, %L)', '2026-11-draft-2', repeat('x', 20001))) = '22023',
     'wording too long');
 
-  first_at := public.record_intake_consent('2026-11-draft-1', '  Who we are: ...  I agree.  ');
+  first_at := public.record_intake_consent('2026-11-draft-2', '  Who we are: ...  I agree.  ');
   PERFORM pg_temp.check(first_at BETWEEN now() - interval '1 minute' AND clock_timestamp(), 'the server stamps the time');
   PERFORM pg_sleep(0.01);
-  again_at := public.record_intake_consent('2026-11-draft-1', 'Different words');
+  again_at := public.record_intake_consent('2026-11-draft-2', 'Different words');
   PERFORM pg_temp.check(again_at = first_at, 'agreeing again returns the first time');
   SELECT * INTO c FROM public.intake_consents WHERE user_id = guest;
   PERFORM pg_temp.check((SELECT count(*) FROM public.intake_consents WHERE user_id = guest) = 1, 'one row per account and version');
-  PERFORM pg_temp.check(c.consent_text = 'Who we are: ...  I agree.' AND c.consent_version = '2026-11-draft-1', 'the first wording is kept, trimmed');
+  PERFORM pg_temp.check(c.consent_text = 'Who we are: ...  I agree.' AND c.consent_version = '2026-11-draft-2', 'the first wording is kept, trimmed');
 
   -- The table itself takes no writes from the browser.
   PERFORM pg_temp.check(pg_temp.state_of(format(
@@ -236,7 +237,7 @@ BEGIN
   -- The legacy intake takes its owner's agreement on the first save after it.
   PERFORM pg_temp.as_user(prospect);
   SET LOCAL ROLE authenticated;
-  PERFORM public.record_intake_consent('2026-11-draft-1', 'I agree');
+  PERFORM public.record_intake_consent('2026-11-draft-2', 'I agree');
   SELECT id INTO prospect_agreed FROM public.intake_consents WHERE user_id = prospect;
   UPDATE public.chamber_sessions SET chamber_data = '{"company_name":"Legacy Co, again"}' WHERE id = legacy;
   PERFORM pg_temp.check((SELECT intake_consent_id FROM public.chamber_sessions WHERE id = legacy) = prospect_agreed,
