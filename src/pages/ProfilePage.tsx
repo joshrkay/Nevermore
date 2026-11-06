@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { motion } from "framer-motion";
 import LegalLinks from "@/components/LegalLinks";
 import DraftReminderToggle from "@/components/DraftReminderToggle";
+import SignOutButton from "@/components/SignOutButton";
 
 const ProfilePage = () => {
   const { user } = useAuth();
@@ -50,6 +51,12 @@ const ProfilePage = () => {
 
   const handleSave = async () => {
     if (!user) return;
+    // Saved as typed or not at all: parseInt would save "1e3" as 1 and "12.5" as 12.
+    const count = form.employee_count.trim();
+    if (count && !/^\d{1,7}$/.test(count)) {
+      toast.error("Enter the employee count as a whole number, such as 25");
+      return;
+    }
     setSaving(true);
 
     const { error } = await supabase
@@ -58,7 +65,7 @@ const ProfilePage = () => {
         company_name: form.company_name.trim() || null,
         contact_name: form.contact_name.trim() || null,
         phone: form.phone.trim() || null,
-        employee_count: form.employee_count ? parseInt(form.employee_count, 10) : null,
+        employee_count: count ? Number(count) : null,
       })
       .eq("user_id", user.id);
 
@@ -103,7 +110,10 @@ const ProfilePage = () => {
             <RavenLogo className="w-7 h-7 text-primary" />
             <span className="font-display text-lg text-foreground">Profile Settings</span>
           </div>
-          <span className="text-xs text-muted-foreground hidden sm:block">{user?.email}</span>
+          <div className="flex items-center gap-4">
+            <span className="text-xs text-muted-foreground hidden sm:block">{user?.email}</span>
+            <SignOutButton />
+          </div>
         </div>
       </div>
 
@@ -127,6 +137,8 @@ const ProfilePage = () => {
                 <Input
                   id="company_name"
                   placeholder="Acme Corp"
+                  maxLength={200}
+                  autoComplete="organization"
                   value={form.company_name}
                   onChange={(e) => handleChange("company_name", e.target.value)}
                   className="bg-background border-border"
@@ -138,6 +150,8 @@ const ProfilePage = () => {
                 <Input
                   id="contact_name"
                   placeholder="Jane Doe"
+                  maxLength={200}
+                  autoComplete="name"
                   value={form.contact_name}
                   onChange={(e) => handleChange("contact_name", e.target.value)}
                   className="bg-background border-border"
@@ -149,6 +163,8 @@ const ProfilePage = () => {
                 <Input
                   id="phone"
                   placeholder="(555) 123-4567"
+                  maxLength={40}
+                  autoComplete="tel"
                   value={form.phone}
                   onChange={(e) => handleChange("phone", e.target.value)}
                   className="bg-background border-border"
@@ -160,6 +176,8 @@ const ProfilePage = () => {
                 <Input
                   id="employee_count"
                   type="number"
+                  min={0}
+                  step={1}
                   placeholder="25"
                   value={form.employee_count}
                   onChange={(e) => handleChange("employee_count", e.target.value)}

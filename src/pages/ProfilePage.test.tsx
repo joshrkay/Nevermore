@@ -61,6 +61,29 @@ describe("ProfilePage save", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to save profile"));
   });
 
+  it("caps the names at the length the database keeps", async () => {
+    render(
+      <MemoryRouter>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByLabelText("Company Name")).toHaveAttribute("maxlength", "200");
+    expect(screen.getByLabelText("Contact Name")).toHaveAttribute("maxlength", "200");
+  });
+
+  it("refuses an employee count that isn't a whole number, instead of saving part of it", async () => {
+    render(
+      <MemoryRouter>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    // parseInt("1e3") is 1: the count the person typed must be saved as typed, or not at all.
+    fireEvent.change(await screen.findByLabelText("Employee Count"), { target: { value: "1e3" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/ }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Enter the employee count as a whole number, such as 25"));
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
   it("confirms a successful save", async () => {
     db.update.mockResolvedValue({ error: null });
     await save("555-0100");

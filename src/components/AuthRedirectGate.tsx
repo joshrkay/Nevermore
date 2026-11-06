@@ -11,8 +11,10 @@ import { AUTH_CALLBACK_PATH, authCallbackUrl, DEFAULT_NEXT, peekInitialAuthRedir
  * existed (they point at /start), and when Supabase sends the person to the Site URL because the
  * address the app asked for isn't on its Redirect URLs list.
  *
- * It waits for auth to load: supabase-js reads the session out of the address asynchronously, and
- * moving to another address first would lose it.
+ * A link carrying a session (#access_token=…) goes there too and is refused: the client never signs in from
+ * the address (detectSessionInUrl is off), and moving to the callback page drops the tokens from it.
+ *
+ * It waits for auth to load, so the callback page knows who, if anyone, this browser is signed in as.
  */
 const AuthRedirectGate = ({ children }: { children: ReactNode }) => {
   const { loading } = useAuth();

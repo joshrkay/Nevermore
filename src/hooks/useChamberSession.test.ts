@@ -70,7 +70,8 @@ vi.mock("@/integrations/supabase/client", () => ({
                 maybeSingle: async () => {
                   reads.push(columns);
                   readIds.push(value);
-                  return readError ? { data: null, error: readError } : { data: resumeRow, error: null };
+                  // A fixture is the signed-in person's own intake unless it names another owner.
+                  return readError ? { data: null, error: readError } : { data: resumeRow && { user_id: authUserId, ...resumeRow }, error: null };
                 },
               }
             : {
@@ -334,6 +335,26 @@ describe("useChamberSession", () => {
     expect(result.current.resumeFailed).toBe(true);
     expect(result.current.sessionId).toBeNull();
     expect(inserts).toBe(0);
+  });
+
+  it("won't open someone else's intake that row security lets this account read (an advisor following a prospect's link)", async () => {
+    resumeRow = {
+      id: "prospects-intake",
+      user_id: "the-prospect",
+      data_version: 4,
+      status: "in_progress",
+      chamber_data: { company_name: "Ravenwood Bindery LLC", employee_count: 12 },
+      field_provenance: {},
+      transcript: [{ id: "m1", sender: "user", text: "We have 12 employees.", timestamp: "2026-11-06T00:00:00Z" }],
+    };
+    const { result } = renderHook(() => useChamberSession("prospects-intake"));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.resumeFailed).toBe(true);
+    expect(result.current.sessionId).toBeNull();
+    expect(result.current.chamberData.company_name ?? null).toBeNull();
+    expect(inserts).toBe(0);
+    // Nothing of the prospect's answers is kept in this browser.
+    expect(Object.keys(localStorage).filter((k) => k.includes("prospects-intake"))).toEqual([]);
   });
 
   it("starts a fresh session only once the prospect asks for one", async () => {

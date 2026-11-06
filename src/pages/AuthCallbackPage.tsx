@@ -133,13 +133,6 @@ const AuthCallbackPage = () => {
     if (redirect?.kind === "error") console.warn("Email link refused:", redirect.code, redirect.description);
   }, [redirect]);
 
-  // A link Supabase already verified: supabase-js signs the person in while `loading`.
-  useEffect(() => {
-    if (redirect?.kind !== "session" || loading || !signedIn) return;
-    confirmedToast(user?.email);
-    navigate(next, { replace: true });
-  }, [redirect, loading, signedIn, user?.email, navigate, next]);
-
   const confirm = async () => {
     if (redirect?.kind !== "token") return;
     setTokenState("busy");
@@ -175,7 +168,7 @@ const AuthCallbackPage = () => {
     </button>
   );
 
-  if (loading || (redirect?.kind === "session" && signedIn)) {
+  if (loading) {
     return (
       <Card title="Confirming your email">
         <p className="text-sm text-muted-foreground text-center flex items-center justify-center gap-2">
@@ -199,6 +192,7 @@ const AuthCallbackPage = () => {
 
   // A refused link reads as refused even when this browser is signed in: the error doesn't say whose
   // link it was, and the account signed in here may be another one (an advisor testing a sign-up).
+  // A link carrying a session is refused the same way: nobody is signed in from tokens in the address.
   if (redirect?.kind === "error" || tokenState === "failed" || redirect?.kind === "session") {
     const message =
       redirect?.kind === "error"

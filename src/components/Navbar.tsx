@@ -66,14 +66,21 @@ const Navbar = () => {
         </div>
 
         {/* Mobile hamburger */}
-        <button className="md:hidden text-foreground" onClick={() => setMobileOpen(!mobileOpen)}>
+        <button
+          type="button"
+          className="md:hidden text-foreground"
+          onClick={() => setMobileOpen(!mobileOpen)}
+          aria-label={mobileOpen ? "Close menu" : "Open menu"}
+          aria-expanded={mobileOpen}
+          aria-controls="mobile-menu"
+        >
           {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
       </div>
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="md:hidden bg-background border-b border-border px-6 py-4 space-y-3">
+        <div id="mobile-menu" className="md:hidden bg-background border-b border-border px-6 py-4 space-y-3">
           {navLinks.map((link) =>
             link.isAnchor ? (
               <a key={link.label} href={link.href} onClick={() => setMobileOpen(false)} className="block text-sm text-muted-foreground hover:text-foreground">

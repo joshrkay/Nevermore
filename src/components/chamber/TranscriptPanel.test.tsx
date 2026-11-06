@@ -47,6 +47,11 @@ const scrollUpToRead = () => {
 describe("TranscriptPanel", () => {
   beforeEach(() => scrollTo.mockClear());
 
+  it("names the message box for assistive technology, which a placeholder alone doesn't reliably do", () => {
+    render(panel(conversation(1)));
+    expect(screen.getByRole("textbox", { name: "Message Lenore" })).toBeInTheDocument();
+  });
+
   it("opens a restored conversation at its latest message at once, without animating through it", () => {
     render(panel(conversation(12)));
     expect(scroller().scrollTop).toBe(SCROLL_HEIGHT);

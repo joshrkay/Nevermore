@@ -110,6 +110,7 @@ const LiveWorkspace = ({
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
+            aria-current={activeTab === tab.key ? "step" : undefined}
             className={`px-3 py-2.5 text-xs font-medium whitespace-nowrap transition-colors border-b-2 ${
               activeTab === tab.key
                 ? "border-primary text-foreground"

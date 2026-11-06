@@ -199,9 +199,12 @@ const AuthPage = () => {
           <form onSubmit={handleSubmit} className="space-y-4">
             {isSignUp && (
               <div>
-                <label className="block text-xs text-muted-foreground mb-1.5">Company Name</label>
+                <label htmlFor="auth-company" className="block text-xs text-muted-foreground mb-1.5">Company Name</label>
                 <input
+                  id="auth-company"
                   type="text"
+                  autoComplete="organization"
+                  maxLength={200}
                   value={companyName}
                   onChange={(e) => setCompanyName(e.target.value)}
                   placeholder="Your company's legal name"
@@ -210,9 +213,11 @@ const AuthPage = () => {
               </div>
             )}
             <div>
-              <label className="block text-xs text-muted-foreground mb-1.5">Email</label>
+              <label htmlFor="auth-email" className="block text-xs text-muted-foreground mb-1.5">Email</label>
               <input
+                id="auth-email"
                 type="email"
+                autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@company.com"
@@ -221,9 +226,11 @@ const AuthPage = () => {
               />
             </div>
             <div>
-              <label className="block text-xs text-muted-foreground mb-1.5">Password</label>
+              <label htmlFor="auth-password" className="block text-xs text-muted-foreground mb-1.5">Password</label>
               <input
+                id="auth-password"
                 type="password"
+                autoComplete={isSignUp ? "new-password" : "current-password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
