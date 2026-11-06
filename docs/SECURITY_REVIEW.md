@@ -65,6 +65,12 @@ or consent; can't delete anything, including their own notes, history and record
 change or revoke roles; can't revoke intakes, ask for deletions or read monitoring (admin only); and can't run any
 service-only function. The advisor's account presenting a guest token is treated as a guest.
 
+The prospect's browser writes an intake's source (migration `20261106100000`) once, and nobody can change it
+afterwards: it is set in the insert, only as short codes (`is_source_code()`, so no free text, address or
+URL can be stored there), and an update keeps what the row had whoever sends it. Advisors write referral partners
+only through `advisor_add_referral_partner()` and `advisor_update_referral_partner()`; prospects can't read them
+(`supabase/tests/intake_sources.sql`, `data_isolation.sql`).
+
 ### Private file links can't be reused indefinitely or shared as permanent public URLs
 
 - All three buckets (`documents`, `manuscripts`, `quarantine`) are private, no migration creates or flips one to
@@ -121,7 +127,7 @@ expiry.
 | Roles (`user_roles`) | own | own | own | all |
 | Intake consents | own | all | all | all |
 | Pipeline status and history, notes, field reviews, review events, Manuscript versions, `manuscripts` bucket | | all | all | all |
-| Lifecycle events, deletion requests, information requests | | all | all | all |
+| Lifecycle events, deletion requests, information requests, referral partners | | all | all | all |
 | Monitoring events and alerts | | | all | all |
 | Outbox, email delivery events and suppressions, AI rate-limit records, intake milestones | | | | all |
 | Storage buckets (the list) | | | | all |

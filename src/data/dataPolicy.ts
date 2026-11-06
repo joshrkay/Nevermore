@@ -16,6 +16,7 @@
 
 import { BACKUP_MAX_AGE_MS } from "./intakeBackup";
 import { DRAFT_RETENTION_DAYS } from "./intakeLifecycle";
+import { SOURCE_MAX_AGE_MS } from "./intakeSource";
 
 export type Sensitivity = "restricted" | "confidential" | "internal" | "public";
 
@@ -86,6 +87,8 @@ export const RETENTION = {
   aiEventDays: 90,
   /** How far each intake got, for the pilot funnel: steps and times, never answers. From the intake's start. */
   funnelDays: 365,
+  /** The referral and campaign codes of the last tagged link a visitor followed, kept in their own browser. */
+  sourceLinkDays: Math.round(SOURCE_MAX_AGE_MS / (24 * 60 * 60 * 1000)),
 } as const;
 
 export interface RetentionRule {
@@ -143,6 +146,11 @@ export const RETENTION_RULES: RetentionRule[] = [
     record: "How far each intake got (which steps it reached, such as certifying, and when), used to improve the intake",
     period: `${RETENTION.funnelDays} days after the intake started`,
     then: "Deleted. These never contain your answers, name or email address; if your intake is deleted sooner, these records stay without any link to it.",
+  },
+  {
+    record: "The referral code or campaign tags of the link you arrived by, if it carried any (such as ?ref=… in a link a partner sent you)",
+    period: `Up to ${RETENTION.sourceLinkDays} days in your browser; then with your intake, and with the record of how far it got`,
+    then: "Removed from the browser, and deleted with those records. Everyone who follows the same link carries the same codes, so they never identify you.",
   },
   {
     record: "Your account (email address, name, company, phone)",
@@ -326,10 +334,23 @@ export const DATA_CLASSES: DataClass[] = [
     id: "funnel",
     label: "Intake progress (the pilot funnel)",
     sensitivity: "internal",
-    examples: "Which steps each intake reached (started, first answer, a document, a census, ready to certify, a verified email, certified, the packet downloaded), when, and when the intake started. Never an answer, a name, an address or a document.",
-    stored: { tables: ["intake_milestones"], buckets: [], elsewhere: [] },
+    examples: "Which steps each intake reached (started, first answer, a document, a census, ready to certify, a verified email, certified, The Manuscript downloaded), when, and when the intake started; and the referral code and campaign tags of the link the intake was started from, as short codes. Never an answer, a name, an address or a document.",
+    stored: {
+      tables: ["intake_milestones", "chamber_sessions"],
+      buckets: [],
+      elsewhere: [`The visitor's own browser: the codes of the last tagged link they followed, for up to ${RETENTION.sourceLinkDays} days`],
+    },
     retention: `${RETENTION.funnelDays} days from the intake's start, a whole start date at once.`,
-    deletion: "By the daily retention job. Deleting an intake removes its link to these records; the steps and times stay, unattached, so the funnel still counts it.",
+    deletion: "By the daily retention job. Deleting an intake removes its link to these records; the steps, times and source codes stay, unattached, so the funnel still counts it. The codes on the intake itself go with it.",
+  },
+  {
+    id: "referral_partners",
+    label: "Referral partners",
+    sensitivity: "confidential",
+    examples: "The people and firms who refer employers to us: their name, what kind of partner they are, the code in the link they share, and which advisor added or last changed them.",
+    stored: { tables: ["referral_partners"], buckets: [], elsewhere: [] },
+    retention: "Kept while we work with the partner, so the codes on past intakes still name them.",
+    deletion: "By an admin, on the partner's request or when we stop working with them (docs/DATA_HANDLING.md).",
   },
 ];
 

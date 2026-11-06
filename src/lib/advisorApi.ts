@@ -7,6 +7,7 @@ import { parseTranscript, type ChatMessage } from "@/data/chat";
 import type { ChamberSubmission } from "@/data/manuscript";
 import { parseProvenance, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import type { OutboxStatus } from "@/data/outbox";
+import type { IntakeSource } from "@/data/intakeSource";
 import {
   isPipelineStatus,
   manuscriptStoragePath,
@@ -117,6 +118,40 @@ export async function loadFunnel(from: Date, to: Date): Promise<FunnelResult[]> 
   return data ?? [];
 }
 
+export type IntakeSourceResult = Database["public"]["Functions"]["advisor_intake_sources"]["Returns"][number];
+
+/** For intakes started between `from` and `to`: each source, and how many of its intakes reached each step. */
+export async function loadIntakeSources(from: Date, to: Date): Promise<IntakeSourceResult[]> {
+  const { data, error } = await supabase.rpc("advisor_intake_sources", { p_from: from.toISOString(), p_to: to.toISOString() });
+  if (error) fail(error, "Couldn't load the intakes by source.");
+  return data ?? [];
+}
+
+// ---------- Referral partners (J-2.3) ----------
+
+export type ReferralPartner = Tables["referral_partners"]["Row"];
+
+/** Every referral partner, by name. */
+export async function listReferralPartners(): Promise<ReferralPartner[]> {
+  const { data, error } = await supabase.from("referral_partners").select("*").order("name");
+  if (error) fail(error, "Couldn't load the referral partners.");
+  return data ?? [];
+}
+
+/** Adds a partner under a new code. The database refuses a code that is taken or badly formed, with a message to show. */
+export async function addReferralPartner(code: string, name: string, kind: string): Promise<ReferralPartner> {
+  const { data, error } = await supabase.rpc("advisor_add_referral_partner", { p_code: code, p_name: name, p_kind: kind });
+  if (error || !data) fail(error, "Couldn't add the partner.");
+  return data as ReferralPartner;
+}
+
+/** Renames a partner or changes its kind. Its code never changes. */
+export async function updateReferralPartner(code: string, name: string, kind: string): Promise<ReferralPartner> {
+  const { data, error } = await supabase.rpc("advisor_update_referral_partner", { p_code: code, p_name: name, p_kind: kind });
+  if (error || !data) fail(error, "Couldn't save the partner.");
+  return data as ReferralPartner;
+}
+
 /**
  * The submissions whose prospect cannot be reached by the confirmation email (it bounced for good,
  * or was reported as spam). Empty when all is well. Read beside the queue, not as part of it.
@@ -164,6 +199,10 @@ export interface SubmissionDetail {
   needsAction: NeedsAction;
   createdAt: string;
   updatedAt: string;
+  /** The referral code and campaign tags of the link the intake started from; all null when it had none. */
+  source: IntakeSource;
+  /** The partner the referral code names, when one is listed. */
+  sourcePartnerName: string | null;
   /** The values as the prospect certified them (or as saved, if not certified). */
   data: ChamberData;
   /**
@@ -211,7 +250,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   const [session, workflow, history, notes, reviews, events, versions] = await Promise.all([
     supabase
       .from("chamber_sessions")
-      .select("id, user_id, chamber_data, field_provenance, transcript, status, submission, created_at, updated_at, file_id")
+      .select("id, user_id, chamber_data, field_provenance, transcript, status, submission, created_at, updated_at, file_id, referral_code, utm_source, utm_medium, utm_campaign")
       .eq("id", id)
       .maybeSingle(),
     supabase
@@ -232,7 +271,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   // Row security hides sessions the caller may not see; a missing pipeline row means the same.
   if (!row || !workflow.data) return null;
 
-  const [docs, profile, docEvents, requests, lastCertification] = await Promise.all([
+  const [docs, profile, docEvents, requests, lastCertification, partner] = await Promise.all([
     supabase
       .from("documents")
       .select("id, file_name, file_size, category, status, storage_path, created_at, file_sha256, scan_verdict")
@@ -253,12 +292,17 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
       .order("recorded_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    // The partner behind the referral code, if one is listed.
+    row.referral_code
+      ? supabase.from("referral_partners").select("name").eq("code", row.referral_code).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
   if (docs.error) fail(docs.error, "Couldn't load uploaded documents.");
   if (lastCertification.error) fail(lastCertification.error, "Couldn't load the certification on record.");
   const recorded = lastCertification.data as RecordedCertification | null;
   if (docEvents.error) fail(docEvents.error, "Couldn't load the document history.");
   if (requests.error) fail(requests.error, "Couldn't load the requests sent to the prospect.");
+  if (partner.error) fail(partner.error, "Couldn't load the referral partner.");
 
   const submission = (row.submission as unknown as ChamberSubmission | null) ?? null;
   const certified = row.status === "submitted" && !!submission?.signer_name;
@@ -283,6 +327,13 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    source: {
+      referral_code: row.referral_code ?? null,
+      utm_source: row.utm_source ?? null,
+      utm_medium: row.utm_medium ?? null,
+      utm_campaign: row.utm_campaign ?? null,
+    },
+    sourcePartnerName: partner.data?.name ?? null,
     data: parseChamberData(shown),
     storedAnswers,
     // Pair provenance with whichever copy of the data is shown, as the prospect's Manuscript does.

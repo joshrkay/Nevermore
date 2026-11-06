@@ -28,6 +28,8 @@ import { OPEN_ITEM_STATUSES } from "@/data/openItems";
 import { INFORMATION_REQUEST_MAX, NEEDS_ACTION_NOTE_MAX, PIPELINE_STATUSES, PIPELINE_TRANSITIONS } from "@/data/advisor";
 import { OUTBOX_KIND_LABELS } from "@/data/outbox";
 import { FUNNEL_STEPS } from "@/data/funnel";
+import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
+import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
@@ -200,6 +202,25 @@ describe("server and client intake rules agree", () => {
     const sql = readFileSync("supabase/migrations/20261105092000_intake_milestones.sql", "utf8");
     const counted = /unnest\(ARRAY\[([\s\S]*?)\]\) WITH ORDINALITY AS s\(name, ord\)/.exec(sql)?.[1] ?? "";
     expect(quoted(counted)).toEqual([...FUNNEL_STEPS]);
+  });
+
+  it("accepts the same intake source codes in the browser and the database", () => {
+    const pattern = quoted(blocks("source_code_pattern").join("\n"));
+    expect(pattern).toEqual([SOURCE_CODE_PATTERN.source]);
+    expect(SOURCE_CODE_PATTERN.source).toContain(`{0,${SOURCE_CODE_MAX - 1}}`);
+  });
+
+  it("offers the referral partner kinds the database accepts", () => {
+    expect(quoted(blocks("referral_partner_kinds").join("\n"))).toEqual([...REFERRAL_PARTNER_KINDS]);
+  });
+
+  it("counts the funnel's steps, in order, for each source", () => {
+    const sql = readFileSync("supabase/migrations/20261106100000_intake_sources.sql", "utf8");
+    const returned = /advisor_intake_sources\([^)]*\)\s*RETURNS TABLE \(([\s\S]*?)\)\s*LANGUAGE/.exec(sql)?.[1] ?? "";
+    const columns = [...returned.matchAll(/^\s*(\w+) bigint/gm)].map((m) => m[1]);
+    expect(columns).toEqual([...FUNNEL_STEPS]);
+    const counted = [...sql.matchAll(/FILTER \(WHERE m\.milestone = '(\w+)'\),?\n/g)].map((m) => m[1]);
+    expect(counted).toEqual([...FUNNEL_STEPS]);
   });
 
   it("knows every kind of email the outbox holds, and which of them go to the prospect", () => {
