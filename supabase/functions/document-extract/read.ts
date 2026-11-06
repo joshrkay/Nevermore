@@ -2,10 +2,13 @@
 import * as XLSX from "https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs";
 import { extractText, getDocumentProxy } from "npm:unpdf@1.8.1";
 import {
+  clampSheetRange,
   docxContent,
   isPasswordError,
   MAX_EXTRACT_BYTES,
   MAX_PDF_PAGES,
+  MAX_SHEET_ROWS,
+  MAX_XLSX_UNZIPPED_BYTES,
   mergeCandidates,
   MIN_PDF_TEXT_CHARS,
   paragraphSections,
@@ -16,7 +19,7 @@ import {
   type Grid,
   type TextSection,
 } from "./parse.ts";
-import { readZipEntry } from "./zip.ts";
+import { readZipEntry, unzippedSize, ZipTooLargeError } from "./zip.ts";
 
 // Turns a document's bytes into candidate fields, or a status saying why it couldn't be read.
 // File-format work lives here; what the tables and text mean is decided in parse.ts, and the model
@@ -82,11 +85,22 @@ async function readDocx(bytes: Uint8Array, ask: AskModel): Promise<Outcome> {
 }
 
 async function readSpreadsheet(bytes: Uint8Array, format: "csv" | "xls" | "xlsx", ask: AskModel): Promise<Outcome> {
+  if (format === "xlsx") {
+    // The library unzips the file itself, with no limit of its own.
+    try {
+      await unzippedSize(bytes, MAX_XLSX_UNZIPPED_BYTES);
+    } catch (e) {
+      if (e instanceof ZipTooLargeError) return { status: "too_large" };
+      return { status: "unreadable", message: "This spreadsheet couldn't be opened. It's saved for your advisor." };
+    }
+  }
+
   let wb: XLSX.WorkBook;
   try {
+    // sheetRows: a sheet's declared size is the file's to say, so no more rows are read than a census needs.
     wb = format === "csv"
-      ? XLSX.read(new TextDecoder().decode(bytes), { type: "string", raw: true })
-      : XLSX.read(bytes, { type: "array", cellDates: true });
+      ? XLSX.read(new TextDecoder().decode(bytes), { type: "string", raw: true, sheetRows: MAX_SHEET_ROWS })
+      : XLSX.read(bytes, { type: "array", cellDates: true, sheetRows: MAX_SHEET_ROWS });
   } catch (e) {
     if (isPasswordError(e)) return { status: "encrypted" };
     return { status: "unreadable", message: "This spreadsheet couldn't be opened. It's saved for your advisor." };
@@ -96,12 +110,15 @@ async function readSpreadsheet(bytes: Uint8Array, format: "csv" | "xls" | "xlsx"
   for (const name of wb.SheetNames) {
     const ws = wb.Sheets[name];
     if (!ws || !ws["!ref"]) continue;
+    const range = XLSX.utils.decode_range(ws["!ref"]);
     grids.push({
       label: format === "csv" ? "CSV" : `Sheet ${name}`,
-      firstRow: XLSX.utils.decode_range(ws["!ref"]).s.r + 1,
-      // Raw values, so dates arrive as Dates whatever the sheet's display format, then as ISO text.
+      firstRow: range.s.r + 1,
+      // Raw values, so dates arrive as Dates whatever the sheet's display format, then as ISO text. Every
+      // cell in the range is built, empty or not, so the range is clamped: sheetRows bounds the rows, not
+      // the columns (A1:XFD200 is 3.3 million cells).
       rows: XLSX.utils
-        .sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: "", blankrows: true })
+        .sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: "", blankrows: true, range: clampSheetRange(range) })
         .map((row) => row.map(cellToText)),
     });
   }

@@ -11,6 +11,7 @@
 import { checkAiBudget } from "../_shared/ai/budget.ts";
 import { aiError, type AiErrorCode, type AiErrorReply } from "../_shared/ai/errors.ts";
 import { recordAiEvent, type AiEvent, type EventWriter } from "../_shared/ai/events.ts";
+import { readJsonCapped } from "../_shared/body.ts";
 import { callModel, failureLogLine, failureResponse, unexpectedErrorLine } from "../_shared/ai/model.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
 import { MAX_CHAT_MESSAGE_CHARS, MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES } from "../_shared/chatContext.ts";
@@ -33,6 +34,9 @@ const corsHeaders = {
 // everything the browser sends besides the message: the answers, their field statuses and the recent
 // conversation (D22).
 export const MAX_MESSAGE_CHARS = MAX_CHAT_MESSAGE_CHARS;
+// The whole body, read no further than this: the message and context caps above, as JSON with every
+// character escaped (six bytes for a control character), fit well within it.
+export const MAX_REQUEST_BYTES = 256 * 1024;
 export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES, NEXT_FIELDS };
 export { CLAIMS_COMPLETE, guardReply, STOPPING_REPLY, WRAP_UP_REPLY } from "./reply.ts";
 
@@ -168,12 +172,13 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
 
   try {
     // 1. The request itself, before anything is spent on it.
-    let body: unknown;
-    try {
-      body = await req.json();
-    } catch {
-      return await fail(aiError("bad_request", { message: "The request body must be JSON." }));
+    const read = await readJsonCapped(req, MAX_REQUEST_BYTES);
+    if (!read.ok) {
+      return await fail(read.reason === "too_large"
+        ? aiError("bad_request", { status: 413, message: `The request body must be at most ${MAX_REQUEST_BYTES} bytes.` })
+        : aiError("bad_request", { message: "The request body must be JSON." }));
     }
+    const body = read.value;
     const { message, context, statuses: rawStatuses, recent: rawRecent, census: rawCensus, requested: rawRequested, session_id: sessionId } = isObject(body) ? body : ({} as Record<string, unknown>);
     if (typeof message !== "string" || !message.trim()) {
       return await fail(aiError("bad_request", { message: "message is required" }));

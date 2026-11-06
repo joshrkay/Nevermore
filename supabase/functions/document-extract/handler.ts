@@ -16,6 +16,7 @@ import { UNAVAILABLE } from "../_shared/ai/allowance.ts";
 import { checkAiBudget } from "../_shared/ai/budget.ts";
 import { aiError, type AiErrorCode, type AiErrorReply } from "../_shared/ai/errors.ts";
 import { recordAiEvent, type AiEvent, type EventWriter } from "../_shared/ai/events.ts";
+import { readJsonCapped } from "../_shared/body.ts";
 import { unexpectedErrorLine } from "../_shared/ai/model.ts";
 import { selectAdapter } from "../_shared/ai/providers.ts";
 import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
@@ -31,6 +32,8 @@ const corsHeaders = {
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// The body is `{ "document_id": "<uuid>" }`; it is read no further than this.
+export const MAX_REQUEST_BYTES = 4 * 1024;
 const DOCUMENT_COLUMNS = "id, user_id, session_id, file_name, storage_path, size_bytes, status, category, file_sha256, scan_verdict";
 
 type DbError = { message?: string; code?: string } | null;
@@ -114,12 +117,13 @@ export async function handleDocumentRequest(req: Request, deps: DocumentHandlerD
   const fail = (e: AiErrorReply) => finish({ error: e.message, code: e.code }, e.status, e.code);
 
   try {
-    let body: unknown;
-    try {
-      body = await req.json();
-    } catch {
-      return await fail(aiError("bad_request", { message: "The request body must be JSON." }));
+    const read = await readJsonCapped(req, MAX_REQUEST_BYTES);
+    if (!read.ok) {
+      return await fail(read.reason === "too_large"
+        ? aiError("bad_request", { status: 413, message: `The request body must be at most ${MAX_REQUEST_BYTES} bytes.` })
+        : aiError("bad_request", { message: "The request body must be JSON." }));
     }
+    const body = read.value;
     const documentId = isObject(body) ? body.document_id : undefined;
     if (typeof documentId !== "string" || !UUID.test(documentId)) {
       return await fail(aiError("bad_request", { message: "document_id is required" }));

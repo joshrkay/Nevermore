@@ -26,6 +26,7 @@
 // its bytes showed. Answers carry a code the browser maps to its message, and a request id. Logs carry ids,
 // codes and failure kinds only, never file names, contents or the signed-in user's token.
 
+import { readBodyCapped } from "../_shared/body.ts";
 import {
   cleanFileName,
   formatFileSize,
@@ -103,33 +104,6 @@ const errorCode = (error: unknown): string => {
   return typeof code === "string" || typeof code === "number" ? String(code) : "unknown";
 };
 
-/** The request body, or null once it is over `max` bytes (read no further than that). */
-async function readCapped(req: Request, max: number): Promise<Uint8Array | null> {
-  const declared = Number(req.headers.get("Content-Length") ?? NaN);
-  if (Number.isFinite(declared) && declared > max) return null;
-  if (!req.body) return new Uint8Array(0);
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.length;
-    if (total > max) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  const body = new Uint8Array(total);
-  let at = 0;
-  for (const c of chunks) {
-    body.set(c, at);
-    at += c.length;
-  }
-  return body;
-}
-
 // The database's refusals of a new document row, as the browser's codes.
 const INSERT_REFUSALS: Record<string, { status: number; code: UploadErrorCode; message: string }> = {
   "23505": { status: 409, code: "duplicate", message: "This file is already uploaded to this intake." },
@@ -186,7 +160,7 @@ export async function handleUploadRequest(req: Request, deps: UploadDeps): Promi
     }
 
     // 1. The bytes, before anything is stored.
-    const body = await readCapped(req, MAX_UPLOAD_BYTES + FORM_OVERHEAD_BYTES);
+    const body = await readBodyCapped(req, MAX_UPLOAD_BYTES + FORM_OVERHEAD_BYTES);
     if (!body) return refused(413, "too_large", "Files can be up to 20 MB.");
     let form: FormData;
     try {

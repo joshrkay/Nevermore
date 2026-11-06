@@ -34,10 +34,13 @@ declare module "https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs" {
     SheetNames: string[];
     Sheets: Record<string, WorkSheet>;
   }
-  export function read(data: string | Uint8Array, opts: { type: "string" | "array"; raw?: boolean; cellDates?: boolean }): WorkBook;
+  export function read(data: string | Uint8Array, opts: { type: "string" | "array"; raw?: boolean; cellDates?: boolean; sheetRows?: number }): WorkBook;
   export const utils: {
     decode_range(ref: string): { s: { r: number; c: number }; e: { r: number; c: number } };
-    sheet_to_json<T>(ws: WorkSheet, opts?: { header?: 1; raw?: boolean; defval?: unknown; blankrows?: boolean }): T[];
+    sheet_to_json<T>(
+      ws: WorkSheet,
+      opts?: { header?: 1; raw?: boolean; defval?: unknown; blankrows?: boolean; range?: { s: { r: number; c: number }; e: { r: number; c: number } } },
+    ): T[];
   };
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { errorCode, handleWebhook, logLevel, MAX_BODY_BYTES, type RecordInput, type WebhookDeps, type WebhookRequest } from "./handler";
+import { errorCode, handleWebhook, logLevel, MAX_BODY_BYTES, readWebhookBody, type RecordInput, type WebhookDeps, type WebhookRequest } from "./handler";
 import { decodeSecret, sign } from "./verify";
 
 const SECRET = "whsec_dmVyaWZ5LWhhcm5lc3Mtd2ViaG9vay1zZWNyZXQtMzJiIQ==";
@@ -195,5 +195,31 @@ describe("log routing and codes", () => {
     expect(errorCode({ code: "not a code!", message: "x" })).toBe("unknown");
     expect(errorCode(new Error("boom"))).toBe("unknown");
     expect(errorCode(null)).toBe("unknown");
+  });
+});
+
+describe("reading the request body", () => {
+  it("reads a body within the limit as text", async () => {
+    const req = new Request("https://functions.test/resend-webhook", { method: "POST", body: '{"type":"email.bounced"}' });
+    expect(await readWebhookBody(req)).toBe('{"type":"email.bounced"}');
+  });
+
+  it("refuses a body over the limit while reading it, whether or not it declares its length", async () => {
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulled === 10_000) return controller.close();
+        pulled++;
+        controller.enqueue(new Uint8Array(1024).fill(0x61));
+      },
+    });
+    const undeclared = new Request("https://functions.test/resend-webhook", { method: "POST", body, duplex: "half" } as RequestInit);
+    expect(await readWebhookBody(undeclared)).toBeNull();
+    expect(pulled * 1024).toBeLessThan(MAX_BODY_BYTES + 64 * 1024);
+
+    const declared = new Request("https://functions.test/resend-webhook", {
+      method: "POST", body: "{}", headers: { "Content-Length": String(MAX_BODY_BYTES + 1) },
+    });
+    expect(await readWebhookBody(declared)).toBeNull();
   });
 });

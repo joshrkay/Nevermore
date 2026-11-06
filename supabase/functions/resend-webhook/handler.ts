@@ -4,6 +4,7 @@
 // and anything a retry cannot fix (a bad signature, an event we do not act on) is not. No imports
 // beyond sibling modules, so it runs under Deno and Vitest alike.
 
+import { readBodyCapped } from "../_shared/body.ts";
 import { parseResendEvent, type EmailEvent } from "./events.ts";
 import { verifySignature } from "./verify.ts";
 
@@ -44,6 +45,16 @@ export interface WebhookResponse {
 
 /** Provider payloads are a few hundred bytes. */
 export const MAX_BODY_BYTES = 256 * 1024;
+
+/**
+ * The request's raw body as text (the signature is over these exact characters), or null when it is over
+ * MAX_BODY_BYTES. It is refused while it is read: anyone can call this function (the gateway's JWT check
+ * is off for it), so it must never buffer a body larger than the limit first.
+ */
+export async function readWebhookBody(req: Request): Promise<string | null> {
+  const bytes = await readBodyCapped(req, MAX_BODY_BYTES);
+  return bytes === null ? null : new TextDecoder().decode(bytes);
+}
 
 const respond = (status: number, body: Record<string, unknown>): WebhookResponse => ({ status, body });
 

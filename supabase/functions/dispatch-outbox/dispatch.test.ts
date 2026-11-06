@@ -14,6 +14,7 @@ import {
   retryDelaySeconds,
   rpcErrorCode,
   runMaintenance,
+  runReply,
   sendableKinds,
   type DispatchDeps,
   type OutboxRow,
@@ -1169,5 +1170,17 @@ describe("telling a blocked kind's events why they are waiting", () => {
     const note = vi.fn(async () => {});
     await noteBlockedKinds([], note, () => {});
     expect(note).not.toHaveBeenCalled();
+  });
+});
+
+describe("what a run answers", () => {
+  const counts = { claimed: 3, sent: 1, retrying: 1, dead: 1, unrecorded: 0, skipped: 0 };
+
+  it("tells the schedule (the service role) what it did", () => {
+    expect(runReply(true, counts)).toEqual(counts);
+  });
+
+  it("tells a browser caller only that the run happened: queue health is the advisory team's to read", () => {
+    expect(runReply(false, counts)).toEqual({ ok: true });
   });
 });

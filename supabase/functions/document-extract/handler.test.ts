@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handleDocumentRequest, type DocumentClient, type DocumentHandlerDeps } from "./handler";
+import { handleDocumentRequest, MAX_REQUEST_BYTES, type DocumentClient, type DocumentHandlerDeps } from "./handler";
 import type { AskModel, Outcome } from "./read";
 import { PROMPT_VERSION } from "./schema";
 import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema";
@@ -164,6 +164,15 @@ describe("document-extract handler: the request", () => {
     expect(answer).toMatchObject({ code: "bad_request", request_id: REQUEST });
     expect(t.steps).toEqual([]);
     expect(t.event()).toMatchObject({ function_name: "document-extract", error_code: "bad_request", user_id: USER, document_id: null });
+  });
+
+  it("refuses a body over the request limit as too large, while reading it, with nothing read or spent", async () => {
+    const t = setup();
+    const { status, body: answer } = await read(await handleDocumentRequest(post({ document_id: DOC, padding: "x".repeat(MAX_REQUEST_BYTES) }), t.deps));
+    expect(status).toBe(413);
+    expect(answer).toMatchObject({ code: "bad_request", request_id: REQUEST });
+    expect(t.steps).toEqual([]);
+    expect(t.readDocument).not.toHaveBeenCalled();
   });
 
   it.each([

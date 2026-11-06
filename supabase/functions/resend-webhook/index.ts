@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.100.0";
-import { handleWebhook, logLevel, type RecordInput, type RecordResult } from "./handler.ts";
+import { handleWebhook, logLevel, readWebhookBody, type RecordInput, type RecordResult } from "./handler.ts";
 
 // Receives the email provider's webhooks (bounces, spam complaints, delays) and records them. It
 // is called by the provider, which holds no Supabase login, so the gateway's JWT check is off for
@@ -22,7 +22,10 @@ serve(async (req) => {
   const admin = supabaseUrl && serviceRoleKey ? createClient(supabaseUrl, serviceRoleKey) : null;
 
   try {
-    const body = await req.text();
+    const body = await readWebhookBody(req);
+    if (body === null) {
+      return new Response(JSON.stringify({ error: "Payload too large" }), { status: 413, headers: { "Content-Type": "application/json" } });
+    }
     const { status, body: payload } = await handleWebhook(
       { method: req.method, header: (name) => req.headers.get(name), body },
       {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { guardReply, handleRequest, NEXT_FIELDS, STOPPING_REPLY, WRAP_UP_REPLY, type HandlerDeps, type SupabaseLike } from "./handler";
+import { guardReply, handleRequest, MAX_REQUEST_BYTES, NEXT_FIELDS, STOPPING_REPLY, WRAP_UP_REPLY, type HandlerDeps, type SupabaseLike } from "./handler";
 import { EXTRACT_TOOL, FIELD_TYPES, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema";
 
@@ -160,6 +160,8 @@ describe("chamber-extract handler: the request is checked before anything is spe
     }, 413],
     ["a body that isn't JSON", "{message: hi", 400],
     ["a body that isn't an object", ["hi"], 400],
+    // Refused while it is read, so a huge body is never held in memory whole.
+    ["a body over the request limit", { message: "hi", session_id: INTAKE, padding: "x".repeat(MAX_REQUEST_BYTES) }, 413],
   ] as const)("%s: refused as bad_request, with no quota spent and no lookup made", async (_label, body, status) => {
     const t = setup();
     const response = await read(await handleRequest(post(body), t.deps));

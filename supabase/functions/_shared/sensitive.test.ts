@@ -35,6 +35,19 @@ describe("redactSensitive", () => {
     expect(redactSensitive("Acct # 00123456 at Chase")).toBe(`Acct ${REDACTED} at Chase`);
     expect(redactSensitive("routing: 021000021")).toBe(`routing ${REDACTED}`);
     expect(redactSensitive("account number 4455-6677")).toBe(`account ${REDACTED}`);
+    // However much space a PDF's layout leaves between the label and the number.
+    expect(redactSensitive("Account Number:            0012345")).toBe(`Account ${REDACTED}`);
+    expect(redactSensitive("acct #   :   0012345")).toBe(`acct ${REDACTED}`);
+    expect(redactSensitive("routing\n021000021")).toBe(`routing ${REDACTED}`);
+  });
+
+  it("takes time in proportion to the text, however much space follows a label", () => {
+    // Back-to-back optional spaces once made this quadratic: 64,000 spaces took about 1.5 s.
+    for (const text of ["account" + " ".repeat(200_000) + "x", ("account" + " ".repeat(60) + "x ").repeat(3_000), "acct #" + " ".repeat(200_000)]) {
+      const started = performance.now();
+      redactSensitive(text);
+      expect(performance.now() - started).toBeLessThan(500);
+    }
   });
 
   it("removes a card number written in groups of four", () => {
