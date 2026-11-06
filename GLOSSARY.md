@@ -1,8 +1,32 @@
-# Edgar Allan Advisory
+# Nevermore
 
-PEO underwriting intake. A prospect talks to Lenore in The Chamber, reviews and certifies their answers, and receives a PEO-neutral underwriting packet (The Manuscript). Advisors work the packets that come in.
+PEO underwriting intake, under the brand Nevermore (nevermorepeo.com), operated by Edgar Allan Advisory. A prospect talks to Lenore in their intake (The Chamber, in code), reviews and certifies their answers on the Certify & sign tab (The Reckoning), and receives a PEO-neutral underwriting packet (The Manuscript). Advisors work the packets that come in.
+
+The code keeps the older names (The Chamber, The Reckoning, The Manuscript) in identifiers, files, routes, database tables, columns and events, and so do the entries below. What a prospect reads uses the names under **Brand and the names prospects see**.
 
 ## Language
+
+### Brand and the names prospects see
+
+**Nevermore**:
+The product's brand, at nevermorepeo.com: what the app, the emails and Lenore call it. Operated by **Edgar Allan Advisory**, so the Privacy Policy, the Terms of Use and the intake consent introduce it once as "Nevermore, a service of Edgar Allan Advisory". Headlines may use the tagline "Never more back-and-forth."
+_Avoid_: Edgar Allan Advisory where the brand is meant
+
+**Edgar Allan Advisory**:
+The legal operator of Nevermore: "we" in the Privacy Policy and Terms of Use, the party named in the role disclosure (not a PEO, an insurance carrier or an insurance agency), in the certification statements a prospect signs, and in the copyright. File IDs keep its EAA prefix.
+_Avoid_: using it as the product's name in emails, the app or Lenore's lines
+
+**Your intake** (code: The Chamber):
+What a prospect calls the space where they talk to Lenore and see their answers fill in (the intake, your intake). The Chamber stays its name in code (`ChamberPage`, `chamber_sessions`, `chamber-extract`).
+_Avoid_: The Chamber in anything a prospect reads
+
+**Certify & sign tab** (code: The Reckoning):
+The workspace tab, labelled "⑨ Certify & sign", where the prospect certifies. The Reckoning stays its name in code (`ReckoningTab`). Tab ⑦ is "⑦ Review".
+_Avoid_: The Reckoning in anything a prospect reads
+
+**The packet** (code: The Manuscript):
+What a prospect calls the underwriting document they download and send to PEOs (the packet, your packet). The Manuscript stays its name in code (`ManuscriptPage`, `buildManuscript`) and in the entries below.
+_Avoid_: The Manuscript in anything a prospect reads
 
 ### People
 
@@ -15,8 +39,8 @@ A member of the advisory team who reviews certified intakes and works them throu
 _Avoid_: agent, broker, reviewer
 
 **Lenore**:
-The AI intake guide the prospect talks to, by text or by voice. One persona, whichever mode is used.
-_Avoid_: the bot, the agent, the assistant, the model
+The AI intake assistant the prospect talks to, by text or by voice: "Lenore, the intake assistant at Nevermore". One persona, whichever mode is used: warm, quick, a little informal, in plain words and short sentences, never jokey about the prospect's data.
+_Avoid_: the bot, the agent, the model, or "the assistant" in place of her name
 
 ### The intake
 
@@ -25,8 +49,8 @@ One prospect's whole set of answers for one company, from first message to certi
 _Avoid_: session, intake session, Chamber session, file, application
 
 **The Chamber**:
-The space where the prospect talks to Lenore and sees their answers fill in.
-_Avoid_: the app, the workspace (the workspace is the tabs inside The Chamber)
+The space where the prospect talks to Lenore and sees their answers fill in. Its name in code; a prospect reads "your intake" (see **Your intake**).
+_Avoid_: the workspace (the workspace is the tabs inside The Chamber)
 
 **Field**:
 One underwriting question the intake can hold an answer to, such as company legal name, pay frequency or the census.
@@ -100,15 +124,15 @@ An intake that has been certified at least once. Certifying changed answers upda
 _Avoid_: lead, submission record, qualified submission, packet, application
 
 **The Manuscript**:
-The underwriting document rendered from a submission, for the prospect to send to PEOs. Advisors can render further versions of it.
-_Avoid_: packet, report, PDF, proposal
+The underwriting document rendered from a submission, for the prospect to send to PEOs. Advisors can render further versions of it. Its name in code; a prospect reads "the packet" (see **The packet**).
+_Avoid_: report, PDF, proposal
 
 **File ID**:
 The identifier of one intake, such as EAA-2026-0042, shown in the app, on the signed Manuscript and in every email about it. The database assigns it from a per-year sequence the first time the intake is certified, and it never changes after that; no two intakes share one, and a draft has none. Intakes certified before then keep the File ID they were given, such as EAA-2026-1A2B3C4D.
 _Avoid_: reference, submission reference, submission ID, file number, case number
 
 **The Reckoning**:
-The last step in The Chamber, where the prospect certifies.
+The last step in The Chamber, where the prospect certifies. Its name in code; a prospect reads "the Certify & sign tab" (see **Certify & sign tab**).
 _Avoid_: checkout, submit page
 
 ### Communications

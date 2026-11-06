@@ -14,6 +14,7 @@ describe("InformationRequestNotice", () => {
     expect(screen.getByRole("heading", { name: /Your advisor asked for more information on November 5/ })).toBeInTheDocument();
     expect(screen.getByText(/Please confirm your pay frequency\.\s+And the census\./)).toBeInTheDocument();
     expect(screen.getByText("About: Pay frequency, Employee census")).toBeInTheDocument();
+    expect(screen.getByText(/then certify again on the Certify & sign tab/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open Review" }));
     expect(onOpenReview).toHaveBeenCalledTimes(1);
   });

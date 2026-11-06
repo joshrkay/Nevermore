@@ -185,7 +185,7 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
       ) : required ? (
         <p className="text-xs text-warning">Not provided yet. Needed before you can certify.</p>
       ) : (
-        <p className="text-xs text-muted-foreground/50 italic">Lenore will fill this in...</p>
+        <p className="text-xs text-muted-foreground">Lenore will fill this in...</p>
       )}
 
       {/* Only an answer has a source (showsSource): a field the prospect hasn't answered is never quoted (QA F11). */}

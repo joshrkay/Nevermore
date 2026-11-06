@@ -1,5 +1,5 @@
 // What Lenore still needs and when the intake is ready to certify, in the browser (US-2.3a, D26, D27). The rules
-// are supabase/functions/_shared/followUp.ts, which chamber-extract uses too, so the Chamber and Lenore agree.
+// are supabase/functions/_shared/followUp.ts, which chamber-extract uses too, so the intake and Lenore agree.
 import type { ChamberData } from "./chamberTypes";
 import type { ChatMessage } from "./chat";
 import type { ProvenanceMap } from "./provenance";
@@ -34,11 +34,12 @@ export const isReadyToCertify = (data: ChamberData, provenance: ProvenanceMap, v
  * she has everything: being ready to certify needs three answers, and most of the intake is still to ask (QA F4).
  */
 export const READY_MESSAGE =
-  "You've given every answer certification needs, so you can review and certify on the Review tab whenever you're ready. The Manuscript is stronger with more, so if you have a few more minutes, let's keep going with the questions that help underwriters.";
+  "Good news: you've given all the answers you need to certify. Whenever you're ready, check them on the Review tab, then certify on the Certify & sign tab. Your packet gets stronger with more detail, so if you have a few more minutes, let's keep going with questions that help underwriters.";
 
 /** Lenore's earlier words for READY_MESSAGE, still in older transcripts: they count as having said it. */
 const EARLIER_READY_MESSAGES: readonly string[] = [
   "That's everything The Manuscript needs. You can review your answers and certify now on the Review tab. If you have a few more minutes, I have some questions that help underwriters.",
+  "You've given every answer certification needs, so you can review and certify on the Review tab whenever you're ready. The Manuscript is stronger with more, so if you have a few more minutes, let's keep going with the questions that help underwriters.",
 ];
 
 /** Whether Lenore has already said the intake is ready, in today's words or earlier ones. */

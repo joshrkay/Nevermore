@@ -22,11 +22,11 @@ test("missing required answers block The Manuscript, are marked in Review, and a
   await page.goto("/start");
   await agreeToIntakeConsent(page);
   // Nothing is created until the prospect adds something (A-1).
-  await expect(page.getByRole("button", { name: "⑨ The Reckoning", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "⑨ Certify & sign", exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\/start$/);
 
   await test.step("The Reckoning says what's missing and sends the prospect to Review", async () => {
-    await page.getByRole("button", { name: "⑨ The Reckoning", exact: true }).click();
+    await page.getByRole("button", { name: "⑨ Certify & sign", exact: true }).click();
     const needed = page.getByRole("alert", { name: "Answers still needed" });
     await expect(needed).toContainText("Company legal name");
     await expect(needed).toContainText("States of operation");
@@ -37,7 +37,7 @@ test("missing required answers block The Manuscript, are marked in Review, and a
   });
 
   await test.step("Review marks them and lists them as still needed", async () => {
-    await expect(page.getByRole("region", { name: "Still needed" })).toContainText("Still needed before The Manuscript can be generated: 3");
+    await expect(page.getByRole("region", { name: "Still needed" })).toContainText("Still needed before your packet can be generated: 3");
     for (const name of ["Company", "Workforce", "Locations", "Payroll", "Benefits"]) {
       await expect(page.getByRole("region", { name, exact: true })).toBeVisible();
     }
@@ -71,8 +71,8 @@ test("missing required answers block The Manuscript, are marked in Review, and a
     await expect(page.getByText("Quill & Ink Bindery", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "③ Payroll", exact: true }).click();
     await expect(page.getByText("Weekly", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "⑨ The Reckoning", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "The Reckoning", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "⑨ Certify & sign", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Certify & sign", exact: true })).toBeVisible();
     await expect(page.getByRole("alert", { name: "Answers still needed" })).toHaveCount(0);
   });
 });

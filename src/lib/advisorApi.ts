@@ -479,7 +479,7 @@ export async function saveManuscriptVersion(opts: {
   const upload = await supabase.storage
     .from("manuscripts")
     .upload(path, opts.pdf, { contentType: "application/pdf", upsert: false });
-  if (upload.error) fail(upload.error as { message: string }, "Couldn't store the Manuscript.");
+  if (upload.error) fail(upload.error as { message: string }, "Couldn't store the packet.");
   const { data, error } = await supabase.rpc("record_manuscript_version", {
     p_session_id: opts.sessionId,
     p_version: opts.version,
@@ -494,7 +494,7 @@ export async function saveManuscriptVersion(opts: {
   if (error || !data) {
     // Not recorded, so not a version: don't leave the file behind.
     await supabase.storage.from("manuscripts").remove([path]);
-    fail(error, "Couldn't record the Manuscript version.");
+    fail(error, "Couldn't record the packet version.");
   }
   return data!;
 }

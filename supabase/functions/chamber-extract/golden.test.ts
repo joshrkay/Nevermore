@@ -162,7 +162,7 @@ describe("golden transcripts", () => {
     const { transcript } = await run([
       {
         prospect: "We're Quill & Ink Bindery.",
-        model: { ...said("company_name", "Quill & Ink Bindery"), reply: "A fine name. Which states do your employees work in?" },
+        model: { ...said("company_name", "Quill & Ink Bindery"), reply: "Nice name. Which states do your employees work in?" },
         expect: { next: ["company_name", "states", "pay_frequency", "employee_count"], promptReady: false, ready: false, announced: false },
       },
       {
@@ -212,7 +212,7 @@ describe("golden transcripts", () => {
       {
         act: (s) => applyFieldAction(s, { type: "resolve", field: "company_name", candidate: 1 }),
         prospect: "That's the right one.",
-        model: { reply: "Splendid." },
+        model: { reply: "Great." },
         expect: { notNamed: ["company_name"], promptReady: true, ready: true, announced: true, data: { company_name: "Acme Holdings LLC" } },
       },
     ]);
@@ -259,7 +259,7 @@ describe("golden transcripts", () => {
     const { state, transcript } = await run([
       {
         prospect: "Larkspur Plumbing.",
-        model: { ...said("company_name", "Larkspur Plumbing", "confirmed", "Larkspur Plumbing"), reply: "A fine name. How many days before payday do you fund payroll?" },
+        model: { ...said("company_name", "Larkspur Plumbing", "confirmed", "Larkspur Plumbing"), reply: "Nice name. How many days before payday do you fund payroll?" },
         expect: { ready: false, announced: false },
       },
       {
@@ -270,7 +270,7 @@ describe("golden transcripts", () => {
           has_nonexempt: true,
           field_status: { pay_frequency: "confirmed", employee_count: "confirmed", has_nonexempt: "inferred", ...Object.fromEntries(unmentioned.map((k) => [k, "unknown"])) },
           evidence: { pay_frequency: "Bi-weekly", ...Object.fromEntries(unmentioned.map((k) => [k, answer])) },
-          reply: "Thank you. That's everything The Manuscript needs.",
+          reply: "Thanks! That's everything your packet needs.",
         },
         // Nothing the message didn't speak to is settled: funding lead time, which it didn't answer, is still to ask.
         expect: { ready: false, announced: false, statuses: { fein_count: undefined, funding_days: undefined, start_month: undefined, current_carrier: undefined } },
@@ -279,8 +279,8 @@ describe("golden transcripts", () => {
     // Lenore never said she had everything, and asked something every time.
     const lenore = transcript.filter((m) => m.sender === "lenore").slice(1);
     expect(lenore.map((m) => m.text)).toEqual([
-      "A fine name. How many days before payday do you fund payroll?",
-      "Thank you, I've noted that. Which states do your employees work in?",
+      "Nice name. How many days before payday do you fund payroll?",
+      "Thanks, got it. Which states do your employees work in?",
     ]);
     expect(transcript.some((m) => m.text === READY_MESSAGE)).toBe(false);
     expect(Object.values(state.provenance).filter((p) => p?.status === "unknown")).toEqual([]);
@@ -318,7 +318,7 @@ describe("golden transcripts", () => {
       {
         prospect: "We're Acme.",
         model: said("company_name", "Acme"),
-        expect: { reply: "Thank you, I've noted that. Which states do your employees work in?" },
+        expect: { reply: "Thanks, got it. Which states do your employees work in?" },
       },
     ]);
   });
@@ -366,7 +366,7 @@ describe("golden transcripts", () => {
       {
         prospect: "Is that everything?",
         model: {},
-        expect: { next: [], promptIncludes: ["Not yet settled, most important first: none"], reply: "Thank you. That is everything I need: you can review your intake on the Review tab." },
+        expect: { next: [], promptIncludes: ["Not yet settled, most important first: none"], reply: "Thanks, that's everything I need. You can look over your intake on the Review tab." },
       },
     ], { data, provenance });
   });
@@ -380,7 +380,7 @@ describe("golden transcripts", () => {
           company_name: "Quill and Ink Bindery",
           states: ["NY", "NJ"],
           field_status: { company_name: "confirmed", states: "confirmed" },
-          reply: "A fine name. How often do you run payroll?",
+          reply: "Nice name. How often do you run payroll?",
         },
         expect: {
           statuses: { company_name: "inferred", states: "inferred" },
@@ -419,7 +419,7 @@ describe("golden transcripts", () => {
       "How often do you run payroll?",
       "Every two weeks. And how many people work for you?",
     ]);
-    expect(transcript.some((m) => m.text === "A fine name. How often do you run payroll?")).toBe(false);
+    expect(transcript.some((m) => m.text === "Nice name. How often do you run payroll?")).toBe(false);
     expect(state.provenance.states?.source).toMatchObject({ kind: "transcript", quote: "We're Quill and Ink Bindery, in New York and New Jersey." });
   });
 });

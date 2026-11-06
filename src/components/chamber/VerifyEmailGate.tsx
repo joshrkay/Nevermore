@@ -6,13 +6,13 @@ import { authCodeFailureMessage } from "@/lib/authCodeFailure";
 const inputClass =
   "w-full bg-muted border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors";
 
-/** What the verification is for: certifying (The Reckoning), or saving progress to come back from anywhere. */
+/** What the verification is for: certifying (Certify & sign), or saving progress to come back from anywhere. */
 export type VerifyPurpose = "certify" | "save";
 
 const COPY: Record<VerifyPurpose, { title: string; body: string }> = {
   certify: {
     title: "Verify your email to certify",
-    body: "Your answers are saved. To sign and generate The Manuscript, confirm an email so we know who certified it.",
+    body: "Your answers are saved. To sign and generate your packet, confirm an email so we know who certified it.",
   },
   save: {
     title: "Save your progress",
@@ -22,7 +22,7 @@ const COPY: Record<VerifyPurpose, { title: string; body: string }> = {
 
 /**
  * Guests can fill in the whole intake; certifying needs an identified signer, so a guest attaches and verifies an
- * email here, at The Reckoning or earlier to save their progress. Verification upgrades the same user in place, so
+ * email here, at Certify & sign or earlier to save their progress. Verification upgrades the same user in place, so
  * everything entered so far stays theirs, and the email is their way back from another device (RecoverIntake).
  */
 const VerifyEmailGate = ({ purpose = "certify", framed = true }: { purpose?: VerifyPurpose; framed?: boolean }) => {
@@ -86,7 +86,7 @@ const VerifyEmailGate = ({ purpose = "certify", framed = true }: { purpose?: Ver
             <button
               onClick={sendCode}
               disabled={busy || email.trim() === ""}
-              className="text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 flex items-center gap-2"
+              className="text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 flex items-center gap-2 whitespace-nowrap shrink-0"
             >
               {busy && <Loader2 className="w-4 h-4 animate-spin" />} Send code
             </button>
@@ -109,7 +109,7 @@ const VerifyEmailGate = ({ purpose = "certify", framed = true }: { purpose?: Ver
             <button
               onClick={verify}
               disabled={busy || code.trim().length < 6}
-              className="text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 flex items-center gap-2"
+              className="text-sm font-medium px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 flex items-center gap-2 whitespace-nowrap shrink-0"
             >
               {busy && <Loader2 className="w-4 h-4 animate-spin" />} Verify
             </button>

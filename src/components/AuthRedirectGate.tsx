@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { RavenIcon } from "./RavenLogo";
+import { BrandMark } from "@/components/BrandMark";
 import { useAuth } from "@/hooks/useAuth";
 import { AUTH_CALLBACK_PATH, authCallbackUrl, DEFAULT_NEXT, peekInitialAuthRedirect, safeNext } from "@/lib/authRedirect";
 
@@ -31,7 +31,7 @@ const AuthRedirectGate = ({ children }: { children: ReactNode }) => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <RavenIcon className="w-10 h-10 text-primary animate-pulse" />
+        <BrandMark className="w-10 h-10 text-primary animate-pulse" />
       </div>
     );
   }

@@ -85,7 +85,7 @@ const Orb = ({ size, orbState, onClick }: OrbProps) => {
         className={`w-full h-full rounded-full bg-gradient-to-br from-primary/80 to-primary/40 flex items-center justify-center transition-all duration-500 ${onClick ? "cursor-pointer" : ""} ${(size < SMALL_ORB ? smallOrbClasses : orbClasses)[orbState]}`}
         onClick={onClick}
       >
-        <div className="rounded-full bg-[#07080D] flex items-center justify-center" style={{ width: size * 0.82, height: size * 0.82 }}>
+        <div className="rounded-full bg-card flex items-center justify-center" style={{ width: size * 0.82, height: size * 0.82 }}>
           <div
             className={`rounded-full bg-gradient-to-br from-primary/60 to-primary/20 ${orbState === "speaking" ? "animate-pulse" : ""}`}
             style={{ width: size * 0.64, height: size * 0.64 }}
@@ -127,7 +127,7 @@ const VoiceOrb = ({
     // An icon alone is a square-ish pill; with its words (wide screens) it is a longer one.
     const pill = narrow ? "px-3" : "px-3 sm:px-4";
     return (
-      <div id={id} className="w-full" style={{ background: "#07080D" }}>
+      <div id={id} className="w-full bg-muted">
         <div className="flex items-center gap-3 px-4 py-2">
           <div className="p-1">
             <Orb size={COMPACT_ORB_SIZE} orbState={orbState} onClick={orbClick} />
@@ -138,7 +138,7 @@ const VoiceOrb = ({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 role="status"
-                className="flex items-center gap-2 text-xs text-primary/80"
+                className="flex items-center gap-2 text-xs text-primary"
               >
                 <span className="w-2 h-2 shrink-0 rounded-full bg-primary animate-pulse" />
                 <span className={narrow ? "line-clamp-2" : "truncate"}>{statusLine}</span>
@@ -149,7 +149,7 @@ const VoiceOrb = ({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               title={lastSpokenText}
-              className={`${narrow ? "line-clamp-2" : "truncate"} font-display italic text-sm text-foreground/80`}
+              className={`${narrow ? "line-clamp-2" : "truncate"} font-display text-sm text-foreground/80`}
             >
               {lastSpokenText && `"${lastSpokenText}"`}
             </motion.p>
@@ -170,7 +170,7 @@ const VoiceOrb = ({
                 <button
                   type="button"
                   disabled
-                  className={`shrink-0 flex items-center gap-2 ${pill} py-2 rounded-full font-medium text-sm bg-primary/60 text-primary-foreground cursor-wait`}
+                  className={`shrink-0 flex items-center gap-2 ${pill} py-2 rounded-full font-medium text-sm bg-primary/90 text-primary-foreground cursor-wait`}
                 >
                   <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                   <span className={label}>Connecting...</span>
@@ -201,7 +201,7 @@ const VoiceOrb = ({
   }
 
   return (
-    <div id={id} className="relative w-full flex flex-col items-center justify-center py-5" style={{ background: "#07080D" }}>
+    <div id={id} className="relative w-full flex flex-col items-center justify-center py-5 bg-muted">
       <div className="mb-4">
         <Orb size={orbSize} orbState={orbState} onClick={orbClick} />
       </div>
@@ -212,7 +212,7 @@ const VoiceOrb = ({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           role="status"
-          className="mb-2 flex items-center gap-2 text-xs text-primary/80 text-center px-6"
+          className="mb-2 flex items-center gap-2 text-xs text-primary text-center px-6"
         >
           <span className="w-2 h-2 shrink-0 rounded-full bg-primary animate-pulse" />
           {statusLine}
@@ -228,7 +228,7 @@ const VoiceOrb = ({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0 }}
         title={lastSpokenText}
-        className={`font-display italic text-foreground/80 text-center mb-3 ${
+        className={`font-display text-foreground/80 text-center mb-3 ${
           narrow ? "text-base leading-6 px-5 min-h-[4.5rem] line-clamp-6" : "text-base md:text-lg leading-[1.625rem] max-w-xl px-6 min-h-[3.25rem] line-clamp-6"
         }`}
       >
@@ -256,7 +256,7 @@ const VoiceOrb = ({
               <button
                 type="button"
                 disabled
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm bg-primary/60 text-primary-foreground cursor-wait"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full font-medium text-sm bg-primary/90 text-primary-foreground cursor-wait"
               >
                 <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                 Connecting...

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useLocation, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { RavenIcon } from "@/components/RavenLogo";
+import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { authErrorMessage } from "@/data/authRateLimit";
@@ -102,20 +102,20 @@ const AuthPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center px-6 noise-overlay">
+    <div className="min-h-screen bg-background flex items-center justify-center px-6">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-md relative z-10"
       >
         <Link to="/" className="flex items-center justify-center gap-2 mb-10">
-          <RavenIcon className="w-8 h-8 text-primary" />
-          <span className="font-display text-lg">Edgar Allan Advisory</span>
+          <BrandMark className="w-9 h-9 text-primary" />
+          <Wordmark className="text-3xl" />
         </Link>
 
         <div className="bg-card border border-border rounded-xl p-8">
           <h1 className="font-display text-2xl font-bold text-center mb-2">
-            {linkSentTo ? "Check your email" : forAdvisor ? "Advisor Sign In" : isSignUp ? "Enter The Chamber" : "Welcome Back"}
+            {linkSentTo ? "Check your email" : forAdvisor ? "Advisor Sign In" : isSignUp ? "Start your intake" : "Welcome Back"}
           </h1>
           <p className="text-sm text-muted-foreground text-center mb-8">
             {linkSentTo
@@ -123,7 +123,7 @@ const AuthPage = () => {
               : forAdvisor
                 ? "Sign in with your advisor account to continue."
                 : isSignUp
-                  ? "Create your account to begin underwriting."
+                  ? "Create an account, then chat with Lenore to build your packet."
                   : "Sign in to continue your session."}
           </p>
 
@@ -276,10 +276,7 @@ const AuthPage = () => {
           )}
         </div>
 
-        <p className="text-center text-xs text-muted-foreground mt-6">
-          © Edgar Allan Advisory. All nightmares are optional.
-        </p>
-        <LegalLinks className="text-center mt-2" />
+        <LegalLinks copyright className="text-center mt-6" />
       </motion.div>
     </div>
   );

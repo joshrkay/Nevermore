@@ -9,9 +9,9 @@ complete, every page that shows this copy says it is a draft pending legal revie
 
 | Item | Where it lives | Version | What to check |
 |---|---|---|---|
-| Privacy Policy (`/privacy`) | `src/pages/PrivacyPage.tsx`. Its data classes and retention table are rendered from `src/data/dataPolicy.ts`, its service providers from `src/data/legal.ts` | `PRIVACY_POLICY_VERSION` `2026-11-draft-1` | Accuracy against the product, every commitment it makes, the retention windows, the provider list |
-| Terms of Use (`/terms`) | `src/pages/TermsPage.tsx` | `TERMS_VERSION` `2026-11-draft-1` | Role and what we don't do, eligibility, accuracy, acceptable use, ownership of the packet; write the four bracketed sections (below) |
-| Intake consent (shown before the Chamber opens) | `src/data/intakeConsent.ts`, rendered by `src/components/chamber/IntakeConsentGate.tsx` | `INTAKE_CONSENT_VERSION` `2026-11-draft-1`, also `public.intake_consent_version()` in `supabase/migrations/20261104090000_intake_consent.sql` | Who we are, what is shared, how it's used, how long it's kept, and the agreement line (authority to share employee data). The exact text is stored with every agreement (`intake_consents`) |
+| Privacy Policy (`/privacy`) | `src/pages/PrivacyPage.tsx`. Its data classes and retention table are rendered from `src/data/dataPolicy.ts`, its service providers from `src/data/legal.ts` | `PRIVACY_POLICY_VERSION` `2026-11-draft-2` | Accuracy against the product, every commitment it makes, the retention windows, the provider list |
+| Terms of Use (`/terms`) | `src/pages/TermsPage.tsx` | `TERMS_VERSION` `2026-11-draft-2` | Role and what we don't do, eligibility, accuracy, acceptable use, ownership of the packet; write the four bracketed sections (below) |
+| Intake consent (shown before the Chamber opens) | `src/data/intakeConsent.ts`, rendered by `src/components/chamber/IntakeConsentGate.tsx` | `INTAKE_CONSENT_VERSION` `2026-11-draft-2`, also `public.intake_consent_version()` in `supabase/migrations/20261107090000_intake_consent_v2.sql` | Who we are, what is shared, how it's used, how long it's kept, and the agreement line (authority to share employee data). The exact text is stored with every agreement (`intake_consents`) |
 | Certification consent (The Reckoning, then printed on the Manuscript page and its PDF) | `src/data/certification.ts`, the only definition | `CONSENT_TEXT_VERSION` `2026-10-draft-1` | The three statements and the signing statement (D3), and the draft mark's wording, `CONSENT_DRAFT_LABEL` |
 | Retention windows | `src/data/dataPolicy.ts` (`RETENTION`), enforced by the database functions it names | D4 | Draft 30 days after last change; closed drafts deleted 30 days after closing; submitted records reviewed for deletion 3 years after the latest certification; email delivery events 365 days; monitoring events 90 days; rate-limit records 1 day; browser backup 7 days |
 | Role disclosure across the site | Landing page, intake consent, Privacy Policy, Terms of Use, The Reckoning, the notification emails, the Manuscript | n/a | Nothing implies we are a PEO, carrier or agency, that we act or submit for the prospect, or that a listed PEO endorses or works with us. `src/copy.guard.test.ts` bans the phrases we know of |
@@ -97,9 +97,9 @@ One row per item and version. A changed wording is a new version and needs a new
 
 | Item | Version | Reviewer (name, firm) | Date | Decision (approved / changes requested) | Notes |
 |---|---|---|---|---|---|
-| Privacy Policy | `2026-11-draft-1` | | | | |
-| Terms of Use | `2026-11-draft-1` | | | | |
-| Intake consent | `2026-11-draft-1` | | | | |
+| Privacy Policy | `2026-11-draft-2` | | | | |
+| Terms of Use | `2026-11-draft-2` | | | | |
+| Intake consent | `2026-11-draft-2` | | | | |
 | Certification consent | `2026-10-draft-1` | | | | |
 | Retention windows (D4) | `src/data/dataPolicy.ts` as of approval | | | | |
 | Role disclosure audit (H-2.3) | site copy as of approval | | | | |

@@ -1,6 +1,6 @@
 import { Link, NavLink } from "react-router-dom";
 import { LogOut } from "lucide-react";
-import { RavenLogo } from "@/components/RavenLogo";
+import { BrandMark, Wordmark } from "@/components/BrandMark";
 import { useAuth } from "@/hooks/useAuth";
 import LegalLinks from "@/components/LegalLinks";
 
@@ -10,8 +10,8 @@ const AdvisorHeader = () => {
     <header className="border-b border-border bg-card">
       <div className="container mx-auto px-6 min-h-14 py-2 flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
         <Link to="/advisor" className="flex items-center gap-2">
-          <RavenLogo className="w-7 h-7 text-primary" />
-          <span className="font-display whitespace-nowrap">Edgar Allan Advisory</span>
+          <BrandMark className="w-7 h-7 text-primary" />
+          <Wordmark className="text-xl whitespace-nowrap" />
           <span className="text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5 ml-1">Advisor</span>
         </Link>
         <nav aria-label="Advisor" className="order-last w-full sm:order-none sm:w-auto flex items-center gap-4 text-sm">

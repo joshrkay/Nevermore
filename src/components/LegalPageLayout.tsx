@@ -1,13 +1,13 @@
 import { useEffect, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { RavenIcon } from "@/components/RavenLogo";
+import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
 import { LEGAL_COPY_APPROVED, LEGAL_LAST_UPDATED } from "@/data/legal";
 
 /** The frame the Privacy Policy and Terms of Use share: title, version, the draft notice and the legal links. */
 const LegalPageLayout = ({ title, version, children }: { title: string; version: string; children: ReactNode }) => {
   useEffect(() => {
-    document.title = `${title} | Edgar Allan Advisory`;
+    document.title = `${title} | Nevermore`;
   }, [title]);
 
   return (
@@ -15,8 +15,8 @@ const LegalPageLayout = ({ title, version, children }: { title: string; version:
       <header className="border-b border-border">
         <div className="container mx-auto max-w-3xl px-6 h-14 flex items-center justify-between gap-4">
           <Link to="/" className="flex items-center gap-2">
-            <RavenIcon className="w-6 h-6 text-primary" />
-            <span className="font-display">Edgar Allan Advisory</span>
+            <BrandMark className="w-7 h-7 text-primary" />
+            <Wordmark className="text-xl" />
           </Link>
           <Link to="/start" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
             Start your intake

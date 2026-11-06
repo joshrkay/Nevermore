@@ -103,6 +103,9 @@ const PROMPT_KNOWN: Record<number, string> = {
   // 1: conversation only, following the intake updates; answers go through chamber-extract (US-2.3b). Points to the
   // census template as typed chat does since US-2.3d (recorded before v1 was first deployed).
   1: "9e23211bb8bd3f21851753ce31aca1bc07d316bba946208fe630bdb20bda0044",
+  // 2: the Nevermore rebrand. Lenore is "the intake assistant at Nevermore", warm and plain-spoken rather than gothic
+  // and literary, with a friendly first message and the app's names for things; the rules are version 1's.
+  2: "dd22b22a7a56652b3d33f794aefcea081768dd462f87b685b388f3025daaa18d",
 };
 // The update's wording for fixed intakes: nothing captured, an answer with a census, and everything settled.
 const UPDATES = () => [
@@ -112,6 +115,8 @@ const UPDATES = () => [
 ];
 const UPDATE_KNOWN: Record<number, string> = {
   1: "2ed1005fe6f2eee96f13e477db8fe187d51d8231337c217d92253ae3f0ac5b17",
+  // 2: unchanged from 1 (the rebrand changed only the prompt).
+  2: "2ed1005fe6f2eee96f13e477db8fe187d51d8231337c217d92253ae3f0ac5b17",
 };
 
 describe("Lenore's voice prompt", () => {

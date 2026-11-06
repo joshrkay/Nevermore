@@ -125,13 +125,13 @@ describe("required answers", () => {
   it("drop off the Review's still-needed list the moment they're answered there", () => {
     render(<Harness initial={{ data: EMPTY_CHAMBER_DATA, provenance: {} }} tab="review" />);
     const needed = () => screen.getByRole("region", { name: "Still needed" });
-    expect(needed()).toHaveTextContent("Still needed before The Manuscript can be generated: 3");
+    expect(needed()).toHaveTextContent("Still needed before your packet can be generated: 3");
 
     fireEvent.click(screen.getByRole("button", { name: "Add Company legal name" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Company legal name" }), { target: { value: "Acme Bindery" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(needed()).toHaveTextContent("Still needed before The Manuscript can be generated: 2");
+    expect(needed()).toHaveTextContent("Still needed before your packet can be generated: 2");
     expect(needed()).not.toHaveTextContent("Company legal name");
     const company = screen.getByRole("region", { name: "Company" });
     expect(within(company).getByText("Acme Bindery")).toBeInTheDocument();

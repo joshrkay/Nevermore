@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { RavenLogo } from "@/components/RavenLogo";
+import { BrandMark } from "@/components/BrandMark";
 import { ArrowLeft, Save, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
@@ -107,7 +107,7 @@ const ProfilePage = () => {
             >
               <ArrowLeft className="w-5 h-5" />
             </Button>
-            <RavenLogo className="w-7 h-7 text-primary" />
+            <BrandMark className="w-7 h-7 text-primary" />
             <span className="font-display text-lg text-foreground">Profile Settings</span>
           </div>
           <div className="flex items-center gap-4">
@@ -128,7 +128,7 @@ const ProfilePage = () => {
             <CardHeader>
               <CardTitle className="text-foreground">Company Profile</CardTitle>
               <CardDescription className="text-muted-foreground">
-                Update your company information. This data is used when generating PEO proposals.
+                Your company and contact details. An advisor reviewing your intake sees your contact name and phone number.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">

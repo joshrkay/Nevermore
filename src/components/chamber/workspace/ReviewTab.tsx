@@ -54,7 +54,7 @@ const displayOf = (field: FieldKey, value: unknown): string | null => {
   return text;
 };
 
-// Every answer the Manuscript draws on, by section, each editable in place.
+// Every answer the packet draws on, by section, each editable in place.
 function rowsBySection(data: ChamberData): Record<ReviewSection, Row[]> {
   return Object.fromEntries(
     REVIEW_SECTIONS.map(({ key }) => [key, REVIEW_FIELDS[key].map((field) => ({ label: FIELD_LABELS[field], field, display: displayOf(field, data[field]) }))]),
@@ -115,7 +115,7 @@ const StatusChip = ({ status, section }: { status: SectionStatus; section: Revie
 const Section = ({ section, title, progress, status, children }: { section: ReviewSection; title: string; progress: { settled: number; total: number }; status: SectionStatus; children: ReactNode }) => (
   <section id={sectionId(section)} aria-labelledby={`${sectionId(section)}-title`} className="bg-card border border-border rounded-xl p-6 space-y-4">
     <div className="flex items-baseline justify-between gap-2">
-      <h3 id={`${sectionId(section)}-title`} className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
+      <h3 id={`${sectionId(section)}-title`} className="text-sm font-semibold text-muted-foreground">
         {title}
       </h3>
       <div className="flex items-center gap-2">
@@ -191,7 +191,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
       <div>
         <h2 ref={headingRef} tabIndex={-1} className="font-display text-2xl font-bold mb-2 focus:outline-none">Review</h2>
         <p className="text-muted-foreground text-sm">
-          Everything that goes into The Manuscript, by section. Correct anything here and it's saved right away: no need
+          Everything that goes into your packet, by section. Correct anything here and it's saved right away: no need
           to start the conversation over. <span className="text-primary font-medium">Required</span> answers are needed
           before you can certify.
         </p>
@@ -200,8 +200,8 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
       {/* What's still needed: required answers missing or in conflict block certification; recommended ones never do */}
       {stillNeeded.length > 0 ? (
         <div role="region" aria-label="Still needed" className="bg-card border border-destructive/40 rounded-xl p-6 space-y-3">
-          <p className="text-xs font-mono text-destructive uppercase tracking-wider">
-            Still needed before The Manuscript can be generated: {stillNeeded.length}
+          <p className="text-sm font-semibold text-destructive">
+            Still needed before your packet can be generated: {stillNeeded.length}
           </p>
           <ul className="space-y-2">
             {stillNeeded.map((item) => (
@@ -224,7 +224,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
       )}
       {recommended.length > 0 && (
         <div className="bg-card border border-border rounded-xl p-4 text-sm space-y-1">
-          <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Recommended</p>
+          <p className="text-sm font-semibold text-muted-foreground">Recommended</p>
           {recommended.map((item) => (
             <p key={item.key}>
               <span className="font-medium">{item.label}</span>{" "}
@@ -237,7 +237,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
       {/* Inferred, incomplete, and conflicting values */}
       {needsReview.length > 0 && (
         <div className="bg-card border border-warning/40 rounded-xl p-6 space-y-4">
-          <p className="text-xs font-mono text-warning uppercase tracking-wider">
+          <p className="text-sm font-semibold text-warning">
             Needs your review — {needsReview.length} item{needsReview.length === 1 ? "" : "s"}
           </p>
           {needsReview.map((item) => (
@@ -276,7 +276,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
 
       {/* Eligibility check */}
       <div className="bg-card border border-border rounded-xl p-6 space-y-3">
-        <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">Eligibility Check</p>
+        <p className="text-sm font-semibold text-muted-foreground mb-4">Eligibility check</p>
         {checks.map((c, i) => (
           <div key={i} className="flex items-start gap-2.5">
             {c.status === "pass" && <CheckCircle className="w-4 h-4 text-success flex-shrink-0 mt-0.5" />}
@@ -369,7 +369,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
 
       {/* Documents — informational only; missing ones never block moving on */}
       <div className="bg-card border border-border rounded-xl p-6">
-        <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-4">
+        <p className="text-sm font-semibold text-muted-foreground mb-4">
           Documents — {uploaded.length} uploaded
         </p>
         {uploaded.length === 0 ? (
@@ -407,7 +407,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
 
       {stillNeeded.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          You can choose a PEO now. The answers marked Required are needed, each with one answer, before The Manuscript can be generated.
+          You can choose a PEO now. The answers marked Required are needed, each with one answer, before your packet can be generated.
         </p>
       )}
       <button

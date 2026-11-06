@@ -17,8 +17,8 @@ const DependentsTab = ({ data }: DependentsTabProps) => {
       </div>
 
       {data.census.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground/50 italic text-sm">
-          Lenore will confirm dependents during conversation.
+        <div className="text-center py-8 text-muted-foreground text-sm">
+          Dependents come from your employee census. Upload one on the Upload tab.
         </div>
       ) : (
         <div className="space-y-3">
@@ -54,7 +54,7 @@ const DependentsTab = ({ data }: DependentsTabProps) => {
                   ))}
                 </div>
               ) : (
-                <p className="ml-5 text-[10px] text-muted-foreground/40 italic">No dependents confirmed</p>
+                <p className="ml-5 text-[10px] text-muted-foreground">No dependents confirmed</p>
               )}
             </motion.div>
             );

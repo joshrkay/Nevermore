@@ -10,8 +10,9 @@ const TermsPage = () => (
     <section aria-labelledby="terms-role">
       <h2 id="terms-role">Who we are and what we do</h2>
       <p>
-        Edgar Allan Advisory prepares PEO underwriting packets. Through this site you give us information about your
-        company, review and certify it, and download a packet (the Manuscript) to send to the PEO you choose.
+        Nevermore, a service of Edgar Allan Advisory, prepares PEO underwriting packets. In these terms, "we", "us" and
+        "our" mean Edgar Allan Advisory. Through this site you give us information about your company, review and
+        certify it, and download a packet to send to the PEO you choose.
       </p>
       <p className="mt-3">
         We are not a PEO, an insurance carrier or an insurance agency. A PEO shown in the product is listed for

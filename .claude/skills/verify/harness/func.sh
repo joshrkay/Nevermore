@@ -8,7 +8,7 @@ cat > $RUN/import_map.json <<JSON
 { "imports": { "https://deno.land/std@0.168.0/http/server.ts": "file://$H/std-serve.ts", "https://esm.sh/@supabase/supabase-js@2.100.0": "npm:@supabase/supabase-js" } }
 JSON
 declare -A E=([SUPABASE_URL]=http://127.0.0.1:54321 [SUPABASE_ANON_KEY]=$(node $H/jwt.mjs anon) [SUPABASE_SERVICE_ROLE_KEY]=$(node $H/jwt.mjs service_role)
- [RESEND_API_KEY]=re_verify_key [EMAIL_FROM]="Edgar Allan Advisory <intake@mail.verify.example>" [ADVISORY_NOTIFY_EMAIL]=advisors@verify.example
+ [RESEND_API_KEY]=re_verify_key [EMAIL_FROM]="Nevermore <intake@mail.verify.example>" [ADVISORY_NOTIFY_EMAIL]=advisors@verify.example
  [APP_BASE_URL]=https://app.verify.example [SUPPORT_EMAIL]=support@verify.example [PROSPECT_RESPONSE_TIME]="2 business days" [FUNC_PORT]=8000 [NO_PROXY]=127.0.0.1,localhost)
 for kv in "$@"; do k=${kv%%=*}; v=${kv#*=}; if [ -z "$v" ]; then unset "E[$k]"; else E[$k]=$v; fi; done
 A=(); for k in "${!E[@]}"; do A+=("$k=${E[$k]}"); done

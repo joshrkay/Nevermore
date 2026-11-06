@@ -639,7 +639,7 @@ describe("AdvisorSubmissionPage", () => {
       corrections: [{ field: "company_name", label: "Company legal name", prospectValue: "Signed Co", advisorValue: "Signed Co LLC", reason: "Per W-9" }],
     });
     expect(manuscript.signer?.name).toBe("Jo Doe");
-    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "The_Manuscript_EAA-2026-S1_Signed_Co_20261001_advisor-v2.pdf"));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "Nevermore_Packet_EAA-2026-S1_Signed_Co_20261001_advisor-v2.pdf"));
   });
 
   it("reloads, and keeps no file, when the prospect certified again while the Manuscript was being generated", async () => {
@@ -650,7 +650,7 @@ describe("AdvisorSubmissionPage", () => {
         code: "PT409",
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: /Generate Manuscript/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Generate packet/ }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/certified their intake again.*The page now shows the latest answers/)),
     );
@@ -667,9 +667,9 @@ describe("AdvisorSubmissionPage", () => {
     });
     api.loadSubmission.mockResolvedValue(detail({ versions: [version(2), version(1, { certified_at: "2026-09-30T12:00:05Z", certified_data_hash: "d".repeat(64) })] }));
     renderPage();
-    const list = await screen.findByRole("list", { name: "Manuscript versions" });
+    const list = await screen.findByRole("list", { name: "Packet versions" });
     const [v2, v1] = within(list).getAllByRole("listitem");
-    expect(v2).toHaveTextContent("Shared with the prospect as their final Manuscript");
+    expect(v2).toHaveTextContent("Shared with the prospect as their final packet");
     expect(v1).toHaveTextContent("Built from an earlier certification");
     expect(v1).not.toHaveTextContent("Shared with the prospect");
     expect(screen.queryByText(/certified again after v2/)).not.toBeInTheDocument();
@@ -688,7 +688,7 @@ describe("AdvisorSubmissionPage", () => {
     );
     renderPage();
     expect(await screen.findByText(/The prospect certified again after v1 was generated/)).toBeInTheDocument();
-    expect(screen.queryByText("Shared with the prospect as their final Manuscript")).not.toBeInTheDocument();
+    expect(screen.queryByText("Shared with the prospect as their final packet")).not.toBeInTheDocument();
   });
 
   it("downloads a stored version through a short-lived link", async () => {
@@ -704,7 +704,7 @@ describe("AdvisorSubmissionPage", () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Download v1" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://storage.example/signed"));
-    expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "The_Manuscript_EAA-2026-S1_Signed_Co_20261001_advisor-v1.pdf");
+    expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "Nevermore_Packet_EAA-2026-S1_Signed_Co_20261001_advisor-v1.pdf");
   });
 
   it("names a stored version from its own certification, never from the one on record now", async () => {
@@ -722,7 +722,7 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Download v1" }));
     await waitFor(() => expect(api.manuscriptUrl).toHaveBeenCalled());
     // Its own date, and no certification number it doesn't know: the same name however many times they certify.
-    expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "The_Manuscript_EAA-2026-S1_Signed_Co_20260930_advisor-v1.pdf");
+    expect(api.manuscriptUrl).toHaveBeenCalledWith(v, "Nevermore_Packet_EAA-2026-S1_Signed_Co_20260930_advisor-v1.pdf");
   });
 
   it("shows what the prospect signed beside their current answers when they changed them afterwards", async () => {
@@ -749,8 +749,8 @@ describe("AdvisorSubmissionPage", () => {
   it("won't generate a Manuscript for an intake that isn't certified", async () => {
     api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", submission: null, pipelineStatus: "draft" }));
     renderPage();
-    expect(await screen.findByText(/Not certified yet. A Manuscript can be generated once/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Generate Manuscript/ })).not.toBeInTheDocument();
+    expect(await screen.findByText(/Not certified yet. A packet can be generated once/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Generate packet/ })).not.toBeInTheDocument();
   });
 
   it("says when the submission can't be found", async () => {

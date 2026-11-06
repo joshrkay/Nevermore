@@ -141,6 +141,11 @@ describe("greetings", () => {
     expect(isGreeting(opening)).toBe(true);
   });
 
+  it("introduces Lenore as the intake assistant, in plain words", () => {
+    expect(OPENING_MESSAGE).toMatch(/^Hi, I'm Lenore, your intake assistant\./);
+    expect(OPENING_MESSAGE).not.toMatch(/Good evening|Chamber|guide through|demonstration/i);
+  });
+
   it("keeps the first greeting and drops the rest, wherever they are", () => {
     const first = openingMessage();
     const question = said("We're Acme");
@@ -154,6 +159,7 @@ describe("greetings", () => {
       { id: "b", sender: "lenore", text: OPENING_MESSAGE, timestamp: "" },
       { id: "c", sender: "user", text: "Hi", timestamp: "" },
       { id: "d", sender: "lenore", text: "Good evening. I'm Lenore — your guide through The Chamber. Before we begin, I want to be transparent: what you see in the workspace beside us is a demonstration. By the time our conversation is complete, it will hold your company's information instead. Shall we begin with something simple — tell me a little about your business and what you do.", timestamp: "" },
+      { id: "e", sender: "lenore", text: "Good evening. I'm Lenore — your guide through The Chamber. As we talk, I'll fill in the workspace beside us, and you can check or correct anything there. Shall we begin with something simple — tell me a little about your business and what you do.", timestamp: "" },
     ]);
     expect(dedupeGreetings(stored).map((m) => m.id)).toEqual(["a", "c"]);
   });

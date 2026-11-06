@@ -165,7 +165,7 @@ const UploadTab = ({ documents, sessionId, canStart = false, data, provenance, o
                 )}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">{c.guidance}</p>
-              <p className="text-xs text-muted-foreground/80 mt-0.5 italic">e.g. {c.example}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">e.g. {c.example}</p>
             </div>
           ))}
         </div>

@@ -11,7 +11,7 @@ import { censusSummary, statusesOf } from "./followUp";
 import type { ProvenanceMap } from "./provenance";
 
 /** The version of Lenore's voice prompt this Chamber's updates are written for. */
-export const VOICE_PROMPT_VERSION = 1;
+export const VOICE_PROMPT_VERSION = 2;
 
 const list = (labels: string[]) => (labels.length > 0 ? labels.join("; ") : "none");
 

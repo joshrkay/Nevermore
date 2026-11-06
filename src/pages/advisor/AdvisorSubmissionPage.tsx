@@ -266,7 +266,7 @@ const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
               <th className="py-1 pr-3">Title</th>
               <th className="py-1 pr-3 text-right">Salary</th>
               <th className="py-1 pr-3">Type</th>
-              <th className="py-1 pr-3">Tier (as the Manuscript prints it)</th>
+              <th className="py-1 pr-3">Tier (as the packet prints it)</th>
               <th className="py-1 pr-3">WC code</th>
               <th className="py-1">Dependents</th>
             </tr>

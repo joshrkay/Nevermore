@@ -122,8 +122,8 @@ const compactDate = (date: Date | string): string | null => {
 };
 
 /**
- * The Manuscript's file name, the same for the same submission wherever it is generated:
- * `The_Manuscript_<File ID>_v<version>_<company>_<certified YYYYMMDD>.pdf`, safe on every OS and browser.
+ * The packet's file name, the same for the same submission wherever it is generated:
+ * `Nevermore_Packet_<File ID>_v<version>_<company>_<certified YYYYMMDD>.pdf`, safe on every OS and browser.
  * A packet that isn't certified has no version or date. `suffix` tells an advisor's version apart.
  */
 export function manuscriptFilename(
@@ -139,7 +139,7 @@ export function manuscriptFilename(
     .slice(0, 40)
     .replace(/_+$/, "");
   const parts = [
-    "The_Manuscript",
+    "Nevermore_Packet",
     fileId,
     ...(opts.version ? [`v${opts.version}`] : []),
     slug || "Company",

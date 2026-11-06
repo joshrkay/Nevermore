@@ -183,7 +183,7 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await page.getByRole("button", { name: `Choose ${PEO}`, exact: true }).click();
     await expect(page.getByText("✓ Selected")).toBeVisible();
     await page.getByRole("button", { name: `Proceed with ${PEO} →`, exact: true }).click();
-    await expect(page.getByRole("heading", { name: "The Reckoning", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Certify & sign", exact: true })).toBeVisible();
   });
 
   await test.step("Reload in The Reckoning: the same intake and the chosen PEO come back", async () => {
@@ -194,8 +194,8 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
       .toBe(PEO);
     await page.reload();
     await expect(page).toHaveURL(`/start?session=${sessionId}`);
-    await page.getByRole("button", { name: "⑨ The Reckoning", exact: true }).click();
-    await expect(page.getByText(`before The Manuscript is prepared for ${PEO}.`)).toBeVisible();
+    await page.getByRole("button", { name: "⑨ Certify & sign", exact: true }).click();
+    await expect(page.getByText(`before your packet is prepared for ${PEO}.`)).toBeVisible();
     await expect(page.getByText(consentStatements(PEO)[2], { exact: true })).toBeVisible();
     // And it is the same intake: the answers given before the reload are still there.
     await page.getByRole("button", { name: "② Company", exact: true }).click();
@@ -203,7 +203,7 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await page.getByRole("button", { name: "⑧ PEO Match", exact: true }).click();
     await expect(page.getByText("✓ Selected")).toBeVisible();
     await page.getByRole("button", { name: `Proceed with ${PEO} →`, exact: true }).click();
-    await expect(page.getByRole("heading", { name: "The Reckoning", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Certify & sign", exact: true })).toBeVisible();
   });
 
   // The Reckoning forgets what was entered when the tab is left, so everything from here to
@@ -219,7 +219,7 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
   await test.step("Verify the email address", async () => {
     // While the user is a guest, the gate stands in for the signature and the Generate button.
     await expect(page.getByRole("heading", { name: "Verify your email to certify" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Generate The Manuscript →" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Generate your packet →" })).toHaveCount(0);
 
     await page.getByLabel("Work email").fill(email);
     await page.getByRole("button", { name: "Send code", exact: true }).click();
@@ -252,11 +252,11 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
   const requestsBeforeSubmit = (await readRequestLog(request)).length;
 
   const fileId = await test.step("Generate The Manuscript", async () => {
-    const generate = page.getByRole("button", { name: "Generate The Manuscript →", exact: true });
+    const generate = page.getByRole("button", { name: "Generate your packet →", exact: true });
     await expect(generate).toBeEnabled();
     await generate.click();
 
-    const confirmation = page.getByRole("heading", { name: "The Raven has spoken." });
+    const confirmation = page.getByRole("heading", { name: "You're all set." });
     await expect(confirmation).toBeVisible();
     // toBeVisible ignores opacity, and the overlay and its heading fade in with framer-motion. An overlay
     // stuck at 0 is a transparent layer over the form, so a person would see nothing and could click nothing.
@@ -342,18 +342,18 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
   });
 
   await test.step("Open the Manuscript", async () => {
-    const download = page.getByRole("link", { name: "Download The Manuscript", exact: true });
+    const download = page.getByRole("link", { name: "Download your packet", exact: true });
     // The link fades in last (see the overlay above); toBeVisible would not notice it stuck at 0.
     await expect(download.locator("..")).toHaveCSS("opacity", "1");
     await download.click();
     // The Manuscript opens by its File ID, and shows which certification it is.
     await expect(page).toHaveURL(`/manuscript/${fileId}`);
-    await expect(page.getByRole("heading", { name: "THE MANUSCRIPT", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Underwriting packet", exact: true })).toBeVisible();
     await expect(page.getByText(fileId, { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("VERSION", { exact: true }).locator("..")).toContainText("v1");
+    await expect(page.getByText("Version", { exact: true }).locator("..")).toContainText("v1");
     await expect(page.getByText(COMPANY_NAME, { exact: true }).first()).toBeVisible();
     await expect(page.getByText(`Signed electronically by ${SIGNER.name}`)).toBeVisible();
-    await expect(page.getByText(new RegExp(`^PREPARED FOR\\s*${PEO}$`))).toBeVisible();
+    await expect(page.getByText(new RegExp(`^Prepared for\\s*${PEO}$`))).toBeVisible();
     // The consent wording is a draft until counsel approves it, and says so where it is printed (C-2.4).
     await expect(page.getByText(`Consent wording ${CONSENT_TEXT_VERSION} · ${CONSENT_DRAFT_LABEL}`, { exact: true })).toBeVisible();
 
@@ -375,7 +375,7 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       // The top bar and the foot of the page each have the button.
-      page.getByRole("button", { name: "Download The Manuscript (PDF)" }).first().click(),
+      page.getByRole("button", { name: "Download the packet (PDF)" }).first().click(),
     ]);
 
     // Named after the submission: File ID, certification version, company, and the day it was certified (UTC).
@@ -384,7 +384,7 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
       [sessionId],
     );
     const day = new Date(certified_at).toISOString().slice(0, 10).replace(/-/g, "");
-    const expectedName = `The_Manuscript_${fileId}_v1_Ravenwood_Bindery_LLC_${day}.pdf`;
+    const expectedName = `Nevermore_Packet_${fileId}_v1_Ravenwood_Bindery_LLC_${day}.pdf`;
     expect(download.suggestedFilename()).toBe(expectedName);
     expect(manuscriptFilename(fileId, COMPANY_NAME, { version: 1, date: certified_at })).toBe(expectedName);
 

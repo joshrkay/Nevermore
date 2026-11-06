@@ -349,14 +349,14 @@ describe("chamber-extract handler: what is sent to the model", () => {
   it("asks about the next field the message didn't settle when the model gives no reply, and wraps up when none is left", async () => {
     const t = setup({ responses: [anthropicReply({ company_name: "Acme", field_status: { company_name: "confirmed" } })] });
     const { body } = await read(await handleRequest(post({ message: "We're Acme" }), t.deps));
-    expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
+    expect(body.reply).toBe("Thanks, got it. Which states do your employees work in?");
     expect(body.reply).not.toContain("team");
   });
 
   it("asks again about an answer the model marked incomplete, rather than moving on or wrapping up", async () => {
     const t = setup({ responses: [anthropicReply({ states: ["CA", "OR"], field_status: { states: "incomplete" } })] });
     const { body } = await read(await handleRequest(post({ message: "CA, OR and some others", context: { company_name: "Acme" } }), t.deps));
-    expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
+    expect(body.reply).toBe("Thanks, got it. Which states do your employees work in?");
   });
 
   // QA F4 and F11: after "Bi-weekly. We have 12 employees...", the model marked every other field unknown and said
@@ -371,7 +371,7 @@ describe("chamber-extract handler: what is sent to the model", () => {
         has_nonexempt: true,
         field_status: { pay_frequency: "confirmed", employee_count: "confirmed", has_nonexempt: "confirmed", ...Object.fromEntries(others.map((f) => [f, "unknown"])) },
         evidence: Object.fromEntries(others.map((f) => [f, message])),
-        reply: "Thank you. That's everything The Manuscript needs: you can review your answers on the Review tab.",
+        reply: "Thanks! That's everything your packet needs: you can review your answers on the Review tab.",
       })],
     });
     const recent = [{ sender: "lenore", text: "How many days before payday do you fund payroll?" }];
@@ -379,7 +379,7 @@ describe("chamber-extract handler: what is sent to the model", () => {
     expect(status).toBe(200);
     expect(body.field_status).toEqual({ pay_frequency: "confirmed", employee_count: "confirmed", has_nonexempt: "confirmed" });
     expect(Object.keys(body.evidence)).toEqual([]);
-    expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
+    expect(body.reply).toBe("Thanks, got it. Which states do your employees work in?");
     expect(body).not.toHaveProperty("doubted_unknown");
     expect(body).not.toHaveProperty("stopping");
     expect(t.logs).toEqual([
@@ -406,7 +406,7 @@ describe("chamber-extract handler: what is sent to the model", () => {
     });
     const { body } = await read(await handleRequest(post({ message, context: { company_name: "Larkspur Plumbing" }, session_id: INTAKE }), t.deps));
     expect(body.field_status).toEqual({});
-    expect(body.reply).toBe("Thank you, I've noted that. Which states do your employees work in?");
+    expect(body.reply).toBe("Thanks, got it. Which states do your employees work in?");
     expect(t.logs[0]).toBe(`LENORE_REPLY_GUARDED request=${REQUEST} session=${INTAKE} reason=claimed_complete next=states`);
     expect(t.logs[1]).toMatch(/^EXTRACTION_UNKNOWN_DOUBTED /);
   });
@@ -423,11 +423,11 @@ describe("chamber-extract handler: what is sent to the model", () => {
     const { body } = await read(await handleRequest(post({ message: "No idea, sorry.", context: { company_name: "Larkspur Plumbing" }, session_id: INTAKE }), t.deps));
     // States is the first field not yet settled, so the one Lenore was asking about.
     expect(body.field_status).toEqual({ states: "unknown" });
-    expect(body.reply).toBe("Thank you, I've noted that. How often do you run payroll?");
+    expect(body.reply).toBe("Thanks, got it. How often do you run payroll?");
   });
 
   it("lets Lenore wrap up when the prospect asks to stop, with fields still to ask", async () => {
-    const reply = "Of course. Your answers are saved; come back whenever you like.";
+    const reply = "No problem. Your answers are saved, so come back whenever you like.";
     const t = setup({ responses: [anthropicReply({ prospect_stopping: true, reply })] });
     const { body } = await read(await handleRequest(post({ message: "That's all I have time for today.", context: { company_name: "Acme" } }), t.deps));
     expect(body.reply).toBe(reply);
@@ -666,11 +666,14 @@ describe("guardReply", () => {
 
   it.each([
     "That's everything The Manuscript needs.",
+    "That's everything your packet needs.",
+    "Thanks, that's all the packet needs. Anything else?",
     "Thank you, that is all I need. Anything else?",
-    "Splendid: the intake is complete.",
+    "Great, the intake is complete.",
+    "Nice, your packet is done.",
     "I have everything I need now.",
   ])("replaces a reply that says the intake is finished while fields are left: %j", (reply) => {
-    expect(guardReply(reply, NEXT, false)).toEqual({ reply: `Thank you, I've noted that. ${NEXT}`, reason: "claimed_complete" });
+    expect(guardReply(reply, NEXT, false)).toEqual({ reply: `Thanks, got it. ${NEXT}`, reason: "claimed_complete" });
   });
 
   // Code review: her answer to the prospect's own question was replaced because it held "that's all".
@@ -688,11 +691,11 @@ describe("guardReply", () => {
 
   it("lets the reply stand when nothing is left to ask, or the prospect is stopping", () => {
     expect(guardReply("That's everything. Review it on the Review tab.", null, false)).toEqual({ reply: "That's everything. Review it on the Review tab.", reason: null });
-    expect(guardReply("Of course, your answers are saved.", NEXT, true)).toEqual({ reply: "Of course, your answers are saved.", reason: null });
+    expect(guardReply("No problem, your answers are saved.", NEXT, true)).toEqual({ reply: "No problem, your answers are saved.", reason: null });
   });
 
   it("answers for a model that gave no reply: the next question, the wrap-up, or the goodbye", () => {
-    expect(guardReply(null, NEXT, false)).toEqual({ reply: `Thank you, I've noted that. ${NEXT}`, reason: null });
+    expect(guardReply(null, NEXT, false)).toEqual({ reply: `Thanks, got it. ${NEXT}`, reason: null });
     expect(guardReply(null, null, false)).toEqual({ reply: WRAP_UP_REPLY, reason: null });
     expect(guardReply(null, NEXT, true)).toEqual({ reply: STOPPING_REPLY, reason: null });
   });

@@ -1,7 +1,7 @@
-// What a prospect reads and agrees to before the Chamber opens (US-6.2, plan H-2.2): who Edgar Allan Advisory
-// is, what the intake collects, how it is used and kept. The database records the agreement with this
-// wording and version (public.record_intake_consent) and refuses a new intake or document without one;
-// src/data/schemaSync.test.ts keeps the version equal to public.intake_consent_version().
+// What a prospect reads and agrees to before the Chamber opens (US-6.2, plan H-2.2): who we are (Nevermore, a
+// service of Edgar Allan Advisory), what the intake collects, how it is used and kept. The database records the
+// agreement with this wording and version (public.record_intake_consent) and refuses a new intake or document
+// without one; src/data/schemaSync.test.ts keeps the version equal to public.intake_consent_version().
 //
 // Bump the version, here and in a migration, whenever any wording below changes: everyone is asked again.
 //
@@ -9,7 +9,9 @@
 
 import { RETENTION } from "./dataPolicy";
 
-export const INTAKE_CONSENT_VERSION = "2026-11-draft-1";
+// draft-2 (migration 20261107090000): the Nevermore name, introduced as a service of Edgar Allan Advisory, and the
+// packet no longer called "the Manuscript". Nothing else changed.
+export const INTAKE_CONSENT_VERSION = "2026-11-draft-2";
 export const INTAKE_CONSENT_IS_DRAFT = true;
 
 export interface ConsentSection {
@@ -20,7 +22,7 @@ export interface ConsentSection {
 export const INTAKE_CONSENT_SECTIONS: ConsentSection[] = [
   {
     heading: "Who we are",
-    body: "Edgar Allan Advisory prepares PEO underwriting packets. We are not a PEO, an insurance carrier or an insurance agency. We prepare the packet (the Manuscript) for you to send to the PEO you choose; we don't submit it or request a quote for you. A PEO shown in this product is listed for comparison only: naming it doesn't mean it endorses, sponsors or works with us.",
+    body: "Nevermore, a service of Edgar Allan Advisory, prepares PEO underwriting packets. We are not a PEO, an insurance carrier or an insurance agency. We prepare the packet for you to send to the PEO you choose; we don't submit it or request a quote for you. A PEO shown in this product is listed for comparison only: naming it doesn't mean it endorses, sponsors or works with us.",
   },
   {
     heading: "What you'll share",

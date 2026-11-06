@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import DraftReminderToggle from "@/components/DraftReminderToggle";
 import VerifyEmailGate from "./VerifyEmailGate";
 
-// A guest's way back before certifying: the same 6-digit email verification The Reckoning asks for, offered from the
+// A guest's way back before certifying: the same 6-digit email verification Certify & sign asks for, offered from the
 // top bar whenever there is an intake, and once, with a nudge, when its required answers are in (the moment Lenore
 // moves on to the census, which most prospects have to go and find). Verifying upgrades the guest in place, so the
 // email is their way back from another device (RecoverIntake); once verified they can ask for the draft reminder.
