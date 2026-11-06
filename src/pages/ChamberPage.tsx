@@ -24,6 +24,7 @@ import InformationRequestNotice from "@/components/chamber/InformationRequestNot
 import { SaveProgressButton, SaveProgressDialog, SaveProgressNudge } from "@/components/chamber/SaveProgress";
 import LiveWorkspace from "@/components/chamber/workspace/LiveWorkspace";
 import LegalLinks from "@/components/LegalLinks";
+import SignOutButton from "@/components/SignOutButton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { createChatMessage } from "@/data/chat";
 import { COLUMN_DEFAULT_CSS, COLUMN_MAX_CSS, MIN_COLUMN } from "@/data/columnLayout";
@@ -108,6 +109,7 @@ const ChamberPage = () => {
     choosePeo,
     saveStatus,
     retrySave,
+    saveAll,
     loadLatest,
     keepMine,
     discardChanges,
@@ -382,6 +384,7 @@ const ChamberPage = () => {
           onStartNew={startNew}
           invalidField={invalidField}
         />
+        <SignOutButton className="shrink-0" saveFirst={saveAll} />
         <LegalLinks compact className="shrink-0" />
       </div>
 
@@ -471,6 +474,7 @@ const ChamberPage = () => {
                 ref={chatInputRef}
                 type="text"
                 placeholder="Message Lenore..."
+                aria-label="Message Lenore"
                 maxLength={2000}
                 className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
                 onKeyDown={(e) => {

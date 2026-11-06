@@ -44,6 +44,13 @@ describe("parseAuthRedirect", () => {
     expect(parseAuthRedirect(`${SITE}/auth/callback?token_hash=abc123&type=sms`)).toBeNull();
   });
 
+  it("takes only the token types our sign-up emails send, so a crafted link can't sign this browser in some other way", () => {
+    expect(parseAuthRedirect(`${SITE}/auth/callback#token_hash=abc123&type=signup`)).toEqual({ kind: "token", tokenHash: "abc123", type: "signup" });
+    for (const type of ["magiclink", "recovery", "invite", "email_change"]) {
+      expect(parseAuthRedirect(`${SITE}/auth/callback#token_hash=abc123&type=${type}`)).toBeNull();
+    }
+  });
+
   it("recognises a session Supabase already granted", () => {
     expect(
       parseAuthRedirect(`${SITE}/start#access_token=a.b.c&expires_in=3600&refresh_token=r1&token_type=bearer&type=signup`),

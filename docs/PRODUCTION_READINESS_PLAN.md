@@ -285,7 +285,7 @@ Status is the state of each decision in the code today. Engineering proceeds on 
 
 #### A-1.2 Create a guest session and issue a continuation token
 - **Status:** **SUPERSEDED** · **Size:** M · **Priority:** Highest · **Owner:** BE · **Depends:** A-1.1, D1 · **Milestone:** M1
-- **Built:** `signInAnonymously` (`useAuth.tsx`, `RequireAuth.tsx`) followed by a `chamber_sessions` insert (`useChamberSession.ts`). Turnstile guards guest creation when `VITE_TURNSTILE_SITE_KEY` is set. Per-user, per-IP and global limits cap AI spend (section 1.1), but nothing caps session creation.
+- **Built:** `signInAnonymously` (`useAuth.tsx`, `RequireAuth.tsx`) followed by a `chamber_sessions` insert (`useChamberSession.ts`). With `VITE_TURNSTILE_SITE_KEY` set, the browser asks for a Turnstile challenge before it requests a guest session, but nothing on the server checks it while Supabase CAPTCHA is off (`docs/SUPABASE_SETUP.md`), so anyone with the publishable key can still create guests directly (SR-23). Per-user, per-IP and global limits cap AI spend (section 1.1), but nothing caps session creation.
 - **Remaining:** A row id is useless without the owner's JWT, so the intent holds. No limit on sessions per user or per IP exists in the repo (a Supabase anonymous-sign-in limit would be dashboard configuration, which this refresh could not see). Turnstile is off when the key is unset: set it in every deployed environment. Decide whether to add a creation cap.
 
 #### A-1.3 Restore a session after refresh, with a recovery screen

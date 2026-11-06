@@ -48,7 +48,7 @@ export const VERIFY_EMAIL_MESSAGE = "Certifying needs a verified email. Verify y
 type ServerRow = Pick<
   Database["public"]["Tables"]["chamber_sessions"]["Row"],
   | "id" | "data_version" | "status" | "chamber_data" | "field_provenance" | "transcript" | "submission" | "expires_at"
-  | "chosen_peo" | "created_at" | "file_id"
+  | "chosen_peo" | "created_at" | "file_id" | "user_id"
 >;
 
 /** Answers kept in this browser that never reached the server, offered back when the intake is opened. */
@@ -132,6 +132,8 @@ interface UseChamberSessionReturn {
   saveStatus: SaveStatus;
   /** Saves now, or creates the intake again if creating it failed. */
   retrySave: () => void;
+  /** Saves what's pending now; resolves true once everything captured so far is saved (Sign out waits on it). */
+  saveAll: () => Promise<boolean>;
   /**
    * The intake's id, creating the intake first when the prospect hasn't started one yet. No intake exists until
    * the prospect does something with it (a message, an answer, a choice or an upload); any change creates it,
@@ -186,7 +188,7 @@ function unexplainedFailure(error: unknown, sessionId: string): SubmitFailure {
   };
 }
 const ROW_COLUMNS =
-  "id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo, created_at, file_id";
+  "id, user_id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo, created_at, file_id";
 // What a certification reads back: the submission as the database stamped it (its File ID, version and
 // documents), and the intake's File ID.
 const CERTIFIED_COLUMNS = "id, data_version, status, submission, file_id";
@@ -910,14 +912,16 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     let cancelled = false;
 
     const resume = async (id: string): Promise<"opened" | "expired" | "unavailable"> => {
-      // RLS only returns the user's own sessions, and never an archived or revoked one.
+      // RLS never returns an archived or revoked intake, but it does return other people's to an advisor
+      // (decision D16), so ownership is checked here: an advisor following a prospect's link must not get
+      // the prospect's intake as an editable draft, with a copy of it backed up in this browser.
       const { data, error } = await supabase
         .from("chamber_sessions")
         .select(ROW_COLUMNS)
         .eq("id", id)
         .maybeSingle();
       if (error) console.error("Failed to load session:", error);
-      if (!data) return "unavailable";
+      if (!data || data.user_id !== userId) return "unavailable";
       if (data.status === "expired") {
         // Nothing of it is shown: the prospect is told it expired and can start again.
         setExpired({ at: data.expires_at ?? null });
@@ -1451,6 +1455,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     choosePeo,
     saveStatus,
     retrySave,
+    saveAll: flush,
     ensureIntake,
     loadLatest,
     keepMine,

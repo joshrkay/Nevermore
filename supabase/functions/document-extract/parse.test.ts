@@ -1,19 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { CENSUS_TEMPLATE_COLUMNS, censusTemplateCsv } from "../_shared/censusTemplate";
+import { redactSensitive } from "../_shared/sensitive";
 import {
   buildPromptText,
   censusCandidates,
   censusNotes,
+  clampSheetRange,
   docxContent,
   findCensus,
   isPasswordError,
   mapCensusColumns,
   MAX_EMPLOYEES,
+  MAX_SHEET_COLUMNS,
+  MAX_SHEET_ROWS,
   mergeCandidates,
   paragraphSections,
   readGrids,
   sha256Hex,
   shapeAiCandidates,
+  sheetCutOff,
   sheetText,
   sniffFormat,
   US_STATE_CODES,
@@ -318,6 +323,64 @@ describe("the census template", () => {
   });
 });
 
+describe("a census longer than the rows read", () => {
+  // The row bound (MAX_SHEET_ROWS) keeps a read within memory and CPU, so a longer census is read only in part.
+  // The headcount, states and contractor facts would then cover part of the company while reading as the whole.
+  const census = (n: number) => {
+    const rows: string[][] = [["Name", "State", "Title", "Type"]];
+    for (let i = 0; i < n; i++) rows.push([`Person ${i}`, i < 10 ? "NY" : "CA", "Dev", "W-2"]);
+    return rows;
+  };
+
+  it("keeps the rows that were read but takes no headcount, states or contractor facts from them, and says why", () => {
+    const { candidates, notes } = readGrids([{ label: "Sheet Staff", rows: census(MAX_SHEET_ROWS - 1), cutOff: true }], NOW);
+    expect(candidates.map((c) => c.field)).toEqual(["census"]);
+    expect(candidates[0].location).toContain("the sheet has more rows than were read");
+    expect(notes).toContainEqual(expect.stringContaining(`only its first ${MAX_SHEET_ROWS.toLocaleString("en-US")} rows were read`));
+  });
+
+  it("reads a census that wasn't cut off as before", () => {
+    const { candidates } = readGrids([{ label: "Sheet Staff", rows: census(20), cutOff: false }], NOW);
+    expect(candidates.map((c) => c.field)).toEqual(["census", "employee_count", "states"]);
+  });
+
+  // Shapes taken from SheetJS itself with sheetRows: MAX_SHEET_ROWS. A 7,500-person .xlsx reads back 5,050 rows
+  // and declares A1:D7501 in !fullref; the same CSV reads back 5,050 rows and declares nothing; a 100-person
+  // .xlsx whose range formatting inflated to A1:Z1048576 reads back its 101 real rows.
+  it("counts a sheet as cut off when the rows read reached the bound, the last holds data and more were declared", () => {
+    const full = census(MAX_SHEET_ROWS - 1); // header + data fill every row read
+    expect(sheetCutOff(full, 7501)).toBe(true);
+    // A CSV declares no range: one that filled every row read is taken as running past them.
+    expect(sheetCutOff(full, Number.POSITIVE_INFINITY)).toBe(true);
+  });
+
+  it("doesn't count a short census in an inflated range, or one that ends exactly at the bound", () => {
+    expect(sheetCutOff(census(100), 1_048_576)).toBe(false);
+    const padded = [...census(100), ...Array.from({ length: MAX_SHEET_ROWS - 101 }, () => ["", "", "", ""])];
+    expect(sheetCutOff(padded, 1_048_576)).toBe(false);
+    expect(sheetCutOff(census(MAX_SHEET_ROWS - 1), MAX_SHEET_ROWS)).toBe(false);
+  });
+});
+
+describe("clampSheetRange", () => {
+  const range = (sr: number, sc: number, er: number, ec: number) => ({ s: { r: sr, c: sc }, e: { r: er, c: ec } });
+
+  it("leaves a sheet of ordinary size as it is", () => {
+    expect(clampSheetRange(range(0, 0, 199, 25))).toEqual(range(0, 0, 199, 25));
+    expect(clampSheetRange(range(2, 1, MAX_SHEET_ROWS + 1, MAX_SHEET_COLUMNS))).toEqual(range(2, 1, MAX_SHEET_ROWS + 1, MAX_SHEET_COLUMNS));
+  });
+
+  it("cuts a declared range (a sheet's <dimension> says what it likes) to the rows and columns read", () => {
+    // A1:XFD1048576: a one-cell file declaring every cell Excel has.
+    expect(clampSheetRange(range(0, 0, 1_048_575, 16_383))).toEqual(range(0, 0, MAX_SHEET_ROWS - 1, MAX_SHEET_COLUMNS - 1));
+    expect(clampSheetRange(range(4, 3, 1_048_575, 9))).toEqual(range(4, 3, 4 + MAX_SHEET_ROWS - 1, 9));
+  });
+
+  it("reads every row a full census needs", () => {
+    expect(MAX_SHEET_ROWS).toBeGreaterThan(MAX_EMPLOYEES + 1);
+  });
+});
+
 describe("sheetText", () => {
   it("redacts sensitive numbers in any cell", () => {
     expect(sheetText([["Note"], ["Owner SSN 123-45-6789"]])).toBe("Note\nOwner SSN [redacted]");
@@ -339,6 +402,41 @@ describe("Word documents", () => {
       paragraphs: ["Benefits Summary", "Carrier: Aetna & Co\tRenewal 7/1", "Waiting period: 30 days\nLine two – done"],
       tables: [[["Name", "State"], ["Ann Lee", "CA"]]],
     });
+  });
+
+  it("reads markup that never closes in time in proportion to its length", () => {
+    // Each unclosed tag once sent a lazy pattern to the end of the text: 200 KB of "<w:p>" took over a second.
+    const n = 200_000;
+    const unclosed = [
+      "<w:p>".repeat(n),
+      "<w:p ".repeat(n),
+      `<w:p>${"<w:t>".repeat(n)}</w:p>`,
+      `<w:p>${"<w:t ".repeat(n)}</w:p>`,
+      `<w:p>${"<w:br ".repeat(n)}</w:p>`,
+      `<w:p>${"<w:br ".repeat(n)}<w:t>x</w:t></w:p>`,
+      "<w:tbl>".repeat(n),
+      `<w:tbl>${"<w:tr>".repeat(n)}</w:tbl>`,
+      `<w:tbl><w:tr>${"<w:tc>".repeat(n)}</w:tr></w:tbl>`,
+    ];
+    for (const markup of unclosed) {
+      const started = performance.now();
+      docxContent(markup);
+      expect(performance.now() - started, markup.slice(0, 20)).toBeLessThan(500);
+    }
+  });
+
+  it("reads the same text as before from ordinary markup", () => {
+    expect(docxContent("<w:p><w:pPr/><w:r><w:t>a</w:t></w:r></w:p><w:p w:rsidR=\"1\"/><w:p><w:r><w:t>b</w:t><w:cr/><w:t>c</w:t></w:r></w:p>"))
+      .toEqual({ paragraphs: ["a", "b\nc"], tables: [] });
+    // A paragraph's properties (<w:pPr>) are not a paragraph.
+    expect(docxContent("<w:pPr><w:t>x</w:t></w:pPr>")).toEqual({ paragraphs: [], tables: [] });
+    // A table's text is the table's, and the paragraph after it is a paragraph.
+    expect(docxContent("<w:tbl><w:tr><w:tc><w:p><w:r><w:t>only</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>after</w:t></w:r></w:p>"))
+      .toEqual({ paragraphs: ["after"], tables: [[["only"]]] });
+  });
+
+  it("keeps a character reference that names no character instead of failing the document", () => {
+    expect(docxContent("<w:p><w:r><w:t>a&#x110000;b&#9999999999;c</w:t></w:r></w:p>").paragraphs).toEqual(["a&#x110000;b&#9999999999;c"]);
   });
 
   it("groups paragraphs into labelled sections", () => {
@@ -386,5 +484,39 @@ describe("AI-read fields", () => {
   it("numbers sections and caps the prompt text", () => {
     expect(buildPromptText(sections)).toBe("[[Section 1]]\nCarrier: Aetna\n\n[[Section 2]]\nPaid bi-weekly via ADP\n\n");
     expect(buildPromptText([{ label: "Page 1", text: "x".repeat(50_000) }]).length).toBe(20_000);
+  });
+
+  it("redacts only what can reach the prompt, so a huge section costs no more than a full prompt", () => {
+    let redacted = 0;
+    const counting = (text: string) => {
+      redacted += text.length;
+      return text;
+    };
+    buildPromptText([{ label: "Page 1", text: "x".repeat(5_000_000) }], counting);
+    expect(redacted).toBeGreaterThan(0);
+    expect(redacted).toBeLessThan(50_000);
+
+    redacted = 0;
+    const text = sheetText(Array.from({ length: 5_000 }, (_, i) => [`row ${i}`, "y".repeat(2_000)]), counting);
+    expect(text.length).toBeLessThanOrEqual(20_000);
+    expect(redacted).toBeGreaterThan(0);
+    expect(redacted).toBeLessThan(50_000);
+  });
+
+  it("never lets part of a number cut at the edge of what is redacted through", () => {
+    // Shrinking earlier numbers to [redacted] pulls later text forward; a number cut in two where the
+    // redacted window ends must not be pulled into the prompt unredacted.
+    const cards = "card 4111 1111 1111 1111 ".repeat(400); // each 19-character card becomes 10 characters
+    // An unlabelled 16-digit account number, redacted whole but not once cut below nine digits, placed at
+    // every position around where a window of the prompt's size (plus any small margin) would end.
+    for (let at = 19_900; at <= 20_150; at++) {
+      const text = cards + "x".repeat(at - cards.length) + " 1234567890123456 " + "y".repeat(40_000);
+      expect(buildPromptText([{ label: "Page 1", text }]), `number at ${at}`).not.toMatch(/\d{4}/);
+    }
+  });
+
+  it("matches the whole text's redaction exactly when the text fits", () => {
+    const text = "Owner SSN 123-45-6789, routing: 021000021. ".repeat(100);
+    expect(buildPromptText([{ label: "Page 1", text }])).toBe(`[[Section 1]]\n${redactSensitive(text).trim()}\n\n`);
   });
 });

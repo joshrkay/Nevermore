@@ -12,6 +12,7 @@ const query = (table: string) => {
     select: () => chain,
     eq: () => chain,
     order: () => chain,
+    limit: () => chain,
     maybeSingle: async () => ({ data: (tables[table] ?? [])[0] ?? null, error: null }),
     then: (ok: (v: unknown) => unknown, ko: (e: unknown) => unknown) => Promise.resolve(result()).then(ok, ko),
   };
@@ -368,6 +369,30 @@ describe("loadSubmission", () => {
     expect(d.transcript.map((m) => m.text)).toEqual(["rewritten later"]);
     expect(d.transcriptChangedSinceCertified).toBe(false);
     expect(d.documents.map((x) => x.certification)).toEqual([undefined, undefined]);
+  });
+
+  it("shows a withdrawn certification as the database recorded it, not as the intake's submission now says", async () => {
+    // A submission rewritten after the certification was withdrawn (possible before 20261106090000).
+    tables.chamber_sessions = [row({
+      status: "in_progress",
+      file_id: null,
+      submission: { signer_name: "Somebody Else", certified_at: "2025-11-01T00:00:00Z", file_id: "EAA-FORGED", chamber_data: { company_name: "Forged", employee_count: 500 } },
+    })];
+    tables.chamber_certifications = [{
+      file_id: "EAA-1", signer_name: "Jo", signed_at: "2026-10-02T00:00:00Z", recorded_at: "2026-10-02T00:00:05Z", chamber_data: certifiedData,
+    }];
+    const d = (await loadSubmission("s1"))!;
+    expect(d.certified).toBe(false);
+    expect(d.signed).toEqual({ data: expect.objectContaining({ company_name: "Signed Co", employee_count: 12 }), signedAt: "2026-10-02T00:00:05Z" });
+    expect(d.fileId).toBe("EAA-1");
+  });
+
+  it("shows nothing as signed for an intake that was never certified, whatever its submission says", async () => {
+    tables.chamber_sessions = [row({ status: "in_progress", file_id: null })];
+    tables.chamber_certifications = [];
+    const d = (await loadSubmission("s1"))!;
+    expect(d.signed).toBeNull();
+    expect(d.fileId).toBeNull();
   });
 
   it("uses the live conversation and documents for a certification from before they were kept", async () => {

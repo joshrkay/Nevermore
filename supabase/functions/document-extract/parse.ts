@@ -11,6 +11,41 @@ export const MAX_EMPLOYEES = MAX_CENSUS_ROWS;
 export { US_STATE_CODES };
 
 export const MAX_EXTRACT_BYTES = 10 * 1024 * 1024;
+
+// How much of a spreadsheet is read. A sheet says how large it is in its own markup (an .xlsx's <dimension>
+// tag), and every cell of that range would otherwise be built, filled or empty: a one-cell file declaring
+// A1:Z1048576 ran the function out of memory. A census holds at most MAX_EMPLOYEES people; the rest of the
+// rows leave room for titles, headers and notes above and below it.
+export const MAX_SHEET_ROWS = MAX_CENSUS_ROWS + 50;
+export const MAX_SHEET_COLUMNS = 100;
+// What an .xlsx may unzip to, all its parts together. The spreadsheet library unzips the file itself with
+// no limit, so this is checked first; a real census workbook unzips to a few megabytes.
+export const MAX_XLSX_UNZIPPED_BYTES = 50 * 1024 * 1024;
+
+/** A sheet's cell range (SheetJS's shape: zero-based start and end row and column). */
+export interface CellRange {
+  s: { r: number; c: number };
+  e: { r: number; c: number };
+}
+
+/** The part of a sheet's range that is read: at most MAX_SHEET_ROWS rows and MAX_SHEET_COLUMNS columns. */
+export function clampSheetRange(range: CellRange): CellRange {
+  return {
+    s: { r: range.s.r, c: range.s.c },
+    e: { r: Math.min(range.e.r, range.s.r + MAX_SHEET_ROWS - 1), c: Math.min(range.e.c, range.s.c + MAX_SHEET_COLUMNS - 1) },
+  };
+}
+
+/**
+ * Whether rows past the ones read may hold data: the rows read reached MAX_SHEET_ROWS, the last of them isn't
+ * empty, and the sheet declared more. A range inflated by formatting far down a column isn't cut off: SheetJS reads
+ * back only the rows that hold cells.
+ */
+export function sheetCutOff(rows: unknown[][], declaredRows: number): boolean {
+  if (rows.length < MAX_SHEET_ROWS || declaredRows <= rows.length) return false;
+  const last = rows[rows.length - 1] ?? [];
+  return last.some((v) => v !== undefined && v !== null && String(v).trim() !== "");
+}
 export const MAX_PDF_PAGES = 50;
 export const MAX_AI_TEXT_CHARS = 20_000;
 /** Below this much text across the whole PDF, treat it as a scan. */
@@ -226,6 +261,8 @@ export interface CensusResult {
   skipped: number;
   /** Headers of columns that were never read because they hold an SSN or bank details. */
   ignoredColumns: string[];
+  /** The sheet has rows past the ones read (MAX_SHEET_ROWS): the census is only part of the company's. */
+  cutOff?: boolean;
 }
 
 /**
@@ -312,7 +349,12 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
  * MAX_EMPLOYEES people, since the intake can't store more; the headcount, states and contractor
  * facts still cover every row, and the census's location says how many were kept.
  */
-export function censusCandidates({ census, location, facts }: CensusResult): Candidate[] {
+export function censusCandidates({ census, location, facts, cutOff }: CensusResult): Candidate[] {
+  if (cutOff) {
+    // Only part of the company was read: the people read are kept, but a headcount, states or contractor facts
+    // from them would describe part of it as the whole.
+    return [{ field: "census", value: census.slice(0, MAX_EMPLOYEES), location: `${location}; the sheet has more rows than were read`, facts }];
+  }
   const states = [...new Set(census.map((e) => e.work_state).filter(Boolean))].sort();
   const contractors = census.filter((e) => !isW2(e));
   const truncated = census.length > MAX_EMPLOYEES;
@@ -330,8 +372,14 @@ export function censusCandidates({ census, location, facts }: CensusResult): Can
 }
 
 /** What the prospect should know about how a census was read. */
-export function censusNotes({ skipped, ignoredColumns }: CensusResult): string[] {
+export function censusNotes({ skipped, ignoredColumns, cutOff }: CensusResult): string[] {
   const notes: string[] = [];
+  if (cutOff) {
+    notes.push(
+      `This sheet is longer than we read: only its first ${MAX_SHEET_ROWS.toLocaleString("en-US")} rows were read, so the ` +
+        "headcount, states and contractors weren't taken from it. Tell Lenore those, or upload the census in smaller files.",
+    );
+  }
   if (ignoredColumns.length > 0) {
     notes.push(
       `The ${ignoredColumns.join(", ")} column${ignoredColumns.length === 1 ? " wasn't" : "s weren't"} read and ` +
@@ -350,14 +398,21 @@ export function censusNotes({ skipped, ignoredColumns }: CensusResult): string[]
  * A sheet as text for the model: comma-separated rows with SSN and bank columns blanked and any
  * sensitive number in the remaining cells removed.
  */
-export function sheetText(rows: unknown[][]): string {
+export function sheetText(rows: unknown[][], redact: (text: string) => string = redactSensitive): string {
   const sensitive = new Set<number>();
   for (const row of rows.slice(0, 10)) mapCensusColumns(row).sensitive.forEach((i) => sensitive.add(i));
-  const text = rows
-    .map((row) => row.map((v, i) => (sensitive.has(i) ? "" : String(v ?? "").replace(/[\r\n,]+/g, " ").trim())).join(","))
-    .filter((line) => line.replace(/,/g, "").trim())
-    .join("\n");
-  return redactSensitive(text);
+  // Only the first MAX_AI_TEXT_CHARS of any text reach the model, so rows past that are never joined or
+  // redacted. Stopping at the end of a row splits no number: none that is redacted spans a line break.
+  const lines: string[] = [];
+  let size = 0;
+  for (const row of rows) {
+    if (size > MAX_AI_TEXT_CHARS + REDACT_MARGIN) break;
+    const line = row.map((v, i) => (sensitive.has(i) ? "" : String(v ?? "").replace(/[\r\n,]+/g, " ").trim())).join(",");
+    if (!line.replace(/,/g, "").trim()) continue;
+    lines.push(line);
+    size += line.length + 1;
+  }
+  return redactedPrefix(lines.join("\n"), MAX_AI_TEXT_CHARS, redact);
 }
 
 // ---- Tables and text, from any format ---------------------------------------------------------
@@ -368,6 +423,8 @@ export interface Grid {
   rows: unknown[][];
   /** Spreadsheet row number of rows[0], so a location reads "rows 3–40". */
   firstRow?: number;
+  /** Rows past these may hold data that wasn't read (sheetCutOff). */
+  cutOff?: boolean;
 }
 
 export interface GridReading {
@@ -387,7 +444,8 @@ export function readGrids(grids: Grid[], now: Date = new Date()): GridReading {
   const textSections: TextSection[] = [];
   let found = false;
   for (const g of grids) {
-    const census = found ? null : findCensus(g.rows, g.label, g.firstRow ?? 1, now);
+    const inSheet = found ? null : findCensus(g.rows, g.label, g.firstRow ?? 1, now);
+    const census = inSheet && g.cutOff ? { ...inSheet, cutOff: true } : inSheet;
     if (census) {
       found = true;
       candidates.push(...censusCandidates(census));
@@ -417,31 +475,118 @@ export interface DocxContent {
 
 const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 const decodeXml = (s: string) =>
-  s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_m, e: string) =>
-    e[0] === "#"
-      ? String.fromCodePoint(e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10))
-      : XML_ENTITIES[e.toLowerCase()]);
+  s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (m, e: string) => {
+    if (e[0] !== "#") return XML_ENTITIES[e.toLowerCase()];
+    const code = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+    // A reference past the last code point names no character; kept as written rather than failing the file.
+    return code <= 0x10ffff ? String.fromCodePoint(code) : m;
+  });
 
-function paragraphTexts(xml: string): string[] {
-  const out: string[] = [];
-  for (const p of xml.replace(/<w:p\b[^>]*\/>/g, "").match(/<w:p\b[\s\S]*?<\/w:p>/g) ?? []) {
-    let text = "";
-    for (const m of p.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:tab\/>|<w:br\b[^>]*\/>|<w:cr\/>/g)) {
-      text += m[1] !== undefined ? decodeXml(m[1]) : m[0].startsWith("<w:tab") ? "\t" : "\n";
+// The markup is read with plain forward searches, never a lazy pattern such as /<w:p\b[\s\S]*?<\/w:p>/g:
+// for every tag that never closes, a pattern like that reads on to the end of the text, so a document of
+// unclosed tags took time in the square of its length (40 MB of XML is allowed). Each search below starts
+// where the last one ended, and stops for good once a closing tag is nowhere ahead.
+
+const isNameChar = (code: number) =>
+  (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95;
+const isSpace = (ch: string | undefined) => ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
+
+interface Span {
+  start: number;
+  end: number;
+}
+
+/**
+ * Each `<tag ...>...</tag>` in `xml`, in order, as a lazy match would find them: from an opening tag to
+ * the first closing tag after it. With `skipSelfClosing`, an empty `<tag .../>` is passed over.
+ */
+function elementSpans(xml: string, tag: string, skipSelfClosing = false): Span[] {
+  const open = `<${tag}`;
+  const close = `</${tag}>`;
+  const out: Span[] = [];
+  let i = 0;
+  while ((i = xml.indexOf(open, i)) !== -1) {
+    // `<w:pPr>` is not `<w:p>`.
+    if (isNameChar(xml.charCodeAt(i + open.length))) {
+      i += open.length;
+      continue;
     }
-    out.push(text.trim());
+    if (skipSelfClosing) {
+      const gt = xml.indexOf(">", i);
+      if (gt === -1) break;
+      if (xml[gt - 1] === "/") {
+        i = gt + 1;
+        continue;
+      }
+    }
+    const end = xml.indexOf(close, i + open.length);
+    if (end === -1) break;
+    out.push({ start: i, end: end + close.length });
+    i = end + close.length;
   }
   return out;
 }
 
+const elements = (xml: string, tag: string, skipSelfClosing = false) =>
+  elementSpans(xml, tag, skipSelfClosing).map((s) => xml.slice(s.start, s.end));
+
+/** A paragraph's text: its `<w:t>` runs in order, with tabs and line breaks. */
+function paragraphText(p: string): string {
+  let text = "";
+  let textCloses = true; // false once no </w:t> lies ahead, so no later <w:t> can hold text
+  // The first ">" at or after a position, remembered: tags that never end all look ahead to the same one,
+  // so it is searched for once rather than once per tag.
+  let knownGt = -1;
+  const nextGt = (from: number) => (knownGt >= from ? knownGt : (knownGt = p.indexOf(">", from)));
+  let i = 0;
+  while ((i = p.indexOf("<w:", i)) !== -1) {
+    if (p.startsWith("<w:tab/>", i)) {
+      text += "\t";
+      i += 8;
+    } else if (p.startsWith("<w:cr/>", i)) {
+      text += "\n";
+      i += 7;
+    } else if (p.startsWith("<w:br", i) && !isNameChar(p.charCodeAt(i + 5))) {
+      const gt = nextGt(i);
+      if (gt === -1) break;
+      if (p[gt - 1] === "/") {
+        text += "\n";
+        i = gt + 1;
+      } else {
+        i += 5;
+      }
+    } else if (textCloses && p.startsWith("<w:t", i) && (p[i + 4] === ">" || isSpace(p[i + 4]))) {
+      const gt = p[i + 4] === ">" ? i + 4 : nextGt(i + 5);
+      if (gt === -1) break; // no tag of any kind can end after this point
+      const end = p.indexOf("</w:t>", gt + 1);
+      if (end === -1) {
+        textCloses = false;
+        i += 4;
+      } else {
+        text += decodeXml(p.slice(gt + 1, end));
+        i = end + 6;
+      }
+    } else {
+      i += 3;
+    }
+  }
+  return text.trim();
+}
+
+const paragraphTexts = (xml: string): string[] => elements(xml, "w:p", true).map(paragraphText);
+
 /** The text of a .docx body (word/document.xml): paragraphs, and tables as rows of cells. */
 export function docxContent(xml: string): DocxContent {
   const tables: string[][][] = [];
-  const body = xml.replace(/<w:tbl\b[\s\S]*?<\/w:tbl>/g, (tbl) => {
-    tables.push((tbl.match(/<w:tr\b[\s\S]*?<\/w:tr>/g) ?? []).map((tr) =>
-      (tr.match(/<w:tc\b[\s\S]*?<\/w:tc>/g) ?? []).map((tc) => paragraphTexts(tc).filter(Boolean).join(" "))));
-    return "";
-  });
+  let body = "";
+  let at = 0;
+  for (const { start, end } of elementSpans(xml, "w:tbl")) {
+    body += xml.slice(at, start);
+    at = end;
+    const tbl = xml.slice(start, end);
+    tables.push(elements(tbl, "w:tr").map((tr) => elements(tr, "w:tc").map((tc) => paragraphTexts(tc).filter(Boolean).join(" "))));
+  }
+  body += xml.slice(at);
   return { paragraphs: paragraphTexts(body).filter(Boolean), tables };
 }
 
@@ -490,11 +635,14 @@ export interface TextSection {
 }
 
 /** Joins sections under numbered markers the model cites back, capped at the AI text limit. */
-export function buildPromptText(sections: TextSection[]): string {
+export function buildPromptText(sections: TextSection[], redact: (text: string) => string = redactSensitive): string {
   let out = "";
   for (const [i, s] of sections.entries()) {
-    // Sensitive numbers never reach the model.
-    const chunk = `[[Section ${i + 1}]]\n${redactSensitive(s.text).trim()}\n\n`;
+    const header = `[[Section ${i + 1}]]\n`;
+    // Sensitive numbers never reach the model. Only what can fit is redacted, so a huge section costs no
+    // more than a full prompt; the chunk is then cut exactly as the whole text's redaction would be.
+    const room = Math.max(0, MAX_AI_TEXT_CHARS - out.length - header.length);
+    const chunk = `${header}${redactedPrefix(s.text.trim(), room, redact)}\n\n`;
     if (out.length + chunk.length > MAX_AI_TEXT_CHARS) {
       out += chunk.slice(0, Math.max(0, MAX_AI_TEXT_CHARS - out.length));
       break;
@@ -502,6 +650,27 @@ export function buildPromptText(sections: TextSection[]): string {
     out += chunk;
   }
   return out;
+}
+
+// Longer than any number redactSensitive removes once it is cut short (an SSN, a card in groups, a run of
+// up to 17 digits), so a number split by the end of a window is never part of what is kept.
+const REDACT_MARGIN = 64;
+
+/**
+ * The first `chars` characters of `redact(text)`, redacting a window of the text rather than all of it.
+ * When the window stops short of the end, its last REDACT_MARGIN characters are dropped, since a number
+ * cut there may not be recognised; the window grows while what remains is too short (earlier numbers
+ * shrinking to "[redacted]" pull later text forward). Whitespace is never redacted away, so trimming the
+ * text first is the same as trimming its redaction.
+ */
+export function redactedPrefix(text: string, chars: number, redact: (text: string) => string = redactSensitive): string {
+  let window = chars + REDACT_MARGIN;
+  for (;;) {
+    if (window >= text.length) return redact(text).slice(0, chars);
+    const redacted = redact(text.slice(0, window));
+    if (redacted.length - REDACT_MARGIN >= chars) return redacted.slice(0, chars);
+    window *= 2;
+  }
 }
 
 /** Turns the model's `fields` list into candidates, dropping unknown fields and empty values. */

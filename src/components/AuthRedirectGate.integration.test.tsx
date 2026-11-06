@@ -60,27 +60,13 @@ describe("a link result that lands outside /auth/callback", () => {
     expect(await screen.findByText("The Chamber")).toBeInTheDocument();
   });
 
-  it("takes an older email's session link on /start through the callback page and back, once signed in", async () => {
-    auth.loading = true;
+  it("takes a link carrying a session off /start to the callback page, which signs nobody in and drops the tokens from the address", async () => {
     const view = await loadPage("/start#access_token=a.b.c&expires_in=3600&refresh_token=r1&token_type=bearer&type=signup");
-    // supabase-js is still reading the session: nothing under the gate may start a guest session yet.
+    expect(await screen.findByRole("heading", { name: "This link didn't work" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/auth/callback");
+    expect(window.location.hash).toBe("");
+    // The Chamber (which would start or keep a session) never opened underneath.
     expect(screen.queryByText("The Chamber")).not.toBeInTheDocument();
-    auth.loading = false;
-    auth.user = { id: "u1", email: "pat@example.com", email_confirmed_at: "2026-11-03T12:00:00Z" };
-    const { default: AuthRedirectGate } = await import("./AuthRedirectGate");
-    const { default: AuthCallbackPage } = await import("@/pages/AuthCallbackPage");
-    view.rerender(
-      <BrowserRouter>
-        <AuthRedirectGate>
-          <Routes>
-            <Route path="/" element={<p>Landing page</p>} />
-            <Route path="/start" element={<p>The Chamber</p>} />
-            <Route path="/auth/callback" element={<AuthCallbackPage />} />
-          </Routes>
-        </AuthRedirectGate>
-      </BrowserRouter>,
-    );
-    expect(await screen.findByText("The Chamber")).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/start");
+    view.unmount();
   });
 });

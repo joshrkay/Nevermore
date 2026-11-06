@@ -6,15 +6,18 @@ import type { EmailOtpType } from "@supabase/supabase-js";
  * - `token`: a token for the app to verify itself (an email template that links to the app with
  *   `?token_hash=…&type=…`). Verifying on a click means a mail scanner that opens the link first
  *   can't use it up.
- * - `session`: Supabase already verified the link and sent `#access_token=…`; supabase-js signs the
- *   person in from it on load.
+ * - `session`: `#access_token=…`, from Supabase's default links (emails sent before our templates) or
+ *   crafted by someone. Nobody is signed in from it (the client's detectSessionInUrl is off): the
+ *   callback page says the link didn't work and offers a new one.
  */
 export type AuthRedirect =
   | { kind: "error"; code: string; description: string }
   | { kind: "token"; tokenHash: string; type: EmailOtpType }
   | { kind: "session"; type: string | null };
 
-const TOKEN_TYPES: readonly string[] = ["signup", "invite", "magiclink", "recovery", "email_change", "email"];
+// Only what our sign-up emails send (docs/SUPABASE_SETUP.md: `type=email`, and `signup` from before). A
+// magic-link, recovery or invite token in a crafted link would sign this browser into the sender's account.
+const TOKEN_TYPES: readonly string[] = ["email", "signup"];
 
 /** Query and hash parameters together; the query wins, as in supabase-js. */
 function params(href: string): Record<string, string> {

@@ -91,6 +91,19 @@ describe("LiveWorkspace", () => {
     expect(screen.getByText("Also heard: 45 — From Payroll.xlsx")).toBeInTheDocument();
   });
 
+  it("tells assistive technology which step is open, not only by colour", () => {
+    render(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("button", { name: "① Upload" })).toHaveAttribute("aria-current", "step");
+    expect(screen.getByRole("button", { name: "② Company" })).not.toHaveAttribute("aria-current");
+    fireEvent.click(screen.getByRole("button", { name: "② Company" }));
+    expect(screen.getByRole("button", { name: "② Company" })).toHaveAttribute("aria-current", "step");
+    expect(screen.getByRole("button", { name: "① Upload" })).not.toHaveAttribute("aria-current");
+  });
+
   it("moves from Review to PEO Match to The Reckoning", () => {
     render(
       <MemoryRouter>

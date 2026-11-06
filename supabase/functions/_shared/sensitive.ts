@@ -17,8 +17,10 @@ const GLUED_SSN = new RegExp(
   `(ssn?_?)\\d{3}(?:${SSN_SEPARATOR}?\\d{2}${SSN_SEPARATOR}?|\\.\\d{2}\\.)\\d{4}(?!\\d)`,
   "gi",
 );
-// A labelled account or routing number: "acct # 0012345", "routing: 021000021".
-const LABELLED_ACCOUNT = /\b(account|acct|routing|aba)(?:\s*(?:number|num|no\.?|#))?\s*[:#]?\s*\d[\d -]{2,}\d/gi;
+// A labelled account or routing number: "acct # 0012345", "routing: 021000021". Each run of space
+// belongs to exactly one part of the pattern: written as `\s*[:#]?\s*`, two adjacent runs could split
+// the same spaces every way, which made a label followed by a long run of spaces take quadratic time.
+const LABELLED_ACCOUNT = /\b(account|acct|routing|aba)(?:\s*(?:number|num|no\.?|#))?(?:\s*[:#])?\s*\d[\d -]{2,}\d/gi;
 // A card number of 13 to 19 digits in groups, split by spaces or hyphens: three groups of four, then
 // the rest in one group or as four and up to three (4111 1111 1111 1111, 6011-0009-9013-9424-124).
 const GROUPED_CARD = /\b\d{4}(?:[- ]\d{4}){2}[- ](?:\d{4}[- ]\d{1,3}|\d{1,7})\b/g;

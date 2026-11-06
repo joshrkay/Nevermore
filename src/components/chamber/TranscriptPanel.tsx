@@ -133,6 +133,7 @@ const TranscriptPanel = ({ messages, onSendMessage, inputRef, notice, restoredTh
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
             placeholder="Type a message..."
+            aria-label="Message Lenore"
             maxLength={2000}
             className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
           />

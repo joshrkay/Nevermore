@@ -14,5 +14,9 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
     storage: brokeredPreviewStorage(),
     persistSession: true,
     autoRefreshToken: true,
+    // Never take a session from #access_token=… in the address: a link someone sends could otherwise
+    // sign this browser into their account. Email links carry a code or a #token_hash the callback page
+    // verifies on a click. Keep this when regenerating the file (client.test.ts checks it).
+    detectSessionInUrl: false,
   }
 });

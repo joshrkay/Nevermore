@@ -10,6 +10,7 @@ import {
   MAX_ATTEMPTS,
   noteBlockedKinds,
   runMaintenance,
+  runReply,
   sendableKinds,
   type DeadEvent,
   type OutboxRow,
@@ -166,7 +167,7 @@ serve(async (req) => {
       alertDead,
       log,
     });
-    return json({ claimed: rows.length, ...summary, ...maintenance });
+    return json(runReply(service, { claimed: rows.length, ...summary, ...maintenance }));
   } catch (e) {
     // Database errors are plain objects with a message, not Error instances.
     console.error(`OUTBOX_DISPATCH_ERROR: ${(e as { message?: string } | null)?.message ?? "unknown"}`);

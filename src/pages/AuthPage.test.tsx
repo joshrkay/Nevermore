@@ -48,6 +48,18 @@ describe("AuthPage", () => {
     toast.success.mockReset();
   });
 
+  it("labels every field, so a screen reader names it and a password manager knows which password it is", () => {
+    renderLogin();
+    expect(screen.getByLabelText("Email")).toHaveAttribute("autocomplete", "email");
+    expect(screen.getByLabelText("Password")).toHaveAttribute("autocomplete", "current-password");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create one" }));
+    expect(screen.getByLabelText("Company Name")).toHaveAttribute("autocomplete", "organization");
+    expect(screen.getByLabelText("Company Name")).toHaveAttribute("maxlength", "200");
+    expect(screen.getByLabelText("Email")).toHaveAttribute("autocomplete", "email");
+    expect(screen.getByLabelText("Password")).toHaveAttribute("autocomplete", "new-password");
+  });
+
   it("says so when an advisor's session expired", () => {
     renderLogin({ audience: "advisor", reason: "expired", from: { pathname: "/advisor" } });
     expect(screen.getByRole("status")).toHaveTextContent("Your session expired. Sign in again to continue.");

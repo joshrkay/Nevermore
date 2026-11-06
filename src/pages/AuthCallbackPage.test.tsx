@@ -100,43 +100,34 @@ describe("AuthCallbackPage", () => {
     });
   });
 
-  describe("when Supabase verified the link and sent a session", () => {
+  describe("when the link carries a session instead of a code (an older email, or one crafted to sign this browser in as someone else)", () => {
     const granted = "/auth/callback#access_token=a.b.c&expires_in=3600&refresh_token=r1&token_type=bearer&type=signup";
 
-    it("waits while supabase-js signs the person in, then goes on once the session arrives", async () => {
-      auth.loading = true;
-      const view = open(granted);
-      expect(screen.getByRole("heading", { name: "Confirming your email" })).toBeInTheDocument();
-      auth.loading = false;
-      auth.user = confirmedUser;
-      view.rerender(tree("/auth/callback"));
-      expect(await screen.findByText("The Chamber")).toBeInTheDocument();
-      expect(toast.success).toHaveBeenCalledWith("Email confirmed. You're signed in as pat@example.com.");
-    });
-
-    it("goes on to the Chamber and says the email is confirmed", async () => {
-      auth.user = confirmedUser;
-      open(granted);
-      expect(await screen.findByText("The Chamber")).toBeInTheDocument();
-      // Names the account, since a link someone else sent would sign this browser in as them.
-      expect(toast.success).toHaveBeenCalledWith("Email confirmed. You're signed in as pat@example.com.");
-    });
-
-    it("goes where the person was headed, but only on this site", async () => {
-      auth.user = confirmedUser;
-      open(`/auth/callback?next=%2Fadvisor${granted.slice(granted.indexOf("#"))}`);
-      expect(await screen.findByText("Advisor queue")).toBeInTheDocument();
-    });
-
-    it("refuses a destination off the site", async () => {
-      auth.user = confirmedUser;
-      open(`/auth/callback?next=https%3A%2F%2Fevil.example${granted.slice(granted.indexOf("#"))}`);
-      expect(await screen.findByText("The Chamber")).toBeInTheDocument();
-    });
-
-    it("says so when no session came of it", () => {
+    it("signs nobody in and says the link didn't work, with a way to sign in or get a new link", () => {
       open(granted);
       expect(screen.getByRole("heading", { name: "This link didn't work" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Email you signed up with")).toBeInTheDocument();
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    it("doesn't say this browser's own account was just confirmed by it", async () => {
+      auth.user = confirmedUser;
+      open(granted);
+      expect(screen.getByRole("heading", { name: "This link didn't work" })).toBeInTheDocument();
+      expect(screen.getByText("This browser is signed in as pat@example.com.")).toBeInTheDocument();
+      expect(toast.success).not.toHaveBeenCalled();
+      // It stays put until the person chooses to continue.
+      expect(screen.queryByText("The Chamber")).not.toBeInTheDocument();
+    });
+
+    it("sends a guest back to their own intake", () => {
+      auth.user = { id: "guest" };
+      auth.isAnonymous = true;
+      open(granted);
+      expect(screen.getByRole("heading", { name: "This link didn't work" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Back to your intake" })).toHaveAttribute("href", "/start");
+      expect(toast.success).not.toHaveBeenCalled();
     });
   });
 

@@ -303,6 +303,15 @@ export function sendableKinds(config: DispatchConfig): OutboxKind[] {
   return kinds;
 }
 
+/**
+ * What a run answers its caller. The schedule (the service role) gets the counts; a browser (a prospect
+ * nudging the queue after certifying) only hears that the run happened, since the counts would tell
+ * anyone signed in how much email the team sends and whether the provider is failing.
+ */
+export function runReply(service: boolean, counts: Record<string, unknown>): Record<string, unknown> {
+  return service ? counts : { ok: true };
+}
+
 /** Which console a log line belongs on: a send is info, a heal is worth noticing, anything else is for the error log that operators alert on. */
 export function logLevel(line: string): "log" | "warn" | "error" {
   if (line.startsWith("OUTBOX_SENT:")) return "log";
