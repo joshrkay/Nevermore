@@ -352,10 +352,18 @@ read without running scripts.
 
 ## 7. Improving the process
 
-### 7.1 Record where every intake came from (a product change needed before the pilot)
+### 7.1 Record where every intake came from (built: J-2.3, D43)
 
-Today the funnel (`advisor_intake_funnel()`, D41) counts the steps intakes reach, but nothing records which channel
-an intake came from, so channels can't be compared. The proposal below keeps to D41's rule of storing no content:
+**Built on 2026-11-06** (migration `20261106100000`, plan story J-2.3, decision D43). What was built differs from the
+proposal below in two ways. The codes are kept in the visitor's browser for 30 days (`localStorage`), not only
+for the tab, so a referral still counts when the employer comes back days later; the last tagged link counts. And
+referral partners have their own page, `/advisor/partners`, with each partner's link and their counts for the last
+30 days. Landing-page visits are still not counted (GTM-D6). `docs/ADVISOR_CONSOLE.md` describes the screens, and
+`GLOSSARY.md` defines intake source, referral partner and referral code.
+
+Before this, the funnel (`advisor_intake_funnel()`, D41) counted the steps intakes reach, but nothing recorded
+which channel an intake came from, so channels couldn't be compared. The proposal kept to D41's rule of storing no
+content:
 
 - **The landing page notes the source.** It reads `ref`, `utm_source`, `utm_medium` and `utm_campaign` from the URL
   and keeps them in `sessionStorage` until an intake starts. Each read and write is wrapped in try/catch, and
@@ -424,7 +432,7 @@ before and after, and pair it with interviews. Real A/B tests come only after hu
 - Decide the revenue model (GTM-D1) with counsel, and name the legal reviewer (D10).
 - Clear the blockers in section 1.2: the scanner account, the sender domain, the response time and support email,
   the alert channel and the privacy contact.
-- Build source capture (section 7.1).
+- Build source capture (section 7.1). Done on 2026-11-06.
 - Fill in and date the catalog facts (`minHeadcount`, `statesServed`, `lastVerified`) for the five PEOs listed.
 - Have the 30 conversations in section 6.1. Change The Manuscript wherever underwriters say it falls short.
 - Publish the census template page and the sample Manuscript page, both readable by search engines.
@@ -502,7 +510,7 @@ These are guesses to replace with real numbers after the first four weeks.
 | GTM-D2 | Who we target first | Segments 1 and 2, with 10 to 75 employees, low-hazard industries, two or more states | PM + advisory lead | Phase 0 |
 | GTM-D3 | Pay for referral partners | No cash during the pilot. Counsel decides whether we ever pay | LEGAL | Before recruiting |
 | GTM-D4 | The response promise (`PROSPECT_RESPONSE_TIME`) | "1 business day", aiming for the same day | Advisory lead | Phase 0 |
-| GTM-D5 | Recording each intake's source (section 7.1) | Build it before the pilot | PM + FS | Phase 0 |
+| GTM-D5 | Recording each intake's source (section 7.1) | **Built 2026-11-06** (J-2.3, D43) | PM + FS | Phase 0 |
 | GTM-D6 | Counting landing-page visits | A cookieless counter if counsel agrees, otherwise none | PM + LEGAL | Phase 2 |
 | GTM-D7 | The landing page's "Who this is for" | Owners, ops leads, CPAs and fractional CFOs. Drop private-equity associates for now | PM | Phase 1 |
 

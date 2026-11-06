@@ -82,6 +82,14 @@ These make claims that only counsel can stand behind. They are not part of the p
     deleted. It is first-party and uses no cookie or tracker. Does the Privacy Policy's new line about it (rendered
     from `src/data/dataPolicy.ts`) say enough, and does keeping unattached rows after a deletion request fit the
     deletion commitment?
+    Since 2026-11-06 (D43) each intake also keeps its *intake source*: the referral code and campaign tags of the
+    link the visitor arrived by (`?ref=`, `utm_source`, `utm_medium`, `utm_campaign`), short codes kept for 30 days
+    in the visitor's own browser (local storage, not a cookie) and then with the intake and its milestones. The
+    codes are the same for everyone who follows a link and name no person. Does keeping them in the browser need
+    consent or a notice beyond the Privacy Policy's new line? *Referral partners* (`referral_partners`: a partner's
+    name, kind and code) are the advisory team's business contacts: may we tell a partner how many intakes their
+    link started and certified, as the go-to-market plan proposes, and does any referral arrangement with them
+    raise question 1?
 
 ## Approval record
 

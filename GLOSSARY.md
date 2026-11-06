@@ -136,8 +136,20 @@ A step an intake reached, recorded the first time it does: started, answered, a 
 _Avoid_: event, analytics event, conversion
 
 **Funnel**:
-The advisors' count, for the intakes started in a period, of how many reached each milestone and how long it took. Each step is counted against the intakes that started, since prospects don't all take them in the same order.
+The advisors' count, for the intakes started in a period, of how many reached each milestone and how long it took. Each step is counted against the intakes that started, since prospects don't all take them in the same order. The funnel by source counts the same intakes for each intake source.
 _Avoid_: analytics, report, conversion rate
+
+**Intake source**:
+Where an intake came from: the referral code and campaign tags (source, medium, campaign) of the last tagged link the prospect followed to the site, in the 30 days before the intake started. Each is kept as a short code, never free text. It is set when the intake is created and never changes; an intake started without a tagged link has none. Each milestone keeps it, so a deleted intake still counts for its source.
+_Avoid_: channel (a channel is a kind of source, such as referrals or search), attribution, lead source, UTM
+
+**Referral partner**:
+A person or firm outside the advisory team who sends employers to the site with a link carrying their own referral code, such as a fractional CFO or an accelerator. Advisors add and name them in the Advisor Console. A referral partner never sees a prospect's answers, only the counts an advisor sends them. A PEO is never a referral partner.
+_Avoid_: partner on its own, affiliate, referrer
+
+**Referral code**:
+The code in a referral partner's link (`?ref=`), which names that partner in the Advisor Console. It never changes once given, because links carrying it are already out. A code no partner has is still kept, and shows as unlisted.
+_Avoid_: promo code, tracking code
 
 ### Where an answer came from
 

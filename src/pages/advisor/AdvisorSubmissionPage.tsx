@@ -17,6 +17,7 @@ import { changesSinceSigning, NEEDS_ACTION_LABEL } from "@/data/advisor";
 import { censusPay, isW2 } from "@/data/census";
 import { coverageTier, NOT_PROVIDED } from "@/data/manuscript";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
+import { describeSource } from "@/data/referralPartners";
 import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
 
 type Load =
@@ -141,6 +142,7 @@ const Detail = ({
           {detail.contactName && ` · Contact: ${detail.contactName}`}
           {detail.phone && ` · ${detail.phone}`}
         </p>
+        <p className="text-sm text-muted-foreground mt-1">Source: {describeSource(detail.source, detail.sourcePartnerName)}</p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">

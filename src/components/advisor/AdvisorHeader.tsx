@@ -34,6 +34,12 @@ const AdvisorHeader = () => {
           >
             Funnel
           </NavLink>
+          <NavLink
+            to="/advisor/partners"
+            className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
+          >
+            Partners
+          </NavLink>
         </nav>
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
           <LegalLinks compact />

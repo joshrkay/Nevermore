@@ -94,7 +94,9 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
   // The gateway's log spans every test run since it started, so this test reads only what follows this point.
   const firstOwnRequest = (await readRequestLog(request)).length;
 
-  await test.step("Open the Chamber as a guest", async () => {
+  await test.step("Open the Chamber as a guest, having arrived by a referral partner's link", async () => {
+    // The link carries a referral code and a campaign tag (J-2.3); the app keeps them for the intake.
+    await page.goto("/?ref=E2E-Partner&utm_campaign=Pilot+Launch");
     await page.goto("/start");
     // Nothing about the company can be entered until the guest agrees to how it is used (US-6.2).
     await agreeToIntakeConsent(page);
@@ -123,6 +125,16 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     );
     expect(intakes).toBe(1);
     return id;
+  });
+
+  await test.step("The intake keeps the link it started from, and so does each step the funnel counts", async () => {
+    const rows = await queryDatabase<{ referral_code: string | null; utm_source: string | null; utm_campaign: string | null; milestones: string | null }>(
+      `SELECT s.referral_code, s.utm_source, s.utm_campaign,
+              (SELECT string_agg(DISTINCT m.referral_code || '|' || m.utm_campaign, ',') FROM intake_milestones m WHERE m.session_id = s.id) AS milestones
+         FROM chamber_sessions s WHERE s.id = $1`,
+      [sessionId],
+    );
+    expect(rows).toEqual([{ referral_code: "e2e-partner", utm_source: null, utm_campaign: "pilot-launch", milestones: "e2e-partner|pilot-launch" }]);
   });
 
   await test.step("The agreement is recorded with its wording, and the intake points to it", async () => {

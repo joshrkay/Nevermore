@@ -102,6 +102,12 @@ a sign-out the app asked for is remembered until the event arrives.
   row in `submission_status_history` at the current stage, with who and the note. It stays through
   stage changes, and the prospect never sees it.
 - Add internal notes (`advisor_notes`); notes can't be edited or deleted and prospects can't read them.
+- Read the funnel (`advisor_intake_funnel()`) and the funnel by source (`advisor_intake_sources()`), counts only.
+  Read the referral partners (`referral_partners`, advisors and admins only) and add or rename one only through
+  `advisor_add_referral_partner()` (a code already taken is refused, `23505`) and `advisor_update_referral_partner()`.
+  A partner's code never changes, and advisors can't remove a partner (`docs/DATA_HANDLING.md`). Nobody, advisors
+  included, can change an intake's source: it is set when the prospect's browser creates the intake (migration
+  `20261106100000`).
 - Read `intake_lifecycle_events`: every draft that expired, was archived by its prospect ("Start
   over") or was revoked, with who and why. The queue lists those intakes with their intake status
   (`expired`, `archived`, `revoked`).
