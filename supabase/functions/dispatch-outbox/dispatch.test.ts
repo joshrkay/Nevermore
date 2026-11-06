@@ -933,7 +933,7 @@ describe("dispatching the emails that link to the intake", () => {
     const { message } = sent[0];
     expect(message.to).toEqual(["jo@acme.example"]);
     expect(message.replyTo).toBe("support@example.com");
-    expect(message.subject).toBe("Your advisor needs a little more information (EAA-2026-0042)");
+    expect(message.subject).toBe("Your advisor needs a bit more info (EAA-2026-0042)");
     expect(message.text).toContain(`https://app.example.com/start?session=${SESSION}`);
     expect(message.text).toContain("- Pay frequency\n- Employee census\n");
     expect(message.text).not.toContain("not_a_field");
@@ -946,7 +946,7 @@ describe("dispatching the emails that link to the intake", () => {
     await dispatchEvents([reminderRow()], deps);
     expect(sent).toHaveLength(1);
     expect(sent[0].message.to).toEqual(["jo@acme.example"]);
-    expect(sent[0].message.subject).toBe("Your intake for Acme Co closes on 5 December 2026");
+    expect(sent[0].message.subject).toBe("Heads up: your intake for Acme Co closes on 5 December 2026");
     expect(sent[0].message.text).toContain(`https://app.example.com/start?session=${SESSION}`);
   });
 

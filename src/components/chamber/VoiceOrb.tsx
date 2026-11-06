@@ -85,7 +85,7 @@ const Orb = ({ size, orbState, onClick }: OrbProps) => {
         className={`w-full h-full rounded-full bg-gradient-to-br from-primary/80 to-primary/40 flex items-center justify-center transition-all duration-500 ${onClick ? "cursor-pointer" : ""} ${(size < SMALL_ORB ? smallOrbClasses : orbClasses)[orbState]}`}
         onClick={onClick}
       >
-        <div className="rounded-full bg-[#07080D] flex items-center justify-center" style={{ width: size * 0.82, height: size * 0.82 }}>
+        <div className="rounded-full bg-card flex items-center justify-center" style={{ width: size * 0.82, height: size * 0.82 }}>
           <div
             className={`rounded-full bg-gradient-to-br from-primary/60 to-primary/20 ${orbState === "speaking" ? "animate-pulse" : ""}`}
             style={{ width: size * 0.64, height: size * 0.64 }}
@@ -127,7 +127,7 @@ const VoiceOrb = ({
     // An icon alone is a square-ish pill; with its words (wide screens) it is a longer one.
     const pill = narrow ? "px-3" : "px-3 sm:px-4";
     return (
-      <div id={id} className="w-full" style={{ background: "#07080D" }}>
+      <div id={id} className="w-full bg-muted">
         <div className="flex items-center gap-3 px-4 py-2">
           <div className="p-1">
             <Orb size={COMPACT_ORB_SIZE} orbState={orbState} onClick={orbClick} />
@@ -201,7 +201,7 @@ const VoiceOrb = ({
   }
 
   return (
-    <div id={id} className="relative w-full flex flex-col items-center justify-center py-5" style={{ background: "#07080D" }}>
+    <div id={id} className="relative w-full flex flex-col items-center justify-center py-5 bg-muted">
       <div className="mb-4">
         <Orb size={orbSize} orbState={orbState} onClick={orbClick} />
       </div>

@@ -168,7 +168,7 @@ describe("prospect confirmation", () => {
       expect(body).toContain("within 2 business days");
       expect(body).toContain("support@mail.example.com");
     }
-    expect(rendered.subject).toBe("We received your intake (EAA-2026-AB12CD34)");
+    expect(rendered.subject).toBe("Your Nevermore intake is in (EAA-2026-AB12CD34)");
   });
 
   it("calls the identifier the File ID, as the prospect's signed Manuscript does", () => {
@@ -179,9 +179,12 @@ describe("prospect confirmation", () => {
     expect(`${rendered.text}\n${rendered.html}`).not.toMatch(/reference/i);
   });
 
-  it("is branded", () => {
-    expect(rendered.html).toContain("Edgar Allan Advisory");
-    expect(rendered.text).toContain("Edgar Allan Advisory");
+  it("is branded Nevermore, in the brand's colours, and signs off as the team", () => {
+    expect(rendered.html).toMatch(/<div style="[^"]*color:#B4372A;">Nevermore<\/div>/);
+    expect(rendered.html).toContain("background:#FFFBF6;");
+    expect(rendered.text.endsWith("\nThe Nevermore team")).toBe(true);
+    // The operator's name belongs to the legal pages; the emails speak as the brand.
+    expect(`${rendered.subject}\n${rendered.text}\n${rendered.html}`).not.toMatch(/Edgar Allan/);
   });
 
   it("holds no census, payroll or document details, whatever the payload carries", () => {
@@ -189,7 +192,7 @@ describe("prospect confirmation", () => {
     for (const word of SENSITIVE) {
       expect(`${email.subject}\n${email.text}\n${email.html}`.toLowerCase()).not.toContain(word.toLowerCase());
     }
-    expect(email.text).toContain("does not include your census, payroll or document details");
+    expect(email.text).toContain("doesn't include your census, payroll or document details");
   });
 
   it("stays PEO-neutral and never promises to act on the prospect's behalf", () => {
@@ -207,7 +210,7 @@ describe("prospect confirmation", () => {
 
   it("greets and names the company sensibly when those are missing", () => {
     const sparse = renderProspectConfirmation(parseProspectConfirmation({ ...payload, company_name: null, recipient_name: null })!, ctx);
-    expect(sparse.text).toContain("Hello,");
+    expect(sparse.text.startsWith("Hi there,\n")).toBe(true);
     expect(sparse.text).toContain("certified for your company.");
   });
 });
@@ -352,8 +355,9 @@ describe("information request", () => {
 
   it("says who asks, what, about which answers, and where to answer, escaped", () => {
     const r = renderInformationRequest(parseInformationRequest(payload)!, ctx);
-    expect(r.subject).toBe("Your advisor needs a little more information (EAA-2026-0042)");
-    expect(r.text).toContain("Hello Jo Doe,");
+    expect(r.subject).toBe("Your advisor needs a bit more info (EAA-2026-0042)");
+    expect(r.text).toContain("Hi Jo Doe,");
+    expect(r.text).toContain("certify again on the Certify & sign tab");
     expect(r.text).toContain("Their request\nPlease confirm your pay frequency.\n\nAnd upload the census <b>today</b>.");
     expect(r.text).toContain("What it's about\n- Pay frequency\n- Employee census");
     expect(r.text).toContain("File ID: EAA-2026-0042");
@@ -397,11 +401,11 @@ describe("draft expiry reminder", () => {
 
   it("says when the draft closes, in words, and how to keep it", () => {
     const r = renderDraftExpiryReminder(parseDraftExpiryReminder(payload)!, ctx);
-    expect(r.subject).toBe("Your intake for Acme Co closes on 5 December 2026");
+    expect(r.subject).toBe("Heads up: your intake for Acme Co closes on 5 December 2026");
     expect(r.text).toContain("will close on 5 December 2026 (UTC)");
     expect(r.text).toContain("any change keeps it open");
     expect(r.text).toContain("https://app.example.com/start?session=s1");
-    expect(r.text).toContain("If you no longer need it, you don't need to do anything.");
+    expect(r.text).toContain("If you don't need it anymore, there's nothing you need to do.");
     expect(r.text).not.toContain("File ID");
   });
 
@@ -414,8 +418,8 @@ describe("draft expiry reminder", () => {
 
   it("reads as about the prospect's company only when it has one", () => {
     const r = renderDraftExpiryReminder(parseDraftExpiryReminder({ ...payload, company_name: null, recipient_name: null })!, ctx);
-    expect(r.subject).toBe("Your intake for your company closes on 5 December 2026");
-    expect(r.text.startsWith("Hello,\n")).toBe(true);
+    expect(r.subject).toBe("Heads up: your intake for your company closes on 5 December 2026");
+    expect(r.text.startsWith("Hi there,\n")).toBe(true);
   });
 
   it("never carries intake contents a payload might hold", () => {

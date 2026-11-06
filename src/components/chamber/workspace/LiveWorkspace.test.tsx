@@ -17,7 +17,7 @@ const TABS = [
   ["⑥ Dependents", "Dependents"],
   ["⑦ Review", "Review"],
   ["⑧ PEO Match", "PEO Match"],
-  ["⑨ The Reckoning", "The Reckoning"],
+  ["⑨ Certify & sign", "Certify & sign"],
 ] as const;
 
 describe("LiveWorkspace", () => {
@@ -104,7 +104,7 @@ describe("LiveWorkspace", () => {
     expect(screen.getByRole("button", { name: "① Upload" })).not.toHaveAttribute("aria-current");
   });
 
-  it("moves from Review to PEO Match to The Reckoning", () => {
+  it("moves from Review to PEO Match to Certify & sign", () => {
     render(
       <MemoryRouter>
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
@@ -114,10 +114,10 @@ describe("LiveWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "See Your PEO Matches →" }));
     expect(screen.getByRole("heading", { name: "PEO Match" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Continue without choosing a PEO →" }));
-    expect(screen.getByRole("heading", { name: "The Reckoning" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Certify & sign" })).toBeInTheDocument();
   });
 
-  it("carries the chosen PEO into The Reckoning", () => {
+  it("carries the chosen PEO into Certify & sign", () => {
     render(
       <MemoryRouter>
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
@@ -132,7 +132,7 @@ describe("LiveWorkspace", () => {
     expect(screen.queryByText(/TriNet/)).not.toBeInTheDocument();
   });
 
-  it("carries a PEO the prospect typed in, not just the listed ones, into The Reckoning", () => {
+  it("carries a PEO the prospect typed in, not just the listed ones, into Certify & sign", () => {
     render(
       <MemoryRouter>
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
@@ -153,8 +153,8 @@ describe("LiveWorkspace", () => {
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} chosenPeo="Insperity" onChoosePeo={onChoosePeo} />
       </MemoryRouter>,
     );
-    // Opened straight on The Reckoning, as after a reload: the saved choice is already there.
-    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    // Opened straight on Certify & sign, as after a reload: the saved choice is already there.
+    fireEvent.click(screen.getByRole("button", { name: "⑨ Certify & sign" }));
     expect(screen.getByText(/prepared for Insperity/)).toBeInTheDocument();
     expect(screen.getByText(/send to Insperity myself/)).toBeInTheDocument();
 
@@ -171,13 +171,13 @@ describe("LiveWorkspace", () => {
     expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("TriNet");
   });
 
-  it("goes from The Reckoning back to Review to add a missing answer", () => {
+  it("goes from Certify & sign back to Review to add a missing answer", () => {
     render(
       <MemoryRouter>
         <LiveWorkspace data={{ ...DEMO_CHAMBER_DATA, pay_frequency: null }} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    fireEvent.click(screen.getByRole("button", { name: "⑨ Certify & sign" }));
     fireEvent.click(screen.getByRole("button", { name: "Go to Review" }));
     expect(screen.getByRole("heading", { name: "Review" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Still needed" })).toHaveTextContent("Pay frequency");
@@ -199,13 +199,13 @@ describe("LiveWorkspace", () => {
     expect(screen.getByRole("heading", { name: "Review" })).toHaveFocus();
   });
 
-  it("reaches The Reckoning with no PEO chosen without naming or inventing one", () => {
+  it("reaches Certify & sign with no PEO chosen without naming or inventing one", () => {
     render(
       <MemoryRouter>
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "⑨ The Reckoning" }));
+    fireEvent.click(screen.getByRole("button", { name: "⑨ Certify & sign" }));
     expect(screen.getByText(/prepared for your PEO/)).toBeInTheDocument();
     expect(screen.getByText(/send to the PEO I choose myself/)).toBeInTheDocument();
     expect(screen.queryByText(/null|undefined|TriNet|Justworks|Rippling/)).not.toBeInTheDocument();

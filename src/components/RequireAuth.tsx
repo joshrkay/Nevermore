@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { RavenIcon } from "./RavenLogo";
+import { BrandMark } from "@/components/BrandMark";
 import TurnstileWidget from "./TurnstileWidget";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -30,8 +30,8 @@ const RequireAuth = ({ children }: { children: ReactNode }) => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <RavenIcon className="w-10 h-10 text-primary mx-auto mb-4 animate-pulse" />
-          <p className="text-sm text-muted-foreground">Entering The Chamber...</p>
+          <BrandMark className="w-10 h-10 text-primary mx-auto mb-4 animate-pulse" />
+          <p className="text-sm text-muted-foreground">Opening your intake...</p>
           {!loading && !user && siteKey && !captchaToken && (
             <div className="mt-6 flex justify-center">
               <TurnstileWidget siteKey={siteKey} onToken={setCaptchaToken} onError={() => setGuestFailed(true)} />

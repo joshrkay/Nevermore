@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { RavenIcon } from "@/components/RavenLogo";
+import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { authErrorMessage } from "@/data/authRateLimit";
@@ -44,11 +44,11 @@ const Card = ({ title, children }: { title: string; children: ReactNode }) => {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => heading.current?.focus(), [title]);
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center px-6 noise-overlay">
+    <div className="min-h-screen bg-background flex items-center justify-center px-6">
       <div className="w-full max-w-md relative z-10">
         <Link to="/" className="flex items-center justify-center gap-2 mb-10">
-          <RavenIcon className="w-8 h-8 text-primary" />
-          <span className="font-display text-lg">Edgar Allan Advisory</span>
+          <BrandMark className="w-9 h-9 text-primary" />
+          <Wordmark className="text-3xl" />
         </Link>
         <div className="bg-card border border-border rounded-xl p-8 space-y-5">
           <h1 ref={heading} tabIndex={-1} className="font-display text-2xl font-bold text-center outline-none">{title}</h1>

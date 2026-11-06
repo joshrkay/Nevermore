@@ -20,6 +20,6 @@ describe("Navbar", () => {
     expect(close).toHaveAttribute("aria-expanded", "true");
     const menu = document.getElementById(close.getAttribute("aria-controls") ?? "");
     expect(menu).not.toBeNull();
-    expect(menu).toHaveTextContent("Sample Manuscript");
+    expect(menu).toHaveTextContent("Sample packet");
   });
 });
