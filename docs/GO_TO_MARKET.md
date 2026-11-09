@@ -274,16 +274,15 @@ broker, you answer each question once, see exactly what is still open, and keep 
 | Referral partner | "Clients ask me about PEOs, and I can't spend hours on it" | "Send one link. Your client gets a neutral, complete packet." | Counts from their own link |
 | PEO underwriter | "Incomplete submissions, and three email threads for each one" | The landing page's "A packet your underwriters can work from" | The sample Manuscript |
 
-**Brand.** The gothic voice (Nevermore, Lenore, The Chamber, The Reckoning) makes us memorable in a dull category.
-Keep it for brand moments. But in the first three seconds of any ad, email or page, state the plain outcome: "a PEO
-underwriting packet in one sitting". Three changes to the landing page:
+**Brand.** The rebrand to Nevermore (pull request 78, 7 November 2026) made two of the three landing-page changes
+this plan asked for. The headline now leads with the outcome ("Never more back-and-forth."), and prospects no longer
+see the gothic names: they read "your intake", the "Certify & sign" tab and "your packet", and Lenore speaks plainly.
+`GLOSSARY.md` lists the names prospects see. What remains:
 
-- **Test the headline.** "Nevermore will HR slow you down" never says PEO. Test it against a version that leads with
-  the outcome.
-- **Update "Who this is for"** to the audiences chosen here: owners, ops leads, and CPAs and fractional CFOs. Leave
-  out private-equity associates until there is something built for them.
-- **Ask first-time buyers how the names land.** In the pilot interviews, find out whether "The Reckoning" unsettles
-  someone about to hand over employee data.
+- **Update "Who this is for"** to the audiences chosen here: owners, ops leads, and CPAs and fractional CFOs. The
+  page still lists brokers, CPAs doing due diligence and private-equity associates. Leave out private-equity
+  associates until there is something built for them (GTM-D7).
+- **Keep the outcome first** in every ad, email and page: "a PEO underwriting packet in one sitting".
 
 ---
 

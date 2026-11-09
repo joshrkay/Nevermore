@@ -91,6 +91,7 @@
 \i supabase/migrations/20261105092000_intake_milestones.sql
 \i supabase/migrations/20261106090000_hardening.sql
 \i supabase/migrations/20261106100000_intake_sources.sql
+\i supabase/migrations/20261107090000_intake_consent_v2.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

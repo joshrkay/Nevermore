@@ -334,7 +334,7 @@ export const DATA_CLASSES: DataClass[] = [
     id: "funnel",
     label: "Intake progress (the pilot funnel)",
     sensitivity: "internal",
-    examples: "Which steps each intake reached (started, first answer, a document, a census, ready to certify, a verified email, certified, The Manuscript downloaded), when, and when the intake started; and the referral code and campaign tags of the link the intake was started from, as short codes. Never an answer, a name, an address or a document.",
+    examples: "Which steps each intake reached (started, first answer, a document, a census, ready to certify, a verified email, certified, the packet downloaded), when, and when the intake started; and the referral code and campaign tags of the link the intake was started from, as short codes. Never an answer, a name, an address or a document.",
     stored: {
       tables: ["intake_milestones", "chamber_sessions"],
       buckets: [],
