@@ -624,11 +624,11 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "Nevermore_Packet_EAA-2026-S1_Signed_Co_20261001_advisor-v2.pdf"));
   });
 
-  it("reloads, and keeps no file, when the prospect certified again while the Manuscript was being generated", async () => {
+  it("reloads, and keeps no file, when the prospect certified again while the packet was being generated", async () => {
     renderPage();
     await screen.findByRole("heading", { name: "Signed Co" });
     api.saveManuscriptVersion.mockRejectedValue(
-      Object.assign(new Error("The prospect certified their intake again while this Manuscript was being generated; generate it again"), {
+      Object.assign(new Error("The prospect certified their intake again while this packet was being generated; generate it again"), {
         code: "PT409",
       }),
     );

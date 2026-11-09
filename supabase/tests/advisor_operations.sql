@@ -116,6 +116,7 @@ $$;
 \i supabase/migrations/20261104114000_paged_advisor_queue.sql
 \i supabase/migrations/20261104115000_advisor_review_followups.sql
 \i supabase/migrations/20261104122000_pipeline_transitions.sql
+\i supabase/migrations/20261109090000_packet_error_messages.sql
 
 -- Runs `stmt` as `who` and fails the run unless it's refused (permission, row security or a
 -- deliberate check).
