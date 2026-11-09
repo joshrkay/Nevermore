@@ -28,6 +28,20 @@ const renderLanding = (entry = "/") =>
     </MemoryRouter>,
   );
 
+describe("who it's for", () => {
+  // The audiences the go-to-market plan chose (docs/GO_TO_MARKET.md, GTM-D7), and none it left out.
+  it("names owners, ops leads, and CPAs and fractional CFOs, and not brokers or private-equity associates", () => {
+    renderLanding();
+    const list = screen.getByRole("heading", { name: "Made for people who need the packet yesterday" }).nextElementSibling as HTMLElement;
+    const items = [...list.querySelectorAll("li")].map((li) => li.textContent);
+    expect(items).toHaveLength(4);
+    expect(items.join(" ")).toMatch(/Business owners/);
+    expect(items.join(" ")).toMatch(/Ops leads and office managers/);
+    expect(items.join(" ")).toMatch(/CPAs and fractional CFOs/);
+    expect(items.join(" ")).not.toMatch(/\bbrokers?\b|\bPE associates\b|private.equity/i);
+  });
+});
+
 describe("landing page links", () => {
   it("points every in-page link at a section that exists", () => {
     const { container } = renderLanding();

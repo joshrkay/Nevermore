@@ -41,11 +41,14 @@ const FAMILIAR = [
   "Waited three weeks. The quote had the wrong class codes.",
 ];
 
+// Who the pilot sells to first (docs/GO_TO_MARKET.md, section 4, decision GTM-D7): the owner who decides, the ops
+// lead who does the work, and the CPA or fractional CFO they ask. Brokers and private-equity diligence are left out
+// until there is something built for them. Four, so the two-column grid stays even.
 const AUDIENCE = [
   "Business owners who've been through this before and want it faster.",
-  "Brokers who need to move before the client loses patience.",
-  "CPAs doing HR due diligence who need a number before the close.",
-  "PE associates running comps on a target before the deal moves.",
+  "Founders deciding whether a PEO is worth it before the next hire.",
+  "Ops leads and office managers who'd rather not chase the same reports twice.",
+  "CPAs and fractional CFOs whose clients keep asking about PEOs.",
 ];
 
 const STEPS = [

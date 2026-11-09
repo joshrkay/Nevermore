@@ -274,14 +274,14 @@ broker, you answer each question once, see exactly what is still open, and keep 
 | Referral partner | "Clients ask me about PEOs, and I can't spend hours on it" | "Send one link. Your client gets a neutral, complete packet." | Counts from their own link |
 | PEO underwriter | "Incomplete submissions, and three email threads for each one" | The landing page's "A packet your underwriters can work from" | The sample Manuscript |
 
-**Brand.** The rebrand to Nevermore (pull request 78, 7 November 2026) made two of the three landing-page changes
-this plan asked for. The headline now leads with the outcome ("Never more back-and-forth."), and prospects no longer
-see the gothic names: they read "your intake", the "Certify & sign" tab and "your packet", and Lenore speaks plainly.
-`GLOSSARY.md` lists the names prospects see. What remains:
+**Brand.** The three landing-page changes this plan asked for are made. The rebrand to Nevermore (pull request 78,
+7 November 2026) made two: the headline now leads with the outcome ("Never more back-and-forth."), and prospects no
+longer see the gothic names: they read "your intake", the "Certify & sign" tab and "your packet", and Lenore speaks
+plainly. `GLOSSARY.md` lists the names prospects see. And "Who this is for" now names the audiences chosen here
+(GTM-D7, 9 November 2026): owners who have been through a PEO move before, founders deciding whether a PEO is worth
+it, ops leads and office managers, and CPAs and fractional CFOs. Brokers and private-equity associates are left out
+until there is something built for them. What remains:
 
-- **Update "Who this is for"** to the audiences chosen here: owners, ops leads, and CPAs and fractional CFOs. The
-  page still lists brokers, CPAs doing due diligence and private-equity associates. Leave out private-equity
-  associates until there is something built for them (GTM-D7).
 - **Keep the outcome first** in every ad, email and page: "a PEO underwriting packet in one sitting".
 
 ---
@@ -403,7 +403,6 @@ The steps are D41's milestones. Each step is counted against intakes that starte
 
 ### 7.4 Experiments to try, one or two at a time
 
-- **Headline:** the brand line against the outcome line.
 - **Sample Manuscript:** linked above the fold against below it.
 - **Census template:** downloadable before an intake starts against only inside the Chamber.
 - **Voice:** offered against not offered, measured by how many intakes get certified (D8, the beta).
@@ -511,7 +510,7 @@ These are guesses to replace with real numbers after the first four weeks.
 | GTM-D4 | The response promise (`PROSPECT_RESPONSE_TIME`) | "1 business day", aiming for the same day | Advisory lead | Phase 0 |
 | GTM-D5 | Recording each intake's source (section 7.1) | **Built 2026-11-06** (J-2.3, D43) | PM + FS | Phase 0 |
 | GTM-D6 | Counting landing-page visits | A cookieless counter if counsel agrees, otherwise none | PM + LEGAL | Phase 2 |
-| GTM-D7 | The landing page's "Who this is for" | Owners, ops leads, CPAs and fractional CFOs. Drop private-equity associates for now | PM | Phase 1 |
+| GTM-D7 | The landing page's "Who this is for" | **Done 9 November 2026:** owners, founders, ops leads, and CPAs and fractional CFOs; brokers and private-equity associates dropped for now | PM | Phase 1 |
 
 ---
 
