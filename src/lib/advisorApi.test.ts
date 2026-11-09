@@ -304,7 +304,7 @@ describe("a Manuscript version names the certification it was built from", () =>
   it("removes the uploaded file when the database refuses the version, and reports the refusal's code", async () => {
     rpc.mockResolvedValue({
       data: null,
-      error: { message: "The prospect certified their intake again while this Manuscript was being generated; generate it again", code: "PT409" },
+      error: { message: "The prospect certified their intake again while this packet was being generated; generate it again", code: "PT409" },
     });
     const err = await caught(() => saveManuscriptVersion(opts));
     expect(err.code).toBe("PT409");
