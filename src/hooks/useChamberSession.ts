@@ -9,6 +9,7 @@ import { dedupeGreetings, isGreeting, openingMessage, parseTranscript } from "@/
 import { parseChamberData } from "@/data/chamberValidation";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { clearBackup, pruneBackups, readBackup, writeBackup, type IntakeBackup } from "@/data/intakeBackup";
+import { intakeSourceColumns, recalledSource } from "@/data/intakeSource";
 import { INTAKE_SCHEMA_VERSION, validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
@@ -945,6 +946,9 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           field_provenance: sent.provenance as unknown as Json,
           transcript: sent.messages as unknown as Json,
           chosen_peo: sent.peo,
+          // The link the visitor arrived by, if it carried a referral code or campaign tags. Set only here: the
+          // database keeps it fixed from now on.
+          ...intakeSourceColumns(recalledSource()),
         })
         .select("id, data_version, file_id")
         .single();

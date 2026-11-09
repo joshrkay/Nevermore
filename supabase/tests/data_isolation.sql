@@ -90,6 +90,7 @@
 \i supabase/migrations/20261105091000_draft_expiry_reminders.sql
 \i supabase/migrations/20261105092000_intake_milestones.sql
 \i supabase/migrations/20261106090000_hardening.sql
+\i supabase/migrations/20261106100000_intake_sources.sql
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 SET client_min_messages = notice;
@@ -320,6 +321,8 @@ BEGIN
   PERFORM public.review_submission_field(pa_cert, 'company_name', 'verified');
   -- A request for information on prospect B's submission (20261105090000), so its table has a row to protect.
   PERFORM public.advisor_request_information(pb_cert, 'Please confirm the pay frequency', ARRAY['pay_frequency']);
+  -- A referral partner (20261106100000), so its table has a row to protect.
+  PERFORM public.advisor_add_referral_partner('acme-cfo', 'Acme CFO Partners', 'accounting');
   SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = pa_cert;
   INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', pa_cert || '/v1-matrix.pdf');
   PERFORM public.record_manuscript_version(pa_cert, 1, pa_cert || '/v1-matrix.pdf', repeat('c', 64), latest, 0, false,
@@ -403,6 +406,9 @@ INSERT INTO matrix VALUES
   ('public.information_requests',                       '{"advisor":"all","admin":"all"}'),
   -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
   ('public.intake_milestones',                          '{}'),
+  -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
+  -- advisor_add_referral_partner() and advisor_update_referral_partner().
+  ('public.referral_partners',                          '{"advisor":"all","admin":"all"}'),
   ('public.intake_lifecycle_events',                    '{"advisor":"all","admin":"all"}'),
   ('public.intake_deletions',                           '{"advisor":"all","admin":"all"}'),
   -- Monitoring is the admin's: advisors don't need failure codes, routes or account ids.
@@ -645,6 +651,7 @@ INSERT INTO callable VALUES
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
+  ('is_source_code(p_code text)',              'anyone',  NULL, 'pure: whether a referral or campaign code is well formed; the intake source check constraints call it as the writer'),
   ('intake_missing_required(d jsonb)',         'helper',  NULL, 'the certification gate''s trigger calls it as the signed-in prospect; pure: required answers missing from the jsonb it is given'),
   ('intake_answers_present(p_data jsonb)',     'helper',  NULL, 'pure: which answers the jsonb it is given holds; behind intake_missing_required and intake_required_items'),
   ('intake_required_items(p_data jsonb, p_provenance jsonb, p_verified text[])', 'helper', NULL, 'pure: each required item''s state for the jsonb it is given; behind the advisor queue (B-2.2)'),
@@ -704,6 +711,12 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_request_information(%1$L, ''probe'', ''{}'')', 'asking the prospect for information'),
   ('advisor_intake_funnel(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
                                                                      'SELECT count(*) FROM public.advisor_intake_funnel(now() - interval ''1 day'', now())', 'the pilot funnel'),
+  ('advisor_intake_sources(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
+                                                                     'SELECT count(*) FROM public.advisor_intake_sources(now() - interval ''1 day'', now())', 'the funnel by source'),
+  ('advisor_add_referral_partner(p_code text, p_name text, p_kind text)', 'advisor',
+                                                                     'SELECT public.advisor_add_referral_partner(''probe-partner'', ''Probe'', ''other'')', 'adding a referral partner'),
+  ('advisor_update_referral_partner(p_code text, p_name text, p_kind text)', 'advisor',
+                                                                     'SELECT public.advisor_update_referral_partner(''acme-cfo'', ''Probe'', ''other'')', 'renaming a referral partner'),
   ('revoke_chamber_session(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.revoke_chamber_session(%2$L, ''probe'')', 'closing a draft for good'),
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
   ('retry_intake_deletion(p_deletion_id uuid)', 'admin',  'SELECT public.retry_intake_deletion(%2$L)', 'retrying a failed deletion'),

@@ -41,6 +41,8 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   needsAction: { on: false, note: null, at: null, by: null, byEmail: null },
   createdAt: "2026-10-01T00:00:00Z",
   updatedAt: "2026-10-01T00:00:00Z",
+  source: { referral_code: null, utm_source: null, utm_medium: null, utm_campaign: null },
+  sourcePartnerName: null,
   data: signedData,
   // As stored: only what the prospect gave, before the browser fills in empty fields.
   storedAnswers: { company_name: "Signed Co", employee_count: 12, pay_frequency: "Bi-weekly" },
@@ -118,6 +120,22 @@ describe("AdvisorSubmissionPage", () => {
 
     fireEvent.click(within(count).getByRole("button", { name: "View in transcript" }));
     expect(screen.getByText("We're about a dozen people.").closest("li")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("says where the intake came from: the partner who referred it and the campaign tags, or that it had no tagged link", async () => {
+    api.loadSubmission.mockResolvedValue(
+      detail({
+        source: { referral_code: "acme-cfo", utm_source: "partner", utm_medium: null, utm_campaign: null },
+        sourcePartnerName: "Acme CFO Partners",
+      }),
+    );
+    const { unmount } = renderPage();
+    expect(await screen.findByText("Source: Referred by Acme CFO Partners · Campaign: partner")).toBeInTheDocument();
+    unmount();
+
+    api.loadSubmission.mockResolvedValue(detail());
+    renderPage();
+    expect(await screen.findByText("Source: No tagged link")).toBeInTheDocument();
   });
 
   it("groups the fields into The Manuscript's seven sections, the census table in Workforce", async () => {

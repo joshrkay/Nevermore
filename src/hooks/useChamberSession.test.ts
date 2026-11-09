@@ -137,6 +137,7 @@ const { applyExtraction } = await import("@/data/provenance");
 const { parseChamberData } = await import("@/data/chamberValidation");
 const { createChatMessage, OPENING_MESSAGE } = await import("@/data/chat");
 const { readBackup, writeBackup } = await import("@/data/intakeBackup");
+const { captureIntakeSource } = await import("@/data/intakeSource");
 
 // Lets queued promise callbacks run while fake timers are active (waitFor would hang).
 const drain = () => act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
@@ -355,6 +356,23 @@ describe("useChamberSession", () => {
     expect(inserts).toBe(0);
     // Nothing of the prospect's answers is kept in this browser.
     expect(Object.keys(localStorage).filter((k) => k.includes("prospects-intake"))).toEqual([]);
+  });
+
+  it("creates the intake with the codes of the link the visitor arrived by", async () => {
+    captureIntakeSource("?ref=Acme-CFO&utm_campaign=Renewals+2027");
+    const { result } = renderHook(() => useChamberSession());
+    await startIntake(result);
+    expect(insertedRows[0]).toMatchObject({ referral_code: "acme-cfo", utm_campaign: "renewals-2027" });
+    // Only the codes there are: no column is sent for a tag the link didn't carry.
+    expect(insertedRows[0]).not.toHaveProperty("utm_source");
+  });
+
+  it("creates the intake with no source columns when the visitor arrived by no tagged link", async () => {
+    const { result } = renderHook(() => useChamberSession());
+    await startIntake(result);
+    for (const column of ["referral_code", "utm_source", "utm_medium", "utm_campaign"]) {
+      expect(insertedRows[0]).not.toHaveProperty(column);
+    }
   });
 
   it("starts a fresh session only once the prospect asks for one", async () => {

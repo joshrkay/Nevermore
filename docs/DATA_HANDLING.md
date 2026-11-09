@@ -48,10 +48,14 @@ doesn't.
 | Accounts and access | Confidential | Accounts (guests included), profiles (including whether, and since when, the account asked for draft reminders), advisor and admin roles | `profiles`, `user_roles`; Supabase Auth | Until the account is deleted; roles reviewed quarterly (`docs/RUNBOOK.md`) | An admin, on request ("Deleting an account") |
 | Lifecycle and deletion records | Internal | When a draft expired, was started over or revoked; every deletion with who asked and how much was removed | `intake_lifecycle_events`, `intake_deletions` | Lifecycle records with the intake; deletion records for good (ids and counts only) | Lifecycle records by the deletion process; deletion records are never deleted |
 | Operational monitoring and abuse limits | Internal | Failure counts and codes, alerts raised, a record of each AI call (ids, codes and field names, never values), AI rate-limit counters (a one-way hash of the network address, never the address), the per-year counter that numbers File IDs | `ops_events`, `ops_alerts`, `ai_extraction_events`, `ai_request_log`, `ai_ip_log`, `ai_global_usage`, `submission_reference_counters`; Supabase and Vercel logs | Events, AI call records and daily AI totals 90 days; rate-limit records 1 day; alerts for incident review | The retention jobs; AI call records for an intake also with the intake |
-| Intake progress (the pilot funnel) | Internal | Which steps each intake reached (started, first answer, a document, a census, ready to certify, a verified email, certified, The Manuscript downloaded), when, and when it started; never an answer, a name, an address or a document | `intake_milestones` | 365 days from the intake's start, a whole start date at once | `run_retention()`; deleting an intake removes its link to these rows, which stay unattached so the funnel still counts it |
+| Intake progress (the pilot funnel) | Internal | Which steps each intake reached (started, first answer, a document, a census, ready to certify, a verified email, certified, The Manuscript downloaded), when, and when it started; and the referral code and campaign tags of the link it was started from, as short codes (its intake source); never an answer, a name, an address or a document | `intake_milestones`; the source codes also in `chamber_sessions` | 365 days from the intake's start, a whole start date at once; the codes on the intake itself, with the intake | `run_retention()`; deleting an intake removes its link to these rows, which stay unattached (source codes included) so the funnel still counts it |
+| Referral partners | Confidential | The people and firms who refer employers: name, kind of partner, the code in their link, and which advisor added or last changed them | `referral_partners` | While we work with the partner, so past intakes' codes still name them | An admin, on the partner's request or when we stop working with them (below) |
 
 The prospect's browser also keeps a copy of answers whose save hasn't been confirmed, for at most 7 days, in
-that browser only (`src/data/intakeBackup.ts`).
+that browser only (`src/data/intakeBackup.ts`). It also keeps the referral code and campaign tags of the last
+tagged link the visitor followed, for at most 30 days, and sends them with the intake when one is started
+(`src/data/intakeSource.ts`). Those codes are the same for everyone who follows the same link, so they identify
+nobody.
 
 ## Retention windows
 
@@ -64,7 +68,8 @@ that browser only (`src/data/intakeBackup.ts`).
 | Operational events | 90 days | Pruned | `run_retention()` |
 | AI call records (`ai_extraction_events`) | 90 days | Pruned | `prune_ai_extraction_events()`, daily (`prune-ai-extraction-events` job) |
 | Email delivery events | 365 days | Pruned; a suppression keeps its address | `run_retention()` |
-| Intake milestones (`intake_milestones`) | 365 days from the intake's start | Pruned, a whole start date at once | `run_retention()` |
+| Intake milestones (`intake_milestones`), with their source codes | 365 days from the intake's start | Pruned, a whole start date at once | `run_retention()` |
+| The last tagged link's codes, in the visitor's browser | 30 days, or until a later tagged link replaces them | Removed from the browser | `recalledSource()` in `src/data/intakeSource.ts` |
 | AI rate-limit records | 1 day | Pruned | `run_retention()` (and the limiter itself, per caller) |
 | Deletion records | For good | Never deleted (no intake content) | — |
 
@@ -163,6 +168,18 @@ After the account's intakes are deleted (above):
    from before intakes existed sit directly under it).
 3. If they asked, `delete from public.email_suppressions where address = lower('person@example.com');`.
    Delivery events with their address age out within 365 days.
+
+### Removing a referral partner
+
+Advisors can add and rename partners but not remove one, because past intakes carry the partner's code. When a
+partner asks to be removed, or the team stops working with them, an admin runs, from the SQL editor:
+
+```sql
+delete from public.referral_partners where code = '<code>';
+```
+
+Intakes and milestones keep the code, which then shows as unlisted; nothing else names the partner. Tell the
+partner their link no longer counts for them.
 
 ### Reviewing submitted records
 

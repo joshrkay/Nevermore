@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
@@ -13,10 +13,12 @@ import {
   isFunnelPeriod,
   type FunnelPeriodKey,
   type FunnelRow,
+  type FunnelStep,
 } from "@/data/funnel";
-import { loadFunnel } from "@/lib/advisorApi";
+import { sourceRows, sourceTitle, type SourceRow } from "@/data/referralPartners";
+import { loadFunnel, loadIntakeSources } from "@/lib/advisorApi";
 
-type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; rows: FunnelRow[] };
+type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; rows: FunnelRow[]; sources: SourceRow[] };
 
 /**
  * The pilot funnel: of the intakes started in a period, how many reached each step, and the median time it took.
@@ -33,8 +35,8 @@ const AdvisorFunnelPage = () => {
     let cancelled = false;
     setLoad({ kind: "loading" });
     const { from, to } = funnelRange(period);
-    loadFunnel(from, to)
-      .then((raw) => !cancelled && setLoad({ kind: "ready", rows: funnelRows(raw) }))
+    Promise.all([loadFunnel(from, to), loadIntakeSources(from, to)])
+      .then(([raw, sources]) => !cancelled && setLoad({ kind: "ready", rows: funnelRows(raw), sources: sourceRows(sources) }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => {
       cancelled = true;
@@ -84,7 +86,10 @@ const AdvisorFunnelPage = () => {
             <p className="text-sm text-muted-foreground">Choose a longer period, or come back once prospects have started.</p>
           </div>
         ) : (
-          <FunnelTable rows={load.rows} />
+          <>
+            <FunnelTable rows={load.rows} />
+            <SourceTable sources={load.sources} />
+          </>
         ))}
 
         <p className="text-xs text-muted-foreground mt-6">
@@ -125,6 +130,61 @@ const FunnelTable = ({ rows }: { rows: FunnelRow[] }) => (
       ))}
     </tbody>
   </table>
+);
+
+// The steps compared across sources: enough to see where each channel's intakes stop, in a table that fits the page.
+const SOURCE_STEPS: { step: FunnelStep; label: string }[] = [
+  { step: "started", label: "Started" },
+  { step: "answered", label: "First answer" },
+  { step: "census_provided", label: "Census" },
+  { step: "ready_to_certify", label: "Ready to certify" },
+  { step: "certified", label: "Certified" },
+];
+
+/** The same intakes, by the link each started from: the sources with the most intakes first. */
+const SourceTable = ({ sources }: { sources: SourceRow[] }) => (
+  <section aria-labelledby="by-source-heading" className="mt-10">
+    <h2 id="by-source-heading" className="font-display text-xl font-bold mb-1">By source</h2>
+    <p className="text-sm text-muted-foreground mb-4">
+      Where these intakes came from: the referral code or campaign tags of the link each one was started from. Intakes
+      started without a tagged link are counted together.{" "}
+      <Link to="/advisor/partners" className="underline underline-offset-2 hover:text-foreground">Referral partners</Link>
+    </p>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm border-collapse">
+        <caption className="sr-only">Intakes from each source that reached each step</caption>
+        <thead>
+          <tr className="text-left text-xs text-muted-foreground border-b border-border">
+            <th scope="col" className="py-2 pr-4 font-normal">Source</th>
+            {SOURCE_STEPS.map((s) => (
+              <th key={s.step} scope="col" className="py-2 pr-4 font-normal text-right whitespace-nowrap">{s.label}</th>
+            ))}
+            <th scope="col" className="py-2 font-normal text-right whitespace-nowrap">Certified of started</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sources.map((row) => {
+            const { title, detail } = sourceTitle(row);
+            const started = row.counts.started;
+            return (
+              <tr key={[row.source.referral_code, row.source.utm_source, row.source.utm_medium, row.source.utm_campaign].join("|")} className="border-b border-border/60">
+                <th scope="row" className="py-2.5 pr-4 font-normal text-left">
+                  <span className="block">{title}</span>
+                  {detail && <span className="block text-xs text-muted-foreground font-mono">{detail}</span>}
+                </th>
+                {SOURCE_STEPS.map((s) => (
+                  <td key={s.step} className="py-2.5 pr-4 text-right tabular-nums">{row.counts[s.step].toLocaleString("en-US")}</td>
+                ))}
+                <td className="py-2.5 text-right tabular-nums text-muted-foreground">
+                  {formatShare(started > 0 ? Math.min(row.counts.certified / started, 1) : null)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  </section>
 );
 
 export default AdvisorFunnelPage;

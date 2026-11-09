@@ -136,6 +136,12 @@ export type Database = {
           last_activity_at: string
           // The intake schema version chamber_data follows (supabase/functions/_shared/intakeSchema.ts).
           schema_version: number
+          // The referral code and campaign tags of the link the intake started from (20261106100000): short codes
+          // (src/data/intakeSource.ts), set when the intake is created and never changed.
+          referral_code: string | null
+          utm_campaign: string | null
+          utm_medium: string | null
+          utm_source: string | null
           // in_progress | submitted | expired | archived | revoked (the last three are closed).
           status: string
           submission: Json | null
@@ -154,12 +160,16 @@ export type Database = {
           id?: string
           intake_consent_id?: never
           last_activity_at?: never
+          referral_code?: string | null
           schema_version?: never
           status?: string
           submission?: Json | null
           transcript?: Json
           updated_at?: string
           user_id: string
+          utm_campaign?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
         }
         Update: {
           chamber_data?: Json
@@ -172,12 +182,17 @@ export type Database = {
           id?: string
           intake_consent_id?: never
           last_activity_at?: never
+          // The source is fixed when the intake is created: the database keeps it whatever an update sends.
+          referral_code?: never
           schema_version?: never
           status?: string
           submission?: Json | null
           transcript?: Json
           updated_at?: string
           user_id?: string
+          utm_campaign?: never
+          utm_medium?: never
+          utm_source?: never
         }
         Relationships: []
       }
@@ -275,6 +290,23 @@ export type Database = {
           requested_by: string | null
           requested_by_email: string | null
           session_id: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // Who refers employers, by the code in their link (20261106100000). Advisors read it; it is written only
+      // through advisor_add_referral_partner and advisor_update_referral_partner.
+      referral_partners: {
+        Row: {
+          code: string
+          created_at: string
+          created_by_email: string | null
+          // One of REFERRAL_PARTNER_KINDS (src/data/referralPartners.ts).
+          kind: string
+          name: string
+          updated_at: string
+          updated_by_email: string | null
         }
         Insert: never
         Update: never
@@ -413,6 +445,36 @@ export type Database = {
       advisor_intake_funnel: {
         Args: { p_from: string; p_to: string }
         Returns: { step: number; milestone: string; intakes: number; median_minutes: number | null }[]
+      }
+      // The funnel by source (20261106100000): for intakes started in the period, each source and how many of its
+      // intakes reached each step. Intakes with no source are one row whose codes are all null.
+      advisor_intake_sources: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          referral_code: string | null
+          partner_name: string | null
+          utm_source: string | null
+          utm_medium: string | null
+          utm_campaign: string | null
+          started: number
+          answered: number
+          document_uploaded: number
+          census_provided: number
+          ready_to_certify: number
+          email_verified: number
+          certified: number
+          manuscript_downloaded: number
+        }[]
+      }
+      // Adds a referral partner under a new code; a code already taken is refused (23505).
+      advisor_add_referral_partner: {
+        Args: { p_code: string; p_name: string; p_kind: string }
+        Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
+      }
+      // Renames a referral partner or changes its kind; the code never changes.
+      advisor_update_referral_partner: {
+        Args: { p_code: string; p_name: string; p_kind: string }
+        Returns: Database["public"]["Tables"]["referral_partners"]["Row"]
       }
       advisor_list_outbox_events: {
         Args: { p_limit?: number; p_status?: string | null }
