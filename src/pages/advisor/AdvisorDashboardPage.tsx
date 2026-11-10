@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { BellRing, ChevronLeft, ChevronRight, Inbox, Loader2, RefreshCw, Search, SearchX } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -16,7 +16,8 @@ import {
   type PipelineStatus,
 } from "@/data/advisor";
 import { emailProblemHelp, emailProblemLabel, emailProblemsBySession } from "@/data/outbox";
-import { listEmailProblems, listSubmissions, QUEUE_PAGE_SIZE, type EmailProblem, type SubmissionPage } from "@/lib/advisorApi";
+import { formatDay, waitingLabel } from "@/data/quoteRequests";
+import { listEmailProblems, listSubmissions, QUEUE_PAGE_SIZE, type EmailProblem, type QueueSort, type SubmissionPage } from "@/lib/advisorApi";
 import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { PipelineBadge } from "@/components/advisor/PipelineBadge";
@@ -39,6 +40,9 @@ const COMPLETENESS_CLASS: Record<Completeness["state"], string> = {
   missing_required: "bg-destructive/15 text-destructive",
 };
 
+// The queue refreshes itself this often, and whenever the tab is back in focus, so quotes that came in show.
+const REFRESH_MS = 60_000;
+
 // Searching waits for a pause in typing, so the database isn't asked once per keystroke.
 const SEARCH_DELAY_MS = 300;
 
@@ -55,6 +59,10 @@ const AdvisorDashboardPage = () => {
   const search = queueSearchTerm(query);
   // Only the submissions an advisor marked as needing advisor action (F-4.3).
   const needsAction = searchParams.get("action") === "1";
+  // Only the submissions with a quote request sent and not yet answered.
+  const waiting = searchParams.get("waiting") === "1";
+  const sortParam = searchParams.get("sort");
+  const sort: QueueSort | null = sortParam === "oldest_waiting" || sortParam === "earliest_expiry" ? sortParam : null;
   const pageParam = Number(searchParams.get("page"));
   const page = Number.isInteger(pageParam) && pageParam > 1 ? pageParam : 1;
   // What's typed; the URL (and the search) follow it after a pause.
@@ -62,6 +70,22 @@ const AdvisorDashboardPage = () => {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [problems, setProblems] = useState<Map<string, EmailProblem>>(new Map());
+  // A refresh of its own (the minute passed, or the tab came back): the rows stay on screen while it loads.
+  const [tick, setTick] = useState(0);
+  const quiet = useRef(false);
+
+  useEffect(() => {
+    const refresh = () => {
+      quiet.current = true;
+      setTick((n) => n + 1);
+    };
+    const timer = setInterval(refresh, REFRESH_MS);
+    window.addEventListener("focus", refresh);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
 
   // Read beside the queue, not as part of it: if this fails, the queue still loads.
   useEffect(() => {
@@ -75,19 +99,20 @@ const AdvisorDashboardPage = () => {
 
   useEffect(() => {
     let cancelled = false;
-    setLoad({ kind: "loading" });
-    listSubmissions({ status, search, page, needsAction })
+    if (!quiet.current) setLoad({ kind: "loading" });
+    quiet.current = false;
+    listSubmissions({ status, search, page, needsAction, waiting, sort })
       .then((result) => !cancelled && setLoad({ kind: "ready", ...result }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => { cancelled = true; };
-  }, [status, search, page, needsAction, attempt]);
+  }, [status, search, page, needsAction, waiting, sort, attempt, tick]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   // Filters, search and page live in the URL, so a refresh or a shared link shows the same queue.
   // Changing a filter or the search starts again from the first page.
   const setParams = useCallback(
-    (changes: Partial<Record<"status" | "q" | "page" | "action", string>>) => {
+    (changes: Partial<Record<"status" | "q" | "page" | "action" | "waiting" | "sort", string>>) => {
       setSearchParams(
         (current) => {
           const next = new URLSearchParams(current);
@@ -104,7 +129,7 @@ const AdvisorDashboardPage = () => {
     },
     [setSearchParams],
   );
-  const setParam = (key: "status" | "q" | "action", value: string) => setParams({ [key]: value });
+  const setParam = (key: "status" | "q" | "action" | "waiting" | "sort", value: string) => setParams({ [key]: value });
 
   // Follow the URL when it changes from outside (Back, a shared link), but not when it only caught up
   // with what's being typed: that would drop a space typed just before a pause, or a search still too short.
@@ -121,7 +146,7 @@ const AdvisorDashboardPage = () => {
   const total = load.kind === "ready" ? load.total : 0;
   const searching = search !== "";
   // How the filters read in an empty or no-match message: "under review submissions that need advisor action".
-  const filtered = `${status ? `${PIPELINE_LABELS[status].toLowerCase()} ` : ""}submissions${needsAction ? " that need advisor action" : ""}`;
+  const filtered = `${status ? `${PIPELINE_LABELS[status].toLowerCase()} ` : ""}submissions${needsAction ? " that need advisor action" : ""}${waiting ? " waiting on a PEO" : ""}`;
   const firstShown = (page - 1) * QUEUE_PAGE_SIZE + 1;
   const lastShown = firstShown + rows.length - 1;
   const hasNext = lastShown < total;
@@ -181,6 +206,26 @@ const AdvisorDashboardPage = () => {
               />
               {NEEDS_ACTION_LABEL} only
             </label>
+            <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                checked={waiting}
+                onChange={(e) => setParam("waiting", e.target.checked ? "1" : "")}
+                className="accent-primary"
+              />
+              Waiting on a PEO only
+            </label>
+            <label htmlFor="queue-sort" className="text-sm text-muted-foreground">Sort</label>
+            <select
+              id="queue-sort"
+              value={sort ?? ""}
+              onChange={(e) => setParam("sort", e.target.value)}
+              className="bg-muted border border-border rounded-md px-3 py-2 text-sm text-foreground"
+            >
+              <option value="">Newest first</option>
+              <option value="oldest_waiting">Longest wait on a PEO</option>
+              <option value="earliest_expiry">Quote expiring soonest</option>
+            </select>
             <button
               onClick={retry}
               disabled={load.kind === "loading"}
@@ -213,15 +258,15 @@ const AdvisorDashboardPage = () => {
           <div className="border border-dashed border-border rounded-xl p-12 text-center">
             <Inbox className="w-8 h-8 text-muted-foreground mx-auto mb-3" aria-hidden="true" />
             <p className="font-medium">
-              {needsAction
+              {needsAction || waiting
                 ? `No ${filtered}.`
                 : status
                   ? `No submissions are ${PIPELINE_LABELS[status].toLowerCase()}.`
                   : "No submissions yet."}
             </p>
             <p className="text-sm text-muted-foreground mt-1">
-              {needsAction ? (
-                <button onClick={() => setParams({ status: "", action: "" })} className="text-primary underline">Show all submissions</button>
+              {needsAction || waiting ? (
+                <button onClick={() => setParams({ status: "", action: "", waiting: "" })} className="text-primary underline">Show all submissions</button>
               ) : status ? (
                 <button onClick={() => setParam("status", "")} className="text-primary underline">Show all statuses</button>
               ) : (
@@ -262,6 +307,7 @@ const AdvisorDashboardPage = () => {
                     <TableHead>Submitted</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Completeness</TableHead>
+                    <TableHead>Quotes</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -328,6 +374,23 @@ const AdvisorDashboardPage = () => {
                             {completeness.label}
                           </span>
                           <p className="text-xs text-muted-foreground mt-1">{completeness.detail}</p>
+                        </TableCell>
+                        <TableCell className="text-sm space-y-1">
+                          {row.quote_requests_sent > 0 && (
+                            <p>{`${row.quotes_received} / ${row.quote_requests_sent} quoted`}</p>
+                          )}
+                          {row.oldest_waiting_on && (
+                            <p className="text-xs text-muted-foreground">{waitingLabel(row.oldest_waiting_on)}</p>
+                          )}
+                          {row.earliest_quote_expires_on && (
+                            <p className="text-xs text-muted-foreground">{`Expires ${formatDay(row.earliest_quote_expires_on)}`}</p>
+                          )}
+                          {row.sent_older_version && (
+                            <p>
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-warning/15 text-warning whitespace-nowrap">A PEO has an older version</span>
+                            </p>
+                          )}
+                          {row.start_month && <p className="text-xs text-muted-foreground">Target start: <span>{row.start_month}</span></p>}
                         </TableCell>
                       </TableRow>
                     );

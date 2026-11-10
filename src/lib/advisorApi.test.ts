@@ -38,6 +38,10 @@ const {
   reviewField,
   saveManuscriptVersion,
   setNeedsAction,
+  setStatus,
+  recordQuoteSend,
+  updateQuoteRequest,
+  noteUnderwriterQuestion,
 } = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
@@ -188,7 +192,7 @@ describe("the submission queue", () => {
     rpc.mockResolvedValue({ data: [{ session_id: "s26", total_count: 60 }], error: null });
     const page = await listSubmissions({ status: "won", search: "  acme  pat ", page: 2 });
     expect(rpc).toHaveBeenCalledWith("advisor_list_submissions", {
-      p_status: "won", p_search: "acme  pat", p_limit: 25, p_offset: 25, p_needs_action: null,
+      p_status: "won", p_search: "acme  pat", p_limit: 25, p_offset: 25, p_needs_action: null, p_waiting: null, p_sort: null,
     });
     expect(page).toEqual({ rows: [{ session_id: "s26", total_count: 60 }], total: 60 });
   });
@@ -197,7 +201,7 @@ describe("the submission queue", () => {
     rpc.mockResolvedValue({ data: [], error: null });
     expect(await listSubmissions({ status: null, search: "   ", page: 0 })).toEqual({ rows: [], total: 0 });
     expect(rpc).toHaveBeenCalledWith("advisor_list_submissions", {
-      p_status: null, p_search: null, p_limit: 25, p_offset: 0, p_needs_action: null,
+      p_status: null, p_search: null, p_limit: 25, p_offset: 0, p_needs_action: null, p_waiting: null, p_sort: null,
     });
   });
 
@@ -205,7 +209,7 @@ describe("the submission queue", () => {
     rpc.mockResolvedValue({ data: [], error: null });
     await listSubmissions({ status: "under_review", needsAction: true });
     expect(rpc).toHaveBeenCalledWith("advisor_list_submissions", {
-      p_status: "under_review", p_search: null, p_limit: 25, p_offset: 0, p_needs_action: true,
+      p_status: "under_review", p_search: null, p_limit: 25, p_offset: 0, p_needs_action: true, p_waiting: null, p_sort: null,
     });
   });
 });
@@ -409,4 +413,51 @@ describe("loadSubmission", () => {
     tables.chamber_sessions = [];
     expect(await loadSubmission("s1")).toBeNull();
   });
+
+describe("quote requests", () => {
+  beforeEach(() => {
+    rpc.mockReset().mockResolvedValue({ data: {}, error: null });
+    for (const k of Object.keys(tables)) delete tables[k];
+  });
+
+  it("loads the submission's quote requests, their history and the latest certified version with the detail", async () => {
+    tables.chamber_sessions = [{ id: "s1", user_id: "p1", chamber_data: {}, field_provenance: {}, transcript: [], status: "submitted",
+      submission: null, created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z", file_id: "EAA-2026-0001" }];
+    tables.submission_workflow = [{ status: "quoted", won_quote_request_id: null }];
+    tables.quote_requests = [{ id: 7, peo_name: "TriNet", status: "quoted" }];
+    tables.quote_request_events = [{ id: 3, quote_request_id: 7, field: "status" }];
+    tables.chamber_certifications = [{ file_id: "EAA-2026-0001", version: 3, signed_at: null, recorded_at: null, chamber_data: null }];
+    const d = (await loadSubmission("s1"))!;
+    expect(d.quoteRequests).toEqual([{ id: 7, peo_name: "TriNet", status: "quoted" }]);
+    expect(d.quoteRequestEvents).toEqual([{ id: 3, quote_request_id: 7, field: "status" }]);
+    expect(d.currentVersion).toBe(3);
+  });
+
+  it("records a send, an answer and an underwriter's question through the advisor functions", async () => {
+    await recordQuoteSend("s1", "TriNet", "2026-11-10");
+    expect(rpc).toHaveBeenLastCalledWith("advisor_record_quote_send", { p_session_id: "s1", p_peo: "TriNet", p_sent_on: "2026-11-10" });
+    await updateQuoteRequest(7, { status: "quoted", receivedOn: "2026-11-14", expiresOn: "2026-12-14", startOn: null, adminFeePepm: 145.5, note: null });
+    expect(rpc).toHaveBeenLastCalledWith("advisor_update_quote_request", {
+      p_quote_request_id: 7, p_status: "quoted", p_received_on: "2026-11-14", p_expires_on: "2026-12-14", p_start_on: null,
+      p_admin_fee_pepm: 145.5, p_note: null,
+    });
+    await noteUnderwriterQuestion(7, "  Loss runs?  ");
+    expect(rpc).toHaveBeenLastCalledWith("advisor_note_underwriter_question", { p_quote_request_id: 7, p_question: "Loss runs?" });
+  });
+
+  it("names the winning quote when marking a submission won, and nothing otherwise", async () => {
+    await setStatus("s1", "won", " Signed ", 7);
+    expect(rpc).toHaveBeenLastCalledWith("set_submission_status", { p_session_id: "s1", p_status: "won", p_note: "Signed", p_won_quote_request_id: 7 });
+    await setStatus("s1", "lost", "");
+    expect(rpc).toHaveBeenLastCalledWith("set_submission_status", { p_session_id: "s1", p_status: "lost", p_note: null, p_won_quote_request_id: null });
+  });
+
+  it("asks the queue for only the submissions waiting on a PEO, sorted by the longest wait or the earliest expiry", async () => {
+    rpc.mockResolvedValue({ data: [], error: null });
+    await listSubmissions({ status: null, waiting: true, sort: "oldest_waiting" });
+    expect(rpc).toHaveBeenLastCalledWith("advisor_list_submissions", expect.objectContaining({ p_waiting: true, p_sort: "oldest_waiting" }));
+    await listSubmissions({ status: null });
+    expect(rpc).toHaveBeenLastCalledWith("advisor_list_submissions", expect.objectContaining({ p_waiting: null, p_sort: null }));
+  });
+});
 });

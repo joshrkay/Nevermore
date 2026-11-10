@@ -9,7 +9,7 @@ import {
   prospectStatusAfter,
   type PipelineStatus,
 } from "@/data/advisor";
-import { setStatus, type StatusHistoryRow } from "@/lib/advisorApi";
+import { setStatus, type QuoteRequestRow, type StatusHistoryRow } from "@/lib/advisorApi";
 import { PipelineBadge } from "./PipelineBadge";
 import { actorName, formatDateTime } from "./format";
 
@@ -22,6 +22,8 @@ interface StatusPanelProps {
   /** The prospect has certified it at least once. Until then it can only be archived. */
   certifiedOnce: boolean;
   history: StatusHistoryRow[];
+  /** The submission's quote requests: marking it won names the one whose quote the employer took. */
+  quoteRequests: readonly QuoteRequestRow[];
   onChanged: () => void;
 }
 
@@ -31,13 +33,16 @@ const label = (s: string | null) => (s && isPipelineStatus(s) ? PIPELINE_LABELS[
 const optionLabel = (current: PipelineStatus, s: PipelineStatus) =>
   current === "archived" && s === "submitted" ? `${PIPELINE_LABELS[s]} (reopen)` : PIPELINE_LABELS[s];
 
-const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOnce, history, onChanged }: StatusPanelProps) => {
+const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOnce, history, quoteRequests, onChanged }: StatusPanelProps) => {
   // Only the next steps from where the intake is now, as the database allows (one step at a time; a
   // never-certified intake can only be archived).
   const options = nextPipelineStatuses(status, certifiedOnce);
   const [next, setNext] = useState<PipelineStatus>(status);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [winner, setWinner] = useState("");
+  const quoted = quoteRequests.filter((q) => q.status === "quoted");
+  const needsWinner = next === "won" && winner === "";
   const seen = prospectStatusAfter(next, history);
   const seenMessage = seen ? PROSPECT_STATUS_MESSAGES[seen] : undefined;
   // While withdrawn, the prospect sees it once they certify again, and certifying at "information
@@ -60,7 +65,8 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
     if (next === status) return;
     setSaving(true);
     try {
-      await setStatus(sessionId, next, note);
+      if (next === "won") await setStatus(sessionId, next, note, Number(winner));
+      else await setStatus(sessionId, next, note);
       setNote("");
       toast.success(`Status changed to ${PIPELINE_LABELS[next]}.`);
       onChanged();
@@ -99,6 +105,23 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
             : `From ${PIPELINE_LABELS[status]} it can move to ${options.map((s) => optionLabel(status, s)).join(", ")}.`}
         </p>
         <p className="text-xs text-muted-foreground">{hint}</p>
+        {next === "won" && (
+          <>
+            <label htmlFor="won-quote" className="block text-xs text-muted-foreground pt-1">Which quote did the employer take?</label>
+            <select
+              id="won-quote"
+              value={winner}
+              onChange={(e) => setWinner(e.target.value)}
+              className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
+            >
+              <option value="">Choose a PEO</option>
+              {quoted.map((q) => (
+                <option key={q.id} value={String(q.id)}>{q.peo_name}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">Every other open quote request closes.</p>
+          </>
+        )}
         <label htmlFor="status-note" className="block text-xs text-muted-foreground pt-1">Internal note (optional)</label>
         <textarea
           id="status-note"
@@ -110,7 +133,7 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
         />
         <button
           onClick={save}
-          disabled={saving || next === status}
+          disabled={saving || next === status || needsWinner}
           className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 disabled:opacity-50"
         >
           {saving && <Loader2 className="w-4 h-4 animate-spin" />} Update status
