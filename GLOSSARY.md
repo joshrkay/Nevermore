@@ -95,6 +95,14 @@ _Avoid_: open item, flag
 An advisor's message asking the prospect for more, naming the answers it is about (or none, for something no answer holds, such as a document). Sending one emails the prospect, shows it in The Chamber with "Your advisor asked about this" on each answer it names, has Lenore ask about those answers first, and moves the pipeline stage to information requested. Certifying again answers it, as does the advisor moving the stage on. The record of each is kept with the intake and never changed.
 _Avoid_: follow-up, RFI, query
 
+**Quote request**:
+One PEO's handling of one submission, from when an advisor sent it the packet until that PEO quotes, declines or the request is closed. A submission has at most one per PEO; sending a newer packet version to the same PEO continues it. Advisors record it after acting outside the product, and the product sends nothing to the PEO. The prospect never sees it.
+_Avoid_: quote (a quote is what a PEO returns on a quote request), submission, RFP, deal
+
+**Quote**:
+What a PEO returns on a quote request when it offers to take the employer on: when it arrived, when it expires, the proposed start date and the headline admin fee per employee per month, with the advisor's note. Recorded by an advisor and seen only by advisors.
+_Avoid_: proposal, offer, pricing
+
 **Needs advisor action**:
 A submission an advisor has marked because someone on the team has to act on it, with an optional note saying what. It shows on the queue, which can list only these, until an advisor clears it, and stays through pipeline stage changes. It belongs to the whole submission, where an advisor follow-up belongs to one field, and the prospect never sees it.
 _Avoid_: flag, flagged, follow-up flag
@@ -235,6 +243,10 @@ _Avoid_: status, state, session status
 Where an intake stands in the advisors' work, from draft through submitted, under review, information requested, ready for market, sent to carrier and quoted, to won, lost or archived. Advisors move it one step at a time, along the allow-list in `docs/ADVISOR_ACCESS.md`; an archived intake is reopened as submitted.
 _Avoid_: status, intake status, workflow status
 
+**Quote request status**:
+Where one PEO's quote request stands: sent (the packet went and the PEO hasn't answered; a quote request in this status is waiting), quoted, declined, or closed (withdrawn, expired, or the employer went elsewhere). A closed quote request goes back to sent when the packet is sent to that PEO again. A question from the PEO's underwriter is noted on the quote request and doesn't change its status.
+_Avoid_: status, pipeline stage, quote status
+
 **Also heard**:
 An answer Lenore heard for a field from another source than the one kept (a chat answer beside a document's, say, or the value a spoken correction replaced). It is shown under the answer to the prospect and to the advisor, never in The Manuscript, and goes when the prospect confirms or edits the field.
 _Avoid_: alternative, rejected value
@@ -264,3 +276,5 @@ _Avoid_: status, extraction status
 - **The Manuscript** is rendered from a **Submission**'s certified answers
 - Each **Certification** of new answers produces one **Advisor Alert** and one **Confirmation**; certifying the same answers again produces neither
 - Every **Submission** appears in the **Advisor Console**
+- A **Submission** has zero or more **Quote requests**, at most one per PEO; each **Quote request** records the version of the **Submission** last sent and holds at most one current **Quote**
+- A **Submission** that is won names the **Quote request** whose **Quote** the employer took; its other open **Quote requests** close, as all of them do when it is lost or archived
