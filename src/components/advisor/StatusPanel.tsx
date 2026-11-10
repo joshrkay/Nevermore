@@ -3,6 +3,8 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   isPipelineStatus,
+  LOST_REASON_LABELS,
+  LOST_REASONS,
   nextPipelineStatuses,
   PIPELINE_LABELS,
   PROSPECT_STATUS_MESSAGES,
@@ -43,6 +45,8 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
   const [winner, setWinner] = useState("");
   const quoted = quoteRequests.filter((q) => q.status === "quoted");
   const needsWinner = next === "won" && winner === "";
+  const [lostReason, setLostReason] = useState("");
+  const needsLostReason = next === "lost" && lostReason === "";
   const seen = prospectStatusAfter(next, history);
   const seenMessage = seen ? PROSPECT_STATUS_MESSAGES[seen] : undefined;
   // While withdrawn, the prospect sees it once they certify again, and certifying at "information
@@ -66,6 +70,7 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
     setSaving(true);
     try {
       if (next === "won") await setStatus(sessionId, next, note, Number(winner));
+      else if (next === "lost") await setStatus(sessionId, next, note, undefined, lostReason);
       else await setStatus(sessionId, next, note);
       setNote("");
       toast.success(`Status changed to ${PIPELINE_LABELS[next]}.`);
@@ -122,6 +127,23 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
             <p className="text-xs text-muted-foreground">Every other open quote request closes.</p>
           </>
         )}
+        {next === "lost" && (
+          <>
+            <label htmlFor="lost-reason" className="block text-xs text-muted-foreground pt-1">Why was it lost?</label>
+            <select
+              id="lost-reason"
+              value={lostReason}
+              onChange={(e) => setLostReason(e.target.value)}
+              className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm"
+            >
+              <option value="">Choose a reason</option>
+              {LOST_REASONS.map((r) => (
+                <option key={r} value={r}>{LOST_REASON_LABELS[r]}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">Internal: the prospect never sees it.</p>
+          </>
+        )}
         <label htmlFor="status-note" className="block text-xs text-muted-foreground pt-1">Internal note (optional)</label>
         <textarea
           id="status-note"
@@ -133,7 +155,7 @@ const StatusPanel = ({ sessionId, prospectUserId, status, certified, certifiedOn
         />
         <button
           onClick={save}
-          disabled={saving || next === status || needsWinner}
+          disabled={saving || next === status || needsWinner || needsLostReason}
           className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 disabled:opacity-50"
         >
           {saving && <Loader2 className="w-4 h-4 animate-spin" />} Update status

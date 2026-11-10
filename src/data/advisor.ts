@@ -515,3 +515,19 @@ export async function sha256Hex(blob: Blob): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", buf);
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+/**
+ * Why a submission's search ended without the employer taking a quote: required to move it to lost. The database holds
+ * the same list (is_lost_reason, migration 20261111090000); src/data/schemaSync.test.ts keeps them equal. The prospect
+ * never sees it.
+ */
+export const LOST_REASONS = ["stayed_with_current", "chose_to_wait", "cost", "went_elsewhere", "other"] as const;
+export type LostReason = (typeof LOST_REASONS)[number];
+
+export const LOST_REASON_LABELS: Record<LostReason, string> = {
+  stayed_with_current: "Stayed with their current PEO or broker",
+  chose_to_wait: "Chose to wait",
+  cost: "Cost",
+  went_elsewhere: "Went with a PEO outside our search",
+  other: "Other",
+};

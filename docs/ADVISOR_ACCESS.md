@@ -96,8 +96,12 @@ a sign-out the app asked for is remembered until the event arrives.
     the PEO's answer: `quoted`, `declined` or `closed`. Only a quote has dates and a fee (22023 otherwise); a
     closed request is answered again only after a send reopens it. The note is at most 2000 characters, and the
     fee 0 to 100000.
-  - `advisor_note_underwriter_question(id, question)` notes a question from the PEO's underwriter. It doesn't
-    change the status.
+  - `advisor_note_underwriter_question(id, question, fields)` notes a question from the PEO's underwriter, with the
+    answers it is about when the advisor names them (reviewable fields, as an information request takes them;
+    migration `20261111090000`). It doesn't change the status.
+  - Declining needs a **decline reason** from `is_decline_reason()`'s list, and no other answer takes one (22023);
+    moving a submission to `lost` needs a **lost reason** from `is_lost_reason()`'s list, kept in the status history,
+    and no other move takes one (22023). The prospect never sees either (migration `20261111090000`).
   - Every change to a quote request is appended to `quote_request_events` (who, when, the field, the old and new
     value) by a trigger, so nothing changes one unlogged; nobody can change or delete that history.
   - `set_submission_status(session, status, note, won_quote_request_id)`: moving to `won` names one of the

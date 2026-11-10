@@ -94,6 +94,7 @@
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 \i supabase/migrations/20261110090000_quote_requests.sql
+\i supabase/migrations/20261111090000_pipeline_learning.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -670,6 +671,8 @@ INSERT INTO callable VALUES
   ('intake_conflicting_required(p jsonb)',     'anyone',  NULL, 'pure: required fields in conflict in the provenance it is given'),
   ('is_prospect_visible_status(s text)',       'anyone',  NULL, 'pure: whether a status name is shared with prospects'),
   ('is_reviewable_field(f text)',              'anyone',  NULL, 'pure: whether a field name can be reviewed'),
+  ('is_decline_reason(p_reason text)',         'anyone',  NULL, 'pure: whether a decline reason is on the list'),
+  ('is_lost_reason(p_reason text)',            'anyone',  NULL, 'pure: whether a lost reason is on the list'),
   ('ops_clean_code(p_code text)',              'anyone',  NULL, 'pure: cleans a failure code'),
   ('ops_redact(p_text text, p_max integer)',   'anyone',  NULL, 'pure: redacts free text'),
   ('ops_event_retention()',                    'anyone',  NULL, 'a constant: how long monitoring events are kept'),
@@ -706,15 +709,15 @@ INSERT INTO callable VALUES
                                                                      'SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 25, 0, true, true, ''oldest_waiting'')', 'the queue: one page, searched, filtered, sorted'),
   ('advisor_record_quote_send(p_session_id uuid, p_peo text, p_sent_on date)', 'advisor',
                                                                      'SELECT public.advisor_record_quote_send(%1$L, ''Justworks'', NULL)', 'recording a send to a PEO'),
-  ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text)', 'advisor',
+  ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text, p_decline_reason text)', 'advisor',
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
-  ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
+  ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text, p_fields text[])', 'advisor',
                                                                      'SELECT public.advisor_note_underwriter_question(0, ''probe'')', 'noting an underwriter''s question'),
   ('advisor_email_problems()',                 'advisor', 'SELECT count(*) FROM public.advisor_email_problems()', 'email problems on the queue'),
   ('advisor_list_outbox_events(p_status text, p_limit integer)', 'advisor', 'SELECT count(*) FROM public.advisor_list_outbox_events(NULL, 10)', 'the outbox page'),
   ('advisor_outbox_summary()',                 'advisor', 'SELECT count(*) FROM public.advisor_outbox_summary()', 'the outbox page'),
   ('advisor_requeue_outbox_event(event_id uuid, rebuild_payload boolean)', 'advisor', 'SELECT public.advisor_requeue_outbox_event(%2$L, false)', 'retrying a dead email'),
-  ('set_submission_status(p_session_id uuid, p_status text, p_note text, p_won_quote_request_id bigint)', 'advisor', 'SELECT public.set_submission_status(%1$L, ''information_requested'', ''probe'')', 'the pipeline'),
+  ('set_submission_status(p_session_id uuid, p_status text, p_note text, p_won_quote_request_id bigint, p_lost_reason text)', 'advisor', 'SELECT public.set_submission_status(%1$L, ''information_requested'', ''probe'')', 'the pipeline'),
   ('set_submission_needs_action(p_session_id uuid, p_needs_action boolean, p_note text)', 'advisor',
                                                                      'SELECT public.set_submission_needs_action(%1$L, true, ''probe'')', 'needs advisor action'),
   ('review_submission_field(p_session_id uuid, p_field text, p_review_state text, p_correction text, p_value jsonb, p_reason text, p_answer jsonb)', 'advisor',
@@ -724,6 +727,12 @@ INSERT INTO callable VALUES
   ('retention_review_due(p_limit integer)',    'advisor', 'SELECT count(*) FROM public.retention_review_due(10)', 'submitted records due for review'),
   ('advisor_request_information(p_session_id uuid, p_message text, p_fields text[])', 'advisor',
                                                                      'SELECT public.advisor_request_information(%1$L, ''probe'', ''{}'')', 'asking the prospect for information'),
+  ('advisor_peo_outcomes(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
+                                                                     'SELECT count(*) FROM public.advisor_peo_outcomes(now() - interval ''1 day'', now())', 'the funnel page: by PEO'),
+  ('advisor_lost_reasons(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
+                                                                     'SELECT count(*) FROM public.advisor_lost_reasons(now() - interval ''1 day'', now())', 'the funnel page: lost reasons'),
+  ('advisor_question_fields(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
+                                                                     'SELECT count(*) FROM public.advisor_question_fields(now() - interval ''1 day'', now())', 'the funnel page: what underwriters ask'),
   ('advisor_intake_funnel(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
                                                                      'SELECT count(*) FROM public.advisor_intake_funnel(now() - interval ''1 day'', now())', 'the pilot funnel'),
   ('advisor_intake_sources(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',

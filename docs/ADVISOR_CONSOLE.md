@@ -57,9 +57,23 @@ US-5.3 asks for. Who may open what is in `docs/ADVISOR_ACCESS.md`, and the terms
 
 `/advisor/funnel` counts, for the intakes started in the last 7, 30 or 90 days or 12 months, how many reached each
 step (started, first answer, a document, a census, ready to certify, a verified email, certified, The Manuscript
-downloaded) and the median time from starting. Each step is a share of the intakes that started. Counts only: the
+downloaded, then the market steps: sent to a PEO, a first quote, won) and the median time from starting, or, for the
+market steps, from certifying (migration `20261111090000`), so how fast PEOs answer isn't blurred by the prospect's own
+pace. Each step is a share of the intakes that started. Counts only: the
 record behind it (`intake_milestones`, `advisor_intake_funnel()`) holds no answers, names or addresses, outlives an
 intake that is deleted, and is kept a year.
+
+### What PEOs and employers sent back
+
+Under the funnel, for the same intakes (migration `20261111090000`, joshrkay/Nevermore#88):
+
+- **By PEO** (`advisor_peo_outcomes()`): per PEO, alphabetically, the quote requests sent, quoted (ever), declined (by
+  decline reason), the median days from the send to the quote arriving, and won. Computed from the quote requests that
+  exist, so a deleted intake drops out.
+- **Why submissions were lost** (`advisor_lost_reasons()`): the lost submissions by their latest lost reason.
+- **What underwriters asked about** (`advisor_question_fields()`): the answers underwriters' questions were tagged with,
+  most asked first, and how many questions were tagged. Moving a field up Lenore's questions is a reviewed change to the
+  intake schema; nothing reranks automatically.
 
 ### By source
 

@@ -129,6 +129,32 @@ export async function loadFunnel(from: Date, to: Date): Promise<FunnelResult[]> 
 }
 
 export type IntakeSourceResult = Database["public"]["Functions"]["advisor_intake_sources"]["Returns"][number];
+export type PeoOutcome = Database["public"]["Functions"]["advisor_peo_outcomes"]["Returns"][number];
+export type LostReasonCount = Database["public"]["Functions"]["advisor_lost_reasons"]["Returns"][number];
+export type QuestionFieldCount = Database["public"]["Functions"]["advisor_question_fields"]["Returns"][number];
+
+const range = (from: Date, to: Date) => ({ p_from: from.toISOString(), p_to: to.toISOString() });
+
+/** For intakes started in the period: what each PEO did with the packets it was sent (#88). */
+export async function loadPeoOutcomes(from: Date, to: Date): Promise<PeoOutcome[]> {
+  const { data, error } = await supabase.rpc("advisor_peo_outcomes", range(from, to));
+  if (error) fail(error, "Couldn't load the numbers by PEO.");
+  return data ?? [];
+}
+
+/** For intakes started in the period and lost: how many by their lost reason. */
+export async function loadLostReasons(from: Date, to: Date): Promise<LostReasonCount[]> {
+  const { data, error } = await supabase.rpc("advisor_lost_reasons", range(from, to));
+  if (error) fail(error, "Couldn't load why submissions were lost.");
+  return data ?? [];
+}
+
+/** For intakes started in the period: the answers underwriters' questions were tagged with, most asked first. */
+export async function loadQuestionFields(from: Date, to: Date): Promise<QuestionFieldCount[]> {
+  const { data, error } = await supabase.rpc("advisor_question_fields", range(from, to));
+  if (error) fail(error, "Couldn't load what underwriters asked about.");
+  return data ?? [];
+}
 
 /** For intakes started between `from` and `to`: each source, and how many of its intakes reached each step. */
 export async function loadIntakeSources(from: Date, to: Date): Promise<IntakeSourceResult[]> {
@@ -388,13 +414,19 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   };
 }
 
-/** Moves the pipeline one step. Marking it won names the quote request whose quote the employer took. */
-export async function setStatus(sessionId: string, status: PipelineStatus, note: string, wonQuoteRequestId?: number): Promise<void> {
+/**
+ * Moves the pipeline one step. Marking it won names the quote request whose quote the employer took; marking it lost
+ * says why (LOST_REASONS). Each is sent only with its own move.
+ */
+export async function setStatus(
+  sessionId: string, status: PipelineStatus, note: string, wonQuoteRequestId?: number, lostReason?: string,
+): Promise<void> {
   const { error } = await supabase.rpc("set_submission_status", {
     p_session_id: sessionId,
     p_status: status,
     p_note: note.trim() || null,
     p_won_quote_request_id: status === "won" ? wonQuoteRequestId ?? null : null,
+    p_lost_reason: status === "lost" ? lostReason ?? null : null,
   });
   if (error) fail(error, "Couldn't change the status.");
 }
@@ -444,6 +476,8 @@ export interface QuoteAnswer {
   startOn: string | null;
   adminFeePepm: number | null;
   note: string | null;
+  /** Why the PEO declined; required for a decline, null otherwise (#88). */
+  declineReason: string | null;
 }
 
 /** Records a PEO's answer on a quote request, replacing what was recorded before. Every change is logged. */
@@ -456,13 +490,19 @@ export async function updateQuoteRequest(id: number, answer: QuoteAnswer): Promi
     p_start_on: answer.startOn,
     p_admin_fee_pepm: answer.adminFeePepm,
     p_note: answer.note,
+    p_decline_reason: answer.declineReason,
   });
   if (error) fail(error, "Couldn't record the answer.");
 }
 
-/** Notes a question the PEO's underwriter asked, on its quote request's history. The status doesn't change. */
-export async function noteUnderwriterQuestion(id: number, question: string): Promise<void> {
-  const { error } = await supabase.rpc("advisor_note_underwriter_question", { p_quote_request_id: id, p_question: question.trim() });
+/**
+ * Notes a question the PEO's underwriter asked, on its quote request's history, with the answers it is about when the
+ * advisor names them (#88). The status doesn't change.
+ */
+export async function noteUnderwriterQuestion(id: number, question: string, fields: readonly FieldKey[] = []): Promise<void> {
+  const { error } = await supabase.rpc("advisor_note_underwriter_question", {
+    p_quote_request_id: id, p_question: question.trim(), p_fields: [...fields],
+  });
   if (error) fail(error, "Couldn't note the question.");
 }
 

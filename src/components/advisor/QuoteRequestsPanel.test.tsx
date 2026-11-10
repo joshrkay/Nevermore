@@ -34,7 +34,7 @@ const request = (over: Partial<QuoteRequestRow> = {}): QuoteRequestRow => ({
 const panel = (
   over: {
     status?: PipelineStatus; requests?: QuoteRequestRow[]; events?: QuoteRequestEventRow[]; currentVersion?: number | null;
-    data?: ChamberData; catalog?: PeoRecord[]; onAskProspect?: (question: string) => void;
+    data?: ChamberData; catalog?: PeoRecord[]; onAskProspect?: (question: string, fields: string[]) => void;
   } = {},
 ) => {
   const onChanged = vi.fn();
@@ -144,6 +144,7 @@ describe("QuoteRequestsPanel", () => {
     await waitFor(() =>
       expect(api.updateQuoteRequest).toHaveBeenCalledWith(7, {
         status: "quoted", receivedOn: "2026-11-14", expiresOn: "2026-12-14", startOn: "2027-04-01", adminFeePepm: 145.5, note: "Includes the PPO.",
+        declineReason: null,
       }),
     );
     expect(onChanged).toHaveBeenCalled();
@@ -158,10 +159,14 @@ describe("QuoteRequestsPanel", () => {
     fireEvent.change(within(row).getByLabelText("Answer"), { target: { value: "declined" } });
     expect(within(row).queryByLabelText("Expires on")).not.toBeInTheDocument();
     fireEvent.change(within(row).getByLabelText("Note"), { target: { value: "Outside their appetite." } });
+    // A decline says why, from the list, before it can be saved.
+    expect(within(row).getByRole("button", { name: "Save answer" })).toBeDisabled();
+    fireEvent.change(within(row).getByLabelText("Why did they decline?"), { target: { value: "class_code_excluded" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save answer" }));
     await waitFor(() =>
       expect(api.updateQuoteRequest).toHaveBeenCalledWith(7, {
         status: "declined", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: "Outside their appetite.",
+        declineReason: "class_code_excluded",
       }),
     );
     expect(screen.queryByRole("button", { name: /^Move to/ })).not.toBeInTheDocument();
@@ -173,7 +178,7 @@ describe("QuoteRequestsPanel", () => {
     fireEvent.click(within(row).getByRole("button", { name: "Note a question" }));
     fireEvent.change(within(row).getByLabelText("Underwriter's question"), { target: { value: "Can they send loss runs?" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save question" }));
-    await waitFor(() => expect(api.noteUnderwriterQuestion).toHaveBeenCalledWith(7, "Can they send loss runs?"));
+    await waitFor(() => expect(api.noteUnderwriterQuestion).toHaveBeenCalledWith(7, "Can they send loss runs?", []));
     expect(onChanged).toHaveBeenCalled();
   });
 
@@ -207,6 +212,7 @@ describe("QuoteRequestsPanel", () => {
     fireEvent.change(within(row).getByLabelText("Admin fee per employee per month ($)"), { target: { value: "99" } });
     fireEvent.change(within(row).getByLabelText("Expires on"), { target: { value: "2026-12-01" } });
     fireEvent.change(within(row).getByLabelText("Answer"), { target: { value: "declined" } });
+    fireEvent.change(within(row).getByLabelText("Why did they decline?"), { target: { value: "other" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save answer" }));
     await waitFor(() => expect(api.updateQuoteRequest).toHaveBeenCalledWith(7, expect.objectContaining({ adminFeePepm: null, expiresOn: null })));
   });
@@ -248,6 +254,38 @@ describe("QuoteRequestsPanel", () => {
     const asks = within(history).getAllByRole("button", { name: "Ask the prospect" });
     expect(asks).toHaveLength(1);
     fireEvent.click(asks[0]);
-    expect(onAskProspect).toHaveBeenCalledWith("Can they send loss runs?");
+    expect(onAskProspect).toHaveBeenCalledWith("Can they send loss runs?", []);
+  });
+
+  it("tags a question with the answers it's about, optionally, and carries them into the ask", async () => {
+    const onAskProspect = vi.fn();
+    panel({
+      onAskProspect,
+      events: [{ id: 3, quote_request_id: 7, session_id: "s1", field: "underwriter_question", old_value: null, new_value: "Census?",
+        fields: ["census", "pay_frequency"], changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-11-12T15:00:00Z" }],
+    });
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Ask the prospect" }));
+    expect(onAskProspect).toHaveBeenCalledWith("Census?", ["census", "pay_frequency"]);
+
+    fireEvent.click(within(row).getByRole("button", { name: "Note a question" }));
+    fireEvent.change(within(row).getByLabelText("Underwriter's question"), { target: { value: "What's the pay schedule?" } });
+    fireEvent.change(within(row).getByLabelText("Answers it's about (optional)"), { target: { value: "hq_state" } });
+    fireEvent.change(within(row).getByLabelText("Answers it's about (optional)"), { target: { value: "pay_frequency" } });
+    fireEvent.click(within(row).getByRole("button", { name: /^Remove HQ/ }));
+    expect(within(row).getByRole("button", { name: "Remove Pay frequency" })).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "Save question" }));
+    await waitFor(() => expect(api.noteUnderwriterQuestion).toHaveBeenCalledWith(7, "What's the pay schedule?", ["pay_frequency"]));
+  });
+
+  it("sends no decline reason with a quote, even one picked before switching back", async () => {
+    panel({ status: "sent_to_carrier" });
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Record answer" }));
+    fireEvent.change(within(row).getByLabelText("Answer"), { target: { value: "declined" } });
+    fireEvent.change(within(row).getByLabelText("Why did they decline?"), { target: { value: "other" } });
+    fireEvent.change(within(row).getByLabelText("Answer"), { target: { value: "quoted" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save answer" }));
+    await waitFor(() => expect(api.updateQuoteRequest).toHaveBeenCalledWith(7, expect.objectContaining({ status: "quoted", declineReason: null })));
   });
 });

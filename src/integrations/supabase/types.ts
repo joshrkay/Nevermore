@@ -311,6 +311,8 @@ export type Database = {
           sent_version: number | null
           // One of QUOTE_REQUEST_STATUSES (src/data/quoteRequests.ts).
           status: string
+          // One of DECLINE_REASONS (src/data/quoteRequests.ts), only on a declined request (#88).
+          decline_reason?: string | null
         }
         Insert: never
         Update: never
@@ -326,6 +328,8 @@ export type Database = {
           id: number
           new_value: string | null
           old_value: string | null
+          // On an underwriter's question: the answers it is about (#88).
+          fields?: string[] | null
           quote_request_id: number
           session_id: string
         }
@@ -590,8 +594,29 @@ export type Database = {
         Returns: Json
       }
       advisor_note_underwriter_question: {
-        Args: { p_question: string; p_quote_request_id: number }
+        Args: { p_question: string; p_quote_request_id: number; p_fields?: string[] }
         Returns: Json
+      }
+      advisor_peo_outcomes: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          peo_name: string
+          sent: number
+          quoted: number
+          declined: number
+          // Count per decline reason (DECLINE_REASONS in src/data/quoteRequests.ts).
+          decline_reasons: Json
+          median_days_to_quote: number | null
+          won: number
+        }[]
+      }
+      advisor_lost_reasons: {
+        Args: { p_from: string; p_to: string }
+        Returns: { reason: string; submissions: number }[]
+      }
+      advisor_question_fields: {
+        Args: { p_from: string; p_to: string }
+        Returns: { field: string; questions: number; total_questions: number; tagged_questions: number }[]
       }
       advisor_record_quote_send: {
         Args: { p_peo: string; p_sent_on?: string | null; p_session_id: string }
@@ -602,6 +627,7 @@ export type Database = {
           p_admin_fee_pepm?: number | null
           p_expires_on?: string | null
           p_note?: string | null
+          p_decline_reason?: string | null
           p_quote_request_id: number
           p_received_on?: string | null
           p_start_on?: string | null
@@ -710,7 +736,7 @@ export type Database = {
         Returns: Database["public"]["Tables"]["submission_workflow"]["Row"]
       }
       set_submission_status: {
-        Args: { p_note?: string | null; p_session_id: string; p_status: string; p_won_quote_request_id?: number | null }
+        Args: { p_note?: string | null; p_session_id: string; p_status: string; p_won_quote_request_id?: number | null; p_lost_reason?: string | null }
         Returns: Database["public"]["Tables"]["submission_workflow"]["Row"]
       }
     }

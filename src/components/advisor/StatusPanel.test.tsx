@@ -48,9 +48,22 @@ describe("StatusPanel: marking a submission won", () => {
 
   it("asks no winner for any other move", async () => {
     panel([quote(7, "TriNet", "quoted")]);
-    fireEvent.change(screen.getByLabelText("Change status to"), { target: { value: "lost" } });
+    fireEvent.change(screen.getByLabelText("Change status to"), { target: { value: "archived" } });
     expect(screen.queryByLabelText("Which quote did the employer take?")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Update status" }));
-    await waitFor(() => expect(setStatus).toHaveBeenCalledWith("s1", "lost", ""));
+    await waitFor(() => expect(setStatus).toHaveBeenCalledWith("s1", "archived", ""));
+  });
+});
+
+describe("StatusPanel: marking a submission lost", () => {
+  beforeEach(() => setStatus.mockReset().mockResolvedValue(undefined));
+
+  it("asks why it was lost, from the list, before the move, and sends the reason with it", async () => {
+    panel([quote(7, "TriNet", "quoted")]);
+    fireEvent.change(screen.getByLabelText("Change status to"), { target: { value: "lost" } });
+    expect(screen.getByRole("button", { name: "Update status" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Why was it lost?"), { target: { value: "stayed_with_current" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update status" }));
+    await waitFor(() => expect(setStatus).toHaveBeenCalledWith("s1", "lost", "", undefined, "stayed_with_current"));
   });
 });

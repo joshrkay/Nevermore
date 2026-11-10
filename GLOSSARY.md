@@ -176,7 +176,7 @@ The advisory team's operating workflow: every submission with its pipeline stage
 _Avoid_: CRM, admin queue
 
 **Milestone**:
-A step an intake reached, recorded the first time it does: started, answered, a document uploaded, a census provided, ready to certify, an email verified, certified, The Manuscript downloaded. A milestone holds the step and its times, never an answer, name or address, and stays (unlinked) when its intake is deleted.
+A step an intake reached, recorded the first time it does: started, answered, a document uploaded, a census provided, ready to certify, an email verified, certified, The Manuscript downloaded, sent to a PEO, a first quote, won. The last three are timed from certification, the rest from the start. A milestone holds the step and its times, never an answer, name or address, and stays (unlinked) when its intake is deleted.
 _Avoid_: event, analytics event, conversion
 
 **Funnel**:
@@ -260,8 +260,16 @@ The pipeline stage of a submission whose employer took one of its quotes, which 
 _Avoid_: closed, placed, converted
 
 **Lost**:
-The pipeline stage of a submission whose search ended without the employer taking a quote.
+The pipeline stage of a submission whose search ended without the employer taking a quote. It always has a lost reason.
 _Avoid_: closed, dead, rejected (a PEO declines; a submission is lost)
+
+**Lost reason**:
+Why a submission was lost, from a short list: the employer stayed with their current PEO or broker, chose to wait, found it too costly, went with a PEO outside the search, or something else. Only advisors see it.
+_Avoid_: loss reason, churn reason
+
+**Decline reason**:
+Why a PEO declined a quote request, from a short list: below its minimum headcount, a state it doesn't serve, an excluded industry or class code, claims or loss history, incomplete information, or something else. It never changes a PEO's eligibility facts, which come only from the PEO's own materials.
+_Avoid_: rejection reason, decline code
 
 **Quote request status**:
 Where one PEO's quote request stands: sent (the packet went and the PEO hasn't answered; a quote request in this status is waiting), quoted, declined, or closed (withdrawn, expired, or the employer went elsewhere). A closed quote request goes back to sent when the packet is sent to that PEO again. A question from the PEO's underwriter is noted on the quote request and doesn't change its status.

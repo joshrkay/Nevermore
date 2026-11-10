@@ -42,6 +42,9 @@ const {
   recordQuoteSend,
   updateQuoteRequest,
   noteUnderwriterQuestion,
+  loadPeoOutcomes,
+  loadLostReasons,
+  loadQuestionFields,
 } = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
@@ -436,20 +439,28 @@ describe("quote requests", () => {
   it("records a send, an answer and an underwriter's question through the advisor functions", async () => {
     await recordQuoteSend("s1", "TriNet", "2026-11-10");
     expect(rpc).toHaveBeenLastCalledWith("advisor_record_quote_send", { p_session_id: "s1", p_peo: "TriNet", p_sent_on: "2026-11-10" });
-    await updateQuoteRequest(7, { status: "quoted", receivedOn: "2026-11-14", expiresOn: "2026-12-14", startOn: null, adminFeePepm: 145.5, note: null });
+    await updateQuoteRequest(7, { status: "declined", receivedOn: null, expiresOn: null, startOn: null, adminFeePepm: null, note: null, declineReason: "claims_history" });
     expect(rpc).toHaveBeenLastCalledWith("advisor_update_quote_request", {
-      p_quote_request_id: 7, p_status: "quoted", p_received_on: "2026-11-14", p_expires_on: "2026-12-14", p_start_on: null,
-      p_admin_fee_pepm: 145.5, p_note: null,
+      p_quote_request_id: 7, p_status: "declined", p_received_on: null, p_expires_on: null, p_start_on: null,
+      p_admin_fee_pepm: null, p_note: null, p_decline_reason: "claims_history",
     });
     await noteUnderwriterQuestion(7, "  Loss runs?  ");
-    expect(rpc).toHaveBeenLastCalledWith("advisor_note_underwriter_question", { p_quote_request_id: 7, p_question: "Loss runs?" });
+    expect(rpc).toHaveBeenLastCalledWith("advisor_note_underwriter_question", { p_quote_request_id: 7, p_question: "Loss runs?", p_fields: [] });
+    await noteUnderwriterQuestion(7, "Census?", ["census", "pay_frequency"]);
+    expect(rpc).toHaveBeenLastCalledWith("advisor_note_underwriter_question", { p_quote_request_id: 7, p_question: "Census?", p_fields: ["census", "pay_frequency"] });
   });
 
   it("names the winning quote when marking a submission won, and nothing otherwise", async () => {
     await setStatus("s1", "won", " Signed ", 7);
-    expect(rpc).toHaveBeenLastCalledWith("set_submission_status", { p_session_id: "s1", p_status: "won", p_note: "Signed", p_won_quote_request_id: 7 });
-    await setStatus("s1", "lost", "", 7);
-    expect(rpc).toHaveBeenLastCalledWith("set_submission_status", { p_session_id: "s1", p_status: "lost", p_note: null, p_won_quote_request_id: null });
+    expect(rpc).toHaveBeenLastCalledWith("set_submission_status", { p_session_id: "s1", p_status: "won", p_note: "Signed", p_won_quote_request_id: 7, p_lost_reason: null });
+    await setStatus("s1", "lost", "", 7, "cost");
+    expect(rpc).toHaveBeenLastCalledWith("set_submission_status", {
+      p_session_id: "s1", p_status: "lost", p_note: null, p_won_quote_request_id: null, p_lost_reason: "cost",
+    });
+    await setStatus("s1", "archived", "", undefined, "cost");
+    expect(rpc).toHaveBeenLastCalledWith("set_submission_status", {
+      p_session_id: "s1", p_status: "archived", p_note: null, p_won_quote_request_id: null, p_lost_reason: null,
+    });
   });
 
   it("asks the queue for only the submissions waiting on a PEO, sorted by the longest wait or the earliest expiry", async () => {
@@ -460,4 +471,25 @@ describe("quote requests", () => {
     expect(rpc).toHaveBeenLastCalledWith("advisor_list_submissions", expect.objectContaining({ p_waiting: null, p_sort: null }));
   });
 });
+});
+
+describe("what the funnel page counts", () => {
+  beforeEach(() => rpc.mockReset().mockResolvedValue({ data: [{ x: 1 }], error: null }));
+
+  it("asks each advisor-only function for the period, and returns its rows", async () => {
+    const from = new Date("2026-10-01T00:00:00Z");
+    const to = new Date("2026-11-01T00:00:00Z");
+    const range = { p_from: "2026-10-01T00:00:00.000Z", p_to: "2026-11-01T00:00:00.000Z" };
+    expect(await loadPeoOutcomes(from, to)).toEqual([{ x: 1 }]);
+    expect(rpc).toHaveBeenLastCalledWith("advisor_peo_outcomes", range);
+    expect(await loadLostReasons(from, to)).toEqual([{ x: 1 }]);
+    expect(rpc).toHaveBeenLastCalledWith("advisor_lost_reasons", range);
+    expect(await loadQuestionFields(from, to)).toEqual([{ x: 1 }]);
+    expect(rpc).toHaveBeenLastCalledWith("advisor_question_fields", range);
+  });
+
+  it("calls a refusal a lack of advisor access", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "denied", code: "42501" } });
+    await expect(loadPeoOutcomes(new Date(0), new Date(1))).rejects.toThrow("You don't have advisor access.");
+  });
 });

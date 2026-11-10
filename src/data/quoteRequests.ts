@@ -107,3 +107,26 @@ export const waitingLabel = (sentOn: string, now?: Date) => {
   const days = daysSince(sentOn, now);
   return `Waiting ${days} day${days === 1 ? "" : "s"}`;
 };
+
+/**
+ * Why a PEO declined, from a short list: required when a quote request is declined. The database holds the same list
+ * (is_decline_reason, migration 20261111090000); src/data/schemaSync.test.ts keeps them equal.
+ */
+export const DECLINE_REASONS = [
+  "below_minimum_headcount",
+  "state_not_served",
+  "class_code_excluded",
+  "claims_history",
+  "incomplete_information",
+  "other",
+] as const;
+export type DeclineReason = (typeof DECLINE_REASONS)[number];
+
+export const DECLINE_REASON_LABELS: Record<DeclineReason, string> = {
+  below_minimum_headcount: "Below its minimum headcount",
+  state_not_served: "A state it doesn't serve",
+  class_code_excluded: "Industry or class code excluded",
+  claims_history: "Claims or loss history",
+  incomplete_information: "Incomplete information",
+  other: "Other",
+};

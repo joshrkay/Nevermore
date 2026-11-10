@@ -12,6 +12,10 @@ export const FUNNEL_STEPS = [
   "email_verified",
   "certified",
   "manuscript_downloaded",
+  // The market steps (#88), timed from certification rather than from the start.
+  "sent_to_peo",
+  "first_quote",
+  "won",
 ] as const;
 export type FunnelStep = (typeof FUNNEL_STEPS)[number];
 
@@ -24,6 +28,9 @@ export const FUNNEL_LABELS: Record<FunnelStep, string> = {
   email_verified: "Verified an email",
   certified: "Certified",
   manuscript_downloaded: "Downloaded the packet",
+  sent_to_peo: "Sent to a PEO",
+  first_quote: "Got a first quote",
+  won: "Won",
 };
 
 /** The periods the page offers, as days back from now. The database answers at most a year at once. */
@@ -50,8 +57,10 @@ export interface FunnelRow {
   intakes: number;
   /** Of the intakes that started in the period, as a fraction (0 to 1); null when none started. */
   ofStarted: number | null;
-  /** The median time from the start to reaching the step, in minutes; null when nothing recorded it. */
+  /** The median time to reach the step, in minutes, from `measuredFrom`; null when nothing recorded it. */
   medianMinutes: number | null;
+  /** What the median is timed from: the start, or (for the market steps) the certification. */
+  measuredFrom: "start" | "certification";
 }
 
 const asCount = (v: unknown) => {
@@ -64,7 +73,7 @@ const asMinutes = (v: unknown) => {
 };
 
 /** The database's rows as the page shows them: every step in order (a missing one at zero), each against the start. */
-export function funnelRows(raw: readonly { milestone: string; intakes: unknown; median_minutes: unknown }[]): FunnelRow[] {
+export function funnelRows(raw: readonly { milestone: string; intakes: unknown; median_minutes: unknown; measured_from?: unknown }[]): FunnelRow[] {
   const byStep = new Map(raw.map((r) => [r.milestone, r]));
   const started = asCount(byStep.get("started")?.intakes);
   return FUNNEL_STEPS.map((step) => {
@@ -76,6 +85,7 @@ export function funnelRows(raw: readonly { milestone: string; intakes: unknown; 
       intakes,
       ofStarted: started > 0 ? Math.min(intakes / started, 1) : null,
       medianMinutes: asMinutes(r?.median_minutes),
+      measuredFrom: r?.measured_from === "certification" ? "certification" : "start",
     };
   });
 }

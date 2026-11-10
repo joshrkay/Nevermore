@@ -9,7 +9,7 @@ describe("funnelRows", () => {
       { milestone: "answered", intakes: "16", median_minutes: "3.5" },
     ]);
     expect(rows.map((r) => r.step)).toEqual([...FUNNEL_STEPS]);
-    expect(rows[0]).toEqual({ step: "started", label: "Started an intake", intakes: 20, ofStarted: 1, medianMinutes: null });
+    expect(rows[0]).toEqual({ step: "started", label: "Started an intake", intakes: 20, ofStarted: 1, medianMinutes: null, measuredFrom: "start" });
     expect(rows[1]).toMatchObject({ intakes: 16, ofStarted: 0.8, medianMinutes: 3.5 });
     expect(rows.find((r) => r.step === "certified")).toMatchObject({ intakes: 5, ofStarted: 0.25, medianMinutes: 2880 });
     expect(rows.find((r) => r.step === "census_provided")).toMatchObject({ intakes: 0, ofStarted: 0, medianMinutes: null });

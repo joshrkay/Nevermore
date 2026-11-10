@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { actorName, formatDateTime } from "./format";
 import { toast } from "sonner";
-import { PIPELINE_LABELS, type PipelineStatus } from "@/data/advisor";
+import { PIPELINE_LABELS, REQUESTABLE_FIELDS, type PipelineStatus } from "@/data/advisor";
+import { FIELD_LABELS, type FieldKey } from "@/data/provenance";
 import { cleanPeoName, PEO_CATALOG, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
 import type { ChamberData } from "@/data/chamberTypes";
-import { canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isQuoteRequestStatus, olderVersionNote, QUOTE_REQUEST_LABELS, stageToOffer } from "@/data/quoteRequests";
+import { canRecordSend, DECLINE_REASON_LABELS, DECLINE_REASONS, describeQuote, describeQuoteRequestEvent, formatDay, isQuoteRequestStatus, olderVersionNote, QUOTE_REQUEST_LABELS, stageToOffer } from "@/data/quoteRequests";
 import { noteUnderwriterQuestion, recordQuoteSend, setStatus, updateQuoteRequest, type QuoteAnswer, type QuoteRequestEventRow, type QuoteRequestRow } from "@/lib/advisorApi";
 
 interface QuoteRequestsPanelProps {
@@ -20,8 +21,8 @@ interface QuoteRequestsPanelProps {
   data: ChamberData;
   /** The PEOs with sourced facts; the app's catalog unless a test supplies one. */
   catalog?: readonly PeoRecord[];
-  /** Opens Ask the prospect with an underwriter's question in it, for the advisor to edit and send as their own. */
-  onAskProspect: (question: string) => void;
+  /** Opens Ask the prospect with an underwriter's question and the answers it's about, for the advisor to edit and send. */
+  onAskProspect: (question: string, fields: FieldKey[]) => void;
   onChanged: () => void;
 }
 
@@ -48,8 +49,10 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
   const [expiresOn, setExpiresOn] = useState(request.quote_expires_on ?? "");
   const [startOn, setStartOn] = useState(request.proposed_start_on ?? "");
   const [note, setNote] = useState(request.note ?? "");
+  const [declineReason, setDeclineReason] = useState(request.decline_reason ?? "");
   const [saving, setSaving] = useState(false);
   const quoted = status === "quoted";
+  const declined = status === "declined";
 
   const save = async () => {
     setSaving(true);
@@ -61,6 +64,7 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
         startOn: quoted ? startOn || null : null,
         adminFeePepm: quoted && fee.trim() !== "" ? Number(fee) : null,
         note: note.trim() || null,
+        declineReason: declined ? declineReason || null : null,
       });
       toast.success(`Recorded ${request.peo_name}'s answer.`);
       onSaved(status);
@@ -91,10 +95,21 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
           <input id={`${id}-start`} type="date" value={startOn} onChange={(e) => setStartOn(e.target.value)} className={inputClass} />
         </>
       )}
+      {declined && (
+        <>
+          <label htmlFor={`${id}-reason`} className="block text-xs text-muted-foreground">Why did they decline?</label>
+          <select id={`${id}-reason`} value={declineReason} onChange={(e) => setDeclineReason(e.target.value)} className={inputClass}>
+            <option value="">Choose a reason</option>
+            {DECLINE_REASONS.map((r) => (
+              <option key={r} value={r}>{DECLINE_REASON_LABELS[r]}</option>
+            ))}
+          </select>
+        </>
+      )}
       <label htmlFor={`${id}-note`} className="block text-xs text-muted-foreground">Note</label>
       <textarea id={`${id}-note`} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} rows={2} className={inputClass} />
       <div className="flex gap-2">
-        <button onClick={save} disabled={saving} className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-1.5 rounded-md disabled:opacity-50">
+        <button onClick={save} disabled={saving || (declined && !declineReason)} className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-1.5 rounded-md disabled:opacity-50">
           {saving && <Loader2 className="w-4 h-4 animate-spin" />} Save answer
         </button>
         <button onClick={onCancel} className="px-3 py-1.5 rounded-md border border-border text-sm">Cancel</button>
@@ -107,11 +122,13 @@ const AnswerForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; 
 const QuestionForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow; onSaved: () => void; onCancel: () => void }) => {
   const id = `question-${request.id}`;
   const [question, setQuestion] = useState("");
+  // The answers it's about, if the advisor names them: counted on the funnel page, carried into Ask the prospect.
+  const [fields, setFields] = useState<FieldKey[]>([]);
   const [saving, setSaving] = useState(false);
   const save = async () => {
     setSaving(true);
     try {
-      await noteUnderwriterQuestion(request.id, question);
+      await noteUnderwriterQuestion(request.id, question, fields);
       toast.success(`Noted ${request.peo_name}'s question.`);
       onSaved();
     } catch (err) {
@@ -124,7 +141,30 @@ const QuestionForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow
     <div className="space-y-2 pt-2">
       <label htmlFor={id} className="block text-xs text-muted-foreground">Underwriter's question</label>
       <textarea id={id} value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={2000} rows={2} className={inputClass} />
-      <p className="text-xs text-muted-foreground">To ask the prospect, use Ask the prospect above.</p>
+      <label htmlFor={`${id}-fields`} className="block text-xs text-muted-foreground">Answers it's about (optional)</label>
+      <select
+        id={`${id}-fields`}
+        value=""
+        onChange={(e) => e.target.value && setFields((f) => (f.includes(e.target.value as FieldKey) ? f : [...f, e.target.value as FieldKey]))}
+        className={inputClass}
+      >
+        <option value="">Add an answer</option>
+        {REQUESTABLE_FIELDS.filter((f) => !fields.includes(f)).map((f) => (
+          <option key={f} value={f}>{FIELD_LABELS[f]}</option>
+        ))}
+      </select>
+      {fields.length > 0 && (
+        <ul className="flex flex-wrap gap-1.5">
+          {fields.map((f) => (
+            <li key={f} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted">
+              {FIELD_LABELS[f]}
+              <button onClick={() => setFields((all) => all.filter((x) => x !== f))} aria-label={`Remove ${FIELD_LABELS[f]}`}>
+                <X className="w-3 h-3" aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="flex gap-2">
         <button onClick={save} disabled={saving || question.trim() === ""} className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-1.5 rounded-md disabled:opacity-50">
           {saving && <Loader2 className="w-4 h-4 animate-spin" />} Save question
@@ -253,7 +293,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
                     {e.field === "underwriter_question" && e.new_value && (
                       <>
                         {" · "}
-                        <button onClick={() => onAskProspect(e.new_value!)} className="text-primary underline">Ask the prospect</button>
+                        <button onClick={() => onAskProspect(e.new_value!, (e.fields ?? []) as FieldKey[])} className="text-primary underline">Ask the prospect</button>
                       </>
                     )}
                   </li>

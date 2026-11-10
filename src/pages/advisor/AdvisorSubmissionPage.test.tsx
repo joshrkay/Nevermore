@@ -210,9 +210,10 @@ describe("AdvisorSubmissionPage", () => {
     // An internal status leaves the prospect with their last shared one.
     expect(within(panel).getByText(/The prospect will see: “Received\. .*” \(the status itself stays internal\)/)).toBeInTheDocument();
     fireEvent.change(within(panel).getByLabelText("Internal note (optional)"), { target: { value: "Went with incumbent" } });
+    fireEvent.change(within(panel).getByLabelText("Why was it lost?"), { target: { value: "stayed_with_current" } });
     api.setStatus.mockResolvedValue(undefined);
     fireEvent.click(within(panel).getByRole("button", { name: "Update status" }));
-    await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "lost", "Went with incumbent"));
+    await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "lost", "Went with incumbent", undefined, "stayed_with_current"));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
     expect(within(panel).queryByRole("option", { name: "Draft" })).not.toBeInTheDocument();
   });
@@ -846,7 +847,7 @@ describe("AdvisorSubmissionPage", () => {
       quoteRequests: [{ id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 1, sent_on: "2026-11-10",
         quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
       quoteRequestEvents: [{ id: 3, quote_request_id: 7, session_id: "s1", field: "underwriter_question", old_value: null,
-        new_value: "Can they send last year's loss runs?", changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-11-12T15:00:00Z" }],
+        new_value: "Can they send last year's loss runs?", fields: ["pay_frequency"], changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-11-12T15:00:00Z" }],
     }));
     renderPage();
     const quotes = await screen.findByRole("region", { name: "Quote requests" });
@@ -854,6 +855,8 @@ describe("AdvisorSubmissionPage", () => {
     const message = screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
     expect(message.value).toBe("Can they send last year's loss runs?");
     expect(message.value).not.toMatch(/TriNet/);
+    // The answers the advisor tagged it with come along, to keep or remove.
+    expect(within(screen.getByRole("list", { name: "Answers the request is about" })).getByText("Pay frequency")).toBeInTheDocument();
     expect(api.requestInformation).not.toHaveBeenCalled();
   });
 });

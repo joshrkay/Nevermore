@@ -25,12 +25,12 @@ import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
 import { isFileId } from "@/data/manuscript";
 import { OPEN_ITEM_STATUSES } from "@/data/openItems";
-import { INFORMATION_REQUEST_MAX, NEEDS_ACTION_NOTE_MAX, PIPELINE_STATUSES, PIPELINE_TRANSITIONS } from "@/data/advisor";
+import { INFORMATION_REQUEST_MAX, LOST_REASONS, NEEDS_ACTION_NOTE_MAX, PIPELINE_STATUSES, PIPELINE_TRANSITIONS } from "@/data/advisor";
 import { OUTBOX_KIND_LABELS } from "@/data/outbox";
 import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
-import { QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
+import { DECLINE_REASONS, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
@@ -199,8 +199,9 @@ describe("server and client intake rules agree", () => {
   });
 
   it("lists the funnel's steps in the order the database records and counts them", () => {
-    expect(quoted(blocks("intake_milestones").join("\n"))).toEqual([...FUNNEL_STEPS]);
-    const sql = readFileSync("supabase/migrations/20261105092000_intake_milestones.sql", "utf8");
+    // The step list is the constraint's, as the latest migration that defines it (20261111090000) holds it.
+    expect(quoted(latest.get("intake_milestones_milestone_check")!.map((b) => b.body).join("\n"))).toEqual([...FUNNEL_STEPS]);
+    const sql = readFileSync("supabase/migrations/20261111090000_pipeline_learning.sql", "utf8");
     const counted = /unnest\(ARRAY\[([\s\S]*?)\]\) WITH ORDINALITY AS s\(name, ord\)/.exec(sql)?.[1] ?? "";
     expect(quoted(counted)).toEqual([...FUNNEL_STEPS]);
   });
@@ -216,7 +217,7 @@ describe("server and client intake rules agree", () => {
   });
 
   it("counts the funnel's steps, in order, for each source", () => {
-    const sql = readFileSync("supabase/migrations/20261106100000_intake_sources.sql", "utf8");
+    const sql = readFileSync("supabase/migrations/20261111090000_pipeline_learning.sql", "utf8");
     const returned = /advisor_intake_sources\([^)]*\)\s*RETURNS TABLE \(([\s\S]*?)\)\s*LANGUAGE/.exec(sql)?.[1] ?? "";
     const columns = [...returned.matchAll(/^\s*(\w+) bigint/gm)].map((m) => m[1]);
     expect(columns).toEqual([...FUNNEL_STEPS]);
@@ -238,6 +239,12 @@ describe("server and client intake rules agree", () => {
   it("holds the same quote request statuses, and records sends at the same stages", () => {
     expect(quoted(blocks("quote_request_statuses").join("\n"))).toEqual([...QUOTE_REQUEST_STATUSES]);
     expect(quoted(blocks("quote_sendable_stages").join("\n"))).toEqual([...SENDABLE_STAGES]);
+  });
+
+  // Learning from what PEOs send back (20261111090000): the reasons the panels offer are the ones the database takes.
+  it("takes the same decline and lost reasons", () => {
+    expect(quoted(blocks("decline_reasons").join("\n"))).toEqual([...DECLINE_REASONS]);
+    expect(quoted(blocks("lost_reasons").join("\n"))).toEqual([...LOST_REASONS]);
   });
 
   it("caps the PEO a packet went to at the longest PEO name", () => {

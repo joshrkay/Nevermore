@@ -13,6 +13,7 @@ import NotesPanel from "@/components/advisor/NotesPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
 import { PEO_CATALOG } from "@/data/peoCatalog";
+import type { FieldKey } from "@/data/provenance";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
@@ -116,9 +117,9 @@ const Detail = ({
 }) => {
   // An underwriter's question the advisor chose to ask the prospect: it opens Ask the prospect with the text in it,
   // as a fresh draft each time, for the advisor to edit and send as their own request.
-  const [askDraft, setAskDraft] = useState<{ message: string; n: number } | null>(null);
-  const askProspect = (message: string) => {
-    setAskDraft((current) => ({ message, n: (current?.n ?? 0) + 1 }));
+  const [askDraft, setAskDraft] = useState<{ message: string; fields: FieldKey[]; n: number } | null>(null);
+  const askProspect = (message: string, fields: FieldKey[]) => {
+    setAskDraft((current) => ({ message, fields, n: (current?.n ?? 0) + 1 }));
     window.requestAnimationFrame?.(() => document.getElementById("information-request-message")?.focus());
   };
   const sub = detail.submission;
@@ -188,6 +189,7 @@ const Detail = ({
             // panel follows the marks as they change.
             key={`${detail.informationRequests.length}-${askDraft?.n ?? 0}`}
             initialMessage={askDraft?.message}
+            initialFields={askDraft?.fields}
             sessionId={detail.id}
             prospectUserId={detail.userId}
             status={detail.pipelineStatus}

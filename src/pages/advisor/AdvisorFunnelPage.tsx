@@ -16,9 +16,15 @@ import {
   type FunnelStep,
 } from "@/data/funnel";
 import { sourceRows, sourceTitle, type SourceRow } from "@/data/referralPartners";
-import { loadFunnel, loadIntakeSources } from "@/lib/advisorApi";
+import { loadFunnel, loadIntakeSources, loadLostReasons, loadPeoOutcomes, loadQuestionFields, type LostReasonCount, type PeoOutcome, type QuestionFieldCount } from "@/lib/advisorApi";
+import { DECLINE_REASON_LABELS, type DeclineReason } from "@/data/quoteRequests";
+import { LOST_REASON_LABELS, type LostReason } from "@/data/advisor";
+import { FIELD_LABELS, type FieldKey } from "@/data/provenance";
 
-type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; rows: FunnelRow[]; sources: SourceRow[] };
+type Load =
+  | { kind: "loading" }
+  | { kind: "error"; error: Error }
+  | { kind: "ready"; rows: FunnelRow[]; sources: SourceRow[]; peos: PeoOutcome[]; lost: LostReasonCount[]; asked: QuestionFieldCount[] };
 
 /**
  * The pilot funnel: of the intakes started in a period, how many reached each step, and the median time it took.
@@ -35,8 +41,9 @@ const AdvisorFunnelPage = () => {
     let cancelled = false;
     setLoad({ kind: "loading" });
     const { from, to } = funnelRange(period);
-    Promise.all([loadFunnel(from, to), loadIntakeSources(from, to)])
-      .then(([raw, sources]) => !cancelled && setLoad({ kind: "ready", rows: funnelRows(raw), sources: sourceRows(sources) }))
+    Promise.all([loadFunnel(from, to), loadIntakeSources(from, to), loadPeoOutcomes(from, to), loadLostReasons(from, to), loadQuestionFields(from, to)])
+      .then(([raw, sources, peos, lost, asked]) =>
+        !cancelled && setLoad({ kind: "ready", rows: funnelRows(raw), sources: sourceRows(sources), peos, lost, asked }))
       .catch((error: Error) => !cancelled && setLoad({ kind: "error", error }));
     return () => {
       cancelled = true;
@@ -89,6 +96,8 @@ const AdvisorFunnelPage = () => {
           <>
             <FunnelTable rows={load.rows} />
             <SourceTable sources={load.sources} />
+            <PeoTable peos={load.peos} />
+            <WhatWeLearn lost={load.lost} asked={load.asked} />
           </>
         ))}
 
@@ -125,7 +134,13 @@ const FunnelTable = ({ rows }: { rows: FunnelRow[] }) => (
           </td>
           <td className="py-2.5 pr-4 text-right tabular-nums">{r.intakes.toLocaleString("en-US")}</td>
           <td className="py-2.5 pr-4 text-right tabular-nums text-muted-foreground">{formatShare(r.ofStarted)}</td>
-          <td className="py-2.5 text-right tabular-nums text-muted-foreground">{r.step === "started" ? "—" : formatDuration(r.medianMinutes)}</td>
+          <td className="py-2.5 text-right tabular-nums text-muted-foreground">
+            {r.step === "started"
+              ? "—"
+              : r.measuredFrom === "certification" && r.medianMinutes !== null
+                ? `${formatDuration(r.medianMinutes)} from certifying`
+                : formatDuration(r.medianMinutes)}
+          </td>
         </tr>
       ))}
     </tbody>
@@ -183,6 +198,101 @@ const SourceTable = ({ sources }: { sources: SourceRow[] }) => (
           })}
         </tbody>
       </table>
+    </div>
+  </section>
+);
+
+const reasonLabel = (r: string) => DECLINE_REASON_LABELS[r as DeclineReason] ?? r;
+
+/** Declines by reason, alphabetically by label: "Claims or loss history 1 · A state it doesn't serve 1". */
+function declineBreakdown(reasons: unknown): string {
+  if (!reasons || typeof reasons !== "object") return "";
+  return Object.entries(reasons as Record<string, number>)
+    .map(([r, n]) => [reasonLabel(r), n] as const)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([label, n]) => `${label} ${n}`)
+    .join(" · ");
+}
+
+const days = (n: number | null) => (n === null ? "—" : `${Number(n).toLocaleString("en-US", { maximumFractionDigits: 1 })} days`);
+
+/** What each PEO did with the packets it was sent, for the same intakes (#88). Alphabetical: never a ranking. */
+const PeoTable = ({ peos }: { peos: PeoOutcome[] }) => (
+  <section aria-labelledby="by-peo-heading" className="mt-10">
+    <h2 id="by-peo-heading" className="font-display text-xl font-bold mb-1">By PEO</h2>
+    <p className="text-sm text-muted-foreground mb-3">
+      Quote requests to each PEO for these intakes. Days to quote run from the send to the quote arriving.
+    </p>
+    {peos.length === 0 ? (
+      <p className="text-sm text-muted-foreground">No packet from these intakes has gone to a PEO yet.</p>
+    ) : (
+      <table className="w-full text-sm border-collapse">
+        <caption className="sr-only">What each PEO did with the packets it was sent</caption>
+        <thead>
+          <tr className="text-left text-xs text-muted-foreground border-b border-border">
+            <th scope="col" className="py-2 pr-4 font-normal">PEO</th>
+            <th scope="col" className="py-2 pr-4 font-normal text-right">Sent</th>
+            <th scope="col" className="py-2 pr-4 font-normal text-right">Quoted</th>
+            <th scope="col" className="py-2 pr-4 font-normal">Declined</th>
+            <th scope="col" className="py-2 pr-4 font-normal text-right">Median days to quote</th>
+            <th scope="col" className="py-2 font-normal text-right">Won</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...peos].sort((a, b) => a.peo_name.localeCompare(b.peo_name)).map((p) => (
+            <tr key={p.peo_name} className="border-b border-border/60">
+              <th scope="row" className="py-2.5 pr-4 font-normal text-left">{p.peo_name}</th>
+              <td className="py-2.5 pr-4 text-right tabular-nums">{p.sent}</td>
+              <td className="py-2.5 pr-4 text-right tabular-nums">{p.quoted}</td>
+              <td className="py-2.5 pr-4">
+                <span className="tabular-nums">{p.declined}</span>
+                {p.declined > 0 && <span className="block text-xs text-muted-foreground">{declineBreakdown(p.decline_reasons)}</span>}
+              </td>
+              <td className="py-2.5 pr-4 text-right tabular-nums text-muted-foreground">{days(p.median_days_to_quote)}</td>
+              <td className="py-2.5 text-right tabular-nums">{p.won}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
+  </section>
+);
+
+/** Why searches were lost, and what underwriters asked about: counts to act on by hand (#88). */
+const WhatWeLearn = ({ lost, asked }: { lost: LostReasonCount[]; asked: QuestionFieldCount[] }) => (
+  <section aria-labelledby="learn-heading" className="mt-10 grid gap-6 md:grid-cols-2">
+    <h2 id="learn-heading" className="sr-only">What PEOs and employers sent back</h2>
+    <div>
+      <h3 className="font-medium mb-2">Why submissions were lost</h3>
+      {lost.length === 0 ? (
+        <p className="text-sm text-muted-foreground">None lost in this period.</p>
+      ) : (
+        <ul aria-label="Why submissions were lost" className="text-sm space-y-1">
+          {lost.map((l) => (
+            <li key={l.reason}>{`${LOST_REASON_LABELS[l.reason as LostReason] ?? l.reason}: ${l.submissions}`}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+    <div>
+      <h3 className="font-medium mb-2">What underwriters asked about</h3>
+      {asked.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No tagged underwriters' questions in this period.</p>
+      ) : (
+        <>
+          <ul aria-label="Answers underwriters asked about" className="text-sm space-y-1">
+            {asked.map((a) => (
+              <li key={a.field}>{`${FIELD_LABELS[a.field as FieldKey] ?? a.field}: ${a.questions}`}</li>
+            ))}
+          </ul>
+          <p className="text-xs text-muted-foreground mt-2">
+            {`${asked[0].tagged_questions} of ${asked[0].total_questions} underwriters' questions were tagged with the answers they're about.`}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            A field asked about often may belong higher in Lenore's questions: that change is made to the intake schema and reviewed.
+          </p>
+        </>
+      )}
     </div>
   </section>
 );
