@@ -21,6 +21,9 @@ const api = {
   saveManuscriptVersion: vi.fn(),
   manuscriptUrl: vi.fn(),
   documentUrl: vi.fn(),
+  recordQuoteSend: vi.fn(),
+  updateQuoteRequest: vi.fn(),
+  noteUnderwriterQuestion: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
 const downloadBlob = vi.fn();
@@ -84,6 +87,10 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   ],
   documentEvents: [],
   informationRequests: [],
+  quoteRequests: [],
+  quoteRequestEvents: [],
+  currentVersion: 1,
+  wonQuoteRequestId: null,
   ...over,
 });
 
@@ -804,5 +811,18 @@ describe("AdvisorSubmissionPage", () => {
       expect(await screen.findByRole("heading", { name: "Signed Co" })).toBeInTheDocument();
       expect(screen.queryByText(/Email bounced/)).not.toBeInTheDocument();
     });
+  });
+
+  it("shows the PEOs the submission went to, flagging one that has an older version", async () => {
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "sent_to_carrier",
+      currentVersion: 2,
+      quoteRequests: [{ id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 1, sent_on: "2026-11-10",
+        quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
+    }));
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote requests" });
+    expect(within(within(panel).getByTestId("quote-request-7")).getByText("TriNet")).toBeInTheDocument();
+    expect(within(panel).getByText("Sent v1, current v2")).toBeInTheDocument();
   });
 });

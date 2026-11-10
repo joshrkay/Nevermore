@@ -93,6 +93,7 @@
 \i supabase/migrations/20261106100000_intake_sources.sql
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
+\i supabase/migrations/20261110090000_quote_requests.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -319,6 +320,10 @@ BEGIN
   PERFORM public.set_submission_status(pa_cert, 'under_review', 'Picked up');
   INSERT INTO public.advisor_notes (session_id, body) VALUES (pa_cert, 'Loss runs look thin');
   PERFORM public.review_submission_field(pa_cert, 'company_name', 'verified');
+  -- A quote request on prospect A's submission, once it is ready for market (20261110090000), so it and its
+  -- history have rows to protect.
+  PERFORM public.set_submission_status(pa_cert, 'ready_for_market', 'Reviewed');
+  PERFORM public.advisor_record_quote_send(pa_cert, 'TriNet', NULL);
   -- A request for information on prospect B's submission (20261105090000), so its table has a row to protect.
   PERFORM public.advisor_request_information(pb_cert, 'Please confirm the pay frequency', ARRAY['pay_frequency']);
   -- A referral partner (20261106100000), so its table has a row to protect.
@@ -404,6 +409,10 @@ INSERT INTO matrix VALUES
   -- What advisors asked prospects for (20261105090000): the prospect reads their own open request only through
   -- prospect_information_request(), never the table.
   ('public.information_requests',                       '{"advisor":"all","admin":"all"}'),
+  -- Which PEOs each submission went to and what they answered (20261110090000), with every change: the advisors'
+  -- alone. The prospect never sees a quote request, even on their own submission.
+  ('public.quote_requests',                             '{"advisor":"all","admin":"all"}'),
+  ('public.quote_request_events',                       '{"advisor":"all","admin":"all"}'),
   -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
   ('public.intake_milestones',                          '{}'),
   -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
@@ -693,13 +702,19 @@ INSERT INTO callable VALUES
   ('ai_event_names_ok(names text[], paths boolean)', 'helper', NULL, 'pure: the AI call records'' check constraint'),
   ('intake_accepts_files(p_session text)',     'helper',  NULL, 'the upload policies call it as the uploader; answers only whether an intake exists with no deletion open (and holds the row against one)'),
   ('ops_alert_rules()',                        'helper',  NULL, 'constants: the alert thresholds'),
-  ('advisor_list_submissions(p_status text, p_search text, p_limit integer, p_offset integer, p_needs_action boolean)', 'advisor',
-                                                                     'SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 25, 0, true)', 'the queue: one page, searched, filtered'),
+  ('advisor_list_submissions(p_status text, p_search text, p_limit integer, p_offset integer, p_needs_action boolean, p_waiting boolean, p_sort text)', 'advisor',
+                                                                     'SELECT count(*) FROM public.advisor_list_submissions(NULL, NULL, 25, 0, true, true, ''oldest_waiting'')', 'the queue: one page, searched, filtered, sorted'),
+  ('advisor_record_quote_send(p_session_id uuid, p_peo text, p_sent_on date)', 'advisor',
+                                                                     'SELECT public.advisor_record_quote_send(%1$L, ''Justworks'', NULL)', 'recording a send to a PEO'),
+  ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text)', 'advisor',
+                                                                     'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
+  ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
+                                                                     'SELECT public.advisor_note_underwriter_question(0, ''probe'')', 'noting an underwriter''s question'),
   ('advisor_email_problems()',                 'advisor', 'SELECT count(*) FROM public.advisor_email_problems()', 'email problems on the queue'),
   ('advisor_list_outbox_events(p_status text, p_limit integer)', 'advisor', 'SELECT count(*) FROM public.advisor_list_outbox_events(NULL, 10)', 'the outbox page'),
   ('advisor_outbox_summary()',                 'advisor', 'SELECT count(*) FROM public.advisor_outbox_summary()', 'the outbox page'),
   ('advisor_requeue_outbox_event(event_id uuid, rebuild_payload boolean)', 'advisor', 'SELECT public.advisor_requeue_outbox_event(%2$L, false)', 'retrying a dead email'),
-  ('set_submission_status(p_session_id uuid, p_status text, p_note text)', 'advisor', 'SELECT public.set_submission_status(%1$L, ''information_requested'', ''probe'')', 'the pipeline'),
+  ('set_submission_status(p_session_id uuid, p_status text, p_note text, p_won_quote_request_id bigint)', 'advisor', 'SELECT public.set_submission_status(%1$L, ''information_requested'', ''probe'')', 'the pipeline'),
   ('set_submission_needs_action(p_session_id uuid, p_needs_action boolean, p_note text)', 'advisor',
                                                                      'SELECT public.set_submission_needs_action(%1$L, true, ''probe'')', 'needs advisor action'),
   ('review_submission_field(p_session_id uuid, p_field text, p_review_state text, p_correction text, p_value jsonb, p_reason text, p_answer jsonb)', 'advisor',

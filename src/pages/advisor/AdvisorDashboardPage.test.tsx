@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { SubmissionSummary } from "@/lib/advisorApi";
 
@@ -16,7 +16,7 @@ vi.mock("@/lib/advisorApi", () => ({
   },
   listEmailProblems: () => listEmailProblems(),
 }));
-const query = (over: Record<string, unknown> = {}) => ({ status: null, search: "", page: 1, needsAction: false, ...over });
+const query = (over: Record<string, unknown> = {}) => ({ status: null, search: "", page: 1, needsAction: false, waiting: false, sort: null, ...over });
 
 const { default: AdvisorDashboardPage } = await import("./AdvisorDashboardPage");
 
@@ -39,6 +39,12 @@ const row = (over: Partial<SubmissionSummary> = {}): SubmissionSummary => ({
   states: ["CA", "NY"],
   needs_action: false,
   needs_action_note: null,
+  quote_requests_sent: 0,
+  quotes_received: 0,
+  oldest_waiting_on: null,
+  earliest_quote_expires_on: null,
+  sent_older_version: false,
+  start_month: null,
   total_count: 1,
   ...over,
 });
@@ -150,7 +156,7 @@ describe("AdvisorDashboardPage", () => {
     renderAt();
     await screen.findByRole("link", { name: "Acme" });
     expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
-      "Company", "Contact", "States", "Employees", "Submitted", "Status", "Completeness",
+      "Company", "Contact", "States", "Employees", "Submitted", "Status", "Completeness", "Quotes",
     ]);
   });
 
@@ -516,6 +522,67 @@ describe("AdvisorDashboardPage", () => {
       listEmailProblems.mockImplementation(() => { throw new Error("synchronous"); });
       renderAt();
       expect(await screen.findByText("Acme")).toBeInTheDocument();
+    });
+  });
+
+  describe("quote requests", () => {
+    it("shows quotes back out of sent, the longest wait, the earliest expiry, the target start and an older version", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-16T15:00:00"));
+      listSubmissions.mockResolvedValue([
+        row({ quote_requests_sent: 3, quotes_received: 1, oldest_waiting_on: "2026-11-10", earliest_quote_expires_on: "2026-12-14",
+          sent_older_version: true, start_month: "April 2027" }),
+        row({ session_id: "s2", company_name: "Beta" }),
+      ]);
+      renderAt();
+      const acme = (await screen.findByText("Acme")).closest("tr")!;
+      expect(within(acme).getByText("1 / 3 quoted")).toBeInTheDocument();
+      expect(within(acme).getByText("Waiting 6 days")).toBeInTheDocument();
+      expect(within(acme).getByText("Expires Dec 14, 2026")).toBeInTheDocument();
+      expect(within(acme).getByText("A PEO has an older version")).toBeInTheDocument();
+      expect(within(acme).getByText("April 2027")).toBeInTheDocument();
+      const beta = screen.getByText("Beta").closest("tr")!;
+      expect(within(beta).queryByText(/quoted|Waiting|Expires|older version/)).not.toBeInTheDocument();
+      vi.useRealTimers();
+    });
+
+    it("lists only the submissions waiting on a PEO, keeps it in the URL, and says when there are none", async () => {
+      listSubmissions.mockResolvedValue([]);
+      renderAt("/advisor?status=sent_to_carrier");
+      await screen.findByText(/No submissions are/);
+      fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
+      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ status: "sent_to_carrier", waiting: true })));
+      expect(await screen.findByText("No sent to carrier/peo submissions waiting on a PEO.")).toBeInTheDocument();
+    });
+
+    it("sorts by the longest wait or the earliest expiry, from the first page, and reads the sort from the URL", async () => {
+      listSubmissions.mockResolvedValue([row()]);
+      renderAt("/advisor?page=2&sort=earliest_expiry");
+      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ page: 2, sort: "earliest_expiry" })));
+      fireEvent.change(await screen.findByLabelText("Sort"), { target: { value: "oldest_waiting" } });
+      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ sort: "oldest_waiting" })));
+      fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "" } });
+      await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query()));
+    });
+
+    it("refreshes every minute and when the tab is back in focus, keeping the rows on screen meanwhile", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      listSubmissions.mockResolvedValueOnce([row()]);
+      const { unmount } = renderAt();
+      await screen.findByText("Acme");
+      listSubmissions.mockReturnValue(new Promise(() => {}));
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(listSubmissions).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("Acme")).toBeInTheDocument();
+      expect(screen.queryByText(/Loading submissions/)).not.toBeInTheDocument();
+      act(() => { window.dispatchEvent(new Event("focus")); });
+      expect(listSubmissions).toHaveBeenCalledTimes(3);
+      unmount();
+      // Leaving the page stops the refresh: no timer is left behind.
+      expect(vi.getTimerCount()).toBe(0);
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(listSubmissions).toHaveBeenCalledTimes(3);
+      vi.useRealTimers();
     });
   });
 });

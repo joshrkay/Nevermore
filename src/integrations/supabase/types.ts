@@ -295,6 +295,44 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      // Which PEOs each submission was sent to and what they answered (20261110090000). Advisors read it; it is
+      // written only through advisor_record_quote_send, advisor_update_quote_request and set_submission_status.
+      quote_requests: {
+        Row: {
+          admin_fee_pepm: number | null
+          id: number
+          note: string | null
+          peo_name: string
+          proposed_start_on: string | null
+          quote_expires_on: string | null
+          quote_received_on: string | null
+          session_id: string
+          sent_on: string | null
+          sent_version: number | null
+          // One of QUOTE_REQUEST_STATUSES (src/data/quoteRequests.ts).
+          status: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // Every change to a quote request, and each underwriter's question: append-only, advisors read it.
+      quote_request_events: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          changed_by_email: string | null
+          field: string
+          id: number
+          new_value: string | null
+          old_value: string | null
+          quote_request_id: number
+          session_id: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       // Who refers employers, by the code in their link (20261106100000). Advisors read it; it is written only
       // through advisor_add_referral_partner and advisor_update_referral_partner.
       referral_partners: {
@@ -403,6 +441,8 @@ export type Database = {
       }
       submission_workflow: {
         Row: {
+          // The quote request whose quote the employer took, once won (20261110090000).
+          won_quote_request_id: number | null
           needs_action: boolean
           needs_action_at: string | null
           needs_action_by: string | null
@@ -500,7 +540,15 @@ export type Database = {
         }[]
       }
       advisor_list_submissions: {
-        Args: { p_status?: string | null; p_search?: string | null; p_limit?: number | null; p_offset?: number; p_needs_action?: boolean | null }
+        Args: {
+          p_status?: string | null
+          p_search?: string | null
+          p_limit?: number | null
+          p_offset?: number
+          p_needs_action?: boolean | null
+          p_waiting?: boolean | null
+          p_sort?: string | null
+        }
         Returns: {
           company_name: string | null
           contact_name: string | null
@@ -512,8 +560,14 @@ export type Database = {
           missing_required: string[]
           needs_action: boolean
           needs_action_note: string | null
+          earliest_quote_expires_on: string | null
+          oldest_waiting_on: string | null
           open_fields: number
           pipeline_status: string
+          quote_requests_sent: number
+          quotes_received: number
+          sent_older_version: boolean
+          start_month: string | null
           session_id: string
           signer_name: string | null
           states: string[]
@@ -533,6 +587,26 @@ export type Database = {
       }
       advisor_request_information: {
         Args: { p_fields?: string[]; p_message: string; p_session_id: string }
+        Returns: Json
+      }
+      advisor_note_underwriter_question: {
+        Args: { p_question: string; p_quote_request_id: number }
+        Returns: Json
+      }
+      advisor_record_quote_send: {
+        Args: { p_peo: string; p_sent_on?: string | null; p_session_id: string }
+        Returns: Json
+      }
+      advisor_update_quote_request: {
+        Args: {
+          p_admin_fee_pepm?: number | null
+          p_expires_on?: string | null
+          p_note?: string | null
+          p_quote_request_id: number
+          p_received_on?: string | null
+          p_start_on?: string | null
+          p_status: string
+        }
         Returns: Json
       }
       advisor_requeue_outbox_event: {
@@ -636,7 +710,7 @@ export type Database = {
         Returns: Database["public"]["Tables"]["submission_workflow"]["Row"]
       }
       set_submission_status: {
-        Args: { p_note?: string | null; p_session_id: string; p_status: string }
+        Args: { p_note?: string | null; p_session_id: string; p_status: string; p_won_quote_request_id?: number | null }
         Returns: Database["public"]["Tables"]["submission_workflow"]["Row"]
       }
     }

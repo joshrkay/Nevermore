@@ -83,6 +83,29 @@ a sign-out the app asked for is remembered until the event arrives.
   `under_review`, and information that arrives after a request is reviewed again before the file goes
   to market. The prospect's own moves above (certifying, withdrawing) are not limited by this list.
   `ready_for_market` is internal, like every stage after it: the prospect keeps the last status we share.
+- Record **quote requests** (migration `20261110090000`): which PEOs a submission was sent to and what each
+  answered, one per PEO (compared ignoring case). Advisors send the packet outside the product and record it
+  afterwards; the product sends nothing to a PEO, and prospects read neither table, even for their own
+  submission. All through advisor-only functions:
+  - `advisor_record_quote_send(session, peo, sent_on)` records a send, only while the stage is
+    `ready_for_market`, `sent_to_carrier` or `quoted` (22023 otherwise; PT404 for no such submission). It
+    notes the submission's latest certified version. A second send to the same PEO continues its quote
+    request with the new version and date, and reopens it (`closed` → `sent`) if it was closed. The PEO's name
+    is trimmed and at most 80 characters.
+  - `advisor_update_quote_request(id, status, received_on, expires_on, start_on, admin_fee_pepm, note)` records
+    the PEO's answer: `quoted`, `declined` or `closed`. Only a quote has dates and a fee (22023 otherwise); a
+    closed request is answered again only after a send reopens it. The note is at most 2000 characters, and the
+    fee 0 to 100000.
+  - `advisor_note_underwriter_question(id, question)` notes a question from the PEO's underwriter. It doesn't
+    change the status.
+  - Every change to a quote request is appended to `quote_request_events` (who, when, the field, the old and new
+    value) by a trigger, so nothing changes one unlogged; nobody can change or delete that history.
+  - `set_submission_status(session, status, note, won_quote_request_id)`: moving to `won` names one of the
+    submission's `quoted` requests (22023 otherwise), kept in `submission_workflow.won_quote_request_id`. `won`,
+    `lost` and `archived` close every request still `sent` or `quoted` (except the winner), logged like any
+    change; a decline stays a decline. The stage itself is still moved by hand: after a first send at
+    `ready_for_market` or a first quote at `sent_to_carrier`, the Quote requests panel offers the next step as
+    one click, and declining it changes nothing.
 - Review the evidence as certified. Certifying stamps a copy of the transcript and of the document
   list (name, category, size, storage path, SHA-256) into the submission; the detail page shows that
   transcript (and says if the prospect's conversation changed since) and marks documents removed,
@@ -157,6 +180,15 @@ still stored and open by their link; a verified prospect's empty draft is still 
   filter or the search returns to the first page.
 - A submission marked **Needs advisor action** carries that badge and the advisor's note under its
   status.
+- **Quotes** (migration `20261110090000`): quotes received out of the quote requests not closed ("1 / 3
+  quoted"), how many days the longest-waiting request has waited, the earliest expiry among the quotes held,
+  "A PEO has an older version" when an open request was sent an older version than the latest certified, and the
+  prospect's target start as they wrote it. **Waiting on a PEO only** (`?waiting=1`) lists the submissions with a
+  request sent and unanswered, and **Sort** (`?sort=oldest_waiting` or `?sort=earliest_expiry`) puts the
+  longest wait or the soonest expiry first; both run in the database. The target start is free text, so the
+  queue shows it but doesn't sort by it. There is no "overdue" threshold yet.
+- The queue reloads itself every minute and when its tab is back in focus, keeping the rows on screen while it
+  does.
 - **Completeness** describes what the advisor reviews: a certified intake is described from its
   certified copy, a required item supplied by a verified advisor correction isn't missing, and only
   fields an advisor can review count as unconfirmed (migration `20261104114000`).

@@ -30,6 +30,7 @@ import { OUTBOX_KIND_LABELS } from "@/data/outbox";
 import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
+import { QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
@@ -231,6 +232,17 @@ describe("server and client intake rules agree", () => {
   it("lets advisors review every answer of the intake schema", () => {
     const reviewable = quoted(blocks("reviewable_fields").join("\n"));
     expect(reviewable.filter((f) => f !== "employees").sort()).toEqual(Object.keys(INTAKE_SCHEMA.properties as object).sort());
+  });
+
+  // Quote requests (20261110090000): the statuses the panel shows and the stages it offers a send at.
+  it("holds the same quote request statuses, and records sends at the same stages", () => {
+    expect(quoted(blocks("quote_request_statuses").join("\n"))).toEqual([...QUOTE_REQUEST_STATUSES]);
+    expect(quoted(blocks("quote_sendable_stages").join("\n"))).toEqual([...SENDABLE_STAGES]);
+  });
+
+  it("caps the PEO a packet went to at the longest PEO name", () => {
+    const [sql] = blocks("quote_peo_length");
+    expect(Number(/>\s*(\d+)/.exec(sql)?.[1])).toBe(PEO_NAME_MAX);
   });
 
   it("keeps the same longest PEO name", () => {

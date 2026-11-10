@@ -34,6 +34,8 @@ export type ManuscriptVersion = Tables["manuscript_versions"]["Row"];
 export type UploadedDocument = Pick<Tables["documents"]["Row"], "id" | "file_name" | "file_size" | "category" | "status" | "storage_path" | "created_at" | "file_sha256" | "scan_verdict">;
 export type DocumentEvent = Tables["document_events"]["Row"];
 export type InformationRequestRow = Tables["information_requests"]["Row"];
+export type QuoteRequestRow = Tables["quote_requests"]["Row"];
+export type QuoteRequestEventRow = Tables["quote_request_events"]["Row"];
 
 export class AdvisorApiError extends Error {
   constructor(message: string, readonly code?: string, readonly unauthenticated = false) {
@@ -63,6 +65,9 @@ export async function fetchIsAdvisor(): Promise<boolean> {
   return data === true;
 }
 
+/** The queue's sorts besides its default: the longest wait on a PEO, or the quote that expires soonest. */
+export type QueueSort = "oldest_waiting" | "earliest_expiry";
+
 /** How many submissions the queue shows at a time. */
 export const QUEUE_PAGE_SIZE = 25;
 
@@ -82,6 +87,9 @@ export async function listSubmissions(opts: {
   search?: string;
   page?: number;
   needsAction?: boolean;
+  /** Only the submissions with a quote request sent and not yet answered. */
+  waiting?: boolean;
+  sort?: QueueSort | null;
 }): Promise<SubmissionPage> {
   const page = Math.max(1, Math.floor(opts.page ?? 1));
   const { data, error } = await supabase.rpc("advisor_list_submissions", {
@@ -90,6 +98,8 @@ export async function listSubmissions(opts: {
     p_limit: QUEUE_PAGE_SIZE,
     p_offset: (page - 1) * QUEUE_PAGE_SIZE,
     p_needs_action: opts.needsAction ? true : null,
+    p_waiting: opts.waiting ? true : null,
+    p_sort: opts.sort ?? null,
   });
   if (error) fail(error, "Couldn't load submissions.");
   const rows = data ?? [];
@@ -236,11 +246,20 @@ export interface SubmissionDetail {
   documentEvents: DocumentEvent[];
   /** What advisors have asked the prospect for, newest first. */
   informationRequests: InformationRequestRow[];
+  /** The PEOs this submission went to and what each answered, oldest first. */
+  quoteRequests: QuoteRequestRow[];
+  /** Every change to those quote requests, and the underwriters' questions, newest first. */
+  quoteRequestEvents: QuoteRequestEventRow[];
+  /** The submission's latest certified version (1, 2, ...); null before the first certification. */
+  currentVersion: number | null;
+  /** The quote request whose quote the employer took, once won. */
+  wonQuoteRequestId: number | null;
 }
 
 /** The columns of a chamber_certifications row the detail page reads. */
 interface RecordedCertification {
   file_id: string | null;
+  version: number | null;
   signed_at: string | null;
   recorded_at: string | null;
   chamber_data: Json | null;
@@ -255,7 +274,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
       .maybeSingle(),
     supabase
       .from("submission_workflow")
-      .select("status, needs_action, needs_action_note, needs_action_at, needs_action_by, needs_action_by_email")
+      .select("status, needs_action, needs_action_note, needs_action_at, needs_action_by, needs_action_by_email, won_quote_request_id")
       .eq("session_id", id)
       .maybeSingle(),
     supabase.from("submission_status_history").select("*").eq("session_id", id).order("id", { ascending: false }),
@@ -271,7 +290,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   // Row security hides sessions the caller may not see; a missing pipeline row means the same.
   if (!row || !workflow.data) return null;
 
-  const [docs, profile, docEvents, requests, lastCertification, partner] = await Promise.all([
+  const [docs, profile, docEvents, requests, lastCertification, partner, quotes, quoteEvents] = await Promise.all([
     supabase
       .from("documents")
       .select("id, file_name, file_size, category, status, storage_path, created_at, file_sha256, scan_verdict")
@@ -287,7 +306,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     // chamber_certifications isn't in the generated types (src/integrations/supabase/types.ts).
     (supabase as unknown as SupabaseClient)
       .from("chamber_certifications")
-      .select("file_id, signed_at, recorded_at, chamber_data")
+      .select("file_id, version, signed_at, recorded_at, chamber_data")
       .eq("session_id", id)
       .order("recorded_at", { ascending: false })
       .limit(1)
@@ -296,6 +315,8 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     row.referral_code
       ? supabase.from("referral_partners").select("name").eq("code", row.referral_code).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
+    supabase.from("quote_requests").select("*").eq("session_id", id).order("id", { ascending: true }),
+    supabase.from("quote_request_events").select("*").eq("session_id", id).order("id", { ascending: false }),
   ]);
   if (docs.error) fail(docs.error, "Couldn't load uploaded documents.");
   if (lastCertification.error) fail(lastCertification.error, "Couldn't load the certification on record.");
@@ -303,6 +324,8 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   if (docEvents.error) fail(docEvents.error, "Couldn't load the document history.");
   if (requests.error) fail(requests.error, "Couldn't load the requests sent to the prospect.");
   if (partner.error) fail(partner.error, "Couldn't load the referral partner.");
+  if (quotes.error) fail(quotes.error, "Couldn't load the quote requests.");
+  if (quoteEvents.error) fail(quoteEvents.error, "Couldn't load the quote requests' history.");
 
   const submission = (row.submission as unknown as ChamberSubmission | null) ?? null;
   const certified = row.status === "submitted" && !!submission?.signer_name;
@@ -358,14 +381,20 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     documents: reconcileDocuments(docs.data ?? [], useSnapshot ? submission!.documents : undefined),
     documentEvents: docEvents.data ?? [],
     informationRequests: requests.data ?? [],
+    quoteRequests: quotes.data ?? [],
+    quoteRequestEvents: quoteEvents.data ?? [],
+    currentVersion: recorded?.version ?? null,
+    wonQuoteRequestId: workflow.data.won_quote_request_id ?? null,
   };
 }
 
-export async function setStatus(sessionId: string, status: PipelineStatus, note: string): Promise<void> {
+/** Moves the pipeline one step. Marking it won names the quote request whose quote the employer took. */
+export async function setStatus(sessionId: string, status: PipelineStatus, note: string, wonQuoteRequestId?: number): Promise<void> {
   const { error } = await supabase.rpc("set_submission_status", {
     p_session_id: sessionId,
     p_status: status,
     p_note: note.trim() || null,
+    p_won_quote_request_id: status === "won" ? wonQuoteRequestId ?? null : null,
   });
   if (error) fail(error, "Couldn't change the status.");
 }
@@ -394,6 +423,47 @@ export async function requestInformation(sessionId: string, message: string, fie
     p_fields: [...fields],
   });
   if (error) fail(error, "Couldn't send the request.");
+}
+
+// ---------- Quote requests (joshrkay/Nevermore#82) ----------
+
+/**
+ * Records that the packet went to a PEO on `sentOn` (YYYY-MM-DD): a new quote request, or the PEO's existing one
+ * continued with the latest version. Refused before Ready for market.
+ */
+export async function recordQuoteSend(sessionId: string, peo: string, sentOn: string): Promise<void> {
+  const { error } = await supabase.rpc("advisor_record_quote_send", { p_session_id: sessionId, p_peo: peo, p_sent_on: sentOn });
+  if (error) fail(error, "Couldn't record the send.");
+}
+
+/** What a PEO answered: its quote's terms only when it quoted (dates YYYY-MM-DD, the fee in dollars). */
+export interface QuoteAnswer {
+  status: "quoted" | "declined" | "closed";
+  receivedOn: string | null;
+  expiresOn: string | null;
+  startOn: string | null;
+  adminFeePepm: number | null;
+  note: string | null;
+}
+
+/** Records a PEO's answer on a quote request, replacing what was recorded before. Every change is logged. */
+export async function updateQuoteRequest(id: number, answer: QuoteAnswer): Promise<void> {
+  const { error } = await supabase.rpc("advisor_update_quote_request", {
+    p_quote_request_id: id,
+    p_status: answer.status,
+    p_received_on: answer.receivedOn,
+    p_expires_on: answer.expiresOn,
+    p_start_on: answer.startOn,
+    p_admin_fee_pepm: answer.adminFeePepm,
+    p_note: answer.note,
+  });
+  if (error) fail(error, "Couldn't record the answer.");
+}
+
+/** Notes a question the PEO's underwriter asked, on its quote request's history. The status doesn't change. */
+export async function noteUnderwriterQuestion(id: number, question: string): Promise<void> {
+  const { error } = await supabase.rpc("advisor_note_underwriter_question", { p_quote_request_id: id, p_question: question.trim() });
+  if (error) fail(error, "Couldn't note the question.");
 }
 
 export async function addNote(sessionId: string, body: string): Promise<void> {

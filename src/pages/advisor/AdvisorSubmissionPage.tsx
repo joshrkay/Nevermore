@@ -10,6 +10,7 @@ import InformationRequestPanel from "@/components/advisor/InformationRequestPane
 import ManuscriptPanel from "@/components/advisor/ManuscriptPanel";
 import NeedsActionPanel from "@/components/advisor/NeedsActionPanel";
 import NotesPanel from "@/components/advisor/NotesPanel";
+import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
@@ -186,6 +187,15 @@ const Detail = ({
             requests={detail.informationRequests}
             onChanged={reload}
           />
+          <QuoteRequestsPanel
+            sessionId={detail.id}
+            prospectUserId={detail.userId}
+            status={detail.pipelineStatus}
+            currentVersion={detail.currentVersion}
+            requests={detail.quoteRequests}
+            events={detail.quoteRequestEvents}
+            onChanged={reload}
+          />
           <StatusPanel
             key={detail.pipelineStatus}
             sessionId={detail.id}
@@ -194,6 +204,7 @@ const Detail = ({
             certified={detail.certified}
             certifiedOnce={!!detail.submission?.signer_name}
             history={detail.history}
+            quoteRequests={detail.quoteRequests}
             onChanged={reload}
           />
           <ManuscriptPanel detail={detail} onChanged={reload} />
