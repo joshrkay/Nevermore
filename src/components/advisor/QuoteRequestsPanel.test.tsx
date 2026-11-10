@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { QuoteRequestEventRow, QuoteRequestRow } from "@/lib/advisorApi";
 import type { PipelineStatus } from "@/data/advisor";
+import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
+import type { PeoRecord } from "@/data/peoCatalog";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const api = {
@@ -30,7 +32,10 @@ const request = (over: Partial<QuoteRequestRow> = {}): QuoteRequestRow => ({
 });
 
 const panel = (
-  over: { status?: PipelineStatus; requests?: QuoteRequestRow[]; events?: QuoteRequestEventRow[]; currentVersion?: number | null } = {},
+  over: {
+    status?: PipelineStatus; requests?: QuoteRequestRow[]; events?: QuoteRequestEventRow[]; currentVersion?: number | null;
+    data?: ChamberData; catalog?: PeoRecord[]; onAskProspect?: (question: string) => void;
+  } = {},
 ) => {
   const onChanged = vi.fn();
   render(
@@ -41,6 +46,9 @@ const panel = (
       currentVersion={over.currentVersion === undefined ? 1 : over.currentVersion}
       requests={over.requests ?? [request()]}
       events={over.events ?? []}
+      data={over.data ?? EMPTY_CHAMBER_DATA}
+      catalog={over.catalog}
+      onAskProspect={over.onAskProspect ?? vi.fn()}
       onChanged={onChanged}
     />,
   );
@@ -100,16 +108,16 @@ describe("QuoteRequestsPanel", () => {
     expect(screen.queryByRole("button", { name: "Record send" })).not.toBeInTheDocument();
   });
 
-  it("after a send at Ready for market, offers the one step to Sent to carrier/PEO, and declining changes nothing", async () => {
+  it("after a send at Ready for market, offers the one step to Sent to PEOs, and declining changes nothing", async () => {
     const onChanged = panel({ status: "ready_for_market", requests: [] });
     fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "TriNet" } });
     fireEvent.click(screen.getByRole("button", { name: "Record send" }));
     fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
-    expect(screen.queryByRole("button", { name: "Move to Sent to carrier/PEO" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Move to Sent to PEOs" })).not.toBeInTheDocument();
     expect(api.setStatus).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Record send" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Move to Sent to carrier/PEO" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Move to Sent to PEOs" }));
     await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "sent_to_carrier", ""));
     expect(onChanged).toHaveBeenCalledTimes(3);
   });
@@ -208,5 +216,38 @@ describe("QuoteRequestsPanel", () => {
     const row = screen.getByTestId("quote-request-7");
     expect(within(row).queryByRole("button", { name: "Record answer" })).not.toBeInTheDocument();
     expect(within(row).getByRole("button", { name: "Note a question" })).toBeInTheDocument();
+  });
+
+  it("warns, on its row, about a PEO whose sourced facts don't fit the submission", () => {
+    panel({
+      data: { ...EMPTY_CHAMBER_DATA, employee_count: 8 },
+      catalog: [{ name: "TriNet", minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01",
+        sources: { minHeadcount: "https://trinet.example/minimums" } }],
+      requests: [request(), request({ id: 8, peo_name: "Regional HR Co" })],
+    });
+    const alert = within(screen.getByTestId("quote-request-7")).getByRole("alert");
+    expect(alert).toHaveTextContent("TriNet lists a 10-employee minimum; you have 8");
+    // Only what doesn't fit: the checks that pass or can't be told aren't warnings.
+    expect(alert).not.toHaveTextContent(/States of operation|Class codes/);
+    expect(within(screen.getByTestId("quote-request-8")).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("turns an underwriter's question into an ask of the prospect, and offers that only on questions", () => {
+    const onAskProspect = vi.fn();
+    const at = "2026-11-12T15:00:00Z";
+    panel({
+      onAskProspect,
+      events: [
+        { id: 3, quote_request_id: 7, session_id: "s1", field: "underwriter_question", old_value: null, new_value: "Can they send loss runs?",
+          changed_by: "a1", changed_by_email: "adv@example.com", changed_at: at },
+        { id: 1, quote_request_id: 7, session_id: "s1", field: "status", old_value: null, new_value: "sent",
+          changed_by: "a1", changed_by_email: "adv@example.com", changed_at: at },
+      ],
+    });
+    const history = within(screen.getByTestId("quote-request-7")).getByRole("list", { name: "TriNet history" });
+    const asks = within(history).getAllByRole("button", { name: "Ask the prospect" });
+    expect(asks).toHaveLength(1);
+    fireEvent.click(asks[0]);
+    expect(onAskProspect).toHaveBeenCalledWith("Can they send loss runs?");
   });
 });

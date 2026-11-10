@@ -30,9 +30,17 @@ _Avoid_: The Manuscript in anything a prospect reads
 
 ### People
 
+**Employer**:
+The company whose employees are in the census and that would join a PEO. It, not whoever filled in the intake for it, takes a quote or walks away.
+_Avoid_: company (on its own), client, customer
+
 **Prospect**:
-The employer, or the person acting for it, who gives the answers and certifies them.
+The person who gives the answers and certifies them for an employer: the employer's owner or someone acting for it, such as its CFO.
 _Avoid_: user, customer, client, guest (a guest is only a prospect who hasn't verified an email yet)
+
+**PEO**:
+A professional employer organization: a company that co-employs the employer's staff and runs their payroll, benefits and workers' comp. The packet is prepared for PEOs, and each quote request is to one.
+_Avoid_: carrier (an insurance carrier is a different business), vendor, provider
 
 **Advisor**:
 A member of the advisory team who reviews certified intakes and works them through the pipeline.
@@ -57,8 +65,12 @@ One underwriting question the intake can hold an answer to, such as company lega
 _Avoid_: attribute, property, key
 
 **Census**:
-The list of the prospect's employees, one row per person, with the facts underwriting needs about each.
+The list of the employer's employees, one row per person, with the facts underwriting needs about each.
 _Avoid_: roster, employee list, employees
+
+**PEO census layout**:
+A PEO's own column layout for a census, so the certified census can be sent in the shape its underwriters read. Columns the intake doesn't collect are left blank and named. A PEO whose layout isn't held gets the census template's own layout.
+_Avoid_: census template (that is our own layout), census format
 
 **Employee**:
 One person in the census.
@@ -84,7 +96,7 @@ Something the prospect still owes on a field: a required field with no answer, o
 _Avoid_: gap, missing item, to-do, issue
 
 **Eligibility check**:
-A test of the intake's answers against what a PEO accepts, such as minimum headcount or industry exclusions. It passes, fails, or can't be told yet. It is not an open item.
+A test of the intake's answers against what a PEO accepts, such as its minimum headcount, the states it serves, or the workers' comp class codes it excludes (how a PEO's industry exclusions are compared, since the intake's industry is free text). It passes, fails, or can't be told yet: it can't be told until the PEO's own materials have been checked for that fact. A failed check is a warning, never a reason to hide or rule out a PEO. It is not an open item.
 _Avoid_: requirement, open item
 
 **Advisor follow-up**:
@@ -240,8 +252,16 @@ Where the intake stands for the prospect: in progress, submitted (certified), ex
 _Avoid_: status, state, session status
 
 **Pipeline stage**:
-Where an intake stands in the advisors' work, from draft through submitted, under review, information requested, ready for market, sent to carrier and quoted, to won, lost or archived. Advisors move it one step at a time, along the allow-list in `docs/ADVISOR_ACCESS.md`; an archived intake is reopened as submitted.
+Where an intake stands in the advisors' work, from draft through submitted, under review, information requested, ready for market, sent to PEOs and quoted, to won, lost or archived. Advisors move it one step at a time, along the allow-list in `docs/ADVISOR_ACCESS.md`; an archived intake is reopened as submitted.
 _Avoid_: status, intake status, workflow status
+
+**Won**:
+The pipeline stage of a submission whose employer took one of its quotes, which the submission names.
+_Avoid_: closed, placed, converted
+
+**Lost**:
+The pipeline stage of a submission whose search ended without the employer taking a quote.
+_Avoid_: closed, dead, rejected (a PEO declines; a submission is lost)
 
 **Quote request status**:
 Where one PEO's quote request stands: sent (the packet went and the PEO hasn't answered; a quote request in this status is waiting), quoted, declined, or closed (withdrawn, expired, or the employer went elsewhere). A closed quote request goes back to sent when the packet is sent to that PEO again. A question from the PEO's underwriter is noted on the quote request and doesn't change its status.

@@ -17,6 +17,8 @@ import { readVerifiedFields } from "@/lib/verifiedFields";
 import { SITE_DOMAIN } from "@/data/site";
 import { downloadBlob } from "@/lib/downloadFile";
 import { recordManuscriptDownload } from "@/lib/milestones";
+import CensusDownload from "@/components/CensusDownload";
+import { PEO_CATALOG } from "@/data/peoCatalog";
 import { finalManuscriptUrl } from "@/lib/advisorApi";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
 import LegalLinks from "@/components/LegalLinks";
@@ -411,6 +413,18 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               . That's the packet to send to your PEO. The page below shows your intake as you certified it, before review.
             </p>
           </div>
+        )}
+
+        {/* The certified census as a file, in a PEO's layout when we hold it (#86). Not while withdrawn: nothing
+            here may pass as a current certification. */}
+        {state.kind === "ready" && !withdrawn && state.data.census.length > 0 && (
+          <section aria-labelledby="census-file-heading" className="bg-card border border-border rounded-xl p-5 space-y-2">
+            <h2 id="census-file-heading" className="font-display text-lg font-bold">Your census, as a file</h2>
+            <p className="text-sm text-muted-foreground">
+              Send it with your packet so the PEO's underwriters don't have to re-type it. It's the census you certified.
+            </p>
+            <CensusDownload census={state.data.census} fileId={state.fileId} peos={PEO_CATALOG.map((p) => p.name)} />
+          </section>
         )}
 
         {/* Header */}

@@ -70,4 +70,19 @@ describe("PEOMatchTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Proceed with Acme PEO →" }));
     expect(onProceed).toHaveBeenCalled();
   });
+
+  it("warns about a PEO whose sourced facts don't fit, naming the fact, and still offers it in its place", () => {
+    const catalog = [
+      { name: "Alpha PEO", minHeadcount: 50, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01",
+        sources: { minHeadcount: "https://alpha.example/minimums" } },
+      { name: "Beta PEO", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
+    ];
+    const onSelect = vi.fn();
+    render(<PEOMatchTab data={{ ...DEMO_CHAMBER_DATA, employee_count: 8 }} selectedPeo={null} onSelect={onSelect} onProceed={vi.fn()} catalog={catalog} />);
+    const warning = screen.getByRole("alert");
+    expect(warning).toHaveTextContent("Alpha PEO lists a 50-employee minimum; you have 8");
+    expect(screen.getAllByRole("button", { name: /^Choose / }).map((b) => b.textContent)).toEqual(["Choose Alpha PEO", "Choose Beta PEO"]);
+    fireEvent.click(screen.getByRole("button", { name: "Choose Alpha PEO" }));
+    expect(onSelect).toHaveBeenCalledWith("Alpha PEO");
+  });
 });

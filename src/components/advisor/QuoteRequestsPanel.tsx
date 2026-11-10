@@ -3,7 +3,8 @@ import { Loader2 } from "lucide-react";
 import { actorName, formatDateTime } from "./format";
 import { toast } from "sonner";
 import { PIPELINE_LABELS, type PipelineStatus } from "@/data/advisor";
-import { cleanPeoName, PEO_CATALOG, PEO_NAME_MAX } from "@/data/peoCatalog";
+import { cleanPeoName, PEO_CATALOG, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
+import type { ChamberData } from "@/data/chamberTypes";
 import { canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isQuoteRequestStatus, olderVersionNote, QUOTE_REQUEST_LABELS, stageToOffer } from "@/data/quoteRequests";
 import { noteUnderwriterQuestion, recordQuoteSend, setStatus, updateQuoteRequest, type QuoteAnswer, type QuoteRequestEventRow, type QuoteRequestRow } from "@/lib/advisorApi";
 
@@ -15,6 +16,12 @@ interface QuoteRequestsPanelProps {
   currentVersion: number | null;
   requests: readonly QuoteRequestRow[];
   events: readonly QuoteRequestEventRow[];
+  /** The answers the advisor sees, to compare with each listed PEO's sourced facts. */
+  data: ChamberData;
+  /** The PEOs with sourced facts; the app's catalog unless a test supplies one. */
+  catalog?: readonly PeoRecord[];
+  /** Opens Ask the prospect with an underwriter's question in it, for the advisor to edit and send as their own. */
+  onAskProspect: (question: string) => void;
   onChanged: () => void;
 }
 
@@ -132,7 +139,7 @@ const QuestionForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow
  * The PEOs this submission went to and what each answered. Advisors send the packet outside the product and record
  * it here; the prospect never sees any of it.
  */
-const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, events, currentVersion, onChanged }: QuoteRequestsPanelProps) => {
+const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, events, currentVersion, data, catalog = PEO_CATALOG, onAskProspect, onChanged }: QuoteRequestsPanelProps) => {
   const [catalogPeo, setCatalogPeo] = useState("");
   const [otherPeo, setOtherPeo] = useState("");
   const [sentOn, setSentOn] = useState(today);
@@ -186,6 +193,9 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
         {requests.map((r) => {
           const quote = r.status === "quoted" ? describeQuote(r) : "";
           const older = olderVersionNote(r, currentVersion);
+          // The same warnings the prospect saw on PEO Match, for a PEO whose facts are listed.
+          const listed = catalog.find((p) => p.name.toLowerCase() === r.peo_name.toLowerCase());
+          const misfits = listed ? peoFit(data, listed).filter((c) => c.status === "does_not_meet") : [];
           return (
             <li key={r.id} data-testid={`quote-request-${r.id}`} className="border-l-2 border-border pl-3 space-y-1">
               <div className="flex items-center justify-between gap-2">
@@ -201,6 +211,11 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
               )}
               {older && (
                 <p className="text-xs px-2 py-0.5 rounded-full bg-warning/15 text-warning inline-block">{older}</p>
+              )}
+              {misfits.length > 0 && (
+                <div role="alert" className="text-xs rounded-md bg-warning/10 text-warning px-2 py-1">
+                  {misfits.map((m) => <p key={m.label}>{m.label}</p>)}
+                </div>
               )}
               {quote && <p className="text-sm">{quote}</p>}
               {r.note && <p className="text-xs text-muted-foreground italic">{r.note}</p>}
@@ -235,6 +250,12 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
                 {events.filter((e) => e.quote_request_id === r.id).map((e) => (
                   <li key={e.id} className="text-xs text-muted-foreground">
                     {describeQuoteRequestEvent(e)} · {actorName(e.changed_by, e.changed_by_email, prospectUserId)} · {formatDateTime(e.changed_at)}
+                    {e.field === "underwriter_question" && e.new_value && (
+                      <>
+                        {" · "}
+                        <button onClick={() => onAskProspect(e.new_value!)} className="text-primary underline">Ask the prospect</button>
+                      </>
+                    )}
                   </li>
                 ))}
               </ol>

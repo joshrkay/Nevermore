@@ -80,10 +80,29 @@ describe("eligibilityChecks", () => {
   });
 
   it("fails headcount below the chosen PEO's sourced minimum, naming the PEO", () => {
-    const peo = { name: "Example PEO", minHeadcount: 10, statesServed: null, lastVerified: "2026-10-01" };
+    const peo = { name: "Example PEO", minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-10-01" };
     const [headcount] = eligibilityChecks({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, peo);
     expect(headcount.status).toBe("fail");
     expect(headcount.label).toBe("Headcount meets Example PEO minimum (3 of 10 employees)");
+  });
+});
+
+describe("eligibilityChecks: class codes", () => {
+  const census = (class_code: string) => [{ id: "1", first_name: "A", last_name: "B", work_state: "CA", class_code, compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
+  const peo = { name: "Example PEO", minHeadcount: null, statesServed: null, excludedClassCodes: ["5551"], lastVerified: "2026-10-01" };
+  const industry = (data: typeof EMPTY_CHAMBER_DATA, p?: typeof peo) => eligibilityChecks(data, p).find((c) => /^Industry/.test(c.label))!;
+
+  it("passes when no census class code is one the chosen PEO excludes", () => {
+    expect(industry({ ...EMPTY_CHAMBER_DATA, census: census("8810") }, peo)).toEqual({ label: "Industry — no class code Example PEO excludes", status: "pass" });
+  });
+
+  it("fails naming the excluded class code", () => {
+    expect(industry({ ...EMPTY_CHAMBER_DATA, census: census("5551") }, peo)).toEqual({ label: "Industry — Example PEO lists class code 5551 as excluded", status: "fail" });
+  });
+
+  it("stays unknown with no PEO, or a PEO whose exclusions aren't sourced", () => {
+    expect(industry({ ...EMPTY_CHAMBER_DATA, census: census("5551") }).status).toBe("unknown");
+    expect(industry({ ...EMPTY_CHAMBER_DATA, census: census("5551") }, { ...peo, excludedClassCodes: null as unknown as string[] }).status).toBe("unknown");
   });
 });
 

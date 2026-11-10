@@ -11,6 +11,8 @@ import ManuscriptPanel from "@/components/advisor/ManuscriptPanel";
 import NeedsActionPanel from "@/components/advisor/NeedsActionPanel";
 import NotesPanel from "@/components/advisor/NotesPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
+import CensusDownload from "@/components/CensusDownload";
+import { PEO_CATALOG } from "@/data/peoCatalog";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
@@ -112,6 +114,13 @@ const Detail = ({
   onShowMessage: (id: string) => void;
   emailProblem: EmailProblem | null;
 }) => {
+  // An underwriter's question the advisor chose to ask the prospect: it opens Ask the prospect with the text in it,
+  // as a fresh draft each time, for the advisor to edit and send as their own request.
+  const [askDraft, setAskDraft] = useState<{ message: string; n: number } | null>(null);
+  const askProspect = (message: string) => {
+    setAskDraft((current) => ({ message, n: (current?.n ?? 0) + 1 }));
+    window.requestAnimationFrame?.(() => document.getElementById("information-request-message")?.focus());
+  };
   const sub = detail.submission;
   return (
     <>
@@ -177,7 +186,8 @@ const Detail = ({
           <InformationRequestPanel
             // A sent request starts the next one afresh, from the fields marked Needs follow-up; until then the
             // panel follows the marks as they change.
-            key={`${detail.informationRequests.length}`}
+            key={`${detail.informationRequests.length}-${askDraft?.n ?? 0}`}
+            initialMessage={askDraft?.message}
             sessionId={detail.id}
             prospectUserId={detail.userId}
             status={detail.pipelineStatus}
@@ -194,6 +204,8 @@ const Detail = ({
             currentVersion={detail.currentVersion}
             requests={detail.quoteRequests}
             events={detail.quoteRequestEvents}
+            data={detail.data}
+            onAskProspect={askProspect}
             onChanged={reload}
           />
           <StatusPanel
@@ -263,6 +275,12 @@ const ChangedSinceSigning = ({ detail, signed }: { detail: SubmissionDetail; sig
 const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
   <section aria-labelledby="census-heading" className="border border-border rounded-lg p-4">
     <h4 id="census-heading" className="text-sm font-medium mb-3">Employee census</h4>
+    {/* The certified census as a file for a PEO (#86): only from the certified copy, never a draft. */}
+    {detail.certified && detail.fileId && detail.data.census.length > 0 && (
+      <div className="mb-3">
+        <CensusDownload census={detail.data.census} fileId={detail.fileId} peos={PEO_CATALOG.map((p) => p.name)} />
+      </div>
+    )}
     {detail.data.census.length === 0 ? (
       <p className="text-sm text-muted-foreground">No census captured.</p>
     ) : (

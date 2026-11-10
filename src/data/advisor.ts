@@ -28,7 +28,7 @@ export const PIPELINE_LABELS: Record<PipelineStatus, string> = {
   under_review: "Under review",
   information_requested: "Information requested",
   ready_for_market: "Ready for market",
-  sent_to_carrier: "Sent to carrier/PEO",
+  sent_to_carrier: "Sent to PEOs",
   quoted: "Quoted",
   won: "Won",
   lost: "Lost",

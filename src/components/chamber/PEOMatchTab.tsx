@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Users, UserPlus, DollarSign, MapPin, Shield, Zap } from "lucide-react";
 import type { ChamberData } from "@/data/chamberTypes";
-import { PEO_CATALOG, PEO_NAME_MAX, findPeo, peoFit, type FitStatus } from "@/data/peoCatalog";
+import { PEO_CATALOG, PEO_NAME_MAX, findPeo, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
 
 interface PEOMatchTabProps {
   data: ChamberData;
@@ -9,6 +9,8 @@ interface PEOMatchTabProps {
   selectedPeo: string | null;
   onSelect: (name: string) => void;
   onProceed: () => void;
+  /** The PEOs offered, alphabetically; the app's catalog unless a test supplies one. */
+  catalog?: readonly PeoRecord[];
 }
 
 const FIT_TEXT: Record<FitStatus, string> = {
@@ -17,7 +19,7 @@ const FIT_TEXT: Record<FitStatus, string> = {
   unknown: "Not yet confirmed",
 };
 
-const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProps) => {
+const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog = PEO_CATALOG }: PEOMatchTabProps) => {
   const [otherName, setOtherName] = useState("");
 
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
@@ -80,7 +82,10 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
 
       {/* PEO Cards */}
       <div className="space-y-4">
-        {PEO_CATALOG.map((peo) => (
+        {catalog.map((peo) => {
+          const checks = peoFit(data, peo);
+          const misfits = checks.filter((c) => c.status === "does_not_meet");
+          return (
           <div key={peo.name} className={`bg-card border rounded-xl p-6 transition-colors ${
             peo.name === selectedPeo ? "border-primary" : "border-border hover:border-primary/30"
           }`}>
@@ -97,8 +102,15 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
                 </button>
               )}
             </div>
+            {/* A misfit is a warning, never a reason to hide or block a PEO: facts go stale and PEOs make exceptions. */}
+            {misfits.length > 0 && (
+              <div role="alert" className="text-sm rounded-lg bg-warning/10 text-warning px-3 py-2 mb-3 space-y-1">
+                {misfits.map((m) => <p key={m.label}>{m.label}</p>)}
+                <p className="text-xs">You can still choose {peo.name}; your advisor will see this too.</p>
+              </div>
+            )}
             <ul className="text-sm text-muted-foreground space-y-1">
-              {peoFit(data, peo).map((check) => (
+              {checks.map((check) => (
                 <li key={check.label} className="flex justify-between gap-4">
                   <span>{check.label}</span>
                   <span className="font-mono text-foreground">{FIT_TEXT[check.status]}</span>
@@ -109,7 +121,8 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed }: PEOMatchTabProp
               {peo.lastVerified ? `Facts checked ${peo.lastVerified}.` : "Not yet checked against this PEO's own materials."}
             </p>
           </div>
-        ))}
+          );
+        })}
 
         <div className={`bg-card border rounded-xl p-6 ${selectedPeo && !selectedIsListed ? "border-primary" : "border-border"}`}>
           <div className="flex items-start justify-between gap-3 mb-3">

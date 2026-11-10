@@ -825,4 +825,35 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(within(panel).getByTestId("quote-request-7")).getByText("TriNet")).toBeInTheDocument();
     expect(within(panel).getByText("Sent v1, current v2")).toBeInTheDocument();
   });
+
+  it("offers the certified census as a file in a PEO's layout, only while the intake is certified", async () => {
+    const census = [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
+    api.loadSubmission.mockResolvedValue(detail({ data: { ...signedData, census } }));
+    const { unmount } = renderPage();
+    const section = await screen.findByRole("region", { name: "Employee census" });
+    expect(within(section).getByRole("button", { name: "Download the census" })).toBeInTheDocument();
+    unmount();
+
+    api.loadSubmission.mockResolvedValue(detail({ certified: false, data: { ...signedData, census } }));
+    renderPage();
+    const draft = await screen.findByRole("region", { name: "Employee census" });
+    expect(within(draft).queryByRole("button", { name: "Download the census" })).not.toBeInTheDocument();
+  });
+
+  it("puts an underwriter's question into Ask the prospect for the advisor to edit, without sending it or naming the PEO", async () => {
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "sent_to_carrier",
+      quoteRequests: [{ id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 1, sent_on: "2026-11-10",
+        quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
+      quoteRequestEvents: [{ id: 3, quote_request_id: 7, session_id: "s1", field: "underwriter_question", old_value: null,
+        new_value: "Can they send last year's loss runs?", changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-11-12T15:00:00Z" }],
+    }));
+    renderPage();
+    const quotes = await screen.findByRole("region", { name: "Quote requests" });
+    fireEvent.click(within(quotes).getByRole("button", { name: "Ask the prospect" }));
+    const message = screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+    expect(message.value).toBe("Can they send last year's loss runs?");
+    expect(message.value).not.toMatch(/TriNet/);
+    expect(api.requestInformation).not.toHaveBeenCalled();
+  });
 });

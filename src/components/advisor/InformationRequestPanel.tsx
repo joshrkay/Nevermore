@@ -23,6 +23,8 @@ interface InformationRequestPanelProps {
   intakeStatus: string;
   reviews: ReviewMap;
   requests: readonly InformationRequestRow[];
+  /** A message to start from, such as an underwriter's question the advisor chose to ask. */
+  initialMessage?: string;
   onChanged: () => void;
 }
 
@@ -49,10 +51,11 @@ const InformationRequestPanel = ({
   intakeStatus,
   reviews,
   requests,
+  initialMessage,
   onChanged,
 }: InformationRequestPanelProps) => {
   const followUps = useMemo(() => followUpFieldsOf(reviews), [reviews]);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(initialMessage ?? "");
   // The selection follows the follow-up marks as the advisor changes them on this page, keeping what the advisor
   // chose here: a follow-up they took out stays out, and an answer they added stays in.
   const [removed, setRemoved] = useState<ReadonlySet<FieldKey>>(new Set());
