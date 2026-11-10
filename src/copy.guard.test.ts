@@ -20,6 +20,8 @@ const PUBLIC_COPY_FILES = [
   "src/data/legal.ts",
   // PEO Match shows PEO names from the sourced catalog (src/data/peoCatalog.ts), never in its own copy.
   "src/components/chamber/PEOMatchTab.tsx",
+  // Page titles and descriptions, and the summary in llms.txt (search results and AI assistants quote them).
+  "src/data/seo.ts",
 ];
 
 const NAMED_PEOS = /trinet|justworks|rippling|insperity|totalsource/i;

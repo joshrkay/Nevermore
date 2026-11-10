@@ -4,6 +4,7 @@ import path from "path";
 import { componentTagger } from "lovable-tagger";
 
 import { missingSupabaseEnvMessage, resolveSupabaseEnv } from "./scripts/buildEnv";
+import { seoPages } from "./scripts/seoBuild";
 
 // The Supabase URL and publishable key the app is built with (scripts/buildEnv.ts takes the
 // NEXT_PUBLIC_SUPABASE_* names Vercel's integration sets as well as the VITE_* ones). Without them
@@ -27,7 +28,8 @@ export default defineConfig(({ mode, command }) => ({
     },
   },
   define: supabaseEnv(mode, command),
-  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+  // seoPages: a head for each public page, sitemap.xml and llms.txt (scripts/seoBuild.ts).
+  plugins: [react(), mode === "development" && componentTagger(), seoPages()].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

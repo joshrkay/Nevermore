@@ -29,6 +29,31 @@
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <!-- Who runs the site, for search engines. Facts only: the brand, its operator and the site's address. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://nevermorepeo.com/#organization",
+            "name": "Edgar Allan Advisory",
+            "url": "https://nevermorepeo.com/",
+            "logo": "https://nevermorepeo.com/apple-touch-icon.png",
+            "brand": { "@type": "Brand", "name": "Nevermore" }
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://nevermorepeo.com/#website",
+            "name": "Nevermore",
+            "url": "https://nevermorepeo.com/",
+            "inLanguage": "en",
+            "description": "Nevermore prepares PEO underwriting packets: chat with Lenore, drop in your census, and leave with a complete packet to send to the PEO you choose.",
+            "publisher": { "@id": "https://nevermorepeo.com/#organization" }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

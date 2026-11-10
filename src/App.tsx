@@ -8,6 +8,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import ErrorBoundary from "./components/ErrorBoundary";
 import AuthRedirectGate from "./components/AuthRedirectGate";
 import Navbar from "./components/Navbar";
+import PageMeta from "./components/PageMeta";
 import RequireAuth from "./components/RequireAuth";
 import RequireAdvisor from "./components/RequireAdvisor";
 import IntakeConsentGate from "./components/chamber/IntakeConsentGate";
@@ -39,6 +40,8 @@ const App = () => (
       <Sonner />
       <AuthProvider>
         <BrowserRouter>
+          {/* The title, description and robots rule of the page at this address (src/data/seo.ts). */}
+          <PageMeta />
           <ErrorBoundary>
             <Suspense fallback={null}>
               <AuthRedirectGate>

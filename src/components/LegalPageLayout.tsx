@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
@@ -6,10 +6,6 @@ import { LEGAL_COPY_APPROVED, LEGAL_LAST_UPDATED } from "@/data/legal";
 
 /** The frame the Privacy Policy and Terms of Use share: title, version, the draft notice and the legal links. */
 const LegalPageLayout = ({ title, version, children }: { title: string; version: string; children: ReactNode }) => {
-  useEffect(() => {
-    document.title = `${title} | Nevermore`;
-  }, [title]);
-
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border">
