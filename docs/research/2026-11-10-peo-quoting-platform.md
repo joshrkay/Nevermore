@@ -44,28 +44,6 @@ Below, **fact** means read in the repo or stated in a cited source, **inference*
 
 ---
 
-## 1a. Direction set by the founder (2026-11-10)
-
-After reading the first version of this report, the founder narrowed the goal. This section records that and
-adds the one design the first version left thin: email.
-
-- **Progressive is the idea, not the mechanism.** Underwriting stays with each PEO's underwriters. Nobody is
-  asking for a rater that computes a price.
-- **The core is the quoting tool: the common questions.** Take the forms PEOs and their carriers already use,
-  make sure the intake holds everything they ask, and ask it once. That is section 5.
-- **Delivery is email, and the email has to be threaded.** Status, replies, updates and annotations all come back
-  onto the quote request they belong to. That is section 5a, new.
-- **The users are brokers and their clients.** They create quote requests and compare what comes back. That is
-  sections 5.4 and 6.
-- **PEOs win because their data collection is done for them.** They get a complete, certified submission in their
-  own layout and are asked to change nothing. So no step depends on a PEO adopting anything.
-
-What this changes in the sequence (section 7): steps 5 and 6 (instant prices, integrations) drop out of the plan
-until a PEO asks for them. Steps 1 to 4 are the product. Sending by threaded email becomes the centre of step 3
-rather than the first of four delivery tiers.
-
----
-
 ## 2. What actually happened in P&C
 
 Facts, from `2026-11-10-pc-quoting-sources.md`:
@@ -225,79 +203,6 @@ comparison view, for the broker and then the employer, is the visible "Progressi
 Instant numbers are possible only where the price is a rule. Justworks' published price list is the one found. Our
 own record of proposals can later support a labelled estimate ("employers like you were quoted between…"), and
 P&C's lesson is that a soft number presented as firm destroys trust in the tool.
-
----
-
-## 5a. Threaded email: the delivery layer
-
-All of this section is a recommendation, except where marked.
-
-**Fact, from the repo.** Email today is outbound only. `dispatch-outbox` sends through Resend with retries and an
-advisor-visible outbox; `resend-webhook` records delivery, bounces and suppression. Every email sets a Reply-To of
-the support address, so a reply lands in a mailbox the product never sees. Nothing is sent to a PEO.
-
-### The rule
-
-**One quote request, one email thread, one address.** Each quote request gets its own reply address on a
-subdomain we receive mail for, such as `q-<random token>@quotes.nevermorepeo.com`. Every message about that
-employer and that PEO leaves from, and replies to, that address. Whatever arrives there belongs to that quote
-request, whoever at the PEO wrote it and however many people were copied in.
-
-Why an address and not only the email headers: the standard headers (`Message-ID`, `In-Reply-To`, `References`)
-keep a thread together in the PEO rep's mail client, and we set them on everything we send. But a rep forwards to
-underwriting, underwriting answers from a new message, someone changes the subject. The address survives all of
-that. The File ID in the subject line is a third, human-readable fallback.
-
-### What goes out
-
-- The first message: a short cover note from the broker (their name, firm and reply details), the packet, the
-  census in that PEO's layout, the ACORD 130 for workers' comp, and the documents that PEO's profile asks for.
-- Attachments, not only links. PEO reps work from files, and a link that needs a login is one more step for them.
-  A link back to a no-login page for that one submission can sit beside the attachments (section 5.3, tier 2).
-- Later messages on the same thread: an updated packet version after the employer certifies again (the quote
-  request already records "an older version sent"), an answer to an underwriter's question, a nudge, a withdrawal.
-- The broker is copied, or sends from the product in their own name, so the PEO sees the relationship it already
-  knows.
-
-### What comes back, and what the product does with it
-
-| Arrives on the thread | The product records | Who confirms |
-|---|---|---|
-| Any reply | A message on the quote request's timeline: sender, time, text, attachments. Delivery and bounce events for what we sent, from the webhook that already exists | Nobody: it is a record |
-| "Received, in underwriting" | Suggests the status *acknowledged* | Broker, one click |
-| A question, or a request for a missing item | Suggests an underwriter's question (the quote request already holds these as dated notes) and drafts an information request to the employer naming the answers it is about | Broker sends it |
-| A proposal attached | Suggests *quoted*, stores the document, and reads the four cost areas out of it into the quote for the comparison | Broker checks the figures before the client sees them |
-| A decline | Suggests *declined* with the reason | Broker |
-| Nothing, for N days | Shows the wait on the board (it already sorts by longest wait) and offers a follow-up on the same thread | Broker |
-
-Two rules keep this trustworthy. A reading of an email is a **suggestion** until a person accepts it, the same
-way a document candidate changes nothing until the prospect applies it. And the timeline is **append-only**, like
-`quote_request_events`: the original message is kept beside whatever was read out of it.
-
-### Annotations
-
-Three kinds, all on the quote request's timeline and never sent to the PEO unless the broker chooses:
-
-- an internal note on a message ("rep says underwriting is backed up until the 20th");
-- a tag on a figure in a proposal ("this admin fee excludes the 401(k) fee");
-- a comment for the client on the comparison ("their workers' comp rate assumes the 8810 code for everyone").
-
-### What it takes to build
-
-| Piece | Starting point |
-|---|---|
-| Receiving mail: a subdomain with inbound routing to a new edge function that verifies the provider's signature | `resend-webhook` already verifies signed webhooks. Whether Resend's inbound service fits, or a separate inbound provider is needed, has to be checked against current documentation; it was not verified here |
-| A message table per quote request (direction, sender, headers, body, attachments, what was suggested and what was accepted) | `quote_request_events` and `information_requests` are the patterns |
-| Outbound on the thread, with our own `Message-ID`, `In-Reply-To` and `References` | `dispatch-outbox` gains a new event kind; it already retries and shows failures. It does not set custom headers today |
-| Attachments scanned before anyone opens them | The upload scanner (D13). Today a quote has no attachment for exactly this reason |
-| Reading a reply and a proposal into suggestions | `document-extract` and the Anthropic adapter already do this for prospect documents |
-| Mail that matches no thread, or comes from an unknown sender | A holding queue for a person to assign. Never attach by guesswork |
-
-**Risks to design for.** Reply addresses are capabilities, so they must be unguessable and can be revoked. Inbound
-mail is untrusted input: scan it, and never let its text steer the model that reads it. Replies may contain health
-or claims detail about named employees, so retention and access follow the intake's rules, and brokers see only
-their own firm's threads. Some PEOs will answer by phone or in their own portal; the broker must always be able to
-record that by hand, as advisors do now.
 
 ---
 
