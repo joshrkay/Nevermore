@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { Check, MessageCircle, PenLine, Send } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
 import LegalLinks from "@/components/LegalLinks";
+import { preloadIntake } from "@/lib/lazyPages";
 
 const fadeUp = (delay: number) => ({
   initial: { opacity: 0, y: 24 },
@@ -139,6 +140,16 @@ const LandingPage = () => {
     if (/^[a-z][a-z0-9-]*$/.test(id)) document.getElementById(id)?.scrollIntoView?.();
   }, [hash]);
 
+  // The intake's code isn't part of this page's download (src/lib/lazyPages.ts). Fetch it once the browser is
+  // idle, so "Start chatting" opens without a wait. Browsers without requestIdleCallback fetch it
+  // when the visitor reaches for the button instead (startIntent below).
+  useEffect(() => {
+    if (typeof window.requestIdleCallback !== "function") return;
+    const handle = window.requestIdleCallback(preloadIntake, { timeout: 4000 });
+    return () => window.cancelIdleCallback(handle);
+  }, []);
+  const startIntent = { onPointerEnter: preloadIntake, onFocus: preloadIntake, onTouchStart: preloadIntake };
+
   return (
     <div className="min-h-screen bg-background">
       {/* Hero */}
@@ -157,6 +168,7 @@ const LandingPage = () => {
           <motion.div {...fadeUp(0.3)} className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 mt-9">
             <Link
               to="/start"
+              {...startIntent}
               className="inline-flex items-center justify-center min-h-[52px] px-7 rounded-full bg-primary text-primary-foreground font-bold text-[17px] hover:bg-primary/90 transition-colors"
             >
               Start chatting →
@@ -319,6 +331,7 @@ const LandingPage = () => {
           <p className="text-lg text-muted-foreground mb-8">Start as a guest. You verify your email when you're ready to sign.</p>
           <Link
             to="/start"
+            {...startIntent}
             className="inline-flex items-center justify-center min-h-[52px] px-7 rounded-full bg-primary text-primary-foreground font-bold text-[17px] hover:bg-primary/90 transition-colors"
           >
             Start chatting →
