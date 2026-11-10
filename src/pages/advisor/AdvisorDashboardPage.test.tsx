@@ -552,7 +552,7 @@ describe("AdvisorDashboardPage", () => {
       await screen.findByText(/No submissions are/);
       fireEvent.click(screen.getByLabelText("Waiting on a PEO only"));
       await waitFor(() => expect(listSubmissions).toHaveBeenLastCalledWith(query({ status: "sent_to_carrier", waiting: true })));
-      expect(await screen.findByText("No sent to carrier/peo submissions waiting on a PEO.")).toBeInTheDocument();
+      expect(await screen.findByText("No sent to peos submissions waiting on a PEO.")).toBeInTheDocument();
     });
 
     it("sorts by the longest wait or the earliest expiry, from the first page, and reads the sort from the URL", async () => {

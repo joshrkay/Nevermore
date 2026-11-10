@@ -108,16 +108,16 @@ describe("QuoteRequestsPanel", () => {
     expect(screen.queryByRole("button", { name: "Record send" })).not.toBeInTheDocument();
   });
 
-  it("after a send at Ready for market, offers the one step to Sent to carrier/PEO, and declining changes nothing", async () => {
+  it("after a send at Ready for market, offers the one step to Sent to PEOs, and declining changes nothing", async () => {
     const onChanged = panel({ status: "ready_for_market", requests: [] });
     fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "TriNet" } });
     fireEvent.click(screen.getByRole("button", { name: "Record send" }));
     fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
-    expect(screen.queryByRole("button", { name: "Move to Sent to carrier/PEO" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Move to Sent to PEOs" })).not.toBeInTheDocument();
     expect(api.setStatus).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Record send" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Move to Sent to carrier/PEO" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Move to Sent to PEOs" }));
     await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("s1", "sent_to_carrier", ""));
     expect(onChanged).toHaveBeenCalledTimes(3);
   });
