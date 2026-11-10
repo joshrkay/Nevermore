@@ -578,6 +578,8 @@ describe("AdvisorDashboardPage", () => {
       act(() => { window.dispatchEvent(new Event("focus")); });
       expect(listSubmissions).toHaveBeenCalledTimes(3);
       unmount();
+      // Leaving the page stops the refresh: no timer is left behind.
+      expect(vi.getTimerCount()).toBe(0);
       act(() => vi.advanceTimersByTime(60_000));
       expect(listSubmissions).toHaveBeenCalledTimes(3);
       vi.useRealTimers();

@@ -448,7 +448,7 @@ describe("quote requests", () => {
   it("names the winning quote when marking a submission won, and nothing otherwise", async () => {
     await setStatus("s1", "won", " Signed ", 7);
     expect(rpc).toHaveBeenLastCalledWith("set_submission_status", { p_session_id: "s1", p_status: "won", p_note: "Signed", p_won_quote_request_id: 7 });
-    await setStatus("s1", "lost", "");
+    await setStatus("s1", "lost", "", 7);
     expect(rpc).toHaveBeenLastCalledWith("set_submission_status", { p_session_id: "s1", p_status: "lost", p_note: null, p_won_quote_request_id: null });
   });
 
