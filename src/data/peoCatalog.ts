@@ -11,9 +11,17 @@ export interface PeoRecord {
   minHeadcount: number | null;
   /** Two-letter state codes the PEO serves, once sourced from the PEO. */
   statesServed: string[] | null;
+  /** Workers' comp class codes the PEO won't write, once sourced from the PEO. */
+  excludedClassCodes: string[] | null;
   /** ISO date the facts above were last checked against the PEO's own materials. */
   lastVerified: string | null;
+  /** Where each sourced fact was read: an https link to the PEO's own materials. catalogProblems() asks one of every fact. */
+  sources?: Partial<Record<PeoFact, string>>;
 }
+
+/** The facts a PEO record can hold. */
+export const PEO_FACTS = ["minHeadcount", "statesServed", "excludedClassCodes"] as const;
+export type PeoFact = (typeof PEO_FACTS)[number];
 
 export type FitStatus = "meets" | "does_not_meet" | "unknown";
 
@@ -27,7 +35,12 @@ export function peoFit(data: ChamberData, peo: PeoRecord): PeoFitCheck[] {
   const count = headcount(data);
   let status: FitStatus = "unknown";
   if (peo.minHeadcount !== null && count > 0) status = count >= peo.minHeadcount ? "meets" : "does_not_meet";
-  const headcountCheck: PeoFitCheck = { label: `Headcount vs ${peo.name} minimum`, status };
+  const headcountCheck: PeoFitCheck = {
+    label: status === "does_not_meet"
+      ? `${peo.name} lists a ${peo.minHeadcount}-employee minimum; you have ${count}`
+      : `Headcount vs ${peo.name} minimum`,
+    status,
+  };
 
   const stated = data.states;
   let statesCheck: PeoFitCheck = { label: `States of operation vs ${peo.name} coverage`, status: "unknown" };
@@ -37,17 +50,26 @@ export function peoFit(data: ChamberData, peo: PeoRecord): PeoFitCheck[] {
       ? { label: `States of operation vs ${peo.name} coverage`, status: "meets" }
       : { label: `${peo.name} doesn't list: ${unserved.join(", ")}`, status: "does_not_meet" };
   }
-  return [headcountCheck, statesCheck];
+  // The census's workers' comp class codes, each once: that is how PEOs screen hazard (the intake's industry is free text).
+  const codes = [...new Set(data.census.map((e) => e.class_code?.trim()).filter((c): c is string => !!c))];
+  let classCheck: PeoFitCheck = { label: `Class codes vs ${peo.name} exclusions`, status: "unknown" };
+  if (peo.excludedClassCodes !== null && codes.length > 0) {
+    const excluded = codes.filter((c) => peo.excludedClassCodes!.includes(c));
+    classCheck = excluded.length === 0
+      ? { label: `Class codes vs ${peo.name} exclusions`, status: "meets" }
+      : { label: `${peo.name} lists class code${excluded.length === 1 ? "" : "s"} ${excluded.join(", ")} as excluded`, status: "does_not_meet" };
+  }
+  return [headcountCheck, statesCheck, classCheck];
 }
 
 // Alphabetical on purpose: this is a list of choices, not a ranking. Facts stay null until
 // someone checks them against the PEO's own materials and records the date in `lastVerified`.
 export const PEO_CATALOG: PeoRecord[] = [
-  { name: "ADP TotalSource", minHeadcount: null, statesServed: null, lastVerified: null },
-  { name: "Insperity", minHeadcount: null, statesServed: null, lastVerified: null },
-  { name: "Justworks", minHeadcount: null, statesServed: null, lastVerified: null },
-  { name: "Rippling", minHeadcount: null, statesServed: null, lastVerified: null },
-  { name: "TriNet", minHeadcount: null, statesServed: null, lastVerified: null },
+  { name: "ADP TotalSource", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
+  { name: "Insperity", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
+  { name: "Justworks", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
+  { name: "Rippling", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
+  { name: "TriNet", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
 ];
 
 /**
@@ -67,4 +89,19 @@ export function cleanPeoName(name: unknown): string | null {
 export function findPeo(name: string): PeoRecord | undefined {
   const wanted = name.trim().toLowerCase();
   return PEO_CATALOG.find((p) => p.name.toLowerCase() === wanted);
+}
+
+/** What a catalog is missing for its facts to count as sourced. */
+export function catalogProblems(catalog: readonly PeoRecord[]): string[] {
+  const problems: string[] = [];
+  for (const peo of catalog) {
+    const sourced = PEO_FACTS.filter((fact) => peo[fact] !== null);
+    for (const fact of sourced) {
+      const source = peo.sources?.[fact];
+      if (!source) problems.push(`${peo.name}: ${fact} has no source`);
+      else if (!source.startsWith("https://")) problems.push(`${peo.name}: ${fact}'s source isn't an https link`);
+    }
+    if (sourced.length > 0 && !peo.lastVerified) problems.push(`${peo.name}: facts with no lastVerified date`);
+  }
+  return problems;
 }

@@ -60,6 +60,10 @@ _Avoid_: attribute, property, key
 The list of the prospect's employees, one row per person, with the facts underwriting needs about each.
 _Avoid_: roster, employee list, employees
 
+**PEO census layout**:
+A PEO's own column layout for a census, so the certified census can be sent in the shape its underwriters read. Columns the intake doesn't collect are left blank and named. A PEO whose layout isn't held gets the census template's own layout.
+_Avoid_: census template (that is our own layout), census format
+
 **Employee**:
 One person in the census.
 _Avoid_: census row, worker, member
@@ -84,7 +88,7 @@ Something the prospect still owes on a field: a required field with no answer, o
 _Avoid_: gap, missing item, to-do, issue
 
 **Eligibility check**:
-A test of the intake's answers against what a PEO accepts, such as minimum headcount or industry exclusions. It passes, fails, or can't be told yet. It is not an open item.
+A test of the intake's answers against what a PEO accepts, such as its minimum headcount, the states it serves, or the workers' comp class codes it excludes (how a PEO's industry exclusions are compared, since the intake's industry is free text). It passes, fails, or can't be told yet: it can't be told until the PEO's own materials have been checked for that fact. A failed check is a warning, never a reason to hide or rule out a PEO. It is not an open item.
 _Avoid_: requirement, open item
 
 **Advisor follow-up**:

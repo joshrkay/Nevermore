@@ -146,7 +146,9 @@ describe("ManuscriptPage", () => {
         signer_title: "CEO",
         signed_at: "2026-05-01T12:00:00Z",
         file_id: "EAA-2026-ABC",
-        chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co" },
+        // With a census, so the census download is withheld too, not merely absent.
+        chamber_data: { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co", census: [{ id: "1", first_name: "A", last_name: "B", work_state: "CA",
+          compensation_type: "salary", employment_type: "full_time", classification: "w2" }] },
       },
       status: "in_progress",
       created_at: "2026-05-01T00:00:00Z",
@@ -549,5 +551,33 @@ describe("ManuscriptPage", () => {
       // The button is usable again for a retry.
       await waitFor(() => expect(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]).toBeEnabled());
     });
+  });
+
+  it("offers the certified census as a file to send with the packet, never a census added after signing", async () => {
+    downloadBlob.mockClear();
+    const signedCensus = [{ id: "1", first_name: "Signed", last_name: "Person", work_state: "CA" }];
+    const base = certified();
+    row = certified({
+      chamber_data: { ...base.chamber_data, census: [{ id: "2", first_name: "Added", last_name: "Later" }] },
+      submission: { ...base.submission, chamber_data: { ...signed, census: signedCensus } },
+    });
+    renderAt("/manuscript/EAA-2026-0042");
+    fireEvent.click(await screen.findByRole("button", { name: "Download the census" }));
+    const [blob, name] = downloadBlob.mock.calls.at(-1)!;
+    expect(name).toBe("EAA-2026-0042-census.csv");
+    const csv = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.readAsText(blob as Blob);
+    });
+    expect(csv).toContain("Signed,Person");
+    expect(csv).not.toContain("Added");
+  });
+
+  it("offers no census download when the certified packet has no census", async () => {
+    row = certified();
+    renderAt("/manuscript/EAA-2026-0042");
+    await screen.findByText("Underwriting packet");
+    expect(screen.queryByRole("button", { name: "Download the census" })).not.toBeInTheDocument();
   });
 });

@@ -172,6 +172,15 @@ function headcountCheck(data: ChamberData, peo?: PeoRecord): EligibilityCheck {
   };
 }
 
+/** The census's class codes against the chosen PEO's sourced exclusions (peoFit); unknown without either. */
+function industryCheck(data: ChamberData, peo?: PeoRecord): EligibilityCheck {
+  const fit = peo ? peoFit(data, peo)[2] : undefined;
+  if (!peo || !fit || fit.status === "unknown") return { label: "Industry — no exclusions", status: "unknown" };
+  return fit.status === "meets"
+    ? { label: `Industry — no class code ${peo.name} excludes`, status: "pass" }
+    : { label: `Industry — ${fit.label}`, status: "fail" };
+}
+
 /** Only reports pass/fail for what was actually collected; everything else is "unknown". */
 export function eligibilityChecks(data: ChamberData, peo?: PeoRecord): EligibilityCheck[] {
   return [
@@ -181,7 +190,7 @@ export function eligibilityChecks(data: ChamberData, peo?: PeoRecord): Eligibili
       label: `Employee census captured${data.census.length ? ` (${data.census.length} employees)` : ""}`,
       status: data.census.length > 0 ? "pass" : "unknown",
     },
-    { label: "Industry — no exclusions", status: "unknown" },
+    industryCheck(data, peo),
     { label: "Workers' comp history and open claims", status: "unknown" },
     { label: "Renewal increase within range", status: "unknown" },
   ];
