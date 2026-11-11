@@ -39,6 +39,9 @@ export type QuoteRequestRow = Tables["quote_requests"]["Row"];
 export type QuoteRequestEventRow = Tables["quote_request_events"]["Row"];
 export type QuoteRequestNoteRow = Tables["quote_request_notes"]["Row"];
 export type QuoteRequestAddressRow = Tables["quote_request_addresses"]["Row"];
+export type QuoteRequestMessageRow = Tables["quote_request_messages"]["Row"];
+export type QuoteRequestMailAttachmentRow = Tables["quote_request_message_attachments"]["Row"];
+export type QuoteRequestThreadReadRow = Tables["quote_request_thread_reads"]["Row"];
 
 export class AdvisorApiError extends Error {
   constructor(message: string, readonly code?: string, readonly unauthenticated = false) {
@@ -257,6 +260,12 @@ export interface SubmissionDetail {
   quoteRequestNotes: QuoteRequestNoteRow[];
   /** Each quote request's live reply address: the part before the @. */
   quoteRequestAddresses: QuoteRequestAddressRow[];
+  /** The mail that reached those quote requests' reply addresses (held mail, which has no quote request, isn't here). */
+  quoteRequestMessages: QuoteRequestMessageRow[];
+  /** What became of each attachment on that mail. */
+  quoteRequestMailAttachments: QuoteRequestMailAttachmentRow[];
+  /** When an advisor last opened each quote request's thread. */
+  quoteRequestThreadReads: QuoteRequestThreadReadRow[];
   /** The submission's latest certified version (1, 2, ...); null before the first certification. */
   currentVersion: number | null;
   /** The quote request whose quote the employer took, once won. */
@@ -344,6 +353,24 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   if (quoteNotes.error) fail(quoteNotes.error, "Couldn't load the quote requests' notes.");
   if (quoteAddresses.error) fail(quoteAddresses.error, "Couldn't load the quote requests' reply addresses.");
 
+  // The mail on those quote requests, then what depends on it. Read after the quote requests, so a failure here
+  // is named for what it loads; the thread is only as complete as these.
+  const requestIds = (quotes.data ?? []).map((q) => q.id);
+  const [mail, threadReads] = await Promise.all([
+    supabase.from("quote_request_messages").select("*").eq("session_id", id).order("recorded_at", { ascending: false }).order("id", { ascending: false }),
+    requestIds.length > 0
+      ? supabase.from("quote_request_thread_reads").select("*").in("quote_request_id", requestIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (mail.error) fail(mail.error, "Couldn't load the mail on the quote requests.");
+  if (threadReads.error) fail(threadReads.error, "Couldn't load which threads were opened.");
+  const mailIds = (mail.data ?? []).map((m) => m.id);
+  const mailAttachments =
+    mailIds.length > 0
+      ? await supabase.from("quote_request_message_attachments").select("*").in("message_id", mailIds).order("id", { ascending: true })
+      : { data: [], error: null };
+  if (mailAttachments.error) fail(mailAttachments.error, "Couldn't load the attachments on that mail.");
+
   const submission = (row.submission as unknown as ChamberSubmission | null) ?? null;
   const certified = row.status === "submitted" && !!submission?.signer_name;
   const useSnapshot = certified && submission?.chamber_data !== undefined;
@@ -402,6 +429,9 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     quoteRequestEvents: quoteEvents.data ?? [],
     quoteRequestNotes: quoteNotes.data ?? [],
     quoteRequestAddresses: quoteAddresses.data ?? [],
+    quoteRequestMessages: mail.data ?? [],
+    quoteRequestMailAttachments: mailAttachments.data ?? [],
+    quoteRequestThreadReads: threadReads.data ?? [],
     currentVersion: recorded?.version ?? null,
     wonQuoteRequestId: workflow.data.won_quote_request_id ?? null,
   };
@@ -488,6 +518,15 @@ export async function reissueQuoteRequestAddress(quoteRequestId: number): Promis
   if (error) fail(error, "Couldn't issue a new address.");
 }
 
+/**
+ * Marks a quote request's thread opened, for the whole team, through `seenThrough`: the time of the latest message
+ * the page showed, exactly as it was loaded, so mail that arrived since stays new. With none it is now.
+ */
+export async function openQuoteRequestThread(quoteRequestId: number, seenThrough: string | null): Promise<void> {
+  const { error } = await supabase.rpc("advisor_open_quote_request_thread", { p_quote_request_id: quoteRequestId, p_seen_through: seenThrough });
+  if (error) fail(error, "Couldn't mark the thread as read.");
+}
+
 /** A quote request note as the form holds it: its kind, the day it happened (YYYY-MM-DD) and its text. */
 export interface QuoteNoteInput {
   kind: QuoteNoteKind;
@@ -564,7 +603,7 @@ export const SIGNED_URL_SECONDS = 60;
  * doesn't sign that request, but every document is also stored as application/octet-stream
  * (20261104130000_document_scanning.sql), which a browser downloads whatever the link says.
  */
-async function signedUrl(bucket: "documents" | "manuscripts", path: string, download: string): Promise<string> {
+async function signedUrl(bucket: "documents" | "manuscripts" | "peo-mail", path: string, download: string): Promise<string> {
   const { data, error } = await supabase.storage
     .from(bucket)
     .createSignedUrl(path, SIGNED_URL_SECONDS, { download: downloadName(download) });
@@ -574,6 +613,12 @@ async function signedUrl(bucket: "documents" | "manuscripts", path: string, down
 
 export const documentUrl = (doc: Pick<UploadedDocument, "storage_path" | "file_name">) =>
   signedUrl("documents", doc.storage_path, doc.file_name);
+
+/** A signed link to an attachment on PEO mail, which only a scanned-clean one has a file for. */
+export const mailAttachmentUrl = (a: { storage_path: string | null; file_name: string }) => {
+  if (!a.storage_path) throw new AdvisorApiError("That file isn't stored: it was blocked, not kept, or is still being checked.");
+  return signedUrl("peo-mail", a.storage_path, a.file_name);
+};
 
 export const manuscriptUrl = (v: ManuscriptVersion, filename: string) => signedUrl("manuscripts", v.storage_path, filename);
 

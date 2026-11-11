@@ -97,6 +97,7 @@
 \i supabase/migrations/20261111090000_quote_request_notes.sql
 \i supabase/migrations/20261111100000_quote_request_addresses.sql
 \i supabase/migrations/20261111110000_quote_request_messages.sql
+\i supabase/migrations/20261111120000_quote_request_threads.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -385,6 +386,9 @@ BEGIN
   SELECT m.id, 'att_2', 'waiting.pdf', 100, 'pending' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
   INSERT INTO storage.objects (bucket_id, name)
   SELECT 'peo-mail', pa_cert || '/' || m.id || '/1-proposal.pdf' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
+  -- An advisor opened its thread (20261111120000), so the mark has a row to protect.
+  INSERT INTO public.quote_request_thread_reads (quote_request_id, last_opened_at)
+  SELECT q.id, now() FROM public.quote_requests q WHERE q.session_id = pa_cert;
   -- A file in the bucket that no stored attachment names stays the service role's alone.
   INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', pa_cert || '/0/unrecorded.pdf');
   PERFORM set_config('request.jwt.claims', '', false);
@@ -443,6 +447,7 @@ INSERT INTO matrix VALUES
   -- Mail on a quote request reaches advisors; held mail (none here) only admins. The prospect reads none.
   ('public.quote_request_messages',                     '{"advisor":1,"admin":2}'),
   ('public.quote_request_message_attachments',          '{"advisor":2,"admin":2}'),
+  ('public.quote_request_thread_reads',                 '{"advisor":1,"admin":1}'),
   -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
   ('public.intake_milestones',                          '{}'),
   -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
@@ -740,6 +745,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
   ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
                                                                      'SELECT public.advisor_note_underwriter_question(0, ''probe'')', 'noting an underwriter''s question'),
+  ('advisor_open_quote_request_thread(p_quote_request_id bigint, p_seen_through timestamp with time zone)', 'advisor',
+                                                                     'SELECT public.advisor_open_quote_request_thread(0)', 'marking a PEO thread as opened'),
   ('advisor_add_quote_request_note(p_quote_request_id bigint, p_kind text, p_noted_on date, p_body text)', 'advisor',
                                                                      'SELECT public.advisor_add_quote_request_note(0, ''call'', current_date, ''probe'')', 'adding a note to a quote request'),
   ('advisor_correct_quote_request_note(p_note_id bigint, p_kind text, p_noted_on date, p_body text)', 'advisor',
