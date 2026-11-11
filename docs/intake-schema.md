@@ -62,6 +62,9 @@ New in v3. The database checks each key of a row as the kind named here (`public
 | List | Cap | Row keys (kind) |
 | --- | --- | --- |
 | `entities` | 50 | `legal_name` (text), `fein` (FEIN) |
+| `owners_officers` | 20 | `name`, `title` (text of at most 200 characters), `ownership_percent` (a number from 0 to 100), `duties` (text), `covered` (true or false: whether workers' comp covers them) |
+
+Chat extraction adds to a table rather than replacing it (`mergeRows` in `src/data/rowColumns.ts`): a row for someone or something already listed, matched by the list's key column (a person's name, a legal name), fills in what that row lacked, and a new one is added at the end. Only a document the prospect applied changes a value a row already held, and never one the prospect typed. Lenore never asks for a table row by row; each is named in her prompt's "Entered in the workspace" line with its tab.
 
 Postgres jsonb refuses NUL and unpaired surrogate characters before any trigger runs, so the client removes them from every string.
 
@@ -116,6 +119,7 @@ Writers: **C** chat extraction (`chamber-extract`, which asks for every field bu
 | Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | C |
 | Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | C |
 | Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | C |
+| Workers' comp | `owners_officers` | Owners and officers | list of rows | Recommended | 54 | C E |
 | Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 41 | C D |
 | Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 42 | C |
 | Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 43 | C |

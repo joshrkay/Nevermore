@@ -28,6 +28,8 @@ export const WORKSPACE_ANSWERS: Readonly<Record<string, string>> = {
   // Lenore proposes a NAICS code from the description of operations, and the prospect can search for one on the
   // Company tab; she never asks a prospect to recite a code (K-1.2).
   naics_code: "the Company tab",
+  // Tables: Lenore takes what the prospect volunteers of one, and never asks for it row by row (Epic K).
+  owners_officers: "the Workers' comp tab",
 };
 
 /** What the conversation never asks about: the census (a file) and the answers entered in the workspace. */

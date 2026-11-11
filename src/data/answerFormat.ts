@@ -47,6 +47,7 @@ export function formatAnswer(field: FieldKey, value: unknown): string {
     case "entities":
       return (value as LegalEntity[]).map(entityLine).filter(Boolean).join("; ");
     default:
-      return formatFieldValue(value);
+      // Any other table of rows is shown as a table where there is room, and as a count where there isn't.
+      return Array.isArray(value) && value.every((row) => typeof row === "object" && row !== null) ? `${value.length} listed` : formatFieldValue(value);
   }
 }

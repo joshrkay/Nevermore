@@ -750,6 +750,19 @@
         "rank": 24
       }
     },
+    "owners_officers": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "$ref": "#/$defs/ownerOfficer"
+      },
+      "x-intake": {
+        "label": "Owners and officers",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 54
+      }
+    },
     "census": {
       "type": "array",
       "maxItems": 5000,
@@ -1095,6 +1108,33 @@
           "title": "nine digits, such as 123456789",
           "type": "string",
           "pattern": "^[0-9]{9}$"
+        }
+      }
+    },
+    "ownerOfficer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "[^ ]"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "ownership_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "duties": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "covered": {
+          "type": "boolean"
         }
       }
     },

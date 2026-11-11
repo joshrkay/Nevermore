@@ -21,7 +21,7 @@ What a prospect calls the space where they talk to Lenore and see their answers 
 _Avoid_: The Chamber in anything a prospect reads
 
 **Certify & sign tab** (code: The Reckoning):
-The workspace tab, labelled "⑨ Certify & sign", where the prospect certifies. The Reckoning stays its name in code (`ReckoningTab`). Tab ⑦ is "⑦ Review".
+The workspace tab, labelled "⑩ Certify & sign", where the prospect certifies. The Reckoning stays its name in code (`ReckoningTab`). Tab ⑧ is "⑧ Review".
 _Avoid_: The Reckoning in anything a prospect reads
 
 **The packet** (code: The Manuscript):

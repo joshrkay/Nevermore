@@ -55,6 +55,8 @@ describe("intake schema v3", () => {
     "naics_code", "operations_description",
     // K-1.3 current PEO
     "in_peo", "current_peo", "peo_renewal_date",
+    // K-3.1 owners and officers
+    "owners_officers",
   ];
 
   it("only adds the common questions to v2, changing nothing v2 had", () => {
@@ -108,7 +110,7 @@ describe("intake schema v3", () => {
 
   it("puts the workers' comp block in its own section", () => {
     expect(INTAKE_FIELDS.filter((f) => f.section === "workers_comp").map((f) => f.key).sort()).toEqual([
-      "wc_annual_premium", "wc_carrier", "wc_experience_mod", "wc_renewal_date",
+      "owners_officers", "wc_annual_premium", "wc_carrier", "wc_experience_mod", "wc_renewal_date",
     ]);
   });
 
@@ -258,6 +260,25 @@ describe("validateChamberData", () => {
       { path: "census[0].travels", reason: "must be a boolean" },
     ]);
     expect(paths({ census: [row({ worksite: "x".repeat(201) })] })).toEqual(["census[0].worksite"]);
+  });
+
+  it("lists up to 20 owners and officers, each with a title, ownership share, duties and whether they are covered (K-3.1)", () => {
+    expect(validateChamberData({ owners_officers: [
+      { name: "Dana Reyes", title: "President", ownership_percent: 60, duties: "Runs sales; no field work", covered: false },
+      { name: "Sam Okafor", title: "Secretary", ownership_percent: 12.5, covered: true },
+      { name: "Lee Park" },
+    ] })).toEqual([]);
+    expect(validateChamberData({ owners_officers: [{ name: " ", title: 7, ownership_percent: 101, duties: "x".repeat(1001), covered: "yes", ssn: "1" }] })).toEqual([
+      { path: "owners_officers[0].name", reason: "must not be blank" },
+      { path: "owners_officers[0].title", reason: "must be a string" },
+      { path: "owners_officers[0].ownership_percent", reason: "must be at most 100" },
+      { path: "owners_officers[0].duties", reason: "must be at most 1000 characters" },
+      { path: "owners_officers[0].covered", reason: "must be a boolean" },
+      { path: "owners_officers[0].ssn", reason: "is not a known intake field" },
+    ]);
+    expect(paths({ owners_officers: [{ ownership_percent: -1 }] })).toEqual(["owners_officers[0].ownership_percent"]);
+    expect(paths({ owners_officers: [{ name: "x".repeat(201) }] })).toEqual(["owners_officers[0].name"]);
+    expect(validateChamberData({ owners_officers: Array.from({ length: 21 }, () => ({ name: "A" })) })).toEqual([{ path: "owners_officers", reason: "must have at most 20 entries" }]);
   });
 
   it("refuses the legacy roster key, which no writer sends any more", () => {

@@ -343,6 +343,12 @@ describe("the extraction contract", () => {
     if (key === "states") return ["NY", "NJ"];
     if (key === "naics_code") return "541430";
     const types = Array.isArray(PROPERTIES[key].type) ? (PROPERTIES[key].type as string[]) : [PROPERTIES[key].type as string];
+    // A table of rows: one row holding the list's first key.
+    const ref = (PROPERTIES[key] as { items?: { $ref?: string } }).items?.$ref;
+    if (ref && ref !== "#/$defs/stateCode") {
+      const row = (INTAKE_SCHEMA.$defs as Record<string, { properties: Record<string, unknown> }>)[ref.slice("#/$defs/".length)];
+      return [{ [Object.keys(row.properties)[0]]: "Acme" }];
+    }
     if (types.includes("array")) return ["Dental"];
     if (PROPERTIES[key].enum) return PROPERTIES[key].enum![0];
     if (types.includes("boolean")) return false;
@@ -394,6 +400,23 @@ describe("the extraction contract", () => {
     expect(shaped.extracted).toEqual({ company_name: "Acme" });
     expect(shaped.rejected).toEqual([{ path: "naics_code", reason: "is not a 2022 NAICS code" }]);
     expect(shaped.field_status).not.toHaveProperty("naics_code");
+  });
+
+  // K-3.1: Lenore doesn't ask for a table row by row, but takes what the prospect volunteers of one.
+  it("takes owners and officers the prospect volunteers, as rows of the table's own keys", () => {
+    expect((EXTRACT_TOOL.parameters.properties as Record<string, unknown>).owners_officers).toEqual({
+      type: "array",
+      items: {
+        type: "object",
+        properties: { name: { type: "string" }, title: { type: "string" }, ownership_percent: { type: "number" }, duties: { type: "string" }, covered: { type: "boolean" } },
+        additionalProperties: false,
+      },
+    });
+    const shaped = shape({ owners_officers: [{ name: "Dana Reyes", ownership_percent: 60, covered: false }], field_status: { owners_officers: "confirmed" } }, "I own 60% and I'm excluded from comp.");
+    expect(shaped.extracted).toEqual({ owners_officers: [{ name: "Dana Reyes", ownership_percent: 60, covered: false }] });
+    const bad = shape({ owners_officers: [{ name: "Dana Reyes", ownership_percent: "60%" }] }, "I own 60%.");
+    expect(bad.extracted).toEqual({});
+    expect(bad.rejected).toEqual([{ path: "owners_officers[0].ownership_percent", reason: "must be a number" }]);
   });
 
   it("offers the model an entity type as one of the listed values", () => {

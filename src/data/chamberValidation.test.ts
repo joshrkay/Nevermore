@@ -343,6 +343,34 @@ describe("industry as a code and a description (K-1.2)", () => {
   });
 });
 
+describe("owners and officers (K-3.1)", () => {
+  it("keeps each person with what was given of them, reading percentages and yes or no as people write them", () => {
+    expect(sanitizeChamberPatch({ owners_officers: [
+      { name: " Dana Reyes ", title: "President", ownership_percent: "60%", duties: "Runs sales; no field work", covered: "no" },
+      { name: "Sam Okafor", ownership_percent: 12.5, covered: true },
+      { name: "Lee Park", ownership_percent: "a third", covered: "maybe" },
+      { title: "Treasurer" },
+      { ownership_percent: 150 },
+      "Pat",
+    ] })).toEqual({ owners_officers: [
+      { name: "Dana Reyes", title: "President", ownership_percent: 60, duties: "Runs sales; no field work", covered: false },
+      { name: "Sam Okafor", ownership_percent: 12.5, covered: true },
+      { name: "Lee Park" },
+      { title: "Treasurer" },
+    ] });
+  });
+
+  it("keeps a share to two decimal places, and stops at 20 people", () => {
+    expect(sanitizeChamberPatch({ owners_officers: [{ name: "A", ownership_percent: 33.3333 }] }).owners_officers).toEqual([{ name: "A", ownership_percent: 33.33 }]);
+    expect(sanitizeChamberPatch({ owners_officers: Array.from({ length: 25 }, (_, i) => ({ name: `Owner ${i}` })) }).owners_officers).toHaveLength(20);
+  });
+
+  it("never keeps a Social Security number typed into a name, title or duties", () => {
+    const [row] = sanitizeChamberPatch({ owners_officers: [{ name: "Dana Reyes", duties: "Owner, SSN 123-45-6789" }] }).owners_officers!;
+    expect(row.duties).toBe("Owner, SSN [redacted]");
+  });
+});
+
 // A TypeScript copy of the server's rules (public.chamber_data_error), used to prove that whatever
 // the sanitiser emits is accepted. The SQL tests prove the same against the real function.
 function serverRefusal(d: unknown): string | null {
@@ -360,7 +388,7 @@ function serverRefusal(d: unknown): string | null {
   kinds.naics_code = "naics";
   for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"], ["wc_experience_mod", "experience_mod"], ["wc_annual_premium", "dollars"]]) kinds[k] = kind;
   // New in v3: the scalar kinds public.chamber_data_scalar_reason checks, and the lists of rows.
-  for (const [k, kind] of [["fein", "fein"], ["entity_type", "entity_type"], ["year_founded", "year"], ["entities", "rows"]]) kinds[k] = kind;
+  for (const [k, kind] of [["fein", "fein"], ["entity_type", "entity_type"], ["year_founded", "year"], ["entities", "rows"], ["owners_officers", "rows"]]) kinds[k] = kind;
   const scalarOk = (kind: string, v: unknown): boolean => {
     switch (kind) {
       case "text": return isText(v, TEXT_MAX);
@@ -368,11 +396,15 @@ function serverRefusal(d: unknown): string | null {
       case "naics": return typeof v === "string" && /^[0-9]{6}$/.test(v);
       case "entity_type": return typeof v === "string" && ["sole_proprietorship", "partnership", "llc", "c_corporation", "s_corporation", "nonprofit", "other"].includes(v);
       case "year": return isCount(v, YEAR_MAX) && (v as number) >= YEAR_MIN;
+      case "name": return isText(v, NAME_MAX);
+      case "percent": return typeof v === "number" && v >= 0 && v <= 100;
+      case "boolean": return typeof v === "boolean";
       default: return false;
     }
   };
   const rowLists: Record<string, { max: number; keys: Record<string, string> }> = {
     entities: { max: MAX_ENTITIES, keys: { legal_name: "text", fein: "fein" } },
+    owners_officers: { max: 20, keys: { name: "name", title: "name", ownership_percent: "percent", duties: "text", covered: "boolean" } },
   };
   for (const [k, v] of Object.entries(d)) {
     switch (kinds[k]) {
@@ -566,6 +598,7 @@ describe("sanitiser output the server must accept", () => {
       { census: [{ first_name: "A", work_state: "ZZ" }] }, { census: [{ first_name: "A", classification: "W2" }] },
       { census: [{ first_name: "A", annual_salary: 1_000_001 }] }, { census: [{ first_name: " " }] }, { extra: 1 }, [],
       { fein: "12-3456789" }, { entity_type: "LLC" }, { year_founded: 1599 }, { entities: [{ dba: "x" }] }, { entities: [{ fein: "1" }] }, { entities: null }, { naics_code: "54143" }, { naics_code: 541430 },
+      { owners_officers: [{ ownership_percent: 101 }] }, { owners_officers: [{ covered: "yes" }] }, { owners_officers: [{ name: "x".repeat(201) }] },
     ]) {
       expect(serverRefusal(refused), JSON.stringify(refused)).not.toBeNull();
       expect(validateChamberData(refused), JSON.stringify(refused)).not.toEqual([]);

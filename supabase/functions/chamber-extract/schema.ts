@@ -61,6 +61,7 @@ export const FIELD_GUIDE: Record<string, string> = {
   in_peo: "true if the business is in a PEO (a professional employer organization that co-employs its staff) right now, false if it is not",
   current_peo: "The PEO the business is in now, by name; report in_peo with it",
   peo_renewal_date: "When the agreement with their current PEO renews or ends, as they said it; report in_peo with it",
+  owners_officers: "Owners and officers the prospect names, one row per person: name, title, ownership_percent (their share, a number from 0 to 100), duties (what they do in the business), covered (true if workers' comp covers them, false if they are excluded). Give only the rows and keys this message states; never ask for the rest",
 };
 
 /**
@@ -118,6 +119,7 @@ export const FIELD_QUESTION: Record<string, string> = {
   in_peo: "Is the business in a PEO right now?",
   current_peo: "Which PEO are you with now?",
   peo_renewal_date: "When does your agreement with your current PEO renew?",
+  owners_officers: "Who are the owners and officers of the business?",
 };
 
 // The census (the employee roster) comes only from an uploaded file (D21), and the FEIN is typed into the workspace.
@@ -131,7 +133,16 @@ const MAX_TOOL_CHOICES = 20;
 function toolType(rule: JsonSchema): JsonSchema {
   const types = Array.isArray(rule.type) ? rule.type : [rule.type];
   const type = types.find((t) => t !== "null") as string;
-  if (type === "array") return { type: "array", items: { type: "string" } };
+  if (type === "array") {
+    // A table of rows: each row an object of the list's own keys, typed as the schema types them.
+    const ref = (rule.items as JsonSchema | undefined)?.$ref;
+    const row = typeof ref === "string" ? (INTAKE_SCHEMA.$defs as Record<string, JsonSchema>)[ref.slice("#/$defs/".length)] : undefined;
+    if (row?.type === "object") {
+      const properties = Object.fromEntries(Object.entries(row.properties as Record<string, JsonSchema>).map(([key, cell]) => [key, { type: cell.type }]));
+      return { type: "array", items: { type: "object", properties, additionalProperties: false } };
+    }
+    return { type: "array", items: { type: "string" } };
+  }
   // One of a short list of values (an entity type). A state code stays plain text: its guide says what it is.
   const values = Array.isArray(rule.enum) ? rule.enum.filter((v) => v !== null) : [];
   if (values.length > 0 && values.length <= MAX_TOOL_CHOICES) return { type, enum: values };
@@ -210,6 +221,7 @@ How Lenore replies (the reply field):
 - When the prospect asks to stop, pause or finish for now, set prospect_stopping to true and ask nothing more: tell them their answers are saved, that they can come back to carry on, and that they can review them on the Review tab.
 - When no employee census is uploaded and the next fields aren't required ones, you may invite them to share one with the census template: they download it on the Upload tab, fill in one row per employee and upload it there.
 - Whenever the prospect brings up their employees' details, their roster or census, or starts listing employees, point them to the census template on the Upload tab instead of taking the details in chat, then carry on with the next field. Never ask for Social Security or bank numbers: the template has no place for them.
+- A table (owners and officers and the like) is filled in on its tab. When the prospect volunteers a row of one, capture it; never ask for a table's rows one by one.
 - Never ask for an answer named in "Entered in the workspace": the prospect types those into the app, not the chat. When "Not yet settled" is "none" and "Entered in the workspace" names any, end the wrap-up by saying where each one goes.
 - When the prospect gives or offers their FEIN (their EIN or federal tax ID), tell them to type it into the FEIN box on the Company tab, where it is kept out of the conversation; never repeat the number, and carry on with the next field.
 - Don't tell them the intake is ready to certify: the app tells them itself when it is.

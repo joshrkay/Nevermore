@@ -12,6 +12,18 @@ export interface LegalEntity {
   fein?: string;
 }
 
+/** One owner or officer of the employer (K-3.1). */
+export interface OwnerOfficer {
+  name?: string;
+  title?: string;
+  /** Their share of the business, from 0 to 100. */
+  ownership_percent?: number;
+  /** What they do in the business, as a workers' comp underwriter needs it. */
+  duties?: string;
+  /** Whether the workers' comp policy covers them (included) or not (excluded). */
+  covered?: boolean;
+}
+
 export interface ChamberData {
   // Company
   company_name: string | null;
@@ -87,6 +99,10 @@ export interface ChamberData {
   current_peo: string | null;
   peo_renewal_date: string | null;
 
+  // Workers' comp tables (intake schema v3)
+  /** Each owner and officer (K-3.1). */
+  owners_officers: OwnerOfficer[];
+
   // Employees: the canonical census (see supabase/functions/_shared/census.ts)
   census: CensusEmployee[];
 }
@@ -144,6 +160,7 @@ export const EMPTY_CHAMBER_DATA: ChamberData = {
   in_peo: null,
   current_peo: null,
   peo_renewal_date: null,
+  owners_officers: [],
   census: [],
 };
 
@@ -201,6 +218,10 @@ export const DEMO_CHAMBER_DATA: ChamberData = {
   in_peo: true,
   current_peo: "Summit Employer Services",
   peo_renewal_date: "January 2027",
+  owners_officers: [
+    { name: "Dana Reyes", title: "Chief Executive Officer", ownership_percent: 60, duties: "Runs the studio and client accounts; office work only", covered: false },
+    { name: "Marcus Rivera", title: "Art Director", ownership_percent: 40, duties: "Leads design; on the census as an employee", covered: true },
+  ],
   census: [
     { id: "6f1c2a40-0001-4c1e-9a7b-3d5e00000001", first_name: "Sarah", last_name: "Chen", dob: "1988-03-15", work_state: "CA", zip_code: "94107", job_title: "Senior Designer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "FAM", class_code: "8810", dependents: [{ first_name: "Michael", last_name: "Chen", dob: "1985-06-12", relationship: "spouse" }, { first_name: "Emma", last_name: "Chen", dob: "2018-03-22", relationship: "child" }] },
     { id: "6f1c2a40-0002-4c1e-9a7b-3d5e00000002", first_name: "Marcus", last_name: "Rivera", dob: "1985-07-22", work_state: "CA", zip_code: "94110", job_title: "Art Director", annual_salary: 125000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810", dependents: [{ first_name: "Ana", last_name: "Rivera", dob: "1987-09-04", relationship: "spouse" }] },

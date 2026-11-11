@@ -16,6 +16,7 @@ import {
   TEXT_MAX,
   US_STATE_CODES,
   YEAR_MAX,
+  MONEY_MAX,
 } from "@/data/chamberValidation";
 import { FIELD_KINDS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
@@ -141,6 +142,8 @@ describe("server and client intake rules agree", () => {
       max_experience_mod: EXPERIENCE_MOD_MAX,
       max_dollars: DOLLARS_MAX,
       max_year: YEAR_MAX,
+      max_percent: 100,
+      max_money: MONEY_MAX,
     });
   });
 
@@ -275,6 +278,7 @@ describe("server and client intake rules agree", () => {
       if (json === '{"type":"boolean"}') return "boolean";
       if (json === '{"type":"array","items":{"type":"string"}}') return "list";
       if (/^\{"type":"string","enum":\[/.test(json)) return "choice";
+      if (/^\{"type":"array","items":\{"type":"object"/.test(json)) return "rows";
       return json;
     };
     // An industry code is picked from a search in the app; the model sends it as text.
@@ -308,6 +312,7 @@ describe("server and client intake rules agree", () => {
         max_employees: LIMITS.census, max_dependents: LIMITS.dependents, max_states: LIMITS.states, max_list_items: LIMITS.listItems,
         max_text: LIMITS.text, max_name: LIMITS.name, max_dob: LIMITS.dob, max_count: LIMITS.count, max_salary: LIMITS.salary,
         max_experience_mod: LIMITS.experienceMod, max_dollars: LIMITS.dollars, max_year: LIMITS.yearMax,
+        max_percent: LIMITS.percent, max_money: LIMITS.money,
       }).toEqual(Object.fromEntries(server));
       expect(props.year_founded.maximum).toBe(server.get("max_year"));
       expect(props.wc_experience_mod.maximum).toBe(server.get("max_experience_mod"));
@@ -343,12 +348,12 @@ describe("server and client intake rules agree", () => {
       const types = ([] as unknown[]).concat(schema.type);
       const values = ((schema.enum ?? []) as unknown[]).filter((v) => v !== null);
       if (values.length > 0) return values.includes("CA") ? "state" : JSON.stringify(values) === JSON.stringify(ENTITY_TYPES) ? "entity_type" : "unknown enum";
-      if (types.includes("number")) return "experience_mod";
+      if (types.includes("number")) return schema.maximum === LIMITS.percent ? "percent" : schema.maximum === LIMITS.money ? "money" : "experience_mod";
       if (types.includes("integer")) return schema.maximum === LIMITS.dollars ? "dollars" : schema.maximum === LIMITS.yearMax ? "year" : "count";
       if (types.includes("boolean")) return "boolean";
       if (schema.pattern === "^[0-9]{9}$") return "fein";
       if (schema.pattern === "^[0-9]{6}$") return "naics";
-      return "text";
+      return schema.maxLength === LIMITS.name ? "name" : "text";
     };
 
     const kindOf = (schema: JsonSchema): string => {

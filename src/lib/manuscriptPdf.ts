@@ -270,6 +270,15 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     ["Sensitive Fields", reveal ? "Shown in full" : "Masked (dates of birth show year only)"],
   ]);
 
+  // A section's answers that are tables of rows (owners and officers and the like), each under a subheading,
+  // its columns sharing the page's width.
+  const tablesOf = (section: Manuscript["tables"][number]["section"]) => {
+    for (const t of m.tables.filter((each) => each.section === section)) {
+      subheading(t.title);
+      table(t.columns.map((header) => ({ header, width: CONTENT_W / t.columns.length })), t.rows);
+    }
+  };
+
   // ---------- 1 Company ----------
   sectionHeading("1 — Company Profile");
   keyValues(m.companyRows);
@@ -357,6 +366,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   // ---------- 8 Workers' comp ----------
   sectionHeading("8 — Workers' Compensation");
   keyValues(m.workersCompRows);
+  tablesOf("workers_comp");
 
   // ---------- 9 Operations ----------
   sectionHeading("9 — Operations & HR");

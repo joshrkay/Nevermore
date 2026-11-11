@@ -88,14 +88,27 @@ const RowsField = ({ field, rows, provenance, onAction, hint }: RowsFieldProps) 
                   <tr key={i}>
                     {columns.map((c) => (
                       <td key={c.key} className="pr-2 pb-1">
-                        <input
-                          aria-label={`${c.label}, row ${i + 1}`}
-                          value={row[c.key]}
-                          onChange={(e) => setCell(i, c.key, e.target.value)}
-                          placeholder={c.placeholder}
-                          inputMode={c.kind === "fein" ? "numeric" : undefined}
-                          className="w-full min-w-24 bg-background border border-border rounded px-2 py-1"
-                        />
+                        {c.kind === "boolean" ? (
+                          <select
+                            aria-label={`${c.label}, row ${i + 1}`}
+                            value={row[c.key]}
+                            onChange={(e) => setCell(i, c.key, e.target.value)}
+                            className="bg-background border border-border rounded px-2 py-1"
+                          >
+                            <option value="">—</option>
+                            <option value="yes">Yes</option>
+                            <option value="no">No</option>
+                          </select>
+                        ) : (
+                          <input
+                            aria-label={`${c.label}, row ${i + 1}`}
+                            value={row[c.key]}
+                            onChange={(e) => setCell(i, c.key, e.target.value)}
+                            placeholder={c.placeholder}
+                            inputMode={c.kind === "fein" ? "numeric" : c.kind === "percent" ? "decimal" : undefined}
+                            className="w-full min-w-24 bg-background border border-border rounded px-2 py-1"
+                          />
+                        )}
                       </td>
                     ))}
                     <td className="pb-1">

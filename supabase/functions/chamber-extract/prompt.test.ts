@@ -29,7 +29,7 @@ describe("buildUserPrompt", () => {
       expect.stringMatching(/^Not yet settled, most important first: /),
       "Ready to certify: no",
       "Employee census: not uploaded",
-      "Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab), naics_code (NAICS code, on the Company tab)",
+      expect.stringMatching(/^Entered in the workspace, never asked for in chat: fein \(FEIN, on the Company tab\), naics_code \(NAICS code, on the Company tab\)/),
       'Recent conversation, oldest first: [{"sender":"lenore","text":"How many people work for you?"}]',
       'New user message: "We have 40 \\"full time\\" people"',
     ]);
@@ -78,7 +78,10 @@ describe("buildUserPrompt", () => {
 // K-1.1: nine digits in a chat message are redacted before the model sees them, so the FEIN is typed into its own
 // box in the workspace. Lenore never asks for it; she is told where it goes, so she can say so.
 describe("answers entered in the workspace", () => {
-  const line = (turn: Parameters<typeof buildUserPrompt>[0]) => buildUserPrompt(turn).split("\n\n")[5];
+  // Every table already holds a row, so a line names only the answers its case is about. Add each new table here.
+  const TABLES = { owners_officers: [{ name: "Dana Reyes" }] };
+  const line = (turn: Parameters<typeof buildUserPrompt>[0], tables: object = TABLES) =>
+    buildUserPrompt({ ...turn, context: { ...tables, ...((turn.context ?? {}) as object) } }).split("\n\n")[5];
 
   it("are never among the fields Lenore asks about, however little else is left", () => {
     expect(unsettledForTurn({}).map((f) => f.key)).not.toContain("fein");
@@ -107,6 +110,14 @@ describe("answers entered in the workspace", () => {
     expect(unsettledForTurn({}).map((f) => f.key)).toContain("operations_description");
     expect(line({ message: "hi", context: { fein: "**-***4567" } })).toBe("Entered in the workspace, never asked for in chat: naics_code (NAICS code, on the Company tab)");
     expect(line({ message: "hi", context: { fein: "**-***4567", naics_code: "541430" } })).toBe("Entered in the workspace, never asked for in chat: none");
+  });
+
+  // K-3.1: Lenore takes what is volunteered of a table, but never asks for it row by row.
+  it("include the tables, each with its tab, until one holds a row", () => {
+    const known = { fein: "**-***4567", naics_code: "541430" };
+    expect(unsettledForTurn({}).map((f) => f.key)).not.toContain("owners_officers");
+    expect(line({ message: "hi", context: known }, {})).toBe("Entered in the workspace, never asked for in chat: owners_officers (Owners and officers, on the Workers' comp tab)");
+    expect(line({ message: "hi", context: { ...known, owners_officers: [{ name: "Dana Reyes" }] } }, {})).toBe("Entered in the workspace, never asked for in chat: none");
   });
 
   it("are not asked about even when an advisor asked: the request shows on the answer in the workspace", () => {

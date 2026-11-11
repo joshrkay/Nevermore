@@ -107,6 +107,15 @@ describe("buildManuscriptPdf", () => {
     expect(text).toContain("8810"); // the class code column
   });
 
+  // K-3.1: a table of rows prints under its section, with its title, its columns and each row.
+  it("prints the owners and officers as a table in the workers' comp section", async () => {
+    const { text } = await render();
+    const section = text.slice(text.indexOf("8 — Workers' Compensation"), text.indexOf("9 — Operations & HR"));
+    for (const expected of ["Owners and Officers", "Ownership %", "Dana Reyes", "Chief Executive Officer", "60%", "Marcus Rivera"]) expect(section).toContain(expected);
+    const none = await render({ ...DEMO_CHAMBER_DATA, owners_officers: [] });
+    expect(none.text).not.toContain("Ownership %");
+  });
+
   it("prints a multi-state submission's state breakdown, and an incomplete one without clipping", async () => {
     const states = ["CA", "TX", "NY", "OH", "WA", "FL", "IL", "PA", "GA", "NC", "AZ", "MA"];
     const { text } = await render({ ...DEMO_CHAMBER_DATA, states });

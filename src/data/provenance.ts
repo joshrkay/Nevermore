@@ -1,3 +1,4 @@
+import { isRowListField, mergeRows } from "./rowColumns";
 import { z } from "zod";
 import type { ChamberData } from "./chamberTypes";
 import { sanitizeChamberPatch } from "./chamberValidation";
@@ -127,6 +128,7 @@ export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
   in_peo: "boolean",
   current_peo: "text",
   peo_renewal_date: "text",
+  owners_officers: "rows",
 };
 
 const FIELD_KEYS = Object.keys(FIELD_LABELS) as FieldKey[];
@@ -330,6 +332,19 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
     const status: ExtractedStatus = opts.statuses?.[field] ?? "inferred";
     const prev = provenance[field];
     const prevValue = data[field];
+
+    // A table of rows is added to, never traded: what was heard fills in or extends what the table holds, the
+    // prospect's own rows included, and only a better source changes a value already there.
+    // (A table closed as "Doesn't apply" holds no rows, and one the prospect typed outranks every source.)
+    if (isRowListField(field) && !isEmpty(prevValue)) {
+      const better = prev !== undefined && RANK[source.kind] > fieldRank(prev);
+      const merged = mergeRows(field, prevValue as object[], value as object[], better);
+      if (JSON.stringify(merged) === JSON.stringify(prevValue)) continue;
+      (data as Record<FieldKey, unknown>)[field] = merged;
+      // The prospect confirms the whole table again, unless a document they applied supplied the rows.
+      provenance[field] = { status: source.kind === "document" ? status : "inferred", source, updated_at };
+      continue;
+    }
 
     if (prev?.source.kind === "prospect_edit") continue;
     // Only the prospect marks a field not applicable, and only they can take it back.

@@ -53,6 +53,10 @@ export const LIMITS = {
   yearMin: 1600,
   yearMax: 2100,
   entities: 50,
+  ownersOfficers: 20,
+  percent: 100,
+  // An amount with cents, such as a monthly premium rate.
+  money: 1_000_000,
 } as const;
 
 /** How an employer is organised, as PEO and carrier forms ask it (K-1.1). */
@@ -189,6 +193,9 @@ const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: stri
   ["current_peo", text(), "company", "Current PEO"],
   ["peo_renewal_date", text(), "company", "PEO agreement renewal"],
 
+  // K-3.1: each owner and officer, for pricing workers' comp inclusions and exclusions.
+  ["owners_officers", rows("ownerOfficer", LIMITS.ownersOfficers), "workers_comp", "Owners and officers"],
+
   ["census", { type: "array", maxItems: LIMITS.census, items: { $ref: "#/$defs/censusRow" } }, "census", "Employee census"],
 ];
 
@@ -263,6 +270,18 @@ export const INTAKE_SCHEMA_V3: JsonSchema = {
       properties: {
         legal_name: { type: "string", maxLength: LIMITS.text, pattern: NOT_BLANK },
         fein: { title: FEIN_TITLE, type: "string", pattern: FEIN_PATTERN },
+      },
+    },
+    // One owner or officer (K-3.1): who they are, how much they own, what they do, and whether workers' comp covers them.
+    ownerOfficer: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { type: "string", maxLength: LIMITS.name, pattern: NOT_BLANK },
+        title: { type: "string", maxLength: LIMITS.name },
+        ownership_percent: { type: "number", minimum: 0, maximum: LIMITS.percent },
+        duties: { type: "string", maxLength: LIMITS.text },
+        covered: { type: "boolean" },
       },
     },
     dependent: {

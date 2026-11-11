@@ -36,6 +36,7 @@ CREATE TABLE auth.users (id uuid PRIMARY KEY, raw_user_meta_data jsonb);
 \i supabase/migrations/20261111093000_intake_schema_v3_current_peo.sql
 \i supabase/migrations/20261111094000_intake_schema_v3_census_columns.sql
 \i supabase/migrations/20261111095000_intake_schema_v3_census_worksite.sql
+\i supabase/migrations/20261111096000_intake_schema_v3_owners_officers.sql
 
 -- ---------- helpers ----------
 -- The path chamber_data_error names for d, or NULL when d is acceptable.
@@ -166,4 +167,25 @@ BEGIN
   PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","travels":1}]}', 'census[0].travels', 'travels sent as a number');
   PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","gender":"female"}]}', 'census[0].gender', 'a gender written out, after K-2.2');
   RAISE NOTICE 'intake_schema_v3: worksite cases passed';
+END $$;
+
+-- ---------- K-3.1 owners and officers ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.must_accept('{"owners_officers":[{"name":"Dana Reyes","title":"President","ownership_percent":60,"duties":"Runs sales; no field work","covered":false},{"name":"Sam Okafor","ownership_percent":12.5,"covered":true},{}]}', 'owners and officers');
+  PERFORM pg_temp.must_accept('{"owners_officers":[]}', 'no owners listed');
+  PERFORM pg_temp.must_accept('{"owners_officers":[{"ownership_percent":0},{"ownership_percent":100}]}', 'shares at the limits');
+  PERFORM pg_temp.must_refuse('{"owners_officers":[{"ownership_percent":100.01}]}', 'owners_officers[0].ownership_percent', 'a share over 100');
+  PERFORM pg_temp.must_refuse('{"owners_officers":[{"ownership_percent":-1}]}', 'owners_officers[0].ownership_percent', 'a negative share');
+  PERFORM pg_temp.must_refuse('{"owners_officers":[{"ownership_percent":"60"}]}', 'owners_officers[0].ownership_percent', 'a share sent as text');
+  PERFORM pg_temp.must_refuse('{"owners_officers":[{"name":"A"},{"covered":"no"}]}', 'owners_officers[1].covered', 'covered sent as text');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('owners_officers', jsonb_build_array(jsonb_build_object('name', repeat('x', 201)))), 'owners_officers[0].name', 'a name of 201 characters');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('owners_officers', jsonb_build_array(jsonb_build_object('title', repeat('x', 201)))), 'owners_officers[0].title', 'a title of 201 characters');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('owners_officers', jsonb_build_array(jsonb_build_object('duties', repeat('x', 1001)))), 'owners_officers[0].duties', 'duties of 1,001 characters');
+  PERFORM pg_temp.must_refuse('{"owners_officers":[{"ssn":"1"}]}', 'owners_officers[0].ssn', 'an unknown key on an owner');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('owners_officers', (SELECT jsonb_agg(jsonb_build_object('name', 'O')) FROM generate_series(1, 21))), 'owners_officers', '21 owners');
+  PERFORM pg_temp.must_accept(jsonb_build_object('owners_officers', (SELECT jsonb_agg(jsonb_build_object('name', 'O')) FROM generate_series(1, 20))), '20 owners');
+  PERFORM pg_temp.must_accept('{"entities":[{"legal_name":"A","fein":"841234567"}]}', 'legal entities after K-3.1');
+  PERFORM pg_temp.must_refuse('{"entities":[{"name":"A"}]}', 'entities[0].name', 'an owner''s key on a legal entity');
+  RAISE NOTICE 'intake_schema_v3: owners and officers cases passed';
 END $$;

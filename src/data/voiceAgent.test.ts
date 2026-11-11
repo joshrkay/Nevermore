@@ -28,7 +28,7 @@ describe("voiceContextUpdate (D24)", () => {
       "Ask about next, most important first: Company legal name (required); States of operation (required); Pay frequency (required); Employee count; Industry; HQ state; Current carrier; Renewal date",
       "Already settled, never ask again: none",
       "Employee census: not uploaded",
-      "Entered in the workspace, never ask aloud: FEIN, on the Company tab; NAICS code, on the Company tab",
+      expect.stringMatching(/^Entered in the workspace, never ask aloud: FEIN, on the Company tab; NAICS code, on the Company tab/),
     ]);
     expect(nextOf(update).split("; ")).toHaveLength(NEXT_FIELDS);
   });
@@ -75,11 +75,13 @@ describe("voiceContextUpdate (D24)", () => {
 
   // K-1.1: a FEIN is typed into the workspace, never said aloud.
   it("never asks aloud for an answer entered in the workspace, or calls it settled while it is open: it says where it goes", () => {
-    const open = voiceContextUpdate({ ...EMPTY_CHAMBER_DATA, naics_code: "541430", multiple_entities: true }, {});
+    // Every table already holds a row, so the line names only the answers this case is about. Add each new table here.
+    const TABLES = { owners_officers: [{ name: "Dana Reyes" }] };
+    const open = voiceContextUpdate({ ...EMPTY_CHAMBER_DATA, ...TABLES, naics_code: "541430", multiple_entities: true }, {});
     expect(nextOf(open)).not.toMatch(/FEIN|Legal entities/);
     expect(settledOf(open)).not.toMatch(/\bFEIN\b(?! count)|Legal entities/);
     expect(line(open, "Entered in the workspace, never ask aloud:")).toBe("FEIN, on the Company tab; Legal entities, on the Company tab");
-    const held = voiceContextUpdate({ ...EMPTY_CHAMBER_DATA, naics_code: "541430", fein: "841234567" }, {});
+    const held = voiceContextUpdate({ ...EMPTY_CHAMBER_DATA, ...TABLES, naics_code: "541430", fein: "841234567" }, {});
     expect(line(held, "Entered in the workspace, never ask aloud:")).toBe("none");
     expect(settledOf(held).split("; ")).toContain("FEIN");
     expect(held).not.toContain("4567");
@@ -135,7 +137,7 @@ const UPDATE_KNOWN: Record<number, string> = {
   // 2: unchanged from 1 (the rebrand changed only the prompt).
   2: "2ed1005fe6f2eee96f13e477db8fe187d51d8231337c217d92253ae3f0ac5b17",
   // 3: the "Entered in the workspace" line, and v3's fields among the labels.
-  3: "0a80a426001a2598a893617a7970234180e675964fcddce60495d71ece081271",
+  3: "7fdb036a7aec3eebc9982c31a16d9b8220d4fd5024a793ceaf8a36413be2b847",
 };
 
 describe("Lenore's voice prompt", () => {

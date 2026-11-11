@@ -11,6 +11,7 @@ import CompanyTab from "./CompanyTab";
 import PayrollTab from "./PayrollTab";
 import BenefitsTab from "./BenefitsTab";
 import CensusWorkspaceTab from "./CensusWorkspaceTab";
+import WorkersCompTab from "./WorkersCompTab";
 import DependentsTab from "./DependentsTab";
 import ReviewTab from "./ReviewTab";
 import { VerifiedFieldsContext } from "./VerifiedFieldsContext";
@@ -24,11 +25,12 @@ const WORKSPACE_TABS = [
   { key: "company", label: "② Company" },
   { key: "payroll", label: "③ Payroll" },
   { key: "benefits", label: "④ Benefits" },
-  { key: "team", label: "⑤ Your Team" },
-  { key: "dependents", label: "⑥ Dependents" },
-  { key: "review", label: "⑦ Review" },
-  { key: "match", label: "⑧ PEO Match" },
-  { key: "reckoning", label: "⑨ Certify & sign" },
+  { key: "workers_comp", label: "⑤ Workers' comp" },
+  { key: "team", label: "⑥ Your Team" },
+  { key: "dependents", label: "⑦ Dependents" },
+  { key: "review", label: "⑧ Review" },
+  { key: "match", label: "⑨ PEO Match" },
+  { key: "reckoning", label: "⑩ Certify & sign" },
 ];
 
 interface LiveWorkspaceProps {
@@ -130,6 +132,7 @@ const LiveWorkspace = ({
           {activeTab === "company" && <CompanyTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
           {activeTab === "payroll" && <PayrollTab data={data} provenance={provenance} onAction={onAction} />}
           {activeTab === "benefits" && <BenefitsTab data={data} provenance={provenance} onAction={onAction} />}
+          {activeTab === "workers_comp" && <WorkersCompTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
           {activeTab === "team" && <CensusWorkspaceTab data={data} isDemo={isDemo} provenance={provenance} onAction={onAction} />}
           {activeTab === "dependents" && <DependentsTab data={data} />}
           {activeTab === "review" && (

@@ -7,7 +7,8 @@ import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
 import { formatAnswer } from "./answerFormat";
 import { describeSource, FIELD_LABELS, isEmpty, showsSource, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
-import { isRequiredField } from "./readiness";
+import { isRequiredField, type ReviewSection } from "./readiness";
+import { formatCell, ROW_LISTS, type RowListField } from "./rowColumns";
 import { NO_VERIFIED_FIELDS } from "./requiredItems";
 import { describeOpenItem, openItems } from "./openItems";
 
@@ -302,6 +303,20 @@ const counted = (n: number, of: number, what: string) => `${n} of ${of} ${what}`
  */
 export type ManuscriptRow = [label: string, value: string, field?: FieldKey, alsoFrom?: readonly FieldKey[]];
 
+/** An answer that is a table of rows, as The Manuscript prints it: every cell text, "—" where a row holds nothing. */
+export interface ManuscriptTable {
+  section: ReviewSection;
+  field: FieldKey;
+  title: string;
+  columns: string[];
+  rows: string[][];
+}
+
+/** Each table's title in The Manuscript, and the section it is printed in. */
+const TABLES: { field: RowListField; title: string; section: ReviewSection }[] = [
+  { field: "owners_officers", title: "Owners and Officers", section: "workers_comp" },
+];
+
 /**
  * The provenance the Manuscript shows: an answer an advisor verified that still needed the prospect reads as
  * confirmed with no rival answers, rather than keeping a "Conflicting" chip or an "unresolved" marker that
@@ -372,6 +387,8 @@ export interface Manuscript {
   benefitsRows: ManuscriptRow[];
   workersCompRows: ManuscriptRow[];
   operationsRows: ManuscriptRow[];
+  /** The answers that are tables of rows, each under its section's own rows (K-3.1 on). None for an empty table. */
+  tables: ManuscriptTable[];
   /** The documents uploaded, as they stood at certification; null when the submission predates the record. */
   documents: ManuscriptDocument[] | null;
   /** Facts the prospect confirmed (the only "resolved" items), in business language. */
@@ -441,6 +458,12 @@ export function buildManuscript(
       const shown = field && provenance[field]?.status === "not_applicable" ? NOT_APPLICABLE : value;
       return alsoFrom ? [label, shown, field, alsoFrom] : [label, shown, field];
     });
+
+  const tables: ManuscriptTable[] = TABLES.flatMap(({ field, title, section }) => {
+    const rows = data[field] as Record<string, unknown>[];
+    const { columns } = ROW_LISTS[field];
+    return rows.length === 0 ? [] : [{ section, field, title, columns: columns.map((c) => c.label), rows: rows.map((row) => columns.map((c) => formatCell(c, row[c.key]))) }];
+  });
 
   // An answer as formatAnswer writes it, or "Not provided".
   const answer = (field: FieldKey): string => (isEmpty(data[field]) ? NOT_PROVIDED : formatAnswer(field, data[field]));
@@ -586,12 +609,14 @@ export function buildManuscript(
       ["Retirement Plan Type", orNotProvided(data.retirement_type), "retirement_type"],
       ["Employer Retirement Contribution", yesNo(data.employer_contributes), "employer_contributes"],
     ]),
+    tables,
     workersCompRows: finish([
       ["Current Carrier", orNotProvided(data.wc_carrier), "wc_carrier"],
       ["Renewal Date", orNotProvided(data.wc_renewal_date), "wc_renewal_date"],
       ["Experience Mod", data.wc_experience_mod === null ? NOT_PROVIDED : data.wc_experience_mod.toFixed(2), "wc_experience_mod"],
       ["Annual Premium", dollars(data.wc_annual_premium), "wc_annual_premium"],
       ["Class Codes on Census", classCodes(data.census)],
+      ["Owners and Officers", answer("owners_officers"), "owners_officers"],
     ]),
     operationsRows: finish([
       ["Employee Handbook", yesNo(data.has_handbook), "has_handbook"],

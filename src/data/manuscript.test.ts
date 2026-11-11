@@ -283,9 +283,27 @@ describe("buildManuscript covers the whole intake", () => {
     });
   });
 
+  // K-3.1: each owner and officer, so an underwriter can price who is included and who is excluded.
+  it("lists each owner and officer in the workers' comp section, as a table", () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
+    expect(m.workersCompRows.find(([, , field]) => field === "owners_officers")).toEqual(["Owners and Officers", "2 listed", "owners_officers"]);
+    expect(m.tables.filter((t) => t.section === "workers_comp").map((t) => t.title)).toEqual(["Owners and Officers"]);
+    const [table] = m.tables;
+    expect(table.columns).toEqual(["Name", "Title", "Ownership %", "Duties", "Covered by workers' comp"]);
+    expect(table.rows).toEqual([
+      ["Dana Reyes", "Chief Executive Officer", "60%", "Runs the studio and client accounts; office work only", "No"],
+      ["Marcus Rivera", "Art Director", "40%", "Leads design; on the census as an employee", "Yes"],
+    ]);
+    const none = buildManuscript({ ...DEMO_CHAMBER_DATA, owners_officers: [] }, opts);
+    expect(none.workersCompRows.find(([, , field]) => field === "owners_officers")?.[1]).toBe("Not provided");
+    expect(none.tables).toEqual([]);
+    const one = buildManuscript({ ...DEMO_CHAMBER_DATA, owners_officers: [{ name: "Dana Reyes" }] }, opts);
+    expect(one.tables[0].rows).toEqual([["Dana Reyes", "—", "—", "—", "—"]]);
+  });
+
   it("shows the workers' comp block and the census class codes", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
-    expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toEqual({
+    expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toMatchObject({
       "Current Carrier": "Pinnacle Mutual",
       "Renewal Date": "July 2026",
       "Experience Mod": "0.92",

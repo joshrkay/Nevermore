@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { rowProvenance } from "@/data/manuscript";
@@ -485,6 +485,14 @@ describe("ManuscriptPage", () => {
     expect(screen.queryByText(/Meridian/)).not.toBeInTheDocument();
     expect(screen.queryByText("Underwriting packet")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Go to the intake/ })).toHaveAttribute("href", "/start");
+  });
+
+  // K-3.1
+  it("shows the owners and officers as a table under the workers' comp answers", async () => {
+    renderAt("/manuscript/demo");
+    const table = await screen.findByRole("table", { name: "Owners and Officers" });
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Name", "Title", "Ownership %", "Duties", "Covered by workers' comp"]);
+    expect(within(table).getAllByRole("row")[1]).toHaveTextContent("Dana ReyesChief Executive Officer60%");
   });
 
   it("renders the fictional sample only on the demo route, clearly labelled", async () => {

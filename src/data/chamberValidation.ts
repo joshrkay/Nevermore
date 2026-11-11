@@ -32,6 +32,8 @@ export const DOB_MAX = 40;
 export const YEAR_MIN = 1600;
 export const YEAR_MAX = 2100;
 export const MAX_ENTITIES = 50;
+export const MAX_OWNERS_OFFICERS = 20;
+export const MONEY_MAX = 1_000_000;
 
 const STATE_CODE_SET: ReadonlySet<string> = new Set(US_STATE_CODES);
 
@@ -148,6 +150,21 @@ const rowsOf = <Row extends object>(shape: { [K in keyof Row]-?: z.ZodType<NonNu
     return out;
   });
 
+// Text held to the shorter cap a name or title has; longer is dropped, as with any text.
+const nameText = str(z.string().trim().min(1).max(NAME_MAX));
+
+// A percentage from 0 to 100, as people write it ("60%", "12.5"), kept to two decimal places.
+const percent = z.preprocess(
+  numberText(/[\s%,]/g),
+  z.number().finite().min(0).max(100).transform((n) => Math.round(n * 100) / 100),
+);
+
+// Yes or no, as a person or a model writes it.
+const yesNo = z.preprocess(
+  (v) => (typeof v === "string" ? (/^\s*(y|yes|true)\s*$/i.test(v) ? true : /^\s*(n|no|false)\s*$/i.test(v) ? false : v) : v),
+  z.boolean(),
+);
+
 type FieldSchemas = { [K in keyof ChamberData]: z.ZodType<ChamberData[K], z.ZodTypeDef, unknown> };
 
 const FIELD_SCHEMAS: FieldSchemas = {
@@ -203,6 +220,10 @@ const FIELD_SCHEMAS: FieldSchemas = {
   street_address: nullableText,
   website: nullableText,
   entities: rowsOf<ChamberData["entities"][number]>({ legal_name: text, fein }, MAX_ENTITIES),
+  owners_officers: rowsOf<ChamberData["owners_officers"][number]>(
+    { name: nameText, title: nameText, ownership_percent: percent, duties: text, covered: yesNo },
+    MAX_OWNERS_OFFICERS,
+  ),
   naics_code: naicsCode.nullable(),
   operations_description: nullableText,
   in_peo: z.boolean().nullable(),

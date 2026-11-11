@@ -806,3 +806,57 @@ describe("answers that close other answers", () => {
     expect(applyExtraction(inPeo, { company_name: "Acme" }, { source: spoken }).provenance.peo_renewal_date?.status).toBe("not_applicable");
   });
 });
+
+// K-3.1 on: what Lenore hears of a table of rows is added to the table, never traded for it.
+describe("rows heard in conversation or read from a document", () => {
+  const heard = { kind: "transcript" as const, message_id: "m3" };
+  const empty: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
+  const owners = (s: IntakeState) => s.data.owners_officers;
+
+  it("starts the table from the first rows heard, with their status", () => {
+    const next = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60 }] }, { source: heard, statuses: { owners_officers: "confirmed" } });
+    expect(owners(next)).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }]);
+    expect(next.provenance.owners_officers?.status).toBe("confirmed");
+  });
+
+  it("adds a row for someone new and keeps everyone already listed, for the prospect to confirm again", () => {
+    const one = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60 }] }, { source: heard, statuses: { owners_officers: "confirmed" } });
+    const two = applyExtraction(one, { owners_officers: [{ name: "Sam Okafor", title: "Secretary" }] }, { source: { ...heard, message_id: "m4" }, statuses: { owners_officers: "confirmed" } });
+    expect(owners(two)).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }, { name: "Sam Okafor", title: "Secretary" }]);
+    expect(two.provenance.owners_officers?.status).toBe("inferred");
+  });
+
+  it("fills in what a listed person's row was missing, matching the name whatever its case, and never changes what the row held", () => {
+    const one = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60 }] }, { source: heard });
+    const more = applyExtraction(one, { owners_officers: [{ name: "dana reyes", title: "President", ownership_percent: 55 }] }, { source: { ...heard, message_id: "m4" } });
+    expect(owners(more)).toEqual([{ name: "Dana Reyes", ownership_percent: 60, title: "President" }]);
+  });
+
+  it("adds to a table the prospect typed, without touching their rows", () => {
+    const typed = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: [{ name: "Dana Reyes", ownership_percent: 60 }] });
+    const next = applyExtraction(typed, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 10 }, { name: "Sam Okafor" }] }, { source: heard });
+    expect(owners(next)).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }, { name: "Sam Okafor" }]);
+  });
+
+  it("changes nothing when what was heard is already in the table, or the prospect said the table doesn't apply", () => {
+    const one = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60 }] }, { source: heard, statuses: { owners_officers: "confirmed" } });
+    expect(applyExtraction(one, { owners_officers: [{ name: "Dana Reyes" }] }, { source: { ...heard, message_id: "m4" } })).toEqual(one);
+    const closed = applyFieldAction(empty, { type: "not_applicable", field: "owners_officers" });
+    expect(owners(applyExtraction(closed, { owners_officers: [{ name: "Dana Reyes" }] }, { source: heard }))).toEqual([]);
+  });
+
+  it("stops adding people once the table is full", () => {
+    const full = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: Array.from({ length: 20 }, (_, i) => ({ name: `Owner ${i + 1}` })) });
+    const next = applyExtraction(full, { owners_officers: [{ name: "One Too Many" }, { name: "Owner 3", title: "Treasurer" }] }, { source: heard });
+    expect(owners(next)).toHaveLength(20);
+    expect(owners(next)[2]).toEqual({ name: "Owner 3", title: "Treasurer" });
+  });
+
+  it("lets a document's figures replace what was only heard in conversation, and never what the prospect typed", () => {
+    const doc = { kind: "document" as const, document_id: "d1" };
+    const one = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60 }] }, { source: heard });
+    expect(owners(applyExtraction(one, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: doc, statuses: { owners_officers: "confirmed" } }))).toEqual([{ name: "Dana Reyes", ownership_percent: 55 }]);
+    const typed = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: [{ name: "Dana Reyes", ownership_percent: 60 }] });
+    expect(owners(applyExtraction(typed, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: doc }))).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }]);
+  });
+});

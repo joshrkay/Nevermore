@@ -247,17 +247,17 @@ describe("ReviewTab sections", () => {
     // Not offered for an answer certification needs, nor for one already given.
     expect(screen.queryByRole("button", { name: "Pay frequency doesn't apply" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Company legal name doesn't apply" })).not.toBeInTheDocument();
-    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("0 of 4 settled");
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent(`0 of ${REVIEW_FIELDS.workers_comp.length} settled`);
 
     fireEvent.click(screen.getByRole("button", { name: "Workers' comp carrier doesn't apply" }));
     const row = document.getElementById("review-field-wc_carrier")!;
     expect(within(row).getByText("Doesn't apply")).toBeInTheDocument();
-    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("1 of 4 settled");
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent(`1 of ${REVIEW_FIELDS.workers_comp.length} settled`);
 
     fireEvent.click(screen.getByRole("button", { name: "Undo: Workers' comp carrier doesn't apply" }));
     expect(screen.queryByRole("button", { name: "Undo: Workers' comp carrier doesn't apply" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Workers' comp carrier doesn't apply" })).toBeInTheDocument();
-    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent("0 of 4 settled");
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent(`0 of ${REVIEW_FIELDS.workers_comp.length} settled`);
   });
 
   it("marks the required answers wherever they sit, and only those", () => {
@@ -372,7 +372,7 @@ describe("ReviewTab section status and nav (C-1)", () => {
 
   it("calls a section not applicable once every answer in it is marked so", () => {
     const na = { status: "not_applicable" as const, source: { kind: "prospect_edit" as const }, updated_at: at };
-    const provenance = { wc_carrier: na, wc_renewal_date: na, wc_experience_mod: na, wc_annual_premium: na };
+    const provenance = Object.fromEntries(REVIEW_FIELDS.workers_comp.map((field) => [field, na]));
     render(<ReviewTab data={complete} provenance={provenance} onProceed={() => {}} />);
     expect(screen.getByTestId("status-workers_comp")).toHaveTextContent("Not applicable");
   });
@@ -398,5 +398,22 @@ describe("ReviewTab: columns the census lacks", () => {
   it("lists none once every person has them", () => {
     render(<ReviewTab data={{ ...complete, census: [{ ...person, gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NY" }] }} provenance={{}} onProceed={() => {}} />);
     expect(screen.queryByText(/on the census/)).not.toBeInTheDocument();
+  });
+});
+
+// K-3.1: a table of rows is read in Review and edited on its own tab.
+describe("ReviewTab: tables of rows", () => {
+  const complete = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY"], pay_frequency: "bi-weekly" };
+
+  it("shows each owner and officer in the workers' comp section, with no editor of its own", () => {
+    render(<ReviewTab data={{ ...complete, owners_officers: [{ name: "Dana Reyes", ownership_percent: 60, covered: false }] }} provenance={{}} onAction={() => {}} onProceed={() => {}} />);
+    const table = within(screen.getByRole("region", { name: "Workers' comp" })).getByRole("table", { name: "Owners and officers" });
+    expect(within(table).getAllByRole("row")[1]).toHaveTextContent("Dana Reyes—60%—No");
+    expect(screen.queryByRole("button", { name: "Edit Owners and officers" })).not.toBeInTheDocument();
+  });
+
+  it("shows no table while none is listed", () => {
+    render(<ReviewTab data={complete} provenance={{}} onProceed={() => {}} />);
+    expect(screen.queryByRole("table", { name: "Owners and officers" })).not.toBeInTheDocument();
   });
 });

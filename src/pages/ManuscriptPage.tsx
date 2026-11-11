@@ -72,6 +72,28 @@ const renderRows = (rows: ManuscriptRow[], m: Pick<Manuscript, "provenance" | "a
     <DataRow key={row[0]} label={row[0]} value={row[1]} provenance={rowProvenance(row, m.provenance)} source={rowSourceLine(row, m)} />
   ));
 
+/** A section's answers that are tables of rows, each under the section's own rows. */
+const renderTables = (m: Pick<Manuscript, "tables">, section: Manuscript["tables"][number]["section"]) =>
+  m.tables.filter((t) => t.section === section).map((t) => (
+    <div key={t.field} className="bg-card border border-border rounded-xl p-6 mt-3 overflow-x-auto">
+      <table aria-label={t.title} className="w-full text-sm">
+        <caption className="text-left text-xs uppercase tracking-wider text-muted-foreground pb-2">{t.title}</caption>
+        <thead>
+          <tr className="border-b border-border text-left text-xs text-muted-foreground">
+            {t.columns.map((c) => <th key={c} className="font-normal pb-2 pr-3">{c}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {t.rows.map((row, i) => (
+            <tr key={i} className="border-b border-border/50 last:border-0">
+              {row.map((cell, j) => <td key={j} className="py-2 pr-3 align-top">{cell}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  ));
+
 const Card = ({ children }: { children: React.ReactNode }) => <div className="bg-card border border-border rounded-xl p-6">{children}</div>;
 
 type LoadState =
@@ -567,6 +589,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         <section>
           <SectionHeader>8 — Workers' Compensation</SectionHeader>
           <Card>{renderRows(d.workersCompRows, d)}</Card>
+          {renderTables(d, "workers_comp")}
         </section>
 
         <section>

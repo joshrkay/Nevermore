@@ -1,3 +1,5 @@
+import { isRowListField } from "@/data/rowColumns";
+import RowsField from "./RowsField";
 import { formatAnswer } from "@/data/answerFormat";
 import { useEffect, useRef, type ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
@@ -184,6 +186,8 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
             editable={row.editable}
             allowNotApplicable
           />
+          {/* A table of rows is read here and edited on its own tab. */}
+          {isRowListField(row.field) && data[row.field].length > 0 && <RowsField field={row.field} rows={data[row.field]} />}
         </div>
       ))}
     </div>
