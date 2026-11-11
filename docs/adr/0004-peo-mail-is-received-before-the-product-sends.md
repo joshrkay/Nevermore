@@ -18,6 +18,18 @@ An arriving message changes nothing but the thread: the advisor still records a 
 
 Thread messages and their attachments are kept as long as the intake and deleted with it.
 
+## The details
+
+Settled story by story on 2026-11-11:
+
+- **The address.** File ID, the PEO's short name and an unguessable part, on a subdomain of nevermorepeo.com, so an advisor can see it is the right one before pasting it. It keeps receiving after the quote request closes, until the intake is deleted or an advisor revokes it.
+- **What is shown.** The plain-text body, with earlier quoted messages collapsed. No HTML from outside is rendered.
+- **Attachments.** The upload rules apply: the same file types, up to 20 MB, scanned first. Another type, or a larger file, is listed by name and size as not kept. A file that fails its scan is blocked; the message and its clean attachments stay readable.
+- **The holding list.** Mail to a never-issued address is held like mail to a revoked one. Only admins assign or discard. One ops alert is raised when the list stops being empty. No sender gets a reply.
+- **Knowing mail arrived.** Mail a person at the PEO wrote sends the email to the Advisor Alert recipients and sets a "new PEO mail" mark on the quote request and on its submission in the queue, until any advisor opens the thread. The mark is one for the team. An automatic reply and an advisor's own copied-in message do neither.
+- **The timeline.** Messages, attachments, sends, status changes and quote request notes. Corrections to a quote request's fields stay in its change log. A combined timeline shows every PEO's entries for one submission, each labelled with its PEO.
+- **Quote request notes.** A note never records a send or changes a status, can be corrected with the change logged, and can be added to a closed quote request.
+
 ## The provider (QP-D9)
 
 Resend, which already sends. It receives mail for a subdomain and signs an `email.received` webhook. The webhook carries metadata only, so the function fetches the body, headers and attachments with a second call. Inbound mail gets its own subdomain, so the sending domain's mail routing is untouched.
@@ -35,6 +47,6 @@ Resend, which already sends. It receives mail for a subdomain and signs an `emai
 
 - Counsel has not reviewed the product storing PEO mail. If counsel objects, receiving is switched off and the stored mail deleted, so it ships behind one setting.
 - D44 said a quote holds no attachment. Quote documents now arrive on threads as attachments, scanned before anyone can open them (D13, ADR 0002), which changes D44 before counsel answers on sending.
-- Resend now receives mail that can hold an employer's details and a PEO's pricing. `docs/DATA_HANDLING.md`, `src/data/dataPolicy.ts` and the service provider list say so in the same release.
+- Resend now receives mail that can hold an employer's details and a PEO's pricing. `docs/DATA_HANDLING.md`, `src/data/dataPolicy.ts`, the service provider list and a new Privacy Policy line (we keep correspondence with PEOs about a submission) say so in the same release. The Privacy Policy line is put to counsel as its own question, apart from QP-D1.
 - The address in CC is visible to the PEO, and anyone it is forwarded to can write to the thread. That is why it can be revoked and why a new sender is marked.
 - Until the product sends, a thread is only as complete as the advisor's habit of copying the address in.

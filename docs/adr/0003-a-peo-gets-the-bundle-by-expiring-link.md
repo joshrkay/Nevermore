@@ -12,6 +12,19 @@ The bundle holds the census: every employee's facts, classified Restricted (`doc
 - A reply from the product (M-3.5) sends the intake's documents the same way, not as attachments.
 - The message's From shows the advisor's name at one product sending address. Reply-To is the quote request's reply address, so every answer lands on the thread. The advisor's own email address is not in the message.
 
+## What a send carries
+
+Settled story by story on 2026-11-11:
+
+- **Who it goes to.** One or more people at that PEO, picked from its contacts or typed.
+- **Which version.** The latest certified version only. While an answer has changed and isn't certified again, sending waits.
+- **What the link opens.** A page, with no sign-in, showing the employer, the File ID and version, each file with its own download, and the open items. Each file's download is logged on its own.
+- **The fixed block.** Under the advisor's cover note, a block the advisor can't edit carries the link, the File ID and version, the open items, the advisor's name, firm and phone, and any line counsel requires.
+- **An update.** The message names the changed fields by label and the census changes by count. No value is in the email.
+- **A follow-up.** It carries a live link to the version already sent, issuing a new 30-day one if the earlier one expired.
+- **A reply.** Any document on the intake that passed its scan can go, by link. The market authorization's wording has to cover the packet and supporting documents.
+- **After a prospect withdraws a PEO.** An advisor can still write to it, as text only. The database refuses a link for a PEO with no authorization, as it refuses a send.
+
 ## Considered Options
 
 - **Attach the files.** What advisors do by hand today, and what a PEO desk expects. Rejected: nothing can be recalled, large bundles reach the email provider's size limit, and `dispatch-outbox` would have to carry files (it sends text and HTML only).
