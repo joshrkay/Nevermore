@@ -627,10 +627,12 @@ export const DOCUMENT_FIELDS = [
   "entity_type", "year_founded", "street_address", "website",
   // K-1.2: the industry as a code and a description.
   "naics_code", "operations_description",
+  // K-1.3: the PEO the employer is in now.
+  "in_peo", "current_peo", "peo_renewal_date",
 ] as const;
 
 const BOOLEAN_FIELDS = new Set([
-  "virgin_medical", "has_401k", "employer_contributes", "has_handbook", "has_1099", "ca_contractors",
+  "virgin_medical", "has_401k", "employer_contributes", "has_handbook", "has_1099", "ca_contractors", "in_peo",
 ]);
 
 export interface TextSection {

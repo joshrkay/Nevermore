@@ -526,6 +526,9 @@ export function buildManuscript(
       ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? "Multiple entities" : "Single entity", "multiple_entities"],
       ["FEINs", orNotProvided(data.fein_count), "fein_count"],
       ["Legal Entities", answer("entities"), "entities"],
+      ["In a PEO Now", answer("in_peo"), "in_peo"],
+      ["Current PEO", answer("current_peo"), "current_peo"],
+      ["PEO Agreement Renewal", answer("peo_renewal_date"), "peo_renewal_date"],
       ["Target Start", orNotProvided(data.start_month), "start_month"],
     ]),
     workforceRows: finish([

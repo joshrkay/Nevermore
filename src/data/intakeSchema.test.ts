@@ -53,6 +53,8 @@ describe("intake schema v3", () => {
     "fein", "entity_type", "year_founded", "street_address", "website", "entities",
     // K-1.2 industry as a code and a description
     "naics_code", "operations_description",
+    // K-1.3 current PEO
+    "in_peo", "current_peo", "peo_renewal_date",
   ];
 
   it("only adds the common questions to v2, changing nothing v2 had", () => {
@@ -214,6 +216,12 @@ describe("validateChamberData", () => {
     expect(paths({ naics_code: "5414300" })).toEqual(["naics_code"]);
     expect(validateChamberData({ operations_description: "x".repeat(1000) })).toEqual([]);
     expect(validateChamberData({ operations_description: "x".repeat(1001) })).toEqual([{ path: "operations_description", reason: "must be at most 1000 characters" }]);
+  });
+
+  it("holds whether the employer is in a PEO now, which one and when its agreement renews (K-1.3)", () => {
+    expect(validateChamberData({ in_peo: true, current_peo: "Summit PEO", peo_renewal_date: "January 2027" })).toEqual([]);
+    expect(validateChamberData({ in_peo: false, current_peo: null, peo_renewal_date: null })).toEqual([]);
+    expect(paths({ in_peo: "no", current_peo: 7, peo_renewal_date: ["January"] })).toEqual(["in_peo", "current_peo", "peo_renewal_date"]);
   });
 
   it("lists each legal entity with its name and FEIN when the employer is more than one (K-1.1)", () => {

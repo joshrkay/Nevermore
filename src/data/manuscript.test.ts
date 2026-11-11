@@ -272,6 +272,17 @@ describe("buildManuscript covers the whole intake", () => {
     });
   });
 
+  it("shows whether the employer is in a PEO now, which one, and when its agreement renews (K-1.3)", () => {
+    const row = (data: typeof DEMO_CHAMBER_DATA, provenance = {}) => Object.fromEntries(buildManuscript(data, { ...opts, provenance }).companyRows.map(([label, value]) => [label, value]));
+    expect(row({ ...DEMO_CHAMBER_DATA, in_peo: true, current_peo: "Summit PEO", peo_renewal_date: "January 2027" })).toMatchObject({
+      "In a PEO Now": "Yes", "Current PEO": "Summit PEO", "PEO Agreement Renewal": "January 2027",
+    });
+    const na = { status: "not_applicable" as const, source: { kind: "prospect_edit" as const }, updated_at: AT };
+    expect(row({ ...DEMO_CHAMBER_DATA, in_peo: false, current_peo: null, peo_renewal_date: null }, { current_peo: na, peo_renewal_date: na })).toMatchObject({
+      "In a PEO Now": "No", "Current PEO": NOT_APPLICABLE, "PEO Agreement Renewal": NOT_APPLICABLE,
+    });
+  });
+
   it("shows the workers' comp block and the census class codes", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
     expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toEqual({

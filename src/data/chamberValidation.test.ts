@@ -355,7 +355,8 @@ function serverRefusal(d: unknown): string | null {
   for (const k of ["company_name", "industry", "start_month", "current_carrier", "renewal_date", "rate_history", "benefits_waiting_period", "retirement_type", "payroll_vendor", "pay_frequency", "accrual_method", "handbook_last_updated", "hris_system", "key_challenges", "business_goals", "wc_carrier", "wc_renewal_date"]) kinds[k] = "text";
   for (const k of ["employee_count", "fein_count", "funding_days", "nonexempt_count", "exempt_count", "hr_staff_count"]) kinds[k] = "count";
   for (const k of ["multiple_entities", "virgin_medical", "has_401k", "employer_contributes", "has_nonexempt", "has_handbook", "has_1099", "ca_contractors", "uses_physical_clocks", "uses_mobile_app", "uses_computer_timekeeping", "shift_differentials"]) kinds[k] = "bool";
-  for (const k of ["street_address", "website", "operations_description"]) kinds[k] = "text";
+  for (const k of ["street_address", "website", "operations_description", "current_peo", "peo_renewal_date"]) kinds[k] = "text";
+  kinds.in_peo = "bool";
   kinds.naics_code = "naics";
   for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"], ["wc_experience_mod", "experience_mod"], ["wc_annual_premium", "dollars"]]) kinds[k] = kind;
   // New in v3: the scalar kinds public.chamber_data_scalar_reason checks, and the lists of rows.

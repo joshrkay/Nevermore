@@ -205,6 +205,9 @@ const FIELD_SCHEMAS: FieldSchemas = {
   entities: rowsOf<ChamberData["entities"][number]>({ legal_name: text, fein }, MAX_ENTITIES),
   naics_code: naicsCode.nullable(),
   operations_description: nullableText,
+  in_peo: z.boolean().nullable(),
+  current_peo: nullableText,
+  peo_renewal_date: nullableText,
 
   // Rows are checked one by one (supabase/functions/_shared/census.ts): an invalid row is dropped and the
   // census stops at the most the intake holds.

@@ -757,3 +757,52 @@ describe("fieldOpenItems and advisor verification", () => {
     expect(fieldOpenItems(provenance).map((i) => i.field)).toEqual(["company_name", "hq_state", "industry"]);
   });
 });
+
+// K-1.3: an employer in no PEO has no current PEO and no agreement to renew, so that answer closes both.
+describe("answers that close other answers", () => {
+  const spoken = { kind: "transcript" as const, message_id: "m9" };
+  const empty: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
+  const closed = (s: IntakeState) => [s.provenance.current_peo?.status, s.provenance.peo_renewal_date?.status];
+
+  it("closes which PEO and when it renews once Lenore hears the employer is in no PEO", () => {
+    const next = applyExtraction(empty, { in_peo: false }, { source: spoken, statuses: { in_peo: "confirmed" } });
+    expect(next.data.in_peo).toBe(false);
+    expect(closed(next)).toEqual(["not_applicable", "not_applicable"]);
+    // Each says where it was closed: the message that said so, with no quote of its own.
+    const said = applyExtraction(empty, { in_peo: false }, { source: spoken, evidence: { in_peo: "we're not in a PEO" } });
+    expect(said.provenance.current_peo?.source).toEqual({ kind: "transcript", message_id: "m9" });
+    expect(fieldOpenItems(next.provenance).map((i) => i.field)).not.toContain("current_peo");
+  });
+
+  it("closes them when the prospect says so in the workspace, and when a document does", () => {
+    expect(closed(applyFieldAction(empty, { type: "edit", field: "in_peo", value: false }))).toEqual(["not_applicable", "not_applicable"]);
+    expect(closed(applyChosenValue(empty, "in_peo", false, { kind: "document", document_id: "d1" }))).toEqual(["not_applicable", "not_applicable"]);
+  });
+
+  it("leaves them open while the employer is in a PEO, or hasn't said", () => {
+    expect(closed(applyExtraction(empty, { in_peo: true }, { source: spoken }))).toEqual([undefined, undefined]);
+    expect(closed(applyExtraction(empty, { company_name: "Acme" }, { source: spoken }))).toEqual([undefined, undefined]);
+  });
+
+  it("opens them again when the answer changes to being in a PEO", () => {
+    const out = applyFieldAction(empty, { type: "edit", field: "in_peo", value: false });
+    const back = applyFieldAction(out, { type: "edit", field: "in_peo", value: true });
+    expect(closed(back)).toEqual([undefined, undefined]);
+  });
+
+  it("never closes an answer that is already given: the prospect settles what doesn't fit", () => {
+    const held: IntakeState = { data: { ...EMPTY_CHAMBER_DATA, current_peo: "Summit PEO" }, provenance: { current_peo: { status: "confirmed", source: spoken, updated_at: "2026-11-11T00:00:00Z" } } };
+    const next = applyFieldAction(held, { type: "edit", field: "in_peo", value: false });
+    expect(next.data.current_peo).toBe("Summit PEO");
+    expect(closed(next)).toEqual(["confirmed", "not_applicable"]);
+  });
+
+  it("changes nothing about them when another answer changes", () => {
+    const out = applyFieldAction(empty, { type: "edit", field: "in_peo", value: false });
+    const later = applyExtraction(out, { company_name: "Acme" }, { source: spoken });
+    expect(closed(later)).toEqual(["not_applicable", "not_applicable"]);
+    // In a PEO, and the prospect then says the renewal doesn't apply: a later answer elsewhere leaves that alone.
+    const inPeo = applyFieldAction(applyFieldAction(empty, { type: "edit", field: "in_peo", value: true }), { type: "not_applicable", field: "peo_renewal_date" });
+    expect(applyExtraction(inPeo, { company_name: "Acme" }, { source: spoken }).provenance.peo_renewal_date?.status).toBe("not_applicable");
+  });
+});

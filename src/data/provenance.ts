@@ -124,6 +124,9 @@ export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
   entities: "rows",
   naics_code: "naics",
   operations_description: "text",
+  in_peo: "boolean",
+  current_peo: "text",
+  peo_renewal_date: "text",
 };
 
 const FIELD_KEYS = Object.keys(FIELD_LABELS) as FieldKey[];
@@ -406,7 +409,41 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
     provenance[field] = { status: "unknown", source: withoutQuote(opts.source), updated_at };
   }
 
-  return { data, provenance };
+  return applyClosingRules(state, { data, provenance }, opts.now ?? new Date());
+}
+
+// ---------- Answers that close other answers ----------
+
+/**
+ * An answer that makes other questions pointless: an employer in no PEO has no current PEO and no agreement to
+ * renew (K-1.3). While `by` holds `when`, each of `closes` that holds no answer is marked "Doesn't apply".
+ */
+const CLOSING_RULES: readonly { by: FieldKey; when: unknown; closes: readonly FieldKey[] }[] = [
+  { by: "in_peo", when: false, closes: ["current_peo", "peo_renewal_date"] },
+];
+
+/**
+ * Applies the closing rules after an answer changed (`before` is the intake as it was). A closed field carries
+ * the source of the answer that closed it. An answer already given is never closed: it stays for the prospect to
+ * settle. When the closing answer changes to something else, what it closed is opened again.
+ */
+function applyClosingRules(before: IntakeState, after: IntakeState, now: Date): IntakeState {
+  let provenance = after.provenance;
+  for (const rule of CLOSING_RULES) {
+    const closing = after.data[rule.by] === rule.when;
+    const wasClosing = before.data[rule.by] === rule.when;
+    for (const field of rule.closes) {
+      const status = provenance[field]?.status;
+      if (closing && isEmpty(after.data[field]) && status !== "not_applicable") {
+        const source = provenance[rule.by]?.source ?? { kind: "prospect_edit" as const };
+        provenance = { ...provenance, [field]: { status: "not_applicable", source: withoutQuote(source), updated_at: now.toISOString() } };
+      } else if (!closing && wasClosing && status === "not_applicable") {
+        const { [field]: _closed, ...rest } = provenance;
+        provenance = rest;
+      }
+    }
+  }
+  return provenance === after.provenance ? after : { data: after.data, provenance };
 }
 
 // ---------- Prospect actions ----------
@@ -455,10 +492,10 @@ export function applyFieldAction(state: IntakeState, action: FieldAction, now = 
   if (action.type === "resolve" && value === undefined) return state;
   const patch = sanitizeChamberPatch({ [field]: value });
   if (!(field in patch)) return state;
-  return {
+  return applyClosingRules(state, {
     data: { ...state.data, [field]: patch[field] },
     provenance: { ...state.provenance, [field]: confirmed() },
-  };
+  }, now);
 }
 
 /**
@@ -476,13 +513,13 @@ export function applyChosenValue(state: IntakeState, field: FieldKey, raw: unkno
   // The census isn't ranked, so a replaced roster isn't noted (as in applyExtraction).
   const displaced =
     prev && field !== "census" && !isEmpty(prevValue) ? heldValues(prev, prevValue).filter((c) => c.source.kind !== source.kind) : [];
-  return {
+  return applyClosingRules(state, {
     data: { ...state.data, [field]: value },
     provenance: {
       ...state.provenance,
       [field]: withNotes({ status: "confirmed", source, updated_at: now.toISOString() }, noteHeard(prev?.also_heard, displaced, value)),
     },
-  };
+  }, now);
 }
 
 // ---------- Open items ----------

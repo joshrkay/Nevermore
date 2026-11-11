@@ -58,6 +58,9 @@ export const FIELD_GUIDE: Record<string, string> = {
   website: "The business's website address",
   naics_code: "The six-digit 2022 NAICS industry code that best fits what the business does. Propose one whenever the prospect describes their operations, with field_status \"inferred\"; never invent digits you aren't sure name a real industry",
   operations_description: "What the business does, in the prospect's own plain words: its products or services and how the work is done (at most 1,000 characters)",
+  in_peo: "true if the business is in a PEO (a professional employer organization that co-employs its staff) right now, false if it is not",
+  current_peo: "The PEO the business is in now, by name; report in_peo with it",
+  peo_renewal_date: "When the agreement with their current PEO renews or ends, as they said it; report in_peo with it",
 };
 
 /**
@@ -112,6 +115,9 @@ export const FIELD_QUESTION: Record<string, string> = {
   website: "Does the business have a website?",
   naics_code: "Do you know your NAICS industry code?",
   operations_description: "In a sentence or two, what does the business do day to day?",
+  in_peo: "Is the business in a PEO right now?",
+  current_peo: "Which PEO are you with now?",
+  peo_renewal_date: "When does your agreement with your current PEO renew?",
 };
 
 // The census (the employee roster) comes only from an uploaded file (D21), and the FEIN is typed into the workspace.

@@ -33,12 +33,12 @@ const KNOWN = {
     8: "97b83efde81d83cf10958b734560d4e583396a21dd782fc37a98f2c0f37a4ea7",
     // 9: intake schema v3 (Epic K): the common questions join the fields, the FEIN and the legal entities are never
     // taken in chat, and Lenore says where the answers entered in the workspace go.
-    9: "113f501fa24d200b0bc323cd66eb488ba490256bcb7b7a5aa4b69b0307ffc0fd",
+    9: "1cb5e2a6a4f43976402bdf50c7d0ced7c55522497a62e40c551b34c6909a8969",
   } as Record<number, string>,
   "document-extract": {
     1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526",
     // 2: intake schema v3 (Epic K): the common questions a document can state, and never a FEIN.
-    2: "0a9317b51abfa5ee3dbe535af36cb35e1b538bfe1a049b59e44cc68d2b9e1394",
+    2: "50aa2d228b7a71d54bfe73992ae5133e2bb66be61d0623fd6a7f2593fe41f345",
   } as Record<number, string>,
 };
 

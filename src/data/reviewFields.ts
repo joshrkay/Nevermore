@@ -7,7 +7,7 @@ import type { ReviewSection } from "./readiness";
  * shown (D28). A test fails when a schema field has no place here.
  */
 export const REVIEW_FIELDS: Record<ReviewSection, FieldKey[]> = {
-  company: ["company_name", "fein", "entity_type", "year_founded", "street_address", "website", "industry", "naics_code", "operations_description", "start_month", "multiple_entities", "fein_count", "entities"],
+  company: ["company_name", "fein", "entity_type", "year_founded", "street_address", "website", "industry", "naics_code", "operations_description", "start_month", "multiple_entities", "fein_count", "entities", "in_peo", "current_peo", "peo_renewal_date"],
   workforce: ["employee_count", "has_nonexempt", "nonexempt_count", "exempt_count", "has_1099", "ca_contractors"],
   locations: ["hq_state", "states"],
   payroll: ["payroll_vendor", "pay_frequency", "funding_days", "pto_types", "accrual_method"],

@@ -27,6 +27,9 @@ const CompanyTab = ({ data, isDemo, provenance = {}, onAction }: CompanyTabProps
     { label: "All States", field: "states", value: data.states.length > 0 ? data.states.join(", ") : null },
     { label: "Employee Count", field: "employee_count", value: data.employee_count?.toString() },
     { label: "Target Start", field: "start_month", value: data.start_month },
+    { label: "In a PEO Now", field: "in_peo", value: data.in_peo === null ? null : data.in_peo ? "Yes" : "No" },
+    { label: "Current PEO", field: "current_peo", value: data.current_peo },
+    { label: "PEO Agreement Renewal", field: "peo_renewal_date", value: data.peo_renewal_date },
     { label: "Entity Structure", field: "multiple_entities", value: data.multiple_entities === null ? null : data.multiple_entities ? `Multiple (${data.fein_count ?? "?"} FEINs)` : "Single entity" },
   ];
 

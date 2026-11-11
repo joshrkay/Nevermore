@@ -33,6 +33,7 @@ CREATE TABLE auth.users (id uuid PRIMARY KEY, raw_user_meta_data jsonb);
 -- v3: each group of the common questions, in order.
 \i supabase/migrations/20261111091000_intake_schema_v3_company_identity.sql
 \i supabase/migrations/20261111092000_intake_schema_v3_industry_code.sql
+\i supabase/migrations/20261111093000_intake_schema_v3_current_peo.sql
 
 -- ---------- helpers ----------
 -- The path chamber_data_error names for d, or NULL when d is acceptable.
@@ -118,4 +119,16 @@ BEGIN
   PERFORM pg_temp.must_accept('{"fein":"841234567","entities":[{"legal_name":"Meridian Creative LLC"}]}', 'company identity after K-1.2');
   PERFORM pg_temp.must_refuse('{"fein":"84-1234567"}', 'fein', 'a hyphenated FEIN after K-1.2');
   RAISE NOTICE 'intake_schema_v3: industry code cases passed';
+END $$;
+
+-- ---------- K-1.3 current PEO ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.must_accept('{"in_peo":true,"current_peo":"Summit PEO","peo_renewal_date":"January 2027"}', 'an employer in a PEO');
+  PERFORM pg_temp.must_accept('{"in_peo":false,"current_peo":null,"peo_renewal_date":null}', 'an employer in no PEO');
+  PERFORM pg_temp.must_refuse('{"in_peo":"no"}', 'in_peo', 'in_peo sent as text');
+  PERFORM pg_temp.must_refuse('{"current_peo":7}', 'current_peo', 'a PEO sent as a number');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('peo_renewal_date', repeat('x', 1001)), 'peo_renewal_date', 'a renewal of 1,001 characters');
+  PERFORM pg_temp.must_accept('{"naics_code":"541430","fein":"841234567"}', 'earlier v3 answers after K-1.3');
+  RAISE NOTICE 'intake_schema_v3: current PEO cases passed';
 END $$;

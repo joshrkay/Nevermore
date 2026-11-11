@@ -173,3 +173,30 @@ describe("industry as a code and a description in the Company tab (K-1.2)", () =
     expect(screen.getByRole("button", { name: "Add Description of Operations" })).toBeInTheDocument();
   });
 });
+
+describe("the current PEO in the Company tab (K-1.3)", () => {
+  function Peo() {
+    const [state, setState] = useState<IntakeState>({ data: EMPTY_CHAMBER_DATA, provenance: {} });
+    return <CompanyTab data={state.data} isDemo={false} provenance={state.provenance} onAction={(a) => setState((s) => applyFieldAction(s, a))} />;
+  }
+  const answer = (value: "yes" | "no") => {
+    fireEvent.click(screen.getByRole("button", { name: /^(Add|Edit) In a PEO Now$/ }));
+    fireEvent.change(screen.getByLabelText("In a PEO Now"), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  };
+
+  it("asks which PEO and when it renews, and closes both once the prospect says they are in no PEO", () => {
+    render(<Peo />);
+    expect(screen.getByRole("button", { name: "Add Current PEO" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add PEO Agreement Renewal" })).toBeInTheDocument();
+    answer("no");
+    expect(screen.getAllByText("Doesn't apply")).toHaveLength(2);
+  });
+
+  it("opens both again when the answer changes to being in a PEO", () => {
+    render(<Peo />);
+    answer("no");
+    answer("yes");
+    expect(screen.queryByText("Doesn't apply")).not.toBeInTheDocument();
+  });
+});

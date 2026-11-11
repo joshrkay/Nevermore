@@ -22,6 +22,7 @@ Field meanings:
 - has_handbook, has_1099 (uses 1099 contractors), ca_contractors (contractors in California)
 - entity_type (sole proprietorship, partnership, LLC, C corporation, S corporation or nonprofit), year_founded (four digits), street_address (the business's main address, with city, state and ZIP), website
 - naics_code (the six-digit NAICS industry code, only when the document prints one), operations_description (what the business does, as the document describes it)
+- in_peo (whether the business is in a PEO now), current_peo (that PEO's name), peo_renewal_date (when its agreement renews)
 Never report a federal employer identification number (FEIN or EIN) or any other tax ID.
 Use "yes"/"no" for yes-or-no fields. Leave out anything not stated.`;
 

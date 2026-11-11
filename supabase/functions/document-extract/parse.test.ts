@@ -501,6 +501,14 @@ describe("AI-read fields", () => {
     ]);
   });
 
+  it("reads whether the employer is in a PEO, which one and when it renews (K-1.3)", () => {
+    expect(shapeAiCandidates([{ field: "in_peo", value: "yes", section: 1 }, { field: "current_peo", value: "Summit PEO", section: 1 }, { field: "peo_renewal_date", value: "January 2027", section: 2 }], sections)).toEqual([
+      { field: "in_peo", value: true, location: "Page 1" },
+      { field: "current_peo", value: "Summit PEO", location: "Page 1" },
+      { field: "peo_renewal_date", value: "January 2027", location: "Page 2" },
+    ]);
+  });
+
   it("never sends or keeps a sensitive number", () => {
     expect(buildPromptText([{ label: "Page 1", text: "Group 12345, owner SSN 123-45-6789" }])).toBe("[[Section 1]]\nGroup 12345, owner SSN [redacted]\n\n");
     expect(shapeAiCandidates([{ field: "rate_history", value: "acct 0012345 up 9%", section: 1 }], sections)).toEqual([

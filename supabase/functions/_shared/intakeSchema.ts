@@ -98,6 +98,7 @@ const RANKED_RECOMMENDED = [
   "wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium",
   // New in v3: the single-value common questions follow the fields ranked before them (Epic K).
   "fein", "entity_type", "year_founded", "street_address", "website", "operations_description", "naics_code",
+  "in_peo", "current_peo", "peo_renewal_date",
 ] as const;
 
 /** A JSON Schema, as far as this module reads one. */
@@ -183,6 +184,10 @@ const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: stri
   // K-1.2: the industry as a code and a description, beside the free-text `industry`.
   ["naics_code", naicsCode, "company", "NAICS code"],
   ["operations_description", text(), "company", "Description of operations"],
+  // K-1.3: whether the employer is in a PEO now. "No" closes the other two (src/data/provenance.ts).
+  ["in_peo", flag, "company", "In a PEO now"],
+  ["current_peo", text(), "company", "Current PEO"],
+  ["peo_renewal_date", text(), "company", "PEO agreement renewal"],
 
   ["census", { type: "array", maxItems: LIMITS.census, items: { $ref: "#/$defs/censusRow" } }, "census", "Employee census"],
 ];
