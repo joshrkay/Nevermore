@@ -38,6 +38,7 @@ export type InformationRequestRow = Tables["information_requests"]["Row"];
 export type QuoteRequestRow = Tables["quote_requests"]["Row"];
 export type QuoteRequestEventRow = Tables["quote_request_events"]["Row"];
 export type QuoteRequestNoteRow = Tables["quote_request_notes"]["Row"];
+export type QuoteRequestAddressRow = Tables["quote_request_addresses"]["Row"];
 
 export class AdvisorApiError extends Error {
   constructor(message: string, readonly code?: string, readonly unauthenticated = false) {
@@ -254,6 +255,8 @@ export interface SubmissionDetail {
   quoteRequestEvents: QuoteRequestEventRow[];
   /** What happened on those quote requests outside the product, the latest day first. */
   quoteRequestNotes: QuoteRequestNoteRow[];
+  /** Each quote request's live reply address: the part before the @. */
+  quoteRequestAddresses: QuoteRequestAddressRow[];
   /** The submission's latest certified version (1, 2, ...); null before the first certification. */
   currentVersion: number | null;
   /** The quote request whose quote the employer took, once won. */
@@ -294,7 +297,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   // Row security hides sessions the caller may not see; a missing pipeline row means the same.
   if (!row || !workflow.data) return null;
 
-  const [docs, profile, docEvents, requests, lastCertification, partner, quotes, quoteEvents, quoteNotes] = await Promise.all([
+  const [docs, profile, docEvents, requests, lastCertification, partner, quotes, quoteEvents, quoteNotes, quoteAddresses] = await Promise.all([
     supabase
       .from("documents")
       .select("id, file_name, file_size, category, status, storage_path, created_at, file_sha256, scan_verdict")
@@ -327,6 +330,8 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
       .eq("session_id", id)
       .order("noted_on", { ascending: false })
       .order("id", { ascending: false }),
+    // The live address of each quote request; revoked ones stay in the table and aren't shown.
+    supabase.from("quote_request_addresses").select("*").eq("session_id", id).is("revoked_at", null),
   ]);
   if (docs.error) fail(docs.error, "Couldn't load uploaded documents.");
   if (lastCertification.error) fail(lastCertification.error, "Couldn't load the certification on record.");
@@ -337,6 +342,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   if (quotes.error) fail(quotes.error, "Couldn't load the quote requests.");
   if (quoteEvents.error) fail(quoteEvents.error, "Couldn't load the quote requests' history.");
   if (quoteNotes.error) fail(quoteNotes.error, "Couldn't load the quote requests' notes.");
+  if (quoteAddresses.error) fail(quoteAddresses.error, "Couldn't load the quote requests' reply addresses.");
 
   const submission = (row.submission as unknown as ChamberSubmission | null) ?? null;
   const certified = row.status === "submitted" && !!submission?.signer_name;
@@ -395,6 +401,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     quoteRequests: quotes.data ?? [],
     quoteRequestEvents: quoteEvents.data ?? [],
     quoteRequestNotes: quoteNotes.data ?? [],
+    quoteRequestAddresses: quoteAddresses.data ?? [],
     currentVersion: recorded?.version ?? null,
     wonQuoteRequestId: workflow.data.won_quote_request_id ?? null,
   };
@@ -470,6 +477,15 @@ export async function updateQuoteRequest(id: number, answer: QuoteAnswer): Promi
     p_note: answer.note,
   });
   if (error) fail(error, "Couldn't record the answer.");
+}
+
+/**
+ * Revokes a quote request's reply address and issues a new one. Mail sent to the old address no longer reaches
+ * the quote request, so the PEO has to be given the new one.
+ */
+export async function reissueQuoteRequestAddress(quoteRequestId: number): Promise<void> {
+  const { error } = await supabase.rpc("advisor_reissue_quote_request_address", { p_quote_request_id: quoteRequestId });
+  if (error) fail(error, "Couldn't issue a new address.");
 }
 
 /** A quote request note as the form holds it: its kind, the day it happened (YYYY-MM-DD) and its text. */

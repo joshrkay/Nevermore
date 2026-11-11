@@ -335,6 +335,26 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      // The address replies about a quote request are sent to (20261111100000): the part before the @, one live
+      // per quote request. Advisors read it; it is written only by advisor_record_quote_send and
+      // advisor_reissue_quote_request_address.
+      quote_request_addresses: {
+        Row: {
+          id: number
+          issued_at: string
+          issued_by: string | null
+          issued_by_email: string | null
+          local_part: string
+          quote_request_id: number
+          revoked_at: string | null
+          revoked_by: string | null
+          revoked_by_email: string | null
+          session_id: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       // What happened on a quote request outside the product (20261111090000). Advisors read it; it is written
       // only through advisor_add_quote_request_note and advisor_correct_quote_request_note.
       quote_request_notes: {
@@ -621,6 +641,10 @@ export type Database = {
       }
       advisor_note_underwriter_question: {
         Args: { p_question: string; p_quote_request_id: number }
+        Returns: Json
+      }
+      advisor_reissue_quote_request_address: {
+        Args: { p_quote_request_id: number }
         Returns: Json
       }
       advisor_record_quote_send: {

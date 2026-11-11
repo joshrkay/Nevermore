@@ -105,6 +105,13 @@ a sign-out the app asked for is remembered until the event arrives.
   - `advisor_correct_quote_request_note(note, kind, noted_on, body)` corrects a note. Each value changed is
     appended to `quote_request_events` with the old one (`note_kind`, `note_noted_on`, `note_body`, and the
     note's id in `note_id`). Who wrote the note and when never change.
+  - Each quote request has one live **reply address** (GLOSSARY.md, Thread), kept in `quote_request_addresses` as
+    the part before the @: the File ID, the PEO's name reduced to letters and digits, and 16 random hex characters
+    (migration `20261111100000`). `advisor_record_quote_send` issues it and keeps the one a quote request already
+    has; closing a quote request doesn't revoke it. `advisor_reissue_quote_request_address(id)` revokes the live
+    one and issues another (PT404 for no such quote request); the revoked row stays. Both are logged in
+    `quote_request_events` (`reply_address`). Advisors read the addresses and prospects don't. The console shows
+    an address only while `VITE_QUOTE_REPLY_DOMAIN` names the subdomain that receives mail.
   - `advisor_note_underwriter_question(id, question)` is kept for the front end deployed before notes: it adds a
     note of kind `underwriter_question` dated today. Questions recorded before the migration were copied to
     notes; their log rows stay, and the console no longer shows them.

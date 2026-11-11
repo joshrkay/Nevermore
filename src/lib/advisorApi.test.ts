@@ -11,6 +11,7 @@ const query = (table: string) => {
   const chain: Record<string, unknown> = {
     select: () => chain,
     eq: () => chain,
+    is: () => chain,
     order: () => chain,
     limit: () => chain,
     maybeSingle: async () => ({ data: (tables[table] ?? [])[0] ?? null, error: null }),
@@ -43,6 +44,7 @@ const {
   updateQuoteRequest,
   addQuoteRequestNote,
   correctQuoteRequestNote,
+  reissueQuoteRequestAddress,
 } = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
@@ -428,11 +430,13 @@ describe("quote requests", () => {
     tables.quote_requests = [{ id: 7, peo_name: "TriNet", status: "quoted" }];
     tables.quote_request_events = [{ id: 3, quote_request_id: 7, field: "status" }];
     tables.quote_request_notes = [{ id: 21, quote_request_id: 7, kind: "call" }];
+    tables.quote_request_addresses = [{ id: 31, quote_request_id: 7, local_part: "eaa-2026-0001.trinet.0123456789abcdef", revoked_at: null }];
     tables.chamber_certifications = [{ file_id: "EAA-2026-0001", version: 3, signed_at: null, recorded_at: null, chamber_data: null }];
     const d = (await loadSubmission("s1"))!;
     expect(d.quoteRequests).toEqual([{ id: 7, peo_name: "TriNet", status: "quoted" }]);
     expect(d.quoteRequestEvents).toEqual([{ id: 3, quote_request_id: 7, field: "status" }]);
     expect(d.quoteRequestNotes).toEqual([{ id: 21, quote_request_id: 7, kind: "call" }]);
+    expect(d.quoteRequestAddresses).toEqual([{ id: 31, quote_request_id: 7, local_part: "eaa-2026-0001.trinet.0123456789abcdef", revoked_at: null }]);
     expect(d.currentVersion).toBe(3);
   });
 
@@ -448,6 +452,8 @@ describe("quote requests", () => {
     expect(rpc).toHaveBeenLastCalledWith("advisor_add_quote_request_note", {
       p_quote_request_id: 7, p_kind: "underwriter_question", p_noted_on: "2026-11-12", p_body: "Loss runs?",
     });
+    await reissueQuoteRequestAddress(7);
+    expect(rpc).toHaveBeenLastCalledWith("advisor_reissue_quote_request_address", { p_quote_request_id: 7 });
     await correctQuoteRequestNote(21, { kind: "call", notedOn: "2026-11-11", body: "Loss runs, three years." });
     expect(rpc).toHaveBeenLastCalledWith("advisor_correct_quote_request_note", {
       p_note_id: 21, p_kind: "call", p_noted_on: "2026-11-11", p_body: "Loss runs, three years.",

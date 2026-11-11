@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { QuoteRequestEventRow, QuoteRequestNoteRow, QuoteRequestRow } from "@/lib/advisorApi";
+import type { QuoteRequestAddressRow, QuoteRequestEventRow, QuoteRequestNoteRow, QuoteRequestRow } from "@/lib/advisorApi";
 import type { PipelineStatus } from "@/data/advisor";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { PeoRecord } from "@/data/peoCatalog";
@@ -11,6 +11,7 @@ const api = {
   updateQuoteRequest: vi.fn(),
   addQuoteRequestNote: vi.fn(),
   correctQuoteRequestNote: vi.fn(),
+  reissueQuoteRequestAddress: vi.fn(),
   setStatus: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
@@ -45,6 +46,12 @@ const note = (over: Partial<QuoteRequestNoteRow> = {}): QuoteRequestNoteRow => (
   ...over,
 });
 
+const address = (over: Partial<QuoteRequestAddressRow> = {}): QuoteRequestAddressRow => ({
+  id: 31, quote_request_id: 7, session_id: "s1", local_part: "eaa-2026-0042.trinet.0123456789abcdef",
+  issued_at: "2026-11-10T15:00:00Z", issued_by: "a1", issued_by_email: "adv@example.com",
+  revoked_at: null, revoked_by: null, revoked_by_email: null, ...over,
+});
+
 const event = (over: Partial<QuoteRequestEventRow> = {}): QuoteRequestEventRow => ({
   id: 1, quote_request_id: 7, session_id: "s1", note_id: null, field: "status", old_value: null, new_value: "sent",
   changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-11-12T15:00:00Z", ...over,
@@ -52,7 +59,8 @@ const event = (over: Partial<QuoteRequestEventRow> = {}): QuoteRequestEventRow =
 
 const panel = (
   over: {
-    status?: PipelineStatus; requests?: QuoteRequestRow[]; events?: QuoteRequestEventRow[]; notes?: QuoteRequestNoteRow[]; currentVersion?: number | null;
+    status?: PipelineStatus; requests?: QuoteRequestRow[]; events?: QuoteRequestEventRow[]; notes?: QuoteRequestNoteRow[]; addresses?: QuoteRequestAddressRow[];
+    replyDomain?: string | null; currentVersion?: number | null;
     data?: ChamberData; catalog?: PeoRecord[]; onAskProspect?: (question: string) => void;
   } = {},
 ) => {
@@ -66,6 +74,8 @@ const panel = (
       requests={over.requests ?? [request()]}
       events={over.events ?? []}
       notes={over.notes ?? []}
+      addresses={over.addresses ?? []}
+      replyDomain={over.replyDomain === undefined ? null : over.replyDomain}
       data={over.data ?? EMPTY_CHAMBER_DATA}
       catalog={over.catalog}
       onAskProspect={over.onAskProspect ?? vi.fn()}
@@ -300,6 +310,48 @@ describe("QuoteRequestsPanel", () => {
     // Only what doesn't fit: the checks that pass or can't be told aren't warnings.
     expect(alert).not.toHaveTextContent(/States of operation|Class codes/);
     expect(within(screen.getByTestId("quote-request-8")).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows each quote request's reply address to copy, on the receiving subdomain", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    panel({
+      replyDomain: "quotes.example.com",
+      requests: [request(), request({ id: 8, peo_name: "Justworks" })],
+      addresses: [address(), address({ id: 32, quote_request_id: 8, local_part: "eaa-2026-0042.justworks.fedcba9876543210" })],
+    });
+    const row = screen.getByTestId("quote-request-7");
+    expect(within(row).getByLabelText("Reply address")).toHaveValue("eaa-2026-0042.trinet.0123456789abcdef@quotes.example.com");
+    expect(within(row).getByText(/Put this address in CC when you email TriNet/)).toBeInTheDocument();
+    expect(within(screen.getByTestId("quote-request-8")).getByLabelText("Reply address")).toHaveValue(
+      "eaa-2026-0042.justworks.fedcba9876543210@quotes.example.com",
+    );
+    fireEvent.click(within(row).getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("eaa-2026-0042.trinet.0123456789abcdef@quotes.example.com"));
+  });
+
+  it("shows no reply address while no receiving subdomain is set, or for a quote request without one", () => {
+    panel({ replyDomain: null, addresses: [address()] });
+    expect(screen.queryByLabelText("Reply address")).not.toBeInTheDocument();
+  });
+
+  it("keeps showing the address of a closed quote request: a PEO that answers late still reaches it", () => {
+    panel({ replyDomain: "quotes.example.com", requests: [request({ status: "closed" })], addresses: [address()] });
+    expect(screen.getByLabelText("Reply address")).toBeInTheDocument();
+  });
+
+  it("revokes and reissues an address only after the advisor confirms", async () => {
+    const onChanged = panel({ replyDomain: "quotes.example.com", addresses: [address()] });
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Revoke and issue a new address" }));
+    expect(within(row).getByRole("alert")).toHaveTextContent("Mail sent to this one will no longer reach this quote request");
+    expect(api.reissueQuoteRequestAddress).not.toHaveBeenCalled();
+    fireEvent.click(within(row).getByRole("button", { name: "Keep this one" }));
+    expect(within(row).queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "Revoke and issue a new address" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Issue a new address" }));
+    await waitFor(() => expect(api.reissueQuoteRequestAddress).toHaveBeenCalledWith(7));
+    expect(onChanged).toHaveBeenCalled();
   });
 
   it("turns an underwriter's question into an ask of the prospect, and offers that only on questions", () => {

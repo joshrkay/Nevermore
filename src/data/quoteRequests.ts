@@ -38,6 +38,18 @@ export const QUOTE_NOTE_KIND_LABELS: Record<QuoteNoteKind, string> = {
   other: "Other",
 };
 
+/**
+ * The subdomain that receives mail for quote requests (VITE_QUOTE_REPLY_DOMAIN), or null while receiving is
+ * switched off. With none set the console shows no reply address, so nobody copies one that can't receive.
+ */
+export function quoteReplyDomain(value: unknown = import.meta.env.VITE_QUOTE_REPLY_DOMAIN): string | null {
+  const domain = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain) ? domain : null;
+}
+
+/** A quote request's whole reply address, from the part the database holds and the receiving subdomain. */
+export const replyAddress = (localPart: string, domain: string) => `${localPart}@${domain}`;
+
 /** The longest a note can be; the database refuses a longer one. */
 export const QUOTE_NOTE_MAX = 2000;
 
@@ -106,6 +118,7 @@ const FIELD_NAMES: Record<string, string> = {
   proposed_start_on: "Proposed start",
   admin_fee_pepm: "Admin fee per employee per month",
   note: "Note",
+  reply_address: "Reply address",
   note_kind: "Note kind",
   note_noted_on: "Note date",
   note_body: "Note text",

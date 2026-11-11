@@ -205,6 +205,7 @@ const Detail = ({
             requests={detail.quoteRequests}
             events={detail.quoteRequestEvents}
             notes={detail.quoteRequestNotes}
+            addresses={detail.quoteRequestAddresses}
             data={detail.data}
             onAskProspect={askProspect}
             onChanged={reload}

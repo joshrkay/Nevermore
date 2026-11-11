@@ -25,6 +25,7 @@ const api = {
   updateQuoteRequest: vi.fn(),
   addQuoteRequestNote: vi.fn(),
   correctQuoteRequestNote: vi.fn(),
+  reissueQuoteRequestAddress: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
 const downloadBlob = vi.fn();
@@ -91,6 +92,7 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   quoteRequests: [],
   quoteRequestEvents: [],
   quoteRequestNotes: [],
+  quoteRequestAddresses: [],
   currentVersion: 1,
   wonQuoteRequestId: null,
   ...over,
