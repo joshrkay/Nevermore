@@ -1,7 +1,9 @@
 // Pure helpers for document-extract: no Deno or network imports, so they're unit-tested
 // with the frontend suite (vitest includes supabase/functions/**/*.test.ts).
 
-import { isW2, MAX_CENSUS_ROWS, normalizeCensus, parseMoney, US_STATE_CODES, type CensusEmployee } from "../_shared/census.ts";
+import { isW2, MAX_CENSUS_ROWS, normalizeCensus, parseMoney, US_STATE_CODES, type CensusEmployee,
+  rowRelationship,
+} from "../_shared/census.ts";
 import { isSensitiveHeader, redactForModel, redactSensitive } from "../_shared/sensitive.ts";
 
 // The most people an intake's census holds and the states it accepts, which the intake database enforces
@@ -132,7 +134,7 @@ export type ColumnKey =
   | "first_name" | "last_name" | "full_name" | "dob" | "age" | "work_state" | "home_state" | "zip_code"
   | "job_title" | "annual_salary" | "hourly_rate" | "hours_per_week" | "compensation_type"
   | "employment_type" | "classification" | "coverage_tier" | "class_code"
-  | "gender" | "hire_date" | "cobra" | "worksite" | "remote" | "travels";
+  | "gender" | "hire_date" | "cobra" | "worksite" | "remote" | "travels" | "relationship";
 
 // Header spellings, after normaliseHeader ("Work State:" -> "work state").
 const SYNONYMS: Record<ColumnKey, string[]> = {
@@ -161,6 +163,8 @@ const SYNONYMS: Record<ColumnKey, string[]> = {
   worksite: ["worksite", "work site", "work location", "location", "office", "site", "job site", "work address", "branch", "facility", "store"],
   remote: ["remote", "remote worker", "works remotely", "work from home", "wfh", "telecommute", "telework", "remote status", "remote y n"],
   travels: ["travels", "travel", "travels for work", "business travel", "travel required", "work travel"],
+  // K-2.3: who the row is, in a file that lists dependents under their employee.
+  relationship: ["relationship", "relation", "relationship to employee", "relationship to subscriber", "dependent type", "member type", "rel", "relationship code"],
 };
 
 // Words a header may carry that don't change what the column holds ("Employee DOB", "Current Salary").
@@ -276,6 +280,8 @@ export interface CensusResult {
   skipped: number;
   /** Headers of columns that were never read because they hold an SSN or bank details. */
   ignoredColumns: string[];
+  /** Dependent rows that came before any employee row, so belong to nobody and weren't read (K-2.3). */
+  orphanDependents: number;
   /** The sheet has rows past the ones read (MAX_SHEET_ROWS): the census is only part of the company's. */
   cutOff?: boolean;
 }
@@ -295,6 +301,8 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
 
     const raw: Record<string, unknown>[] = [];
     let skipped = 0;
+    let orphanDependents = 0;
+    let listsDependents = false;
     let firstData = -1;
     let lastData = h;
     for (let r = h + 1; r < rows.length; r++) {
@@ -304,6 +312,21 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
       // Totals and notes under the table aren't people.
       if (!looksLikeName(name) || /^(total|totals|grand total|count|average|subtotal)\b/i.test(String(name).trim())) {
         if (hasText(name) || row.some(hasText)) skipped++;
+        continue;
+      }
+      // A dependent's row (K-2.3) belongs to the employee on the nearest row above it, and is nobody's employee.
+      const who = c.relationship === undefined ? "employee" : rowRelationship(cell(row, c.relationship));
+      if (who !== "employee") {
+        const employee = raw[raw.length - 1];
+        if (!employee) {
+          orphanDependents++;
+          continue;
+        }
+        listsDependents = true;
+        (employee.dependents as Record<string, unknown>[]).push({
+          first_name: cell(row, c.first_name), last_name: cell(row, c.last_name), full_name: cell(row, c.full_name), dob: cell(row, c.dob), relationship: who,
+        });
+        lastData = r;
         continue;
       }
       const hourly = cell(row, c.hourly_rate);
@@ -334,6 +357,7 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
         worksite: cell(row, c.worksite),
         remote: cell(row, c.remote),
         travels: cell(row, c.travels),
+        dependents: [],
       });
       if (firstData === -1) firstData = r;
       lastData = r;
@@ -361,12 +385,16 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
       ["worksite", has("worksite")],
       ["remote", has("remote")],
       ["travels", has("travels")],
+      // Only a file that lists a dependent states them: one with a relationship column and no dependent rows
+      // says nothing about anyone's.
+      ["dependents", listsDependents],
     ];
     return {
       census,
       location: `${sheet}, rows ${firstRow + firstData}–${firstRow + lastData}`,
       facts: stated.filter(([, yes]) => yes).map(([fact]) => fact),
       skipped,
+      orphanDependents,
       ignoredColumns: sensitive.map((i) => String(header[i] ?? "").trim()).filter(Boolean),
     };
   }
@@ -401,7 +429,7 @@ export function censusCandidates({ census, location, facts, cutOff }: CensusResu
 }
 
 /** What the prospect should know about how a census was read. */
-export function censusNotes({ skipped, ignoredColumns, cutOff }: CensusResult): string[] {
+export function censusNotes({ skipped, ignoredColumns, cutOff, orphanDependents }: CensusResult): string[] {
   const notes: string[] = [];
   if (cutOff) {
     notes.push(
@@ -413,6 +441,12 @@ export function censusNotes({ skipped, ignoredColumns, cutOff }: CensusResult): 
     notes.push(
       `The ${ignoredColumns.join(", ")} column${ignoredColumns.length === 1 ? " wasn't" : "s weren't"} read and ` +
         "nothing from it is kept with your intake. The file itself still contains it; consider uploading a copy without it.",
+    );
+  }
+  if (orphanDependents > 0) {
+    notes.push(
+      `${orphanDependents} dependent row${orphanDependents === 1 ? "" : "s"} came before any employee and ${orphanDependents === 1 ? "wasn't" : "weren't"} read. ` +
+        "List each dependent directly under their employee.",
     );
   }
   if (skipped > 0) {

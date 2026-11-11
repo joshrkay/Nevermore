@@ -278,9 +278,11 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   const tablesOf = (section: Manuscript["tables"][number]["section"]) => {
     for (const t of m.tables.filter((each) => each.section === section)) {
       subheading(t.title);
+      const dob = t.dobColumn;
+      const rows = dob === undefined || reveal ? t.rows : t.rows.map((row) => row.map((v, i) => (i === dob && v !== NOT_PROVIDED ? maskDob(v) : v)));
       // A column of figures or short words is as wide as its longest heading or cell needs; the columns of
       // longer text (duties, a question, an explanation) share what is left, by how much they hold.
-      const longest = t.columns.map((header, i) => Math.max(header.length, ...t.rows.map((row) => row[i].length)));
+      const longest = t.columns.map((header, i) => Math.max(header.length, ...rows.map((row) => row[i].length)));
       const SHORT = 16;
       const wanted = longest.map((n) => Math.min(n, SHORT) * 1.75 + CELL_PAD_X * 2);
       // A table with many columns can want more than the page has: every column then gives way in proportion,
@@ -291,7 +293,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
       const long = longest.map((n) => (n > SHORT ? Math.min(n, 60) : 0));
       const share = long.some((n) => n > 0) ? long : floor;
       const total = share.reduce((sum, w) => sum + w, 0);
-      table(t.columns.map((header, i) => ({ header, width: floor[i] + (spare * share[i]) / total })), t.rows, { wrapHeadings: true });
+      table(t.columns.map((header, i) => ({ header, width: floor[i] + (spare * share[i]) / total })), rows, { wrapHeadings: true });
     }
   };
 
@@ -356,6 +358,8 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     ],
   );
   paragraph("Dependent figures are self-reported. Actual election rates may vary at open enrollment.", 8.5, "italic", MUTED);
+
+  tablesOf("dependents");
 
   // ---------- 5 Locations ----------
   sectionHeading("5 — Locations");

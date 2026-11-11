@@ -127,6 +127,12 @@ describe("buildManuscriptPdf", () => {
     const censusTable = text.slice(text.indexOf("3 — Employee Census"), text.indexOf("CENSUS DETAILS"));
     expect(censusTable).toContain("(8810)");
     expect(censusTable).not.toContain("(881)");
+    // K-2.3: each dependent prints under the dependent summary, the date of birth masked to its year.
+    const dependents = text.slice(text.indexOf("4 — Dependent Summary"), text.indexOf("5 — Locations"));
+    for (const expected of ["DEPENDENTS", "Michael Chen", "Spouse", "/1985"]) expect(dependents).toContain(expected);
+    expect(dependents).not.toContain("1985-06-12");
+    const revealed = await render(DEMO_CHAMBER_DATA, { revealSensitive: true });
+    expect(revealed.text.slice(revealed.text.indexOf("4 — Dependent Summary"), revealed.text.indexOf("5 — Locations"))).toContain("1985-06-12");
     // K-5.3: the census facts v3 added print under the census table.
     const census = text.slice(text.indexOf("3 — Employee Census"), text.indexOf("4 — Dependent Summary"));
     for (const expected of ["CENSUS DETAILS", "94107", "Hire date"]) expect(census).toContain(expected);

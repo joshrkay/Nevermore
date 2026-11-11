@@ -77,7 +77,7 @@ One person in the census.
 _Avoid_: census row, worker, member
 
 **Dependent**:
-A spouse, domestic partner, child or other person covered through an employee in the census.
+A spouse, domestic partner, child or other person covered through an employee in the census. Listed in the census file on the rows directly under their employee, told apart by the relationship column; never asked for in chat.
 
 **Workspace answer**:
 A field Lenore never asks for in conversation, because the prospect enters it on a workspace tab: the FEIN, the NAICS code and every table. Lenore says which tab it is on, and takes what the prospect volunteers of one where the conversation can hold it. The FEIN is the exception: it is never taken from the conversation or from a document.

@@ -61,6 +61,8 @@ export const CENSUS_FACTS = [
   "gender", "hire_date", "cobra", "home_state",
   // K-2.2
   "worksite", "remote", "travels",
+  // K-2.3: stated only by a file that lists a dependent.
+  "dependents",
 ] as const;
 export type CensusFact = (typeof CENSUS_FACTS)[number];
 
@@ -83,6 +85,7 @@ export const CENSUS_FACT_LABELS: Record<CensusFact, string> = {
   worksite: "worksite",
   remote: "works remotely",
   travels: "travels for work",
+  dependents: "dependents",
 };
 
 /** One census fact for display: "$95,000", "Part time", "W-2", "Employee + Spouse", or "—". */
@@ -101,6 +104,8 @@ export function formatCensusFact(fact: CensusFact, v: unknown): string {
       return COVERAGE_TIER_LABELS[v as keyof typeof COVERAGE_TIER_LABELS] ?? String(v);
     case "cobra":
       return v === true ? "On COBRA" : "Not on COBRA";
+    case "dependents":
+      return Array.isArray(v) ? `${v.length} ${v.length === 1 ? "dependent" : "dependents"}` : String(v);
     case "remote":
     case "travels":
       return v === true ? "Yes" : "No";

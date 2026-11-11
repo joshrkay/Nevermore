@@ -75,7 +75,7 @@ const renderRows = (rows: ManuscriptRow[], m: Pick<Manuscript, "provenance" | "a
 /** A section's answers that are tables of rows, each under the section's own rows. */
 const renderTables = (m: Pick<Manuscript, "tables">, section: Manuscript["tables"][number]["section"]) =>
   m.tables.filter((t) => t.section === section).map((t) => (
-    <div key={t.field} className="bg-card border border-border rounded-xl p-6 mt-3 overflow-x-auto">
+    <div key={t.title} className="bg-card border border-border rounded-xl p-6 mt-3 overflow-x-auto">
       <table aria-label={t.title} className="w-full text-sm">
         <caption className="text-left text-xs uppercase tracking-wider text-muted-foreground pb-2">{t.title}</caption>
         <thead>
@@ -86,7 +86,7 @@ const renderTables = (m: Pick<Manuscript, "tables">, section: Manuscript["tables
         <tbody>
           {t.rows.map((row, i) => (
             <tr key={i} className="border-b border-border/50 last:border-0">
-              {row.map((cell, j) => <td key={j} className="py-2 pr-3 align-top">{cell}</td>)}
+              {row.map((cell, j) => <td key={j} className="py-2 pr-3 align-top">{j === t.dobColumn && cell !== NOT_PROVIDED ? maskDob(cell) : cell}</td>)}
             </tr>
           ))}
         </tbody>
@@ -544,6 +544,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               </tbody>
             </table>
           </Card>
+          {renderTables(d, "dependents")}
           <div className="mt-4 bg-muted border border-border rounded-xl p-4 text-sm">
             <p className="text-muted-foreground">
               ℹ Dependent figures are self-reported. Actual election rates may vary at open enrollment.

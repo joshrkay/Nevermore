@@ -497,6 +497,9 @@ describe("ManuscriptPage", () => {
     const acord = screen.getByRole("table", { name: "ACORD 130 (2017/05): General Information" });
     expect(within(acord).getAllByRole("row")).toHaveLength(25);
     expect(within(acord).getAllByRole("row")[8]).toHaveTextContent("8IS A WRITTEN SAFETY PROGRAM IN OPERATION?YesA written ergonomics and office safety policy, reviewed each year");
+    // K-2.3: each dependent, with the date of birth masked as an employee's is on this page.
+    const dependents = screen.getByRole("table", { name: "Dependents" });
+    expect(within(dependents).getAllByRole("row")[1]).toHaveTextContent("Sarah ChenMichael ChenSpouse••/••/1985");
     // K-5.3: the census facts v3 added sit under the census table.
     expect(within(screen.getByRole("table", { name: "Census Details" })).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Name", "ZIP", "Gender", "Hire date", "COBRA", "Home state", "Worksite", "Remote", "Travels"]);
     // K-4.1: the medical plans sit under the benefits answers.

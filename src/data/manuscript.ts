@@ -227,7 +227,7 @@ export function wcSystem(state: string): string {
 }
 
 /**
- * The tier the census states, or else the one the dependents named in conversation imply, or null when
+ * The tier the census states, or else the one the dependents listed under the employee imply, or null when
  * neither says. No dependents named is not the same as none: nobody may have asked.
  */
 export function coverageTier(emp: CensusEmployee): string | null {
@@ -242,7 +242,7 @@ export function coverageTier(emp: CensusEmployee): string | null {
 }
 
 /**
- * How many dependents a person has, when that is known: the ones named in conversation, or none for a
+ * How many dependents a person has, when that is known: the ones listed under them, or none for a
  * stated Employee Only or Waived tier. Null otherwise (a family tier from a census names nobody).
  */
 function knownDependents(emp: CensusEmployee): number | null {
@@ -307,11 +307,26 @@ export type ManuscriptRow = [label: string, value: string, field?: FieldKey, als
 
 /** An answer that is a table of rows, as The Manuscript prints it: every cell text, "—" where a row holds nothing. */
 export interface ManuscriptTable {
-  section: ReviewSection;
+  /** The section it is printed in; "dependents" is the dependent summary, which has no answers of its own. */
+  section: ReviewSection | "dependents";
   field: FieldKey;
   title: string;
   columns: string[];
   rows: string[][];
+  /** The column holding dates of birth, which are masked to the year unless an advisor reveals them. */
+  dobColumn?: number;
+}
+
+const RELATIONSHIPS: Record<string, string> = { spouse: "Spouse", domestic_partner: "Domestic partner", child: "Child", other: "Other" };
+const fullName = (p: { first_name?: string; last_name?: string }) => [p.first_name, p.last_name].filter(Boolean).join(" ");
+
+/** The dependents the census lists one by one (K-2.3), each beside their employee; no table when it lists none. */
+function dependentsTable(census: readonly CensusEmployee[]): ManuscriptTable[] {
+  const rows = census.flatMap((e) =>
+    (e.dependents ?? []).map((d) => [fullName(e) || "—", fullName(d), RELATIONSHIPS[d.relationship] ?? "Other", d.dob || NOT_PROVIDED]),
+  );
+  if (rows.length === 0) return [];
+  return [{ section: "dependents", field: "census", title: "Dependents", columns: ["Employee", "Dependent", "Relationship", "Date of birth"], rows, dobColumn: 3 }];
 }
 
 const RENEWAL_RATES = ["renewal_rate_ee", "renewal_rate_ee_sp", "renewal_rate_ee_ch", "renewal_rate_fam"] as const;
@@ -497,6 +512,7 @@ export function buildManuscript(
       : all.map((column) => ({ column, heading: column.label }));
     return [{ section, field, title, columns: columns.map((c) => c.heading), rows: rows.map((row) => columns.map(({ column }) => formatCell(column, row[column.key]))) }];
   });
+  tables.push(...dependentsTable(data.census));
 
   // The census facts that have no column in the census table (K-5.3): each person's ZIP and what v3 added to a
   // row. Printed once anyone on the census holds one of them.

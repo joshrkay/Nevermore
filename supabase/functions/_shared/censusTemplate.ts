@@ -1,5 +1,5 @@
 // The census template (US-2.3d, D21): the CSV a prospect downloads from the Upload tab, fills in with one row per
-// employee and uploads. Its headers are the census row's own keys, which document-extract's column matching reads
+// employee (and, when the prospect wants to list them, one per dependent under their employee) and uploads. Its headers are the census row's own keys, which document-extract's column matching reads
 // exactly (parse.test.ts holds every header to its column), so a filled-in template reads with every column
 // matched. It has no SSN or bank column. It lives beside the census contract, which the app re-exports
 // (src/data/census.ts), so the template, the guide the Upload tab shows and the reader name the same columns.
@@ -18,6 +18,7 @@ import {
 export const CENSUS_TEMPLATE_COLUMNS = [
   "first_name",
   "last_name",
+  "relationship",
   "dob",
   "gender",
   "hire_date",
@@ -35,7 +36,7 @@ export const CENSUS_TEMPLATE_COLUMNS = [
   "coverage_tier",
   "cobra",
   "class_code",
-] as const satisfies readonly (keyof CensusEmployee)[];
+] as const satisfies readonly (keyof CensusEmployee | "relationship")[];
 export type CensusTemplateColumn = (typeof CENSUS_TEMPLATE_COLUMNS)[number];
 
 export const CENSUS_TEMPLATE_FILE_NAME = "employee-census-template.csv";
@@ -46,6 +47,7 @@ const either = (values: readonly string[]) => `${values.slice(0, -1).join(", ")}
 export const CENSUS_TEMPLATE_GUIDE: Record<CensusTemplateColumn, string> = {
   first_name: "Legal first name",
   last_name: "Legal last name",
+  relationship: "Leave blank for an employee. For a dependent, listed on the rows directly under their employee: spouse, domestic_partner, child or other",
   dob: "Date of birth, as YYYY-MM-DD or MM/DD/YYYY",
   gender: either(GENDERS),
   hire_date: "The date they were hired, as YYYY-MM-DD or MM/DD/YYYY",

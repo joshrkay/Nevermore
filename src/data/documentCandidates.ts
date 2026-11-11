@@ -155,7 +155,9 @@ export interface CensusComparison {
   missing: CensusEmployee[];
 }
 
-const hasValue = (v: unknown) => v !== undefined && v !== null && v !== "";
+// A fact that is a list (a person's dependents) is stated only when it lists someone, and is compared by what it holds.
+const hasValue = (v: unknown) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0);
+const sameFact = (a: unknown, b: unknown) => (Array.isArray(a) || Array.isArray(b) ? JSON.stringify(a ?? []) === JSON.stringify(b ?? []) : a === b);
 
 /** Whether the document stated `fact` for this row: a column it had, a value in it, and not a default. */
 const statesFact = (row: CensusEmployee, fact: CensusFact, facts: readonly CensusFact[]) =>
@@ -178,7 +180,7 @@ export function compareCensus(current: CensusEmployee[], incoming: CensusEmploye
     }
     const [existing] = unmatched.splice(i, 1);
     const changes = facts
-      .filter((f) => statesFact(row, f, facts) && row[f] !== existing[f])
+      .filter((f) => statesFact(row, f, facts) && !sameFact(row[f], existing[f]))
       .map((f) => ({ fact: f, from: existing[f], to: row[f] }));
     matched.push({ current: existing, incoming: row, changes });
   }
@@ -190,7 +192,7 @@ export const censusAgrees = (c: CensusComparison) =>
 
 /**
  * The intake's census updated from a document: people in both take the document's stated facts
- * (keeping their id and the dependents named in conversation), people only in the document are
+ * (keeping their id, and the dependents they have unless the document lists theirs), people only in the document are
  * added, and people only in the intake stay.
  */
 export function mergeCensus(current: CensusEmployee[], incoming: CensusEmployee[], facts: readonly CensusFact[] = CENSUS_FACTS): CensusEmployee[] {

@@ -12,9 +12,9 @@ describe("censusExport in our own layout", () => {
   it("writes the census template's header, then one row per employee in the same column order", () => {
     const { csv, blankColumns } = censusExport([sarah, { ...sarah, id: "2", first_name: "Marcus", last_name: "Rivera", dob: undefined, work_state: "", zip_code: undefined, job_title: undefined, annual_salary: undefined, class_code: undefined, coverage_tier: undefined }], OUR_CENSUS_LAYOUT);
     expect(csv.split("\r\n")).toEqual([
-      "first_name,last_name,dob,gender,hire_date,work_state,home_state,zip_code,worksite,remote,travels,job_title,annual_salary,compensation_type,employment_type,classification,coverage_tier,cobra,class_code",
-      "Sarah,Chen,1988-03-15,,,CA,,94107,,,,Senior Designer,105000,salary,full_time,w2,FAM,,8810",
-      "Marcus,Rivera,,,,,,,,,,,,salary,full_time,w2,,,",
+      "first_name,last_name,relationship,dob,gender,hire_date,work_state,home_state,zip_code,worksite,remote,travels,job_title,annual_salary,compensation_type,employment_type,classification,coverage_tier,cobra,class_code",
+      "Sarah,Chen,,1988-03-15,,,CA,,94107,,,,Senior Designer,105000,salary,full_time,w2,FAM,,8810",
+      "Marcus,Rivera,,,,,,,,,,,,,salary,full_time,w2,,,",
       "",
     ]);
     expect(blankColumns).toEqual([]);
@@ -70,6 +70,30 @@ describe("censusExport with gender, hire date, COBRA status and home state", () 
     const at = (row: string[], column: string) => row[header.indexOf(column)];
     expect([at(first, "gender"), at(first, "hire_date"), at(first, "cobra"), at(first, "home_state")]).toEqual(["F", "2019-04-01", "no", "NV"]);
     expect(at(second, "cobra")).toBe("yes");
+  });
+});
+
+// K-2.3: PEOs that want dependents one by one get them, in the layout the census template takes.
+describe("censusExport with dependents", () => {
+  const withFamily: CensusEmployee = { ...sarah, dependents: [{ first_name: "Michael", last_name: "Chen", dob: "1985-06-12", relationship: "spouse" }, { first_name: "Emma", last_name: "Chen", dob: "", relationship: "child" }] };
+
+  it("writes a row for each dependent directly under their employee, with who they are and nothing of the employee's", () => {
+    const rows = censusExport([withFamily, { ...sarah, id: "2", first_name: "Marcus", last_name: "Rivera" }], OUR_CENSUS_LAYOUT).csv.split("\r\n").map((line) => line.split(","));
+    const [header, , spouse, child, marcus] = rows;
+    const at = (row: string[], column: string) => row[header.indexOf(column)];
+    expect([at(spouse, "first_name"), at(spouse, "last_name"), at(spouse, "relationship"), at(spouse, "dob")]).toEqual(["Michael", "Chen", "spouse", "1985-06-12"]);
+    expect([at(child, "first_name"), at(child, "relationship"), at(child, "dob")]).toEqual(["Emma", "child", ""]);
+    // A dependent's row carries no pay, class code or work state.
+    expect(spouse.filter((cell) => cell !== "")).toHaveLength(4);
+    expect(at(marcus, "first_name")).toBe("Marcus");
+    expect(rows).toHaveLength(6);
+  });
+
+  it("writes a PEO's own relationship column, and leaves dependents out of a layout that has none", () => {
+    const layout = { peo: "Sample PEO", columns: [{ header: "First", from: "first_name" as const }, { header: "Rel", from: "relationship" as const }] };
+    expect(censusExport([withFamily], layout).csv).toBe("First,Rel\r\nSarah,\r\nMichael,spouse\r\nEmma,child\r\n");
+    const none = { peo: "Other PEO", columns: [{ header: "First", from: "first_name" as const }, { header: "State", from: "work_state" as const }] };
+    expect(censusExport([withFamily], none).csv).toBe("First,State\r\nSarah,CA\r\n");
   });
 });
 

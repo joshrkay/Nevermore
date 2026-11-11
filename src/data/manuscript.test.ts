@@ -433,6 +433,24 @@ describe("buildManuscript covers the whole intake", () => {
     expect(buildManuscript({ ...DEMO_CHAMBER_DATA, ...untouched }, opts).tables.map((t) => t.title)).not.toContain("ACORD 130 (2017/05): General Information");
   });
 
+  // K-2.3: PEOs that want dependents one by one get them. Dates of birth are masked like employees'.
+  it("lists each dependent under the dependent summary, with their employee and relationship", () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
+    const table = m.tables.find((t) => t.title === "Dependents")!;
+    expect([table.section, table.field, table.dobColumn]).toEqual(["dependents", "census", 3]);
+    expect(table.columns).toEqual(["Employee", "Dependent", "Relationship", "Date of birth"]);
+    expect(table.rows.slice(0, 3)).toEqual([
+      ["Sarah Chen", "Michael Chen", "Spouse", "1985-06-12"],
+      ["Sarah Chen", "Emma Chen", "Child", "2018-03-22"],
+      ["Marcus Rivera", "Ana Rivera", "Spouse", "1987-09-04"],
+    ]);
+    expect(table.rows).toHaveLength(6);
+    const none = buildManuscript({ ...DEMO_CHAMBER_DATA, census: DEMO_CHAMBER_DATA.census.map(({ dependents: _d, ...e }) => e) }, opts);
+    expect(none.tables.map((t) => t.title)).not.toContain("Dependents");
+    const noDob = buildManuscript({ ...DEMO_CHAMBER_DATA, census: [{ ...DEMO_CHAMBER_DATA.census[0], dependents: [{ first_name: "Kim", last_name: "", dob: "", relationship: "domestic_partner" as const }] }] }, opts);
+    expect(noDob.tables.find((t) => t.title === "Dependents")!.rows).toEqual([["Sarah Chen", "Kim", "Domestic partner", "Not provided"]]);
+  });
+
   it("shows the workers' comp block and the census class codes", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
     expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toMatchObject({

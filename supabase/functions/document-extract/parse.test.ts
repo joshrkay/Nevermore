@@ -296,9 +296,9 @@ describe("the census template", () => {
   it("reads a filled-in template, as typed and as a spreadsheet saves it, with every fact stated and no notes", () => {
     const csv = [
       censusTemplateCsv().trim(),
-      "Ann,Lee,1990-01-01,F,2019-04-01,CA,NV,94105,Oakland office,no,yes,Engineer,105000,salary,full_time,w2,EE+SP,no,8810",
+      "Ann,Lee,,1990-01-01,F,2019-04-01,CA,NV,94105,Oakland office,no,yes,Engineer,105000,salary,full_time,w2,EE+SP,no,8810",
       // Saved from a spreadsheet: a US date, the ZIP's leading zero gone.
-      "Bo,Ray,3/15/1988,M,6/3/2021,NJ,NJ,7030,Store 12,no,no,Cashier,31200,hourly,part_time,1099,WAIVE,yes,8017",
+      "Bo,Ray,,3/15/1988,M,6/3/2021,NJ,NJ,7030,Store 12,no,no,Cashier,31200,hourly,part_time,1099,WAIVE,yes,8017",
     ].join("\r\n");
     const reading = readGrids([{ label: "CSV", rows: csvRows(csv) }], NOW);
 
@@ -354,6 +354,70 @@ describe("the census template", () => {
     const found = findCensus([["Name", "State", "Salary"], ["Ann Lee", "CA", "50000"]], "Sheet1", 1, NOW)!;
     expect(found.census[0]).not.toHaveProperty("gender");
     expect(found.facts).toEqual(["work_state", "annual_salary"]);
+  });
+
+  // K-2.3: dependents are read from the file when it lists them, one row each under their employee.
+  describe("dependents listed under their employee", () => {
+    const sheet = [
+      ["First Name", "Last Name", "Relationship", "DOB", "State", "Salary", "Coverage Tier"],
+      ["Ann", "Lee", "Employee", "1990-01-01", "CA", "105000", "FAM"],
+      ["Raj", "Lee", "Spouse", "1989-05-05", "", "", ""],
+      ["Mia", "Lee", "Daughter", "3/2/2019", "", "", ""],
+      ["Bo", "Ray", "", "1988-03-15", "NJ", "31200", "EE"],
+      ["Cy", "Ito", "EE", "1985-07-07", "NJ", "64000", "EE+SP"],
+      ["Kim", "Ito", "Domestic Partner", "", "", "", ""],
+    ];
+
+    it("reads each dependent onto the employee above, and counts only employees as people", () => {
+      const found = findCensus(sheet, "Sheet1", 1, NOW)!;
+      expect(found.census.map((e) => e.first_name)).toEqual(["Ann", "Bo", "Cy"]);
+      expect(found.census[0].dependents).toEqual([
+        { first_name: "Raj", last_name: "Lee", dob: "1989-05-05", relationship: "spouse" },
+        { first_name: "Mia", last_name: "Lee", dob: "2019-03-02", relationship: "child" },
+      ]);
+      expect(found.census[1]).not.toHaveProperty("dependents");
+      expect(found.census[2].dependents).toEqual([{ first_name: "Kim", last_name: "Ito", dob: "", relationship: "domestic_partner" }]);
+      expect(found.facts).toContain("dependents");
+      expect(found.skipped).toBe(0);
+      // The headcount is the employees: a dependent is nobody's employee.
+      expect(censusCandidates(found).find((c) => c.field === "employee_count")?.value).toBe(3);
+    });
+
+    it("reads the relationship however a carrier's file writes it", () => {
+      const rel = (label: string) => findCensus([["Name", "Relationship", "State", "Salary"], ["Ann Lee", "Subscriber", "CA", "1"], ["Pat Lee", label, "", ""]], "S", 1, NOW)!.census[0].dependents?.[0]?.relationship;
+      for (const label of ["Spouse", "Husband", "Wife", "SP"]) expect(rel(label), label).toBe("spouse");
+      for (const label of ["Domestic Partner", "DP", "Partner"]) expect(rel(label), label).toBe("domestic_partner");
+      for (const label of ["Child", "Son", "Daughter", "Dependent Child", "CH", "Stepchild"]) expect(rel(label), label).toBe("child");
+      for (const label of ["Dependent", "Other", "Parent"]) expect(rel(label), label).toBe("other");
+    });
+
+    it("takes a row as an employee when its relationship is blank or says employee, self, subscriber or primary", () => {
+      for (const label of ["", "Employee", "EE", "Self", "Subscriber", "Primary", "Insured"]) {
+        const found = findCensus([["Name", "Relationship", "State", "Salary"], ["Ann Lee", label, "CA", "1"], ["Bo Ray", "", "NJ", "2"]], "S", 1, NOW)!;
+        expect(found.census.map((e) => e.first_name), label).toEqual(["Ann", "Bo"]);
+      }
+    });
+
+    it("skips a dependent with no employee above it, and says so", () => {
+      const found = findCensus([["Name", "Relationship", "State", "Salary"], ["Pat Lee", "Spouse", "", ""], ["Ann Lee", "Employee", "CA", "1"], ["Bo Ray", "Employee", "NJ", "2"]], "S", 1, NOW)!;
+      expect(found.census.map((e) => e.first_name)).toEqual(["Ann", "Bo"]);
+      expect(found.census[0]).not.toHaveProperty("dependents");
+      expect(found.orphanDependents).toBe(1);
+      expect(censusNotes(found)).toContain("1 dependent row came before any employee and wasn't read. List each dependent directly under their employee.");
+    });
+
+    it("keeps the first 20 dependents of one employee", () => {
+      const many = [["Name", "Relationship", "State", "Salary"], ["Ann Lee", "Employee", "CA", "1"], ...Array.from({ length: 25 }, (_, i) => [`Kid${i} Lee`, "Child", "", ""])];
+      expect(findCensus(many, "S", 1, NOW)!.census[0].dependents).toHaveLength(20);
+    });
+
+    it("leaves a census with coverage tiers only exactly as it was read before", () => {
+      const tiersOnly = findCensus([["Name", "State", "Salary", "Coverage Tier"], ["Ann Lee", "CA", "105000", "FAM"]], "S", 1, NOW)!;
+      expect(tiersOnly.census[0]).toMatchObject({ first_name: "Ann", coverage_tier: "FAM" });
+      expect(tiersOnly.census[0]).not.toHaveProperty("dependents");
+      expect(tiersOnly.facts).not.toContain("dependents");
+      expect(tiersOnly.orphanDependents).toBe(0);
+    });
   });
 
   it("finds no census in the template before it is filled in", () => {

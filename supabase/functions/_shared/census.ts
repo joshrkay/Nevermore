@@ -68,7 +68,7 @@ export interface CensusEmployee {
   worksite?: string;
   remote?: boolean;
   travels?: boolean;
-  /** Dependents the prospect named in conversation. Not read from documents. */
+  /** Their dependents, read from a census file that lists one per row under the employee (K-2.3). */
   dependents?: CensusDependent[];
   /** The facts whose values are defaults, not answers (see CENSUS_ASSUMABLE). Absent when none are. */
   assumed?: CensusAssumable[];
@@ -326,16 +326,37 @@ export function normalizeClassCode(v: unknown): string | undefined {
 const RELATIONSHIPS = new Set(["spouse", "domestic_partner", "child", "other"]);
 
 /** Valid dependents, the first MAX_DEPENDENTS of them (invalid ones use no slot). */
+// How a census file names who a row is (K-2.3): the employee themselves, or one of their dependents.
+const EMPLOYEE_LABELS = new Set(["employee", "ee", "self", "subscriber", "primary", "insured", "member"]);
+const RELATIONSHIP_LABELS: Record<string, CensusDependent["relationship"]> = {
+  spouse: "spouse", husband: "spouse", wife: "spouse", sp: "spouse",
+  "domestic partner": "domestic_partner", dp: "domestic_partner", partner: "domestic_partner",
+  child: "child", son: "child", daughter: "child", ch: "child", "dependent child": "child", stepchild: "child", "step child": "child",
+};
+
+/**
+ * Who a census row is, from its relationship cell: "employee" (also for a blank cell), or the kind of dependent.
+ * Any other label ("Dependent", "Parent") is a dependent of the kind "other".
+ */
+export function rowRelationship(v: unknown): "employee" | CensusDependent["relationship"] {
+  const said = key(v);
+  if (said === "" || EMPLOYEE_LABELS.has(said)) return "employee";
+  return RELATIONSHIP_LABELS[said] ?? "other";
+}
+
 function normalizeDependents(v: unknown, now: Date): CensusDependent[] {
   if (!Array.isArray(v)) return [];
   return v.flatMap((d) => {
     if (!isRecord(d)) return [];
-    const first_name = cleanText(d.first_name);
+    let first_name = cleanText(d.first_name);
+    let last = cleanText(d.last_name);
+    // A census file may give a dependent's name in one cell, as it may an employee's.
+    if (!first_name && d.full_name !== undefined) [first_name, last] = splitFullName(cleanText(d.full_name));
     if (!first_name) return [];
     const relationship = typeof d.relationship === "string" && RELATIONSHIPS.has(d.relationship) ? d.relationship : "other";
     return [{
       first_name,
-      last_name: cleanText(d.last_name),
+      last_name: last,
       dob: normalizeDob(d.dob, now) ?? "",
       relationship: relationship as CensusDependent["relationship"],
     }];

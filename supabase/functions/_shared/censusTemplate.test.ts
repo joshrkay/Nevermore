@@ -8,7 +8,7 @@ import { normaliseHeader } from "../document-extract/parse";
 describe("census template", () => {
   it("has exactly the census columns, in order, as its only row", () => {
     expect(censusTemplateCsv()).toBe(
-      "first_name,last_name,dob,gender,hire_date,work_state,home_state,zip_code,worksite,remote,travels,job_title,annual_salary,compensation_type,employment_type,classification,coverage_tier,cobra,class_code\r\n",
+      "first_name,last_name,relationship,dob,gender,hire_date,work_state,home_state,zip_code,worksite,remote,travels,job_title,annual_salary,compensation_type,employment_type,classification,coverage_tier,cobra,class_code\r\n",
     );
   });
 
@@ -35,6 +35,8 @@ describe("census template", () => {
     expect(CENSUS_TEMPLATE_GUIDE.gender).toBe("F, M or X");
     expect(CENSUS_TEMPLATE_GUIDE.cobra).toMatch(/^yes or no/);
     expect(CENSUS_TEMPLATE_GUIDE.hire_date).toMatch(/YYYY-MM-DD or MM\/DD\/YYYY/);
+    // K-2.3: one row per dependent, under their employee.
+    expect(CENSUS_TEMPLATE_GUIDE.relationship).toBe("Leave blank for an employee. For a dependent, listed on the rows directly under their employee: spouse, domestic_partner, child or other");
     // K-2.2: where and how each person works.
     expect(CENSUS_TEMPLATE_GUIDE.remote).toMatch(/^yes or no/);
     expect(CENSUS_TEMPLATE_GUIDE.travels).toMatch(/^yes or no/);

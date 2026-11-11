@@ -29,9 +29,18 @@ function cell(value: unknown): string {
 
 /** The census in a layout, as CSV (CRLF rows, a header row first), and the headers it leaves blank. */
 export function censusExport(census: readonly CensusEmployee[], layout: PeoCensusLayout): { csv: string; blankColumns: string[] } {
+  const listsDependents = layout.columns.some((c) => c.from === "relationship");
   const rows = [
     layout.columns.map((c) => cell(c.header)),
-    ...census.map((e) => layout.columns.map((c) => (c.from ? cell(e[c.from]) : ""))),
+    ...census.flatMap((e) => [
+      // An employee's own row leaves the relationship blank, as the census template takes it.
+      layout.columns.map((c) => (c.from && c.from !== "relationship" ? cell(e[c.from]) : "")),
+      // Their dependents follow directly under them (K-2.3), each with what is held of them (name, relationship, date of
+      // birth) and so nothing of the employee's. A layout with no relationship column could not tell them from employees, so leaves them out.
+      ...(listsDependents ? (e.dependents ?? []) : []).map((d) =>
+        layout.columns.map((c) => (c.from ? cell((d as unknown as Record<string, unknown>)[c.from]) : "")),
+      ),
+    ]),
   ];
   const blankColumns = layout.columns.filter((c) => c.from === null).map((c) => c.header);
   return { csv: rows.map((r) => r.join(",")).join("\r\n") + "\r\n", blankColumns };

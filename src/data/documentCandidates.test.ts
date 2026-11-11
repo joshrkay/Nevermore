@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { formatCensusFact } from "./census";
 import { applyExtraction, applyFieldAction } from "./provenance";
 import { EMPTY_CHAMBER_DATA, type CensusEmployee } from "./chamberTypes";
 import {
   applyDocumentCandidates,
+  censusAgrees,
   compareCensus,
   mergeCensus,
   parseExtraction,
@@ -392,5 +394,37 @@ describe("a table's rows from a document", () => {
     const typed = applyFieldAction({ data: EMPTY_CHAMBER_DATA, provenance: {} }, { type: "edit", field: "loss_history", value: [{ policy_year: 2025, premium: 17000 }] });
     const next = applyDocumentCandidates(typed, doc, [candidate], { now });
     expect(next.data.loss_history).toEqual([{ ...year2025, premium: 17000 }]);
+  });
+});
+
+// K-2.3: a census file that lists dependents supplies them; one that doesn't leaves them alone.
+describe("dependents from a census file", () => {
+  const person = (over: Partial<CensusEmployee> = {}): CensusEmployee => ({ id: "e1", first_name: "Ann", last_name: "Lee", dob: "1990-01-01", work_state: "CA", compensation_type: "salary", employment_type: "full_time", classification: "w2", ...over });
+  const raj = { first_name: "Raj", last_name: "Lee", dob: "1989-05-05", relationship: "spouse" as const };
+  const mia = { first_name: "Mia", last_name: "Lee", dob: "2019-03-02", relationship: "child" as const };
+
+  it("gives a person already in the intake the dependents the file lists for them", () => {
+    const merged = mergeCensus([person()], [person({ id: "x", dependents: [raj, mia] })], ["dependents"]);
+    expect(merged[0]).toMatchObject({ id: "e1", dependents: [raj, mia] });
+  });
+
+  it("sees no change when the file lists the same dependents", () => {
+    const same = compareCensus([person({ dependents: [raj] })], [person({ id: "x", dependents: [{ ...raj }] })], ["dependents"]);
+    expect(same.matched[0].changes).toEqual([]);
+    expect(censusAgrees(same)).toBe(true);
+  });
+
+  it("keeps the dependents a person has when the file has no relationship column, or lists none for them", () => {
+    expect(mergeCensus([person({ dependents: [raj] })], [person({ id: "x" })], ["dob"])[0].dependents).toEqual([raj]);
+    expect(mergeCensus([person({ dependents: [raj] })], [person({ id: "x" })], ["dependents"])[0].dependents).toEqual([raj]);
+    // The file lists someone else's dependents, and an empty list for this person: that is not "they have none".
+    const listedNone = compareCensus([person({ dependents: [raj] })], [person({ id: "x", dependents: [] })], ["dependents"]);
+    expect(listedNone.matched[0].changes).toEqual([]);
+    expect(mergeCensus([person({ dependents: [raj] })], [person({ id: "x", dependents: [] })], ["dependents"])[0].dependents).toEqual([raj]);
+  });
+
+  it("says how many dependents a change is about", () => {
+    expect(formatCensusFact("dependents", [raj, mia])).toBe("2 dependents");
+    expect(formatCensusFact("dependents", [raj])).toBe("1 dependent");
   });
 });
