@@ -120,6 +120,9 @@ describe("buildManuscriptPdf", () => {
     // K-4.2: each state's unemployment tax rate prints under the payroll answers.
     const payroll = text.slice(text.indexOf("6 — Payroll & Time"), text.indexOf("7 — Current Benefits"));
     for (const expected of ["STATE UNEMPLOYMENT TAX RATES", "3.4%", "2026"]) expect(payroll).toContain(expected);
+    // K-5.3: the census facts v3 added print under the census table.
+    const census = text.slice(text.indexOf("3 — Employee Census"), text.indexOf("4 — Dependent Summary"));
+    for (const expected of ["CENSUS DETAILS", "94107", "Hire date"]) expect(census).toContain(expected);
     const none = await render({ ...DEMO_CHAMBER_DATA, owners_officers: [] });
     expect(none.text).not.toContain("OWNERS AND OFFICERS");
   });

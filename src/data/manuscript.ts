@@ -495,6 +495,18 @@ export function buildManuscript(
     return [{ section, field, title, columns: columns.map((c) => c.heading), rows: rows.map((row) => columns.map(({ column }) => formatCell(column, row[column.key]))) }];
   });
 
+  // The census facts that have no column in the census table (K-5.3): each person's ZIP and what v3 added to a
+  // row. Printed once anyone on the census holds one of them.
+  const yesOrNo = (v: boolean | undefined) => (v === undefined ? "—" : v ? "Yes" : "No");
+  const details = data.census.map((e) => [e.zip_code ?? "—", e.gender ?? "—", e.hire_date ?? "—", yesOrNo(e.cobra), e.home_state ?? "—", e.worksite ?? "—", yesOrNo(e.remote), yesOrNo(e.travels)]);
+  if (details.some((row) => row.some((cell) => cell !== "—"))) {
+    tables.push({
+      section: "workforce", field: "census", title: "Census Details",
+      columns: ["Name", "ZIP", "Gender", "Hire date", "COBRA", "Home state", "Worksite", "Remote", "Travels"],
+      rows: data.census.map((e, i) => [`${e.first_name} ${e.last_name}`.trim(), ...details[i]]),
+    });
+  }
+
   // Payroll by class code and state is worked out from the census (K-3.2): a table with no field of its own.
   const payroll = classCodePayroll(data.census);
   if (payroll.length > 0) {

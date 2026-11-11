@@ -524,6 +524,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               </table>
             </div>
           )}
+          {renderTables(d, "workforce")}
         </section>
 
         <section>

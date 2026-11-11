@@ -3,6 +3,8 @@ import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import type { CensusEmployee } from "./chamberTypes";
 import type { ProvenanceMap } from "./provenance";
 import { REVIEW_FIELDS } from "./reviewFields";
+import { ROW_LISTS } from "./rowColumns";
+import { INTAKE_SCHEMA } from "./intakeSchema";
 import {
   buildManuscript,
   certificationFromRow,
@@ -241,6 +243,47 @@ describe("buildManuscript covers the whole intake", () => {
       expect(keyed.get(field), `${field} is in the wrong section`).toBe(reviewSectionOf[field]);
     }
     expect(m.census.length).toBe(DEMO_CHAMBER_DATA.census.length);
+  });
+
+  // K-5.3: the same rule for what a census row holds (D30 covered the top-level answers only). v3 added seven
+  // facts to a row; each is printed, or left out here with the reason.
+  it("prints every fact a census row holds, or leaves it out for a stated reason", () => {
+    const facts = Object.keys((INTAKE_SCHEMA.$defs as Record<string, { properties: object }>).censusRow.properties);
+    const inTheCensusTable = ["first_name", "last_name", "dob", "age", "work_state", "job_title", "annual_salary", "compensation_type", "employment_type", "classification", "coverage_tier", "class_code"];
+    const inTheDetailsTable = ["zip_code", "gender", "hire_date", "cobra", "home_state", "worksite", "remote", "travels"];
+    const leftOut: Record<string, string> = {
+      id: "an internal key, never shown",
+      dependents: "counted in the dependent summary; the packet names no dependent",
+      assumed: "shown on the fact it qualifies, as 'Not provided' or '(est.)'",
+    };
+    expect([...facts].sort()).toEqual([...inTheCensusTable, ...inTheDetailsTable, ...Object.keys(leftOut)].sort());
+
+    const sarah = { ...DEMO_CHAMBER_DATA.census[0], gender: "F" as const, hire_date: "2019-04-01", cobra: false, home_state: "NV", worksite: "Harbor Street studio", remote: false, travels: true };
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, census: [sarah, DEMO_CHAMBER_DATA.census[3]] }, opts);
+    const details = m.tables.find((t) => t.title === "Census Details")!;
+    expect([details.section, details.field]).toEqual(["workforce", "census"]);
+    expect(details.columns).toEqual(["Name", "ZIP", "Gender", "Hire date", "COBRA", "Home state", "Worksite", "Remote", "Travels"]);
+    expect(details.rows).toEqual([
+      ["Sarah Chen", "94107", "F", "2019-04-01", "No", "NV", "Harbor Street studio", "No", "Yes"],
+      ["James O'Brien", "78701", "—", "—", "—", "—", "—", "—", "—"],
+    ]);
+    // Every fact of the row reaches the packet: the census table holds the rest.
+    expect(m.census[0]).toMatchObject({ name: "Sarah Chen", dob: "1988-03-15", state: "CA", title: "Senior Designer", salary: "$105,000", classification: "W-2", tier: "Employee + Family", classCode: "8810" });
+  });
+
+  it("prints no census details table for a census that holds none of them", () => {
+    const bare = DEMO_CHAMBER_DATA.census.map(({ zip_code: _zip, ...e }) => e);
+    expect(buildManuscript({ ...DEMO_CHAMBER_DATA, census: bare }, opts).tables.map((t) => t.title)).not.toContain("Census Details");
+    expect(buildManuscript({ ...DEMO_CHAMBER_DATA, census: [] }, opts).tables.map((t) => t.title)).not.toContain("Census Details");
+  });
+
+  // Every answer that is a table of rows is printed as a table (or, for the legal entities, as a line of the company profile).
+  it("prints every table of rows the intake holds", () => {
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, entities: [{ legal_name: "Meridian Creative LLC" }] }, opts);
+    const asALine: Record<string, string> = { entities: "one line of the company profile: each entity's name and FEIN" };
+    const lists = Object.keys(ROW_LISTS).filter((field) => !(field in asALine));
+    expect(lists.filter((field) => !m.tables.some((t) => t.field === field))).toEqual([]);
+    for (const table of m.tables) expect(table.rows.length, table.title).toBeGreaterThan(0);
   });
 
   // K-1.1: a PEO's form needs all nine digits, so the packet prints the FEIN in full.

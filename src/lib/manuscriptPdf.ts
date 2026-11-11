@@ -164,15 +164,16 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
    * Draws a table whose rows never split across pages and whose header repeats on each new page.
    * Cell text wraps inside its column, so nothing is clipped or overlaps its neighbour.
    */
-  const table = (columns: Column[], rows: string[][], opts: { header?: boolean; flagged?: Set<number> } = {}) => {
+  const table = (columns: Column[], rows: string[][], opts: { header?: boolean; flagged?: Set<number>; wrapHeadings?: boolean } = {}) => {
     const showHeader = opts.header !== false;
     const size = 8.5;
     const lh = lineHeight(size);
 
     const drawHeader = () => {
       font("bold", size);
-      // A heading wraps inside its column, as a cell does, so a long one never runs into its neighbour.
-      const headings = columns.map((col) => wrap(col.header, col.width - CELL_PAD_X * 2));
+      // With `wrapHeadings` a heading wraps inside its column, as a cell does, so a long one never runs into its
+      // neighbour (the tables of rows, whose columns are sized by content). Otherwise it prints on one line.
+      const headings = columns.map((col) => (opts.wrapHeadings ? wrap(col.header, col.width - CELL_PAD_X * 2) : [pdfSafe(col.header)]));
       const h = Math.max(...headings.map((lines) => lines.length)) * lh + CELL_PAD_Y * 2;
       ensure(h);
       pdf.setFillColor(...HEAD_FILL);
@@ -281,7 +282,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
       // figures stays narrow and one of words gets room to wrap between them.
       const weights = t.columns.map((header, i) => Math.min(22, Math.max(10, header.length, ...t.rows.map((row) => row[i].length))));
       const total = weights.reduce((sum, w) => sum + w, 0);
-      table(t.columns.map((header, i) => ({ header, width: (CONTENT_W * weights[i]) / total })), t.rows);
+      table(t.columns.map((header, i) => ({ header, width: (CONTENT_W * weights[i]) / total })), t.rows, { wrapHeadings: true });
     }
   };
 
@@ -328,6 +329,8 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
       notes.forEach((n) => paragraph(n, 8.5, "normal", WARN, 1));
     }
   }
+
+  tablesOf("workforce");
 
   // ---------- 4 Dependents ----------
   sectionHeading("4 — Dependent Summary");
