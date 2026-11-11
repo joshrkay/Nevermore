@@ -99,6 +99,7 @@
 \i supabase/migrations/20261111110000_quote_request_messages.sql
 \i supabase/migrations/20261111120000_quote_request_threads.sql
 \i supabase/migrations/20261111130000_held_mail.sql
+\i supabase/migrations/20261111140000_peo_mail_alert.sql
 \i supabase/migrations/20261112090000_intake_schema_v3_version.sql
 \i supabase/migrations/20261112091000_intake_schema_v3_company_identity.sql
 \i supabase/migrations/20261112092000_intake_schema_v3_industry_code.sql

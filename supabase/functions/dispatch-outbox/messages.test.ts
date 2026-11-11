@@ -6,10 +6,12 @@ import {
   parseAdvisorNotification,
   parseDraftExpiryReminder,
   parseInformationRequest,
+  parsePeoMailArrived,
   parseProspectConfirmation,
   renderAdvisorNotification,
   renderDraftExpiryReminder,
   renderInformationRequest,
+  renderPeoMailArrived,
   renderProspectConfirmation,
 } from "./messages";
 import { fieldLabels } from "./fieldLabels";
@@ -428,5 +430,35 @@ describe("draft expiry reminder", () => {
       expect(r.text).not.toContain(value);
       expect(r.html).not.toContain(value);
     }
+  });
+});
+
+describe("PEO mail notice", () => {
+  const url = "https://app.example.com/advisor/submissions/abc";
+  const n = { reference: "EAA-2026-0042", companyName: "Harbor Street Bakery LLC", peoName: "TriNet" };
+
+  it("names the PEO, the employer and the File ID, and links to the thread", () => {
+    const m = renderPeoMailArrived(n, { reviewUrl: url });
+    expect(m.subject).toBe("New PEO mail: TriNet on Harbor Street Bakery LLC (EAA-2026-0042)");
+    expect(m.text).toContain("PEO: TriNet");
+    expect(m.text).toContain("File ID: EAA-2026-0042");
+    expect(m.text).toContain(url);
+    expect(m.html).toContain(`href="${url}"`);
+    expect(m.text).toContain("carries nothing from the message");
+  });
+
+  it("copes with no company name and escapes what it shows", () => {
+    expect(renderPeoMailArrived({ ...n, companyName: null }, { reviewUrl: url }).subject).toContain("Company name not provided");
+    const m = renderPeoMailArrived({ ...n, peoName: "<b>Evil</b>" }, { reviewUrl: url });
+    expect(m.html).not.toContain("<b>Evil</b>");
+    expect(m.html).toContain("&lt;b&gt;Evil&lt;/b&gt;");
+  });
+
+  it("reads only the File ID, the company and the PEO from a payload", () => {
+    expect(parsePeoMailArrived({ reference: "EAA-1", company_name: "Acme", peo_name: "TriNet", body_text: "secret", from_address: "x@y.example" }))
+      .toEqual({ reference: "EAA-1", companyName: "Acme", peoName: "TriNet" });
+    expect(parsePeoMailArrived({ peo_name: "TriNet" })).toBeNull();
+    expect(parsePeoMailArrived({ reference: "EAA-1" })).toBeNull();
+    expect(parsePeoMailArrived("nope")).toBeNull();
   });
 });
