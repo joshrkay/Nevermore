@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { QuoteRequestEventRow, QuoteRequestRow } from "@/lib/advisorApi";
+import type { QuoteRequestEventRow, QuoteRequestNoteRow, QuoteRequestRow } from "@/lib/advisorApi";
 import type { PipelineStatus } from "@/data/advisor";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { PeoRecord } from "@/data/peoCatalog";
@@ -9,7 +9,8 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const api = {
   recordQuoteSend: vi.fn(),
   updateQuoteRequest: vi.fn(),
-  noteUnderwriterQuestion: vi.fn(),
+  addQuoteRequestNote: vi.fn(),
+  correctQuoteRequestNote: vi.fn(),
   setStatus: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
@@ -31,9 +32,27 @@ const request = (over: Partial<QuoteRequestRow> = {}): QuoteRequestRow => ({
   ...over,
 });
 
+const note = (over: Partial<QuoteRequestNoteRow> = {}): QuoteRequestNoteRow => ({
+  id: 21,
+  quote_request_id: 7,
+  session_id: "s1",
+  kind: "call",
+  noted_on: "2026-11-09",
+  body: "Dana called about loss runs.",
+  created_by: "a1",
+  created_by_email: "adv@example.com",
+  created_at: "2026-11-09T15:00:00Z",
+  ...over,
+});
+
+const event = (over: Partial<QuoteRequestEventRow> = {}): QuoteRequestEventRow => ({
+  id: 1, quote_request_id: 7, session_id: "s1", note_id: null, field: "status", old_value: null, new_value: "sent",
+  changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-11-12T15:00:00Z", ...over,
+});
+
 const panel = (
   over: {
-    status?: PipelineStatus; requests?: QuoteRequestRow[]; events?: QuoteRequestEventRow[]; currentVersion?: number | null;
+    status?: PipelineStatus; requests?: QuoteRequestRow[]; events?: QuoteRequestEventRow[]; notes?: QuoteRequestNoteRow[]; currentVersion?: number | null;
     data?: ChamberData; catalog?: PeoRecord[]; onAskProspect?: (question: string) => void;
   } = {},
 ) => {
@@ -46,6 +65,7 @@ const panel = (
       currentVersion={over.currentVersion === undefined ? 1 : over.currentVersion}
       requests={over.requests ?? [request()]}
       events={over.events ?? []}
+      notes={over.notes ?? []}
       data={over.data ?? EMPTY_CHAMBER_DATA}
       catalog={over.catalog}
       onAskProspect={over.onAskProspect ?? vi.fn()}
@@ -167,33 +187,82 @@ describe("QuoteRequestsPanel", () => {
     expect(screen.queryByRole("button", { name: /^Move to/ })).not.toBeInTheDocument();
   });
 
-  it("notes a question from the PEO's underwriter", async () => {
+  it("adds a note of a call, with the day it happened", async () => {
     const onChanged = panel();
     const row = screen.getByTestId("quote-request-7");
-    fireEvent.click(within(row).getByRole("button", { name: "Note a question" }));
-    fireEvent.change(within(row).getByLabelText("Underwriter's question"), { target: { value: "Can they send loss runs?" } });
-    fireEvent.click(within(row).getByRole("button", { name: "Save question" }));
-    await waitFor(() => expect(api.noteUnderwriterQuestion).toHaveBeenCalledWith(7, "Can they send loss runs?"));
+    fireEvent.click(within(row).getByRole("button", { name: "Add a note" }));
+    expect(within(row).getByLabelText("Kind")).toHaveValue("call");
+    fireEvent.change(within(row).getByLabelText("Date it happened"), { target: { value: "2026-11-09" } });
+    fireEvent.change(within(row).getByLabelText("Note"), { target: { value: "Dana called about loss runs." } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save note" }));
+    await waitFor(() =>
+      expect(api.addQuoteRequestNote).toHaveBeenCalledWith(7, { kind: "call", notedOn: "2026-11-09", body: "Dana called about loss runs." }),
+    );
     expect(onChanged).toHaveBeenCalled();
   });
 
-  it("shows each quote request's history: who changed what, and the underwriter's questions", () => {
-    const at = "2026-11-12T15:00:00Z";
-    const ev = (over: Partial<QuoteRequestEventRow>): QuoteRequestEventRow => ({
-      id: 1, quote_request_id: 7, session_id: "s1", field: "status", old_value: null, new_value: "sent",
-      changed_by: "a1", changed_by_email: "adv@example.com", changed_at: at, ...over,
+  it("offers every kind of note, and says a note of an email is not a send", () => {
+    panel();
+    const row = screen.getByTestId("quote-request-7");
+    fireEvent.click(within(row).getByRole("button", { name: "Add a note" }));
+    const kind = within(row).getByLabelText("Kind");
+    expect(within(kind).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Call", "Portal entry", "Email sent elsewhere", "Underwriter's question", "Other",
+    ]);
+    fireEvent.change(kind, { target: { value: "email_elsewhere" } });
+    expect(within(row).getByText(/A note doesn't record a send/)).toBeInTheDocument();
+    // Nothing to save until the note says something.
+    expect(within(row).getByRole("button", { name: "Save note" })).toBeDisabled();
+  });
+
+  it("lists a quote request's notes with their kind, day and author, and marks a corrected one", () => {
+    panel({
+      notes: [
+        note({ id: 22, kind: "portal_entry", noted_on: "2026-11-10", body: "Entered in their portal." }),
+        note(),
+        note({ id: 23, quote_request_id: 8, body: "On another request." }),
+      ],
+      events: [event({ id: 9, note_id: 21, field: "note_body", old_value: "Dana called.", new_value: "Dana called about loss runs." })],
     });
+    const notes = within(screen.getByTestId("quote-request-7")).getByRole("list", { name: "TriNet notes" });
+    const items = within(notes).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent("Portal entry · Nov 10, 2026 · adv@example.com");
+    expect(items[0]).not.toHaveTextContent("corrected");
+    expect(items[0]).toHaveTextContent("Entered in their portal.");
+    expect(items[1]).toHaveTextContent("Call · Nov 9, 2026 · adv@example.com · corrected");
+  });
+
+  it("corrects a note from what it holds now", async () => {
+    const onChanged = panel({ notes: [note()] });
+    const item = screen.getByTestId("quote-note-21");
+    fireEvent.click(within(item).getByRole("button", { name: "Correct" }));
+    expect(within(item).getByLabelText("Kind")).toHaveValue("call");
+    expect(within(item).getByLabelText("Date it happened")).toHaveValue("2026-11-09");
+    expect(within(item).getByLabelText("Note")).toHaveValue("Dana called about loss runs.");
+    fireEvent.change(within(item).getByLabelText("Date it happened"), { target: { value: "2026-11-08" } });
+    fireEvent.click(within(item).getByRole("button", { name: "Save correction" }));
+    await waitFor(() =>
+      expect(api.correctQuoteRequestNote).toHaveBeenCalledWith(21, { kind: "call", notedOn: "2026-11-08", body: "Dana called about loss runs." }),
+    );
+    expect(api.addQuoteRequestNote).not.toHaveBeenCalled();
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("shows each quote request's change log: who changed what, corrections to notes included", () => {
     panel({
       events: [
-        ev({ id: 3, field: "underwriter_question", new_value: "Can they send loss runs?" }),
-        ev({ id: 2, field: "admin_fee_pepm", old_value: "145.50", new_value: "150.00" }),
-        ev({ id: 1 }),
-        ev({ id: 4, quote_request_id: 8, field: "status", old_value: "sent", new_value: "declined" }),
+        event({ id: 5, note_id: 21, field: "note_kind", old_value: "call", new_value: "portal_entry" }),
+        // A question recorded before questions became notes: its note is shown, not this.
+        event({ id: 3, field: "underwriter_question", new_value: "Can they send loss runs?" }),
+        event({ id: 2, field: "admin_fee_pepm", old_value: "145.50", new_value: "150.00" }),
+        event({ id: 1 }),
+        event({ id: 4, quote_request_id: 8, field: "status", old_value: "sent", new_value: "declined" }),
       ],
     });
     const history = within(screen.getByTestId("quote-request-7")).getByRole("list", { name: "TriNet history" });
     expect(within(history).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      expect.stringContaining("Underwriter asked: Can they send loss runs?"),
+      expect.stringContaining("Note kind: Call → Portal entry"),
       expect.stringContaining("Admin fee per employee per month: 145.50 → 150.00"),
       expect.stringContaining("Status: — → Waiting"),
     ]);
@@ -215,7 +284,8 @@ describe("QuoteRequestsPanel", () => {
     panel({ requests: [request({ status: "closed" })] });
     const row = screen.getByTestId("quote-request-7");
     expect(within(row).queryByRole("button", { name: "Record answer" })).not.toBeInTheDocument();
-    expect(within(row).getByRole("button", { name: "Note a question" })).toBeInTheDocument();
+    // A PEO that phones after its request closed can still be recorded.
+    expect(within(row).getByRole("button", { name: "Add a note" })).toBeInTheDocument();
   });
 
   it("warns, on its row, about a PEO whose sourced facts don't fit the submission", () => {
@@ -234,18 +304,12 @@ describe("QuoteRequestsPanel", () => {
 
   it("turns an underwriter's question into an ask of the prospect, and offers that only on questions", () => {
     const onAskProspect = vi.fn();
-    const at = "2026-11-12T15:00:00Z";
     panel({
       onAskProspect,
-      events: [
-        { id: 3, quote_request_id: 7, session_id: "s1", field: "underwriter_question", old_value: null, new_value: "Can they send loss runs?",
-          changed_by: "a1", changed_by_email: "adv@example.com", changed_at: at },
-        { id: 1, quote_request_id: 7, session_id: "s1", field: "status", old_value: null, new_value: "sent",
-          changed_by: "a1", changed_by_email: "adv@example.com", changed_at: at },
-      ],
+      notes: [note({ id: 22, kind: "underwriter_question", body: "Can they send loss runs?" }), note()],
     });
-    const history = within(screen.getByTestId("quote-request-7")).getByRole("list", { name: "TriNet history" });
-    const asks = within(history).getAllByRole("button", { name: "Ask the prospect" });
+    const notes = within(screen.getByTestId("quote-request-7")).getByRole("list", { name: "TriNet notes" });
+    const asks = within(notes).getAllByRole("button", { name: "Ask the prospect" });
     expect(asks).toHaveLength(1);
     fireEvent.click(asks[0]);
     expect(onAskProspect).toHaveBeenCalledWith("Can they send loss runs?");

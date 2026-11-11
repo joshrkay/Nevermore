@@ -283,7 +283,7 @@ export const DATA_CLASSES: DataClass[] = [
     sensitivity: "confidential",
     examples: "Advisors' field reviews and corrections, internal notes, pipeline status and its history, the requests for information sent to the prospect, the PEOs each submission went to with what each quoted and every change to that, and who changed each uploaded document and when.",
     stored: {
-      tables: ["advisor_field_reviews", "advisor_review_events", "advisor_notes", "submission_workflow", "submission_status_history", "information_requests", "quote_requests", "quote_request_events", "document_events"],
+      tables: ["advisor_field_reviews", "advisor_review_events", "advisor_notes", "submission_workflow", "submission_status_history", "information_requests", "quote_requests", "quote_request_events", "quote_request_notes", "document_events"],
       buckets: [],
       elsewhere: [],
     },

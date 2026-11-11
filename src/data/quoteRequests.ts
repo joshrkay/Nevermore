@@ -23,6 +23,29 @@ export const SENDABLE_STAGES = ["ready_for_market", "sent_to_carrier", "quoted"]
 
 export const canRecordSend = (stage: PipelineStatus) => (SENDABLE_STAGES as readonly PipelineStatus[]).includes(stage);
 
+/**
+ * What kind of thing a quote request note records (GLOSSARY.md, Quote request note). The database holds the same
+ * list (20261111090000_quote_request_notes.sql); src/data/schemaSync.test.ts keeps them equal.
+ */
+export const QUOTE_NOTE_KINDS = ["call", "portal_entry", "email_elsewhere", "underwriter_question", "other"] as const;
+export type QuoteNoteKind = (typeof QUOTE_NOTE_KINDS)[number];
+
+export const QUOTE_NOTE_KIND_LABELS: Record<QuoteNoteKind, string> = {
+  call: "Call",
+  portal_entry: "Portal entry",
+  email_elsewhere: "Email sent elsewhere",
+  underwriter_question: "Underwriter's question",
+  other: "Other",
+};
+
+/** The longest a note can be; the database refuses a longer one. */
+export const QUOTE_NOTE_MAX = 2000;
+
+export const isQuoteNoteKind = (k: unknown): k is QuoteNoteKind =>
+  typeof k === "string" && (QUOTE_NOTE_KINDS as readonly string[]).includes(k);
+
+export const quoteNoteKindLabel = (kind: string) => (isQuoteNoteKind(kind) ? QUOTE_NOTE_KIND_LABELS[kind] : kind);
+
 export const isQuoteRequestStatus = (s: unknown): s is QuoteRequestStatus =>
   typeof s === "string" && (QUOTE_REQUEST_STATUSES as readonly string[]).includes(s);
 
@@ -83,16 +106,25 @@ const FIELD_NAMES: Record<string, string> = {
   proposed_start_on: "Proposed start",
   admin_fee_pepm: "Admin fee per employee per month",
   note: "Note",
+  note_kind: "Note kind",
+  note_noted_on: "Note date",
+  note_body: "Note text",
 };
 
 const shown = (field: string, value: string | null) => {
   if (value === null) return "—";
+  if (field === "note_kind") return quoteNoteKindLabel(value);
   return field === "status" && isQuoteRequestStatus(value) ? QUOTE_REQUEST_LABELS[value] : value;
 };
 
-/** One line for a recorded change to a quote request, or an underwriter's question. */
+/**
+ * Whether a logged event belongs in a quote request's change log. An underwriter's question recorded before
+ * questions became notes is left out: the note that replaced it is shown instead.
+ */
+export const isChangeLogEvent = (e: { field: string }) => e.field !== "underwriter_question";
+
+/** One line for a recorded change to a quote request, or a correction to one of its notes. */
 export function describeQuoteRequestEvent(e: { field: string; old_value: string | null; new_value: string | null }): string {
-  if (e.field === "underwriter_question") return `Underwriter asked: ${e.new_value ?? ""}`;
   return `${FIELD_NAMES[e.field] ?? e.field}: ${shown(e.field, e.old_value)} → ${shown(e.field, e.new_value)}`;
 }
 

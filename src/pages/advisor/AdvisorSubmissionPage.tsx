@@ -204,6 +204,7 @@ const Detail = ({
             currentVersion={detail.currentVersion}
             requests={detail.quoteRequests}
             events={detail.quoteRequestEvents}
+            notes={detail.quoteRequestNotes}
             data={detail.data}
             onAskProspect={askProspect}
             onChanged={reload}

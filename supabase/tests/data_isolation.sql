@@ -94,6 +94,7 @@
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 \i supabase/migrations/20261110090000_quote_requests.sql
+\i supabase/migrations/20261111090000_quote_request_notes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -324,6 +325,9 @@ BEGIN
   -- history have rows to protect.
   PERFORM public.set_submission_status(pa_cert, 'ready_for_market', 'Reviewed');
   PERFORM public.advisor_record_quote_send(pa_cert, 'TriNet', NULL);
+  -- A note on it (20261111090000), so the notes have a row to protect.
+  PERFORM public.advisor_add_quote_request_note(
+    (SELECT id FROM public.quote_requests WHERE session_id = pa_cert), 'call', current_date, 'Their rep called');
   -- A request for information on prospect B's submission (20261105090000), so its table has a row to protect.
   PERFORM public.advisor_request_information(pb_cert, 'Please confirm the pay frequency', ARRAY['pay_frequency']);
   -- A referral partner (20261106100000), so its table has a row to protect.
@@ -413,6 +417,7 @@ INSERT INTO matrix VALUES
   -- alone. The prospect never sees a quote request, even on their own submission.
   ('public.quote_requests',                             '{"advisor":"all","admin":"all"}'),
   ('public.quote_request_events',                       '{"advisor":"all","admin":"all"}'),
+  ('public.quote_request_notes',                        '{"advisor":"all","admin":"all"}'),
   -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
   ('public.intake_milestones',                          '{}'),
   -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
@@ -710,6 +715,10 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
   ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
                                                                      'SELECT public.advisor_note_underwriter_question(0, ''probe'')', 'noting an underwriter''s question'),
+  ('advisor_add_quote_request_note(p_quote_request_id bigint, p_kind text, p_noted_on date, p_body text)', 'advisor',
+                                                                     'SELECT public.advisor_add_quote_request_note(0, ''call'', current_date, ''probe'')', 'adding a note to a quote request'),
+  ('advisor_correct_quote_request_note(p_note_id bigint, p_kind text, p_noted_on date, p_body text)', 'advisor',
+                                                                     'SELECT public.advisor_correct_quote_request_note(0, ''call'', current_date, ''probe'')', 'correcting a quote request note'),
   ('advisor_email_problems()',                 'advisor', 'SELECT count(*) FROM public.advisor_email_problems()', 'email problems on the queue'),
   ('advisor_list_outbox_events(p_status text, p_limit integer)', 'advisor', 'SELECT count(*) FROM public.advisor_list_outbox_events(NULL, 10)', 'the outbox page'),
   ('advisor_outbox_summary()',                 'advisor', 'SELECT count(*) FROM public.advisor_outbox_summary()', 'the outbox page'),

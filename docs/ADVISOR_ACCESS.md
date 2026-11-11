@@ -96,8 +96,18 @@ a sign-out the app asked for is remembered until the event arrives.
     the PEO's answer: `quoted`, `declined` or `closed`. Only a quote has dates and a fee (22023 otherwise); a
     closed request is answered again only after a send reopens it. The note is at most 2000 characters, and the
     fee 0 to 100000.
-  - `advisor_note_underwriter_question(id, question)` notes a question from the PEO's underwriter. It doesn't
-    change the status.
+  - `advisor_add_quote_request_note(id, kind, noted_on, body)` adds a **quote request note** (GLOSSARY.md) for
+    something that happened outside the product: a `call`, a `portal_entry`, an `email_elsewhere`, an
+    `underwriter_question` or `other`, with the day it happened and at most 2000 characters (22023 otherwise, and
+    for a date more than a day ahead; PT404 for no such quote request). A note changes nothing else: it never
+    records a send or changes the status, and a closed quote request takes one and stays closed. Notes are kept
+    in `quote_request_notes`, which advisors read and prospects don't (migration `20261111090000`).
+  - `advisor_correct_quote_request_note(note, kind, noted_on, body)` corrects a note. Each value changed is
+    appended to `quote_request_events` with the old one (`note_kind`, `note_noted_on`, `note_body`, and the
+    note's id in `note_id`). Who wrote the note and when never change.
+  - `advisor_note_underwriter_question(id, question)` is kept for the front end deployed before notes: it adds a
+    note of kind `underwriter_question` dated today. Questions recorded before the migration were copied to
+    notes; their log rows stay, and the console no longer shows them.
   - Every change to a quote request is appended to `quote_request_events` (who, when, the field, the old and new
     value) by a trigger, so nothing changes one unlogged; nobody can change or delete that history.
   - `set_submission_status(session, status, note, won_quote_request_id)`: moving to `won` names one of the
