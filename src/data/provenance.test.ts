@@ -845,6 +845,20 @@ describe("rows heard in conversation or read from a document", () => {
     expect(owners(applyExtraction(closed, { owners_officers: [{ name: "Dana Reyes" }] }, { source: heard }))).toEqual([]);
   });
 
+  // ADR 0004: the prospect correcting a row in conversation changes it, unless they typed that row themselves.
+  it("changes a row's value when the prospect corrects it in conversation", () => {
+    const one = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60, title: "President" }] }, { source: heard, statuses: { owners_officers: "confirmed" } });
+    const fixed = applyExtraction(one, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: { ...heard, message_id: "m5" }, corrections: ["owners_officers"] });
+    expect(owners(fixed)).toEqual([{ name: "Dana Reyes", ownership_percent: 55, title: "President" }]);
+    expect(fixed.provenance.owners_officers).toMatchObject({ status: "inferred", source: { message_id: "m5" } });
+  });
+
+  it("never changes a row the prospect typed, even when the conversation corrects it", () => {
+    const typed = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: [{ name: "Dana Reyes", ownership_percent: 60 }] });
+    const next = applyExtraction(typed, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: heard, corrections: ["owners_officers"] });
+    expect(owners(next)).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }]);
+  });
+
   it("stops adding people once the table is full", () => {
     const full = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: Array.from({ length: 20 }, (_, i) => ({ name: `Owner ${i + 1}` })) });
     const next = applyExtraction(full, { owners_officers: [{ name: "One Too Many" }, { name: "Owner 3", title: "Treasurer" }] }, { source: heard });
