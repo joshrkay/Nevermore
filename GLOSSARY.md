@@ -108,11 +108,27 @@ An advisor's message asking the prospect for more, naming the answers it is abou
 _Avoid_: follow-up, RFI, query
 
 **Quote request**:
-One PEO's handling of one submission, from when an advisor sent it the packet until that PEO quotes, declines or the request is closed. A submission has at most one per PEO; sending a newer packet version to the same PEO continues it. Advisors record it after acting outside the product, and the product sends nothing to the PEO. The prospect never sees it.
+One PEO's handling of one submission, from when an advisor sent it the packet until that PEO quotes, declines or the request is closed. A submission has at most one per PEO; sending a newer packet version to the same PEO continues it. Advisors record it after acting outside the product: until counsel answers QP-D1 the product sends nothing to a PEO, and an advisor sends from their own mail. Each quote request has its own reply address and one **thread**. The prospect never sees it.
 _Avoid_: quote (a quote is what a PEO returns on a quote request), submission, RFP, deal
 
+**Thread**:
+Every email sent and received about one quote request, read newest first on its timeline with its status changes and quote request notes. Mail reaches it through the quote request's reply address, an unguessable address that can be revoked and reissued. A message to that address joins the thread whoever sent it, with a sender not seen before marked as new. An advisor's own email joins as sent by hand when they copy the address in. An arriving message never changes the quote request status. Kept and deleted with the intake; the prospect never sees it.
+_Avoid_: conversation, inbox, chain
+
+**Quote request note**:
+A dated entry an advisor adds to a quote request's timeline for something that happened outside the product, with its kind: a call, a portal entry, an email sent elsewhere, an underwriter's question, or other.
+_Avoid_: activity, log entry, comment
+
+**Holding list**:
+Mail that arrived for a revoked or unknown reply address, or that an advisor moved off a thread it didn't belong to. An admin assigns each message to a quote request or discards it; nothing is attached by guesswork, and a message nobody assigns is deleted after 30 days.
+_Avoid_: unmatched inbox, spam folder, quarantine (quarantine holds files waiting for or failing a malware scan)
+
+**Market authorization**:
+The prospect's recorded yes to sending their packet to the PEOs they picked: the PEOs, the wording and its version, who signed and when. Distinct from **Certification** (the answers are true) and the intake consent (how their information is used). It names PEOs, not a packet version, so certifying again leaves it in place. The prospect can add a PEO or withdraw one at any time, and each change is appended, never edited. An advisor who wants another PEO asks through an information request, and the prospect adds it themselves. No send to a PEO is possible without one. Withdrawing a PEO closes its quote request, revokes its download link, and marks the submission as needing advisor action so an advisor tells the PEO. Not built until counsel answers QP-D1 (joshrkay/Nevermore#85, #92).
+_Avoid_: consent (the intake consent is a different record), permission, release, authorization on its own
+
 **Quote**:
-What a PEO returns on a quote request when it offers to take the employer on: when it arrived, when it expires, the proposed start date and the headline admin fee per employee per month, with the advisor's note. Recorded by an advisor and seen only by advisors.
+What a PEO returns on a quote request when it offers to take the employer on: when it arrived, when it expires, the proposed start date and the headline admin fee per employee per month, with the advisor's note. Recorded by an advisor and seen only by advisors. The file a PEO attaches is the quote document: it arrives on the thread and is scanned before anyone can open it.
 _Avoid_: proposal, offer, pricing
 
 **Needs advisor action**:
@@ -264,7 +280,7 @@ The pipeline stage of a submission whose search ended without the employer takin
 _Avoid_: closed, dead, rejected (a PEO declines; a submission is lost)
 
 **Quote request status**:
-Where one PEO's quote request stands: sent (the packet went and the PEO hasn't answered; a quote request in this status is waiting), quoted, declined, or closed (withdrawn, expired, or the employer went elsewhere). A closed quote request goes back to sent when the packet is sent to that PEO again. A question from the PEO's underwriter is noted on the quote request and doesn't change its status.
+Where one PEO's quote request stands: sent (the packet went and the PEO hasn't answered; a quote request in this status is waiting), quoted, declined, or closed (withdrawn by an advisor or by the prospect withdrawing that PEO's market authorization, expired, or the employer went elsewhere). A closed quote request goes back to sent when the packet is sent to that PEO again. A question from the PEO's underwriter is a quote request note and doesn't change its status; nor does a message arriving on the thread.
 _Avoid_: status, pipeline stage, quote status
 
 **Also heard**:
@@ -297,4 +313,6 @@ _Avoid_: status, extraction status
 - Each **Certification** of new answers produces one **Advisor Alert** and one **Confirmation**; certifying the same answers again produces neither
 - Every **Submission** appears in the **Advisor Console**
 - A **Submission** has zero or more **Quote requests**, at most one per PEO; each **Quote request** records the version of the **Submission** last sent and holds at most one current **Quote**
+- A **Quote request** has one **Thread** and one reply address at a time; a message to an address that no longer belongs to a quote request goes to the **Holding list**
+- A **Submission** has at most one **Market authorization**, naming zero or more PEOs; a PEO it doesn't name, or no longer names, can't be sent to
 - A **Submission** that is won names the **Quote request** whose **Quote** the employer took; its other open **Quote requests** close, as all of them do when it is lost or archived

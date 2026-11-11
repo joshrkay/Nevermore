@@ -1,0 +1,40 @@
+# The product receives PEO mail before it may send any
+
+Epic M (joshrkay/Nevermore#92) is gated on QP-D1: whether the product may send a submission to a PEO, which counsel has not answered. On 2026-11-11 we decided that receiving doesn't wait. Each quote request gets a reply address and a thread, built on the email provider already in use, while D9 and D44's "the product sends nothing to a PEO" stays true.
+
+## The rule
+
+Built before counsel answers: quote request notes (M-2.5), the reply address (M-3.1), receiving mail (M-3.2), the holding list (M-3.3), the thread on the submission page (M-3.4) and the email telling advisors that mail arrived (M-3.6). Everything that sends to a PEO waits: M-1.1, M-1.2, M-2.1 to M-2.4 and M-3.5.
+
+How mail gets onto a thread until the product sends:
+
+1. The advisor records the send on the quote request, as today. That creates the quote request and its reply address. There is no status for a quote request that hasn't been sent.
+2. The advisor copies the address and sends the packet from their own mail client with the address in CC.
+3. Their message arrives at the address and is stored as sent by hand. The PEO's reply-all arrives there too.
+
+A message to a live address joins its thread whoever sent it, because an underwriter usually answers from another address than the sales contact's. A sender not seen on that thread before is marked as new, and an advisor can move a message to the holding list. A message to a revoked or unknown address goes to the holding list and is never attached by guesswork; one nobody assigns is deleted after 30 days. Any advisor can revoke and reissue an address.
+
+An arriving message changes nothing but the thread: the advisor still records a quote or a decline. It sends one email to the Advisor Alert recipients with the File ID, the PEO's name and a link that needs sign-in, and none of the message's content.
+
+Thread messages and their attachments are kept as long as the intake and deleted with it.
+
+## The provider (QP-D9)
+
+Resend, which already sends. It receives mail for a subdomain and signs an `email.received` webhook. The webhook carries metadata only, so the function fetches the body, headers and attachments with a second call. Inbound mail gets its own subdomain, so the sending domain's mail routing is untouched.
+
+## Considered Options
+
+- **Wait for counsel with the whole epic.** Rejected: receiving sends nothing, and until it exists a PEO's reply sits in one advisor's mailbox where the team can't see it.
+- **Only quote request notes before counsel.** Rejected for the same reason.
+- **Capture only replies, through Reply-To.** Rejected: the thread would hold answers without what they answer, and setting Reply-To by hand is awkward in most mail clients.
+- **BCC the address.** Rejected: the PEO never sees it, so replies miss the thread.
+- **A "preparing" status, so the address exists before a send is recorded.** Rejected: a new status in the queue and the glossary to avoid a quote request reading "sent" for the minute before the email goes.
+- **Hold mail from senders who aren't a known contact.** Rejected: most underwriters' replies would wait on an admin.
+
+## Consequences
+
+- Counsel has not reviewed the product storing PEO mail. If counsel objects, receiving is switched off and the stored mail deleted, so it ships behind one setting.
+- D44 said a quote holds no attachment. Quote documents now arrive on threads as attachments, scanned before anyone can open them (D13, ADR 0002), which changes D44 before counsel answers on sending.
+- Resend now receives mail that can hold an employer's details and a PEO's pricing. `docs/DATA_HANDLING.md`, `src/data/dataPolicy.ts` and the service provider list say so in the same release.
+- The address in CC is visible to the PEO, and anyone it is forwarded to can write to the thread. That is why it can be revoked and why a new sender is marked.
+- Until the product sends, a thread is only as complete as the advisor's habit of copying the address in.
