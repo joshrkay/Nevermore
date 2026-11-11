@@ -111,7 +111,11 @@ describe("buildManuscriptPdf", () => {
   it("prints the owners and officers as a table in the workers' comp section", async () => {
     const { text } = await render();
     const section = text.slice(text.indexOf("8 — Workers' Compensation"), text.indexOf("9 — Operations & HR"));
-    for (const expected of ["Owners and Officers", "Ownership %", "Dana Reyes", "Chief Executive Officer", "60%", "Marcus Rivera"]) expect(section).toContain(expected);
+    for (const expected of ["OWNERS AND OFFICERS", "Ownership %", "Dana Reyes", "Chief Executive Officer", "60%", "Marcus Rivera"]) expect(section).toContain(expected);
+    // K-4.1: the medical plans and their renewal rates print under the benefits answers.
+    const benefits = text.slice(text.indexOf("7 — Current Benefits"), text.indexOf("8 — Workers' Compensation"));
+    // (A table's title is printed in capitals.)
+    for (const expected of ["CURRENT MEDICAL PLANS", "Gold PPO 500", "$612.40", "MEDICAL RENEWAL RATES", "$685.89"]) expect(benefits).toContain(expected);
     const none = await render({ ...DEMO_CHAMBER_DATA, owners_officers: [] });
     expect(none.text).not.toContain("Ownership %");
   });

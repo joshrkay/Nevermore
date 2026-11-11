@@ -59,6 +59,8 @@ describe("intake schema v3", () => {
     "owners_officers",
     // K-3.3 loss history by year
     "loss_history",
+    // K-4.1 current medical plans
+    "medical_plans",
   ];
 
   it("only adds the common questions to v2, changing nothing v2 had", () => {
@@ -294,6 +296,18 @@ describe("validateChamberData", () => {
       "loss_history[0].paid", "loss_history[0].reserved", "loss_history[0].valuation_date", "loss_history[0].no_coverage", "loss_history[0].adjuster",
     ]);
     expect(validateChamberData({ loss_history: Array.from({ length: 6 }, (_, i) => ({ policy_year: 2020 + i })) })).toEqual([{ path: "loss_history", reason: "must have at most 5 entries" }]);
+  });
+
+  it("lists each current medical plan with its rates by tier, renewal rates, employer contribution and enrolment (K-4.1)", () => {
+    expect(validateChamberData({ medical_plans: [
+      { name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: 612.4, rate_ee_sp: 1286.04, rate_ee_ch: 1102.32, rate_fam: 1837.2, renewal_rate_ee: 685.89, employer_contribution: "75% of employee-only", enrolled: 14 },
+      { name: "Silver HMO" },
+    ] })).toEqual([]);
+    expect(validateChamberData({ medical_plans: [{ name: " ", carrier: 7, rate_ee: "612.40", rate_fam: 1_000_001, renewal_rate_fam: -1, employer_contribution: "x".repeat(201), enrolled: 1.5, deductible: 500 }] }).map((i) => i.path)).toEqual([
+      "medical_plans[0].name", "medical_plans[0].carrier", "medical_plans[0].rate_ee", "medical_plans[0].rate_fam", "medical_plans[0].renewal_rate_fam",
+      "medical_plans[0].employer_contribution", "medical_plans[0].enrolled", "medical_plans[0].deductible",
+    ]);
+    expect(validateChamberData({ medical_plans: Array.from({ length: 21 }, () => ({ name: "P" })) })).toEqual([{ path: "medical_plans", reason: "must have at most 20 entries" }]);
   });
 
   it("refuses the legacy roster key, which no writer sends any more", () => {

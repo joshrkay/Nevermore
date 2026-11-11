@@ -584,6 +584,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         <section>
           <SectionHeader>7 — Current Benefits</SectionHeader>
           <Card>{renderRows(d.benefitsRows, d)}</Card>
+          {renderTables(d, "benefits")}
         </section>
 
         <section>

@@ -493,6 +493,9 @@ describe("ManuscriptPage", () => {
     const table = await screen.findByRole("table", { name: "Owners and Officers" });
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Name", "Title", "Ownership %", "Duties", "Covered by workers' comp"]);
     expect(within(table).getAllByRole("row")[1]).toHaveTextContent("Dana ReyesChief Executive Officer60%");
+    // K-4.1: the medical plans sit under the benefits answers.
+    expect(within(screen.getByRole("table", { name: "Current Medical Plans" })).getAllByRole("row")[1]).toHaveTextContent("Gold PPO 500Blue Shield$612.40");
+    expect(screen.getByRole("table", { name: "Medical Renewal Rates" })).toBeInTheDocument();
   });
 
   it("renders the fictional sample only on the demo route, clearly labelled", async () => {

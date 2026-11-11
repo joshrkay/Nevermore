@@ -55,6 +55,7 @@ export const LIMITS = {
   entities: 50,
   ownersOfficers: 20,
   lossYears: 5,
+  medicalPlans: 20,
   percent: 100,
   // An amount with cents, such as a monthly premium rate.
   money: 1_000_000,
@@ -128,6 +129,8 @@ const fein: JsonSchema = { title: FEIN_TITLE, type: ["string", "null"], pattern:
 const naicsCode: JsonSchema = { title: "a six-digit NAICS code, such as 541430", type: ["string", "null"], pattern: "^[0-9]{6}$" };
 const choice = (values: readonly string[]): JsonSchema => ({ type: ["string", "null"], enum: [...values, null] });
 const year: JsonSchema = { type: ["integer", "null"], minimum: LIMITS.yearMin, maximum: LIMITS.yearMax };
+// An amount with cents inside a row, such as a monthly premium rate.
+const money: JsonSchema = { type: "number", minimum: 0, maximum: LIMITS.money };
 const rows = (def: string, maxItems: number): JsonSchema => ({ type: "array", maxItems, items: { $ref: `#/$defs/${def}` } });
 
 // Each answer's rule, section and label, in the order the schema lists them.
@@ -198,6 +201,8 @@ const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: stri
   ["owners_officers", rows("ownerOfficer", LIMITS.ownersOfficers), "workers_comp", "Owners and officers"],
   // K-3.3: five policy years of workers' comp loss history.
   ["loss_history", rows("lossYear", LIMITS.lossYears), "workers_comp", "Loss history"],
+  // K-4.1: each current medical plan, for a side-by-side with what the employer pays now.
+  ["medical_plans", rows("medicalPlan", LIMITS.medicalPlans), "benefits", "Current medical plans"],
 
   ["census", { type: "array", maxItems: LIMITS.census, items: { $ref: "#/$defs/censusRow" } }, "census", "Employee census"],
 ];
@@ -302,6 +307,26 @@ export const INTAKE_SCHEMA_V3: JsonSchema = {
         reserved: { type: "integer", minimum: 0, maximum: LIMITS.dollars },
         valuation_date: { type: "string", maxLength: LIMITS.name },
         no_coverage: { type: "boolean" },
+      },
+    },
+    // One current medical plan (K-4.1): its monthly rate for each coverage tier, the renewal rates when the
+    // employer has them, what the employer contributes and how many are enrolled.
+    medicalPlan: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { type: "string", maxLength: LIMITS.name, pattern: NOT_BLANK },
+        carrier: { type: "string", maxLength: LIMITS.name },
+        rate_ee: money,
+        rate_ee_sp: money,
+        rate_ee_ch: money,
+        rate_fam: money,
+        renewal_rate_ee: money,
+        renewal_rate_ee_sp: money,
+        renewal_rate_ee_ch: money,
+        renewal_rate_fam: money,
+        employer_contribution: { type: "string", maxLength: LIMITS.name },
+        enrolled: { type: "integer", minimum: 0, maximum: LIMITS.count },
       },
     },
     dependent: {

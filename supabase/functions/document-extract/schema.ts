@@ -26,6 +26,7 @@ Field meanings:
 - wc_carrier (the current workers' comp carrier), wc_renewal_date, wc_experience_mod (a decimal such as 0.92), wc_annual_premium (whole dollars)
 Tables are reported as rows (one object per row) in place of a value:
 - loss_history, from a workers' comp loss run or experience rating worksheet: one row per policy year with policy_year (four digits), carrier, premium, experience_mod, claims (the number of claims; 0 when the run shows none), paid, reserved (whole dollars), and valuation_date (the date the run is valued as of). Include only what the document prints for that year.
+- medical_plans, from a carrier invoice, a benefits summary or a renewal letter: one row per plan with name, carrier, rate_ee, rate_ee_sp, rate_ee_ch, rate_fam (the current monthly rate for employee only, employee and spouse, employee and children, and family), renewal_rate_ee, renewal_rate_ee_sp, renewal_rate_ee_ch, renewal_rate_fam (the renewal rates, from a renewal letter), employer_contribution and enrolled (the number of employees enrolled).
 Never report a federal employer identification number (FEIN or EIN) or any other tax ID.
 Use "yes"/"no" for yes-or-no fields. Leave out anything not stated.`;
 

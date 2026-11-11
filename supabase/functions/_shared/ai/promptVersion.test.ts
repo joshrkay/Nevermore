@@ -33,12 +33,12 @@ const KNOWN = {
     8: "97b83efde81d83cf10958b734560d4e583396a21dd782fc37a98f2c0f37a4ea7",
     // 9: intake schema v3 (Epic K): the common questions join the fields, the FEIN and the legal entities are never
     // taken in chat, and Lenore says where the answers entered in the workspace go.
-    9: "519aa1437c8234ecd88cf04547ac578e4721e19b32f0d53f4778697b82abdd7b",
+    9: "5287dc8bc36dc92d201aad21450c80299902cbeea67fda458e58a6a0ee8d94fb",
   } as Record<number, string>,
   "document-extract": {
     1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526",
     // 2: intake schema v3 (Epic K): the common questions a document can state, and never a FEIN.
-    2: "feea9204c1cfa89635a2d14542b545639a3f86f3bef072e5f16967d3bc5e8ed9",
+    2: "f593402fcccd1c64d690781ebed2cccb13201f646ff96dbb5545f71e91e793e5",
   } as Record<number, string>,
 };
 
@@ -74,7 +74,7 @@ const USER_TURN_KNOWN: Record<number, string> = {
   // 8: unchanged from 7 (the rebrand changed only the system prompt and the tool).
   8: "720e99e10e619db28c25b43a612ac07584636a08e8ef91a65bc5763fb264bb5b",
   // 9: the "Entered in the workspace" line (K-1.1), and v3's fields in "Not yet settled".
-  9: "481f89ed0fa1b292380c28e10440b9e771b1aa16f2c0e33cb3cbfa2f6d2da511",
+  9: "6dd0507f54c13af4989cae7c4e2b6874c6aa16c834b6df80db5d036eaf4546cf",
 };
 
 describe("prompt versions", () => {

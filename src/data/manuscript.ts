@@ -313,11 +313,28 @@ export interface ManuscriptTable {
   rows: string[][];
 }
 
+const RENEWAL_RATES = ["renewal_rate_ee", "renewal_rate_ee_sp", "renewal_rate_ee_ch", "renewal_rate_fam"] as const;
+
 /** Each table's title in The Manuscript, and the section it is printed in. */
-const TABLES: { field: RowListField; title: string; section: ReviewSection; order?: (a: Record<string, unknown>, b: Record<string, unknown>) => number }[] = [
+const TABLES: {
+  field: RowListField;
+  title: string;
+  section: ReviewSection;
+  order?: (a: Record<string, unknown>, b: Record<string, unknown>) => number;
+  /** The columns printed, by key, with any heading that differs in print; all of the list's columns when absent. */
+  columns?: readonly (string | readonly [key: string, heading: string])[];
+  /** Printed only when some row holds one of these keys. */
+  onlyWith?: readonly string[];
+}[] = [
   { field: "owners_officers", title: "Owners and Officers", section: "workers_comp" },
   // Newest policy year first, as a loss run reads.
   { field: "loss_history", title: "Loss History by Year", section: "workers_comp", order: (a, b) => Number(b.policy_year ?? 0) - Number(a.policy_year ?? 0) },
+  // Twelve columns don't fit a page, so the renewal rates are a table of their own, printed when any is held.
+  { field: "medical_plans", title: "Current Medical Plans", section: "benefits", columns: ["name", "carrier", "rate_ee", "rate_ee_sp", "rate_ee_ch", "rate_fam", "employer_contribution", "enrolled"] },
+  {
+    field: "medical_plans", title: "Medical Renewal Rates", section: "benefits", onlyWith: RENEWAL_RATES,
+    columns: ["name", ["renewal_rate_ee", "EE"], ["renewal_rate_ee_sp", "EE + spouse"], ["renewal_rate_ee_ch", "EE + child(ren)"], ["renewal_rate_fam", "Family"]],
+  },
 ];
 
 /**
@@ -462,11 +479,19 @@ export function buildManuscript(
       return alsoFrom ? [label, shown, field, alsoFrom] : [label, shown, field];
     });
 
-  const tables: ManuscriptTable[] = TABLES.flatMap(({ field, title, section, order }) => {
+  const tables: ManuscriptTable[] = TABLES.flatMap(({ field, title, section, order, columns: printed, onlyWith }) => {
     const held = data[field] as Record<string, unknown>[];
     const rows = order ? [...held].sort(order) : held;
-    const { columns } = ROW_LISTS[field];
-    return rows.length === 0 ? [] : [{ section, field, title, columns: columns.map((c) => c.label), rows: rows.map((row) => columns.map((c) => formatCell(c, row[c.key]))) }];
+    if (rows.length === 0 || (onlyWith && !rows.some((row) => onlyWith.some((key) => row[key] !== undefined)))) return [];
+    const all = ROW_LISTS[field].columns;
+    const columns = printed
+      ? printed.map((each) => {
+          const [key, heading] = typeof each === "string" ? [each, undefined] : each;
+          const column = all.find((c) => c.key === key)!;
+          return { column, heading: heading ?? column.label };
+        })
+      : all.map((column) => ({ column, heading: column.label }));
+    return [{ section, field, title, columns: columns.map((c) => c.heading), rows: rows.map((row) => columns.map(({ column }) => formatCell(column, row[column.key]))) }];
   });
 
   // Payroll by class code and state is worked out from the census (K-3.2): a table with no field of its own.
@@ -614,6 +639,7 @@ export function buildManuscript(
       ["Renewal Date", orNotProvided(data.renewal_date), "renewal_date"],
       ["Rate History", orNotProvided(data.rate_history), "rate_history"],
       ["Waiting Period", orNotProvided(data.benefits_waiting_period), "benefits_waiting_period"],
+      ["Current Medical Plans", answer("medical_plans"), "medical_plans"],
       ["Ancillary Benefits", data.ancillary_benefits.length ? data.ancillary_benefits.join(", ") : NOT_PROVIDED, "ancillary_benefits"],
       ["Retirement Plan", yesNo(data.has_401k), "has_401k"],
       ["Retirement Plan Type", orNotProvided(data.retirement_type), "retirement_type"],

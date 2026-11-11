@@ -105,7 +105,7 @@ const RowsField = ({ field, rows, provenance, onAction, hint }: RowsFieldProps) 
                             value={row[c.key]}
                             onChange={(e) => setCell(i, c.key, e.target.value)}
                             placeholder={c.placeholder}
-                            inputMode={c.kind === "fein" || c.kind === "year" || c.kind === "count" ? "numeric" : c.kind === "percent" || c.kind === "decimal" || c.kind === "dollars" ? "decimal" : undefined}
+                            inputMode={c.kind === "fein" || c.kind === "year" || c.kind === "count" ? "numeric" : c.kind === "percent" || c.kind === "decimal" || c.kind === "dollars" || c.kind === "money" ? "decimal" : undefined}
                             className="w-full min-w-24 bg-background border border-border rounded px-2 py-1"
                           />
                         )}

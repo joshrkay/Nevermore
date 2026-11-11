@@ -776,6 +776,19 @@
         "rank": 55
       }
     },
+    "medical_plans": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "$ref": "#/$defs/medicalPlan"
+      },
+      "x-intake": {
+        "label": "Current medical plans",
+        "section": "benefits",
+        "required": false,
+        "rank": 56
+      }
+    },
     "census": {
       "type": "array",
       "maxItems": 5000,
@@ -1195,6 +1208,70 @@
         },
         "no_coverage": {
           "type": "boolean"
+        }
+      }
+    },
+    "medicalPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "[^ ]"
+        },
+        "carrier": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "rate_ee": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "rate_ee_sp": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "rate_ee_ch": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "rate_fam": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "renewal_rate_ee": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "renewal_rate_ee_sp": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "renewal_rate_ee_ch": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "renewal_rate_fam": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "employer_contribution": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "enrolled": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
         }
       }
     },

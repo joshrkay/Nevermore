@@ -43,6 +43,24 @@ export interface LossYear {
   no_coverage?: boolean;
 }
 
+/** One current medical plan (K-4.1). Rates are dollars a month, to the cent, for each coverage tier. */
+export interface MedicalPlan {
+  name?: string;
+  carrier?: string;
+  rate_ee?: number;
+  rate_ee_sp?: number;
+  rate_ee_ch?: number;
+  rate_fam?: number;
+  renewal_rate_ee?: number;
+  renewal_rate_ee_sp?: number;
+  renewal_rate_ee_ch?: number;
+  renewal_rate_fam?: number;
+  /** What the employer pays toward the premium, as they put it ("75% of employee-only"). */
+  employer_contribution?: string;
+  /** How many employees are enrolled in the plan. */
+  enrolled?: number;
+}
+
 export interface ChamberData {
   // Company
   company_name: string | null;
@@ -124,6 +142,10 @@ export interface ChamberData {
   /** Up to five policy years of loss history (K-3.3). */
   loss_history: LossYear[];
 
+  // Benefits and payroll tables (intake schema v3)
+  /** Each current medical plan (K-4.1). */
+  medical_plans: MedicalPlan[];
+
   // Employees: the canonical census (see supabase/functions/_shared/census.ts)
   census: CensusEmployee[];
 }
@@ -183,6 +205,7 @@ export const EMPTY_CHAMBER_DATA: ChamberData = {
   peo_renewal_date: null,
   owners_officers: [],
   loss_history: [],
+  medical_plans: [],
   census: [],
 };
 
@@ -248,6 +271,9 @@ export const DEMO_CHAMBER_DATA: ChamberData = {
     { policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, experience_mod: 0.92, claims: 1, paid: 3200, reserved: 0, valuation_date: "2026-09-30" },
     { policy_year: 2024, carrier: "Pinnacle Mutual", premium: 17100, experience_mod: 0.95, claims: 0, paid: 0, reserved: 0, valuation_date: "2026-09-30" },
     { policy_year: 2023, carrier: "Pinnacle Mutual", premium: 16300, experience_mod: 0.97, claims: 0, paid: 0, reserved: 0, valuation_date: "2026-09-30" },
+  ],
+  medical_plans: [
+    { name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: 612.4, rate_ee_sp: 1286.04, rate_ee_ch: 1102.32, rate_fam: 1837.2, renewal_rate_ee: 685.89, renewal_rate_ee_sp: 1440.36, renewal_rate_ee_ch: 1234.6, renewal_rate_fam: 2057.66, employer_contribution: "75% of employee-only", enrolled: 4 },
   ],
   census: [
     { id: "6f1c2a40-0001-4c1e-9a7b-3d5e00000001", first_name: "Sarah", last_name: "Chen", dob: "1988-03-15", work_state: "CA", zip_code: "94107", job_title: "Senior Designer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "FAM", class_code: "8810", dependents: [{ first_name: "Michael", last_name: "Chen", dob: "1985-06-12", relationship: "spouse" }, { first_name: "Emma", last_name: "Chen", dob: "2018-03-22", relationship: "child" }] },

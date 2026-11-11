@@ -76,7 +76,7 @@ describe("voiceContextUpdate (D24)", () => {
   // K-1.1: a FEIN is typed into the workspace, never said aloud.
   it("never asks aloud for an answer entered in the workspace, or calls it settled while it is open: it says where it goes", () => {
     // Every table already holds a row, so the line names only the answers this case is about. Add each new table here.
-    const TABLES = { owners_officers: [{ name: "Dana Reyes" }], loss_history: [{ policy_year: 2025 }] };
+    const TABLES = { owners_officers: [{ name: "Dana Reyes" }], loss_history: [{ policy_year: 2025 }], medical_plans: [{ name: "Gold PPO" }] };
     const open = voiceContextUpdate({ ...EMPTY_CHAMBER_DATA, ...TABLES, naics_code: "541430", multiple_entities: true }, {});
     expect(nextOf(open)).not.toMatch(/FEIN|Legal entities/);
     expect(settledOf(open)).not.toMatch(/\bFEIN\b(?! count)|Legal entities/);
@@ -137,7 +137,7 @@ const UPDATE_KNOWN: Record<number, string> = {
   // 2: unchanged from 1 (the rebrand changed only the prompt).
   2: "2ed1005fe6f2eee96f13e477db8fe187d51d8231337c217d92253ae3f0ac5b17",
   // 3: the "Entered in the workspace" line, and v3's fields among the labels.
-  3: "c2178b11a3081af4267533de5232f22d69702b9e9080789579d90414168ebddf",
+  3: "17fde7fe9a922e329d59d51bd17e7cce25f4979b5b07ff26ea00d226ddd5333a",
 };
 
 describe("Lenore's voice prompt", () => {

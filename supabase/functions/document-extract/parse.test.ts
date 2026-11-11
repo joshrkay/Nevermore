@@ -568,6 +568,13 @@ describe("AI-read fields", () => {
     ]);
   });
 
+  // K-4.1: an invoice or a renewal letter states each plan's rates.
+  it("reads an invoice's medical plans as rows", () => {
+    expect(shapeAiCandidates([{ field: "medical_plans", section: 1, rows: [{ name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: "$612.40", renewal_rate_ee: 685.89, enrolled: 14 }] }], sections)).toEqual([
+      { field: "medical_plans", location: "Page 1", value: [{ name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: "$612.40", renewal_rate_ee: 685.89, enrolled: 14 }] },
+    ]);
+  });
+
   it("proposes no table when a document states no usable row of it", () => {
     expect(shapeAiCandidates([{ field: "loss_history", section: 1, rows: [{}, "2023", { note: " " }] }, { field: "loss_history", section: 1, value: "five years clean" }], sections)).toEqual([]);
   });

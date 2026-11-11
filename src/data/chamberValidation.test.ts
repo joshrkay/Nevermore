@@ -394,6 +394,22 @@ describe("loss history by year (K-3.3)", () => {
   });
 });
 
+describe("current medical plans (K-4.1)", () => {
+  it("reads each plan's monthly rates as invoices print them, to the cent", () => {
+    expect(sanitizeChamberPatch({ medical_plans: [
+      { name: " Gold PPO 500 ", carrier: "Blue Shield", rate_ee: "$612.40", rate_ee_sp: "1,286.04", rate_ee_ch: 1102.321, rate_fam: 1837.2, renewal_rate_ee: "$685.89", employer_contribution: "75% of employee-only", enrolled: "14" },
+      { name: "Silver HMO", rate_ee: "ask the broker", rate_fam: 2_000_000 },
+      { rate_ee: 400 },
+      { deductible: 500 },
+    ] })).toEqual({ medical_plans: [
+      { name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: 612.4, rate_ee_sp: 1286.04, rate_ee_ch: 1102.32, rate_fam: 1837.2, renewal_rate_ee: 685.89, employer_contribution: "75% of employee-only", enrolled: 14 },
+      { name: "Silver HMO" },
+      { rate_ee: 400 },
+    ] });
+    expect(sanitizeChamberPatch({ medical_plans: Array.from({ length: 30 }, (_, i) => ({ name: `Plan ${i}` })) }).medical_plans).toHaveLength(20);
+  });
+});
+
 // A TypeScript copy of the server's rules (public.chamber_data_error), used to prove that whatever
 // the sanitiser emits is accepted. The SQL tests prove the same against the real function.
 function serverRefusal(d: unknown): string | null {
@@ -411,7 +427,7 @@ function serverRefusal(d: unknown): string | null {
   kinds.naics_code = "naics";
   for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"], ["wc_experience_mod", "experience_mod"], ["wc_annual_premium", "dollars"]]) kinds[k] = kind;
   // New in v3: the scalar kinds public.chamber_data_scalar_reason checks, and the lists of rows.
-  for (const [k, kind] of [["fein", "fein"], ["entity_type", "entity_type"], ["year_founded", "year"], ["entities", "rows"], ["owners_officers", "rows"], ["loss_history", "rows"]]) kinds[k] = kind;
+  for (const [k, kind] of [["fein", "fein"], ["entity_type", "entity_type"], ["year_founded", "year"], ["entities", "rows"], ["owners_officers", "rows"], ["loss_history", "rows"], ["medical_plans", "rows"]]) kinds[k] = kind;
   const scalarOk = (kind: string, v: unknown): boolean => {
     switch (kind) {
       case "text": return isText(v, TEXT_MAX);
@@ -423,6 +439,7 @@ function serverRefusal(d: unknown): string | null {
       case "percent": return typeof v === "number" && v >= 0 && v <= 100;
       case "boolean": return typeof v === "boolean";
       case "count": return isCount(v, COUNT_MAX);
+      case "money": return typeof v === "number" && v >= 0 && v <= 1_000_000;
       case "dollars": return isCount(v, DOLLARS_MAX);
       case "experience_mod": return typeof v === "number" && v >= 0 && v <= EXPERIENCE_MOD_MAX;
       default: return false;
@@ -431,6 +448,7 @@ function serverRefusal(d: unknown): string | null {
   const rowLists: Record<string, { max: number; keys: Record<string, string> }> = {
     entities: { max: MAX_ENTITIES, keys: { legal_name: "text", fein: "fein" } },
     loss_history: { max: 5, keys: { policy_year: "year", carrier: "name", premium: "dollars", experience_mod: "experience_mod", claims: "count", paid: "dollars", reserved: "dollars", valuation_date: "name", no_coverage: "boolean" } },
+    medical_plans: { max: 20, keys: { name: "name", carrier: "name", employer_contribution: "name", enrolled: "count", ...Object.fromEntries(["rate_ee", "rate_ee_sp", "rate_ee_ch", "rate_fam", "renewal_rate_ee", "renewal_rate_ee_sp", "renewal_rate_ee_ch", "renewal_rate_fam"].map((k) => [k, "money"])) } },
     owners_officers: { max: 20, keys: { name: "name", title: "name", ownership_percent: "percent", duties: "text", covered: "boolean" } },
   };
   for (const [k, v] of Object.entries(d)) {
@@ -625,6 +643,7 @@ describe("sanitiser output the server must accept", () => {
       { census: [{ first_name: "A", work_state: "ZZ" }] }, { census: [{ first_name: "A", classification: "W2" }] },
       { census: [{ first_name: "A", annual_salary: 1_000_001 }] }, { census: [{ first_name: " " }] }, { extra: 1 }, [],
       { fein: "12-3456789" }, { entity_type: "LLC" }, { year_founded: 1599 }, { entities: [{ dba: "x" }] }, { entities: [{ fein: "1" }] }, { entities: null }, { naics_code: "54143" }, { naics_code: 541430 },
+      { medical_plans: [{ rate_ee: 1_000_001 }] }, { medical_plans: [{ rate_ee: "612.40" }] }, { medical_plans: [{ enrolled: 1.5 }] },
       { loss_history: [{ policy_year: 1599 }] }, { loss_history: [{ premium: 1.5 }] }, { loss_history: [{ claims: "2" }] },
       { owners_officers: [{ ownership_percent: 101 }] }, { owners_officers: [{ covered: "yes" }] }, { owners_officers: [{ name: "x".repeat(201) }] },
     ]) {

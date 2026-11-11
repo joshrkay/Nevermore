@@ -5,7 +5,7 @@ import { formatFein } from "./answerFormat";
 import type { ChamberData } from "./chamberTypes";
 
 /** How a cell is typed and shown. */
-export type RowCellKind = "text" | "fein" | "percent" | "boolean" | "year" | "dollars" | "decimal" | "count";
+export type RowCellKind = "text" | "fein" | "percent" | "boolean" | "year" | "dollars" | "decimal" | "count" | "money";
 
 export interface RowColumn {
   key: string;
@@ -66,6 +66,25 @@ export const ROW_LISTS: Record<RowListField, RowList> = {
     max: 5,
     key: "policy_year",
   },
+  medical_plans: {
+    title: "Current medical plans",
+    columns: [
+      { key: "name", label: "Plan", kind: "text" },
+      { key: "carrier", label: "Carrier", kind: "text" },
+      { key: "rate_ee", label: "EE", kind: "money", placeholder: "per month" },
+      { key: "rate_ee_sp", label: "EE + spouse", kind: "money" },
+      { key: "rate_ee_ch", label: "EE + child(ren)", kind: "money" },
+      { key: "rate_fam", label: "Family", kind: "money" },
+      { key: "renewal_rate_ee", label: "Renewal EE", kind: "money" },
+      { key: "renewal_rate_ee_sp", label: "Renewal EE + spouse", kind: "money" },
+      { key: "renewal_rate_ee_ch", label: "Renewal EE + child(ren)", kind: "money" },
+      { key: "renewal_rate_fam", label: "Renewal family", kind: "money" },
+      { key: "employer_contribution", label: "Employer contribution", kind: "text" },
+      { key: "enrolled", label: "Enrolled", kind: "count" },
+    ],
+    max: 20,
+    key: "name",
+  },
 };
 
 export const isRowListField = (field: string): field is RowListField => field in ROW_LISTS;
@@ -76,6 +95,7 @@ export function formatCell(column: RowColumn, value: unknown): string {
   if (column.kind === "fein" && typeof value === "string") return formatFein(value);
   if (column.kind === "percent") return `${value}%`;
   if (column.kind === "dollars" && typeof value === "number") return `$${value.toLocaleString("en-US")}`;
+  if (column.kind === "money" && typeof value === "number") return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   if (column.kind === "boolean") return value ? "Yes" : "No";
   return String(value);
 }
@@ -84,7 +104,7 @@ export function formatCell(column: RowColumn, value: unknown): string {
 export function cellInput(column: RowColumn, value: unknown): string {
   if (value === null || value === undefined) return "";
   if (column.kind === "boolean") return value ? "yes" : "no";
-  if (column.kind === "percent" || column.kind === "dollars") return String(value);
+  if (column.kind === "percent" || column.kind === "dollars" || column.kind === "money") return String(value);
   return formatCell(column, value);
 }
 

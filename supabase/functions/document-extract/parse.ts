@@ -666,7 +666,7 @@ export const DOCUMENT_FIELDS = [
  * Answers that are tables of rows a document can state (K-3.3 on): the model reports each as `rows`, a list of
  * objects of that table's keys, and the browser keeps what the intake's rules accept of them.
  */
-export const DOCUMENT_ROW_FIELDS = ["loss_history"] as const;
+export const DOCUMENT_ROW_FIELDS = ["loss_history", "medical_plans"] as const;
 
 const BOOLEAN_FIELDS = new Set([
   "virgin_medical", "has_401k", "employer_contributes", "has_handbook", "has_1099", "ca_contractors", "in_peo",

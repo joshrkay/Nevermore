@@ -64,6 +64,7 @@ New in v3. The database checks each key of a row as the kind named here (`public
 | `entities` | 50 | `legal_name` (text), `fein` (FEIN) |
 | `owners_officers` | 20 | `name`, `title` (text of at most 200 characters), `ownership_percent` (a number from 0 to 100), `duties` (text), `covered` (true or false: whether workers' comp covers them) |
 | `loss_history` | 5 | `policy_year` (year), `carrier`, `valuation_date` (text of at most 200 characters), `premium`, `paid`, `reserved` (whole dollars), `experience_mod`, `claims` (a count; 0 is "no claims"), `no_coverage` (true when there was no coverage that year) |
+| `medical_plans` | 20 | `name`, `carrier`, `employer_contribution` (text of at most 200 characters), `rate_ee`, `rate_ee_sp`, `rate_ee_ch`, `rate_fam` and the same four with `renewal_` before them (dollars a month to the cent, from 0 to 1,000,000), `enrolled` (a count) |
 
 Chat extraction adds to a table rather than replacing it (`mergeRows` in `src/data/rowColumns.ts`): a row for someone or something already listed, matched by the list's key column (a person's name, a legal name), fills in what that row lacked, and a new one is added at the end. Only a document the prospect applied changes a value a row already held, and never one the prospect typed. Lenore never asks for a table row by row; each is named in her prompt's "Entered in the workspace" line with its tab.
 
@@ -108,6 +109,7 @@ Writers: **C** chat extraction (`chamber-extract`, which asks for every field bu
 | Benefits | `has_401k` | Retirement plan | boolean | Recommended | 32 | C D E |
 | Benefits | `retirement_type` | Retirement plan type | text | Recommended | 33 | C D |
 | Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 34 | C D |
+| Benefits | `medical_plans` | Current medical plans | list of rows | Recommended | 56 | C E |
 | Payroll | `pay_frequency` | Pay frequency | text (free text, not an enum) | Required | 3 | C D E |
 | Payroll | `payroll_vendor` | Payroll vendor | text | Recommended | 10 | C D E |
 | Payroll | `funding_days` | Funding lead time | count | Recommended | 35 | C E |

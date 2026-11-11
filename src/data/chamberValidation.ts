@@ -35,6 +35,7 @@ export const MAX_ENTITIES = 50;
 export const MAX_OWNERS_OFFICERS = 20;
 export const MONEY_MAX = 1_000_000;
 export const MAX_LOSS_YEARS = 5;
+export const MAX_MEDICAL_PLANS = 20;
 
 const STATE_CODE_SET: ReadonlySet<string> = new Set(US_STATE_CODES);
 
@@ -166,6 +167,12 @@ const yesNo = z.preprocess(
   z.boolean(),
 );
 
+// An amount to the cent, as an invoice prints it ("$612.40"); over the cap is dropped, not capped.
+const money = z.preprocess(
+  numberText(/[\s$,]/g),
+  z.number().finite().nonnegative().transform((n) => Math.round(n * 100) / 100).pipe(z.number().max(MONEY_MAX)),
+);
+
 type FieldSchemas = { [K in keyof ChamberData]: z.ZodType<ChamberData[K], z.ZodTypeDef, unknown> };
 
 const FIELD_SCHEMAS: FieldSchemas = {
@@ -228,6 +235,15 @@ const FIELD_SCHEMAS: FieldSchemas = {
   loss_history: rowsOf<ChamberData["loss_history"][number]>(
     { policy_year: year, carrier: nameText, premium: dollars, experience_mod: experienceMod, claims: count, paid: dollars, reserved: dollars, valuation_date: nameText, no_coverage: yesNo },
     MAX_LOSS_YEARS,
+  ),
+  medical_plans: rowsOf<ChamberData["medical_plans"][number]>(
+    {
+      name: nameText, carrier: nameText,
+      rate_ee: money, rate_ee_sp: money, rate_ee_ch: money, rate_fam: money,
+      renewal_rate_ee: money, renewal_rate_ee_sp: money, renewal_rate_ee_ch: money, renewal_rate_fam: money,
+      employer_contribution: nameText, enrolled: count,
+    },
+    MAX_MEDICAL_PLANS,
   ),
   naics_code: naicsCode.nullable(),
   operations_description: nullableText,

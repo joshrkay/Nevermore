@@ -171,17 +171,19 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
 
     const drawHeader = () => {
       font("bold", size);
-      const h = lh + CELL_PAD_Y * 2;
+      // A heading wraps inside its column, as a cell does, so a long one never runs into its neighbour.
+      const headings = columns.map((col) => wrap(col.header, col.width - CELL_PAD_X * 2));
+      const h = Math.max(...headings.map((lines) => lines.length)) * lh + CELL_PAD_Y * 2;
       ensure(h);
       pdf.setFillColor(...HEAD_FILL);
       pdf.rect(MARGIN, y, CONTENT_W, h, "F");
       setInk(MUTED);
       let x = MARGIN;
-      for (const col of columns) {
+      columns.forEach((col, i) => {
         const tx = col.align === "right" ? x + col.width - CELL_PAD_X : x + CELL_PAD_X;
-        pdf.text(pdfSafe(col.header), tx, y + CELL_PAD_Y + lh * 0.75, { align: col.align === "right" ? "right" : "left" });
+        headings[i].forEach((line, n) => pdf.text(line, tx, y + CELL_PAD_Y + lh * (n + 0.75), { align: col.align === "right" ? "right" : "left" }));
         x += col.width;
-      }
+      });
       y += h;
     };
 
@@ -275,7 +277,11 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   const tablesOf = (section: Manuscript["tables"][number]["section"]) => {
     for (const t of m.tables.filter((each) => each.section === section)) {
       subheading(t.title);
-      table(t.columns.map((header) => ({ header, width: CONTENT_W / t.columns.length })), t.rows);
+      // Each column's share of the width follows its longest heading or cell, within limits, so a column of
+      // figures stays narrow and one of words gets room to wrap between them.
+      const weights = t.columns.map((header, i) => Math.min(22, Math.max(10, header.length, ...t.rows.map((row) => row[i].length))));
+      const total = weights.reduce((sum, w) => sum + w, 0);
+      table(t.columns.map((header, i) => ({ header, width: (CONTENT_W * weights[i]) / total })), t.rows);
     }
   };
 
@@ -362,6 +368,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   // ---------- 7 Benefits ----------
   sectionHeading("7 — Current Benefits");
   keyValues(m.benefitsRows);
+  tablesOf("benefits");
 
   // ---------- 8 Workers' comp ----------
   sectionHeading("8 — Workers' Compensation");

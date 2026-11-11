@@ -38,6 +38,7 @@ CREATE TABLE auth.users (id uuid PRIMARY KEY, raw_user_meta_data jsonb);
 \i supabase/migrations/20261111095000_intake_schema_v3_census_worksite.sql
 \i supabase/migrations/20261111096000_intake_schema_v3_owners_officers.sql
 \i supabase/migrations/20261111097000_intake_schema_v3_loss_history.sql
+\i supabase/migrations/20261111098000_intake_schema_v3_medical_plans.sql
 
 -- ---------- helpers ----------
 -- The path chamber_data_error names for d, or NULL when d is acceptable.
@@ -210,4 +211,21 @@ BEGIN
   PERFORM pg_temp.must_accept(jsonb_build_object('loss_history', (SELECT jsonb_agg(jsonb_build_object('policy_year', 2019 + n)) FROM generate_series(1, 5) n)), 'five years');
   PERFORM pg_temp.must_accept('{"owners_officers":[{"name":"Dana Reyes","ownership_percent":60}]}', 'owners after K-3.3');
   RAISE NOTICE 'intake_schema_v3: loss history cases passed';
+END $$;
+
+-- ---------- K-4.1 current medical plans ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.must_accept('{"medical_plans":[{"name":"Gold PPO 500","carrier":"Blue Shield","rate_ee":612.4,"rate_ee_sp":1286.04,"rate_ee_ch":1102.32,"rate_fam":1837.2,"renewal_rate_ee":685.89,"renewal_rate_ee_sp":1440.36,"renewal_rate_ee_ch":1234.6,"renewal_rate_fam":2057.66,"employer_contribution":"75% of employee-only","enrolled":14},{"name":"Silver HMO"}]}', 'medical plans');
+  PERFORM pg_temp.must_accept('{"medical_plans":[{"rate_ee":0},{"rate_fam":1000000}]}', 'rates at the limits');
+  PERFORM pg_temp.must_refuse('{"medical_plans":[{"rate_ee":1000000.01}]}', 'medical_plans[0].rate_ee', 'a rate over the cap');
+  PERFORM pg_temp.must_refuse('{"medical_plans":[{"rate_ee_sp":-0.01}]}', 'medical_plans[0].rate_ee_sp', 'a negative rate');
+  PERFORM pg_temp.must_refuse('{"medical_plans":[{"renewal_rate_fam":"2057.66"}]}', 'medical_plans[0].renewal_rate_fam', 'a rate sent as text');
+  PERFORM pg_temp.must_refuse('{"medical_plans":[{"enrolled":1.5}]}', 'medical_plans[0].enrolled', 'a fractional enrolment');
+  PERFORM pg_temp.must_refuse('{"medical_plans":[{"name":7}]}', 'medical_plans[0].name', 'a plan name that is not text');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('medical_plans', jsonb_build_array(jsonb_build_object('employer_contribution', repeat('x', 201)))), 'medical_plans[0].employer_contribution', 'a contribution of 201 characters');
+  PERFORM pg_temp.must_refuse('{"medical_plans":[{"deductible":500}]}', 'medical_plans[0].deductible', 'an unknown key on a plan');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('medical_plans', (SELECT jsonb_agg(jsonb_build_object('name', 'P')) FROM generate_series(1, 21))), 'medical_plans', '21 plans');
+  PERFORM pg_temp.must_accept('{"loss_history":[{"policy_year":2025,"premium":18400}]}', 'loss history after K-4.1');
+  RAISE NOTICE 'intake_schema_v3: medical plan cases passed';
 END $$;

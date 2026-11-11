@@ -335,6 +335,27 @@ describe("buildManuscript covers the whole intake", () => {
     expect(m.workersCompRows.find(([, , field]) => field === "loss_history")).toEqual(["Loss History", "3 listed", "loss_history"]);
   });
 
+  // K-4.1: what the employer pays now, for a side-by-side; renewal rates beside current ones when it has them.
+  it("prints the current medical plans in the benefits section, and their renewal rates when any is held", () => {
+    const plans = [
+      { name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: 612.4, rate_ee_sp: 1286.04, rate_ee_ch: 1102.32, rate_fam: 1837.2, employer_contribution: "75% of employee-only", enrolled: 14 },
+      { name: "Silver HMO", carrier: "Blue Shield", rate_ee: 498 },
+    ];
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, medical_plans: plans }, opts);
+    const tables = m.tables.filter((t) => t.field === "medical_plans");
+    expect(tables.map((t) => [t.section, t.title])).toEqual([["benefits", "Current Medical Plans"]]);
+    expect(tables[0].columns).toEqual(["Plan", "Carrier", "EE", "EE + spouse", "EE + child(ren)", "Family", "Employer contribution", "Enrolled"]);
+    expect(tables[0].rows).toEqual([
+      ["Gold PPO 500", "Blue Shield", "$612.40", "$1,286.04", "$1,102.32", "$1,837.20", "75% of employee-only", "14"],
+      ["Silver HMO", "Blue Shield", "$498.00", "—", "—", "—", "—", "—"],
+    ]);
+    const renewing = buildManuscript({ ...DEMO_CHAMBER_DATA, medical_plans: [{ ...plans[0], renewal_rate_ee: 685.89, renewal_rate_fam: 2057.66 }, plans[1]] }, opts);
+    const renewal = renewing.tables.find((t) => t.title === "Medical Renewal Rates")!;
+    expect(renewal.columns).toEqual(["Plan", "EE", "EE + spouse", "EE + child(ren)", "Family"]);
+    expect(renewal.rows).toEqual([["Gold PPO 500", "$685.89", "—", "—", "$2,057.66"], ["Silver HMO", "—", "—", "—", "—"]]);
+    expect(m.benefitsRows.find(([, , field]) => field === "medical_plans")).toEqual(["Current Medical Plans", "2 listed", "medical_plans"]);
+  });
+
   it("shows the workers' comp block and the census class codes", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
     expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toMatchObject({
