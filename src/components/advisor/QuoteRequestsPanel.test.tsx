@@ -250,4 +250,37 @@ describe("QuoteRequestsPanel", () => {
     fireEvent.click(asks[0]);
     expect(onAskProspect).toHaveBeenCalledWith("Can they send loss runs?");
   });
+
+  // K-1.3: the employer says which PEO it is in now, so an advisor isn't left to submit it to its own PEO unawares.
+  describe("a send to the employer's current PEO", () => {
+    const inPeo = { ...EMPTY_CHAMBER_DATA, in_peo: true, current_peo: "Summit Employer Services" };
+    const warning = () => screen.queryByRole("alert");
+    const typeOther = (name: string) => fireEvent.change(screen.getByLabelText("Another PEO"), { target: { value: name } });
+
+    it("warns when the PEO typed is the one the employer is with now, whatever the capitals or spacing", () => {
+      panel({ status: "ready_for_market", requests: [], data: inPeo });
+      expect(warning()).not.toBeInTheDocument();
+      typeOther("  summit employer services ");
+      expect(warning()).toHaveTextContent("This employer says it is with Summit Employer Services now.");
+    });
+
+    it("still lets the advisor record the send: a warning, never a block", async () => {
+      panel({ status: "ready_for_market", requests: [], data: inPeo });
+      typeOther("Summit Employer Services");
+      fireEvent.click(screen.getByRole("button", { name: /Record send/ }));
+      await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "Summit Employer Services", expect.any(String)));
+    });
+
+    it("says nothing for another PEO, or when the employer is in no PEO or hasn't said", () => {
+      panel({ status: "ready_for_market", requests: [], data: inPeo });
+      typeOther("Harbor PEO");
+      expect(warning()).not.toBeInTheDocument();
+    });
+
+    it("says nothing when the employer has left the PEO it named", () => {
+      panel({ status: "ready_for_market", requests: [], data: { ...inPeo, in_peo: false } });
+      typeOther("Summit Employer Services");
+      expect(warning()).not.toBeInTheDocument();
+    });
+  });
 });

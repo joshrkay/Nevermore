@@ -150,6 +150,9 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
   const [answering, setAnswering] = useState<number | null>(null);
   const [asking, setAsking] = useState<number | null>(null);
   const peo = cleanPeoName(catalogPeo || otherPeo);
+  // Whether the PEO being recorded is the one the employer says it is in now, names compared ignoring case and spacing.
+  const sameName = (a: string, b: string) => a.trim().toLowerCase().replace(/\s+/g, " ") === b.trim().toLowerCase().replace(/\s+/g, " ");
+  const isCurrentPeo = data.in_peo !== false && Boolean(peo) && Boolean(data.current_peo) && sameName(peo, data.current_peo ?? "");
 
   const move = async (to: PipelineStatus) => {
     setOffer(null);
@@ -287,6 +290,12 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
               className={inputClass}
             />
           </>
+        )}
+        {/* The employer's own PEO (K-1.3): a warning, never a block, as an eligibility check is. */}
+        {isCurrentPeo && (
+          <p role="alert" className="text-xs text-warning">
+            This employer says it is with {data.current_peo} now. Check before sending its packet to its own PEO.
+          </p>
         )}
         <label htmlFor="quote-sent-on" className="block text-xs text-muted-foreground">Sent on</label>
         <input id="quote-sent-on" type="date" value={sentOn} onChange={(e) => setSentOn(e.target.value)} className={inputClass} />
