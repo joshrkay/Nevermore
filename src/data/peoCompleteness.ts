@@ -98,6 +98,16 @@ function standing(d: ReviewedDocument): DocumentStanding | null {
   return "scanning";
 }
 
+/**
+ * The uploaded files of each kind the profile lists that count as on file for the certified version (certified, its
+ * virus check passed or skipped), in the order given: what a PEO's bundle carries. Never a file blocked or not yet
+ * checked, one added after certifying or one removed since.
+ */
+export function documentsOnFile(documents: readonly ReviewedDocument[], profile: RequirementProfile): ReviewedDocument[] {
+  const listed = new Set<string>(profile.documents.map((d) => d.category));
+  return documents.filter((d) => listed.has(d.certifiedCategory ?? d.category) && standing(d) === "on_file");
+}
+
 /** The documents the profile lists that the certified version doesn't have on file, each with why. */
 function missingDocuments(documents: readonly ReviewedDocument[], profile: RequirementProfile): NeededItem[] {
   return profile.documents.flatMap((wanted): NeededItem[] => {
@@ -148,7 +158,7 @@ export function groupByCompleteness(intake: CertifiedIntake, documents: readonly
 const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
 /** How many answers, questions and documents, such as "3 answers, 1 of its own questions and 1 document"; empty for none. */
-function counted(items: readonly NeededItem[]): string {
+export function counted(items: readonly NeededItem[]): string {
   const answers = items.filter((i) => i.kind === "answer").length;
   const questions = items.filter((i) => i.kind === "question").length;
   const documents = items.filter((i) => i.kind === "document").length;

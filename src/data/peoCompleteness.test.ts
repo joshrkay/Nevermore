@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ReviewedDocument } from "./advisor";
 import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import type { PeoRecord } from "./peoCatalog";
-import { groupByCompleteness, informationRequestDraft, lastCertifiedVersion, missingLine, peoCompleteness, type CertifiedIntake, type PeoCompleteness } from "./peoCompleteness";
+import { documentsOnFile, groupByCompleteness, informationRequestDraft, lastCertifiedVersion, missingLine, peoCompleteness, type CertifiedIntake, type PeoCompleteness } from "./peoCompleteness";
 import type { RequirementProfile } from "./peoProfiles";
 
 const profile = (over: Partial<RequirementProfile> = {}): RequirementProfile => ({
@@ -293,3 +293,33 @@ describe("lastCertifiedVersion: what each PEO's list is built from", () => {
   });
 });
 
+describe("documentsOnFile: the uploaded files a PEO's profile lists that count as on file", () => {
+  it("gives every file of each kind the profile lists that is on file, never one blocked, unscanned, added after certifying or removed", () => {
+    const p = profile({ documents: [
+      { category: "workers_comp_loss_runs", description: "Three years of loss runs" },
+      { category: "payroll_report", description: "Last quarter's payroll register" },
+    ] });
+    const onFile = [
+      doc({ id: "clean" }),
+      doc({ id: "skipped", file_name: "loss-runs-2024.pdf", scan_verdict: "skipped" }),
+      // Re-categorised since: it counts as the kind it was certified as.
+      doc({ id: "recategorised", file_name: "register.xlsx", category: "other", certifiedCategory: "payroll_report" }),
+    ];
+    const notOnFile = [
+      doc({ id: "infected", scan_verdict: "infected" }),
+      doc({ id: "pending", scan_verdict: "pending" }),
+      doc({ id: "scan-failed", scan_verdict: "failed" }),
+      doc({ id: "no-verdict", scan_verdict: undefined }),
+      doc({ id: "added", certification: "added" }),
+      doc({ id: "removed", certification: "removed" }),
+      doc({ id: "uploading", status: "uploading" }),
+      // On file, but not a kind this profile lists.
+      doc({ id: "census", category: "employee_census" }),
+    ];
+    expect(documentsOnFile([...notOnFile, ...onFile], p).map((d) => d.id)).toEqual(["clean", "skipped", "recategorised"]);
+  });
+
+  it("gives none for a profile that lists no documents", () => {
+    expect(documentsOnFile([doc()], profile())).toEqual([]);
+  });
+});

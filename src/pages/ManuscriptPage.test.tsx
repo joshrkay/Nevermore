@@ -3,7 +3,8 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { rowProvenance } from "@/data/manuscript";
-import { blobText } from "@/test/blob";
+import { blobBytes, blobText } from "@/test/blob";
+import { unzip } from "@/test/zip";
 
 let row: Record<string, unknown> | null = null;
 // What the page asked the database for: the column it filtered on and the value.
@@ -781,6 +782,39 @@ describe("ManuscriptPage", () => {
     expect(error.mock.calls.map((c) => c[0])).toEqual([refused, refused, refused]);
     expect(downloadBlob).not.toHaveBeenCalled();
     error.mockRestore();
+  });
+
+  it("offers the prospect their chosen PEO's bundle: what they could download one by one, never documents, and no send to record", async () => {
+    downloadBlob.mockClear();
+    createSignedUrl.mockClear();
+    const base = certified();
+    row = certified({ submission: { ...base.submission, chamber_data: { ...signed, census: [{ id: "1", first_name: "Signed", last_name: "Person", work_state: "CA" }] } } });
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 4, documents: [{ category: "workers_comp_loss_runs", description: "Three years of loss runs" }] } }];
+    renderAt("/manuscript/EAA-2026-0042");
+    const bundle = await screen.findByRole("region", { name: "Everything for Justworks in one file" });
+    expect(bundle).toHaveTextContent("Includes: packet, census in our layout, workers' comp application. Not included: the documents Justworks asks for (Workers' comp loss runs). Add your own copies when you send it.");
+    fireEvent.click(within(bundle).getByRole("button", { name: "Download bundle" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-justworks-v2.zip"));
+    const blob = downloadBlob.mock.calls.find((c) => c[1] === "EAA-2026-0042-justworks-v2.zip")![0] as Blob;
+    const names = unzip(await blobBytes(blob)).map((p) => p.name);
+    expect(names[0]).toBe("CONTENTS.txt");
+    expect(names).toContain("EAA-2026-0042-census-v2.csv");
+    expect(names.filter((n) => n.startsWith("documents/"))).toEqual([]);
+    expect(createSignedUrl).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Sent this to/)).not.toBeInTheDocument();
+  });
+
+  it("offers no bundle while the certification is withdrawn, or when no PEO was chosen", async () => {
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 4 } }];
+    row = certified({ status: "in_progress" });
+    const { unmount } = renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download bundle" })).not.toBeInTheDocument();
+    unmount();
+    row = certified({ submission: { ...certified().submission, peo: undefined } });
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download bundle" })).not.toBeInTheDocument();
   });
 
   it("offers no answers as JSON while the certification is withdrawn", async () => {

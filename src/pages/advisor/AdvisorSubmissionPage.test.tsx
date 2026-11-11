@@ -7,7 +7,8 @@ import type { Supplement } from "@/data/peoSupplement";
 import { workersCompFilename, type WorkersCompApplication } from "@/data/workersCompApplication";
 import type { SubmissionDetail } from "@/lib/advisorApi";
 import { toast } from "sonner";
-import { blobText } from "@/test/blob";
+import { blobBytes, blobText } from "@/test/blob";
+import { unzip } from "@/test/zip";
 
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
@@ -27,6 +28,7 @@ const api = {
   recordQuoteSend: vi.fn(),
   updateQuoteRequest: vi.fn(),
   noteUnderwriterQuestion: vi.fn(),
+  documentFile: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
 // The intake as the database holds it at a download's click: what the page loaded, unless a test changes it since.
@@ -1209,9 +1211,8 @@ describe("AdvisorSubmissionPage", () => {
       expect(within(justworks).getByRole("list", { name: "Eligibility checks for Justworks" })).toHaveTextContent("Doesn't meet · Minimum headcount: Justworks takes groups of 20 or more employees; this employer has 12.checked 2 Nov 2026");
       expect(justworks).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
       expect(justworks).toHaveTextContent("Justworks's profile was last checked 2 Mar 2026 and may be out of date.");
-      // Complete has no main action yet: the bundle comes later, and nothing is offered that does nothing. Its files
-      // are downloads, not actions on it.
-      expect(within(justworks).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Download Workers' compensation application data"]);
+      // Complete: its one main action is the bundle, beside its files.
+      expect(within(justworks).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Download Workers' compensation application data", "Download bundle"]);
     });
 
     it("turns what a PEO still needs into a draft in Ask the prospect, for the advisor to edit and send: the click sends nothing", async () => {
@@ -1383,6 +1384,124 @@ describe("AdvisorSubmissionPage", () => {
       expect(within(trinet).queryByRole("button", { name: "Draft information request" })).not.toBeInTheDocument();
       // It says why instead, in the words Ask the prospect uses.
       expect(trinet).toHaveTextContent("The prospect can't be asked for it now: a submission at Won can't move to Information requested.");
+    });
+
+    describe("the bundle", () => {
+      const lossRuns = { id: "d7", file_name: "loss-runs.pdf", file_size: "80 KB", category: "workers_comp_loss_runs", status: "uploaded", storage_path: "prospect-1/loss-runs.pdf", created_at: "2026-10-01T00:00:00Z", scan_verdict: "clean", certification: "certified" as const };
+      const blocked = { ...lossRuns, id: "d8", file_name: "loss-runs-2024.pdf", storage_path: "prospect-1/loss-runs-2024.pdf", scan_verdict: "infected" };
+      const zipOf = async () => {
+        await waitFor(() => expect(downloadBlob).toHaveBeenCalled());
+        const [blob, name] = downloadBlob.mock.calls.at(-1) as [Blob, string];
+        return { name, parts: unzip(await blobBytes(blob)).map((p) => ({ name: p.name, text: new TextDecoder().decode(p.data as Uint8Array) })) };
+      };
+
+      beforeEach(() => {
+        api.documentFile.mockImplementation(async (d: { storage_path: string }) => new Blob([`BYTES OF ${d.storage_path}`]));
+      });
+
+      it("offers a complete PEO's bundle as its main action, saying what is in it, and a PEO missing something the bundle anyway", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", documents: [lossRuns] }));
+        renderPage();
+        const needs = await panel();
+        const justworks = (await within(needs).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        expect(within(justworks).getByRole("button", { name: "Download bundle" })).toHaveClass("bg-primary");
+        expect(justworks).toHaveTextContent("Includes: packet, workers' comp application. No census file: the certified version holds none. Nothing it requires is missing.");
+        const trinet = within(needs).getByRole("heading", { name: "TriNet" }).closest("article")!;
+        expect(within(trinet).getByRole("button", { name: "Draft information request" })).toHaveClass("bg-primary");
+        expect(within(trinet).getByRole("button", { name: "Download bundle anyway" })).not.toHaveClass("bg-primary");
+        expect(trinet).toHaveTextContent("Includes: packet, workers' comp application, 1 document. No census file: the certified version holds none. Missing: 1 answer.");
+      });
+
+      it("builds the bundle from the certified copy, not answers changed since, with only documents on file, and names what is missing", async () => {
+        const changed = { ...signedData, company_name: "Edited Later Inc" };
+        api.loadSubmission.mockResolvedValue(detail({
+          pipelineStatus: "ready_for_market", certified: false, intakeStatus: "in_progress", data: changed, currentVersion: 1,
+          submission: { ...detail().submission!, version: 1 },
+          signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: detail().provenance, documents: [blocked], extraAnswers: {} },
+        }));
+        renderPage();
+        const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+        fireEvent.click(within(trinet).getByRole("button", { name: "Download bundle anyway" }));
+        const { name, parts } = await zipOf();
+        expect(name).toBe("EAA-2026-S1-trinet-v1.zip");
+        const contents = parts[0].text;
+        expect(contents).toContain("Signed Co · File ID EAA-2026-S1 · certified version 1");
+        expect(contents).toContain("The prospect has changed answers since certifying. These files are from version 1.");
+        expect(contents).toContain("Documents TriNet requires that aren't in this bundle:\r\n- Workers' comp loss runs (Three years of loss runs): blocked by the virus check");
+        expect(parts.map((p) => p.text).join("\n")).not.toContain("Edited Later Inc");
+        // The blocked file is never fetched, let alone included.
+        expect(api.documentFile).not.toHaveBeenCalled();
+        expect(parts.map((p) => p.name).filter((n) => n.startsWith("documents/"))).toEqual([]);
+      });
+
+      it("carries the documents on file, fetched as the page opens them, and holds no advisor notes or reviews", async () => {
+        api.loadSubmission.mockResolvedValue(detail({
+          pipelineStatus: "ready_for_market", documents: [lossRuns, blocked],
+          notes: [{ id: 1, session_id: "s1", body: "Call the CFO on Monday", author_id: "a1", author_email: "adv@example.com", created_at: "2026-10-02T00:00:00Z" }] as unknown as SubmissionDetail["notes"],
+          reviews: { employee_count: { review_state: "follow_up", has_correction: true, corrected_value: 14, reason: "Payroll register says 14" } } as unknown as SubmissionDetail["reviews"],
+        }));
+        renderPage();
+        const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+        fireEvent.click(within(trinet).getByRole("button", { name: "Download bundle anyway" }));
+        const { parts } = await zipOf();
+        expect(api.documentFile).toHaveBeenCalledTimes(1);
+        expect(api.documentFile).toHaveBeenCalledWith(expect.objectContaining({ storage_path: "prospect-1/loss-runs.pdf" }));
+        expect(parts.find((p) => p.name === "documents/loss-runs.pdf")?.text).toBe("BYTES OF prospect-1/loss-runs.pdf");
+        expect(parts.map((p) => p.text).join("\n")).not.toMatch(/Call the CFO|Payroll register says/);
+      });
+
+      it("asks whether it was sent once downloaded, and records the send only when the advisor says so", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));
+        api.recordQuoteSend.mockResolvedValue(undefined);
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        expect(within(justworks).queryByText("Sent this to Justworks?")).not.toBeInTheDocument();
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        await zipOf();
+        // A download is never a send by itself.
+        expect(await within(justworks).findByText("Sent this to Justworks?")).toBeInTheDocument();
+        expect(api.recordQuoteSend).not.toHaveBeenCalled();
+        fireEvent.click(within(justworks).getByRole("button", { name: "Not yet" }));
+        expect(within(justworks).queryByText("Sent this to Justworks?")).not.toBeInTheDocument();
+        expect(api.recordQuoteSend).not.toHaveBeenCalled();
+
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        fireEvent.click(await within(justworks).findByRole("button", { name: "Record it" }));
+        await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "Justworks", "2026-11-11"));
+        expect(api.recordQuoteSend).toHaveBeenCalledTimes(1);
+        await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+      });
+
+      it("records no send once the certification has changed since the bundle was made", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market" }));
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        const record = await within(justworks).findByRole("button", { name: "Record it" });
+        intakeNow = { status: "submitted", data_sha256: "d".repeat(64), version: "2" };
+        fireEvent.click(record);
+        await waitFor(() => expect(toast.error).toHaveBeenCalledWith("This intake changed since you opened the page. Reload to get the certified version."));
+        expect(api.recordQuoteSend).not.toHaveBeenCalled();
+      });
+
+      it("says what the send function refuses instead of hiding it", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market" }));
+        api.recordQuoteSend.mockRejectedValue(new Error("Move this submission to Ready for market first. It is submitted"));
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        fireEvent.click(await within(justworks).findByRole("button", { name: "Record it" }));
+        expect(await within(justworks).findByRole("alert")).toHaveTextContent("Move this submission to Ready for market first. It is submitted");
+      });
+
+      it("offers no Record it where the stage allows no send, and says what would", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "submitted" }));
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        expect(await within(justworks).findByText("To record a send to Justworks, move this submission to Ready for market first.")).toBeInTheDocument();
+        expect(within(justworks).queryByRole("button", { name: "Record it" })).not.toBeInTheDocument();
+      });
     });
   });
 });

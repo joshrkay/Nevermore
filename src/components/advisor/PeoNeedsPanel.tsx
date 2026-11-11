@@ -14,7 +14,11 @@ import {
 } from "@/data/peoCompleteness";
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import { formatDay } from "@/data/quoteRequests";
-import type { QuoteRequestRow } from "@/lib/advisorApi";
+import { documentFile, type QuoteRequestRow } from "@/lib/advisorApi";
+import type { PipelineStatus } from "@/data/advisor";
+import type { ChamberSubmission } from "@/data/manuscript";
+import BundleDownload from "@/components/BundleDownload";
+import RecordSendPrompt from "./RecordSendPrompt";
 import type { BuiltFrom } from "@/lib/certificationCheck";
 import { supplementFor } from "@/data/peoSupplement";
 import CensusDownload from "@/components/CensusDownload";
@@ -40,6 +44,13 @@ interface PeoNeedsPanelProps {
   companyName: string;
   /** The certification the files were built from, checked again at each download's click. */
   builtFrom: BuiltFrom;
+  /** The certification on record, which each PEO's packet is stamped with. */
+  submission: ChamberSubmission | null;
+  sessionId: string;
+  /** The pipeline stage, which decides whether a send can be recorded after a bundle is downloaded. */
+  stage: PipelineStatus;
+  /** After a send is recorded from a bundle's prompt. */
+  onSendRecorded: () => void;
 }
 
 const chip = "inline-flex items-center text-xs px-2 py-0.5 rounded-full whitespace-nowrap";
@@ -66,7 +77,7 @@ const MissingBox = ({ title, items, quiet }: { title: string; items: readonly Ne
   );
 };
 
-const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, fileId, companyName, builtFrom }: {
+const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, fileId, companyName, builtFrom, bundle }: {
   entry: PeoCompletenessEntry;
   certified: CertifiedVersion;
   chosen: boolean;
@@ -77,9 +88,12 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
   fileId: string;
   companyName: string;
   builtFrom: BuiltFrom;
+  bundle: Pick<PeoNeedsPanelProps, "catalog" | "submission" | "sessionId" | "stage" | "onSendRecorded">;
 }) => {
   const id = useId();
   const [open, setOpen] = useState(false);
+  // Right after a bundle is saved: did it go to the PEO?
+  const [asking, setAsking] = useState(false);
   const { peo, completeness: c } = entry;
   const stale = staleProfileWarning(peo, today);
   const anything = c.toQuote.length + c.beforeSigning.length > 0;
@@ -134,14 +148,42 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
       {!c.complete && askBlocked !== null && (
         <p className="text-sm text-muted-foreground">{`The prospect can't be asked for it now: ${askBlocked.charAt(0).toLowerCase()}${askBlocked.slice(1)}`}</p>
       )}
-      {!c.complete && askBlocked === null && (
-        <button
-          type="button"
-          onClick={() => onDraft(informationRequestDraft(c, peo.id))}
-          className="min-h-11 w-full sm:w-auto px-4 inline-flex items-center justify-center gap-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          Draft information request
-        </button>
+      {/* The main action: complete, its bundle; something missing, a draft request, with the bundle anyway beside it. */}
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-start gap-3">
+        {!c.complete && askBlocked === null && (
+          <button
+            type="button"
+            onClick={() => onDraft(informationRequestDraft(c, peo.id))}
+            className="min-h-11 w-full sm:w-auto px-4 inline-flex items-center justify-center gap-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            Draft information request
+          </button>
+        )}
+        {bundle.submission && (
+          <div className="flex-1 min-w-0">
+            <BundleDownload
+              source={{
+                audience: "advisor", peo, catalog: bundle.catalog, intake: certified.intake, documents: certified.documents,
+                submission: bundle.submission, fileId, version: certified.version, changedSince: certified.changedSince, today,
+              }}
+              builtFrom={builtFrom}
+              label={c.complete ? "Download bundle" : "Download bundle anyway"}
+              primary={c.complete}
+              fetchDocument={documentFile}
+              onSaved={() => setAsking(true)}
+            />
+          </div>
+        )}
+      </div>
+      {asking && (
+        <RecordSendPrompt
+          sessionId={bundle.sessionId}
+          peo={peo.name}
+          stage={bundle.stage}
+          builtFrom={builtFrom}
+          onClose={() => setAsking(false)}
+          onRecorded={() => { setAsking(false); bundle.onSendRecorded(); }}
+        />
       )}
     </article>
   );
@@ -153,8 +195,9 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
  * apart, what it needs only before signing, with its eligibility checks as warnings beside it, and drafts an
  * information request from what is missing. Nothing here ranks a PEO or sends anything.
  */
-const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, askBlocked, onDraft, fileId, companyName, builtFrom }: PeoNeedsPanelProps) => {
+const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, askBlocked, onDraft, fileId, companyName, builtFrom, submission, sessionId, stage, onSendRecorded }: PeoNeedsPanelProps) => {
   const today = localToday();
+  const bundle = { catalog, submission, sessionId, stage, onSendRecorded };
   const body = () => {
     if (!certified) return <p className="text-sm text-muted-foreground">Available once the prospect has certified their intake: each PEO's list is built from what they certified.</p>;
     if (certified.cantTell) {
@@ -190,7 +233,7 @@ const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chos
           <ul aria-label={title} className="space-y-3">
             {entries.map((e) => (
               <li key={e.peo.name}>
-                <PeoCard entry={e} certified={certified} chosen={isChosen(e.peo)} sent={sentTo(e.peo)} askBlocked={askBlocked} onDraft={onDraft} today={today} fileId={fileId} companyName={companyName} builtFrom={builtFrom} />
+                <PeoCard entry={e} certified={certified} chosen={isChosen(e.peo)} sent={sentTo(e.peo)} askBlocked={askBlocked} onDraft={onDraft} today={today} fileId={fileId} companyName={companyName} builtFrom={builtFrom} bundle={bundle} />
               </li>
             ))}
           </ul>

@@ -188,6 +188,10 @@ const Detail = ({
             onDraft={(draft) => askProspect(draft.message, draft.fields, draft.questions)}
             fileId={detail.fileId ?? "No File ID"}
             builtFrom={builtFrom}
+            submission={sub}
+            sessionId={detail.id}
+            stage={detail.pipelineStatus}
+            onSendRecorded={reload}
             companyName={certifiedVersion?.intake.data.company_name ?? "Company not provided"}
           />
           <FieldReviewPanel

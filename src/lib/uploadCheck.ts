@@ -12,7 +12,8 @@ export type { SniffResult } from "../../supabase/functions/_shared/fileSignature
 /** Matches documents_limit_per_session in 20261029090000_document_ingestion.sql. */
 export const MAX_DOCUMENTS_PER_INTAKE = 25;
 
-function readBytes(blob: Blob): Promise<Uint8Array> {
+/** A Blob's bytes, where the browser's Blob has no arrayBuffer() too. */
+export function readBytes(blob: Blob): Promise<Uint8Array> {
   if (typeof blob.arrayBuffer === "function") return blob.arrayBuffer().then((b) => new Uint8Array(b));
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

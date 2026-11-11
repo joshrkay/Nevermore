@@ -559,6 +559,18 @@ async function signedUrl(bucket: "documents" | "manuscripts", path: string, down
 export const documentUrl = (doc: Pick<UploadedDocument, "storage_path" | "file_name">) =>
   signedUrl("documents", doc.storage_path, doc.file_name);
 
+/**
+ * One uploaded document's file, read on the caller's own storage rights: the same policies that sign its links, so a
+ * file blocked or not yet through its virus check is refused. For a PEO's bundle, which carries the file itself. A
+ * refusal says only that the file couldn't be opened, never its path.
+ */
+export async function documentFile(doc: Pick<UploadedDocument, "storage_path">): Promise<Blob> {
+  const { data, error } = await supabase.storage.from("documents").download(doc.storage_path);
+  if (error && isEndedSession(error)) fail(error, "Couldn't open that file.");
+  if (error || !data) throw new AdvisorApiError("Couldn't open that file.");
+  return data;
+}
+
 export const manuscriptUrl = (v: ManuscriptVersion, filename: string) => signedUrl("manuscripts", v.storage_path, filename);
 
 /**

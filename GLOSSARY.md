@@ -80,6 +80,10 @@ _Avoid_: ACORD 130, ACORD form, workers' comp form
 The certified answers as one JSON file for a PEO's or advisor's own system: the File ID, the certified version, the certification, and the answers, census included, which validate against the published intake schema, each with its field status as certified. Offered beside the packet to the prospect and to advisors, only while the certification stands. Never a PEO's **Extra question** answers, and never anything an advisor wrote. Its stored data hash identifies the stored record the certification covers; it can't be recomputed from the answers in the file, which are laid out in the schema's order.
 _Avoid_: export, data dump, API file
 
+**Bundle**:
+One .zip of what a PEO needs, built from one certified version and named for the File ID, the PEO and the version: the packet prepared for that PEO, its census file (in its **PEO census layout**, its **PEO template workbook** filled, or the **Census template**'s layout), the **Workers' comp application data**, its **Supplement** when it asks **Extra questions**, and, for an advisor, the uploaded documents its **Requirement profile** lists that are on file (certified and through the virus check; never a file blocked or not yet checked). A contents page, CONTENTS.txt and the zip's comment, leads with what is missing (each required document not on file and why, any file that couldn't be included, the answers it needs to quote), then names every file, the blanks and the certified version. Offered to advisors on each PEO's card in "What each PEO still needs" and to the prospect for their chosen PEO, whose bundle holds only what they can download one by one, never the documents. Never another PEO's answers, and nothing an advisor wrote. Downloading one is never a send: the advisor is asked, and records it only if they say so.
+_Avoid_: package, zip, submission package
+
 **Census**:
 The list of the employer's employees, one row per person, with the facts underwriting needs about each.
 _Avoid_: roster, employee list, employees

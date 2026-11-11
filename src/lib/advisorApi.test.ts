@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 const upload = vi.fn();
 const remove = vi.fn();
+const download = vi.fn();
+const buckets: string[] = [];
 /** Rows each table returns to the detail page's queries, which are all select/eq/order chains. */
 const tables: Record<string, unknown[]> = {};
 /** Each `.in(column, values)` filter a query asked for, by table. */
@@ -31,7 +33,10 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: (table: string) => query(table),
     rpc: (...args: unknown[]) => rpc(...args),
-    storage: { from: () => ({ upload: (...a: unknown[]) => upload(...a), remove: (...a: unknown[]) => remove(...a) }) },
+    storage: { from: (bucket: string) => {
+      buckets.push(bucket);
+      return { upload: (...a: unknown[]) => upload(...a), remove: (...a: unknown[]) => remove(...a), download: (...a: unknown[]) => download(...a) };
+    } },
   },
 }));
 
@@ -57,6 +62,7 @@ const {
   publishPeoDraft,
   savePeoDraft,
   recheckPeoProfile,
+  documentFile,
 } = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
@@ -602,5 +608,26 @@ describe("the PEOs page's reads and writes", () => {
     const err = await caught(() => savePeoDraft(1, { neededToQuote: [], neededBeforeSigning: [], censusLayout: null, documents: [], extraQuestions: [], contacts: [],
       rules: { minHeadcount: null, statesServed: null, excludedIndustries: null, excludedClassCodes: null, minEnrolmentPercent: null }, sources: {} }, { draftRevision: null, inUseVersion: null }));
     expect(err.message).toBe("A census file is CSV or xlsx");
+  });
+});
+
+describe("documentFile: an uploaded document's file, for a bundle", () => {
+  beforeEach(() => {
+    download.mockReset();
+    buckets.length = 0;
+  });
+
+  it("reads the file from the documents bucket by its path, on the caller's own storage rights", async () => {
+    const file = new Blob(["%PDF"]);
+    download.mockResolvedValue({ data: file, error: null });
+    expect(await documentFile({ storage_path: "u1/loss-runs.pdf" })).toBe(file);
+    expect(buckets).toEqual(["documents"]);
+    expect(download).toHaveBeenCalledWith("u1/loss-runs.pdf");
+  });
+
+  it("fails with a fixed message, never the path, when storage refuses it (a blocked or unscanned file)", async () => {
+    download.mockResolvedValue({ data: null, error: { message: "Object not found: u1/loss-runs.pdf" } });
+    const err = await caught(() => documentFile({ storage_path: "u1/loss-runs.pdf" }));
+    expect(err.message).toBe("Couldn't open that file.");
   });
 });
