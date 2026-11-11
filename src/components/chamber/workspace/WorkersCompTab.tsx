@@ -1,5 +1,6 @@
 import type { ChamberData } from "@/data/chamberTypes";
 import { formatAnswer } from "@/data/answerFormat";
+import { CLASS_CODE_PAYROLL_COLUMNS, classCodePayroll, classCodePayrollCells } from "@/data/classCodePayroll";
 import { isEmpty, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import ProvenanceField from "./ProvenanceField";
 import RowsField from "./RowsField";
@@ -24,6 +25,7 @@ const ANSWERS: { label: string; field: FieldKey }[] = [
  */
 const WorkersCompTab = ({ data, isDemo, provenance = {}, onAction }: WorkersCompTabProps) => {
   const act = isDemo ? undefined : onAction;
+  const payroll = classCodePayroll(data.census);
   return (
     <div className="p-4 space-y-6">
       <h3 className="font-display text-lg font-bold">Workers' Comp</h3>
@@ -49,6 +51,34 @@ const WorkersCompTab = ({ data, isDemo, provenance = {}, onAction }: WorkersComp
         onAction={act}
         hint="List each owner and officer, with their share of the business and whether workers' comp covers them."
       />
+
+      {/* Worked out from the census, never typed (K-3.2). */}
+      <section className="space-y-2">
+        <h4 className="text-[10px] uppercase tracking-wider text-muted-foreground">Payroll by class code and state</h4>
+        {payroll.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Upload a census and this table fills itself in: payroll and headcount for each workers' comp class code in each state.</p>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table aria-label="Payroll by class code and state" className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {CLASS_CODE_PAYROLL_COLUMNS.map((c) => <th key={c} className="font-normal pr-3 pb-1">{c}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {payroll.map((row) => (
+                    <tr key={`${row.state}|${row.classCode}`} className="border-t border-border/50">
+                      {classCodePayrollCells(row).map((cell, i) => <td key={i} className="pr-3 py-1 font-medium">{cell}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[10px] text-muted-foreground">Worked out from your census, for employees only. It changes only when your census does.</p>
+          </>
+        )}
+      </section>
     </div>
   );
 };

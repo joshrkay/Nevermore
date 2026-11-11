@@ -41,6 +41,7 @@ describe("openItems", () => {
       ["census.hire_date", "Missing from the census"],
       ["census.cobra", "Missing from the census"],
       ["census.home_state", "Missing from the census"],
+      ["census.class_code", "Missing from the census"],
       ["current_carrier", "Conflicting answers"],
       ["hq_state", "Incomplete"],
       ["renewal_date", "Prospect to provide"],
@@ -71,7 +72,7 @@ describe("openItems", () => {
 
   // K-2.1: a census without the columns PEOs ask for is accepted; each missing column is one item, not one per person.
   describe("columns the census lacks", () => {
-    const person = (extra: Record<string, unknown> = {}) => ({ id: "e", first_name: "Ada", last_name: "L", work_state: "NY", compensation_type: "salary", employment_type: "full_time", classification: "w2", ...extra });
+    const person = (extra: Record<string, unknown> = {}) => ({ id: "e", first_name: "Ada", last_name: "L", work_state: "NY", compensation_type: "salary", employment_type: "full_time", classification: "w2", class_code: "8810", ...extra });
     const withCensus = (census: Record<string, unknown>[]) => parseChamberData({ company_name: "Acme", states: ["NY"], pay_frequency: "weekly", census: census.map((e, i) => ({ ...e, id: `e${i}` })) });
     const columns = (data: ChamberData) => openItems(data, {}).filter((i) => i.reason === "Missing from the census");
 
@@ -102,6 +103,14 @@ describe("openItems", () => {
       const full = { gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NY" };
       expect(columns(withCensus([person(full)]))).toEqual([]);
       expect(openItems(parseChamberData({ company_name: "Acme", states: ["NY"], pay_frequency: "weekly" }), {}).map((i) => i.key)).toEqual(["census"]);
+    });
+
+    // K-3.2: people with no class code are one open item, however many there are; contractors need none.
+    it("lists the class code once when employees lack it, counting employees only", () => {
+      const full = { gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NY" };
+      const items = columns(withCensus([person(full), person({ ...full, first_name: "Bo", class_code: undefined }), person({ ...full, first_name: "Cy", classification: "1099", class_code: undefined })]));
+      expect(items.map(describeOpenItem)).toEqual(["Workers' comp class code — missing from the census for 1 of 2 employees"]);
+      expect(columns(withCensus([person(full), person({ ...full, first_name: "Cy", classification: "1099", class_code: undefined })]))).toEqual([]);
     });
 
     it("never holds an intake back from certifying", () => {

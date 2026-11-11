@@ -35,6 +35,8 @@ export const CENSUS_COLUMN_ITEMS = [
   ["hire_date", "Hire date"],
   ["cobra", "COBRA status"],
   ["home_state", "Home state"],
+  // What the payroll-by-class-code table needs (K-3.2). Asked of employees only: a contractor has no class code.
+  ["class_code", "Workers' comp class code"],
 ] as const satisfies readonly (readonly [keyof ChamberData["census"][number], string])[];
 export type CensusColumnItem = (typeof CENSUS_COLUMN_ITEMS)[number][0];
 
@@ -81,10 +83,12 @@ export const RECOMMENDED_ITEMS: readonly ReadinessItem[] = [
  * with how many people lack it. A census without a column is still accepted, and none of these ever blocks
  * certification. Empty when there is no census: the census itself is then the item.
  */
-export function missingCensusColumns(data: ChamberData): { key: string; column: CensusColumnItem; label: string; missing: number; of: number }[] {
+export function missingCensusColumns(data: ChamberData): { key: string; column: CensusColumnItem; label: string; missing: number; of: number; who: "people" | "employees" }[] {
   return CENSUS_COLUMN_ITEMS.flatMap(([column, label]) => {
-    const missing = data.census.filter((e) => e[column] === undefined).length;
-    return missing > 0 ? [{ key: `census.${column}`, column, label, missing, of: data.census.length }] : [];
+    const who = column === "class_code" ? ("employees" as const) : ("people" as const);
+    const asked = who === "employees" ? data.census.filter((e) => e.classification !== "1099") : data.census;
+    const missing = asked.filter((e) => e[column] === undefined).length;
+    return missing > 0 ? [{ key: `census.${column}`, column, label, missing, of: asked.length, who }] : [];
   });
 }
 

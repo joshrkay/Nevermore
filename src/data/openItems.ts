@@ -26,8 +26,8 @@ export interface OpenItem {
   field?: FieldKey;
   label: string;
   reason: OpenItemReason;
-  /** For a census column: how many people lack it, of how many. */
-  people?: { missing: number; of: number };
+  /** For a census column: how many people (or employees, for a class code) lack it, of how many. */
+  people?: { missing: number; of: number; who: "people" | "employees" };
 }
 
 /**
@@ -55,7 +55,7 @@ export function openItems(data: ChamberData, provenance: ProvenanceMap, verified
     listed.add(item.key);
   }
   for (const column of missingCensusColumns(data)) {
-    items.push({ key: column.key, label: column.label, reason: "Missing from the census", people: { missing: column.missing, of: column.of } });
+    items.push({ key: column.key, label: column.label, reason: "Missing from the census", people: { missing: column.missing, of: column.of, who: column.who } });
     listed.add(column.key);
   }
   for (const { field, label, reason } of fieldOpenItems(provenance, verified)) {
@@ -68,4 +68,4 @@ export function openItems(data: ChamberData, provenance: ProvenanceMap, verified
 
 /** The open items as The Manuscript lists them: "Company legal name — not provided". */
 export const describeOpenItem = (item: OpenItem): string =>
-  `${item.label} — ${item.reason.toLowerCase()}${item.people ? ` for ${item.people.missing} of ${item.people.of} ${item.people.of === 1 ? "person" : "people"}` : ""}`;
+  `${item.label} — ${item.reason.toLowerCase()}${item.people ? ` for ${item.people.missing} of ${item.people.of} ${item.people.who === "employees" ? (item.people.of === 1 ? "employee" : "employees") : item.people.of === 1 ? "person" : "people"}` : ""}`;

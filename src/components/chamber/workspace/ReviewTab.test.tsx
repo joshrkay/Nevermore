@@ -381,7 +381,7 @@ describe("ReviewTab section status and nav (C-1)", () => {
 // K-2.1: a census without the columns PEOs ask for is accepted; Review says which are missing, once each.
 describe("ReviewTab: columns the census lacks", () => {
   const complete = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY"], pay_frequency: "bi-weekly" };
-  const person = { id: "e1", first_name: "Ada", last_name: "L", work_state: "NY", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const };
+  const person = { id: "e1", first_name: "Ada", last_name: "L", work_state: "NY", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const, class_code: "8810" };
 
   it("lists each missing column under Recommended with how many people lack it, and still lets the prospect certify", () => {
     render(<ReviewTab data={{ ...complete, census: [{ ...person, gender: "F" }, { ...person, id: "e2", first_name: "Bo" }] }} provenance={{}} onProceed={() => {}} />);
@@ -393,6 +393,13 @@ describe("ReviewTab: columns the census lacks", () => {
       "Home state on the census Missing for 2 of 2 people. Add it to your census file and upload the file again. You can certify without it.",
     ]);
     expect(screen.getByRole("status")).toHaveTextContent("Every required answer is here");
+  });
+
+  // K-3.2: a class code is asked of employees, not contractors.
+  it("counts employees, not everyone, for a missing class code", () => {
+    const full = { ...person, gender: "F" as const, hire_date: "2019-04-01", cobra: false, home_state: "NY" };
+    render(<ReviewTab data={{ ...complete, census: [{ ...full, class_code: undefined }, { ...full, id: "e2", first_name: "Bo", classification: "1099" as const, class_code: undefined }] }} provenance={{}} onProceed={() => {}} />);
+    expect(screen.getByText(/Missing for 1 of 1 employee\./)).toBeInTheDocument();
   });
 
   it("lists none once every person has them", () => {

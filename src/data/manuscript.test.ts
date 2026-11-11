@@ -287,8 +287,9 @@ describe("buildManuscript covers the whole intake", () => {
   it("lists each owner and officer in the workers' comp section, as a table", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
     expect(m.workersCompRows.find(([, , field]) => field === "owners_officers")).toEqual(["Owners and Officers", "2 listed", "owners_officers"]);
-    expect(m.tables.filter((t) => t.section === "workers_comp").map((t) => t.title)).toEqual(["Owners and Officers"]);
-    const [table] = m.tables;
+    const owners = (built: typeof m) => built.tables.filter((t) => t.field === "owners_officers");
+    expect(owners(m).map((t) => [t.section, t.title])).toEqual([["workers_comp", "Owners and Officers"]]);
+    const [table] = owners(m);
     expect(table.columns).toEqual(["Name", "Title", "Ownership %", "Duties", "Covered by workers' comp"]);
     expect(table.rows).toEqual([
       ["Dana Reyes", "Chief Executive Officer", "60%", "Runs the studio and client accounts; office work only", "No"],
@@ -296,9 +297,24 @@ describe("buildManuscript covers the whole intake", () => {
     ]);
     const none = buildManuscript({ ...DEMO_CHAMBER_DATA, owners_officers: [] }, opts);
     expect(none.workersCompRows.find(([, , field]) => field === "owners_officers")?.[1]).toBe("Not provided");
-    expect(none.tables).toEqual([]);
+    expect(owners(none)).toEqual([]);
     const one = buildManuscript({ ...DEMO_CHAMBER_DATA, owners_officers: [{ name: "Dana Reyes" }] }, opts);
-    expect(one.tables[0].rows).toEqual([["Dana Reyes", "—", "—", "—", "—"]]);
+    expect(owners(one)[0].rows).toEqual([["Dana Reyes", "—", "—", "—", "—"]]);
+  });
+
+  // K-3.2: worked out from the census; nobody types it.
+  it("prints payroll and headcount by class code and state in the workers' comp section", () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
+    const table = m.tables.find((t) => t.title === "Payroll by Class Code and State")!;
+    expect(table.section).toBe("workers_comp");
+    expect(table.columns).toEqual(["State", "Class code", "Full time", "Part time", "Annual payroll"]);
+    // The demo census: four W-2 employees in California and one in Texas, all 8810; the contractor is left out.
+    expect(table.rows).toEqual([["CA", "8810", "4", "0", "$438,000"], ["TX", "8810", "1", "0", "$78,000"]]);
+    const uncoded = buildManuscript({ ...DEMO_CHAMBER_DATA, census: DEMO_CHAMBER_DATA.census.map((e) => ({ ...e, class_code: undefined })) }, opts);
+    expect(uncoded.tables.find((t) => t.title === "Payroll by Class Code and State")!.rows).toEqual([
+      ["CA", "No class code yet", "4", "0", "$438,000"], ["TX", "No class code yet", "1", "0", "$78,000"],
+    ]);
+    expect(buildManuscript({ ...DEMO_CHAMBER_DATA, census: [] }, opts).tables.map((t) => t.title)).not.toContain("Payroll by Class Code and State");
   });
 
   it("shows the workers' comp block and the census class codes", () => {

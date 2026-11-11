@@ -1,5 +1,6 @@
 import type { ChamberData } from "./chamberTypes";
 import { isDraftConsent } from "./certification";
+import { CLASS_CODE_PAYROLL_COLUMNS, classCodePayroll, classCodePayrollCells } from "./classCodePayroll";
 import { classificationLabel, COVERAGE_TIER_LABELS, isAssumed, isW2, type CensusEmployee } from "./census";
 import { categoryInfo } from "./documentCategories";
 import { documentStatusInfo } from "./documentStatus";
@@ -464,6 +465,12 @@ export function buildManuscript(
     const { columns } = ROW_LISTS[field];
     return rows.length === 0 ? [] : [{ section, field, title, columns: columns.map((c) => c.label), rows: rows.map((row) => columns.map((c) => formatCell(c, row[c.key]))) }];
   });
+
+  // Payroll by class code and state is worked out from the census (K-3.2): a table with no field of its own.
+  const payroll = classCodePayroll(data.census);
+  if (payroll.length > 0) {
+    tables.push({ section: "workers_comp", field: "census", title: "Payroll by Class Code and State", columns: [...CLASS_CODE_PAYROLL_COLUMNS], rows: payroll.map(classCodePayrollCells) });
+  }
 
   // An answer as formatAnswer writes it, or "Not provided".
   const answer = (field: FieldKey): string => (isEmpty(data[field]) ? NOT_PROVIDED : formatAnswer(field, data[field]));

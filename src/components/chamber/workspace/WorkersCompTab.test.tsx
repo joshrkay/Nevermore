@@ -67,4 +67,22 @@ describe("the Workers' comp tab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit Owners and officers" }));
     expect(screen.queryByRole("button", { name: "Add a row" })).not.toBeInTheDocument();
   });
+
+  // K-3.2
+  it("shows payroll by class code and state, worked out from the census, with nothing to edit", () => {
+    const emp = (over: object) => ({ id: Math.random().toString(36).slice(2), first_name: "A", last_name: "B", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const, ...over });
+    render(<Harness data={{ census: [emp({ class_code: "8810", annual_salary: 100000 }), emp({ annual_salary: 40000, employment_type: "part_time" })] }} show={() => null} />);
+    const table = screen.getByRole("table", { name: "Payroll by class code and state" });
+    expect(within(table).getAllByRole("row").map((r) => r.textContent)).toEqual([
+      "StateClass codeFull timePart timeAnnual payroll", "CA881010$100,000", "CANo class code yet01$40,000",
+    ]);
+    expect(screen.queryByRole("button", { name: /Payroll by class code/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/It changes only when your census does/)).toBeInTheDocument();
+  });
+
+  it("says the table comes from the census while there is none", () => {
+    render(<Harness show={() => null} />);
+    expect(screen.queryByRole("table", { name: "Payroll by class code and state" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Upload a census and this table fills itself in/)).toBeInTheDocument();
+  });
 });

@@ -242,7 +242,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
             <p key={column.key}>
               <span className="font-medium">{column.label} on the census</span>{" "}
               <span className="text-muted-foreground text-xs">
-                Missing for {column.missing} of {column.of} {column.of === 1 ? "person" : "people"}. {CENSUS_COLUMN_HINT}
+                Missing for {column.missing} of {column.of} {column.who === "employees" ? (column.of === 1 ? "employee" : "employees") : column.of === 1 ? "person" : "people"}. {CENSUS_COLUMN_HINT}
               </span>
             </p>
           ))}
