@@ -812,7 +812,7 @@ describe("AdvisorSubmissionPage", () => {
   it("shows what the prospect signed beside their current answers when they changed them afterwards", async () => {
     const current = { ...signedData, employee_count: 14, pay_frequency: "Weekly" };
     api.loadSubmission.mockResolvedValue(
-      detail({ certified: false, intakeStatus: "in_progress", data: current, signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z" } }),
+      detail({ certified: false, intakeStatus: "in_progress", data: current, signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [] } }),
     );
     renderPage();
     const section = (await screen.findByRole("heading", { name: "Changed since signing" })).closest("section")!;
@@ -954,5 +954,190 @@ describe("AdvisorSubmissionPage", () => {
     expect(message.value).toBe("Can they send last year's loss runs?");
     expect(message.value).not.toMatch(/TriNet/);
     expect(api.requestInformation).not.toHaveBeenCalled();
+  });
+
+  describe("What each PEO still needs", () => {
+    const sourced = { kind: "document", name: "Broker guide", checked_on: "2026-11-02" };
+    const catalog = () => [
+      { id: 1, name: "ADP TotalSource", listed: false, profile: { version: 1, needed_to_quote: ["hris_system"], sources: { answers: sourced } } },
+      { id: 2, name: "Insperity", profile: null },
+      { id: 3, name: "Justworks", profile: { version: 2, needed_to_quote: ["company_name", "pay_frequency"], sources: { answers: sourced } } },
+      { id: 4, name: "Oasis", profile: null },
+      { id: 5, name: "TriNet", profile: {
+        version: 4, needed_to_quote: ["company_name", "hris_system"], needed_before_signing: ["payroll_vendor"],
+        documents: [{ category: "workers_comp_loss_runs", description: "Three years of loss runs" }],
+        min_headcount: 20, sources: { answers: sourced, documents: sourced, min_headcount: sourced },
+      } },
+    ];
+    const panel = async () => screen.findByRole("region", { name: "What each PEO still needs" });
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(2026, 10, 11, 12));
+      peoCatalogRows = catalog();
+    });
+
+    it("groups every listed PEO with a profile by whether the certified version is complete for it, alphabetical and never ranked", async () => {
+      renderPage();
+      const needs = await panel();
+      await within(needs).findByRole("heading", { name: "Complete · 1" });
+      expect(within(needs).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Complete · 1", "Something missing · 1", "No profile yet · 2"]);
+      expect(needs).toHaveTextContent("Alphabetical in each group. Nothing here is a ranking.");
+      expect(needs).toHaveTextContent("From version 1, the prospect's last certification.");
+      const complete = within(needs).getByRole("list", { name: "Complete" });
+      expect(within(complete).getAllByRole("heading", { level: 4 }).map((h) => h.textContent)).toEqual(["Justworks"]);
+      expect(complete).toHaveTextContent("Everything it needs to quote is on file");
+      const missing = within(needs).getByRole("list", { name: "Something missing" });
+      expect(within(missing).getAllByRole("heading", { level: 4 }).map((h) => h.textContent)).toEqual(["TriNet"]);
+      expect(missing).toHaveTextContent("1 answer and 1 document missing · 1 answer needed only before signing");
+      // PEOs with no profile are one sentence, and a PEO no longer listed isn't there at all.
+      expect(needs).toHaveTextContent("No profile yet for Insperity and Oasis, so there's nothing to check against.");
+      expect(needs).not.toHaveTextContent("ADP TotalSource");
+      expect(needs).not.toHaveTextContent(/ready|best|rank(ed|ing) \d/i);
+    });
+
+    it("opens what a PEO still needs in place: what it needs to quote, and apart what it needs only before signing", async () => {
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      const show = within(trinet).getByRole("button", { name: "Show what's missing" });
+      expect(show).toHaveAttribute("aria-expanded", "false");
+      expect(within(trinet).queryByRole("region", { name: "Needed to quote" })).not.toBeInTheDocument();
+      fireEvent.click(show);
+      expect(within(trinet).getByRole("button", { name: "Hide what's missing" })).toHaveAttribute("aria-expanded", "true");
+      expect(within(within(trinet).getByRole("region", { name: "Needed to quote" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+        "HRIS system: not provided",
+        "Workers' comp loss runs: Three years of loss runs (not uploaded)",
+      ]);
+      expect(within(within(trinet).getByRole("region", { name: "Needed only before signing" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+        "Payroll vendor: not provided",
+      ]);
+    });
+
+    it("marks the prospect's choice and each PEO the packet was sent to, with when and which version", async () => {
+      api.loadSubmission.mockResolvedValue(detail({
+        submission: { ...detail().submission!, peo: "trinet" },
+        // Named as typed when the send was recorded.
+        quoteRequests: [{ id: 7, session_id: "s1", peo_name: "justworks", status: "sent", sent_version: 1, sent_on: "2026-11-03",
+          quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
+      }));
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      const justworks = within(needs).getByRole("heading", { name: "Justworks" }).closest("article")!;
+      expect(within(trinet).getByText("Prospect's choice")).toBeInTheDocument();
+      expect(within(trinet).queryByText(/^Sent /)).not.toBeInTheDocument();
+      expect(within(justworks).getByText("Sent Nov 3, 2026 · version 1")).toBeInTheDocument();
+      expect(within(justworks).queryByText("Prospect's choice")).not.toBeInTheDocument();
+    });
+
+    it("names the prospect's choice among the PEOs with no profile", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ submission: { ...detail().submission!, peo: "Oasis" } }));
+      renderPage();
+      const needs = await panel();
+      await within(needs).findByRole("heading", { name: "Complete · 1" });
+      expect(needs).toHaveTextContent("No profile yet for Insperity and Oasis (the prospect's choice), so there's nothing to check against.");
+      expect(needs).not.toHaveTextContent("isn't on the PEO list");
+    });
+
+    it("says a PEO named in the prospect's own words isn't on the list", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ submission: { ...detail().submission!, peo: "Acme PEO" } }));
+      renderPage();
+      const needs = await panel();
+      await within(needs).findByRole("heading", { name: "Complete · 1" });
+      expect(needs).toHaveTextContent("The prospect named Acme PEO, which isn't on the PEO list, so it has no profile.");
+    });
+
+    it("shows each PEO's eligibility checks under it as warnings that never move it, and when its profile is out of date", async () => {
+      // TriNet's minimum is 20 and this employer has 12: a warning, while Justworks stays complete.
+      peoCatalogRows = catalog().map((p) => (p.name === "Justworks" ? { ...p, profile: { ...p.profile!, min_headcount: 20, sources: { answers: { ...sourced, checked_on: "2026-03-02" }, min_headcount: sourced } } } : p));
+      renderPage();
+      const needs = await panel();
+      const complete = await within(needs).findByRole("list", { name: "Complete" });
+      const justworks = within(complete).getByRole("heading", { name: "Justworks" }).closest("article")!;
+      expect(within(justworks).getByRole("list", { name: "Eligibility checks for Justworks" })).toHaveTextContent("Doesn't meet · Minimum headcount: Justworks takes groups of 20 or more employees; this employer has 12.checked 2 Nov 2026");
+      expect(justworks).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
+      expect(justworks).toHaveTextContent("Justworks's profile was last checked 2 Mar 2026 and may be out of date.");
+      // Complete has no main action yet: the bundle comes later, and nothing is offered that does nothing.
+      expect(within(justworks).queryByRole("button")).not.toBeInTheDocument();
+    });
+
+    it("turns what a PEO still needs into a draft in Ask the prospect, for the advisor to edit and send: the click sends nothing", async () => {
+      api.requestInformation.mockResolvedValue(undefined);
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
+      const message = screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+      expect(message.value).toBe([
+        "We need a few more things from you to get a quote.",
+        "",
+        "Please upload these on the Upload tab of your intake:",
+        "- Workers' comp loss runs: Three years of loss runs",
+        "",
+        "Please also answer or confirm the answers this request is about.",
+      ].join("\n"));
+      expect(message.value).not.toMatch(/TriNet/);
+      expect(within(screen.getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HRIS system", "Payroll vendor"]);
+      expect(api.requestInformation).not.toHaveBeenCalled();
+      fireEvent.change(message, { target: { value: `${message.value}\nThanks!` } });
+      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", expect.stringMatching(/Thanks!$/), ["hris_system", "payroll_vendor"]));
+    });
+
+    it("starts the draft from the PEO's missing answers alone, not the fields marked Needs follow-up", async () => {
+      const followUp = { field: "hq_state", review_state: "follow_up", has_correction: false, corrected_value: null, reason: null, updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z" };
+      api.loadSubmission.mockResolvedValue(detail({ reviews: { hq_state: followUp } as SubmissionDetail["reviews"] }));
+      renderPage();
+      const answers = () => within(screen.getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent);
+      await screen.findByRole("list", { name: "Answers the request is about" });
+      expect(answers()).toEqual(["HQ state"]);
+      const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
+      expect(answers()).toEqual(["HRIS system", "Payroll vendor"]);
+    });
+
+    it("lists what is missing as of the version certified when the prospect has changed answers since", async () => {
+      // Certified as version 3 without an HRIS system; the prospect has since added one, which withdrew it.
+      const now = { ...signedData, hris_system: "Rippling" };
+      api.loadSubmission.mockResolvedValue(detail({
+        certified: false, intakeStatus: "in_progress", data: now, currentVersion: 3,
+        signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [] },
+      }));
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      expect(needs).toHaveTextContent("The prospect has changed answers since certifying. What's listed here is as of version 3.");
+      fireEvent.click(within(trinet).getByRole("button", { name: "Show what's missing" }));
+      expect(within(trinet).getByRole("region", { name: "Needed to quote" })).toHaveTextContent("HRIS system: not provided");
+    });
+
+    it("waits for the prospect's first certification", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", signed: null, submission: null, currentVersion: null }));
+      renderPage();
+      expect(await panel()).toHaveTextContent("Available once the prospect has certified their intake: each PEO's list is built from what they certified.");
+    });
+
+    it("says while the PEOs' profiles load, and when they couldn't be loaded, and loads them again on request", async () => {
+      let fail!: (e: Error) => void;
+      peoCatalogReads.push(() => new Promise((_, reject) => { fail = reject; }));
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      renderPage();
+      const needs = await panel();
+      expect(needs).toHaveTextContent("Loading the PEOs' profiles to see what each still needs.");
+      await act(async () => fail(new Error("offline")));
+      expect(await within(needs).findByRole("alert")).toHaveTextContent("We couldn't load the PEOs' profiles, so we can't say what each still needs.");
+      fireEvent.click(within(needs).getByRole("button", { name: "Load the profiles again" }));
+      expect(await within(needs).findByRole("heading", { name: "Complete · 1" })).toBeInTheDocument();
+    });
+
+    it("offers no draft when the prospect can't be asked at this stage, and still lists what each PEO needs", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "won" }));
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      expect(trinet).toHaveTextContent("1 answer and 1 document missing");
+      expect(within(trinet).queryByRole("button", { name: "Draft information request" })).not.toBeInTheDocument();
+    });
   });
 });

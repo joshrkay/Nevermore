@@ -25,6 +25,11 @@ interface InformationRequestPanelProps {
   requests: readonly InformationRequestRow[];
   /** A message to start from, such as an underwriter's question the advisor chose to ask. */
   initialMessage?: string;
+  /**
+   * The answers to start from instead of the fields marked Needs follow-up, such as a PEO's missing answers
+   * (PeoNeedsPanel). The advisor can still add or remove any.
+   */
+  initialFields?: readonly FieldKey[];
   onChanged: () => void;
 }
 
@@ -52,14 +57,16 @@ const InformationRequestPanel = ({
   reviews,
   requests,
   initialMessage,
+  initialFields,
   onChanged,
 }: InformationRequestPanelProps) => {
   const followUps = useMemo(() => followUpFieldsOf(reviews), [reviews]);
   const [message, setMessage] = useState(initialMessage ?? "");
   // The selection follows the follow-up marks as the advisor changes them on this page, keeping what the advisor
-  // chose here: a follow-up they took out stays out, and an answer they added stays in.
-  const [removed, setRemoved] = useState<ReadonlySet<FieldKey>>(new Set());
-  const [added, setAdded] = useState<FieldKey[]>([]);
+  // chose here: a follow-up they took out stays out, and an answer they added stays in. A draft that starts from its
+  // own answers starts with only those.
+  const [removed, setRemoved] = useState<ReadonlySet<FieldKey>>(() => new Set(initialFields ? followUps.filter((f) => !initialFields.includes(f)) : []));
+  const [added, setAdded] = useState<FieldKey[]>(() => [...(initialFields ?? [])]);
   const fields = useMemo(
     () => [...followUps.filter((f) => !removed.has(f)), ...added.filter((f) => !followUps.includes(f))],
     [followUps, removed, added],

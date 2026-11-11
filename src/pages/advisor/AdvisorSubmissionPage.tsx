@@ -10,18 +10,21 @@ import InformationRequestPanel from "@/components/advisor/InformationRequestPane
 import ManuscriptPanel from "@/components/advisor/ManuscriptPanel";
 import NeedsActionPanel from "@/components/advisor/NeedsActionPanel";
 import NotesPanel from "@/components/advisor/NotesPanel";
+import PeoNeedsPanel from "@/components/advisor/PeoNeedsPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
 import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
-import { changesSinceSigning, NEEDS_ACTION_LABEL } from "@/data/advisor";
+import { canRequestInformation, changesSinceSigning, NEEDS_ACTION_LABEL, verifiedFieldsOf } from "@/data/advisor";
 import { censusPay, isW2 } from "@/data/census";
 import { coverageTier, NOT_PROVIDED } from "@/data/manuscript";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
 import { describeSource } from "@/data/referralPartners";
 import { listedPeos } from "@/data/peoCatalog";
+import { lastCertifiedVersion } from "@/data/peoCompleteness";
+import type { FieldKey } from "@/data/provenance";
 import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
 
 type Load =
@@ -120,11 +123,14 @@ const Detail = ({
   const peoCatalog = usePeoCatalog();
   // An underwriter's question the advisor chose to ask the prospect: it opens Ask the prospect with the text in it,
   // as a fresh draft each time, for the advisor to edit and send as their own request.
-  const [askDraft, setAskDraft] = useState<{ message: string; n: number } | null>(null);
-  const askProspect = (message: string) => {
-    setAskDraft((current) => ({ message, n: (current?.n ?? 0) + 1 }));
+  // What a PEO still needs comes the same way, with the answers the request names.
+  const [askDraft, setAskDraft] = useState<{ message: string; fields?: FieldKey[]; n: number } | null>(null);
+  const askProspect = (message: string, fields?: FieldKey[]) => {
+    setAskDraft((current) => ({ message, fields, n: (current?.n ?? 0) + 1 }));
     window.requestAnimationFrame?.(() => document.getElementById("information-request-message")?.focus());
   };
+  // What each PEO still needs is built from the last certified version, never from answers given since.
+  const certifiedVersion = lastCertifiedVersion(detail, verifiedFieldsOf(detail.reviews));
   const sub = detail.submission;
   return (
     <>
@@ -162,6 +168,16 @@ const Detail = ({
       <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
         <div className="space-y-6 min-w-0">
           {detail.signed && <ChangedSinceSigning detail={detail} signed={detail.signed} />}
+          <PeoNeedsPanel
+            certified={certifiedVersion}
+            catalog={peoCatalog.peos}
+            catalogStatus={peoCatalog.status}
+            onRetryCatalog={peoCatalog.retry}
+            chosenPeo={sub?.peo ?? null}
+            quoteRequests={detail.quoteRequests}
+            canAsk={canRequestInformation(detail.pipelineStatus, !!sub?.signer_name, detail.intakeStatus)}
+            onDraft={(draft) => askProspect(draft.message, draft.fields)}
+          />
           <FieldReviewPanel
             sessionId={detail.id}
             data={detail.data}
@@ -192,6 +208,7 @@ const Detail = ({
             // panel follows the marks as they change.
             key={`${detail.informationRequests.length}-${askDraft?.n ?? 0}`}
             initialMessage={askDraft?.message}
+            initialFields={askDraft?.fields}
             sessionId={detail.id}
             prospectUserId={detail.userId}
             status={detail.pipelineStatus}

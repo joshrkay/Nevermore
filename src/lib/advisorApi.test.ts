@@ -402,8 +402,21 @@ describe("loadSubmission", () => {
     }];
     const d = (await loadSubmission("s1"))!;
     expect(d.certified).toBe(false);
-    expect(d.signed).toEqual({ data: expect.objectContaining({ company_name: "Signed Co", employee_count: 12 }), signedAt: "2026-10-02T00:00:05Z" });
+    expect(d.signed).toEqual({ data: expect.objectContaining({ company_name: "Signed Co", employee_count: 12 }), signedAt: "2026-10-02T00:00:05Z", provenance: {}, documents: expect.any(Array) });
     expect(d.fileId).toBe("EAA-1");
+  });
+
+  it("keeps what a withdrawn certification covered: its field status and its documents, set against the documents now", async () => {
+    tables.chamber_sessions = [row({ status: "in_progress" })];
+    const inferred = { status: "inferred", source: { kind: "prospect_edit" }, updated_at: "2026-10-02T00:00:00Z" };
+    tables.chamber_certifications = [{
+      file_id: "EAA-1", version: 2, signed_at: "2026-10-02T00:00:00Z", recorded_at: "2026-10-02T00:00:05Z", chamber_data: certifiedData,
+      field_provenance: { employee_count: inferred }, documents: [doc("d1"), doc("d2")],
+    }];
+    const d = (await loadSubmission("s1"))!;
+    expect(d.signed?.provenance).toEqual({ employee_count: inferred });
+    expect(d.signed?.documents.map((x) => [x.id, x.certification])).toEqual([["d3", "added"], ["d2", "removed"], ["d1", "certified"]]);
+    expect(d.currentVersion).toBe(2);
   });
 
   it("shows nothing as signed for an intake that was never certified, whatever its submission says", async () => {

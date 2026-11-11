@@ -229,7 +229,14 @@ export interface SubmissionDetail {
    * What the prospect signed, when they changed their answers afterwards and so withdrew the
    * certification: `data` is then their current answers, and this the copy they certified.
    */
-  signed: { data: ChamberData; signedAt: string } | null;
+  signed: {
+    data: ChamberData;
+    signedAt: string;
+    /** The field status and sources as certified. */
+    provenance: ProvenanceMap;
+    /** The documents set against the list that certification covered (reconcileDocuments). */
+    documents: ReviewedDocument[];
+  } | null;
   submission: ChamberSubmission | null;
   /** The conversation as certified when the intake is certified (otherwise as it stands). */
   transcript: ChatMessage[];
@@ -265,6 +272,8 @@ interface RecordedCertification {
   signed_at: string | null;
   recorded_at: string | null;
   chamber_data: Json | null;
+  field_provenance?: Json | null;
+  documents?: Json | null;
 }
 
 export async function loadSubmission(id: string): Promise<SubmissionDetail | null> {
@@ -308,7 +317,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     // chamber_certifications isn't in the generated types (src/integrations/supabase/types.ts).
     (supabase as unknown as SupabaseClient)
       .from("chamber_certifications")
-      .select("file_id, version, signed_at, recorded_at, chamber_data")
+      .select("file_id, version, signed_at, recorded_at, chamber_data, field_provenance, documents")
       .eq("session_id", id)
       .order("recorded_at", { ascending: false })
       .limit(1)
@@ -366,7 +375,12 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     certified,
     signed:
       !certified && recorded && recorded.chamber_data !== null && recorded.chamber_data !== undefined
-        ? { data: parseChamberData(recorded.chamber_data), signedAt: recorded.recorded_at ?? recorded.signed_at }
+        ? {
+            data: parseChamberData(recorded.chamber_data),
+            signedAt: recorded.recorded_at ?? recorded.signed_at,
+            provenance: parseProvenance(recorded.field_provenance),
+            documents: reconcileDocuments(docs.data ?? [], recorded.documents ?? undefined),
+          }
         : null,
     submission,
     transcript: parseTranscript(certifiedTranscript ?? row.transcript),
