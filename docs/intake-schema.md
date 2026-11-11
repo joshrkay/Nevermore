@@ -363,6 +363,21 @@ Candidates never change `chamber_data` by themselves. In the Upload tab the pros
 
 When the prospect signs, `submission.field_provenance` snapshots the provenance alongside `submission.chamber_data`. The Manuscript shows the status and source for each row, and adds the open items (see "Required items") to "Underwriting Readiness".
 
+#### Certified answers as JSON
+
+The prospect's packet page and the advisor's packet panel offer the certified answers as one JSON file (L-3.3, `src/data/certifiedAnswersExport.ts`), named `<File ID>-answers-v<n>.json`, only while the certification stands. The schema above describes `chamber_data` alone and refuses unknown keys, so the file is an envelope around it:
+
+| Key | What it holds |
+| --- | --- |
+| `kind`, `kind_version` | `"certified_intake_answers"` and `1`: the envelope's own name and version |
+| `file_id`, `version` | The File ID and which certification it is (null when the certification predates numbering) |
+| `certification` | `signer_name`, `signer_title`, `signed_at` (the signer's browser), `certified_at` (the database), `statement_version` (the certification statement signed), `data_version` and `data_sha256` (the database's SHA-256 of `chamber_data` as it stored it); null for what an older certification didn't record |
+| `answers_schema` | `{ "id": "urn:edgar-allan-advisory:intake:chamber-data:v2", "version": 2 }`: the schema `answers` validates against |
+| `answers` | The certified `chamber_data`, census included, every key of the schema |
+| `answer_status` | Each field's status as certified (Field provenance, below), or null where none was recorded. An advisor's later verification doesn't change it |
+
+It never holds a PEO's own questions and answers (each PEO's supplement carries those), the transcript, the documents, or anything an advisor wrote: notes, reviews, corrections or verifications. The envelope has no JSON Schema of its own yet.
+
 ### Required answers
 
 Three answers are required before an intake can be certified, and so before The Manuscript can be generated (decision D2, US-1.2). The one list is `REQUIRED_ITEMS` in `src/data/readiness.ts`:

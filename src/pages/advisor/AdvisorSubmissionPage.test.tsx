@@ -957,6 +957,39 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(draft).queryByRole("button", { name: "Download the census" })).not.toBeInTheDocument();
   });
 
+  it("offers the certified answers as JSON beside the packet, without a PEO's own answers or the advisor's reviews and notes", async () => {
+    api.loadSubmission.mockResolvedValue(detail({
+      submission: { ...detail().submission!, version: 1, data_version: 9, consent_version: "2026-04-01", extra_answers: { "3": { vehicles: { question: "Do employees drive for work?" } } } } as SubmissionDetail["submission"],
+      extraAnswers: { "3": { vehicles: { question: "Do employees drive for work?", kind: "yes_no", value: true, status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-01T00:00:00Z" } } },
+      notes: [{ id: 1, session_id: "s1", body: "Call the CFO on Monday", author_id: "a1", author_email: "adv@example.com", created_at: "2026-10-02T00:00:00Z" }] as unknown as SubmissionDetail["notes"],
+      reviews: { employee_count: { review_state: "verified", has_correction: true, advisor_value: 14, reason: "Payroll register says 14" } } as unknown as SubmissionDetail["reviews"],
+    }));
+    renderPage();
+    const packet = await screen.findByRole("region", { name: "Advisor packet" });
+    expect(within(packet).getByText(/From certified version 1\./)).toBeInTheDocument();
+    fireEvent.click(within(packet).getByRole("button", { name: "Download the answers as JSON" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-answers-v1.json"));
+    const blob = downloadBlob.mock.calls.find((c) => c[1] === "EAA-2026-S1-answers-v1.json")![0] as Blob;
+    const json = await new Promise<string>((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.readAsText(blob); });
+    const doc = JSON.parse(json);
+    // The prospect's answer and its status as certified: the advisor's correction and verification are not in it.
+    expect(doc.answers.employee_count).toBe(12);
+    expect(doc.answer_status.employee_count).toBe("inferred");
+    expect(doc.certification).toEqual({
+      signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-10-01T12:00:00Z", certified_at: "2026-10-01T12:00:05Z",
+      statement_version: "2026-04-01", data_version: 9, data_sha256: "c".repeat(64),
+    });
+    expect(json).not.toMatch(/vehicles|drive for work|Call the CFO|Payroll register|14/);
+  });
+
+  it("offers no answers as JSON while the certification is withdrawn, saying why as the packet does", async () => {
+    api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", signed: { data: signedData, signedAt: "2026-10-01T12:00:00Z", provenance: {}, documents: [], extraAnswers: null } }));
+    renderPage();
+    const packet = await screen.findByRole("region", { name: "Advisor packet" });
+    expect(within(packet).getByText("The prospect changed their answers after certifying. A packet can be generated once they certify again.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download the answers as JSON" })).not.toBeInTheDocument();
+  });
+
   it("puts an underwriter's question into Ask the prospect for the advisor to edit, without sending it or naming the PEO", async () => {
     api.loadSubmission.mockResolvedValue(detail({
       pipelineStatus: "sent_to_carrier",

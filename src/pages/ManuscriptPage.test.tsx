@@ -745,6 +745,31 @@ describe("ManuscriptPage", () => {
     expect(screen.queryByRole("region", { name: "Your workers' comp application data" })).not.toBeInTheDocument();
   });
 
+  it("offers the certified answers as JSON beside the packet: the snapshot, as certified, without any PEO's own answers", async () => {
+    const extra_answers = { "3": { vehicles: { question: "Do employees drive for work?", kind: "yes_no", value: true, status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-05-01T00:00:00Z" } } };
+    row = certified({ submission: { ...(certified().submission as object), extra_answers } });
+    renderAt("/manuscript/EAA-2026-0042");
+    const files = await screen.findByRole("region", { name: "Your answers as a JSON file" });
+    expect(files).toHaveTextContent("From certified version 2.");
+    fireEvent.click(within(files).getByRole("button", { name: "Download the answers as JSON" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-answers-v2.json"));
+    const blob = downloadBlob.mock.calls.find((c) => c[1] === "EAA-2026-0042-answers-v2.json")![0] as Blob;
+    const json = await new Promise<string>((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.readAsText(blob); });
+    const doc = JSON.parse(json);
+    expect(doc.answers.company_name).toBe("Signed Co");
+    expect(doc.answer_status.company_name).toBe("confirmed");
+    expect(doc.certification).toMatchObject({ signer_name: "Jo Doe", certified_at: "2026-05-01T12:00:03Z", data_version: 17 });
+    expect(json).not.toContain("vehicles");
+  });
+
+  it("offers no answers as JSON while the certification is withdrawn", async () => {
+    row = certified({ status: "in_progress" });
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Your answers as a JSON file" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download the answers as JSON" })).not.toBeInTheDocument();
+  });
+
   it("offers no PEO's questions while the certification is withdrawn", async () => {
     peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] } }];
     row = certified({ status: "in_progress" });

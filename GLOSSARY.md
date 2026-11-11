@@ -76,6 +76,10 @@ _Avoid_: addendum, rider, PEO questionnaire
 Our own PDF, "Workers' compensation application data", of what the last certified version holds that a workers' comp application asks, in the order of the standard application (applicant, locations, owners and officers, the rating table by state, prior carriers and loss history, nature of business, general questions), and which version it is from. It is not the ACORD form and never presents itself as it. Nothing is guessed: whatever the certified answers don't hold is printed "Not in the certified answers", and every blank is counted and listed at its start and beside the download. The rating table groups the certified census by work state and class code, counting full and part time and summing pay only where the census states them. People the census marks 1099 are not employees there: they are left out of the counts and the payroll and shown apart with the pay stated for them; whether any must be rated is for the carrier. The same for every PEO; offered to advisors on each PEO's card and to the prospect beside their packet.
 _Avoid_: ACORD 130, ACORD form, workers' comp form
 
+**Answers as JSON**:
+The certified answers as one JSON file for a PEO's or advisor's own system: the File ID, the certified version, the certification, and the answers, census included, which validate against the published intake schema, each with its field status as certified. Offered beside the packet to the prospect and to advisors, only while the certification stands. Never a PEO's **Extra question** answers, and never anything an advisor wrote.
+_Avoid_: export, data dump, API file
+
 **Census**:
 The list of the employer's employees, one row per person, with the facts underwriting needs about each.
 _Avoid_: roster, employee list, employees

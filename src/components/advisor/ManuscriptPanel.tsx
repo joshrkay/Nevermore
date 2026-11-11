@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import AnswersJsonDownload from "@/components/AnswersJsonDownload";
 import { applyAdvisorReview, isCurrentVersion, isStaleRefusal, verifiedFieldsOf } from "@/data/advisor";
 import { buildManuscript, manuscriptFilename } from "@/data/manuscript";
 import type { PeoRecord } from "@/data/peoCatalog";
 import { localToday } from "@/data/peoProfiles";
+import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
@@ -174,6 +176,15 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
             {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
             {latest ? "Regenerate as new version" : "Generate packet"}
           </button>
+          {/* The certified answers as JSON (L-3.3): the prospect's certification alone, never the review, the
+              corrections, the notes or a PEO's own answers. */}
+          {detail.submission && detail.fileId && (
+            <div className="border-t border-border pt-3">
+              <AnswersJsonDownload
+                source={{ intake: { data: detail.data, provenance: detail.provenance, verified: NO_VERIFIED_FIELDS, extraAnswers: null }, submission: detail.submission, fileId: detail.fileId }}
+              />
+            </div>
+          )}
         </div>
       )}
 
