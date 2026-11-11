@@ -258,6 +258,15 @@ const AuthPage = () => {
           </form>
           )}
 
+          {forAdvisor && !linkSentTo && (
+            <p className="text-center text-sm text-muted-foreground mt-6">
+              Advisor or broker?{" "}
+              <Link to="/broker/sign-in" state={{ from: fromLocation }} className="text-primary underline hover:text-primary/80">
+                Sign in with Google or Microsoft
+              </Link>
+            </p>
+          )}
+
           {!forAdvisor && !linkSentTo && (
             <p className="text-center text-sm text-muted-foreground mt-6">
               {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
