@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import { Loader2, MailQuestion, X } from "lucide-react";
 import { toast } from "sonner";
 import {
-  canRequestInformation,
   followUpFieldsOf,
+  informationRequestBlockedReason,
   INFORMATION_REQUEST_MAX,
   PIPELINE_LABELS,
   REQUESTABLE_FIELDS,
@@ -34,13 +34,6 @@ interface InformationRequestPanelProps {
 }
 
 const labelOf = (field: string) => FIELD_LABELS[(field === "employees" ? "census" : field) as FieldKey] ?? field;
-
-/** Why a request can't be sent now, in the advisor's terms. */
-function blockedReason(status: PipelineStatus, certifiedOnce: boolean, intakeStatus: string): string {
-  if (!certifiedOnce) return "Available once the prospect has certified their intake.";
-  if (["archived", "revoked", "expired"].includes(intakeStatus)) return "This intake is closed, so the prospect can't answer a request on it.";
-  return `A submission at ${PIPELINE_LABELS[status]} can't move to ${PIPELINE_LABELS.information_requested}.`;
-}
 
 /**
  * Asks the prospect for more information: a message and the answers it is about, which start as the fields
@@ -84,7 +77,7 @@ const InformationRequestPanel = ({
     setAdded((current) => (current.includes(f) ? current : [...current, f]));
   };
   const [saving, setSaving] = useState(false);
-  const allowed = canRequestInformation(status, certifiedOnce, intakeStatus);
+  const blocked = informationRequestBlockedReason(status, certifiedOnce, intakeStatus);
   const others = REQUESTABLE_FIELDS.filter((f) => !fields.includes(f));
 
   const send = async () => {
@@ -108,7 +101,7 @@ const InformationRequestPanel = ({
         Ask the prospect
       </h2>
 
-      {allowed ? (
+      {blocked === null ? (
         <>
           <p className="text-xs text-muted-foreground">
             Emailed to the prospect and shown in their intake, and the submission moves to{" "}
@@ -184,7 +177,7 @@ const InformationRequestPanel = ({
           </button>
         </>
       ) : (
-        <p className="text-xs text-muted-foreground">{blockedReason(status, certifiedOnce, intakeStatus)}</p>
+        <p className="text-xs text-muted-foreground">{blocked}</p>
       )}
 
       {requests.length > 0 && (

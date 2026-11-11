@@ -261,6 +261,12 @@ export interface SubmissionDetail {
   quoteRequestEvents: QuoteRequestEventRow[];
   /** The submission's latest certified version (1, 2, ...); null before the first certification. */
   currentVersion: number | null;
+  /**
+   * The certification on record (the submission while it stands, else the last chamber_certifications row) kept no
+   * field status or no list of the documents it covered: one recorded before 20261104117000 / 20261104120000. What
+   * it held can't then be told apart from what the intake holds now.
+   */
+  certificationLacksSnapshot: boolean;
   /** The quote request whose quote the employer took, once won. */
   wonQuoteRequestId: number | null;
 }
@@ -400,6 +406,9 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     quoteRequests: quotes.data ?? [],
     quoteRequestEvents: quoteEvents.data ?? [],
     currentVersion: recorded?.version ?? null,
+    certificationLacksSnapshot: certified
+      ? (useSnapshot && submission!.field_provenance == null) || !Array.isArray(submission!.documents)
+      : !!recorded && (recorded.field_provenance == null || !Array.isArray(recorded.documents)),
     wonQuoteRequestId: workflow.data.won_quote_request_id ?? null,
   };
 }

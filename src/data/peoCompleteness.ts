@@ -1,5 +1,6 @@
 // Complete for a PEO (GLOSSARY.md, L-2.2): whether the last certified version of an intake holds everything one PEO's
-// requirement profile needs to quote. Each answer it needs to quote is held and settled (not an open item), and each
+// requirement profile needs to quote. Each answer it needs to quote is held and is not an open item (an unknown one is
+// still needed; one the prospect marked as not applying is answered), and each
 // document it requires is on file. What it needs only before signing is listed apart and doesn't count; an eligibility
 // check that isn't met is a warning beside it, never part of it.
 import { INFORMATION_REQUEST_MAX, type ReviewedDocument } from "./advisor";
@@ -33,8 +34,8 @@ export interface PeoCompleteness {
 }
 
 /**
- * The answers in `fields` the intake doesn't hold settled: with no answer, or one that is still an open item (an
- * advisor's verification settles it, as everywhere). One the prospect marked as not applying is settled.
+ * The answers in `fields` the intake doesn't hold: with no answer, or one that is still an open item (an advisor's
+ * verification settles an unconfirmed one, as everywhere). One the prospect marked as not applying is answered.
  */
 function missingAnswers(intake: CertifiedIntake, fields: readonly FieldKey[]): NeededItem[] {
   const open = new Map(openItems(intake.data, intake.provenance, intake.verified).map((i) => [i.key, i]));
@@ -50,18 +51,27 @@ function missingAnswers(intake: CertifiedIntake, fields: readonly FieldKey[]): N
 /**
  * Where one document stands for the certified version, nearest to on file first: on file (certified, uploaded and
  * through the virus check; a file that couldn't be read is still on file), still being checked, uploaded only after
- * certifying, or held back by the virus check. A file removed since certifying, or still uploading, isn't there.
+ * certifying, couldn't be checked, or held back by the virus check. A file removed since certifying, or still
+ * uploading, isn't there. The order decides which of several files of a kind speaks for it.
  */
-const DOCUMENT_STANDINGS = ["on_file", "Still being checked for viruses", "Uploaded after certifying", "Couldn't be checked for viruses", "Blocked by the virus check"] as const;
+const DOCUMENT_STANDINGS = ["on_file", "scanning", "added_after", "scan_failed", "blocked"] as const;
 type DocumentStanding = (typeof DOCUMENT_STANDINGS)[number];
+
+/** Why a document isn't on file, as the PEO's list says it. */
+const NOT_ON_FILE: Record<Exclude<DocumentStanding, "on_file">, string> = {
+  scanning: "Still being checked for viruses",
+  added_after: "Uploaded after certifying",
+  scan_failed: "Couldn't be checked for viruses",
+  blocked: "Blocked by the virus check",
+};
 
 function standing(d: ReviewedDocument): DocumentStanding | null {
   if (d.certification === "removed" || d.status === "uploading") return null;
-  if (d.certification === "added") return "Uploaded after certifying";
+  if (d.certification === "added") return "added_after";
   if (isScanReleased(d.scan_verdict)) return "on_file";
-  if (d.scan_verdict === "infected") return "Blocked by the virus check";
-  if (d.scan_verdict === "failed") return "Couldn't be checked for viruses";
-  return "Still being checked for viruses";
+  if (d.scan_verdict === "infected") return "blocked";
+  if (d.scan_verdict === "failed") return "scan_failed";
+  return "scanning";
 }
 
 /** The documents the profile lists that the certified version doesn't have on file, each with why. */
@@ -71,7 +81,7 @@ function missingDocuments(documents: readonly ReviewedDocument[], profile: Requi
     const ofKind = documents.filter((d) => (d.certifiedCategory ?? d.category) === wanted.category);
     const best = ofKind.map(standing).filter((s): s is DocumentStanding => s !== null).sort((a, b) => DOCUMENT_STANDINGS.indexOf(a) - DOCUMENT_STANDINGS.indexOf(b))[0];
     if (best === "on_file") return [];
-    return [{ kind: "document", category: wanted.category, label: categoryInfo(wanted.category).label, description: wanted.description, reason: best ?? "Not uploaded" }];
+    return [{ kind: "document", category: wanted.category, label: categoryInfo(wanted.category).label, description: wanted.description, reason: best ? NOT_ON_FILE[best] : "Not uploaded" }];
   });
 }
 
@@ -170,12 +180,20 @@ export interface CertifiedVersion {
   version: number | null;
   /** The prospect has changed answers since, which withdrew it: what is shown is still this version. */
   changedSince: boolean;
+  /**
+   * The certification was recorded before each answer's status and the documents it covered were kept with it
+   * (20261104117000, 20261104120000), so nothing can say what it held: the prospect has to certify again.
+   */
+  cantTell: boolean;
 }
 
 /**
  * What a PEO's list is built from: the last certified version, never answers the prospect gave since. While the
  * certification stands that is the submission as shown; once the prospect has changed answers, it is the copy they
- * certified (`signed`). Null before the first certification. `verified` are the fields an advisor verified.
+ * certified (`signed`). Null before the first certification. `verified` are the fields an advisor verified, each on
+ * the answer the intake held when they did: once the prospect has changed answers, a verification counts for the
+ * certified copy only where the answer now is still the one certified (a changed answer resets its review, so one
+ * verified since was made on the new answer).
  */
 export function lastCertifiedVersion(
   d: {
@@ -185,10 +203,15 @@ export function lastCertifiedVersion(
     documents: readonly ReviewedDocument[];
     signed: { data: ChamberData; provenance: ProvenanceMap; documents: readonly ReviewedDocument[] } | null;
     currentVersion: number | null;
+    /** The certification on record kept no field status or no document list (SubmissionDetail). */
+    certificationLacksSnapshot: boolean;
   },
   verified: ReadonlySet<string>,
 ): CertifiedVersion | null {
-  if (d.certified) return { intake: { data: d.data, provenance: d.provenance, verified }, documents: d.documents, version: d.currentVersion, changedSince: false };
+  const cantTell = d.certificationLacksSnapshot;
+  if (d.certified) return { intake: { data: d.data, provenance: d.provenance, verified }, documents: d.documents, version: d.currentVersion, changedSince: false, cantTell };
   if (!d.signed) return null;
-  return { intake: { data: d.signed.data, provenance: d.signed.provenance, verified }, documents: d.signed.documents, version: d.currentVersion, changedSince: true };
+  const signed = d.signed;
+  const onCertified = new Set([...verified].filter((f) => JSON.stringify(signed.data[f as FieldKey]) === JSON.stringify(d.data[f as FieldKey])));
+  return { intake: { data: signed.data, provenance: signed.provenance, verified: onCertified }, documents: signed.documents, version: d.currentVersion, changedSince: true, cantTell };
 }

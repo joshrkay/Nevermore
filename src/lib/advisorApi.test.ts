@@ -419,6 +419,24 @@ describe("loadSubmission", () => {
     expect(d.currentVersion).toBe(2);
   });
 
+  it("says when the certification on record kept no field status or no document list, so nothing can be told from it", async () => {
+    const withdrawn = (over: object) => {
+      tables.chamber_sessions = [row({ status: "in_progress" })];
+      tables.chamber_certifications = [{ file_id: "EAA-1", version: 2, signed_at: "2026-10-02T00:00:00Z", recorded_at: "2026-10-02T00:00:05Z", chamber_data: certifiedData, ...over }];
+      return loadSubmission("s1").then((d) => d!.certificationLacksSnapshot);
+    };
+    expect(await withdrawn({ field_provenance: {}, documents: [] })).toBe(false);
+    expect(await withdrawn({ field_provenance: null, documents: [] })).toBe(true);
+    expect(await withdrawn({ field_provenance: {}, documents: null })).toBe(true);
+    // A certification that stands is read from the submission, which can be as old.
+    tables.chamber_sessions = [row()];
+    expect((await loadSubmission("s1"))!.certificationLacksSnapshot).toBe(false);
+    tables.chamber_sessions = [row({ submission: { ...row().submission, documents: undefined } })];
+    expect((await loadSubmission("s1"))!.certificationLacksSnapshot).toBe(true);
+    tables.chamber_sessions = [row({ submission: { ...row().submission, field_provenance: undefined } })];
+    expect((await loadSubmission("s1"))!.certificationLacksSnapshot).toBe(true);
+  });
+
   it("shows nothing as signed for an intake that was never certified, whatever its submission says", async () => {
     tables.chamber_sessions = [row({ status: "in_progress", file_id: null })];
     tables.chamber_certifications = [];

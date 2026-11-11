@@ -117,6 +117,14 @@ export function canRequestInformation(status: PipelineStatus, certifiedOnce: boo
   return status === "information_requested" || PIPELINE_TRANSITIONS[status].includes("information_requested");
 }
 
+/** Why an advisor can't ask the prospect for more information now (canRequestInformation), in their terms; null when they can. */
+export function informationRequestBlockedReason(status: PipelineStatus, certifiedOnce: boolean, intakeStatus: string): string | null {
+  if (canRequestInformation(status, certifiedOnce, intakeStatus)) return null;
+  if (!certifiedOnce) return "Available once the prospect has certified their intake.";
+  if (CLOSED_INTAKE_STATUSES.has(intakeStatus)) return "This intake is closed, so the prospect can't answer a request on it.";
+  return `A submission at ${PIPELINE_LABELS[status]} can't move to ${PIPELINE_LABELS.information_requested}.`;
+}
+
 /**
  * Every field a request can name, in Review's order: the census (reviewed in Workforce, with its table) after the
  * Workforce answers.

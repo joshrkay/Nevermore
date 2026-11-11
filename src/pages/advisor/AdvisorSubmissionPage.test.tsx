@@ -99,6 +99,7 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   quoteRequests: [],
   quoteRequestEvents: [],
   currentVersion: 1,
+  certificationLacksSnapshot: false,
   wonQuoteRequestId: null,
   ...over,
 });
@@ -954,6 +955,14 @@ describe("AdvisorSubmissionPage", () => {
     expect(message.value).toBe("Can they send last year's loss runs?");
     expect(message.value).not.toMatch(/TriNet/);
     expect(api.requestInformation).not.toHaveBeenCalled();
+    // Once sent, the question is spent: the next request starts empty.
+    api.requestInformation.mockResolvedValue(undefined);
+    api.loadSubmission.mockResolvedValue({ ...(await api.loadSubmission.mock.results[0].value), informationRequests: [
+      { id: 1, session_id: "s1", message: "Can they send last year's loss runs?", fields: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-12T16:00:00Z" },
+    ] });
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByLabelText(/What do you need from them/i)).toHaveValue(""));
   });
 
   describe("What each PEO still needs", () => {
@@ -1048,6 +1057,15 @@ describe("AdvisorSubmissionPage", () => {
       expect(needs).toHaveTextContent("The prospect named Acme PEO, which isn't on the PEO list, so it has no profile.");
     });
 
+    it("says when the prospect's chosen PEO has been taken off the list", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ submission: { ...detail().submission!, peo: "adp totalsource" } }));
+      renderPage();
+      const needs = await panel();
+      await within(needs).findByRole("heading", { name: "Complete · 1" });
+      expect(needs).toHaveTextContent("The prospect chose ADP TotalSource, which has been taken off the PEO list, so it isn't shown here.");
+      expect(needs).not.toHaveTextContent("isn't on the PEO list");
+    });
+
     it("shows each PEO's eligibility checks under it as warnings that never move it, and when its profile is out of date", async () => {
       // TriNet's minimum is 20 and this employer has 12: a warning, while Justworks stays complete.
       peoCatalogRows = catalog().map((p) => (p.name === "Justworks" ? { ...p, profile: { ...p.profile!, min_headcount: 20, sources: { answers: { ...sourced, checked_on: "2026-03-02" }, min_headcount: sourced } } } : p));
@@ -1085,6 +1103,25 @@ describe("AdvisorSubmissionPage", () => {
       await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", expect.stringMatching(/Thanks!$/), ["hris_system", "payroll_vendor"]));
     });
 
+    it("starts the next request afresh once a drafted one is sent: no copy of the draft, and the follow-up fields again", async () => {
+      const followUp = { field: "hq_state", review_state: "follow_up", has_correction: false, corrected_value: null, reason: null, updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z" };
+      const reviews = { hq_state: followUp } as SubmissionDetail["reviews"];
+      api.loadSubmission.mockResolvedValue(detail({ reviews }));
+      api.requestInformation.mockResolvedValue(undefined);
+      renderPage();
+      const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
+      // The send reloads the submission, which now lists the request just sent.
+      api.loadSubmission.mockResolvedValue(detail({
+        reviews,
+        informationRequests: [{ id: 1, session_id: "s1", message: "We need a few more things", fields: ["hris_system", "payroll_vendor"], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-11T12:00:00Z" }],
+      }));
+      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(screen.getByLabelText(/What do you need from them/i)).toHaveValue(""));
+      expect(within(screen.getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HQ state"]);
+    });
+
     it("starts the draft from the PEO's missing answers alone, not the fields marked Needs follow-up", async () => {
       const followUp = { field: "hq_state", review_state: "follow_up", has_correction: false, corrected_value: null, reason: null, updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z" };
       api.loadSubmission.mockResolvedValue(detail({ reviews: { hq_state: followUp } as SubmissionDetail["reviews"] }));
@@ -1110,6 +1147,14 @@ describe("AdvisorSubmissionPage", () => {
       expect(needs).toHaveTextContent("The prospect has changed answers since certifying. What's listed here is as of version 3.");
       fireEvent.click(within(trinet).getByRole("button", { name: "Show what's missing" }));
       expect(within(trinet).getByRole("region", { name: "Needed to quote" })).toHaveTextContent("HRIS system: not provided");
+    });
+
+    it("can't tell what a PEO still needs from a certification older than its kept field status and documents", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ certificationLacksSnapshot: true }));
+      renderPage();
+      const needs = await panel();
+      expect(needs).toHaveTextContent("Version 1 was certified before we kept each answer's status and the documents it covered, so we can't tell what each PEO still needs from it. Ask the prospect to certify again.");
+      expect(within(needs).queryByRole("heading", { level: 3 })).not.toBeInTheDocument();
     });
 
     it("waits for the prospect's first certification", async () => {
@@ -1138,6 +1183,8 @@ describe("AdvisorSubmissionPage", () => {
       const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
       expect(trinet).toHaveTextContent("1 answer and 1 document missing");
       expect(within(trinet).queryByRole("button", { name: "Draft information request" })).not.toBeInTheDocument();
+      // It says why instead, in the words Ask the prospect uses.
+      expect(trinet).toHaveTextContent("The prospect can't be asked for it now: a submission at Won can't move to Information requested.");
     });
   });
 });

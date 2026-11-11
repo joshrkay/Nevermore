@@ -32,7 +32,7 @@ import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
 import { QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
-import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, PROFILE_PATTERNS } from "@/data/peoEditor";
+import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS, profileProblems } from "@/data/peoEditor";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
@@ -295,6 +295,14 @@ describe("server and client intake rules agree", () => {
     expect(Number(/\+\s*(\d+)/.exec(blocks("peo_check_grace_days")[0])?.[1])).toBe(CHECKED_ON_GRACE_DAYS);
     // The class codes an excluded industry maps to (20261112090000).
     expect(Number(blocks("peo_industry_codes_max")[0].trim())).toBe(PROFILE_CAPS.industryCodes);
+  });
+
+  // What each PEO still needs (peoCompleteness) counts an answer once: needed to quote, or only before signing.
+  it("refuses an answer listed both to quote and before signing, with the editor's words", () => {
+    const [sql] = blocks("peo_answer_listed_once");
+    expect(sql).toMatch(/cardinality\(v\.needed_to_quote \|\| v\.needed_before_signing\) <> \(SELECT count\(DISTINCT f\)/);
+    const [problem] = profileProblems({ ...EMPTY_PROFILE, neededToQuote: ["states"], neededBeforeSigning: ["states"] }, "2026-11-11");
+    expect(sql).toContain(`RETURN '${problem.message}'`);
   });
 
   it("checks a question's key, a class code, a link and a contact's email with the database's own patterns", () => {

@@ -17,7 +17,7 @@ import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
-import { canRequestInformation, changesSinceSigning, NEEDS_ACTION_LABEL, verifiedFieldsOf } from "@/data/advisor";
+import { changesSinceSigning, informationRequestBlockedReason, NEEDS_ACTION_LABEL, verifiedFieldsOf } from "@/data/advisor";
 import { censusPay, isW2 } from "@/data/census";
 import { coverageTier, NOT_PROVIDED } from "@/data/manuscript";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
@@ -123,11 +123,17 @@ const Detail = ({
   const peoCatalog = usePeoCatalog();
   // An underwriter's question the advisor chose to ask the prospect: it opens Ask the prospect with the text in it,
   // as a fresh draft each time, for the advisor to edit and send as their own request.
-  // What a PEO still needs comes the same way, with the answers the request names.
-  const [askDraft, setAskDraft] = useState<{ message: string; fields?: FieldKey[]; n: number } | null>(null);
+  // What a PEO still needs comes the same way, with the answers the request names. Once a request is sent the
+  // draft is spent: the next one starts afresh, from the fields marked Needs follow-up. `n` only ever grows, so each
+  // draft, and each send, starts the panel anew.
+  const [askDraft, setAskDraft] = useState<{ message?: string; fields?: FieldKey[]; n: number }>({ n: 0 });
   const askProspect = (message: string, fields?: FieldKey[]) => {
-    setAskDraft((current) => ({ message, fields, n: (current?.n ?? 0) + 1 }));
+    setAskDraft((current) => ({ message, fields, n: current.n + 1 }));
     window.requestAnimationFrame?.(() => document.getElementById("information-request-message")?.focus());
+  };
+  const requestSent = () => {
+    setAskDraft((current) => ({ n: current.n + 1 }));
+    reload();
   };
   // What each PEO still needs is built from the last certified version, never from answers given since.
   const certifiedVersion = lastCertifiedVersion(detail, verifiedFieldsOf(detail.reviews));
@@ -175,7 +181,7 @@ const Detail = ({
             onRetryCatalog={peoCatalog.retry}
             chosenPeo={sub?.peo ?? null}
             quoteRequests={detail.quoteRequests}
-            canAsk={canRequestInformation(detail.pipelineStatus, !!sub?.signer_name, detail.intakeStatus)}
+            askBlocked={informationRequestBlockedReason(detail.pipelineStatus, !!sub?.signer_name, detail.intakeStatus)}
             onDraft={(draft) => askProspect(draft.message, draft.fields)}
           />
           <FieldReviewPanel
@@ -206,9 +212,9 @@ const Detail = ({
           <InformationRequestPanel
             // A sent request starts the next one afresh, from the fields marked Needs follow-up; until then the
             // panel follows the marks as they change.
-            key={`${detail.informationRequests.length}-${askDraft?.n ?? 0}`}
-            initialMessage={askDraft?.message}
-            initialFields={askDraft?.fields}
+            key={`${detail.informationRequests.length}-${askDraft.n}`}
+            initialMessage={askDraft.message}
+            initialFields={askDraft.fields}
             sessionId={detail.id}
             prospectUserId={detail.userId}
             status={detail.pipelineStatus}
@@ -216,7 +222,7 @@ const Detail = ({
             intakeStatus={detail.intakeStatus}
             reviews={detail.reviews}
             requests={detail.informationRequests}
-            onChanged={reload}
+            onChanged={requestSent}
           />
           <QuoteRequestsPanel
             sessionId={detail.id}

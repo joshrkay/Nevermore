@@ -25,8 +25,8 @@ interface PeoNeedsPanelProps {
   /** The PEO the prospect chose when they certified, as they named it. */
   chosenPeo: string | null;
   quoteRequests: readonly QuoteRequestRow[];
-  /** Whether Ask the prospect can take a request now (canRequestInformation). */
-  canAsk: boolean;
+  /** Why Ask the prospect can't take a request now (informationRequestBlockedReason); null when it can. */
+  askBlocked: string | null;
   /** Opens Ask the prospect with this draft in it, for the advisor to edit and send. Sends nothing. */
   onDraft: (draft: InformationRequestDraft) => void;
 }
@@ -54,12 +54,12 @@ const MissingBox = ({ title, items, quiet }: { title: string; items: readonly Ne
   );
 };
 
-const PeoCard = ({ entry, certified, chosen, sent, canAsk, onDraft, today }: {
+const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today }: {
   entry: PeoCompletenessEntry;
   certified: CertifiedVersion;
   chosen: boolean;
   sent: QuoteRequestRow | undefined;
-  canAsk: boolean;
+  askBlocked: string | null;
   onDraft: (draft: InformationRequestDraft) => void;
   today: string;
 }) => {
@@ -104,7 +104,10 @@ const PeoCard = ({ entry, certified, chosen, sent, canAsk, onDraft, today }: {
         </>
       )}
       <EligibilityChecks peo={peo.name} checks={peoFit(certified.intake.data, peo, today)} />
-      {!c.complete && canAsk && (
+      {!c.complete && askBlocked !== null && (
+        <p className="text-sm text-muted-foreground">{`The prospect can't be asked for it now: ${askBlocked.charAt(0).toLowerCase()}${askBlocked.slice(1)}`}</p>
+      )}
+      {!c.complete && askBlocked === null && (
         <button
           type="button"
           onClick={() => onDraft(informationRequestDraft(c))}
@@ -123,10 +126,17 @@ const PeoCard = ({ entry, certified, chosen, sent, canAsk, onDraft, today }: {
  * apart, what it needs only before signing, with its eligibility checks as warnings beside it, and drafts an
  * information request from what is missing. Nothing here ranks a PEO or sends anything.
  */
-const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, canAsk, onDraft }: PeoNeedsPanelProps) => {
+const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, askBlocked, onDraft }: PeoNeedsPanelProps) => {
   const today = localToday();
   const body = () => {
     if (!certified) return <p className="text-sm text-muted-foreground">Available once the prospect has certified their intake: each PEO's list is built from what they certified.</p>;
+    if (certified.cantTell) {
+      return (
+        <p className="text-sm text-muted-foreground">
+          {`Version ${certified.version ?? "on record"} was certified before we kept each answer's status and the documents it covered, so we can't tell what each PEO still needs from it. Ask the prospect to certify again.`}
+        </p>
+      );
+    }
     if (catalogStatus === "loading") {
       return (
         <p aria-live="polite" className="text-sm text-muted-foreground flex items-center gap-2">
@@ -145,7 +155,7 @@ const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chos
     const groups = groupByCompleteness(certified.intake, certified.documents, catalog);
     const chosen = chosenPeo ? findPeo(catalog, chosenPeo) : undefined;
     const isChosen = (p: PeoRecord) => chosen === p;
-    const sentTo = (p: PeoRecord) => quoteRequests.find((r) => r.peo_name.trim().toLowerCase() === p.name.toLowerCase());
+    const sentTo = (p: PeoRecord) => quoteRequests.find((r) => findPeo(catalog, r.peo_name) === p);
     const group = (title: string, entries: readonly PeoCompletenessEntry[]) => (
       <div className="space-y-2">
         <h3 className="text-sm font-medium">{`${title} · ${entries.length}`}</h3>
@@ -153,7 +163,7 @@ const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chos
           <ul aria-label={title} className="space-y-3">
             {entries.map((e) => (
               <li key={e.peo.name}>
-                <PeoCard entry={e} certified={certified} chosen={isChosen(e.peo)} sent={sentTo(e.peo)} canAsk={canAsk} onDraft={onDraft} today={today} />
+                <PeoCard entry={e} certified={certified} chosen={isChosen(e.peo)} sent={sentTo(e.peo)} askBlocked={askBlocked} onDraft={onDraft} today={today} />
               </li>
             ))}
           </ul>
@@ -179,6 +189,9 @@ const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chos
         </div>
         {chosenPeo && !chosen && (
           <p className="text-sm text-muted-foreground">{`The prospect named ${chosenPeo}, which isn't on the PEO list, so it has no profile.`}</p>
+        )}
+        {chosen && !chosen.listed && (
+          <p className="text-sm text-muted-foreground">{`The prospect chose ${chosen.name}, which has been taken off the PEO list, so it isn't shown here.`}</p>
         )}
       </>
     );

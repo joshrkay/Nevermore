@@ -175,9 +175,12 @@ BEGIN
   SELECT f INTO bad FROM unnest(v.needed_to_quote || v.needed_before_signing) f
   WHERE f IS NULL OR f = 'employees' OR public.chamber_data_field_kind(f) IS NULL LIMIT 1;
   IF FOUND THEN RETURN format('%s isn''t an answer the intake asks for', COALESCE(bad, 'An empty name')); END IF;
+  -- What each PEO still needs counts each answer once, so none is both needed to quote and needed before signing.
+  -- sync:begin peo_answer_listed_once
   IF cardinality(v.needed_to_quote || v.needed_before_signing) <> (SELECT count(DISTINCT f) FROM unnest(v.needed_to_quote || v.needed_before_signing) f) THEN
     RETURN 'Each answer is listed once: needed to quote, or needed only before signing';
   END IF;
+  -- sync:end peo_answer_listed_once
 
   -- The census layout: a format we make, an optional template file, and 1 to 200 columns, each with its own
   -- header, filled from one of our census columns or left blank.

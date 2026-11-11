@@ -200,20 +200,34 @@ describe("informationRequestDraft: what a PEO still needs, as a draft request to
 
 describe("lastCertifiedVersion: what each PEO's list is built from", () => {
   const current = { ...intake().data, company_name: "Changed Co" };
-  const base = { certified: true, data: intake().data, provenance: intake().provenance, documents: [doc()], signed: null, currentVersion: 2 };
+  const base = { certified: true, data: intake().data, provenance: intake().provenance, documents: [doc()], signed: null, currentVersion: 2, certificationLacksSnapshot: false };
   const verified = new Set(["payroll_vendor"]);
+  const signed = { data: intake().data, signedAt: "2026-10-01T00:00:00Z", provenance: intake().provenance, documents: [doc({ certification: "certified" })] };
 
   it("is the certified answers, their status and documents while the certification stands", () => {
     expect(lastCertifiedVersion(base, verified)).toEqual({
-      intake: { data: intake().data, provenance: intake().provenance, verified }, documents: [doc()], version: 2, changedSince: false,
+      intake: { data: intake().data, provenance: intake().provenance, verified }, documents: [doc()], version: 2, changedSince: false, cantTell: false,
     });
   });
 
   it("is what was certified when the prospect has changed answers since, never their answers now", () => {
-    const signed = { data: intake().data, signedAt: "2026-10-01T00:00:00Z", provenance: intake().provenance, documents: [doc({ certification: "certified" })] };
     expect(lastCertifiedVersion({ ...base, certified: false, data: current, provenance: {}, documents: [doc({ certification: undefined })], signed }, verified)).toEqual({
-      intake: { data: intake().data, provenance: intake().provenance, verified }, documents: signed.documents, version: 2, changedSince: true,
+      intake: { data: intake().data, provenance: intake().provenance, verified }, documents: signed.documents, version: 2, changedSince: true, cantTell: false,
     });
+  });
+
+  it("counts an advisor's verification for the certified version only where it was made on the certified answer", () => {
+    // The prospect changed the company name after certifying and the advisor verified the new one: that verification
+    // is about "Changed Co", not the "Signed Co" that was certified. The payroll vendor is unchanged, so its stands.
+    const both = new Set(["payroll_vendor", "company_name"]);
+    const v = lastCertifiedVersion({ ...base, certified: false, data: current, provenance: {}, signed }, both);
+    expect([...v!.intake.verified]).toEqual(["payroll_vendor"]);
+  });
+
+  it("can't tell from a certification recorded before each answer's status and its documents were kept", () => {
+    // Without them an inferred answer would count as held, and every file on file as certified.
+    expect(lastCertifiedVersion({ ...base, certified: false, data: current, signed, certificationLacksSnapshot: true }, verified)).toMatchObject({ version: 2, changedSince: true, cantTell: true });
+    expect(lastCertifiedVersion({ ...base, certificationLacksSnapshot: true }, verified)).toMatchObject({ version: 2, changedSince: false, cantTell: true });
   });
 
   it("is nothing before the first certification", () => {

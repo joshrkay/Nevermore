@@ -108,7 +108,7 @@ What one PEO asks for, as dated, versioned data: the answers it needs to quote a
 _Avoid_: PEO requirements, PEO rules, appetite, catalog entry
 
 **Complete for a PEO**:
-A submission is complete for a PEO when its last certified version holds every answer that PEO's **Requirement profile** needs to quote, each settled rather than an open item (an answer the prospect marked as not applying counts), and every document the profile asks for is on file: part of that certification and through the virus check. What the PEO needs only before signing is listed apart and doesn't count. An **Eligibility check** that isn't met is a warning beside it and never changes it. It says only what is on file; whether an advisor may record a send is still the **Pipeline stage**'s rule.
+A submission is complete for a PEO when its last certified version holds an answer for every **Field** that PEO's **Requirement profile** needs to quote, and none of those fields is an **Open item** (so a field marked **Unknown** is still needed, while one the prospect marked **Not applicable** counts as answered), and every document the profile asks for is on file: part of that certification and through the virus check. What the PEO needs only before signing is listed apart and doesn't count. An **Eligibility check** that isn't met is a warning beside it and never changes it. It says only what is on file; whether an advisor may record a send is still the **Pipeline stage**'s rule.
 _Avoid_: ready for a PEO, ready to send, ready
 
 **PEO contact**:
