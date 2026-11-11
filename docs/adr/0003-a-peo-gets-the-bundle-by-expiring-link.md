@@ -1,6 +1,6 @@
 # A PEO gets the submission bundle by an expiring link, not as attachments
 
-When the product sends a submission to a PEO (Epic M, joshrkay/Nevermore#92, gated on QP-D1), the email carries the advisor's cover note and a link to the bundle. It carries no files. Decided 2026-11-11.
+When the product sends a submission to a PEO (Epic M, joshrkay/Nevermore#92; counsel answered QP-D1 yes on 2026-11-11), the email carries the advisor's cover note and a link to the bundle. It carries no files. Decided 2026-11-11.
 
 The bundle holds the census: every employee's facts, classified Restricted (`docs/DATA_HANDLING.md`). An attached file can't be taken back. It stays in the PEO contact's mailbox after a prospect withdraws that PEO's market authorization, after a newer version is certified, and when the address was mistyped.
 

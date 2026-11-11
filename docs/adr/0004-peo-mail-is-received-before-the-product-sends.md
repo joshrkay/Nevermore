@@ -2,6 +2,10 @@
 
 Epic M (joshrkay/Nevermore#92) is gated on QP-D1: whether the product may send a submission to a PEO, which counsel has not answered. On 2026-11-11 we decided that receiving doesn't wait. Each quote request gets a reply address and a thread, built on the email provider already in use, while D9 and D44's "the product sends nothing to a PEO" stays true.
 
+## Update: counsel answered QP-D1
+
+Later on 2026-11-11 the founder reported counsel's answer: yes, the product may send, with no conditions beyond supplying the wording. Receiving still comes first, now for a different reason: it depends on nothing else, while sending waits on the market authorization (M-1.1), the bundle (L-3.4) and counsel's wording for the authorization, the new intake consent, the Terms and the line every message to a PEO carries. Where this record says "before counsel answers", read "before sending is built". Counsel's yes was about sending; storing PEO mail is still unreviewed, so the setting that switches receiving off stays.
+
 ## The rule
 
 Built before counsel answers: quote request notes (M-2.5), the reply address (M-3.1), receiving mail (M-3.2), the holding list (M-3.3), the thread on the submission page (M-3.4) and the email telling advisors that mail arrived (M-3.6). Everything that sends to a PEO waits: M-1.1, M-1.2, M-2.1 to M-2.4 and M-3.5.
