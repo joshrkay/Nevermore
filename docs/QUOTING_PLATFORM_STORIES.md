@@ -48,7 +48,7 @@ a PEO pays a broker. PEOs paying per submission stays ruled out (`docs/GO_TO_MAR
 
 | ID | Decision | Recommended | Owner | Gates |
 |---|---|---|---|---|
-| QP-D1 | May the product send a submission to a PEO for a broker or an employer, and under what authorization and disclosure? Reverses D9 and D44 | Yes, with a recorded authorization naming each PEO | Founder + LEGAL | Epic M part B (sending). Part A (receiving) does not wait for it |
+| QP-D1 | May the product send a submission to a PEO for a broker or an employer, and under what authorization and disclosure? Reverses D9 and D44 | **Decided 2026-11-11: yes.** Counsel answered that the product may send under a recorded authorization naming each PEO, with no conditions beyond supplying the wording | Founder + LEGAL | Epic M part B (sending), which now waits only on counsel's wording and on its own dependencies |
 | QP-D2 | May the product show quotes from different PEOs side by side, to a broker and to an employer? Does that need a license in any state? | Show to brokers first; to employers once counsel answers | LEGAL | N-3.x |
 | QP-D3 | Who an outside broker is in our vocabulary, and what happens to **Advisor** | A **Firm** has **Brokers**; Edgar Allan Advisory is a firm whose brokers are still called advisors in its own copy | PM | Epic P |
 | QP-D4 | Does a broker's intake belong to the firm, the employer, or both? Who may delete it? | The employer owns the answers; the firm has access the employer granted and can lose | PM + LEGAL | P-2.x |
@@ -261,10 +261,12 @@ Revised 2026-11-11 after a design review, then story by story (joshrkay/Nevermor
 This epic is written for an **Advisor** of today's one advisory team. It does not assume firms or outside brokers
 (QP-D3, Epic P); when they arrive, "advisor" here reads as "broker" and each send and thread belongs to a firm.
 
-It is in two parts. Part A sends nothing to a PEO and may be built before counsel answers QP-D1. Part B is every
-story in which the product sends, and is gated by QP-D1.
+It is in two parts. Part A sends nothing to a PEO and depends on nothing else. Part B is every story in which the
+product sends. Counsel answered QP-D1 yes on 2026-11-11, so Part B is no longer blocked; it waits on counsel's
+wording (the market authorization, the new intake consent and Terms, the line every message to a PEO carries) and
+on M-1.1 and L-3.4.
 
-#### Part A: before counsel answers
+#### Part A: receiving
 
 Advisors still send from their own mail and copy the quote request's address in. Counsel has not reviewed the
 product storing PEO mail, so receiving ships behind one setting that can switch it off.
@@ -309,7 +311,7 @@ As an advisor, I want to read the whole conversation with a PEO, with delivery a
 - AC: each inbound message a person at the PEO wrote sends one email through the outbox to the Advisor Alert recipients. It identifies the submission as the Advisor Alert does, names the PEO, links to the thread behind sign-in, and carries no content from the message.
 - AC: an automatic reply and an advisor's own copied-in message send no email and set no "new PEO mail" mark.
 
-#### Part B: blocked on counsel (QP-D1)
+#### Part B: sending (cleared by counsel; needs counsel's wording)
 
 **M-1.1 The employer authorizes each PEO.** M · FS · LEGAL · defined in joshrkay/Nevermore#85
 As a prospect, I want to say which PEOs may receive my packet, so that nothing about my employees goes anywhere I
@@ -551,7 +553,7 @@ Each slice is usable on its own. Sizes add up roughly; they are for comparing sl
 | **2. Know each PEO** | L-1.1 to L-1.3, L-2.1, L-2.2, L-3.1 to L-3.4, K-5.2 | Advisors see what each PEO still needs and download its files | QP-D5, QP-D8 |
 | **3. Firms** | P-1.1, P-1.2, P-1.4, P-2.1, P-2.2, P-3.1, L-1.4 | Invited outside brokers work their own clients | QP-D3, QP-D4 |
 | **4a. Receive and thread** | M-2.5, M-3.1 to M-3.4, M-3.6 | Advisors send from their own mail with the quote request's address in CC, and replies come back onto the request | None. Counsel has not reviewed storing PEO mail, so it ships behind one setting |
-| **4b. Send** | M-1.x, M-2.1 to M-2.4, M-3.5, Q-2.1, Q-1.3 | Submissions go out from the product | QP-D1 |
+| **4b. Send** | M-1.x, M-2.1 to M-2.4, M-3.5, Q-2.1, Q-1.3 | Submissions go out from the product | QP-D1, decided yes; counsel's wording |
 | **5. Compare** | N-1.x, N-2.x, N-3.1, N-3.2 | Brokers compare quotes on the same lines | None beyond slice 4 |
 | **6. Show the client** | N-3.3 to N-3.5, P-2.3 | Employers see and choose | QP-D2 |
 | **7. Open the door** | P-1.3, P-1.5, P-2.4, P-2.5, P-3.2, Q-1.1, Q-1.2, Q-2.2, Q-3.x, Q-4.1 | Any firm signs up; brokers are verified and tracked | QP-D7 |
