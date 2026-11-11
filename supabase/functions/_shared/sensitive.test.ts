@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 import { hasSensitive, isSensitiveHeader, REDACTED, redactSensitive } from "./sensitive.ts";
 
 describe("redactSensitive", () => {
+  // ADR 0003: the FEIN is typed into its own box in the workspace, so one written in a message or a document is
+  // removed like any other sensitive number and never reaches the model.
+  it("removes a FEIN written the way a FEIN is written, two digits, a hyphen and seven", () => {
+    expect(redactSensitive("Our EIN is 84-1234567, thanks")).toBe("Our EIN is [redacted], thanks");
+    expect(redactSensitive("FEIN: 84-1234567")).toBe("FEIN: [redacted]");
+    expect(redactSensitive("84–1234567")).toBe("[redacted]");
+    expect(hasSensitive("84-1234567")).toBe(true);
+  });
+
+  it("leaves numbers that only look a little like a FEIN", () => {
+    for (const text of ["500 Main St, Austin, TX 78701-1234", "Order 2024-1234567", "call 512-555-0142", "policy 84-123456", "plan years 24-25", "ratio 12-34567890"]) {
+      expect(redactSensitive(text), text).toBe(text);
+    }
+  });
+
   it("removes formatted and unformatted Social Security numbers", () => {
     expect(redactSensitive("SSN 123-45-6789 on file")).toBe(`SSN ${REDACTED} on file`);
     expect(redactSensitive("123 45 6789")).toBe(REDACTED);
@@ -91,9 +106,8 @@ describe("redactSensitive", () => {
       "ZIP 94107-1234",
       "Payroll of $1,250,000 a year",
       "We have 2 accounts",
-      // An EIN is the company's, not a person's: underwriting can use it.
-      "12-3456789",
-      "EIN 12-3456789",
+      // (An EIN used to pass, as the company's and not a person's. Since the intake holds the FEIN as an answer of its
+      // own, typed in the workspace, one written in free text is removed: ADR 0003, and the test above.)
       "(555) 123-4567",
       "555-123-4567",
       "+1 555 123 4567",

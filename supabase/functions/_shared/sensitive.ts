@@ -29,6 +29,11 @@ const GROUPED_AMEX = /\b\d{4}[- ]\d{6}[- ]\d{5}\b/g;
 // How card numbers start: Mastercard's 2221 to 2720 (taken as 22 to 27), then 3 (American Express, Diners,
 // JCB), 4 (Visa), 5 (Mastercard) and 6 (Discover). No year starts this way.
 const CARD_START = /^(?:2[2-7]|[3-6])/;
+// A federal employer identification number as it is written: two digits, a hyphen (or the en or em dash a word
+// processor substitutes) and seven. The FEIN is typed into its own box in the workspace (ADR 0003), so one
+// written in a message or a document is removed like the rest. A digit on either side means it is part of
+// something longer (an order number, a ZIP+4).
+const FORMATTED_FEIN = /(?<!\d)\d{2}[-\u2013\u2014]\d{7}(?!\d)/g;
 // Nine or more digits in a row: an unformatted SSN, a routing number or an account number.
 const LONG_DIGIT_RUN = /\b\d{9,17}\b/g;
 
@@ -74,7 +79,8 @@ export function redactSensitive(text: string): string {
   const withoutIds = text
     .replace(LABELLED_ACCOUNT, (_match, label: string) => `${label} ${REDACTED}`)
     .replace(GLUED_SSN, (_match, label: string) => `${label}${REDACTED}`)
-    .replace(FORMATTED_SSN, REDACTED);
+    .replace(FORMATTED_SSN, REDACTED)
+    .replace(FORMATTED_FEIN, REDACTED);
   return redactCards(redactCards(withoutIds, GROUPED_CARD), GROUPED_AMEX).replace(LONG_DIGIT_RUN, REDACTED);
 }
 
