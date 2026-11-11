@@ -156,7 +156,7 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(page.getByText(String(INTAKE_EXTRACTION.employee_count), { exact: true })).toBeVisible();
     // HQ State and All States both read "NY".
     await expect(page.getByText(INTAKE_EXTRACTION.hq_state, { exact: true })).toHaveCount(2);
-    await expect(page.getByText("5 of 7 fields captured")).toBeVisible();
+    await expect(page.getByText("5 of 17 fields captured")).toBeVisible();
 
     // Industry is the one value Lenore inferred rather than read from the message.
     await expect(page.getByText("Lenore captured this — please confirm")).toHaveCount(1);
@@ -168,7 +168,7 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await page.getByRole("textbox", { name: "Target Start", exact: true }).fill(TARGET_START);
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText(TARGET_START, { exact: true })).toBeVisible();
-    await expect(page.getByText("6 of 7 fields captured")).toBeVisible();
+    await expect(page.getByText("6 of 17 fields captured")).toBeVisible();
   });
 
   await test.step("Review the intake", async () => {
