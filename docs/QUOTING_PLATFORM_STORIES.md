@@ -261,8 +261,8 @@ Revised 2026-11-11 after a design review, then story by story (joshrkay/Nevermor
 This epic is written for an **Advisor** of today's one advisory team. It does not assume firms or outside brokers
 (QP-D3, Epic P); when they arrive, "advisor" here reads as "broker" and each send and thread belongs to a firm.
 
-It is in two parts. Part A sends nothing to a PEO and depends on nothing else. Part B is every story in which the
-product sends. Counsel answered QP-D1 yes on 2026-11-11, so Part B is no longer blocked; it waits on counsel's
+It is in three parts. Part A sends nothing to a PEO and depends on nothing else. Part B is every story in which the
+product sends. Part C (added the same day) is how a broker connects their own mailbox, which Part B's sends use. Counsel answered QP-D1 yes on 2026-11-11, so Part B is no longer blocked; it waits on counsel's
 wording (the market authorization, the new intake consent and Terms, the line every message to a PEO carries) and
 on M-1.1 and L-3.4.
 
@@ -301,8 +301,8 @@ As the product, I need every reply about a quote request to land on it.
 - AC: one ops alert is raised when the list stops being empty, not one per message.
 
 **M-3.4 The thread on the submission page.** M · FE · needs M-3.2
-As an advisor, I want to read the whole conversation with a PEO, with delivery and bounce marks on what we sent.
-- AC: the quote request shows every message, attachment, send, status change and quote request note on one timeline, newest first; a bounce or a suppressed address is shown on the message it belongs to. Corrections to a quote request's fields stay in the change log.
+As an advisor, I want to read the whole conversation with a PEO, with delivery and bounce marks on what the product sent.
+- AC: the quote request shows every message, attachment, send, status change and quote request note on one timeline, newest first. A bounce or a suppressed address is shown on the message it belongs to for mail the product sends itself. A message sent through a broker's connected mailbox (M-2.1) shows as sent: the provider reports no delivery events for it, and a bounce arrives in the broker's own inbox (ADR 0005). Corrections to a quote request's fields stay in the change log.
 - AC: a "new PEO mail" mark shows on the quote request, and on its submission in the queue, until any advisor opens the thread. It is one mark for the team, not one per advisor.
 - AC: a combined timeline shows every PEO's entries for the submission together, each labelled with its PEO.
 - AC: the prospect never sees it.
@@ -329,14 +329,15 @@ didn't choose.
 - AC: the intake consent, the Terms, D9, D44 and the banned phrases are changed together, in the release that carries the first product send.
 - AC: a prospect who accepted the earlier intake consent accepts the new one before the market authorization is offered.
 
-**M-2.1 Send to a PEO.** M · FS · needs M-1.1, L-3.4, M-3.1
-As an advisor, I want to send the bundle to a PEO contact from the submission page, with my own cover note.
-- AC: sending creates or continues that PEO's quote request, records the version sent, and queues the email through the outbox with retries. Only the latest certified version can be sent; while an answer has changed and isn't certified again, sending waits.
+**M-2.1 Send to a PEO.** M · FS · needs M-1.1, L-3.4, M-3.1, M-4.3
+As an advisor, I want to send the bundle to a PEO contact from the submission page, from my own email address, with my own cover note.
+- AC: sending creates or continues that PEO's quote request, records the version sent, and queues the email through the outbox with retries; the outbox sends it through the advisor's connected mailbox (M-4.3, ADR 0005). Only the latest certified version can be sent; while an answer has changed and isn't certified again, sending waits.
 - AC: a send is addressed to one or more people at that PEO, picked from its contacts or typed.
 - AC: the email carries the cover note and a link to the bundle, and no files. The link is unguessable and expires after 30 days. It opens a page, with no sign-in, showing the employer, the File ID and version, each file with its own download, and the open items; each download shows on the timeline (ADR 0003).
 - AC: under the advisor's note, a fixed block the advisor can't edit carries the link, the File ID and version, the open items, the advisor's name, firm and phone, and any line counsel requires.
-- AC: From shows the advisor's name at one product sending address; Reply-To is the quote request's address; the message sets its own `Message-ID`, `In-Reply-To` and `References`. The advisor's own email address is not in the message.
-- AC: a send that fails shows on the Outbox page with a retry, as other emails do.
+- AC: the message is from the advisor's own address and lands in their own Sent folder. Reply-To lists the quote request's reply address first and the advisor's own address second; the message sets its own `Message-ID`, `In-Reply-To` and `References`.
+- AC: an advisor with no connected mailbox, or whose permission was revoked, is told so, with a button to connect one; sending is off for them, and they can still send by hand from their own mail with the reply address in CC (Part A).
+- AC: a send that fails shows on the Outbox page with a retry, as other emails do. The product records the provider's message id for a send; it receives no delivery or bounce events for it.
 
 **M-2.2 Send to several PEOs at once.** S · FE · needs M-2.1, L-2.2
 - AC: one action sends to every chosen PEO, each on its own thread; no PEO sees another's address or name.
@@ -358,9 +359,31 @@ As an advisor, I want to send a newer certified version on the same thread.
 - AC: marking a submission Won, Lost or Archived offers one withdrawal to every PEO still open, written once and sent on each thread. The advisor can skip it; the links are revoked either way.
 
 **M-3.5 Reply from the product.** S · FS · needs M-3.4
-- AC: an advisor can answer on the thread; the reply is recorded before it is sent. It goes to everyone at the PEO on the message answered, and the advisor can add or remove addresses.
+- AC: an advisor can answer on the thread, from their own address through their connected mailbox; the reply is recorded before it is sent. It goes to everyone at the PEO on the message answered, and the advisor can add or remove addresses. Reply-To is set as in M-2.1.
 - AC: any document on the intake that passed its scan can go with a reply, by the same expiring link and never as an attachment. The market authorization's wording covers the packet and supporting documents.
 - AC: after the prospect withdraws a PEO, a reply to it is text only; the database refuses a link, as it refuses a send.
+
+#### Part C: the broker's own mailbox (M-4)
+
+*Added 2026-11-11 (`docs/adr/0005-brokers-send-through-their-own-mailbox.md`). Sending goes through a broker's own Google or Microsoft mailbox, with send-only permission: the product never reads it. Not yet designed beyond that record. Google's and Microsoft's app and review rules have not been confirmed and have to be before a release.*
+
+**M-4.1 Sign in with Google or Microsoft.** M · FS
+As a broker, I want to sign in with my Google or Microsoft account and let the product send as me, so that mail to a PEO is from my real address.
+- AC: a broker sign-in page, separate from the prospect's, carries "Sign in with Google" and "Sign in with Microsoft" and asks for send permission with the sign-in. The prospect sign-in page is unchanged and never asks.
+- AC: a broker who declines the permission still gets an account and the console, and sends by hand with the reply address in CC.
+- AC: signing in with the same verified email as an existing advisor links to that account: same role and history, and the password still works.
+- AC: a new account without the advisor role shows "waiting for access"; an admin grants the role as today.
+
+**M-4.2 The advisor role by organisation.** S · FS · needs M-4.1
+- AC: an admin keeps a list of allowed organisations. A person who signs up on the broker page gets the advisor role without an admin only when what the provider vouches for matches the list: Google's verified hosted domain, or Microsoft's tenant ID. The email text is never matched.
+- AC: a free-mail domain can't be added; everyone else waits for an admin.
+- AC: every grant by this rule is logged with who, when and the organisation it matched, and an admin can revoke the role as today.
+
+**M-4.3 Store and refresh the mailbox permission.** M · BE · needs M-4.1
+- AC: the refresh token that lets the product send is stored encrypted, readable only by the sending function and never by the browser; the product refreshes the short-lived access token itself.
+- AC: a broker can disconnect their mailbox. Disconnecting, the provider revoking the permission, or the broker leaving deletes the token; a later send fails with a plain message and no PEO is sent anything.
+- AC: the token is classified in `docs/DATA_HANDLING.md` and `src/data/dataPolicy.ts`, and the Privacy Policy line on how the access is used is put to counsel (`docs/LEGAL_REVIEW.md`).
+- AC: a send needs only the permission to send; a test fails if a request for any read permission is added.
 
 **Not in this epic:** reading a quote or a decline out of an email (Epic N; an advisor still records them), and a
 per-PEO option to attach files instead of a link, to reopen if the pilot shows a PEO desk won't follow links.
@@ -553,7 +576,7 @@ Each slice is usable on its own. Sizes add up roughly; they are for comparing sl
 | **2. Know each PEO** | L-1.1 to L-1.3, L-2.1, L-2.2, L-3.1 to L-3.4, K-5.2 | Advisors see what each PEO still needs and download its files | QP-D5, QP-D8 |
 | **3. Firms** | P-1.1, P-1.2, P-1.4, P-2.1, P-2.2, P-3.1, L-1.4 | Invited outside brokers work their own clients | QP-D3, QP-D4 |
 | **4a. Receive and thread** | M-2.5, M-3.1 to M-3.4, M-3.6 | Advisors send from their own mail with the quote request's address in CC, and replies come back onto the request | None. Counsel has not reviewed storing PEO mail, so it ships behind one setting |
-| **4b. Send** | M-1.x, M-2.1 to M-2.4, M-3.5, Q-2.1, Q-1.3 | Submissions go out from the product | QP-D1, decided yes; counsel's wording |
+| **4b. Send** | M-1.x, M-2.1 to M-2.4, M-3.5, M-4.x, Q-2.1, Q-1.3 | Submissions go out from the product | QP-D1, decided yes; counsel's wording |
 | **5. Compare** | N-1.x, N-2.x, N-3.1, N-3.2 | Brokers compare quotes on the same lines | None beyond slice 4 |
 | **6. Show the client** | N-3.3 to N-3.5, P-2.3 | Employers see and choose | QP-D2 |
 | **7. Open the door** | P-1.3, P-1.5, P-2.4, P-2.5, P-3.2, Q-1.1, Q-1.2, Q-2.2, Q-3.x, Q-4.1 | Any firm signs up; brokers are verified and tracked | QP-D7 |
@@ -569,12 +592,12 @@ request exists. Slice 4b is the first that changes what the company is.
 |---|---|---|---|
 | K The common questions | 17 | 9 | 8 |
 | L Requirement profiles | 11 | 4 | 7 |
-| M Sending submissions | 13 | 8 | 5 |
+| M Sending submissions | 16 | 9 | 7 |
 | N What comes back | 13 | 8 | 5 |
 | P Firms and the workspace | 12 | 8 | 4 |
 | Q Tracking brokers | 8 | 4 | 4 |
 | R The PEO side | 7 | 4 | 3 |
-| **Total** | **81** | **45** | **36** |
+| **Total** | **84** | **46** | **38** |
 
 ## 7. What would change this plan
 
