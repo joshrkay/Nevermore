@@ -145,6 +145,45 @@ describe("dispatching an advisor alert", () => {
   });
 });
 
+const peoMailRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+  id: "evt-peo-mail",
+  kind: "peo_mail_arrived",
+  session_id: SESSION,
+  attempts: 1,
+  pending_send: null,
+  payload: { reference: "EAA-2026-AB12CD34", company_name: "Acme Co", peo_name: "TriNet" },
+  ...over,
+});
+
+describe("dispatching a PEO mail notice", () => {
+  it("goes to the advisor distribution list with a link to the thread behind sign-in, and nothing of the message", async () => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents(
+      [peoMailRow({ payload: { reference: "EAA-2026-AB12CD34", company_name: "Acme Co", peo_name: "TriNet", from_address: "dana@trinet.example", subject: "Our quote", body_text: "We can offer 4.2%" } })],
+      deps,
+    );
+    expect(summary.sent).toBe(1);
+    const { message } = sent[0];
+    expect(message.to).toEqual(["advisors@example.com"]);
+    expect(message.subject).toBe("New PEO mail: TriNet on Acme Co (EAA-2026-AB12CD34)");
+    expect(message.text).toContain(`/advisor/submissions/${SESSION}`);
+    for (const leaked of ["dana@trinet.example", "Our quote", "4.2%"]) {
+      expect(message.text + message.html).not.toContain(leaked);
+    }
+  });
+
+  it("is refused for good when its payload has no File ID or PEO, and waits when advisors aren't configured", async () => {
+    const bad = harness();
+    await dispatchEvents([peoMailRow({ payload: { peo_name: "TriNet" } })], bad.deps);
+    expect(bad.sent).toHaveLength(0);
+    expect(bad.deps.fail).toHaveBeenCalledWith("evt-peo-mail", "invalid_payload", null, 1, false);
+
+    const unconfigured = harness({ config: readDispatchConfig((n) => ({ ...env, ADVISORY_NOTIFY_EMAIL: "" })[n]) });
+    await dispatchEvents([peoMailRow()], unconfigured.deps);
+    expect(unconfigured.sent).toHaveLength(0);
+  });
+});
+
 describe("dispatching a prospect confirmation", () => {
   it("goes only to the recipient, with the support address to reply to", async () => {
     const { deps, sent } = harness();
@@ -894,8 +933,8 @@ describe("log routing", () => {
 
 describe("sendableKinds", () => {
   it("lists the kinds whose configuration is complete", () => {
-    expect(sendableKinds(config)).toEqual(["advisor_notification", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
-    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification"]);
+    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "prospect_confirmation", "information_request", "draft_expiry_reminder"]);
+    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived"]);
     // The emails that link to the intake need the app's address; the confirmation doesn't.
     expect(sendableKinds(readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]))).toEqual(["prospect_confirmation"]);
     expect(sendableKinds(readDispatchConfig(() => undefined))).toEqual([]);
@@ -1123,6 +1162,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
     const noAdvisors = configFrom({ ...env, ADVISORY_NOTIFY_EMAIL: "" });
     expect(blockedKinds(noAdvisors, null)).toEqual([
       { kind: "advisor_notification", problem: "ADVISORY_NOTIFY_EMAIL is not set to valid address(es)" },
+      { kind: "peo_mail_arrived", problem: "ADVISORY_NOTIFY_EMAIL is not set to valid address(es)" },
     ]);
     expect(blockedKinds(configFrom({ ...env, ADVISORY_NOTIFY_EMAIL: "not an address, x" }), null)[0].problem)
       .toBe("ADVISORY_NOTIFY_EMAIL is not set to valid address(es)");
@@ -1132,6 +1172,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
     const blocked = blockedKinds(configFrom({ ...env, APP_BASE_URL: "http://app.example.com", ADVISORY_NOTIFY_EMAIL: "" }), null);
     expect(blocked).toEqual([
       { kind: "advisor_notification", problem: "ADVISORY_NOTIFY_EMAIL is not set to valid address(es); APP_BASE_URL is not set to an https URL" },
+      { kind: "peo_mail_arrived", problem: "ADVISORY_NOTIFY_EMAIL is not set to valid address(es); APP_BASE_URL is not set to an https URL" },
       { kind: "information_request", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "draft_expiry_reminder", problem: "APP_BASE_URL is not set to an https URL" },
     ]);
@@ -1140,11 +1181,12 @@ describe("telling a blocked kind's events why they are waiting", () => {
   it("blocks every kind, naming the provider problem first, when there is no usable provider", () => {
     expect(blockedKinds(config, "RESEND_API_KEY is not set")).toEqual([
       { kind: "advisor_notification", problem: "RESEND_API_KEY is not set" },
+      { kind: "peo_mail_arrived", problem: "RESEND_API_KEY is not set" },
       { kind: "prospect_confirmation", problem: "RESEND_API_KEY is not set" },
       { kind: "information_request", problem: "RESEND_API_KEY is not set" },
       { kind: "draft_expiry_reminder", problem: "RESEND_API_KEY is not set" },
     ]);
-    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[1].problem)
+    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[2].problem)
       .toBe("RESEND_API_KEY is not set; SUPPORT_EMAIL is not set to a valid address");
   });
 
@@ -1160,7 +1202,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       if (kind === "advisor_notification") throw { code: "PGRST202", message: "function not found, row jo@acme.example" };
     });
     await noteBlockedKinds(blockedKinds(config, "RESEND_API_KEY is not set"), note, (l) => logs.push(l));
-    expect(note).toHaveBeenCalledTimes(4);
+    expect(note).toHaveBeenCalledTimes(5);
     expect(note).toHaveBeenCalledWith("prospect_confirmation", "RESEND_API_KEY is not set");
     expect(note).toHaveBeenCalledWith("information_request", "RESEND_API_KEY is not set");
     expect(logs).toEqual(["OUTBOX_NOTE_ERROR: kind=advisor_notification PGRST202"]);

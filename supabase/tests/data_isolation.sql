@@ -99,6 +99,7 @@
 \i supabase/migrations/20261111110000_quote_request_messages.sql
 \i supabase/migrations/20261111120000_quote_request_threads.sql
 \i supabase/migrations/20261111130000_held_mail.sql
+\i supabase/migrations/20261111140000_peo_mail_alert.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
