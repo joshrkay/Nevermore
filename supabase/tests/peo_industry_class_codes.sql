@@ -215,5 +215,19 @@ BEGIN
   -- A re-check carries the mapping into the new version.
   saved := pg_temp.recheck(admin, trinet, jsonb_build_object('excluded_industries', pg_temp.guide('2026-11-10')));
   IF saved -> 'excluded_industry_codes' IS DISTINCT FROM mapped THEN RAISE EXCEPTION 'FAIL: the re-check dropped the mapping: %', saved; END IF;
+
+  -- Minimum participation is named so wherever an admin reads it (GLOSSARY.md: never "minimum enrolment").
+  BEGIN
+    PERFORM pg_temp.save(admin, trinet, '{"min_enrolment_percent": "58"}');
+    RAISE EXCEPTION 'FAIL: a participation that isn''t a number was saved';
+  EXCEPTION WHEN invalid_parameter_value THEN
+    IF SQLERRM <> 'The minimum participation must be a plain number' THEN RAISE EXCEPTION 'FAIL: said %', SQLERRM; END IF;
+  END;
+  BEGIN
+    PERFORM pg_temp.save(admin, trinet, '{"min_enrolment_percent": 101}');
+    RAISE EXCEPTION 'FAIL: a participation over 100 percent was saved';
+  EXCEPTION WHEN invalid_parameter_value THEN
+    IF SQLERRM <> 'A minimum participation is a percentage above 0 and up to 100' THEN RAISE EXCEPTION 'FAIL: said %', SQLERRM; END IF;
+  END;
   RAISE NOTICE 'peo_industry_class_codes: all cases passed';
 END $$;

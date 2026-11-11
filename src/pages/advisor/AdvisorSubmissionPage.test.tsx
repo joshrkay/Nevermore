@@ -664,6 +664,8 @@ describe("AdvisorSubmissionPage", () => {
   });
 
   it("generates the packet with its eligibility checks against the chosen PEO's profile in the database", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
     peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 20, states_served: null, excluded_class_codes: null,
       sources: { min_headcount: { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-02" } } } }];
     api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "sent_to_carrier", submission: { ...detail().submission!, peo: "Justworks" } }));
@@ -675,7 +677,7 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Generate packet/ }));
     await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
     const [manuscript] = buildManuscriptPdf.mock.calls[0] as unknown as [Manuscript];
-    expect(manuscript.checks[0]).toEqual({ label: "Minimum headcount: Justworks takes groups of 20 or more employees; this employer has 12.", status: "fail", checkedOn: expect.any(String), stale: expect.any(Boolean) });
+    expect(manuscript.checks[0]).toEqual({ label: "Minimum headcount: Justworks takes groups of 20 or more employees; this employer has 12.", status: "fail", ofPeoRule: true, checkedOn: "2026-11-02", stale: false });
   });
 
   it("notes in the packet that the chosen PEO's profile is out of date as of the day it is generated", async () => {

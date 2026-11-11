@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import { cleanPeoName, findPeo, groupPeosByFit, listedPeos, PEO_NAME_MAX, peoFit, type PeoRecord } from "./peoCatalog";
-import { parsePeoCatalog, type EligibilityRules, type ProfileSource, type RequirementProfile } from "./peoProfiles";
+import { parsePeoCatalog, RULE_KEYS, type EligibilityRules, type ProfileSource, type RequirementProfile } from "./peoProfiles";
 
 const TODAY = "2026-11-11";
 const guide = (checkedOn = "2026-11-02"): ProfileSource => ({ kind: "document", name: "Broker guide", checkedOn });
@@ -14,7 +14,8 @@ const peo = (overrides: Partial<PeoRecord> = {}): PeoRecord => ({
 });
 
 const NO_RULES: EligibilityRules = { minHeadcount: null, statesServed: null, excludedIndustries: null, excludedClassCodes: null, minEnrolmentPercent: null };
-const RULE_PART = { minHeadcount: "min_headcount", statesServed: "states_served", excludedIndustries: "excluded_industries", excludedClassCodes: "excluded_class_codes", minEnrolmentPercent: "min_enrolment_percent" } as const;
+// Each rule's part, by its key: the profile's own table, turned round.
+const RULE_PART = Object.fromEntries(Object.entries(RULE_KEYS).map(([part, key]) => [key, part])) as { [K in (typeof RULE_KEYS)[keyof typeof RULE_KEYS]]: keyof typeof RULE_KEYS };
 
 /** A PEO whose profile in use holds these rules, each sourced on `checkedOn` unless `unsourced` names it. */
 const withRules = (name: string, rules: Partial<EligibilityRules>, opts: { checkedOn?: string; unsourced?: (keyof typeof RULE_PART)[] } = {}): PeoRecord => {

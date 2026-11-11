@@ -157,7 +157,9 @@ export type CheckStatus = "pass" | "fail" | "unknown";
 export interface EligibilityCheck {
   label: string;
   status: CheckStatus;
-  /** For a check against the PEO's rules: when the rule was checked with the PEO (null when it isn't sourced). */
+  /** Set on a check of one of the PEO's rules (peoFit), as against a check of what was collected. */
+  ofPeoRule?: true;
+  /** For a check of the PEO's rules: when the rule was checked with the PEO (null when it isn't sourced). */
   checkedOn?: string | null;
   /** Whether that was more than 180 days ago: the check still stands, with a warning. */
   stale?: boolean;
@@ -166,17 +168,22 @@ export interface EligibilityCheck {
 export { headcount } from "./headcount";
 
 const STATUS: Record<FitStatus, CheckStatus> = { meets: "pass", does_not_meet: "fail", unknown: "unknown" };
+/** A packet check's status as an eligibility check's outcome, for its icon and words (FIT_WORDS). */
+export const CHECK_OUTCOME: Record<CheckStatus, FitStatus> = { pass: "meets", fail: "does_not_meet", unknown: "unknown" };
 
 /**
  * The packet's eligibility checks. With a PEO, its five checks (peoFit: one per rule of its profile in use, dated,
  * "can't tell yet" for a rule not sourced or a PEO with no profile) come first; `today` (YYYY-MM-DD) says whether a
  * rule's check is stale. Then the checks of what was collected, which report only what was actually collected.
+ * "pending" is a PEO chosen whose profile isn't read yet: only the checks of what was collected are run.
  */
-export function eligibilityChecks(data: ChamberData, peo?: PeoRecord, today: string = localToday()): EligibilityCheck[] {
+export function eligibilityChecks(data: ChamberData, peo?: PeoRecord | "pending", today: string = localToday()): EligibilityCheck[] {
   const count = headcount(data);
-  const peoChecks: EligibilityCheck[] = peo
-    ? peoFit(data, peo, today).map((c) => ({ label: `${c.label}: ${c.sentence}`, status: STATUS[c.status], checkedOn: c.checkedOn, stale: c.stale }))
-    : [{ label: `Headcount meets PEO minimum (${count || "?"} employees) — minimum not yet confirmed`, status: "unknown" }];
+  const ofPeo = (p: PeoRecord): EligibilityCheck[] =>
+    peoFit(data, p, today).map((c) => ({ label: `${c.label}: ${c.sentence}`, status: STATUS[c.status], ofPeoRule: true, checkedOn: c.checkedOn, stale: c.stale }));
+  const peoChecks: EligibilityCheck[] = peo === "pending"
+    ? []
+    : peo ? ofPeo(peo) : [{ label: `Headcount meets PEO minimum (${count || "?"} employees) — minimum not yet confirmed`, status: "unknown" }];
   return [
     ...peoChecks,
     { label: "US headquarters", status: data.hq_state ? "pass" : "unknown" },
@@ -373,6 +380,13 @@ export interface Manuscript {
   checks: EligibilityCheck[];
   /** Beside the checks: that the PEO's profile they read is out of date, with when it was last checked; else null. */
   checksNote: string | null;
+  /**
+   * While the PEOs' profiles are being read ("loading") or couldn't be ("failed"), the checks against the chosen PEO
+   * aren't run, and `checks` holds only those of what was collected; null once they are run, or with no PEO chosen.
+   */
+  peoChecks: "loading" | "failed" | null;
+  /** The PEO the checks are against, by name; null with none chosen. */
+  checkedPeo: string | null;
   open: string[];
   /** Status and source of each field, as shown beside its row. */
   provenance: ProvenanceMap;
@@ -422,6 +436,11 @@ export function buildManuscript(
     peo?: PeoRecord;
     /** The PEOs the database lists (usePeoCatalog), to find the chosen one in. */
     catalog?: readonly PeoRecord[];
+    /**
+     * Whether `catalog` has been read (usePeoCatalog's status); "ready" when not given. Until it is, the chosen PEO
+     * can't be told from a name typed in, so no check is run against it.
+     */
+    catalogStatus?: "loading" | "ready" | "failed";
     /**
      * The reader's today (YYYY-MM-DD), to tell whether the PEO's profile is stale; otherwise the packet's own date.
      * Passed in, so the packet stays pure.
@@ -483,10 +502,12 @@ export function buildManuscript(
   // The chosen PEO as the catalog holds it; a name it doesn't hold (typed in, or no catalog) has no profile, so every
   // check against it can't tell yet.
   const chosen = opts.submission?.peo ?? null;
+  const catalogStatus = opts.catalogStatus ?? "ready";
+  const peoChecks = !opts.peo && chosen && catalogStatus !== "ready" ? catalogStatus : null;
   const checkedPeo = opts.peo ?? (chosen ? findPeo(opts.catalog ?? [], chosen) ?? { name: chosen, listed: false, lastVerified: null } : undefined);
   const asOf = opts.today ?? (date ? localToday(date) : null);
-  const checks = eligibilityChecks(data, checkedPeo, asOf ?? localToday());
-  const checksNote = checkedPeo && asOf ? staleProfileWarning(checkedPeo, asOf) : null;
+  const checks = eligibilityChecks(data, peoChecks ? "pending" : checkedPeo, asOf ?? localToday());
+  const checksNote = checkedPeo && asOf && !peoChecks ? staleProfileWarning(checkedPeo, asOf) : null;
   // The intake's open items, the one list Review and the advisor queue use too (src/data/openItems.ts): the answers
   // certification requires (always present on a certified packet), the census, then fields by status, less any an
   // advisor verified.
@@ -604,6 +625,8 @@ export function buildManuscript(
     resolved,
     checks,
     checksNote,
+    peoChecks,
+    checkedPeo: checkedPeo?.name ?? null,
     open: [
       ...intakeItems,
       ...unstatedItems,

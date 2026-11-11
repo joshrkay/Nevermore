@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeSource, EMPTY_PROFILE, industriesText, parseProfileVersion, profileChanges, profilePayload, profileProblems, publishProblems, readIndustries, showRule, type EditableProfile } from "./peoEditor";
+import { describeSource, EMPTY_PROFILE, parseProfileVersion, profileChanges, profilePayload, profileProblems, publishProblems, sameMeaning, samePart, showRule, type EditableProfile } from "./peoEditor";
 import type { ProfileSource } from "./peoProfiles";
 
 const TODAY = "2026-11-11";
@@ -78,7 +78,7 @@ describe("profileProblems: the database's rules, next to each field", () => {
     expect(problems(rules({ excludedIndustries: [" "] }))).toEqual([{ path: "rules.excludedIndustries", message: "Up to 100 excluded industries, each named in 1 to 100 characters" }]);
     expect(problems(rules({ excludedIndustries: ["Trucking "] }))[0].path).toBe("rules.excludedIndustries");
     expect(problems(rules({ excludedClassCodes: ["88"] }))).toEqual([{ path: "rules.excludedClassCodes", message: "Up to 100 excluded class codes, each four digits" }]);
-    expect(problems(rules({ minEnrolmentPercent: 0 }))).toEqual([{ path: "rules.minEnrolmentPercent", message: "A minimum enrolment is a percentage above 0 and up to 100" }]);
+    expect(problems(rules({ minEnrolmentPercent: 0 }))).toEqual([{ path: "rules.minEnrolmentPercent", message: "A minimum participation is a percentage above 0 and up to 100" }]);
     expect(problems(rules({ minEnrolmentPercent: 101 }))[0].path).toBe("rules.minEnrolmentPercent");
     expect(problems(rules({ minEnrolmentPercent: 100, minHeadcount: 100000 }))).toEqual([]);
   });
@@ -258,20 +258,37 @@ describe("the parts of a profile, from one table", () => {
   });
 });
 
+describe("telling whether a part changed, by what it holds and never by the order its keys come in", () => {
+  it("reads objects with the same keys and values in another order as the same, and lists only in the same order", () => {
+    expect(sameMeaning({ Mining: ["1164"], Roofing: ["5551"] }, { Roofing: ["5551"], Mining: ["1164"] })).toBe(true);
+    expect(sameMeaning({ Roofing: ["5551"] }, { Roofing: ["5645"] })).toBe(false);
+    expect(sameMeaning({ Roofing: ["5551"] }, { Roofing: ["5551"], Mining: ["1164"] })).toBe(false);
+    expect(sameMeaning(["Roofing", "Mining"], ["Mining", "Roofing"])).toBe(false);
+    expect(sameMeaning(["5551"], { 0: "5551" })).toBe(false);
+    expect(sameMeaning(null, {})).toBe(false);
+    expect(sameMeaning({ a: 1, b: undefined }, { a: 1 })).toBe(true);
+    expect(sameMeaning(1, "1")).toBe(false);
+  });
+
+  it("reads the excluded industries as unchanged when only the mapping's key order differs", () => {
+    const a = { ...EMPTY_PROFILE, rules: { ...EMPTY_PROFILE.rules, excludedIndustries: ["Roofing", "Mining"], excludedIndustryCodes: { Mining: ["1164"], Roofing: ["5551"] } } };
+    const b = { ...a, rules: { ...a.rules, minHeadcount: 5, excludedIndustryCodes: { Roofing: ["5551"], Mining: ["1164"] } } };
+    expect(samePart("excluded_industries", a, b)).toBe(true);
+    expect(samePart("min_headcount", a, b)).toBe(false);
+  });
+
+  it("names no census change when the columns come back with their parts in another order", () => {
+    const columns = FULL.censusLayout!.columns.map((c) => ({ from: c.from, header: c.header })) as typeof FULL.censusLayout.columns;
+    expect(profileChanges({ ...FULL, censusLayout: { ...FULL.censusLayout!, columns } }, FULL)).toEqual([]);
+  });
+});
+
 describe("excluded industries and the class codes each covers", () => {
   const mapped: EditableProfile = {
     ...EMPTY_PROFILE,
     rules: { ...EMPTY_PROFILE.rules, excludedIndustries: ["Roofing", "Cannabis dispensaries"], excludedIndustryCodes: { Roofing: ["5551", "5645"] } },
     sources: { excluded_industries: guide },
   };
-
-  it("reads and writes the PEO's wording, one per line, with the codes after a colon", () => {
-    expect(industriesText(["Roofing", "Cannabis dispensaries"], { Roofing: ["5551", "5645"] })).toBe("Roofing: 5551, 5645\nCannabis dispensaries");
-    expect(readIndustries("Roofing: 5551, 5645\nCannabis dispensaries\n Trucking: long haul \n")).toEqual({
-      industries: ["Roofing", "Cannabis dispensaries", "Trucking: long haul"],
-      codes: { Roofing: ["5551", "5645"] },
-    });
-  });
 
   it("sends the mapping as the database takes it, and reads it back", () => {
     expect(profilePayload(mapped)).toMatchObject({ excluded_industries: ["Roofing", "Cannabis dispensaries"], excluded_industry_codes: { Roofing: ["5551", "5645"] } });

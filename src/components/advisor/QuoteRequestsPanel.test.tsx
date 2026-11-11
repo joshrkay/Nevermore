@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { QuoteRequestEventRow, QuoteRequestRow } from "@/lib/advisorApi";
 import type { PipelineStatus } from "@/data/advisor";
@@ -66,7 +66,11 @@ const panel = (
 describe("QuoteRequestsPanel", () => {
   beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset().mockResolvedValue(undefined);
+    // Whether a profile is out of date goes by the reader's today: pinned, so every test reads the same day.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
   });
+  afterEach(() => vi.useRealTimers());
 
   it("lists each PEO with where its quote request stands, when it was sent and which version", () => {
     panel({
@@ -271,8 +275,6 @@ describe("QuoteRequestsPanel", () => {
   });
 
   it("warns, on its row, that a PEO's profile is out of date, with when it was last checked", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date(2026, 10, 11, 12));
     panel({
       catalog: [
         withMinimum("TriNet", 10, "2026-03-02"),
@@ -280,34 +282,27 @@ describe("QuoteRequestsPanel", () => {
       ],
       requests: [request(), request({ id: 8, peo_name: "Justworks" })],
     });
-    vi.useRealTimers();
     expect(within(screen.getByTestId("quote-request-7")).getByText("TriNet's profile was last checked 2 Mar 2026 and may be out of date.")).toBeInTheDocument();
     expect(within(screen.getByTestId("quote-request-8")).queryByText(/may be out of date/)).not.toBeInTheDocument();
   });
 
   it("warns, when recording a send, that the chosen PEO's profile is out of date, and still records it", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date(2026, 10, 11, 12));
     api.recordQuoteSend.mockResolvedValue(undefined);
-    try {
-      panel({
-        status: "ready_for_market",
-        requests: [],
-        catalog: [
-          withMinimum("Justworks", 10, "2026-11-01"),
-          withMinimum("TriNet", 10, "2026-03-02"),
-        ],
-      });
-      const warning = "TriNet's profile was last checked 2 Mar 2026 and may be out of date.";
-      fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "Justworks" } });
-      expect(screen.queryByText(/may be out of date/)).not.toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "TriNet" } });
-      expect(screen.getByText(warning)).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: /Record send/ }));
-      await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "TriNet", "2026-11-11"));
-    } finally {
-      vi.useRealTimers();
-    }
+    panel({
+      status: "ready_for_market",
+      requests: [],
+      catalog: [
+        withMinimum("Justworks", 10, "2026-11-01"),
+        withMinimum("TriNet", 10, "2026-03-02"),
+      ],
+    });
+    const warning = "TriNet's profile was last checked 2 Mar 2026 and may be out of date.";
+    fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "Justworks" } });
+    expect(screen.queryByText(/may be out of date/)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "TriNet" } });
+    expect(screen.getByText(warning)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Record send/ }));
+    await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "TriNet", "2026-11-11"));
   });
 
   it("turns an underwriter's question into an ask of the prospect, and offers that only on questions", () => {

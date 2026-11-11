@@ -290,7 +290,8 @@ describe("pdfSafe", () => {
     const text = await readPdf(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob);
     // Long lines wrap, so each is matched in pieces that stay on one line.
     expect(text).toContain("Minimum headcount: Acme PEO takes groups of 50 or more employees;");
-    expect(text).toContain("— Not met · checked 2 Nov");
+    // In the same words as every eligibility check: never "Not met" or "Passes", which are for what was collected.
+    expect(text).toContain("— Doesn't meet · checked 2");
     expect(text).toContain("Can't tell yet");
     expect(text).toContain("A check that isn't met is a warning. It never stops you sending.");
   });

@@ -279,6 +279,29 @@ describe("ManuscriptPage", () => {
     expect(readiness).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
   });
 
+  it("shows the checks as loading while the PEOs' profiles are read, never as rules not checked yet", async () => {
+    peoCatalogReads.push("pending");
+    row = certified();
+    renderAt("/manuscript?session=s1");
+    const readiness = (await screen.findByRole("heading", { name: "11 — Underwriting Readiness" })).closest("section")!;
+    expect(readiness).toHaveTextContent("Loading Justworks's profile to run its eligibility checks.");
+    expect(readiness).not.toHaveTextContent("isn't checked yet");
+    expect(readiness).not.toHaveTextContent("Minimum headcount");
+  });
+
+  it("says the checks can't be run when the PEOs' profiles couldn't be read, and runs them once they are", async () => {
+    peoCatalogReads.push("error");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 10, sources: { min_headcount: { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-02" } } } }];
+    row = certified();
+    renderAt("/manuscript?session=s1");
+    const readiness = (await screen.findByRole("heading", { name: "11 — Underwriting Readiness" })).closest("section")!;
+    await waitFor(() => expect(readiness).toHaveTextContent("We couldn't load Justworks's profile, so its eligibility checks can't be run yet."));
+    expect(readiness).not.toHaveTextContent("isn't checked yet");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(readiness).toHaveTextContent("Minimum headcount: Justworks takes groups of 10 or more employees"));
+  });
+
   it("notes beside the eligibility checks that the chosen PEO's profile is out of date, and still checks against it", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 10, 11, 12));

@@ -58,6 +58,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
         fileId: detail.fileId ?? "EAA-UNCERTIFIED",
         submission: detail.submission,
         catalog,
+        catalogStatus,
         today: localToday(),
         provenance: packet.provenance,
         verified: verifiedFieldsOf(detail.reviews),

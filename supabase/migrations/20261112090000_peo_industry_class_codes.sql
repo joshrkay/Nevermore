@@ -116,7 +116,7 @@ BEGIN
       excluded_industries = public.peo_profile_text_list(p_profile -> 'excluded_industries', 'The excluded industries'),
       excluded_industry_codes = COALESCE(NULLIF(p_profile -> 'excluded_industry_codes', 'null'::jsonb), '{}'::jsonb),
       excluded_class_codes = public.peo_profile_text_list(p_profile -> 'excluded_class_codes', 'The excluded class codes'),
-      min_enrolment_percent = public.peo_profile_number(p_profile -> 'min_enrolment_percent', 'The minimum enrolment', false),
+      min_enrolment_percent = public.peo_profile_number(p_profile -> 'min_enrolment_percent', 'The minimum participation', false),
       extra_questions = COALESCE(NULLIF(p_profile -> 'extra_questions', 'null'::jsonb), '[]'::jsonb),
       sources = COALESCE(NULLIF(p_profile -> 'sources', 'null'::jsonb), '{}'::jsonb),
       -- The admin who started the draft stays its creator; a seeded draft takes the first admin to save it.

@@ -1,7 +1,6 @@
 import type { ChamberData } from "./chamberTypes";
 import { headcount } from "./headcount";
-import { capitalised, codesPhrase, PART_LABELS } from "./peoEditor";
-import { isProfileStale, type EligibilityRules, type RequirementProfile } from "./peoProfiles";
+import { capitalised, codesPhrase, isProfileStale, notCheckedYet, PART_LABELS, RULE_KEYS, RULE_PARTS_IN_ORDER, type RequirementProfile } from "./peoProfiles";
 
 /**
  * A PEO the prospect can prepare a packet for, as the database holds it (src/lib/peoCatalog.ts reads them; see
@@ -33,7 +32,7 @@ export const FIT_WORDS: Record<FitStatus, string> = {
 export const NOT_MET_NOTE = "A check that isn't met is a warning. It never stops you sending.";
 
 /** The eligibility rules a check is run for, in the order the checks always come in. */
-export const FIT_RULES = ["min_headcount", "states_served", "excluded_industries", "excluded_class_codes", "min_enrolment_percent"] as const;
+export const FIT_RULES = RULE_PARTS_IN_ORDER;
 export type FitRule = (typeof FIT_RULES)[number];
 
 /** One eligibility check (GLOSSARY.md): a rule of the PEO's profile in use against the employer's answers. */
@@ -49,14 +48,6 @@ export interface PeoFitCheck {
   /** Whether that was more than 180 days ago (isProfileStale). The check still stands, with a warning. */
   stale: boolean;
 }
-
-const RULE_KEYS = {
-  min_headcount: "minHeadcount",
-  states_served: "statesServed",
-  excluded_industries: "excludedIndustries",
-  excluded_class_codes: "excludedClassCodes",
-  min_enrolment_percent: "minEnrolmentPercent",
-} as const satisfies Record<FitRule, keyof EligibilityRules>;
 
 const list = (items: readonly string[]) => items.join(", ");
 
@@ -80,7 +71,7 @@ export function peoFit(data: ChamberData, peo: PeoRecord, today: string): PeoFit
       rule, label, status, sentence, checkedOn: source!.checkedOn, stale: isProfileStale(source!.checkedOn, today),
     });
     if (value === null || value === undefined || !source) {
-      return { rule, label, status: "unknown", sentence: `${name}'s ${PART_LABELS[rule]} ${rule === "states_served" || rule.startsWith("excluded") ? "aren't" : "isn't"} checked yet.`, checkedOn: null, stale: false };
+      return { rule, label, status: "unknown", sentence: notCheckedYet(name, rule), checkedOn: null, stale: false };
     }
     switch (rule) {
       case "min_headcount": {

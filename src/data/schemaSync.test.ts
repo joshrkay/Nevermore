@@ -292,7 +292,8 @@ describe("server and client intake rules agree", () => {
       phone: Number(/char_length\(p_phone\) > (\d+)/.exec(contact)?.[1]),
     }).toEqual(CONTACT_LIMITS);
     expect(Number(blocks("peo_max_contacts")[0].trim())).toBe(PROFILE_CAPS.contacts);
-    expect(Number(/\+\s*(\d+)/.exec(blocks("peo_check_grace_days")[0])?.[1])).toBe(CHECKED_ON_GRACE_DAYS);    // The class codes an excluded industry maps to (20261112090000).
+    expect(Number(/\+\s*(\d+)/.exec(blocks("peo_check_grace_days")[0])?.[1])).toBe(CHECKED_ON_GRACE_DAYS);
+    // The class codes an excluded industry maps to (20261112090000).
     expect(Number(blocks("peo_industry_codes_max")[0].trim())).toBe(PROFILE_CAPS.industryCodes);
   });
 

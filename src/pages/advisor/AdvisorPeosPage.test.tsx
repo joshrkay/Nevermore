@@ -130,6 +130,15 @@ describe("AdvisorPeosPage", () => {
   const withDraft = (draft: EditableProfile, revision = "rev-3") =>
     directory().map((p) => (p.id === 5 ? { ...p, versions: [version(3, draft, { status: "draft", publishedAt: null, revision }), ...p.versions] } : p));
 
+  /** Adds an excluded industry in the rules' editor: its wording, and the class codes it covers when given. */
+  const addIndustry = (wording: string, codes?: string) => {
+    fireEvent.click(screen.getByRole("button", { name: "Add an industry" }));
+    const group = within(screen.getByRole("group", { name: "Excluded industries" }));
+    const n = group.getAllByLabelText(/^Industry \d+, in the PEO's words$/).length;
+    fireEvent.change(group.getByLabelText(`Industry ${n}, in the PEO's words`), { target: { value: wording } });
+    if (codes) fireEvent.change(group.getByLabelText(`Industry ${n} class codes`), { target: { value: codes } });
+  };
+
   describe("as an admin", () => {
     beforeEach(() => api.fetchIsAdmin.mockResolvedValue(true));
 
@@ -167,7 +176,7 @@ describe("AdvisorPeosPage", () => {
       fireEvent.change(headcount, { target: { value: "12" } });
       fireEvent.change(screen.getByLabelText("Checked on", { selector: "#peo-5-src-min_headcount-checked" }), { target: { value: "2026-11-10" } });
       // A rule not checked yet stays so: nothing entered, no source.
-      expect(screen.getByLabelText("Excluded industries")).toHaveValue("");
+      expect(within(screen.getByRole("group", { name: "Excluded industries" })).queryAllByRole("textbox")).toEqual([]);
 
       const draft = { ...TRINET_V1, rules: { ...TRINET_V1.rules, minHeadcount: 12 }, sources: { ...TRINET_V1.sources, min_headcount: { ...dana, checkedOn: "2026-11-10" } } };
       api.loadPeoDirectory.mockResolvedValue(directory().map((p) => (p.id === 5 ? { ...p, versions: [version(3, draft, { status: "draft", publishedAt: null }), ...p.versions] } : p)));
@@ -240,14 +249,15 @@ describe("AdvisorPeosPage", () => {
       expect(screen.getByLabelText("Minimum headcount")).toHaveValue("15");
     });
 
-    it("reads each rule as it is typed: state codes in capitals, the PEO's own words one per line, a number as a number", async () => {
+    it("reads each rule as it is typed: state codes in capitals, each industry in the PEO's own words, a number as a number", async () => {
       api.savePeoDraft.mockResolvedValue(undefined);
       renderPage("/advisor/peos?peo=5");
       fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
       expect(screen.getByLabelText("Minimum headcount")).toHaveAttribute("inputMode", "decimal");
       expect(screen.getByLabelText("States served")).not.toHaveAttribute("inputMode");
       fireEvent.change(screen.getByLabelText("States served"), { target: { value: "ca, ny tx" } });
-      fireEvent.change(screen.getByLabelText("Excluded industries"), { target: { value: "Trucking, long haul\nRoofing" } });
+      addIndustry("Trucking, long haul");
+      addIndustry("Roofing");
       const industries = within(screen.getByRole("group", { name: "Where the excluded industries were checked" }));
       fireEvent.click(industries.getByLabelText("A document"));
       fireEvent.change(industries.getByLabelText("Document title"), { target: { value: "Broker guide 2026" } });
@@ -264,7 +274,8 @@ describe("AdvisorPeosPage", () => {
       fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
       expect(screen.getByLabelText("Minimum participation")).toHaveAccessibleDescription("The percent of employees eligible for the health plan who must enrol. Leave it empty if not checked yet.");
       expect(screen.getByRole("group", { name: "Where the minimum participation was checked" })).toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText("Excluded industries"), { target: { value: "Roofing: 5551, 5645\nCannabis dispensaries" } });
+      addIndustry("Roofing", "5551, 5645");
+      addIndustry("Cannabis dispensaries");
       const industries = within(screen.getByRole("group", { name: "Where the excluded industries were checked" }));
       fireEvent.click(industries.getByLabelText("A document"));
       fireEvent.change(industries.getByLabelText("Document title"), { target: { value: "Broker guide 2026" } });
@@ -280,10 +291,53 @@ describe("AdvisorPeosPage", () => {
       api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, rules: { ...TRINET_V1.rules, excludedIndustries: ["Roofing"] }, sources: { ...TRINET_V1.sources, excluded_industries: guide } }));
       renderPage("/advisor/peos?peo=5");
       fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
-      fireEvent.change(screen.getByLabelText("Excluded industries"), { target: { value: "Roofing: 5551" } });
+      fireEvent.change(screen.getByLabelText("Industry 1 class codes"), { target: { value: "5551" } });
       fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
       await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
       expect((api.savePeoDraft.mock.calls[0] as [number, EditableProfile])[1].sources.excluded_industries).toEqual({ ...guide, checkedOn: "2026-11-11" });
+    });
+
+    it("keeps an untouched rule's date whatever order the database returns its class code mapping in", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      // The database returns an object's keys shortest first; the PEO lists Roofing before Mining.
+      const old = { ...guide, checkedOn: "2026-06-01" };
+      api.loadPeoDirectory.mockResolvedValue(withDraft({
+        ...TRINET_V1,
+        rules: { ...TRINET_V1.rules, excludedIndustries: ["Roofing", "Mining"], excludedIndustryCodes: { Mining: ["1164"], Roofing: ["5551", "5645"] } },
+        sources: { ...TRINET_V1.sources, excluded_industries: old },
+      }));
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+      fireEvent.change(screen.getByLabelText("Minimum headcount"), { target: { value: "15" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
+      const [, saved] = api.savePeoDraft.mock.calls[0] as [number, EditableProfile];
+      expect(saved.sources.excluded_industries).toEqual(old);
+      expect(saved.sources.min_headcount).toEqual({ ...dana, checkedOn: "2026-11-11" });
+    });
+
+    it("keeps the census layout's date when the editor is saved untouched, whatever order a column's parts come back in", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      // As the database returns them: "from" before "header".
+      const columns = [{ from: "last_name", header: "Last Name" }, { from: null, header: "SSN" }] as unknown as NonNullable<EditableProfile["censusLayout"]>["columns"];
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, censusLayout: { ...TRINET_V1.censusLayout!, columns } }));
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Census layout" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
+      expect((api.savePeoDraft.mock.calls[0] as [number, EditableProfile])[1].sources.census_layout).toEqual(guide);
+    });
+
+    it("keeps the questions' date when the editor is saved untouched, whatever order a question's parts come back in", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      // As the database returns them: "kind" before "text".
+      const extraQuestions = [{ key: "uses_drivers", kind: "yes_no", text: "Do any employees drive for work?" }] as EditableProfile["extraQuestions"];
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, extraQuestions }));
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Its own questions" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
+      expect((api.savePeoDraft.mock.calls[0] as [number, EditableProfile])[1].sources.extra_questions).toEqual(dana);
     });
 
     it("shows a mapped industry with its codes, ready to edit", async () => {
@@ -293,7 +347,62 @@ describe("AdvisorPeosPage", () => {
       expect(within(wont).getByText("Excluded industries").closest("li")).toHaveTextContent("Roofing (class code 5551), Mining (no class codes mapped)");
       expect(within(wont).getByText("Minimum participation")).toBeInTheDocument();
       fireEvent.click(within(wont).getByRole("button", { name: "Edit What it won't take on" }));
-      expect(screen.getByLabelText("Excluded industries")).toHaveValue("Roofing: 5551\nMining");
+      expect(screen.getByLabelText("Industry 1, in the PEO's words")).toHaveValue("Roofing");
+      expect(screen.getByLabelText("Industry 1 class codes")).toHaveValue("5551");
+      expect(screen.getByLabelText("Industry 2, in the PEO's words")).toHaveValue("Mining");
+      expect(screen.getByLabelText("Industry 2 class codes")).toHaveValue("");
+    });
+
+    it("keeps the PEO's wording whole, colons and numbers included, and takes class codes only from their own field", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+      addIndustry("NAICS: 238160");
+      addIndustry("Roofing (SIC): 1761", "5551 5645");
+      const industries = within(screen.getByRole("group", { name: "Where the excluded industries were checked" }));
+      fireEvent.click(industries.getByLabelText("A document"));
+      fireEvent.change(industries.getByLabelText("Document title"), { target: { value: "Broker guide 2026" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
+      const [, saved] = api.savePeoDraft.mock.calls[0] as [number, EditableProfile];
+      expect(saved.rules.excludedIndustries).toEqual(["NAICS: 238160", "Roofing (SIC): 1761"]);
+      expect(saved.rules.excludedIndustryCodes).toEqual({ "Roofing (SIC): 1761": ["5551", "5645"] });
+    });
+
+    it("says beside the industries when a class code isn't four digits, and saves nothing", async () => {
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+      addIndustry("Roofing contractors", "238160");
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      expect(within(screen.getByRole("group", { name: "Excluded industries" })).getByText("Each excluded industry maps to 1 to 100 different class codes, each four digits")).toBeInTheDocument();
+      expect(api.savePeoDraft).not.toHaveBeenCalled();
+    });
+
+    it("drops an industry row left empty, so it is neither saved nor an excluded industry", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+      addIndustry("Roofing", "5551");
+      fireEvent.click(screen.getByRole("button", { name: "Add an industry" }));
+      const industries = within(screen.getByRole("group", { name: "Where the excluded industries were checked" }));
+      fireEvent.click(industries.getByLabelText("A document"));
+      fireEvent.change(industries.getByLabelText("Document title"), { target: { value: "Broker guide 2026" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
+      expect((api.savePeoDraft.mock.calls[0] as [number, EditableProfile])[1].rules.excludedIndustries).toEqual(["Roofing"]);
+    });
+
+    it("removes an excluded industry and the class codes mapped to it", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, rules: { ...TRINET_V1.rules, excludedIndustries: ["Roofing", "Mining"], excludedIndustryCodes: { Mining: ["1164"], Roofing: ["5551"] } }, sources: { ...TRINET_V1.sources, excluded_industries: guide } }));
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+      fireEvent.click(screen.getByRole("button", { name: "Remove industry 1, Roofing" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
+      const [, saved] = api.savePeoDraft.mock.calls[0] as [number, EditableProfile];
+      expect(saved.rules.excludedIndustries).toEqual(["Mining"]);
+      expect(saved.rules.excludedIndustryCodes).toEqual({ Mining: ["1164"] });
     });
 
     it("reads a minimum left empty as not checked yet, even with a source, and says the source has nothing to be for", async () => {
@@ -327,7 +436,7 @@ describe("AdvisorPeosPage", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent("This draft changed since you opened it. Reload to see the latest, your typing is kept.");
       expect(screen.queryByText(/try again/)).not.toBeInTheDocument();
 
-      // Another admin's save made revision rev-4, with a new minimum enrolment.
+      // Another admin's save made revision rev-4, with a new minimum participation.
       const newer = version(3, { ...TRINET_V1, rules: { ...TRINET_V1.rules, minHeadcount: 12, minEnrolmentPercent: 75 }, sources: { ...TRINET_V1.sources, min_enrolment_percent: dana } }, { status: "draft", publishedAt: null, revision: "rev-4" });
       api.loadPeoDirectory.mockResolvedValue(directory().map((p) => (p.id === 5 ? { ...p, versions: [newer, ...p.versions] } : p)));
       fireEvent.click(screen.getByRole("button", { name: "Reload" }));

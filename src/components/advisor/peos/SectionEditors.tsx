@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, Loader2, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
-import { ANSWER_FIELDS, EXTRA_QUESTION_LABELS, industriesText, readIndustries, isStaleDraftError, PROFILE_PART_TABLE, profileProblems, RULE_PARTS, whereChecked, type DraftBasis, type EditableProfile, type ProfileProblem } from "@/data/peoEditor";
+import { ANSWER_FIELDS, EXTRA_QUESTION_LABELS, isStaleDraftError, PROFILE_PART_TABLE, profileProblems, RULE_PARTS, samePart, whereChecked, type DraftBasis, type EditableProfile, type ProfileProblem } from "@/data/peoEditor";
 import { EXTRA_QUESTION_KINDS, PROFILE_PARTS, utcToday, type ProfilePart } from "@/data/peoProfiles";
 import { FIELD_LABELS } from "@/data/provenance";
 import { savePeoDraft } from "@/lib/advisorApi";
@@ -95,6 +95,10 @@ const EditorShell = ({ section, peoId, basis, build, onSaved, onCancel, onReload
   );
 };
 
+let rowSeq = 0;
+/** A key for a row the admin adds, removes or moves, so React keeps each row's inputs with it. */
+const rowKey = () => ++rowSeq;
+
 const srcId = (peoId: number, part: ProfilePart) => `peo-${peoId}-src-${part}`;
 const words = (text: string) => text.split(/[\s,]+/).map((w) => w.trim()).filter(Boolean);
 const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -112,10 +116,9 @@ function useEdited<T>(fromBase: () => T, base: EditableProfile): [T, (next: T) =
 
 /** The parts' sources as the editor shows them: a part whose content changed is dated today unless the admin set the date. */
 function datedSources(base: EditableProfile, next: EditableProfile, edited: Partial<Record<ProfilePart, SourceDraft>>, today: string) {
-  const same = (part: ProfilePart) => JSON.stringify(PROFILE_PART_TABLE[part].read(base)) === JSON.stringify(PROFILE_PART_TABLE[part].read(next));
   return Object.fromEntries(Object.entries(edited).map(([part, draft]) => [
     part,
-    draft!.dateSet || same(part as ProfilePart) ? draft! : { ...draft!, checkedOn: today },
+    draft!.dateSet || samePart(part as ProfilePart, base, next) ? draft! : { ...draft!, checkedOn: today },
   ])) as Partial<Record<ProfilePart, SourceDraft>>;
 }
 
@@ -150,24 +153,79 @@ function useSectionSources(base: EditableProfile, today: string, parts: readonly
 type RuleKey = keyof EditableProfile["rules"];
 type Rule = (typeof RULE_PARTS)[number];
 
-/** A rule's value as its input holds it: a number, words joined by commas, or industries one per line with their codes. */
+/** A rule's value as its input holds it: a number, or words joined by commas. */
 const ruleText = (r: Rule, rules: EditableProfile["rules"]) => {
   const value = rules[r.key];
   if (value === null || value === undefined) return "";
-  if (r.input === "number") return String(value);
-  return r.input === "industries" ? industriesText(value as string[], rules.excludedIndustryCodes) : (value as string[]).join(", ");
+  return r.input === "number" ? String(value) : (value as string[]).join(", ");
 };
 
 /** What a rule's input says: empty is "not checked yet", or, with a source, none excluded. */
 const readRule = (r: Rule, text: string, sourced: boolean): unknown => {
   if (text.trim() === "") return r.input === "number" || !sourced ? null : [];
   if (r.input === "number") return Number(text);
-  return r.input === "industries" ? readIndustries(text).industries : words(text).map((w) => (r.upperCase ? w.toUpperCase() : w));
+  return words(text).map((w) => (r.upperCase ? w.toUpperCase() : w));
+};
+
+/** One excluded industry as the editor holds it: the PEO's wording in one field, the class codes it covers in another. */
+interface IndustryRow {
+  key: number;
+  wording: string;
+  codes: string;
+}
+
+const industryRows = (rules: EditableProfile["rules"]): IndustryRow[] =>
+  (rules.excludedIndustries ?? []).map((wording) => ({ key: rowKey(), wording, codes: (rules.excludedIndustryCodes?.[wording] ?? []).join(", ") }));
+
+/**
+ * What the industry rows say: each row's wording, as typed, and the codes typed beside it. A row left wholly empty is
+ * dropped. No rows is "not checked yet", or, with a source, none excluded.
+ */
+const readIndustryRows = (rows: readonly IndustryRow[], sourced: boolean) => {
+  const kept = rows.filter((r) => r.wording.trim() !== "" || r.codes.trim() !== "");
+  const codes = Object.fromEntries(kept.filter((r) => r.codes.trim() !== "").map((r) => [r.wording.trim(), words(r.codes)]));
+  return { industries: kept.length === 0 && !sourced ? null : kept.map((r) => r.wording.trim()), codes };
+};
+
+/** The excluded industries: one row each, the PEO's own words and the class codes it covers in fields of their own. */
+const IndustriesFields = ({ id, hint, problem, rows, onChange }: { id: string; hint: string; problem?: string; rows: IndustryRow[]; onChange: (next: IndustryRow[]) => void }) => {
+  const set = (key: number, patch: Partial<IndustryRow>) => onChange(rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const describedBy = [`${id}-hint`, problem ? `${id}-problem` : null].filter(Boolean).join(" ");
+  return (
+    <fieldset className="space-y-2 min-w-0" aria-describedby={describedBy}>
+      <legend className="text-sm font-medium">Excluded industries</legend>
+      <p id={`${id}-hint`} className="text-xs text-muted-foreground">{hint}</p>
+      {problem && <p id={`${id}-problem`} className="text-xs text-destructive">{problem}</p>}
+      {rows.length === 0 ? <p className="text-sm text-muted-foreground">None listed.</p> : (
+        <ol className="space-y-2">
+          {rows.map((r, i) => (
+            <li key={r.key} className="grid gap-2 sm:grid-cols-[1fr_12rem_auto] items-start border border-border rounded-lg p-2">
+              <Field id={`${id}-${r.key}-wording`} label={`Industry ${i + 1}, in the PEO's words`}>
+                {(p) => <input {...p} aria-invalid={!!problem} value={r.wording} onChange={(e) => set(r.key, { wording: e.target.value })} className={inputClass} />}
+              </Field>
+              <Field id={`${id}-${r.key}-codes`} label={`Industry ${i + 1} class codes`} hint="Four digits each, such as 5551, 5645. Empty if none are mapped yet.">
+                {(p) => <input {...p} aria-invalid={!!problem} inputMode="numeric" value={r.codes} onChange={(e) => set(r.key, { codes: e.target.value })} className={inputClass} />}
+              </Field>
+              <div className="sm:pt-6">
+                <button onClick={() => onChange(rows.filter((x) => x.key !== r.key))} className={buttonClass} aria-label={`Remove industry ${i + 1}${r.wording.trim() ? `, ${r.wording.trim()}` : ""}`}>
+                  <X className="w-4 h-4" aria-hidden="true" />
+                </button>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+      <button onClick={() => onChange([...rows, { key: rowKey(), wording: "", codes: "" }])} className={buttonClass}>
+        <Plus className="w-4 h-4" aria-hidden="true" /> Add an industry
+      </button>
+    </fieldset>
+  );
 };
 
 export const RulesEditor = ({ peoId, base, basis, today, onSaved, onCancel, onReload }: EditorProps) => {
   // Each rule is its own edit, so a reload keeps the rules typed and takes the others from the newer draft.
   const [typed, setTyped] = useState<Partial<Record<RuleKey, string>>>({});
+  const [industries, setIndustries] = useEdited(() => industryRows(base.rules), base);
   const values = Object.fromEntries(RULE_PARTS.map((r) => [r.key, typed[r.key] ?? ruleText(r, base.rules)])) as Record<RuleKey, string>;
   const [sourceEdits, setSourceEdits] = useState<Partial<Record<ProfilePart, SourceDraft>>>({});
   const drafts = Object.fromEntries(RULE_PARTS.map((r) => [r.part, sourceEdits[r.part] ?? sourceDraft(base.sources[r.part], today)])) as Record<ProfilePart, SourceDraft>;
@@ -175,9 +233,13 @@ export const RulesEditor = ({ peoId, base, basis, today, onSaved, onCancel, onRe
 
   const content = (): EditableProfile => {
     const rules = { ...base.rules };
-    for (const r of RULE_PARTS) (rules as Record<RuleKey, unknown>)[r.key] = readRule(r, values[r.key], drafts[r.part].kind !== "none");
-    // The class codes each excluded industry covers come from the same box.
-    const { codes } = readIndustries(values.excludedIndustries);
+    for (const r of RULE_PARTS) {
+      if (r.input !== "industries") (rules as Record<RuleKey, unknown>)[r.key] = readRule(r, values[r.key], drafts[r.part].kind !== "none");
+    }
+    // The excluded industries, and the class codes each covers, come from their rows.
+    const read = readIndustryRows(industries, drafts.excluded_industries.kind !== "none");
+    rules.excludedIndustries = read.industries;
+    const codes = read.codes;
     if (Object.keys(codes).length > 0) rules.excludedIndustryCodes = codes;
     else delete rules.excludedIndustryCodes;
     return { ...base, rules };
@@ -192,11 +254,13 @@ export const RulesEditor = ({ peoId, base, basis, today, onSaved, onCancel, onRe
         const onChange = (e: { target: { value: string } }) => setTyped({ ...typed, [r.key]: e.target.value });
         return (
           <div key={r.key} className="space-y-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
-            <Field id={id} label={r.label} hint={r.hint} problem={problemAt(problems, `rules.${r.key}`)}>
-              {(p) => r.input === "industries"
-                ? <textarea {...p} rows={3} value={values[r.key]} onChange={onChange} className={inputClass} />
-                : <input {...p} inputMode={r.input === "number" ? "decimal" : undefined} value={values[r.key]} onChange={onChange} className={inputClass} />}
-            </Field>
+            {r.input === "industries"
+              ? <IndustriesFields id={id} hint={r.hint} problem={problemAt(problems, `rules.${r.key}`)} rows={industries} onChange={setIndustries} />
+              : (
+                <Field id={id} label={r.label} hint={r.hint} problem={problemAt(problems, `rules.${r.key}`)}>
+                  {(p) => <input {...p} inputMode={r.input === "number" ? "decimal" : undefined} value={values[r.key]} onChange={onChange} className={inputClass} />}
+                </Field>
+              )}
             <SourceFields
               id={srcId(peoId, r.part)}
               label={whereChecked(r.part)}
@@ -276,9 +340,6 @@ export const AnswersEditor = ({ peoId, base, basis, today, onSaved, onCancel, on
 };
 
 // ---------- Census layout ----------
-
-let rowSeq = 0;
-const rowKey = () => ++rowSeq;
 
 export const CensusEditor = ({ peoId, base, basis, today, onSaved, onCancel, onReload }: EditorProps) => {
   const [census, setCensus] = useEdited(() => {

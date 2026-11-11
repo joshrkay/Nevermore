@@ -242,7 +242,7 @@ BEGIN
     RETURN format('Up to %s excluded class codes, each four digits', max_list_items);
   END IF;
   IF v.min_enrolment_percent IS NOT NULL AND (v.min_enrolment_percent <= 0 OR v.min_enrolment_percent > 100) THEN
-    RETURN 'A minimum enrolment is a percentage above 0 and up to 100';
+    RETURN 'A minimum participation is a percentage above 0 and up to 100';
   END IF;
 
   -- The extra questions: up to 30, each with a key of its own, its text and a kind; a choice has 2 to 20 choices.
@@ -548,7 +548,7 @@ BEGIN
       states_served = public.peo_profile_text_list(p_profile -> 'states_served', 'The states served'),
       excluded_industries = public.peo_profile_text_list(p_profile -> 'excluded_industries', 'The excluded industries'),
       excluded_class_codes = public.peo_profile_text_list(p_profile -> 'excluded_class_codes', 'The excluded class codes'),
-      min_enrolment_percent = public.peo_profile_number(p_profile -> 'min_enrolment_percent', 'The minimum enrolment', false),
+      min_enrolment_percent = public.peo_profile_number(p_profile -> 'min_enrolment_percent', 'The minimum participation', false),
       extra_questions = COALESCE(NULLIF(p_profile -> 'extra_questions', 'null'::jsonb), '[]'::jsonb),
       sources = COALESCE(NULLIF(p_profile -> 'sources', 'null'::jsonb), '{}'::jsonb),
       -- The admin who started the draft stays its creator; a seeded draft takes the first admin to save it.

@@ -17,11 +17,11 @@ export const EXTRA_QUESTION_KINDS = ["text", "yes_no", "number", "choice"] as co
 export type ExtraQuestionKind = (typeof EXTRA_QUESTION_KINDS)[number];
 export const PROFILE_SOURCE_KINDS = ["document", "person"] as const;
 export type ProfileSourceKind = (typeof PROFILE_SOURCE_KINDS)[number];
+/** The eligibility rules, as parts of a profile, in the order their checks always come in. */
+export const RULE_PARTS_IN_ORDER = ["min_headcount", "states_served", "excluded_industries", "excluded_class_codes", "min_enrolment_percent"] as const;
+export type RulePart = (typeof RULE_PARTS_IN_ORDER)[number];
 /** The parts of a profile that each carry their own source and date: the sections, then each eligibility rule. */
-export const PROFILE_PARTS = [
-  "answers", "census_layout", "documents", "extra_questions", "contacts",
-  "min_headcount", "states_served", "excluded_industries", "excluded_class_codes", "min_enrolment_percent",
-] as const;
+export const PROFILE_PARTS = ["answers", "census_layout", "documents", "extra_questions", "contacts", ...RULE_PARTS_IN_ORDER] as const;
 export type ProfilePart = (typeof PROFILE_PARTS)[number];
 
 /**
@@ -85,6 +85,51 @@ export interface EligibilityRules {
   /** Minimum participation: the share of employees eligible for the health plan who must enrol, as a percentage. */
   minEnrolmentPercent: number | null;
 }
+
+/** Each eligibility rule's key in EligibilityRules, by its part: the one table both the editor and the checks read. */
+export const RULE_KEYS = {
+  min_headcount: "minHeadcount",
+  states_served: "statesServed",
+  excluded_industries: "excludedIndustries",
+  excluded_class_codes: "excludedClassCodes",
+  min_enrolment_percent: "minEnrolmentPercent",
+} as const satisfies Record<RulePart, keyof EligibilityRules>;
+
+/** How people name a part of a profile: its name in a sentence, and whether it reads as one thing or many. */
+export interface PartName {
+  /** Its name in a sentence, such as "minimum headcount". */
+  label: string;
+  /** "was" or "were": "Where the states served were checked", "the states served aren't checked yet". */
+  verb: "was" | "were";
+}
+
+/** Every part of a profile by name, the words the PEOs page, the editor and the eligibility checks all use. */
+export const PART_NAMES: Record<ProfilePart, PartName> = {
+  answers: { label: "answers", verb: "were" },
+  census_layout: { label: "census layout", verb: "was" },
+  documents: { label: "documents", verb: "were" },
+  extra_questions: { label: "questions", verb: "were" },
+  contacts: { label: "contacts", verb: "were" },
+  min_headcount: { label: "minimum headcount", verb: "was" },
+  states_served: { label: "states served", verb: "were" },
+  excluded_industries: { label: "excluded industries", verb: "were" },
+  excluded_class_codes: { label: "excluded class codes", verb: "were" },
+  min_enrolment_percent: { label: "minimum participation", verb: "was" },
+};
+
+/** The parts of a profile by the names the PEOs page gives them. */
+export const PART_LABELS = Object.fromEntries(PROFILE_PARTS.map((part) => [part, PART_NAMES[part].label])) as Record<ProfilePart, string>;
+
+/** "Justworks's minimum headcount isn't checked yet." or "Justworks's states served aren't checked yet." */
+export const notCheckedYet = (peo: string, part: ProfilePart) =>
+  `${peo}'s ${PART_NAMES[part].label} ${PART_NAMES[part].verb === "was" ? "isn't" : "aren't"} checked yet.`;
+
+/** A part's name to start a line with: "Minimum headcount". */
+export const capitalised = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** "class code 5551", "class codes 5551, 5645", or "no class codes mapped". */
+export const codesPhrase = (codes: readonly string[]) =>
+  codes.length === 0 ? "no class codes mapped" : `class code${codes.length === 1 ? "" : "s"} ${codes.join(", ")}`;
 
 /** One published version of a PEO's requirement profile. PEO contacts are not in it: only advisors read them. */
 export interface RequirementProfile {
@@ -212,6 +257,9 @@ function daysBetween(from: string, to: string): number {
 export function isProfileStale(lastChecked: string | null, today: string): boolean {
   return lastChecked !== null && daysBetween(lastChecked, today) > STALE_AFTER_DAYS;
 }
+
+/** When a rule was checked, as every eligibility check shows it: "checked 3 Nov 2026", and when stale, that it may be out of date. */
+export const checkedLine = (checkedOn: string, stale: boolean) => `checked ${formatCheckedOn(checkedOn)}${stale ? " · may be out of date" : ""}`;
 
 /** The warning a stale profile carries wherever it is used, naming when it was last checked; null when it isn't stale. */
 export function staleProfileWarning(peo: Pick<PeoRecord, "name" | "lastVerified">, today: string): string | null {

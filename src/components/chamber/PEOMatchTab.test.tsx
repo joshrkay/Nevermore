@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import { parsePeoCatalog } from "@/data/peoProfiles";
@@ -15,6 +15,9 @@ const renderTab = (selectedPeo: string | null = null) => {
 };
 
 describe("PEOMatchTab", () => {
+  // Whether a profile is out of date goes by the reader's today: pinned, so every test reads the same day.
+  beforeEach(() => {
+  });
   afterEach(() => vi.useRealTimers());
 
   it("shows a headcount of 0 as 0, and only a missing one as a dash", () => {
@@ -90,8 +93,6 @@ describe("PEOMatchTab", () => {
   });
 
   it("shows each check with its icon, its outcome in words, the PEO's fact against the employer's, and when the rule was checked", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date(2026, 10, 11, 12));
     const catalog = parsePeoCatalog([sourced("Alpha PEO", { min_headcount: 50, states_served: ["CA", "TX"] }), sourced("Beta PEO", { min_headcount: 5 }, "2026-04-01")]);
     render(<PEOMatchTab data={{ ...DEMO_CHAMBER_DATA, employee_count: 8, states: ["CA"] }} selectedPeo={null} onSelect={vi.fn()} onProceed={vi.fn()} catalog={catalog} catalogStatus="ready" />);
     const alpha = within(screen.getByRole("list", { name: "Eligibility checks for Alpha PEO" })).getAllByRole("listitem");
@@ -147,15 +148,12 @@ describe("PEOMatchTab", () => {
   });
 
   it("still offers a PEO whose profile is out of date, with a warning that says when it was last checked", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date(2026, 10, 11, 12));
     const profile = (checked: string) => ({ version: 1, min_headcount: 5, sources: { min_headcount: { kind: "document", name: "Broker guide", checked_on: checked } } });
     const catalog = parsePeoCatalog([
       { id: 1, name: "Justworks", profile: profile("2026-05-15") },
       { id: 2, name: "TriNet", profile: profile("2026-05-01") },
     ]);
     render(<PEOMatchTab data={DEMO_CHAMBER_DATA} selectedPeo={null} onSelect={vi.fn()} onProceed={vi.fn()} catalog={catalog} catalogStatus="ready" />);
-    vi.useRealTimers();
     expect(screen.getByRole("button", { name: "Choose TriNet" })).toBeInTheDocument();
     expect(screen.getByText("TriNet's profile was last checked 1 May 2026 and may be out of date.")).toBeInTheDocument();
     // Justworks was checked 180 days ago: not yet stale.

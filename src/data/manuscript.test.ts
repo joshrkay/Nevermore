@@ -86,11 +86,11 @@ describe("eligibilityChecks", () => {
     const census = [{ id: "1", first_name: "A", last_name: "B", work_state: "CA", class_code: "5551", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
     const checks = eligibilityChecks({ ...EMPTY_CHAMBER_DATA, employee_count: 3, hq_state: "CA", census }, peo, "2026-11-11");
     expect(checks).toEqual([
-      { label: "Minimum headcount: Example PEO takes groups of 10 or more employees; this employer has 3.", status: "fail", checkedOn: "2026-10-01", stale: false },
-      { label: "States served: Example PEO's states served aren't checked yet.", status: "unknown", checkedOn: null, stale: false },
-      { label: "Excluded industries: Example PEO's excluded industries aren't checked yet.", status: "unknown", checkedOn: null, stale: false },
-      { label: "Excluded class codes: Example PEO excludes class code 5551, which is on this employer's census.", status: "fail", checkedOn: "2026-04-01", stale: true },
-      { label: "Minimum participation: Example PEO's minimum participation isn't checked yet.", status: "unknown", checkedOn: null, stale: false },
+      { label: "Minimum headcount: Example PEO takes groups of 10 or more employees; this employer has 3.", status: "fail", ofPeoRule: true, checkedOn: "2026-10-01", stale: false },
+      { label: "States served: Example PEO's states served aren't checked yet.", status: "unknown", ofPeoRule: true, checkedOn: null, stale: false },
+      { label: "Excluded industries: Example PEO's excluded industries aren't checked yet.", status: "unknown", ofPeoRule: true, checkedOn: null, stale: false },
+      { label: "Excluded class codes: Example PEO excludes class code 5551, which is on this employer's census.", status: "fail", ofPeoRule: true, checkedOn: "2026-04-01", stale: true },
+      { label: "Minimum participation: Example PEO's minimum participation isn't checked yet.", status: "unknown", ofPeoRule: true, checkedOn: null, stale: false },
       { label: "US headquarters", status: "pass" },
       { label: "Employee census captured (1 employees)", status: "pass" },
       { label: "Workers' comp history and open claims", status: "unknown" },
@@ -186,13 +186,34 @@ describe("buildManuscript", () => {
     ]);
     const submission = { signer_name: "Jo", signer_title: "", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1", peo: "justworks" };
     const m = buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission, catalog });
-    expect(m.checks[0]).toEqual({ label: "Minimum headcount: Justworks takes groups of 10 or more employees; this employer has 3.", status: "fail", checkedOn: "2026-11-02", stale: false });
+    expect(m.checks[0]).toEqual({ label: "Minimum headcount: Justworks takes groups of 10 or more employees; this employer has 3.", status: "fail", ofPeoRule: true, checkedOn: "2026-11-02", stale: false });
     // Without the catalog, or for a PEO it doesn't hold, nothing is known about the PEO.
     expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission }).checks[0].status).toBe("unknown");
     expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission: { ...submission, peo: "Acme PEO" }, catalog }).checks[0].status).toBe("unknown");
     // A PEO named in free text has no profile: each of its rules can't be told yet.
     expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission: { ...submission, peo: "Acme PEO" }, catalog }).checks[0].label)
       .toBe("Minimum headcount: Acme PEO's minimum headcount isn't checked yet.");
+  });
+
+  it("runs no check against the chosen PEO until the catalog has been read, and says it is loading or failed", () => {
+    const submission = { signer_name: "Jo", signer_title: "", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1", peo: "Justworks" };
+    for (const catalogStatus of ["loading", "failed"] as const) {
+      const m = buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission, catalog: [], catalogStatus });
+      expect(m.peoChecks).toBe(catalogStatus);
+      expect(m.checks.map((c) => c.label)).toEqual(["US headquarters", "Employee census captured", "Workers' comp history and open claims", "Renewal increase within range"]);
+      expect(m.open.filter((o) => /Minimum headcount|Headcount meets/.test(o))).toEqual([]);
+    }
+    // While a re-read is loading, the catalog last read gives no note either: nothing about the PEO is shown yet.
+    const stale = parsePeoCatalog([{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 10, sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-03-02" } } } }]);
+    expect(buildManuscript(EMPTY_CHAMBER_DATA, { fileId: "EAA-1", submission, catalog: stale, catalogStatus: "loading", today: "2026-11-11" }).checksNote).toBeNull();
+    // A PEO given outright needs no catalog: its checks are run.
+    const given = buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission, peo: stale[0], catalogStatus: "loading", today: "2026-11-11" });
+    expect(given.peoChecks).toBeNull();
+    expect(given.checks[0].status).toBe("fail");
+    // Once read, a name the catalog doesn't hold is free text: every check against it can't tell yet.
+    const read = buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission, catalog: [], catalogStatus: "ready" });
+    expect(read.peoChecks).toBeNull();
+    expect(read.checks[0].label).toBe("Minimum headcount: Justworks's minimum headcount isn't checked yet.");
   });
 
   it("names the PEO chosen at submission", () => {

@@ -5,7 +5,7 @@
 import { CENSUS_TEMPLATE_COLUMNS } from "./census";
 import { US_STATE_CODES } from "./chamberValidation";
 import { categoryInfo, DOCUMENT_CATEGORIES } from "./documentCategories";
-import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, formatCheckedOn, isProfileStale, oldestCheck, parsePeoCatalog, PROFILE_CAPS, PROFILE_PARTS, type ProfilePart, type ProfileSource, type RequirementProfile } from "./peoProfiles";
+import { capitalised, CENSUS_FILE_FORMATS, codesPhrase, EXTRA_QUESTION_KINDS, formatCheckedOn, isProfileStale, oldestCheck, PART_LABELS, PART_NAMES, parsePeoCatalog, PROFILE_CAPS, PROFILE_PARTS, RULE_KEYS, type PartName, type ProfilePart, type ProfileSource, type RequirementProfile } from "./peoProfiles";
 import { FIELD_LABELS } from "./provenance";
 
 /** A contact's limits, in characters. */
@@ -83,90 +83,69 @@ export type SectionKey = "rules" | "answers" | "census" | "documents" | "questio
 type RuleKey = keyof EditableProfile["rules"];
 
 /**
- * How a rule is typed in the editor: a number, words such as state codes, or industries in the PEO's own words, one
- * per line, each with the class codes it covers after a colon.
+ * How a rule is typed in the editor: a number, words such as state codes, or industries, one row each, in the PEO's
+ * own words with the class codes it covers in a field of its own.
  */
 export type RuleInput = "number" | "words" | "industries";
 
-/** One part of a profile: what people call it, where the editor has it, what it holds, and, for a rule, how it is typed. */
-export interface ProfilePartEntry {
-  /** Its name in a sentence, such as "minimum headcount". */
-  label: string;
-  /** "was" or "were", for "Where the <label> <verb> checked". */
-  verb: "was" | "were";
+/** One part of a profile: what people call it (PART_NAMES), where the editor has it, what it holds, and, for a rule, how it is typed. */
+export interface ProfilePartEntry extends PartName {
   section: SectionKey;
   /** The paths of its fields, as profileProblems names them. */
   fields: string[];
   /** What it holds; null when it isn't set ("can't tell yet"). */
   read: (p: EditableProfile) => unknown;
-  /** For an eligibility rule: its key in the rules, how it is typed and shown, and the hint beside it. */
+  /** For an eligibility rule: its key in the rules (RULE_KEYS), how it is typed and shown, and the hint beside it. */
   rule?: { key: RuleKey; input: RuleInput; upperCase?: boolean; hint: string; show: (v: never, rules: EditableProfile["rules"]) => string };
 }
 
 const joined = (v: string[]) => v.join(", ");
 
-/** "class code 5551", "class codes 5551, 5645", or "no class codes mapped". */
-export const codesPhrase = (codes: readonly string[]) =>
-  codes.length === 0 ? "no class codes mapped" : `class code${codes.length === 1 ? "" : "s"} ${codes.join(", ")}`;
+// The names of the parts, shared with the eligibility checks, live with the profile (peoProfiles.ts).
+export { capitalised, codesPhrase, PART_LABELS };
 
-/** Excluded industries as the editor's box holds them: one per line, the class codes it covers after a colon. */
-export function industriesText(industries: readonly string[], codes: Record<string, string[]> = {}): string {
-  return industries.map((i) => (codes[i]?.length ? `${i}: ${codes[i].join(", ")}` : i)).join("\n");
-}
+type EditorPart = Omit<ProfilePartEntry, keyof PartName | "rule"> & { rule?: Omit<NonNullable<ProfilePartEntry["rule"]>, "key"> };
 
-/** What the box says: each line an industry in the PEO's words, and the class codes after a colon, when they are digits. */
-export function readIndustries(text: string): { industries: string[]; codes: Record<string, string[]> } {
-  const industries: string[] = [];
-  const codes: Record<string, string[]> = {};
-  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
-    const m = /^(.*\S)\s*:\s*(\d[\d,\s]*)$/.exec(line);
-    const industry = m ? m[1] : line;
-    industries.push(industry);
-    if (m) codes[industry] = m[2].split(/[\s,]+/).filter(Boolean);
-  }
-  return { industries, codes };
-}
-
-/** Every part of a profile, in the database's order (PROFILE_PARTS). Each list below derives from this one table. */
-export const PROFILE_PART_TABLE: Record<ProfilePart, ProfilePartEntry> = {
-  answers: { label: "answers", verb: "were", section: "answers", fields: ["neededToQuote", "neededBeforeSigning"], read: (p) => [...p.neededToQuote, ...p.neededBeforeSigning] },
-  census_layout: { label: "census layout", verb: "was", section: "census", fields: ["censusLayout"], read: (p) => p.censusLayout },
-  documents: { label: "documents", verb: "were", section: "documents", fields: ["documents"], read: (p) => p.documents },
-  extra_questions: { label: "questions", verb: "were", section: "questions", fields: ["extraQuestions"], read: (p) => p.extraQuestions },
-  contacts: { label: "contacts", verb: "were", section: "contacts", fields: ["contacts"], read: (p) => p.contacts },
+/** How the editor holds each part; its name comes from PART_NAMES and a rule's key from RULE_KEYS. */
+const EDITOR_PARTS: Record<ProfilePart, EditorPart> = {
+  answers: { section: "answers", fields: ["neededToQuote", "neededBeforeSigning"], read: (p) => [...p.neededToQuote, ...p.neededBeforeSigning] },
+  census_layout: { section: "census", fields: ["censusLayout"], read: (p) => p.censusLayout },
+  documents: { section: "documents", fields: ["documents"], read: (p) => p.documents },
+  extra_questions: { section: "questions", fields: ["extraQuestions"], read: (p) => p.extraQuestions },
+  contacts: { section: "contacts", fields: ["contacts"], read: (p) => p.contacts },
   min_headcount: {
-    label: "minimum headcount", verb: "was", section: "rules", fields: ["rules.minHeadcount"], read: (p) => p.rules.minHeadcount,
-    rule: { key: "minHeadcount", input: "number", hint: "Employees. Leave it empty if not checked yet.", show: (v: number) => String(v) },
+    section: "rules", fields: ["rules.minHeadcount"], read: (p) => p.rules.minHeadcount,
+    rule: { input: "number", hint: "Employees. Leave it empty if not checked yet.", show: (v: number) => String(v) },
   },
   states_served: {
-    label: "states served", verb: "were", section: "rules", fields: ["rules.statesServed"], read: (p) => p.rules.statesServed,
-    rule: { key: "statesServed", input: "words", upperCase: true, hint: "State codes, such as CA, NY. Leave it empty if not checked yet.", show: joined },
+    section: "rules", fields: ["rules.statesServed"], read: (p) => p.rules.statesServed,
+    rule: { input: "words", upperCase: true, hint: "State codes, such as CA, NY. Leave it empty if not checked yet.", show: joined },
   },
   excluded_industries: {
-    label: "excluded industries", verb: "were", section: "rules", fields: ["rules.excludedIndustries"],
+    section: "rules", fields: ["rules.excludedIndustries"],
     // The wording and the class codes mapped to it are one rule, with one source.
     read: (p) => (p.rules.excludedIndustries === null ? null : [p.rules.excludedIndustries, p.rules.excludedIndustryCodes ?? {}]),
     rule: {
-      key: "excludedIndustries", input: "industries",
-      hint: "In the PEO's own words, one per line. After a colon, the class codes it covers, such as Roofing: 5551, 5645; an industry with none can't be checked. Leave it empty and give a source if it excludes none.",
+      input: "industries",
+      hint: "Copy each industry as the PEO's form words it, and the workers' comp class codes it covers beside it; an industry with no codes can't be checked. List none and give a source if it excludes none.",
       show: (v: string[], rules) => v.map((i) => `${i} (${codesPhrase(rules.excludedIndustryCodes?.[i] ?? [])})`).join(", ") || "None",
     },
   },
   excluded_class_codes: {
-    label: "excluded class codes", verb: "were", section: "rules", fields: ["rules.excludedClassCodes"], read: (p) => p.rules.excludedClassCodes,
-    rule: { key: "excludedClassCodes", input: "words", hint: "Workers' comp class codes, four digits each. Leave it empty and give a source if it excludes none.", show: (v: string[]) => joined(v) || "None" },
+    section: "rules", fields: ["rules.excludedClassCodes"], read: (p) => p.rules.excludedClassCodes,
+    rule: { input: "words", hint: "Workers' comp class codes, four digits each. Leave it empty and give a source if it excludes none.", show: (v: string[]) => joined(v) || "None" },
   },
   min_enrolment_percent: {
-    label: "minimum participation", verb: "was", section: "rules", fields: ["rules.minEnrolmentPercent"], read: (p) => p.rules.minEnrolmentPercent,
-    rule: { key: "minEnrolmentPercent", input: "number", hint: "The percent of employees eligible for the health plan who must enrol. Leave it empty if not checked yet.", show: (v: number) => `${v}%` },
+    section: "rules", fields: ["rules.minEnrolmentPercent"], read: (p) => p.rules.minEnrolmentPercent,
+    rule: { input: "number", hint: "The percent of employees eligible for the health plan who must enrol. Leave it empty if not checked yet.", show: (v: number) => `${v}%` },
   },
 };
 
-/** A part's name to start a line with: "Minimum headcount". */
-export const capitalised = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
-/** The parts of a profile by the names the PEOs page gives them. */
-export const PART_LABELS = Object.fromEntries(PROFILE_PARTS.map((part) => [part, PROFILE_PART_TABLE[part].label])) as Record<ProfilePart, string>;
+/** Every part of a profile, in the database's order (PROFILE_PARTS). Each list below derives from this one table. */
+export const PROFILE_PART_TABLE = Object.fromEntries(PROFILE_PARTS.map((part) => {
+  const { rule, ...entry } = EDITOR_PARTS[part];
+  return [part, { ...PART_NAMES[part], ...entry, ...(rule ? { rule: { ...rule, key: RULE_KEYS[part as keyof typeof RULE_KEYS] } } : {}) }];
+})) as Record<ProfilePart, ProfilePartEntry>;
 
 /** The eligibility rules, in order: each one's part, its key in the rules, its label to start a line with, and how it is typed. */
 export const RULE_PARTS = PROFILE_PARTS.flatMap((part) => {
@@ -176,6 +155,26 @@ export const RULE_PARTS = PROFILE_PARTS.flatMap((part) => {
 
 /** "Where the minimum headcount was checked". */
 export const whereChecked = (part: ProfilePart) => `Where the ${PROFILE_PART_TABLE[part].label} ${PROFILE_PART_TABLE[part].verb} checked`;
+
+/**
+ * Whether two values mean the same: equal lists in the same order, and objects with the same keys holding the same
+ * values in any order. The database returns an object's keys in its own order (jsonb: shortest first), never the
+ * order they were typed in, so nothing may tell a change by comparing text.
+ */
+export function sameMeaning(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => sameMeaning(x, b[i]));
+  }
+  if (typeof a === "object" && typeof b === "object" && a !== null && b !== null) {
+    const ka = Object.keys(a).filter((k) => (a as Record<string, unknown>)[k] !== undefined);
+    const kb = Object.keys(b).filter((k) => (b as Record<string, unknown>)[k] !== undefined);
+    return ka.length === kb.length && ka.every((k) => sameMeaning((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+  }
+  return a === b;
+}
+
+/** Whether a part of a profile holds the same in two versions of it, so that its source keeps its date. */
+export const samePart = (part: ProfilePart, a: EditableProfile, b: EditableProfile) => sameMeaning(PROFILE_PART_TABLE[part].read(a), PROFILE_PART_TABLE[part].read(b));
 
 /** Whether a part of the profile holds something a source can be for. A rule or a census layout that is null doesn't. */
 function partIsSet(p: EditableProfile, part: ProfilePart): boolean {
@@ -257,7 +256,7 @@ export function profileProblems(p: EditableProfile, today: string): ProfileProbl
     add("rules.excludedClassCodes", `Up to ${caps.listItems} excluded class codes, each four digits`);
   }
   if (r.minEnrolmentPercent !== null && !(r.minEnrolmentPercent > 0 && r.minEnrolmentPercent <= 100)) {
-    add("rules.minEnrolmentPercent", "A minimum enrolment is a percentage above 0 and up to 100");
+    add("rules.minEnrolmentPercent", "A minimum participation is a percentage above 0 and up to 100");
   }
 
   // The extra questions.
@@ -464,7 +463,7 @@ export function profileChanges(from: EditableProfile | null, to: EditableProfile
     const formatName = (l: typeof l1 | null) => (l ? (l.format === "xlsx" ? "xlsx" : "CSV") : "Not checked yet");
     if (formatName(l0) !== formatName(l1)) out.push(`Census file: ${formatName(l0)} → ${formatName(l1)}`);
     if ((l0?.templateFile ?? null) !== l1.templateFile) out.push(`Template file: ${l0?.templateFile ?? "None"} → ${l1.templateFile ?? "None"}`);
-    if (!l0 || JSON.stringify(l0.columns) !== JSON.stringify(l1.columns)) out.push(`Census layout: columns now ${l1.columns.map((c) => c.header).join(", ")}`);
+    if (!l0 || !sameMeaning(l0.columns, l1.columns)) out.push(`Census layout: columns now ${l1.columns.map((c) => c.header).join(", ")}`);
   }
   out.push(...listChange("Documents", before.documents.map(documentLabel), to.documents.map(documentLabel)));
   out.push(...listChange("Its own questions", before.extraQuestions.map((q) => q.text), to.extraQuestions.map((q) => q.text)));
