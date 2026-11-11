@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
@@ -91,6 +91,9 @@ const certified = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("ManuscriptPage", () => {
+  // A test that fakes the clock gets the real one back even when it fails.
+  afterEach(() => vi.useRealTimers());
+
   beforeEach(() => {
     lastQuery = null;
     peoCatalogRows = [];
@@ -283,7 +286,6 @@ describe("ManuscriptPage", () => {
     const readiness = (await screen.findByRole("heading", { name: "11 — Underwriting Readiness" })).closest("section")!;
     await waitFor(() => expect(readiness).toHaveTextContent("Justworks's profile was last checked 1 Apr 2026 and may be out of date."));
     expect(readiness).toHaveTextContent("Headcount meets Justworks minimum (4 of 10 employees) — not met");
-    vi.useRealTimers();
   });
 
   it("says when a certification predates the document record", async () => {

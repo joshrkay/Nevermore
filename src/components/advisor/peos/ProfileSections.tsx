@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { categoryInfo } from "@/data/documentCategories";
-import { describeSource, EXTRA_QUESTION_LABELS, showRule, type EditableProfile } from "@/data/peoEditor";
+import { describeSource, EXTRA_QUESTION_LABELS, RULE_PARTS, showRule, type EditableProfile } from "@/data/peoEditor";
 import type { ProfilePart } from "@/data/peoProfiles";
 import { FIELD_LABELS } from "@/data/provenance";
-import { buttonClass, RULE_ROWS, SECTION_TITLES, type SectionKey } from "./shared";
+import { buttonClass, SECTION_TITLES, type SectionKey } from "./shared";
 
 const SourceLine = ({ source }: { source: EditableProfile["sources"][ProfilePart] }) => (
   <p className={`text-xs ${source ? "text-muted-foreground" : "text-warning"}`}>{describeSource(source)}</p>
@@ -29,7 +29,7 @@ export const SectionContents = ({ section, profile }: { section: SectionKey; pro
     case "rules":
       return (
         <ul className="space-y-2">
-          {RULE_ROWS.map((r) => (
+          {RULE_PARTS.map((r) => (
             <li key={r.key} className="text-sm">
               <span className="font-medium">{r.label}</span>
               <span className="block">{showRule(profile, r.key)}</span>

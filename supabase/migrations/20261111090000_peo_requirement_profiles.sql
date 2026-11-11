@@ -11,7 +11,9 @@
 --   A version is a draft until an admin publishes it. Publishing freezes it: a published version is never changed
 --   or deleted (a trigger refuses it, whoever writes), and the newest published version is the one in use. A
 --   change after that is a new version. peo_profile_version_error() refuses a profile that breaks the shape,
---   whoever writes it.
+--   whoever writes it. Each save gives a draft a new revision: a save or a publish names the revision it was based on
+--   (or, with no draft, the version in use), and one based on anything else is refused (PT409), so an admin never
+--   writes old content back over newer or publishes a draft other than the one reviewed.
 -- * public.peo_contacts: the people at a PEO a profile version names, in a table of their own, frozen with it.
 -- * admin_add_peo(), admin_save_peo_profile(), admin_publish_peo_profile(), admin_set_peo_listed(): the only
 --   writers, for admins. A PEO is never deleted (a trigger refuses it): one no longer offered is marked not listed,
@@ -82,6 +84,8 @@ CREATE TABLE public.peo_profile_versions (
   created_by uuid,
   published_at timestamptz,
   published_by uuid,
+  -- A draft's state: a new one on every save. A save or a publish names the revision it was based on.
+  revision uuid NOT NULL DEFAULT gen_random_uuid(),
   UNIQUE (peo_id, version)
 );
 
@@ -488,8 +492,10 @@ $$;
 
 -- Saves a PEO's draft profile from the whole profile as the editor holds it, contacts included: the draft is
 -- replaced, or, when the PEO has none, a new one is made as its next version, recording the admin who started it.
--- A published version is never touched.
-CREATE OR REPLACE FUNCTION public.admin_save_peo_profile(p_peo_id bigint, p_profile jsonb)
+-- A published version is never touched. The save names what the editor was based on: the draft's revision, or, with
+-- no draft, null and the version in use (null with none). Anything else is refused (PT409): another save, publish,
+-- re-check or discard came in between, and this one would write old content back.
+CREATE OR REPLACE FUNCTION public.admin_save_peo_profile(p_peo_id bigint, p_profile jsonb, p_draft_revision uuid, p_in_use_version integer)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -522,7 +528,12 @@ BEGIN
   END IF;
 
   SELECT * INTO draft FROM public.peo_profile_versions WHERE peo_id = p_peo_id AND status = 'draft';
-  IF NOT FOUND THEN
+  IF (FOUND AND p_draft_revision IS DISTINCT FROM draft.revision)
+     OR (NOT FOUND AND (p_draft_revision IS NOT NULL OR p_in_use_version IS DISTINCT FROM
+       (SELECT max(version) FROM public.peo_profile_versions WHERE peo_id = p_peo_id AND status = 'published'))) THEN
+    RAISE EXCEPTION 'This draft changed since you opened it. Reload to see the latest' USING ERRCODE = 'PT409';
+  END IF;
+  IF draft.id IS NULL THEN
     INSERT INTO public.peo_profile_versions (peo_id, version, created_by)
     VALUES (p_peo_id, (SELECT COALESCE(max(version), 0) + 1 FROM public.peo_profile_versions WHERE peo_id = p_peo_id), auth.uid())
     RETURNING * INTO draft;
@@ -541,7 +552,8 @@ BEGIN
       extra_questions = COALESCE(NULLIF(p_profile -> 'extra_questions', 'null'::jsonb), '[]'::jsonb),
       sources = COALESCE(NULLIF(p_profile -> 'sources', 'null'::jsonb), '{}'::jsonb),
       -- The admin who started the draft stays its creator; a seeded draft takes the first admin to save it.
-      created_by = COALESCE(created_by, auth.uid())
+      created_by = COALESCE(created_by, auth.uid()),
+      revision = gen_random_uuid()
   WHERE id = draft.id
   RETURNING * INTO draft;
 
@@ -574,8 +586,9 @@ BEGIN
 END;
 $$;
 
--- Publishes a PEO's draft: from now on it is the profile in use, and it never changes.
-CREATE OR REPLACE FUNCTION public.admin_publish_peo_profile(p_peo_id bigint)
+-- Publishes a PEO's draft: from now on it is the profile in use, and it never changes. It names the revision the
+-- admin reviewed, and is refused (PT409) when the draft has changed since.
+CREATE OR REPLACE FUNCTION public.admin_publish_peo_profile(p_peo_id bigint, p_draft_revision uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -589,9 +602,12 @@ BEGIN
   END IF;
   UPDATE public.peo_profile_versions
   SET status = 'published', published_at = now(), published_by = auth.uid()
-  WHERE peo_id = p_peo_id AND status = 'draft'
+  WHERE peo_id = p_peo_id AND status = 'draft' AND revision IS NOT DISTINCT FROM p_draft_revision
   RETURNING * INTO v;
   IF NOT FOUND THEN
+    IF EXISTS (SELECT 1 FROM public.peo_profile_versions WHERE peo_id = p_peo_id AND status = 'draft') THEN
+      RAISE EXCEPTION 'This draft changed since you opened it. Reload to see the latest' USING ERRCODE = 'PT409';
+    END IF;
     RAISE EXCEPTION 'This PEO has no draft to publish' USING ERRCODE = 'PT404';
   END IF;
   RETURN to_jsonb(v);
@@ -648,7 +664,7 @@ SET search_path = public, pg_temp
 AS $$
   WITH reader AS (SELECT public.is_advisor() AS advisor)
   SELECT COALESCE(jsonb_agg(jsonb_build_object('id', p.id, 'name', p.name, 'listed', p.listed, 'profile', (
-    SELECT to_jsonb(v) - 'peo_id' - 'status' - 'created_at' - 'created_by' - 'published_by'
+    SELECT to_jsonb(v) - 'peo_id' - 'status' - 'created_at' - 'created_by' - 'published_by' - 'revision'
       || jsonb_build_object('sources', CASE WHEN r.advisor THEN v.sources ELSE (
         SELECT COALESCE(jsonb_object_agg(s.key, CASE WHEN s.value ->> 'kind' = 'person' THEN s.value - 'name' ELSE s.value END), '{}'::jsonb)
         FROM jsonb_each(v.sources - 'contacts') s
@@ -697,13 +713,13 @@ REVOKE ALL ON FUNCTION public.peo_catalog() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.peo_catalog() TO authenticated;
 REVOKE ALL ON FUNCTION public.admin_add_peo(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.admin_add_peo(text) TO authenticated;
-REVOKE ALL ON FUNCTION public.admin_save_peo_profile(bigint, jsonb) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.admin_save_peo_profile(bigint, jsonb) TO authenticated;
+REVOKE ALL ON FUNCTION public.admin_save_peo_profile(bigint, jsonb, uuid, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_save_peo_profile(bigint, jsonb, uuid, integer) TO authenticated;
 REVOKE ALL ON FUNCTION public.admin_set_peo_listed(bigint, boolean) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.admin_set_peo_listed(bigint, boolean) TO authenticated;
 REVOKE ALL ON FUNCTION public.keep_peo() FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.admin_publish_peo_profile(bigint) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.admin_publish_peo_profile(bigint) TO authenticated;
+REVOKE ALL ON FUNCTION public.admin_publish_peo_profile(bigint, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_publish_peo_profile(bigint, uuid) TO authenticated;
 REVOKE ALL ON FUNCTION public.check_peo_profile_version() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.peo_profile_version_error(public.peo_profile_versions) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.peo_contact_error(text, text, text, text) FROM PUBLIC, anon, authenticated;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeSource, EMPTY_PROFILE, parseProfileVersion, profileChanges, profilePayload, profileProblems, publishProblems, type EditableProfile } from "./peoEditor";
+import { describeSource, EMPTY_PROFILE, parseProfileVersion, profileChanges, profilePayload, profileProblems, publishProblems, showRule, type EditableProfile } from "./peoEditor";
 import type { ProfileSource } from "./peoProfiles";
 
 const TODAY = "2026-11-11";
@@ -232,6 +232,28 @@ describe("profileChanges: what publishing a draft changes", () => {
     expect(profileChanges(null, { ...EMPTY_PROFILE, rules: { ...EMPTY_PROFILE.rules, minHeadcount: 5 }, sources: { min_headcount: guide } })).toEqual([
       "Minimum headcount: Not checked yet → 5",
       "Where the minimum headcount was checked: Not checked yet → Document: Broker guide 2026 · checked 20 Oct 2026",
+    ]);
+  });
+});
+
+describe("the parts of a profile, from one table", () => {
+  it("names each part's source in a sentence, was or were by the part", () => {
+    const next: EditableProfile = { ...FULL, sources: { ...FULL.sources, min_enrolment_percent: guide, answers: guide, states_served: dana } };
+    expect(profileChanges(FULL, next)).toEqual([
+      "Where the states served were checked: Document: Broker guide 2026 · checked 20 Oct 2026 → Broker desk: Dana Reyes, Broker desk manager · checked 2 Nov 2026",
+      "Where the minimum enrolment was checked: Broker desk: Dana Reyes, Broker desk manager · checked 2 Nov 2026 → Document: Broker guide 2026 · checked 20 Oct 2026",
+      "Where the answers were checked: Broker desk: Dana Reyes, Broker desk manager · checked 2 Nov 2026 → Document: Broker guide 2026 · checked 20 Oct 2026",
+    ]);
+  });
+
+  it("shows a rule checked with nothing excluded as None", () => {
+    expect(showRule({ ...EMPTY_PROFILE, rules: { ...EMPTY_PROFILE.rules, excludedClassCodes: [], excludedIndustries: [] } }, "excludedClassCodes")).toBe("None");
+    expect(showRule({ ...EMPTY_PROFILE, rules: { ...EMPTY_PROFILE.rules, excludedIndustries: [] } }, "excludedIndustries")).toBe("None");
+  });
+
+  it("asks for the source of a rule checked with nothing excluded: it says something", () => {
+    expect(publishProblems({ ...EMPTY_PROFILE, rules: { ...EMPTY_PROFILE.rules, excludedIndustries: [] }, sources: { documents: guide } })).toEqual([
+      { path: "sources.excluded_industries", message: "Name where the excluded industries came from, and when it was checked, before publishing" },
     ]);
   });
 });

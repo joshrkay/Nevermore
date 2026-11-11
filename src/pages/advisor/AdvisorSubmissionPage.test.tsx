@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
@@ -113,6 +113,9 @@ const renderPage = () =>
   );
 
 describe("AdvisorSubmissionPage", () => {
+  // A test that fakes the clock gets the real one back even when it fails.
+  afterEach(() => vi.useRealTimers());
+
   beforeEach(() => {
     peoCatalogRows = [];
     peoCatalogReads.length = 0;
@@ -688,7 +691,6 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Generate packet/ })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: /Generate packet/ }));
     await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
-    vi.useRealTimers();
     const [manuscript] = buildManuscriptPdf.mock.calls[0] as unknown as [Manuscript];
     expect(manuscript.checksNote).toBe("Justworks's profile was last checked 1 May 2026 and may be out of date.");
   });

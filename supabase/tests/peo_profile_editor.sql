@@ -139,6 +139,15 @@ CREATE FUNCTION pg_temp.guide(checked text DEFAULT '2026-10-20') RETURNS jsonb L
   SELECT jsonb_build_object('kind', 'document', 'name', 'Broker guide 2026', 'link', 'https://trinet.example/guide.pdf', 'checked_on', checked);
 $$;
 
+-- What an editor opened on a PEO was based on: its draft's revision (null with no draft) and the version in use (null
+-- with none). Read as the table's owner, as the page would have read it when it was opened.
+CREATE FUNCTION pg_temp.draft_revision(peo bigint) RETURNS uuid LANGUAGE sql AS $$
+  SELECT revision FROM public.peo_profile_versions WHERE peo_id = peo AND status = 'draft';
+$$;
+CREATE FUNCTION pg_temp.in_use(peo bigint) RETURNS integer LANGUAGE sql AS $$
+  SELECT max(version) FROM public.peo_profile_versions WHERE peo_id = peo AND status = 'published';
+$$;
+
 -- A full profile, as the editor would send it: every rule and every section with its own source and date.
 CREATE FUNCTION pg_temp.full_profile() RETURNS jsonb LANGUAGE sql AS $$
   SELECT jsonb_build_object(
@@ -165,13 +174,32 @@ CREATE FUNCTION pg_temp.full_profile() RETURNS jsonb LANGUAGE sql AS $$
     'contacts', jsonb_build_array(jsonb_build_object('name', 'Dana Reyes', 'role', 'Broker desk', 'email', 'dana@trinet.example', 'phone', '555-0100')));
 $$;
 
+-- Saves and publishes as an editor opened just now would: based on the draft and version in use as they stand.
+CREATE FUNCTION pg_temp.save_sql(peo bigint, profile jsonb, revision uuid, in_use integer) RETURNS text LANGUAGE sql AS $$
+  SELECT format('SELECT public.admin_save_peo_profile(%s, %L, %L, %L)', peo, profile, revision, in_use);
+$$;
 CREATE FUNCTION pg_temp.save(who uuid, peo bigint, profile jsonb) RETURNS jsonb LANGUAGE sql AS $$
-  SELECT pg_temp.run(who, format('SELECT public.admin_save_peo_profile(%s, %L)', peo, profile));
+  SELECT pg_temp.run(who, pg_temp.save_sql(peo, profile, pg_temp.draft_revision(peo), pg_temp.in_use(peo)));
 $$;
 
 CREATE FUNCTION pg_temp.publish(who uuid, peo bigint) RETURNS jsonb LANGUAGE sql AS $$
-  SELECT pg_temp.run(who, format('SELECT public.admin_publish_peo_profile(%s)', peo));
+  SELECT pg_temp.run(who, format('SELECT public.admin_publish_peo_profile(%s, %L)', peo, pg_temp.draft_revision(peo)));
 $$;
+
+-- The message stmt fails with, run as `who`; null when it doesn't fail.
+CREATE FUNCTION pg_temp.refusal(who uuid, stmt text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE message text := NULL;
+BEGIN
+  PERFORM pg_temp.as_user(who);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    message := SQLSTATE || ' ' || SQLERRM;
+  END;
+  RESET ROLE;
+  RETURN message;
+END $$;
 
 
 CREATE FUNCTION pg_temp.recheck(who uuid, peo bigint, sources jsonb) RETURNS jsonb LANGUAGE sql AS $$
@@ -276,6 +304,74 @@ BEGIN
   saved := pg_temp.save(admin, trinet, '{}');
   IF (saved ->> 'version')::int <> 4 THEN RAISE EXCEPTION 'FAIL: the next draft is version %', saved ->> 'version'; END IF;
   RAISE NOTICE 'peo_profile_editor: discard cases passed';
+END $$;
+
+-- ---------- A save or a publish names the draft it was based on ----------
+-- Two admins, or one admin in two tabs, edit the same PEO. Each save and publish says which draft it was based on (its
+-- revision, or no draft and the version in use), and the database refuses one based on anything else, so old content
+-- is never written back over newer and a draft nobody reviewed is never published.
+DO $$
+DECLARE
+  ana uuid := pg_temp.new_user('admin');
+  ben uuid := pg_temp.new_user('admin');
+  justworks bigint := pg_temp.peo('Justworks');
+  opened uuid;
+  saved jsonb;
+  stale constant text := 'PT409 This draft changed since you opened it. Reload to see the latest';
+BEGIN
+  -- Both open Justworks' draft. Ana saves first; Ben's save, based on the draft as he opened it, is refused, with
+  -- words the editor shows, and changes nothing.
+  opened := pg_temp.draft_revision(justworks);
+  saved := pg_temp.run(ana, pg_temp.save_sql(justworks, jsonb_build_object('min_headcount', 5), opened, NULL));
+  IF (saved ->> 'revision')::uuid = opened THEN RAISE EXCEPTION 'FAIL: a save kept the draft''s revision'; END IF;
+  IF pg_temp.refusal(ben, pg_temp.save_sql(justworks, jsonb_build_object('min_headcount', 9), opened, NULL)) IS DISTINCT FROM stale THEN
+    RAISE EXCEPTION 'FAIL: a save based on an older draft was %', COALESCE(pg_temp.refusal(ben, pg_temp.save_sql(justworks, jsonb_build_object('min_headcount', 9), opened, NULL)), 'allowed');
+  END IF;
+  IF (SELECT min_headcount FROM public.peo_profile_versions WHERE peo_id = justworks AND status = 'draft') <> 5 THEN
+    RAISE EXCEPTION 'FAIL: the refused save changed the draft';
+  END IF;
+  -- Once Ben reloads, he saves on top of Ana's draft.
+  PERFORM pg_temp.run(ben, pg_temp.save_sql(justworks, jsonb_build_object('min_headcount', 9), (saved ->> 'revision')::uuid, NULL));
+
+  -- Publishing names the draft that was reviewed: Ana reviews it, Ben saves again, and Ana's publish is refused.
+  opened := pg_temp.draft_revision(justworks);
+  PERFORM pg_temp.save(ben, justworks, jsonb_build_object('min_headcount', 12, 'sources', jsonb_build_object('min_headcount', pg_temp.person())));
+  IF pg_temp.refusal(ana, format('SELECT public.admin_publish_peo_profile(%s, %L)', justworks, opened)) IS DISTINCT FROM stale THEN
+    RAISE EXCEPTION 'FAIL: publishing a draft other than the one reviewed was not refused as stale';
+  END IF;
+  PERFORM pg_temp.must_raise(ana, format('SELECT public.admin_publish_peo_profile(%s, NULL)', justworks), 'PT409', 'publishing without naming the draft');
+  IF EXISTS (SELECT 1 FROM public.peo_profile_versions WHERE peo_id = justworks AND status = 'published') THEN
+    RAISE EXCEPTION 'FAIL: a refused publish published';
+  END IF;
+  PERFORM pg_temp.publish(ana, justworks);
+
+  -- With no draft, a save is based on the version in use. Both open version 1; Ana's save makes the draft, so Ben's,
+  -- still based on no draft, is refused rather than written over hers.
+  PERFORM pg_temp.run(ana, pg_temp.save_sql(justworks, jsonb_build_object('min_headcount', 15), NULL, 1));
+  PERFORM pg_temp.must_raise(ben, pg_temp.save_sql(justworks, jsonb_build_object('min_headcount', 3), NULL, 1), 'PT409', 'a save based on no draft when one was made since');
+  -- Ana publishes it (version 2). Ben, still on version 1 with no draft, is refused: his save would bring version 1's
+  -- content back.
+  PERFORM pg_temp.save(ana, justworks, jsonb_build_object('min_headcount', 15, 'sources', jsonb_build_object('min_headcount', pg_temp.person())));
+  PERFORM pg_temp.publish(ana, justworks);
+  PERFORM pg_temp.must_raise(ben, pg_temp.save_sql(justworks, jsonb_build_object('min_headcount', 3), NULL, 1), 'PT409', 'a save based on a version no longer in use');
+  -- A re-check publishes a version too: an editor opened before it is stale.
+  PERFORM pg_temp.recheck(ana, justworks, jsonb_build_object('min_headcount', pg_temp.guide('2026-11-10')));
+  PERFORM pg_temp.must_raise(ben, pg_temp.save_sql(justworks, jsonb_build_object('min_headcount', 3), NULL, 2), 'PT409', 'a save based on the version before a re-check');
+  -- A draft discarded and started again is a different draft, whatever its version number.
+  saved := pg_temp.save(ana, justworks, jsonb_build_object('min_headcount', 20));
+  PERFORM pg_temp.run(ana, format('SELECT to_jsonb(true) FROM public.admin_discard_peo_draft(%s)', justworks));
+  PERFORM pg_temp.save(ana, justworks, jsonb_build_object('min_headcount', 21));
+  PERFORM pg_temp.must_raise(ben, pg_temp.save_sql(justworks, jsonb_build_object('min_headcount', 3), (saved ->> 'revision')::uuid, NULL), 'PT409', 'a save based on a discarded draft');
+  PERFORM pg_temp.must_raise(ben, format('SELECT public.admin_publish_peo_profile(%s, %L)', justworks, saved ->> 'revision'), 'PT409', 'publishing a discarded draft');
+  -- A save based on a draft when there is none is stale too, and a publish with no draft has nothing to publish.
+  PERFORM pg_temp.run(ana, format('SELECT to_jsonb(true) FROM public.admin_discard_peo_draft(%s)', justworks));
+  PERFORM pg_temp.must_raise(ben, pg_temp.save_sql(justworks, '{}', (saved ->> 'revision')::uuid, 3), 'PT409', 'a save based on a draft that is gone');
+  PERFORM pg_temp.must_raise(ben, format('SELECT public.admin_publish_peo_profile(%s, %L)', justworks, saved ->> 'revision'), 'PT404', 'publishing with no draft');
+  -- The catalog never shows a revision: it is the editor's business.
+  IF (SELECT bool_or(p -> 'profile' ? 'revision') FROM jsonb_array_elements(public.peo_catalog()) p) THEN
+    RAISE EXCEPTION 'FAIL: the catalog shows a revision';
+  END IF;
+  RAISE NOTICE 'peo_profile_editor: stale save and publish cases passed';
 END $$;
 
 \echo 'peo_profile_editor: all cases passed'

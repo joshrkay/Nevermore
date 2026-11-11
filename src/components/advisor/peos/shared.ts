@@ -1,7 +1,9 @@
 // What the PEOs page's components share (L-1.2): the classes, the sections and their rules, and a source as a form
 // holds it.
-import type { EditableProfile, ProfileProblem } from "@/data/peoEditor";
-import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
+import type { ProfileProblem, SectionKey } from "@/data/peoEditor";
+import type { ProfileSource } from "@/data/peoProfiles";
+
+export type { SectionKey } from "@/data/peoEditor";
 
 export const inputClass = "w-full min-h-11 bg-muted border border-border rounded-md px-3 py-2 text-sm aria-[invalid=true]:border-destructive";
 export const buttonClass = "inline-flex items-center justify-center gap-2 min-h-11 border border-border text-sm px-3 py-2 rounded-md hover:bg-muted disabled:opacity-50";
@@ -17,6 +19,8 @@ export interface SourceDraft {
   role: string;
   link: string;
   checkedOn: string;
+  /** Whether the admin set the date: until they do, a part whose content changed is dated today. */
+  dateSet?: boolean;
 }
 
 export const sourceDraft = (source: ProfileSource | undefined, today: string): SourceDraft =>
@@ -30,9 +34,6 @@ export const sourceFrom = (d: SourceDraft): ProfileSource | undefined =>
     : d.kind === "document" ? { kind: "document", name: d.name.trim(), ...(d.link.trim() ? { link: d.link.trim() } : {}), checkedOn: d.checkedOn }
       : { kind: "person", name: d.name.trim(), role: d.role.trim(), checkedOn: d.checkedOn };
 
-/** The sections of a profile, in the order the PEOs page shows them, each with the part its source belongs to. */
-export type SectionKey = "rules" | "answers" | "census" | "documents" | "questions" | "contacts";
-
 export const SECTION_TITLES: Record<SectionKey, string> = {
   rules: "What it won't take on",
   answers: "Answers it needs",
@@ -44,14 +45,6 @@ export const SECTION_TITLES: Record<SectionKey, string> = {
 
 /** A census column we fill, as people read it: "first_name" is "First name". */
 export const columnLabel = (column: string) => column.charAt(0).toUpperCase() + column.slice(1).replace(/_/g, " ");
-
-export const RULE_ROWS: { key: keyof EditableProfile["rules"]; part: ProfilePart; label: string }[] = [
-  { key: "minHeadcount", part: "min_headcount", label: "Minimum headcount" },
-  { key: "statesServed", part: "states_served", label: "States served" },
-  { key: "excludedIndustries", part: "excluded_industries", label: "Excluded industries" },
-  { key: "excludedClassCodes", part: "excluded_class_codes", label: "Excluded class codes" },
-  { key: "minEnrolmentPercent", part: "min_enrolment_percent", label: "Minimum enrolment" },
-];
 
 /** A question's key, suggested from its text until the admin types one: lower-case words joined by underscores. */
 export const suggestQuestionKey = (text: string) => {

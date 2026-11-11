@@ -8,7 +8,7 @@ import type { ChamberSubmission } from "@/data/manuscript";
 import { parseProvenance, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import type { OutboxStatus } from "@/data/outbox";
 import type { IntakeSource } from "@/data/intakeSource";
-import { EMPTY_PROFILE, parseProfileVersion, profilePayload, type EditableProfile, type ProfileVersion } from "@/data/peoEditor";
+import { contactsOf, EMPTY_PROFILE, parseProfileVersion, profilePayload, type DraftBasis, type EditableProfile, type PeoContact, type ProfileVersion } from "@/data/peoEditor";
 import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
 import {
   isPipelineStatus,
@@ -588,19 +588,39 @@ export interface PeoDirectoryEntry {
   versions: ProfileVersion[];
 }
 
+/** Versions whose contacts one request reads: at most 20 contacts each, well under the API's row cap. */
+const CONTACT_VERSIONS_PER_READ = 40;
+
+async function contactRows(versionIds: readonly number[]): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < versionIds.length; i += CONTACT_VERSIONS_PER_READ) {
+    const { data, error } = await supabase.from("peo_contacts").select("*")
+      .in("profile_version_id", versionIds.slice(i, i + CONTACT_VERSIONS_PER_READ)).order("position");
+    if (error) fail(error, "Couldn't load the PEOs' contacts.");
+    rows.push(...((data ?? []) as Record<string, unknown>[]));
+  }
+  return rows;
+}
+
 /**
- * Every PEO with its profile versions and their contacts, as row security lets the reader see them: advisors read
- * the published versions and their contacts, admins drafts too (20261111090000). Alphabetical.
+ * Every PEO with its profile versions, as row security lets the reader see them: advisors read the published
+ * versions, admins drafts too (20261111090000). Alphabetical. Only the contacts of each PEO's version in use and its
+ * draft are read, the ones the page shows and an edit starts from; an older version's are read with
+ * loadVersionContacts() when its history is opened, and until then it lists none.
  */
 export async function loadPeoDirectory(): Promise<PeoDirectoryEntry[]> {
-  const [peos, versions, contacts] = await Promise.all([
+  const [peos, versions] = await Promise.all([
     supabase.from("peos").select("id, name, listed").order("name"),
     supabase.from("peo_profile_versions").select("*").order("version", { ascending: false }),
-    supabase.from("peo_contacts").select("*").order("position"),
   ]);
-  for (const r of [peos, versions, contacts]) if (r.error) fail(r.error, "Couldn't load the PEOs.");
+  for (const r of [peos, versions]) if (r.error) fail(r.error, "Couldn't load the PEOs.");
   const rows = (versions.data ?? []) as Record<string, unknown>[];
-  const contactRows = (contacts.data ?? []) as Record<string, unknown>[];
+  const current = (peoId: number) => {
+    const mine = rows.filter((v) => Number(v.peo_id) === peoId);
+    const inUse = mine.filter((v) => v.status === "published").sort((a, b) => Number(b.version) - Number(a.version))[0];
+    return [mine.find((v) => v.status === "draft"), inUse].filter(Boolean).map((v) => Number(v!.id));
+  };
+  const contacts = await contactRows((peos.data ?? []).flatMap((p) => current(p.id)));
   return [...(peos.data ?? [])]
     .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
     .map((p) => ({
@@ -609,9 +629,15 @@ export async function loadPeoDirectory(): Promise<PeoDirectoryEntry[]> {
       listed: p.listed,
       versions: rows
         .filter((v) => Number(v.peo_id) === p.id)
-        .map((v) => parseProfileVersion(p.name, v, contactRows))
+        .map((v) => parseProfileVersion(p.name, v, contacts))
         .sort((a, b) => b.version - a.version),
     }));
+}
+
+/** The contacts each of these profile versions names, in order, by version id: for a PEO's history. */
+export async function loadVersionContacts(versionIds: readonly number[]): Promise<Map<number, PeoContact[]>> {
+  const rows = await contactRows(versionIds);
+  return new Map(versionIds.map((id) => [id, contactsOf(id, rows)]));
 }
 
 /** Adds a PEO, listed, with no profile. The database refuses a name already listed, in words to show. */
@@ -621,15 +647,26 @@ export async function addPeo(name: string): Promise<{ id: number }> {
   return data as { id: number };
 }
 
-/** Saves the PEO's draft from the whole profile, making the draft when there is none. */
-export async function savePeoDraft(peoId: number, profile: EditableProfile): Promise<void> {
-  const { error } = await supabase.rpc("admin_save_peo_profile", { p_peo_id: peoId, p_profile: profilePayload(profile) as Json });
+/**
+ * Saves the PEO's draft from the whole profile, making the draft when there is none. `basis` is what the editor was
+ * based on: the database refuses the save (PT409) when the draft changed since, so old content is never written back.
+ */
+export async function savePeoDraft(peoId: number, profile: EditableProfile, basis: DraftBasis): Promise<void> {
+  const { error } = await supabase.rpc("admin_save_peo_profile", {
+    p_peo_id: peoId,
+    p_profile: profilePayload(profile) as Json,
+    p_draft_revision: basis.draftRevision,
+    p_in_use_version: basis.inUseVersion,
+  });
   if (error) fail(error, "Couldn't save the draft.");
 }
 
-/** Publishes the PEO's draft: it is the profile in use from now on, and never changes. */
-export async function publishPeoDraft(peoId: number): Promise<void> {
-  const { error } = await supabase.rpc("admin_publish_peo_profile", { p_peo_id: peoId });
+/**
+ * Publishes the PEO's draft, the revision the admin reviewed: it is the profile in use from now on, and never changes.
+ * The database refuses it (PT409) when the draft changed since.
+ */
+export async function publishPeoDraft(peoId: number, draftRevision: string | null): Promise<void> {
+  const { error } = await supabase.rpc("admin_publish_peo_profile", { p_peo_id: peoId, p_draft_revision: draftRevision });
   if (error) fail(error, "Couldn't publish the draft.");
 }
 

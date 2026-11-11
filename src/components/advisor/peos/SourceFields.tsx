@@ -63,7 +63,7 @@ export const SourceFields = ({ id, label, value, onChange, problems, path, allow
             </Field>
           )}
           <Field id={`${id}-checked`} label="Checked on" problem={problemAt(problems, `${path}.checkedOn`)}>
-            {(p) => <input {...p} type="date" value={value.checkedOn} onChange={(e) => set({ checkedOn: e.target.value })} className={inputClass} />}
+            {(p) => <input {...p} type="date" value={value.checkedOn} onChange={(e) => set({ checkedOn: e.target.value, dateSet: true })} className={inputClass} />}
           </Field>
         </div>
       )}

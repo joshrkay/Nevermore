@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { EMPTY_PROFILE, versionsOf } from "@/data/peoEditor";
+import { EMPTY_PROFILE, versionsOf, type DraftBasis } from "@/data/peoEditor";
 import { oldestCheck, staleProfileWarning } from "@/data/peoProfiles";
 import { setPeoListed, type PeoDirectoryEntry } from "@/lib/advisorApi";
 import { DiscardDraft, History, RecheckForm, ReviewAndPublish } from "./PeoActions";
@@ -53,6 +53,8 @@ const PeoPanel = ({ peo, isAdmin, today, onChanged }: PeoPanelProps) => {
       setListing(false);
     }
   };
+  // What an editor or the review is based on; the database refuses a save or a publish based on anything else.
+  const basis: DraftBasis = { draftRevision: draft?.revision ?? null, inUseVersion: inUse?.version ?? null };
   const shown = (isAdmin ? draft?.profile : null) ?? inUse?.profile ?? EMPTY_PROFILE;
   const stale = inUse ? staleProfileWarning({ name: peo.name, lastVerified: oldestCheck(inUse.profile) }, today) : null;
   const id = `peo-${peo.id}`;
@@ -87,7 +89,7 @@ const PeoPanel = ({ peo, isAdmin, today, onChanged }: PeoPanelProps) => {
           {mode === "discard" && <DiscardDraft peoId={peo.id} draft={draft} inUse={inUse} onDone={done} onCancel={() => setMode(null)} />}
         </div>
       )}
-      {isAdmin && draft && mode === "review" && <ReviewAndPublish peo={peo} draft={draft} inUse={inUse} onDone={done} onCancel={() => setMode(null)} />}
+      {isAdmin && draft && mode === "review" && <ReviewAndPublish peo={peo} draft={draft} inUse={inUse} onDone={done} onCancel={() => setMode(null)} onReload={onChanged} />}
       {isAdmin && (
         <div className="flex flex-wrap items-center gap-2">
           {inUse && (
@@ -112,14 +114,16 @@ const PeoPanel = ({ peo, isAdmin, today, onChanged }: PeoPanelProps) => {
             key={section}
             id={id}
             section={section}
-            onEdit={isAdmin && Editor ? () => setEditing(section) : undefined}
-            editor={editing === section && Editor ? (
+            onEdit={isAdmin ? () => setEditing(section) : undefined}
+            editor={editing === section ? (
               <Editor
                 peoId={peo.id}
                 base={draft?.profile ?? inUse?.profile ?? EMPTY_PROFILE}
+                basis={basis}
                 today={today}
                 onSaved={() => { setEditing(null); onChanged(); }}
                 onCancel={() => setEditing(null)}
+                onReload={onChanged}
               />
             ) : undefined}
           >
@@ -127,7 +131,8 @@ const PeoPanel = ({ peo, isAdmin, today, onChanged }: PeoPanelProps) => {
           </Section>
         );
       })}
-      <History id={id} published={published} />
+      {/* Read again from scratch when a version is published, so each compares with its own contacts. */}
+      <History key={published.map((v) => v.id).join()} id={id} published={published} />
     </section>
   );
 };

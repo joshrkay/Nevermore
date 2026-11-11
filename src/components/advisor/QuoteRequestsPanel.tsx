@@ -26,9 +26,6 @@ interface QuoteRequestsPanelProps {
   onChanged: () => void;
 }
 
-/** Today in the advisor's own calendar, as a date input holds it. */
-const today = () => localToday();
-
 const inputClass = "w-full bg-muted border border-border rounded-md px-3 py-2 text-sm";
 
 const ANSWERS: { value: QuoteAnswer["status"]; label: string }[] = [
@@ -140,7 +137,8 @@ const QuestionForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow
 const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, events, currentVersion, data, catalog, onAskProspect, onChanged }: QuoteRequestsPanelProps) => {
   const [catalogPeo, setCatalogPeo] = useState("");
   const [otherPeo, setOtherPeo] = useState("");
-  const [sentOn, setSentOn] = useState(today);
+  // Today in the advisor's own calendar, as a date input holds it.
+  const [sentOn, setSentOn] = useState(localToday);
   const [saving, setSaving] = useState(false);
   // The pipeline step offered after a send or a quote, until the advisor takes it or says not now.
   const [offer, setOffer] = useState<PipelineStatus | null>(null);
@@ -148,6 +146,9 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
   const [answering, setAnswering] = useState<number | null>(null);
   const [asking, setAsking] = useState<number | null>(null);
   const peo = cleanPeoName(catalogPeo || otherPeo);
+  // The PEO chosen to record a send to, when it is one we list: a stale profile is still sent to, with a warning.
+  const chosen = catalogPeo ? findPeo(catalog, catalogPeo) : undefined;
+  const chosenStale = chosen ? staleProfileWarning(chosen, localToday()) : null;
 
   const move = async (to: PipelineStatus) => {
     setOffer(null);
@@ -195,7 +196,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
           const listed = findPeo(catalog, r.peo_name);
           const misfits = listed ? peoFit(data, listed).filter((c) => c.status === "does_not_meet") : [];
           // A stale profile is still read, with when it was last checked (src/data/peoProfiles.ts).
-          const stale = listed ? staleProfileWarning(listed, today()) : null;
+          const stale = listed ? staleProfileWarning(listed, localToday()) : null;
           return (
             <li key={r.id} data-testid={`quote-request-${r.id}`} className="border-l-2 border-border pl-3 space-y-1">
               <div className="flex items-center justify-between gap-2">
@@ -282,6 +283,12 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
             <option key={p.name} value={p.name}>{p.name}</option>
           ))}
         </select>
+        {chosenStale && (
+          <p className="text-xs text-warning flex items-start gap-1">
+            <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" aria-hidden="true" />
+            {chosenStale}
+          </p>
+        )}
         {!catalogPeo && (
           <>
             <label htmlFor="quote-other-peo" className="block text-xs text-muted-foreground">Another PEO</label>

@@ -194,12 +194,25 @@ CREATE FUNCTION pg_temp.full_profile() RETURNS jsonb LANGUAGE sql AS $$
     'contacts', jsonb_build_array(jsonb_build_object('name', 'Dana Reyes', 'role', 'Broker desk', 'email', 'dana@trinet.example', 'phone', '555-0100')));
 $$;
 
+-- Saves and publishes as an editor opened just now would: based on the PEO's draft (its revision) and the version
+-- in use as they stand (20261111090000 refuses anything else; supabase/tests/peo_profile_editor.sql tests that).
+CREATE FUNCTION pg_temp.draft_revision(peo bigint) RETURNS uuid LANGUAGE sql AS $$
+  SELECT revision FROM public.peo_profile_versions WHERE peo_id = peo AND status = 'draft';
+$$;
+CREATE FUNCTION pg_temp.save_sql(peo bigint, profile jsonb) RETURNS text LANGUAGE sql AS $$
+  SELECT format('SELECT public.admin_save_peo_profile(%s, %L, %L, %L)', peo, profile, pg_temp.draft_revision(peo),
+    (SELECT max(version) FROM public.peo_profile_versions WHERE peo_id = peo AND status = 'published'));
+$$;
+CREATE FUNCTION pg_temp.publish_sql(peo bigint) RETURNS text LANGUAGE sql AS $$
+  SELECT format('SELECT public.admin_publish_peo_profile(%s, %L)', peo, pg_temp.draft_revision(peo));
+$$;
+
 CREATE FUNCTION pg_temp.save(who uuid, peo bigint, profile jsonb) RETURNS jsonb LANGUAGE sql AS $$
-  SELECT pg_temp.run(who, format('SELECT public.admin_save_peo_profile(%s, %L)', peo, profile));
+  SELECT pg_temp.run(who, pg_temp.save_sql(peo, profile));
 $$;
 
 CREATE FUNCTION pg_temp.publish(who uuid, peo bigint) RETURNS jsonb LANGUAGE sql AS $$
-  SELECT pg_temp.run(who, format('SELECT public.admin_publish_peo_profile(%s)', peo));
+  SELECT pg_temp.run(who, pg_temp.publish_sql(peo));
 $$;
 
 -- ---------- Writing and publishing ----------
@@ -263,9 +276,9 @@ BEGIN
   END IF;
 
   -- Only admins write: an advisor or a prospect is refused, and nobody writes the tables directly.
-  PERFORM pg_temp.must_raise(advisor, format('SELECT public.admin_save_peo_profile(%s, %L)', trinet, '{}'), '42501', 'an advisor saving a profile');
-  PERFORM pg_temp.must_raise(prospect, format('SELECT public.admin_save_peo_profile(%s, %L)', trinet, '{}'), '42501', 'a prospect saving a profile');
-  PERFORM pg_temp.must_raise(advisor, format('SELECT public.admin_publish_peo_profile(%s)', trinet), '42501', 'an advisor publishing');
+  PERFORM pg_temp.must_raise(advisor, pg_temp.save_sql(trinet, '{}'), '42501', 'an advisor saving a profile');
+  PERFORM pg_temp.must_raise(prospect, pg_temp.save_sql(trinet, '{}'), '42501', 'a prospect saving a profile');
+  PERFORM pg_temp.must_raise(advisor, pg_temp.publish_sql(trinet), '42501', 'an advisor publishing');
   PERFORM pg_temp.must_raise(advisor, 'SELECT public.admin_add_peo(''Acme PEO'')', '42501', 'an advisor adding a PEO');
   PERFORM pg_temp.must_raise(admin, 'INSERT INTO public.peos (name) VALUES (''Acme PEO'')', '42501', 'an admin writing a PEO directly');
   PERFORM pg_temp.must_raise(admin, format('UPDATE public.peo_profile_versions SET min_headcount = 1 WHERE peo_id = %s', trinet), '42501', 'an admin writing a profile directly');
@@ -312,7 +325,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL: the newest published version isn''t the one in use: %', profile;
   END IF;
   -- With no draft left, there is nothing to publish.
-  PERFORM pg_temp.must_raise(admin, format('SELECT public.admin_publish_peo_profile(%s)', trinet), 'PT404', 'publishing with no draft');
+  PERFORM pg_temp.must_raise(admin, pg_temp.publish_sql(trinet), 'PT404', 'publishing with no draft');
   -- A draft can still be changed and dropped: it was never used. Whoever saves it, it keeps the admin who started it.
   PERFORM pg_temp.save(admin, trinet, '{}');
   PERFORM pg_temp.save(pg_temp.new_user('admin'), trinet, '{}');
@@ -389,7 +402,7 @@ BEGIN
     ('a contact with no name', '{"contacts": [{"name": " ", "email": "a@b.example"}]}'),
     ('a contact email that isn''t one', '{"contacts": [{"name": "Dana", "email": "dana"}]}')
   ) AS t(label, profile) LOOP
-    PERFORM pg_temp.must_raise(admin, format('SELECT public.admin_save_peo_profile(%s, %L)', justworks, bad.profile), '22023', 'saving ' || bad.label);
+    PERFORM pg_temp.must_raise(admin, pg_temp.save_sql(justworks, bad.profile), '22023', 'saving ' || bad.label);
     cases := cases + 1;
   END LOOP;
 
@@ -398,13 +411,13 @@ BEGIN
 
   -- A published version says where each part came from and when: an empty draft, or a rule or a section with no
   -- source, can't be published.
-  PERFORM pg_temp.must_raise(admin, format('SELECT public.admin_publish_peo_profile(%s)', justworks), '22023', 'publishing a profile with nothing sourced');
+  PERFORM pg_temp.must_raise(admin, pg_temp.publish_sql(justworks), '22023', 'publishing a profile with nothing sourced');
   PERFORM pg_temp.save(admin, justworks, jsonb_build_object('min_headcount', 5, 'documents', pg_temp.full_profile() -> 'documents',
     'sources', jsonb_build_object('min_headcount', pg_temp.person())));
-  PERFORM pg_temp.must_raise(admin, format('SELECT public.admin_publish_peo_profile(%s)', justworks), '22023', 'publishing documents with no source');
+  PERFORM pg_temp.must_raise(admin, pg_temp.publish_sql(justworks), '22023', 'publishing documents with no source');
   PERFORM pg_temp.save(admin, justworks, jsonb_build_object('min_headcount', 5, 'sources', jsonb_build_object('min_headcount', pg_temp.person()),
     'contacts', pg_temp.full_profile() -> 'contacts'));
-  PERFORM pg_temp.must_raise(admin, format('SELECT public.admin_publish_peo_profile(%s)', justworks), '22023', 'publishing contacts with no source');
+  PERFORM pg_temp.must_raise(admin, pg_temp.publish_sql(justworks), '22023', 'publishing contacts with no source');
 
   -- What the caps allow is stored: 200 columns, 30 questions, a template file; and a section with nothing in it,
   -- sourced, says the PEO asks for none (no documents, here).
@@ -511,7 +524,7 @@ BEGIN
   END;
   PERFORM pg_temp.must_raise(admin, format('SELECT public.admin_add_peo(%L)', repeat('x', 81)), '22023', 'a PEO name over 80 characters');
   PERFORM pg_temp.must_raise(admin, 'SELECT public.admin_add_peo('' '')', '22023', 'a PEO with no name');
-  PERFORM pg_temp.must_raise(admin, 'SELECT public.admin_save_peo_profile(999999, ''{}'')', 'PT404', 'saving a profile for no PEO');
+  PERFORM pg_temp.must_raise(admin, 'SELECT public.admin_save_peo_profile(999999, ''{}'', NULL, NULL)', 'PT404', 'saving a profile for no PEO');
   RAISE NOTICE 'peo_profiles: reading cases passed';
 END $$;
 

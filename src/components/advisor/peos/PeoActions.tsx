@@ -1,18 +1,26 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { PART_LABELS, profileChanges, profileProblems, publishProblems, type ProfileProblem, type ProfileVersion } from "@/data/peoEditor";
-import { formatCheckedOn, PROFILE_PARTS, type ProfilePart } from "@/data/peoProfiles";
-import { discardPeoDraft, publishPeoDraft, recheckPeoProfile } from "@/lib/advisorApi";
+import { capitalised, isStaleDraftError, PART_LABELS, profileChanges, profileProblems, publishProblems, type PeoContact, type ProfileProblem, type ProfileVersion } from "@/data/peoEditor";
+import { formatCheckedOn, PROFILE_PARTS, utcToday, type ProfilePart } from "@/data/peoProfiles";
+import { discardPeoDraft, loadVersionContacts, publishPeoDraft, recheckPeoProfile } from "@/lib/advisorApi";
 import { buttonClass, primaryClass, sourceDraft, sourceFrom, type SourceDraft } from "./shared";
 import { SourceFields } from "./SourceFields";
 
-const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
 /** The review before publishing: what the draft changes from the version in use, and what still stops it. */
-export const ReviewAndPublish = ({ peo, draft, inUse, onDone, onCancel }: { peo: { id: number; name: string }; draft: ProfileVersion; inUse: ProfileVersion | null; onDone: () => void; onCancel: () => void }) => {
+export const ReviewAndPublish = ({ peo, draft, inUse, onDone, onCancel, onReload }: {
+  peo: { id: number; name: string };
+  draft: ProfileVersion;
+  inUse: ProfileVersion | null;
+  onDone: () => void;
+  onCancel: () => void;
+  /** Reads the PEO again, leaving the review open on the draft as it now is. */
+  onReload: () => void;
+}) => {
   const [publishing, setPublishing] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  // The draft changed since this review opened: it publishes only the draft reviewed.
+  const [stale, setStale] = useState(false);
   const changes = profileChanges(inUse?.profile ?? null, draft.profile);
   const blockers = publishProblems(draft.profile);
   const id = `peo-${peo.id}-review`;
@@ -20,12 +28,14 @@ export const ReviewAndPublish = ({ peo, draft, inUse, onDone, onCancel }: { peo:
   const publish = async () => {
     setPublishing(true);
     setFailed(null);
+    setStale(false);
     try {
-      await publishPeoDraft(peo.id);
+      await publishPeoDraft(peo.id, draft.revision);
       toast.success(`Version ${draft.version} of ${peo.name}'s profile is published.`);
       onDone();
     } catch (err) {
-      setFailed((err as Error).message);
+      if (isStaleDraftError(err)) setStale(true);
+      else setFailed((err as Error).message);
     } finally {
       setPublishing(false);
     }
@@ -47,6 +57,12 @@ export const ReviewAndPublish = ({ peo, draft, inUse, onDone, onCancel }: { peo:
         </div>
       )}
       {failed && <p role="alert" className="text-sm rounded-md bg-destructive/10 text-destructive px-3 py-2">{failed}</p>}
+      {stale && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 text-sm rounded-md bg-warning/10 text-warning px-3 py-2">
+          <p className="flex-1 min-w-48">This draft changed since you reviewed it. Reload to review the latest before you publish.</p>
+          <button onClick={() => { setStale(false); onReload(); }} className={buttonClass}>Reload</button>
+        </div>
+      )}
       <p className="text-sm text-muted-foreground">Once published, version {draft.version} is what advisors and prospects see, and it can't be changed.</p>
       <div className="flex flex-wrap gap-2">
         <button onClick={() => void publish()} disabled={publishing || blockers.length > 0} className={primaryClass}>
@@ -101,7 +117,7 @@ export const RecheckForm = ({ peoId, inUse, today, onDone, onCancel }: { peoId: 
   const record = async () => {
     const next = sourceFrom(source)!;
     // The database's rules for a source, checked against the first part re-checked.
-    const found = parts.length === 0 ? [] : profileProblems({ ...inUse.profile, sources: { ...inUse.profile.sources, [parts[0]]: next } }, today)
+    const found = parts.length === 0 ? [] : profileProblems({ ...inUse.profile, sources: { ...inUse.profile.sources, [parts[0]]: next } }, utcToday())
       .filter((p) => p.path.startsWith(`sources.${parts[0]}`))
       .map((p) => ({ ...p, path: p.path.replace(`sources.${parts[0]}`, "sources.recheck") }));
     setProblems(found);
@@ -132,7 +148,7 @@ export const RecheckForm = ({ peoId, inUse, today, onDone, onCancel }: { peoId: 
           <label key={part} className="flex items-center gap-2 min-h-11 text-sm">
             <input type="checkbox" name={part} checked={parts.includes(part)}
               onChange={(e) => setParts(e.target.checked ? sourced.filter((p) => p === part || parts.includes(p)) : parts.filter((p) => p !== part))} />
-            {capital(PART_LABELS[part])}
+            {capitalised(PART_LABELS[part])}
           </label>
         ))}
       </fieldset>
@@ -148,26 +164,50 @@ export const RecheckForm = ({ peoId, inUse, today, onDone, onCancel }: { peoId: 
   );
 };
 
-/** Every published version, newest first, each with when it was published and what it changed. */
-export const History = ({ id, published }: { id: string; published: ProfileVersion[] }) => (
-  <section id={`${id}-history`} aria-labelledby={`${id}-history-heading`} className="border border-border rounded-xl p-4 space-y-3">
-    <h3 id={`${id}-history-heading`} className="font-display text-base font-bold">History</h3>
-    {published.length === 0 ? <p className="text-sm text-muted-foreground">No version published yet.</p> : (
-      <ol className="space-y-3">
-        {published.map((v, i) => {
-          const before = published[i + 1] ?? null;
-          const changes = profileChanges(before?.profile ?? null, v.profile);
-          return (
-            <li key={v.id} aria-label={`Version ${v.version}`} className="text-sm border-t border-border pt-2 first:border-t-0 first:pt-0">
-              <p className="font-medium">Version {v.version}</p>
-              <p className="text-xs text-muted-foreground">Published {v.publishedAt ? formatCheckedOn(v.publishedAt.slice(0, 10)) : "on a day not recorded"}</p>
-              {before === null ? <p className="text-xs">The first version.</p> : changes.length === 0 ? <p className="text-xs">Nothing changed.</p> : (
-                <ul className="list-disc pl-5 text-xs space-y-0.5">{changes.map((c) => <li key={c}>{c}</li>)}</ul>
-              )}
-            </li>
-          );
-        })}
-      </ol>
-    )}
-  </section>
-);
+/**
+ * Every published version, newest first, each with when it was published and what it changed. Older versions'
+ * contacts aren't read with the page, so the history reads every version's when it is opened, and compares each
+ * version with its own.
+ */
+export const History = ({ id, published }: { id: string; published: ProfileVersion[] }) => {
+  const [contacts, setContacts] = useState<Map<number, PeoContact[]> | null>(null);
+  const [state, setState] = useState<"closed" | "loading" | "failed">("closed");
+  const open = async () => {
+    setState("loading");
+    try {
+      setContacts(await loadVersionContacts(published.map((v) => v.id)));
+    } catch {
+      setState("failed");
+    }
+  };
+  const versions = contacts ? published.map((v) => ({ ...v, profile: { ...v.profile, contacts: contacts.get(v.id) ?? [] } })) : null;
+  return (
+    <section id={`${id}-history`} aria-labelledby={`${id}-history-heading`} className="border border-border rounded-xl p-4 space-y-3">
+      <h3 id={`${id}-history-heading`} className="font-display text-base font-bold">History</h3>
+      {published.length === 0 ? <p className="text-sm text-muted-foreground">No version published yet.</p> : !versions ? (
+        <>
+          {state === "failed" && <p role="alert" className="text-sm text-destructive">Couldn't read the history. Try again.</p>}
+          <button onClick={() => void open()} disabled={state === "loading"} className={buttonClass}>
+            {state === "loading" && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />} Show the history
+          </button>
+        </>
+      ) : (
+        <ol className="space-y-3">
+          {versions.map((v, i) => {
+            const before = versions[i + 1] ?? null;
+            const changes = profileChanges(before?.profile ?? null, v.profile);
+            return (
+              <li key={v.id} aria-label={`Version ${v.version}`} className="text-sm border-t border-border pt-2 first:border-t-0 first:pt-0">
+                <p className="font-medium">Version {v.version}</p>
+                <p className="text-xs text-muted-foreground">Published {v.publishedAt ? formatCheckedOn(v.publishedAt.slice(0, 10)) : "on a day not recorded"}</p>
+                {before === null ? <p className="text-xs">The first version.</p> : changes.length === 0 ? <p className="text-xs">Nothing changed.</p> : (
+                  <ul className="list-disc pl-5 text-xs space-y-0.5">{changes.map((c) => <li key={c}>{c}</li>)}</ul>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
+  );
+};

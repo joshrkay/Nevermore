@@ -6,11 +6,20 @@ const upload = vi.fn();
 const remove = vi.fn();
 /** Rows each table returns to the detail page's queries, which are all select/eq/order chains. */
 const tables: Record<string, unknown[]> = {};
+/** Each `.in(column, values)` filter a query asked for, by table. */
+const inFilters: { table: string; column: string; values: unknown[] }[] = [];
 const query = (table: string) => {
-  const result = () => ({ data: tables[table] ?? [], error: null });
+  let rows = () => tables[table] ?? [];
+  const result = () => ({ data: rows(), error: null });
   const chain: Record<string, unknown> = {
     select: () => chain,
     eq: () => chain,
+    in: (column: string, values: unknown[]) => {
+      inFilters.push({ table, column, values });
+      const before = rows;
+      rows = () => before().filter((r) => values.includes((r as Record<string, unknown>)[column]));
+      return chain;
+    },
     order: () => chain,
     limit: () => chain,
     maybeSingle: async () => ({ data: (tables[table] ?? [])[0] ?? null, error: null }),
@@ -44,6 +53,8 @@ const {
   noteUnderwriterQuestion,
   fetchIsAdmin,
   loadPeoDirectory,
+  loadVersionContacts,
+  publishPeoDraft,
   savePeoDraft,
   recheckPeoProfile,
 } = await import("./advisorApi");
@@ -498,13 +509,41 @@ describe("the PEOs page's reads and writes", () => {
     expect(justworks).toMatchObject({ id: 2, name: "Justworks", listed: false, versions: [] });
   });
 
+  it("reads only the contacts of each PEO's version in use and its draft; an older version's on request, for its history", async () => {
+    inFilters.length = 0;
+    tables.peos = [{ id: 1, name: "TriNet", listed: true }];
+    const published = (id: number, version: number) => ({ id, peo_id: 1, version, status: "published", published_at: "2026-11-01T00:00:00Z", created_at: "2026-10-30T00:00:00Z", sources: {} });
+    tables.peo_profile_versions = [published(10, 1), published(11, 2), { id: 12, peo_id: 1, version: 3, status: "draft", revision: "r3", published_at: null, created_at: "2026-11-05T00:00:00Z", sources: {} }];
+    tables.peo_contacts = [10, 11, 12].map((id) => ({ profile_version_id: id, position: 1, name: `Contact of ${id}`, role: null, email: null, phone: null }));
+    const [trinet] = await loadPeoDirectory();
+    expect(inFilters).toEqual([{ table: "peo_contacts", column: "profile_version_id", values: [12, 11] }]);
+    expect(trinet.versions.map((v) => [v.version, v.revision, v.profile.contacts.map((c) => c.name)])).toEqual([
+      [3, "r3", ["Contact of 12"]], [2, null, ["Contact of 11"]], [1, null, []],
+    ]);
+    const history = await loadVersionContacts([11, 10]);
+    expect(history.get(10)).toEqual([{ name: "Contact of 10", role: null, email: null, phone: null }]);
+    expect(history.get(11)).toEqual([{ name: "Contact of 11", role: null, email: null, phone: null }]);
+  });
+
+  it("asks for contacts a bounded number of versions at a time", async () => {
+    inFilters.length = 0;
+    tables.peo_contacts = [];
+    await loadVersionContacts(Array.from({ length: 45 }, (_, i) => i + 1));
+    expect(inFilters.map((f) => f.values.length)).toEqual([40, 5]);
+    inFilters.length = 0;
+    expect(await loadVersionContacts([])).toEqual(new Map());
+    expect(inFilters).toEqual([]);
+  });
+
   it("saves the whole draft, and records a re-check with the new sources, as the database takes them", async () => {
     rpc.mockResolvedValue({ data: {}, error: null });
     await savePeoDraft(1, { neededToQuote: [], neededBeforeSigning: [], censusLayout: null, documents: [], extraQuestions: [], contacts: [],
       rules: { minHeadcount: 5, statesServed: null, excludedIndustries: null, excludedClassCodes: null, minEnrolmentPercent: null },
-      sources: { min_headcount: { kind: "document", name: "Guide", checkedOn: "2026-11-01" } } });
-    expect(rpc).toHaveBeenCalledWith("admin_save_peo_profile", { p_peo_id: 1, p_profile: expect.objectContaining({
+      sources: { min_headcount: { kind: "document", name: "Guide", checkedOn: "2026-11-01" } } }, { draftRevision: "r3", inUseVersion: 2 });
+    expect(rpc).toHaveBeenCalledWith("admin_save_peo_profile", { p_peo_id: 1, p_draft_revision: "r3", p_in_use_version: 2, p_profile: expect.objectContaining({
       min_headcount: 5, sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-11-01" } } }) });
+    await publishPeoDraft(1, "r3");
+    expect(rpc).toHaveBeenLastCalledWith("admin_publish_peo_profile", { p_peo_id: 1, p_draft_revision: "r3" });
     await recheckPeoProfile(1, ["min_headcount", "answers"], { kind: "person", name: "Dana Reyes", role: "Broker desk", checkedOn: "2026-11-10" });
     const source = { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-10" };
     expect(rpc).toHaveBeenLastCalledWith("admin_recheck_peo_profile", { p_peo_id: 1, p_sources: { min_headcount: source, answers: source } });
@@ -513,7 +552,7 @@ describe("the PEOs page's reads and writes", () => {
   it("shows the database's own words when it refuses a save", async () => {
     failWith({ message: "A census file is CSV or xlsx", code: "22023" });
     const err = await caught(() => savePeoDraft(1, { neededToQuote: [], neededBeforeSigning: [], censusLayout: null, documents: [], extraQuestions: [], contacts: [],
-      rules: { minHeadcount: null, statesServed: null, excludedIndustries: null, excludedClassCodes: null, minEnrolmentPercent: null }, sources: {} }));
+      rules: { minHeadcount: null, statesServed: null, excludedIndustries: null, excludedClassCodes: null, minEnrolmentPercent: null }, sources: {} }, { draftRevision: null, inUseVersion: null }));
     expect(err.message).toBe("A census file is CSV or xlsx");
   });
 });

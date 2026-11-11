@@ -18,6 +18,7 @@ const api = {
   discardPeoDraft: vi.fn(),
   recheckPeoProfile: vi.fn(),
   setPeoListed: vi.fn(),
+  loadVersionContacts: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
 
@@ -39,7 +40,7 @@ const TRINET_V1: EditableProfile = {
 };
 
 const version = (n: number, profile: EditableProfile, over: Partial<ProfileVersion> = {}): ProfileVersion => ({
-  id: 100 + n, version: n, status: "published", createdAt: "2026-10-01T00:00:00Z", publishedAt: `2026-11-0${n}T10:00:00Z`, profile, ...over,
+  id: 100 + n, version: n, revision: `rev-${n}`, status: "published", createdAt: "2026-10-01T00:00:00Z", publishedAt: `2026-11-0${n}T10:00:00Z`, profile, ...over,
 });
 
 const directory = (): PeoDirectoryEntry[] => [
@@ -126,8 +127,8 @@ describe("AdvisorPeosPage", () => {
     expect(within(profile).getByText("Minimum headcount").closest("li")).toHaveTextContent("2");
   });
 
-  const withDraft = (draft: EditableProfile) =>
-    directory().map((p) => (p.id === 5 ? { ...p, versions: [version(3, draft, { status: "draft", publishedAt: null }), ...p.versions] } : p));
+  const withDraft = (draft: EditableProfile, revision = "rev-3") =>
+    directory().map((p) => (p.id === 5 ? { ...p, versions: [version(3, draft, { status: "draft", publishedAt: null, revision }), ...p.versions] } : p));
 
   describe("as an admin", () => {
     beforeEach(() => api.fetchIsAdmin.mockResolvedValue(true));
@@ -171,7 +172,7 @@ describe("AdvisorPeosPage", () => {
       const draft = { ...TRINET_V1, rules: { ...TRINET_V1.rules, minHeadcount: 12 }, sources: { ...TRINET_V1.sources, min_headcount: { ...dana, checkedOn: "2026-11-10" } } };
       api.loadPeoDirectory.mockResolvedValue(directory().map((p) => (p.id === 5 ? { ...p, versions: [version(3, draft, { status: "draft", publishedAt: null }), ...p.versions] } : p)));
       fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
-      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalledWith(5, draft));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalledWith(5, draft, { draftRevision: null, inUseVersion: 2 }));
       expect(await screen.findByText("You have a draft of version 3. Advisors and prospects keep seeing version 2 until you publish. Once published, a version can't be changed.")).toBeInTheDocument();
       expect(screen.getByRole("list", { name: "PEOs" })).toHaveTextContent("TriNetVersion 2 · checked 20 Oct 2026 · draft in progress");
     });
@@ -239,6 +240,166 @@ describe("AdvisorPeosPage", () => {
       expect(screen.getByLabelText("Minimum headcount")).toHaveValue("15");
     });
 
+    it("reads each rule as it is typed: state codes in capitals, the PEO's own words one per line, a number as a number", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+      expect(screen.getByLabelText("Minimum headcount")).toHaveAttribute("inputMode", "decimal");
+      expect(screen.getByLabelText("States served")).not.toHaveAttribute("inputMode");
+      fireEvent.change(screen.getByLabelText("States served"), { target: { value: "ca, ny tx" } });
+      fireEvent.change(screen.getByLabelText("Excluded industries"), { target: { value: "Trucking, long haul\nRoofing" } });
+      const industries = within(screen.getByRole("group", { name: "Where the excluded industries were checked" }));
+      fireEvent.click(industries.getByLabelText("A document"));
+      fireEvent.change(industries.getByLabelText("Document title"), { target: { value: "Broker guide 2026" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
+      const [, saved] = api.savePeoDraft.mock.calls[0] as [number, EditableProfile];
+      expect(saved.rules.statesServed).toEqual(["CA", "NY", "TX"]);
+      expect(saved.rules.excludedIndustries).toEqual(["Trucking, long haul", "Roofing"]);
+    });
+
+    it("reads a minimum left empty as not checked yet, even with a source, and says the source has nothing to be for", async () => {
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+      fireEvent.change(screen.getByLabelText("Minimum headcount"), { target: { value: "" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      expect(within(screen.getByRole("group", { name: "Where the minimum headcount was checked" })).getByText("min headcount isn't set, so it has no source")).toBeInTheDocument();
+      expect(screen.getByLabelText("Minimum headcount")).not.toHaveAttribute("aria-invalid", "true");
+      expect(api.savePeoDraft).not.toHaveBeenCalled();
+    });
+
+    it("shows a problem with an answer needed only before signing in the answers' editor", async () => {
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, neededBeforeSigning: ["employees" as never] }));
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Answers it needs" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      expect(screen.getByText("employees isn't an answer the intake asks for")).toBeInTheDocument();
+      expect(api.savePeoDraft).not.toHaveBeenCalled();
+    });
+
+    it("won't save over a draft that changed since the editor opened: it says so, reloads on request and keeps what was typed", async () => {
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, rules: { ...TRINET_V1.rules, minHeadcount: 12 } }));
+      api.savePeoDraft.mockRejectedValueOnce(Object.assign(new Error("This draft changed since you opened it. Reload to see the latest"), { code: "PT409" }));
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+      fireEvent.change(screen.getByLabelText("Minimum headcount"), { target: { value: "15" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      // The save names the draft it was based on.
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalledWith(5, expect.anything(), { draftRevision: "rev-3", inUseVersion: 2 }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("This draft changed since you opened it. Reload to see the latest, your typing is kept.");
+      expect(screen.queryByText(/try again/)).not.toBeInTheDocument();
+
+      // Another admin's save made revision rev-4, with a new minimum enrolment.
+      const newer = version(3, { ...TRINET_V1, rules: { ...TRINET_V1.rules, minHeadcount: 12, minEnrolmentPercent: 75 }, sources: { ...TRINET_V1.sources, min_enrolment_percent: dana } }, { status: "draft", publishedAt: null, revision: "rev-4" });
+      api.loadPeoDirectory.mockResolvedValue(directory().map((p) => (p.id === 5 ? { ...p, versions: [newer, ...p.versions] } : p)));
+      fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+      await waitFor(() => expect(api.loadPeoDirectory).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+      expect(screen.getByLabelText("Minimum headcount")).toHaveValue("15");
+
+      // Saved again, on top of the newer draft: its own change kept, this one added.
+      api.savePeoDraft.mockResolvedValue(undefined);
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenLastCalledWith(5, expect.objectContaining({
+        rules: expect.objectContaining({ minHeadcount: 15, minEnrolmentPercent: 75 }),
+      }), { draftRevision: "rev-4", inUseVersion: 2 }));
+    });
+
+    it("after a reload, keeps a list as typed and takes the parts not touched from the newer draft", async () => {
+      api.loadPeoDirectory.mockResolvedValue(withDraft(TRINET_V1));
+      api.savePeoDraft.mockRejectedValueOnce(Object.assign(new Error("changed"), { code: "PT409" }));
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Documents" }));
+      fireEvent.click(screen.getByRole("button", { name: "Add a document" }));
+      fireEvent.change(screen.getByLabelText("Document 2 kind"), { target: { value: "payroll_report" } });
+      fireEvent.change(screen.getByLabelText("Document 2: what the PEO wants"), { target: { value: "Payroll register" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      // Meanwhile another admin named a person as the documents' source.
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, sources: { ...TRINET_V1.sources, documents: dana } }, "rev-4"));
+      fireEvent.click(await screen.findByRole("button", { name: "Reload" }));
+      await waitFor(() => expect(within(screen.getByRole("group", { name: "Where the documents were checked" })).getByLabelText("Their name")).toHaveValue("Dana Reyes"));
+      expect(screen.getByLabelText("Document 2: what the PEO wants")).toHaveValue("Payroll register");
+    });
+
+    it("bases a save on the version in use when there is no draft", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Documents" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalledWith(5, expect.anything(), { draftRevision: null, inUseVersion: 2 }));
+    });
+
+    it("won't publish a draft other than the one reviewed: it says so, and reloads on request", async () => {
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, rules: { ...TRINET_V1.rules, minHeadcount: 12 } }));
+      api.publishPeoDraft.mockRejectedValueOnce(Object.assign(new Error("This draft changed since you opened it. Reload to see the latest"), { code: "PT409" }));
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Review and publish" }));
+      const review = screen.getByRole("region", { name: "Publish version 3?" });
+      fireEvent.click(within(review).getByRole("button", { name: "Publish version 3" }));
+      await waitFor(() => expect(api.publishPeoDraft).toHaveBeenCalledWith(5, "rev-3"));
+      expect(await within(review).findByRole("alert")).toHaveTextContent("This draft changed since you reviewed it. Reload to review the latest before you publish.");
+      expect(toast.success).not.toHaveBeenCalled();
+
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, rules: { ...TRINET_V1.rules, minHeadcount: 14 } }, "rev-4"));
+      fireEvent.click(within(review).getByRole("button", { name: "Reload" }));
+      await waitFor(() => expect(within(screen.getByRole("region", { name: "Publish version 3?" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Minimum headcount: 10 → 14"]));
+      expect(within(screen.getByRole("region", { name: "Publish version 3?" })).queryByRole("alert")).not.toBeInTheDocument();
+      api.publishPeoDraft.mockResolvedValue(undefined);
+      fireEvent.click(screen.getByRole("button", { name: "Publish version 3" }));
+      await waitFor(() => expect(api.publishPeoDraft).toHaveBeenLastCalledWith(5, "rev-4"));
+    });
+
+    it("dates a part whose content changed today, which the admin can change, and keeps the date of a part left as it was", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+      const headcountDate = () => screen.getByLabelText("Checked on", { selector: "#peo-5-src-min_headcount-checked" });
+      expect(headcountDate()).toHaveValue("2026-11-03");
+      fireEvent.change(screen.getByLabelText("Minimum headcount"), { target: { value: "12" } });
+      expect(headcountDate()).toHaveValue("2026-11-11");
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
+      const [, saved] = api.savePeoDraft.mock.calls[0] as [number, EditableProfile];
+      expect(saved.sources.min_headcount).toEqual({ ...dana, checkedOn: "2026-11-11" });
+      expect(saved.sources.states_served).toEqual(guide);
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Save to draft" })).not.toBeInTheDocument());
+
+      // The admin sets the date themselves; it stays as they set it.
+      fireEvent.click(screen.getByRole("button", { name: "Edit Documents" }));
+      fireEvent.click(screen.getByRole("button", { name: "Add a document" }));
+      fireEvent.change(screen.getByLabelText("Document 2 kind"), { target: { value: "payroll_report" } });
+      fireEvent.change(screen.getByLabelText("Document 2: what the PEO wants"), { target: { value: "Payroll register" } });
+      const documentsDate = screen.getByLabelText("Checked on", { selector: "#peo-5-src-documents-checked" });
+      expect(documentsDate).toHaveValue("2026-11-11");
+      fireEvent.change(documentsDate, { target: { value: "2026-11-09" } });
+      fireEvent.change(screen.getByLabelText("Document 2: what the PEO wants"), { target: { value: "Last quarter's payroll register" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalledTimes(2));
+      expect((api.savePeoDraft.mock.calls[1] as [number, EditableProfile])[1].sources.documents).toEqual({ ...guide, checkedOn: "2026-11-09" });
+    });
+
+    it("allows a source dated one day past the database's date (UTC), as the database does, whatever the admin's own calendar says", async () => {
+      // 02:00 on 12 Nov on Kiritimati (UTC+14) is noon on 11 Nov in UTC: the database takes 12 Nov, never 13 Nov.
+      const tz = process.env.TZ;
+      process.env.TZ = "Pacific/Kiritimati";
+      try {
+        vi.setSystemTime(new Date("2026-11-11T12:00:00Z"));
+        renderPage("/advisor/peos?peo=5");
+        fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+        const date = screen.getByLabelText("Checked on", { selector: "#peo-5-src-min_headcount-checked" });
+        fireEvent.change(date, { target: { value: "2026-11-13" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+        expect(date).toHaveAccessibleDescription("A source can't be checked on a date that hasn't come");
+        expect(api.savePeoDraft).not.toHaveBeenCalled();
+        api.savePeoDraft.mockResolvedValue(undefined);
+        fireEvent.change(date, { target: { value: "2026-11-12" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+        await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
+      } finally {
+        process.env.TZ = tz;
+      }
+    });
+
     it("edits the answers a PEO needs, to quote and only before signing", async () => {
       api.savePeoDraft.mockResolvedValue(undefined);
       renderPage("/advisor/peos?peo=5");
@@ -256,7 +417,7 @@ describe("AdvisorPeosPage", () => {
         neededToQuote: ["company_name", "pay_frequency"],
         neededBeforeSigning: ["payroll_vendor", "hris_system"],
         rules: { ...TRINET_V1.rules, minHeadcount: 10 },
-      })));
+      }), { draftRevision: null, inUseVersion: 2 }));
     });
 
     it("edits the census layout in the PEO's column order, moving a column with the keyboard", async () => {
@@ -287,7 +448,7 @@ describe("AdvisorPeosPage", () => {
         censusLayout: { peo: "TriNet", format: "csv", templateFile: null, columns: [
           { header: "First Name", from: "first_name" }, { header: "SSN", from: null }, { header: "Last Name", from: "last_name" }, { header: "Work State", from: "work_state" },
         ] },
-      })));
+      }), { draftRevision: null, inUseVersion: 2 }));
     });
 
     it("says next to a column what is wrong with it", async () => {
@@ -309,7 +470,7 @@ describe("AdvisorPeosPage", () => {
       fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
       await waitFor(() => expect(api.savePeoDraft).toHaveBeenLastCalledWith(5, expect.objectContaining({
         documents: [...TRINET_V1.documents, { category: "payroll_report", description: "Last quarter's payroll register" }],
-      })));
+      }), { draftRevision: null, inUseVersion: 2 }));
       await waitFor(() => expect(api.loadPeoDirectory).toHaveBeenCalledTimes(2));
 
       fireEvent.click(await screen.findByRole("button", { name: "Edit Its own questions" }));
@@ -321,7 +482,7 @@ describe("AdvisorPeosPage", () => {
       fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
       await waitFor(() => expect(api.savePeoDraft).toHaveBeenLastCalledWith(5, expect.objectContaining({
         extraQuestions: [...TRINET_V1.extraQuestions, { key: "which_union_if_any", text: "Which union, if any?", kind: "choice", choices: ["None", "Teamsters"] }],
-      })));
+      }), { draftRevision: null, inUseVersion: 2 }));
       await waitFor(() => expect(api.loadPeoDirectory).toHaveBeenCalledTimes(3));
 
       fireEvent.click(await screen.findByRole("button", { name: "Edit Contacts · advisors only" }));
@@ -335,7 +496,7 @@ describe("AdvisorPeosPage", () => {
       fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
       await waitFor(() => expect(api.savePeoDraft).toHaveBeenLastCalledWith(5, expect.objectContaining({
         contacts: [{ name: "Sam Lee", role: null, email: "sam@trinet.example", phone: null }],
-      })));
+      }), { draftRevision: null, inUseVersion: 2 }));
     });
 
     it("reviews what publishing the draft changes, then publishes it", async () => {
@@ -347,7 +508,7 @@ describe("AdvisorPeosPage", () => {
       expect(within(review).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Minimum headcount: 10 → 12"]);
       expect(review).toHaveTextContent("Once published, version 3 is what advisors and prospects see, and it can't be changed.");
       fireEvent.click(within(review).getByRole("button", { name: "Publish version 3" }));
-      await waitFor(() => expect(api.publishPeoDraft).toHaveBeenCalledWith(5));
+      await waitFor(() => expect(api.publishPeoDraft).toHaveBeenCalledWith(5, "rev-3"));
       expect(toast.success).toHaveBeenCalledWith("Version 3 of TriNet's profile is published.");
     });
 
@@ -357,7 +518,7 @@ describe("AdvisorPeosPage", () => {
       renderPage("/advisor/peos?peo=5");
       fireEvent.click(await screen.findByRole("button", { name: "Review and publish" }));
       const review = screen.getByRole("region", { name: "Publish version 3?" });
-      expect(within(review).getByRole("alert")).toHaveTextContent("Name where the min enrolment percent came from, and when it was checked, before publishing");
+      expect(within(review).getByRole("alert")).toHaveTextContent("Name where the minimum enrolment came from, and when it was checked, before publishing");
       expect(within(review).getByRole("button", { name: "Publish version 3" })).toBeDisabled();
     });
 
@@ -422,13 +583,52 @@ describe("AdvisorPeosPage", () => {
   });
 
   it("shows every published version, newest first, with what each one changed", async () => {
+    api.loadVersionContacts.mockResolvedValue(new Map([[102, TRINET_V1.contacts], [101, TRINET_V1.contacts]]));
     renderPage("/advisor/peos?peo=5");
     const history = await screen.findByRole("region", { name: "History" });
+    fireEvent.click(within(history).getByRole("button", { name: "Show the history" }));
+    await within(history).findByRole("listitem", { name: "Version 2" });
     const versions = within(history).getAllByRole("listitem", { name: /^Version/ });
     expect(versions.map((v) => v.getAttribute("aria-label"))).toEqual(["Version 2", "Version 1"]);
     expect(versions[0]).toHaveTextContent("Published 2 Nov 2026");
     expect(versions[0]).toHaveTextContent("Minimum headcount: 5 → 10");
     expect(versions[1]).toHaveTextContent("Published 1 Nov 2026");
     expect(versions[1]).toHaveTextContent("The first version");
+  });
+
+  it("closes the history when a version is published, so it is read again with the new version's contacts", async () => {
+    api.fetchIsAdmin.mockResolvedValue(true);
+    api.loadVersionContacts.mockResolvedValue(new Map([[102, TRINET_V1.contacts], [101, TRINET_V1.contacts]]));
+    api.publishPeoDraft.mockResolvedValue(undefined);
+    api.loadPeoDirectory.mockResolvedValue(withDraft(TRINET_V1));
+    renderPage("/advisor/peos?peo=5");
+    const history = await screen.findByRole("region", { name: "History" });
+    fireEvent.click(within(history).getByRole("button", { name: "Show the history" }));
+    await within(history).findByRole("listitem", { name: "Version 2" });
+    api.loadPeoDirectory.mockResolvedValue(directory().map((p) => (p.id === 5 ? { ...p, versions: [version(3, TRINET_V1), ...p.versions] } : p)));
+    fireEvent.click(screen.getByRole("button", { name: "Review and publish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Publish version 3" }));
+    await waitFor(() => expect(within(screen.getByRole("region", { name: "History" })).getByRole("button", { name: "Show the history" })).toBeInTheDocument());
+  });
+
+  it("reads older versions' contacts only when the history is opened, and compares each version with its own", async () => {
+    // Version 1 named nobody; only the version in use's contacts came with the page.
+    api.loadVersionContacts.mockResolvedValue(new Map([[102, TRINET_V1.contacts], [101, []]]));
+    renderPage("/advisor/peos?peo=5");
+    const history = await screen.findByRole("region", { name: "History" });
+    expect(api.loadVersionContacts).not.toHaveBeenCalled();
+    fireEvent.click(within(history).getByRole("button", { name: "Show the history" }));
+    await waitFor(() => expect(api.loadVersionContacts).toHaveBeenCalledWith([102, 101]));
+    expect(await within(history).findByRole("listitem", { name: "Version 2" })).toHaveTextContent("Contacts: added Dana Reyes");
+  });
+
+  it("says when the history couldn't be read, and reads it again on request", async () => {
+    api.loadVersionContacts.mockRejectedValueOnce(new Error("network down")).mockResolvedValue(new Map([[102, []], [101, []]]));
+    renderPage("/advisor/peos?peo=5");
+    const history = await screen.findByRole("region", { name: "History" });
+    fireEvent.click(within(history).getByRole("button", { name: "Show the history" }));
+    expect(await within(history).findByRole("alert")).toHaveTextContent("Couldn't read the history. Try again.");
+    fireEvent.click(within(history).getByRole("button", { name: "Show the history" }));
+    expect(await within(history).findByRole("listitem", { name: "Version 1" })).toBeInTheDocument();
   });
 });

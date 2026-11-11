@@ -213,6 +213,11 @@ export function staleProfileWarning(peo: Pick<PeoRecord, "name" | "lastVerified"
   return isProfileStale(peo.lastVerified, today) ? `${peo.name}'s profile was last checked ${formatCheckedOn(peo.lastVerified!)} and may be out of date.` : null;
 }
 
+/** Today by the database's clock (UTC), as YYYY-MM-DD: what its date rules, such as a source's date, go by. */
+export function utcToday(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
 /** Today in the reader's own calendar, as YYYY-MM-DD. */
 export function localToday(now: Date = new Date()): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;

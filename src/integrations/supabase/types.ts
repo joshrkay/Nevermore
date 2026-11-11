@@ -546,11 +546,11 @@ export type Database = {
         Returns: Json
       }
       admin_save_peo_profile: {
-        Args: { p_peo_id: number; p_profile: Json }
+        Args: { p_draft_revision: string | null; p_in_use_version: number | null; p_peo_id: number; p_profile: Json }
         Returns: Json
       }
       admin_publish_peo_profile: {
-        Args: { p_peo_id: number }
+        Args: { p_draft_revision: string | null; p_peo_id: number }
         Returns: Json
       }
       admin_set_peo_listed: {

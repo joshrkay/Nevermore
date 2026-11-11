@@ -1,33 +1,31 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, Loader2, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
-import { ANSWER_FIELDS, EXTRA_QUESTION_LABELS, profileProblems, type EditableProfile, type ProfileProblem } from "@/data/peoEditor";
-import { EXTRA_QUESTION_KINDS, type ProfilePart } from "@/data/peoProfiles";
+import { ANSWER_FIELDS, EXTRA_QUESTION_LABELS, isStaleDraftError, PROFILE_PART_TABLE, profileProblems, RULE_PARTS, whereChecked, type DraftBasis, type EditableProfile, type ProfileProblem } from "@/data/peoEditor";
+import { EXTRA_QUESTION_KINDS, PROFILE_PARTS, utcToday, type ProfilePart } from "@/data/peoProfiles";
 import { FIELD_LABELS } from "@/data/provenance";
 import { savePeoDraft } from "@/lib/advisorApi";
-import { buttonClass, columnLabel, inputClass, primaryClass, problemAt, RULE_ROWS, sourceDraft, sourceFrom, suggestQuestionKey, type SectionKey, type SourceDraft } from "./shared";
+import { buttonClass, columnLabel, inputClass, primaryClass, problemAt, sourceDraft, sourceFrom, suggestQuestionKey, type SectionKey, type SourceDraft } from "./shared";
 import { Field, SourceFields } from "./SourceFields";
 
-/** The problems' paths that belong to each section, so a section's editor shows only its own. */
-const SECTION_PATHS: Record<SectionKey, string[]> = {
-  rules: ["rules.", ...RULE_ROWS.map((r) => `sources.${r.part}`)],
-  answers: ["neededToQuote", "neededBeforeSigning", "sources.answers"],
-  census: ["censusLayout", "sources.census_layout"],
-  documents: ["documents", "sources.documents"],
-  questions: ["extraQuestions", "sources.extra_questions"],
-  contacts: ["contacts", "sources.contacts"],
-};
-const belongsTo = (section: SectionKey) => (p: ProfileProblem) => SECTION_PATHS[section].some((prefix) => p.path.startsWith(prefix));
+/** The problems' paths that belong to a section (its parts' fields and sources), so its editor shows only its own. */
+const sectionPaths = (section: SectionKey) =>
+  PROFILE_PARTS.filter((part) => PROFILE_PART_TABLE[part].section === section).flatMap((part) => [...PROFILE_PART_TABLE[part].fields, `sources.${part}`]);
+const belongsTo = (section: SectionKey) => (p: ProfileProblem) => sectionPaths(section).some((prefix) => p.path.startsWith(prefix));
 
 export interface EditorProps {
   peoId: number;
   /** What the draft starts from: the PEO's draft, else its profile in use, else an empty profile. */
   base: EditableProfile;
+  /** What `base` is: the draft's revision, or no draft and the version in use. The save names it. */
+  basis: DraftBasis;
   today: string;
   onSaved: () => void;
   onCancel: () => void;
+  /** Reads the PEO again, leaving this editor open with what was typed. */
+  onReload: () => void;
 }
 
 /**
@@ -35,33 +33,38 @@ export interface EditorProps {
  * (or the version in use) holds it. The database's rules are checked first, next to each field; a failed save keeps
  * everything typed.
  */
-const EditorShell = ({ section, peoId, today, build, onSaved, onCancel, problems, setProblems, children }: {
+const EditorShell = ({ section, peoId, basis, build, onSaved, onCancel, onReload, problems, setProblems, children }: {
   section: SectionKey;
   peoId: number;
-  today: string;
+  basis: DraftBasis;
   build: () => EditableProfile;
   onSaved: () => void;
   onCancel: () => void;
+  onReload: () => void;
   problems: readonly ProfileProblem[];
   setProblems: (p: ProfileProblem[]) => void;
   children: ReactNode;
 }) => {
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  // The draft changed since this editor opened (another admin, or another tab): reload, keeping what was typed.
+  const [stale, setStale] = useState(false);
 
   const save = async () => {
     const next = build();
-    const found = profileProblems(next, today).filter(belongsTo(section));
+    const found = profileProblems(next, utcToday()).filter(belongsTo(section));
     setProblems(found);
     setFailed(null);
+    setStale(false);
     if (found.length > 0) return;
     setSaving(true);
     try {
-      await savePeoDraft(peoId, next);
+      await savePeoDraft(peoId, next, basis);
       toast.success("Saved to the draft. Publish it when it's ready.");
       onSaved();
     } catch (err) {
-      setFailed(`${(err as Error).message} Nothing you typed is lost: try again.`);
+      if (isStaleDraftError(err)) setStale(true);
+      else setFailed(`${(err as Error).message} Nothing you typed is lost: try again.`);
     } finally {
       setSaving(false);
     }
@@ -75,6 +78,12 @@ const EditorShell = ({ section, peoId, today, build, onSaved, onCancel, problems
         </p>
       )}
       {failed && <p role="alert" className="text-sm rounded-md bg-destructive/10 text-destructive px-3 py-2">{failed}</p>}
+      {stale && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 text-sm rounded-md bg-warning/10 text-warning px-3 py-2">
+          <p className="flex-1 min-w-48">This draft changed since you opened it. Reload to see the latest, your typing is kept.</p>
+          <button onClick={() => { setStale(false); onReload(); }} className={buttonClass}>Reload</button>
+        </div>
+      )}
       {children}
       <div className="flex flex-wrap gap-2">
         <button onClick={() => void save()} disabled={saving} className={primaryClass}>
@@ -90,6 +99,26 @@ const srcId = (peoId: number, part: ProfilePart) => `peo-${peoId}-src-${part}`;
 const words = (text: string) => text.split(/[\s,]+/).map((w) => w.trim()).filter(Boolean);
 const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean);
 
+/**
+ * A value the admin edits, read from the base until they change it. When the base is read again (Reload, after the
+ * draft changed elsewhere), what they changed is kept and the rest follows the new base.
+ */
+function useEdited<T>(fromBase: () => T, base: EditableProfile): [T, (next: T) => void] {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const initial = useMemo(fromBase, [base]);
+  const [edited, setEdited] = useState<{ value: T } | null>(null);
+  return [edited ? edited.value : initial, (value) => setEdited({ value })];
+}
+
+/** The parts' sources as the editor shows them: a part whose content changed is dated today unless the admin set the date. */
+function datedSources(base: EditableProfile, next: EditableProfile, edited: Partial<Record<ProfilePart, SourceDraft>>, today: string) {
+  const same = (part: ProfilePart) => JSON.stringify(PROFILE_PART_TABLE[part].read(base)) === JSON.stringify(PROFILE_PART_TABLE[part].read(next));
+  return Object.fromEntries(Object.entries(edited).map(([part, draft]) => [
+    part,
+    draft!.dateSet || same(part as ProfilePart) ? draft! : { ...draft!, checkedOn: today },
+  ])) as Partial<Record<ProfilePart, SourceDraft>>;
+}
+
 /** Sources edited in a section, put back into the profile: one left "Not checked yet" is dropped. */
 function withSources(profile: EditableProfile, edited: Partial<Record<ProfilePart, SourceDraft>>): EditableProfile {
   const sources = { ...profile.sources };
@@ -101,46 +130,70 @@ function withSources(profile: EditableProfile, edited: Partial<Record<ProfilePar
   return { ...profile, sources };
 }
 
+/**
+ * A section's content and its sources as the editor holds them: `content` builds the profile with the section as
+ * edited; `shown` is each source as the form shows it (dated today when its part changed); `build` is what is saved.
+ */
+function useSectionSources(base: EditableProfile, today: string, parts: readonly ProfilePart[], content: () => EditableProfile) {
+  const [edited, setEdited] = useEdited(
+    () => Object.fromEntries(parts.map((part) => [part, sourceDraft(base.sources[part], today)])) as Record<ProfilePart, SourceDraft>,
+    base,
+  );
+  const shown = datedSources(base, content(), edited, today) as Record<ProfilePart, SourceDraft>;
+  const set = (part: ProfilePart) => (next: SourceDraft) => setEdited({ ...edited, [part]: next });
+  const build = (override?: Partial<Record<ProfilePart, SourceDraft>>) => withSources(content(), { ...shown, ...override });
+  return { shown, set, build };
+}
+
 // ---------- What it won't take on ----------
 
 type RuleKey = keyof EditableProfile["rules"];
+type Rule = (typeof RULE_PARTS)[number];
 
-const RULE_INPUT: Record<RuleKey, { hint: string; multiline?: boolean; show: (v: never) => string; read: (text: string, sourced: boolean) => unknown }> = {
-  minHeadcount: { hint: "Employees. Leave it empty if not checked yet.", show: (v: number) => String(v), read: (t) => (t.trim() === "" ? null : Number(t)) },
-  statesServed: { hint: "State codes, such as CA, NY. Leave it empty if not checked yet.", show: (v: string[]) => v.join(", "), read: (t, sourced) => (t.trim() === "" ? (sourced ? [] : null) : words(t).map((w) => w.toUpperCase())) },
-  excludedIndustries: { hint: "In the PEO's own words, one per line. Leave it empty and give a source if it excludes none.", multiline: true, show: (v: string[]) => v.join("\n"), read: (t, sourced) => (t.trim() === "" ? (sourced ? [] : null) : lines(t)) },
-  excludedClassCodes: { hint: "Workers' comp class codes, four digits each. Leave it empty and give a source if it excludes none.", show: (v: string[]) => v.join(", "), read: (t, sourced) => (t.trim() === "" ? (sourced ? [] : null) : words(t)) },
-  minEnrolmentPercent: { hint: "Percent of eligible employees. Leave it empty if not checked yet.", show: (v: number) => String(v), read: (t) => (t.trim() === "" ? null : Number(t)) },
+/** A rule's value as its input holds it: a number, words joined by commas, or one line each. */
+const ruleText = (r: Rule, value: unknown) =>
+  value === null ? "" : r.input === "number" ? String(value) : (value as string[]).join(r.input === "lines" ? "\n" : ", ");
+
+/** What a rule's input says: empty is "not checked yet", or, with a source, none excluded. */
+const readRule = (r: Rule, text: string, sourced: boolean): unknown => {
+  if (text.trim() === "") return r.input === "number" || !sourced ? null : [];
+  if (r.input === "number") return Number(text);
+  return r.input === "lines" ? lines(text) : words(text).map((w) => (r.upperCase ? w.toUpperCase() : w));
 };
 
-export const RulesEditor = ({ peoId, base, today, onSaved, onCancel }: EditorProps) => {
-  const [values, setValues] = useState(() => Object.fromEntries(RULE_ROWS.map((r) => [r.key, base.rules[r.key] === null ? "" : RULE_INPUT[r.key].show(base.rules[r.key] as never)])) as Record<RuleKey, string>);
-  const [sources, setSources] = useState(() => Object.fromEntries(RULE_ROWS.map((r) => [r.part, sourceDraft(base.sources[r.part], today)])) as Record<ProfilePart, SourceDraft>);
+export const RulesEditor = ({ peoId, base, basis, today, onSaved, onCancel, onReload }: EditorProps) => {
+  // Each rule is its own edit, so a reload keeps the rules typed and takes the others from the newer draft.
+  const [typed, setTyped] = useState<Partial<Record<RuleKey, string>>>({});
+  const values = Object.fromEntries(RULE_PARTS.map((r) => [r.key, typed[r.key] ?? ruleText(r, base.rules[r.key])])) as Record<RuleKey, string>;
+  const [sourceEdits, setSourceEdits] = useState<Partial<Record<ProfilePart, SourceDraft>>>({});
+  const drafts = Object.fromEntries(RULE_PARTS.map((r) => [r.part, sourceEdits[r.part] ?? sourceDraft(base.sources[r.part], today)])) as Record<ProfilePart, SourceDraft>;
   const [problems, setProblems] = useState<ProfileProblem[]>([]);
 
-  const build = (): EditableProfile => {
+  const content = (): EditableProfile => {
     const rules = { ...base.rules };
-    for (const r of RULE_ROWS) (rules as Record<RuleKey, unknown>)[r.key] = RULE_INPUT[r.key].read(values[r.key], sources[r.part].kind !== "none");
-    return withSources({ ...base, rules }, sources);
+    for (const r of RULE_PARTS) (rules as Record<RuleKey, unknown>)[r.key] = readRule(r, values[r.key], drafts[r.part].kind !== "none");
+    return { ...base, rules };
   };
+  const shown = datedSources(base, content(), drafts, today) as Record<ProfilePart, SourceDraft>;
+  const build = () => withSources(content(), shown);
 
   return (
-    <EditorShell section="rules" peoId={peoId} today={today} build={build} onSaved={onSaved} onCancel={onCancel} problems={problems} setProblems={setProblems}>
-      {RULE_ROWS.map((r) => {
-        const input = RULE_INPUT[r.key];
+    <EditorShell section="rules" peoId={peoId} basis={basis} build={build} onSaved={onSaved} onCancel={onCancel} onReload={onReload} problems={problems} setProblems={setProblems}>
+      {RULE_PARTS.map((r) => {
         const id = `peo-${peoId}-rule-${r.key}`;
+        const onChange = (e: { target: { value: string } }) => setTyped({ ...typed, [r.key]: e.target.value });
         return (
           <div key={r.key} className="space-y-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
-            <Field id={id} label={r.label} hint={input.hint} problem={problemAt(problems, `rules.${r.key}`)}>
-              {(p) => input.multiline
-                ? <textarea {...p} rows={3} value={values[r.key]} onChange={(e) => setValues({ ...values, [r.key]: e.target.value })} className={inputClass} />
-                : <input {...p} inputMode={r.key === "minHeadcount" || r.key === "minEnrolmentPercent" ? "decimal" : undefined} value={values[r.key]} onChange={(e) => setValues({ ...values, [r.key]: e.target.value })} className={inputClass} />}
+            <Field id={id} label={r.label} hint={r.hint} problem={problemAt(problems, `rules.${r.key}`)}>
+              {(p) => r.input === "lines"
+                ? <textarea {...p} rows={3} value={values[r.key]} onChange={onChange} className={inputClass} />
+                : <input {...p} inputMode={r.input === "number" ? "decimal" : undefined} value={values[r.key]} onChange={onChange} className={inputClass} />}
             </Field>
             <SourceFields
               id={srcId(peoId, r.part)}
-              label={`Where the ${r.label.toLowerCase()} ${r.key === "minHeadcount" || r.key === "minEnrolmentPercent" ? "was" : "were"} checked`}
-              value={sources[r.part]}
-              onChange={(next) => setSources({ ...sources, [r.part]: next })}
+              label={whereChecked(r.part)}
+              value={shown[r.part]}
+              onChange={(next) => setSourceEdits({ ...sourceEdits, [r.part]: next })}
               problems={problems}
               path={`sources.${r.part}`}
             />
@@ -153,61 +206,63 @@ export const RulesEditor = ({ peoId, base, today, onSaved, onCancel }: EditorPro
 
 // ---------- Answers it needs ----------
 
-export const AnswersEditor = ({ peoId, base, today, onSaved, onCancel }: EditorProps) => {
-  const [toQuote, setToQuote] = useState<string[]>(base.neededToQuote);
-  const [beforeSigning, setBeforeSigning] = useState<string[]>(base.neededBeforeSigning);
+export const AnswersEditor = ({ peoId, base, basis, today, onSaved, onCancel, onReload }: EditorProps) => {
+  const [answers, setAnswers] = useEdited(() => ({ quote: base.neededToQuote as string[], signing: base.neededBeforeSigning as string[] }), base);
   const [adding, setAdding] = useState({ quote: "", signing: "" });
-  const [source, setSource] = useState(() => sourceDraft(base.sources.answers, today));
   const [problems, setProblems] = useState<ProfileProblem[]>([]);
-  const listed = new Set([...toQuote, ...beforeSigning]);
+  const listed = new Set([...answers.quote, ...answers.signing]);
   const label = (f: string) => FIELD_LABELS[f as keyof typeof FIELD_LABELS] ?? f;
+  const sources = useSectionSources(base, today, ["answers"], () => ({
+    ...base, neededToQuote: answers.quote as EditableProfile["neededToQuote"], neededBeforeSigning: answers.signing as EditableProfile["neededBeforeSigning"],
+  }));
 
-  const build = (): EditableProfile =>
-    withSources({ ...base, neededToQuote: toQuote as EditableProfile["neededToQuote"], neededBeforeSigning: beforeSigning as EditableProfile["neededBeforeSigning"] }, { answers: source });
-
-  const group = (which: "quote" | "signing", title: string, list: string[], setList: (l: string[]) => void, path: string) => (
-    <div className="space-y-2">
-      <h4 className="text-sm font-medium">{title}</h4>
-      {list.length === 0 ? <p className="text-sm text-muted-foreground">None yet</p> : (
-        <ul className="space-y-1">
-          {list.map((f, i) => (
-            <li key={f} className="flex items-center justify-between gap-2 text-sm">
-              <span>
-                {label(f)}
-                {problemAt(problems, `${path}.${i}`) && <span className="block text-xs text-destructive">{problemAt(problems, `${path}.${i}`)}</span>}
-              </span>
-              <button onClick={() => setList(list.filter((x) => x !== f))} className={buttonClass} aria-label={`Remove ${label(f)}`}>Remove</button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="flex-1 min-w-48">
-          <Field id={`peo-${peoId}-add-${which}`} label={`Add an answer needed ${which === "quote" ? "to quote" : "only before signing"}`}>
-            {(p) => (
-              <select {...p} value={adding[which]} onChange={(e) => setAdding({ ...adding, [which]: e.target.value })} className={inputClass}>
-                <option value="">Choose an answer</option>
-                {ANSWER_FIELDS.filter((f) => !listed.has(f)).map((f) => <option key={f} value={f}>{label(f)}</option>)}
-              </select>
-            )}
-          </Field>
+  const group = (which: "quote" | "signing", title: string, path: string) => {
+    const list = answers[which];
+    const setList = (next: string[]) => setAnswers({ ...answers, [which]: next });
+    return (
+      <div className="space-y-2">
+        <h4 className="text-sm font-medium">{title}</h4>
+        {list.length === 0 ? <p className="text-sm text-muted-foreground">None yet</p> : (
+          <ul className="space-y-1">
+            {list.map((f, i) => (
+              <li key={f} className="flex items-center justify-between gap-2 text-sm">
+                <span>
+                  {label(f)}
+                  {problemAt(problems, `${path}.${i}`) && <span className="block text-xs text-destructive">{problemAt(problems, `${path}.${i}`)}</span>}
+                </span>
+                <button onClick={() => setList(list.filter((x) => x !== f))} className={buttonClass} aria-label={`Remove ${label(f)}`}>Remove</button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex-1 min-w-48">
+            <Field id={`peo-${peoId}-add-${which}`} label={`Add an answer needed ${which === "quote" ? "to quote" : "only before signing"}`}>
+              {(p) => (
+                <select {...p} value={adding[which]} onChange={(e) => setAdding({ ...adding, [which]: e.target.value })} className={inputClass}>
+                  <option value="">Choose an answer</option>
+                  {ANSWER_FIELDS.filter((f) => !listed.has(f)).map((f) => <option key={f} value={f}>{label(f)}</option>)}
+                </select>
+              )}
+            </Field>
+          </div>
+          <button
+            onClick={() => { setList([...list, adding[which]]); setAdding({ ...adding, [which]: "" }); }}
+            disabled={!adding[which]}
+            className={buttonClass}
+          >
+            {which === "quote" ? "Add to quote" : "Add to before signing"}
+          </button>
         </div>
-        <button
-          onClick={() => { setList([...list, adding[which]]); setAdding({ ...adding, [which]: "" }); }}
-          disabled={!adding[which]}
-          className={buttonClass}
-        >
-          {which === "quote" ? "Add to quote" : "Add to before signing"}
-        </button>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
-    <EditorShell section="answers" peoId={peoId} today={today} build={build} onSaved={onSaved} onCancel={onCancel} problems={problems} setProblems={setProblems}>
-      {group("quote", "To quote", toQuote, setToQuote, "neededToQuote")}
-      {group("signing", "Only before signing", beforeSigning, setBeforeSigning, "neededBeforeSigning")}
-      <SourceFields id={srcId(peoId, "answers")} label="Where the answers were checked" value={source} onChange={setSource} problems={problems} path="sources.answers" />
+    <EditorShell section="answers" peoId={peoId} basis={basis} build={() => sources.build()} onSaved={onSaved} onCancel={onCancel} onReload={onReload} problems={problems} setProblems={setProblems}>
+      {group("quote", "To quote", "neededToQuote")}
+      {group("signing", "Only before signing", "neededBeforeSigning")}
+      <SourceFields id={srcId(peoId, "answers")} label={whereChecked("answers")} value={sources.shown.answers} onChange={sources.set("answers")} problems={problems} path="sources.answers" />
     </EditorShell>
   );
 };
@@ -217,16 +272,28 @@ export const AnswersEditor = ({ peoId, base, today, onSaved, onCancel }: EditorP
 let rowSeq = 0;
 const rowKey = () => ++rowSeq;
 
-export const CensusEditor = ({ peoId, base, today, onSaved, onCancel }: EditorProps) => {
-  const layout = base.censusLayout;
-  const [held, setHeld] = useState(layout !== null);
-  const [format, setFormat] = useState<string>(layout?.format ?? "xlsx");
-  const [templateFile, setTemplateFile] = useState(layout?.templateFile ?? "");
-  const [columns, setColumns] = useState(() => (layout?.columns ?? [{ header: "", from: null }]).map((c) => ({ key: rowKey(), header: c.header, from: c.from as string | null })));
-  const [source, setSource] = useState(() => sourceDraft(base.sources.census_layout, today));
+export const CensusEditor = ({ peoId, base, basis, today, onSaved, onCancel, onReload }: EditorProps) => {
+  const [census, setCensus] = useEdited(() => {
+    const layout = base.censusLayout;
+    return {
+      held: layout !== null,
+      format: (layout?.format ?? "xlsx") as string,
+      templateFile: layout?.templateFile ?? "",
+      columns: (layout?.columns ?? [{ header: "", from: null }]).map((c) => ({ key: rowKey(), header: c.header, from: c.from as string | null })),
+    };
+  }, base);
+  const { held, format, templateFile, columns } = census;
+  const set = (patch: Partial<typeof census>) => setCensus({ ...census, ...patch });
+  const setColumns = (next: typeof columns) => set({ columns: next });
   const [problems, setProblems] = useState<ProfileProblem[]>([]);
   const headerInputs = useRef(new Map<number, HTMLInputElement>());
   const [focusKey, setFocusKey] = useState<number | null>(null);
+  const sources = useSectionSources(base, today, ["census_layout"], () => ({
+    ...base,
+    censusLayout: held
+      ? { peo: base.censusLayout?.peo ?? null, format: format as "csv" | "xlsx", templateFile: templateFile.trim() === "" ? null : templateFile.trim(), columns: columns.map((c) => ({ header: c.header.trim(), from: (c.from || null) as never })) }
+      : null,
+  } as EditableProfile));
 
   useEffect(() => {
     if (focusKey !== null) headerInputs.current.get(focusKey)?.focus();
@@ -241,33 +308,27 @@ export const CensusEditor = ({ peoId, base, today, onSaved, onCancel }: EditorPr
     setFocusKey(next[j].key);
   };
 
-  const build = (): EditableProfile =>
-    withSources({
-      ...base,
-      censusLayout: held
-        ? { peo: layout?.peo ?? null, format: format as "csv" | "xlsx", templateFile: templateFile.trim() === "" ? null : templateFile.trim(), columns: columns.map((c) => ({ header: c.header.trim(), from: (c.from || null) as never })) }
-        : null,
-    } as EditableProfile, { census_layout: held ? source : { ...source, kind: "none" } });
+  const build = () => sources.build(held ? undefined : { census_layout: { ...sources.shown.census_layout, kind: "none" } });
 
   return (
-    <EditorShell section="census" peoId={peoId} today={today} build={build} onSaved={onSaved} onCancel={onCancel} problems={problems} setProblems={setProblems}>
+    <EditorShell section="census" peoId={peoId} basis={basis} build={build} onSaved={onSaved} onCancel={onCancel} onReload={onReload} problems={problems} setProblems={setProblems}>
       <div className="flex flex-wrap gap-x-4" role="radiogroup" aria-label="Census layout">
-        <label className="flex items-center gap-2 min-h-11 text-sm"><input type="radio" checked={!held} onChange={() => setHeld(false)} /> Not checked yet (our own layout)</label>
-        <label className="flex items-center gap-2 min-h-11 text-sm"><input type="radio" checked={held} onChange={() => setHeld(true)} /> The PEO's own layout</label>
+        <label className="flex items-center gap-2 min-h-11 text-sm"><input type="radio" checked={!held} onChange={() => set({ held: false })} /> Not checked yet (our own layout)</label>
+        <label className="flex items-center gap-2 min-h-11 text-sm"><input type="radio" checked={held} onChange={() => set({ held: true })} /> The PEO's own layout</label>
       </div>
       {held && (
         <>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field id={`peo-${peoId}-census-format`} label="File" problem={problemAt(problems, "censusLayout.format")}>
               {(p) => (
-                <select {...p} value={format} onChange={(e) => setFormat(e.target.value)} className={inputClass}>
+                <select {...p} value={format} onChange={(e) => set({ format: e.target.value })} className={inputClass}>
                   <option value="xlsx">xlsx (a spreadsheet)</option>
                   <option value="csv">CSV</option>
                 </select>
               )}
             </Field>
             <Field id={`peo-${peoId}-census-template`} label="The PEO's template file (optional)" hint="Where the file we fill is kept, when the PEO has one." problem={problemAt(problems, "censusLayout.templateFile")}>
-              {(p) => <input {...p} value={templateFile} onChange={(e) => setTemplateFile(e.target.value)} className={inputClass} />}
+              {(p) => <input {...p} value={templateFile} onChange={(e) => set({ templateFile: e.target.value })} className={inputClass} />}
             </Field>
           </div>
           <div className="space-y-2">
@@ -320,7 +381,7 @@ export const CensusEditor = ({ peoId, base, today, onSaved, onCancel }: EditorPr
               <Plus className="w-4 h-4" aria-hidden="true" /> Add a column
             </button>
           </div>
-          <SourceFields id={srcId(peoId, "census_layout")} label="Where the census layout was checked" value={source} onChange={setSource} problems={problems} path="sources.census_layout" />
+          <SourceFields id={srcId(peoId, "census_layout")} label={whereChecked("census_layout")} value={sources.shown.census_layout} onChange={sources.set("census_layout")} problems={problems} path="sources.census_layout" />
         </>
       )}
     </EditorShell>
@@ -329,15 +390,14 @@ export const CensusEditor = ({ peoId, base, today, onSaved, onCancel }: EditorPr
 
 // ---------- Documents ----------
 
-export const DocumentsEditor = ({ peoId, base, today, onSaved, onCancel }: EditorProps) => {
-  const [docs, setDocs] = useState(() => base.documents.map((d) => ({ key: rowKey(), category: d.category as string, description: d.description })));
-  const [source, setSource] = useState(() => sourceDraft(base.sources.documents, today));
+export const DocumentsEditor = ({ peoId, base, basis, today, onSaved, onCancel, onReload }: EditorProps) => {
+  const [docs, setDocs] = useEdited(() => base.documents.map((d) => ({ key: rowKey(), category: d.category as string, description: d.description })), base);
   const [problems, setProblems] = useState<ProfileProblem[]>([]);
-  const build = (): EditableProfile =>
-    withSources({ ...base, documents: docs.map((d) => ({ category: d.category as never, description: d.description.trim() })) }, { documents: source });
+  const sources = useSectionSources(base, today, ["documents"], () =>
+    ({ ...base, documents: docs.map((d) => ({ category: d.category as never, description: d.description.trim() })) }));
 
   return (
-    <EditorShell section="documents" peoId={peoId} today={today} build={build} onSaved={onSaved} onCancel={onCancel} problems={problems} setProblems={setProblems}>
+    <EditorShell section="documents" peoId={peoId} basis={basis} build={() => sources.build()} onSaved={onSaved} onCancel={onCancel} onReload={onReload} problems={problems} setProblems={setProblems}>
       {problemAt(problems, "documents") && <p className="text-xs text-destructive">{problemAt(problems, "documents")}</p>}
       <p className="text-xs text-muted-foreground">With none listed and a source given, the PEO asks for no documents.</p>
       <ol className="space-y-2">
@@ -363,31 +423,32 @@ export const DocumentsEditor = ({ peoId, base, today, onSaved, onCancel }: Edito
       <button onClick={() => setDocs([...docs, { key: rowKey(), category: "", description: "" }])} className={buttonClass}>
         <Plus className="w-4 h-4" aria-hidden="true" /> Add a document
       </button>
-      <SourceFields id={srcId(peoId, "documents")} label="Where the documents were checked" value={source} onChange={setSource} problems={problems} path="sources.documents" />
+      <SourceFields id={srcId(peoId, "documents")} label={whereChecked("documents")} value={sources.shown.documents} onChange={sources.set("documents")} problems={problems} path="sources.documents" />
     </EditorShell>
   );
 };
 
 // ---------- Its own questions ----------
 
-export const QuestionsEditor = ({ peoId, base, today, onSaved, onCancel }: EditorProps) => {
-  const [questions, setQuestions] = useState(() => base.extraQuestions.map((q) => ({ key: rowKey(), id: q.key, idTyped: true, text: q.text, kind: q.kind as string, choices: (q.choices ?? []).join("\n") })));
-  const [source, setSource] = useState(() => sourceDraft(base.sources.extra_questions, today));
+export const QuestionsEditor = ({ peoId, base, basis, today, onSaved, onCancel, onReload }: EditorProps) => {
+  const [questions, setQuestions] = useEdited(
+    () => base.extraQuestions.map((q) => ({ key: rowKey(), id: q.key, idTyped: true, text: q.text, kind: q.kind as string, choices: (q.choices ?? []).join("\n") })),
+    base,
+  );
   const [problems, setProblems] = useState<ProfileProblem[]>([]);
   const update = (key: number, patch: Partial<(typeof questions)[number]>) => setQuestions(questions.map((q) => (q.key === key ? { ...q, ...patch } : q)));
-  const build = (): EditableProfile =>
-    withSources({
-      ...base,
-      extraQuestions: questions.map((q) => ({
-        key: q.id.trim(),
-        text: q.text.trim(),
-        kind: q.kind as never,
-        ...(q.kind === "choice" ? { choices: lines(q.choices) } : {}),
-      })),
-    }, { extra_questions: source });
+  const sources = useSectionSources(base, today, ["extra_questions"], () => ({
+    ...base,
+    extraQuestions: questions.map((q) => ({
+      key: q.id.trim(),
+      text: q.text.trim(),
+      kind: q.kind as never,
+      ...(q.kind === "choice" ? { choices: lines(q.choices) } : {}),
+    })),
+  }));
 
   return (
-    <EditorShell section="questions" peoId={peoId} today={today} build={build} onSaved={onSaved} onCancel={onCancel} problems={problems} setProblems={setProblems}>
+    <EditorShell section="questions" peoId={peoId} basis={basis} build={() => sources.build()} onSaved={onSaved} onCancel={onCancel} onReload={onReload} problems={problems} setProblems={setProblems}>
       {problemAt(problems, "extraQuestions") && <p className="text-xs text-destructive">{problemAt(problems, "extraQuestions")}</p>}
       <ol className="space-y-3">
         {questions.map((q, i) => (
@@ -422,24 +483,23 @@ export const QuestionsEditor = ({ peoId, base, today, onSaved, onCancel }: Edito
       <button onClick={() => setQuestions([...questions, { key: rowKey(), id: "", idTyped: false, text: "", kind: "text", choices: "" }])} className={buttonClass}>
         <Plus className="w-4 h-4" aria-hidden="true" /> Add a question
       </button>
-      <SourceFields id={srcId(peoId, "extra_questions")} label="Where the questions were checked" value={source} onChange={setSource} problems={problems} path="sources.extra_questions" />
+      <SourceFields id={srcId(peoId, "extra_questions")} label={whereChecked("extra_questions")} value={sources.shown.extra_questions} onChange={sources.set("extra_questions")} problems={problems} path="sources.extra_questions" />
     </EditorShell>
   );
 };
 
 // ---------- Contacts ----------
 
-export const ContactsEditor = ({ peoId, base, today, onSaved, onCancel }: EditorProps) => {
-  const [contacts, setContacts] = useState(() => base.contacts.map((c) => ({ key: rowKey(), name: c.name, role: c.role ?? "", email: c.email ?? "", phone: c.phone ?? "" })));
-  const [source, setSource] = useState(() => sourceDraft(base.sources.contacts, today));
+export const ContactsEditor = ({ peoId, base, basis, today, onSaved, onCancel, onReload }: EditorProps) => {
+  const [contacts, setContacts] = useEdited(() => base.contacts.map((c) => ({ key: rowKey(), name: c.name, role: c.role ?? "", email: c.email ?? "", phone: c.phone ?? "" })), base);
   const [problems, setProblems] = useState<ProfileProblem[]>([]);
   const orNull = (s: string) => (s.trim() === "" ? null : s.trim());
-  const build = (): EditableProfile =>
-    withSources({ ...base, contacts: contacts.map((c) => ({ name: c.name.trim(), role: orNull(c.role), email: orNull(c.email), phone: orNull(c.phone) })) }, { contacts: source });
+  const sources = useSectionSources(base, today, ["contacts"], () =>
+    ({ ...base, contacts: contacts.map((c) => ({ name: c.name.trim(), role: orNull(c.role), email: orNull(c.email), phone: orNull(c.phone) })) }));
   const fields = [["name", "name"], ["role", "role"], ["email", "email"], ["phone", "phone"]] as const;
 
   return (
-    <EditorShell section="contacts" peoId={peoId} today={today} build={build} onSaved={onSaved} onCancel={onCancel} problems={problems} setProblems={setProblems}>
+    <EditorShell section="contacts" peoId={peoId} basis={basis} build={() => sources.build()} onSaved={onSaved} onCancel={onCancel} onReload={onReload} problems={problems} setProblems={setProblems}>
       <p className="text-xs text-muted-foreground">Advisors see these; prospects never do.</p>
       {problemAt(problems, "contacts") && <p className="text-xs text-destructive">{problemAt(problems, "contacts")}</p>}
       <ol className="space-y-2">
@@ -460,7 +520,7 @@ export const ContactsEditor = ({ peoId, base, today, onSaved, onCancel }: Editor
       <button onClick={() => setContacts([...contacts, { key: rowKey(), name: "", role: "", email: "", phone: "" }])} className={buttonClass}>
         <Plus className="w-4 h-4" aria-hidden="true" /> Add a contact
       </button>
-      <SourceFields id={srcId(peoId, "contacts")} label="Where the contacts were checked" value={source} onChange={setSource} problems={problems} path="sources.contacts" />
+      <SourceFields id={srcId(peoId, "contacts")} label={whereChecked("contacts")} value={sources.shown.contacts} onChange={sources.set("contacts")} problems={problems} path="sources.contacts" />
     </EditorShell>
   );
 };

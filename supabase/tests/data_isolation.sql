@@ -358,8 +358,10 @@ BEGIN
     'min_headcount', 5, 'sources', jsonb_build_object(
       'min_headcount', jsonb_build_object('kind', 'person', 'name', 'Dana Reyes', 'role', 'Broker desk', 'checked_on', '2026-11-02'),
       'contacts', jsonb_build_object('kind', 'person', 'name', 'Dana Reyes', 'role', 'Broker desk', 'checked_on', '2026-11-02')),
-    'contacts', jsonb_build_array(jsonb_build_object('name', 'Dana Reyes', 'email', 'dana@trinet.example'))));
-  PERFORM public.admin_publish_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'));
+    'contacts', jsonb_build_array(jsonb_build_object('name', 'Dana Reyes', 'email', 'dana@trinet.example'))),
+    (SELECT revision FROM public.peo_profile_versions v JOIN public.peos p ON p.id = v.peo_id WHERE p.name = 'TriNet' AND v.status = 'draft'), NULL);
+  PERFORM public.admin_publish_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'),
+    (SELECT revision FROM public.peo_profile_versions v JOIN public.peos p ON p.id = v.peo_id WHERE p.name = 'TriNet' AND v.status = 'draft'));
 
   -- Email delivery, and the AI rate-limit counters.
   PERFORM pg_temp.become('service');
@@ -756,8 +758,8 @@ INSERT INTO callable VALUES
   ('admin_ops_summary(p_hours integer)',       'admin',   'SELECT count(*) FROM public.admin_ops_summary(24)', 'monitoring counts'),
   ('peo_catalog()',                            'signed_in', NULL, 'the PEOs and each one''s published profile; never a contact or an admin''s id, and for anyone but an advisor no person''s name'),
   ('admin_add_peo(p_name text)',               'admin',   'SELECT public.admin_add_peo(''Probe PEO'')', 'adding a PEO'),
-  ('admin_save_peo_profile(p_peo_id bigint, p_profile jsonb)', 'admin', 'SELECT public.admin_save_peo_profile(0, ''{}'')', 'saving a PEO''s draft profile'),
-  ('admin_publish_peo_profile(p_peo_id bigint)', 'admin', 'SELECT public.admin_publish_peo_profile(0)', 'publishing a PEO''s profile'),
+  ('admin_save_peo_profile(p_peo_id bigint, p_profile jsonb, p_draft_revision uuid, p_in_use_version integer)', 'admin', 'SELECT public.admin_save_peo_profile(0, ''{}'', NULL, NULL)', 'saving a PEO''s draft profile, based on the draft as the editor opened it'),
+  ('admin_publish_peo_profile(p_peo_id bigint, p_draft_revision uuid)', 'admin', 'SELECT public.admin_publish_peo_profile(0, NULL)', 'publishing the draft the admin reviewed'),
   ('admin_set_peo_listed(p_peo_id bigint, p_listed boolean)', 'admin', 'SELECT public.admin_set_peo_listed(0, true)', 'listing a PEO, or not'),
   ('admin_recheck_peo_profile(p_peo_id bigint, p_sources jsonb)', 'admin', 'SELECT public.admin_recheck_peo_profile(0, ''{"answers": {}}'')', 'checked again: a new published version with new sources'),
   ('admin_discard_peo_draft(p_peo_id bigint)', 'admin', 'SELECT public.admin_discard_peo_draft(0)', 'discarding a PEO''s draft profile');

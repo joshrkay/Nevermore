@@ -5,7 +5,7 @@
 import { CENSUS_TEMPLATE_COLUMNS } from "./census";
 import { US_STATE_CODES } from "./chamberValidation";
 import { categoryInfo, DOCUMENT_CATEGORIES } from "./documentCategories";
-import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, formatCheckedOn, isProfileStale, oldestCheck, parsePeoCatalog, PROFILE_CAPS, type ProfilePart, type ProfileSource, type RequirementProfile } from "./peoProfiles";
+import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, formatCheckedOn, isProfileStale, oldestCheck, parsePeoCatalog, PROFILE_CAPS, PROFILE_PARTS, type ProfilePart, type ProfileSource, type RequirementProfile } from "./peoProfiles";
 import { FIELD_LABELS } from "./provenance";
 
 /** A contact's limits, in characters. */
@@ -75,34 +75,93 @@ const addDays = (iso: string, days: number) => {
   return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 };
 
+// ---------- The parts of a profile ----------
+
+/** The sections of a profile, in the order the PEOs page shows them. */
+export type SectionKey = "rules" | "answers" | "census" | "documents" | "questions" | "contacts";
+
+type RuleKey = keyof EditableProfile["rules"];
+
+/** How a rule is typed in the editor: a number, words such as state codes, or lines in the PEO's own words. */
+export type RuleInput = "number" | "words" | "lines";
+
+/** One part of a profile: what people call it, where the editor has it, what it holds, and, for a rule, how it is typed. */
+export interface ProfilePartEntry {
+  /** Its name in a sentence, such as "minimum headcount". */
+  label: string;
+  /** "was" or "were", for "Where the <label> <verb> checked". */
+  verb: "was" | "were";
+  section: SectionKey;
+  /** The paths of its fields, as profileProblems names them. */
+  fields: string[];
+  /** What it holds; null when it isn't set ("can't tell yet"). */
+  read: (p: EditableProfile) => unknown;
+  /** For an eligibility rule: its key in the rules, how it is typed and shown, and the hint beside it. */
+  rule?: { key: RuleKey; input: RuleInput; upperCase?: boolean; hint: string; show: (v: never) => string };
+}
+
+const joined = (v: string[]) => v.join(", ");
+
+/** Every part of a profile, in the database's order (PROFILE_PARTS). Each list below derives from this one table. */
+export const PROFILE_PART_TABLE: Record<ProfilePart, ProfilePartEntry> = {
+  answers: { label: "answers", verb: "were", section: "answers", fields: ["neededToQuote", "neededBeforeSigning"], read: (p) => [...p.neededToQuote, ...p.neededBeforeSigning] },
+  census_layout: { label: "census layout", verb: "was", section: "census", fields: ["censusLayout"], read: (p) => p.censusLayout },
+  documents: { label: "documents", verb: "were", section: "documents", fields: ["documents"], read: (p) => p.documents },
+  extra_questions: { label: "questions", verb: "were", section: "questions", fields: ["extraQuestions"], read: (p) => p.extraQuestions },
+  contacts: { label: "contacts", verb: "were", section: "contacts", fields: ["contacts"], read: (p) => p.contacts },
+  min_headcount: {
+    label: "minimum headcount", verb: "was", section: "rules", fields: ["rules.minHeadcount"], read: (p) => p.rules.minHeadcount,
+    rule: { key: "minHeadcount", input: "number", hint: "Employees. Leave it empty if not checked yet.", show: (v: number) => String(v) },
+  },
+  states_served: {
+    label: "states served", verb: "were", section: "rules", fields: ["rules.statesServed"], read: (p) => p.rules.statesServed,
+    rule: { key: "statesServed", input: "words", upperCase: true, hint: "State codes, such as CA, NY. Leave it empty if not checked yet.", show: joined },
+  },
+  excluded_industries: {
+    label: "excluded industries", verb: "were", section: "rules", fields: ["rules.excludedIndustries"], read: (p) => p.rules.excludedIndustries,
+    rule: { key: "excludedIndustries", input: "lines", hint: "In the PEO's own words, one per line. Leave it empty and give a source if it excludes none.", show: (v: string[]) => joined(v) || "None" },
+  },
+  excluded_class_codes: {
+    label: "excluded class codes", verb: "were", section: "rules", fields: ["rules.excludedClassCodes"], read: (p) => p.rules.excludedClassCodes,
+    rule: { key: "excludedClassCodes", input: "words", hint: "Workers' comp class codes, four digits each. Leave it empty and give a source if it excludes none.", show: (v: string[]) => joined(v) || "None" },
+  },
+  min_enrolment_percent: {
+    label: "minimum enrolment", verb: "was", section: "rules", fields: ["rules.minEnrolmentPercent"], read: (p) => p.rules.minEnrolmentPercent,
+    rule: { key: "minEnrolmentPercent", input: "number", hint: "Percent of eligible employees. Leave it empty if not checked yet.", show: (v: number) => `${v}%` },
+  },
+};
+
+/** A part's name to start a line with: "Minimum headcount". */
+export const capitalised = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** The parts of a profile by the names the PEOs page gives them. */
+export const PART_LABELS = Object.fromEntries(PROFILE_PARTS.map((part) => [part, PROFILE_PART_TABLE[part].label])) as Record<ProfilePart, string>;
+
+/** The eligibility rules, in order: each one's part, its key in the rules, its label to start a line with, and how it is typed. */
+export const RULE_PARTS = PROFILE_PARTS.flatMap((part) => {
+  const { rule, label, verb } = PROFILE_PART_TABLE[part];
+  return rule ? [{ ...rule, part, label: capitalised(label), verb }] : [];
+});
+
+/** "Where the minimum headcount was checked". */
+export const whereChecked = (part: ProfilePart) => `Where the ${PROFILE_PART_TABLE[part].label} ${PROFILE_PART_TABLE[part].verb} checked`;
+
 /** Whether a part of the profile holds something a source can be for. A rule or a census layout that is null doesn't. */
 function partIsSet(p: EditableProfile, part: ProfilePart): boolean {
-  switch (part) {
-    case "census_layout": return p.censusLayout !== null;
-    case "min_headcount": return p.rules.minHeadcount !== null;
-    case "states_served": return p.rules.statesServed !== null;
-    case "excluded_industries": return p.rules.excludedIndustries !== null;
-    case "excluded_class_codes": return p.rules.excludedClassCodes !== null;
-    case "min_enrolment_percent": return p.rules.minEnrolmentPercent !== null;
-    default: return true;
-  }
+  return PROFILE_PART_TABLE[part].read(p) !== null;
 }
 
 /** Whether a part holds something, so that publishing needs its source. */
 export function partHoldsSomething(p: EditableProfile, part: ProfilePart): boolean {
-  switch (part) {
-    case "answers": return p.neededToQuote.length + p.neededBeforeSigning.length > 0;
-    case "documents": return p.documents.length > 0;
-    case "extra_questions": return p.extraQuestions.length > 0;
-    case "contacts": return p.contacts.length > 0;
-    default: return partIsSet(p, part);
-  }
+  const held = PROFILE_PART_TABLE[part].read(p);
+  return Array.isArray(held) && !RULE_PARTS.some((r) => r.part === part) ? held.length > 0 : held !== null;
 }
 
 /**
  * Every rule a profile breaks, each at the field it is about, in the words an admin acts on: the database's rules
  * (peo_profile_version_error, peo_contact_error and admin_save_peo_profile), so a profile the editor accepts is one
- * the database stores. `today` is the admin's own date (YYYY-MM-DD).
+ * the database stores. `today` is the database's date (UTC, utcToday()), YYYY-MM-DD, since a source may be dated at
+ * most one day past it.
  */
 export function profileProblems(p: EditableProfile, today: string): ProfileProblem[] {
   const out: ProfileProblem[] = [];
@@ -214,17 +273,11 @@ export function profileProblems(p: EditableProfile, today: string): ProfileProbl
   return out;
 }
 
-/** The parts of a profile, in the order the editor shows their sources. */
-const PUBLISH_ORDER: ProfilePart[] = [
-  "answers", "census_layout", "documents", "extra_questions", "contacts",
-  "min_headcount", "states_served", "excluded_industries", "excluded_class_codes", "min_enrolment_percent",
-];
-
 /** What a draft must say before it can be published: where every part that holds something came from. */
 export function publishProblems(p: EditableProfile): ProfileProblem[] {
-  const missing = PUBLISH_ORDER.filter((part) => partHoldsSomething(p, part) && !p.sources[part]);
+  const missing = PROFILE_PARTS.filter((part) => partHoldsSomething(p, part) && !p.sources[part]);
   if (missing.length > 0) {
-    return missing.map((part) => ({ path: `sources.${part}`, message: `Name where the ${part.replace(/_/g, " ")} came from, and when it was checked, before publishing` }));
+    return missing.map((part) => ({ path: `sources.${part}`, message: `Name where the ${PART_LABELS[part]} came from, and when it was checked, before publishing` }));
   }
   return Object.keys(p.sources).length === 0 ? [{ path: "sources", message: "A profile with nothing sourced has nothing to publish" }] : [];
 }
@@ -255,11 +308,8 @@ export function profilePayload(p: EditableProfile): Record<string, unknown> {
       ? { format: p.censusLayout.format, template_file: p.censusLayout.templateFile, columns: p.censusLayout.columns.map((c) => ({ header: c.header, from: c.from })) }
       : null,
     documents: p.documents,
-    min_headcount: p.rules.minHeadcount,
-    states_served: p.rules.statesServed,
-    excluded_industries: p.rules.excludedIndustries,
-    excluded_class_codes: p.rules.excludedClassCodes,
-    min_enrolment_percent: p.rules.minEnrolmentPercent,
+    // Each rule's column is named after its part.
+    ...Object.fromEntries(RULE_PARTS.map((r) => [r.part, p.rules[r.key]])),
     extra_questions: p.extraQuestions,
     sources: Object.fromEntries(Object.entries(p.sources).map(([part, s]) => [part, sourcePayload(s!)])),
     contacts: p.contacts,
@@ -270,6 +320,8 @@ export function profilePayload(p: EditableProfile): Record<string, unknown> {
 export interface ProfileVersion {
   id: number;
   version: number;
+  /** A draft's state, new on every save: a save or a publish names the one it was based on. */
+  revision: string | null;
   status: "draft" | "published";
   createdAt: string;
   publishedAt: string | null;
@@ -282,10 +334,10 @@ type Row = Record<string, unknown>;
 export function parseProfileVersion(peo: string, row: Row, contacts: readonly Row[]): ProfileVersion {
   const [parsed] = parsePeoCatalog([{ id: 0, name: peo, profile: row }]);
   const profile = parsed.profile!;
-  const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : null);
   return {
     id: Number(row.id),
     version: profile.version,
+    revision: typeof row.revision === "string" ? row.revision : null,
     status: row.status === "published" ? "published" : "draft",
     createdAt: String(row.created_at ?? ""),
     publishedAt: profile.publishedAt,
@@ -297,41 +349,37 @@ export function parseProfileVersion(peo: string, row: Row, contacts: readonly Ro
       rules: profile.rules,
       extraQuestions: profile.extraQuestions,
       sources: profile.sources,
-      contacts: [...contacts]
-        .filter((c) => Number(c.profile_version_id) === Number(row.id))
-        .sort((a, b) => Number(a.position) - Number(b.position))
-        .map((c) => ({ name: String(c.name ?? ""), role: str(c.role), email: str(c.email), phone: str(c.phone) })),
+      contacts: contactsOf(Number(row.id), contacts),
     },
   };
 }
 
+/** The contacts one profile version names, in order, from peo_contacts rows. */
+export function contactsOf(versionId: number, rows: readonly Row[]): PeoContact[] {
+  const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : null);
+  return rows
+    .filter((c) => Number(c.profile_version_id) === versionId)
+    .sort((a, b) => Number(a.position) - Number(b.position))
+    .map((c) => ({ name: String(c.name ?? ""), role: str(c.role), email: str(c.email), phone: str(c.phone) }));
+}
+
+/**
+ * What an editor or a review was based on: the draft's revision, or, with no draft, null and the version in use (null
+ * with none). The database refuses a save or a publish based on anything else.
+ */
+export interface DraftBasis {
+  draftRevision: string | null;
+  inUseVersion: number | null;
+}
+
+/** Whether the database refused a save or a publish because the draft changed since it was opened (PT409). */
+export const isStaleDraftError = (err: unknown) => (err as { code?: unknown } | null)?.code === "PT409";
+
 // ---------- What changed ----------
-
-/** The parts of a profile by the names the PEOs page gives them. */
-export const PART_LABELS: Record<ProfilePart, string> = {
-  answers: "answers",
-  census_layout: "census layout",
-  documents: "documents",
-  extra_questions: "questions",
-  contacts: "contacts",
-  min_headcount: "minimum headcount",
-  states_served: "states served",
-  excluded_industries: "excluded industries",
-  excluded_class_codes: "excluded class codes",
-  min_enrolment_percent: "minimum enrolment",
-};
-
-const RULES: { key: keyof EditableProfile["rules"]; part: ProfilePart; label: string; show: (v: never) => string }[] = [
-  { key: "minHeadcount", part: "min_headcount", label: "Minimum headcount", show: (v: number) => String(v) },
-  { key: "statesServed", part: "states_served", label: "States served", show: (v: string[]) => v.join(", ") },
-  { key: "excludedIndustries", part: "excluded_industries", label: "Excluded industries", show: (v: string[]) => v.join(", ") || "None" },
-  { key: "excludedClassCodes", part: "excluded_class_codes", label: "Excluded class codes", show: (v: string[]) => v.join(", ") || "None" },
-  { key: "minEnrolmentPercent", part: "min_enrolment_percent", label: "Minimum enrolment", show: (v: number) => `${v}%` },
-];
 
 /** A rule's value as the PEOs page shows it: "Not checked yet" while it is null. */
 export function showRule(p: EditableProfile, key: keyof EditableProfile["rules"]): string {
-  const rule = RULES.find((r) => r.key === key)!;
+  const rule = RULE_PARTS.find((r) => r.key === key)!;
   const value = p.rules[key];
   return value === null ? "Not checked yet" : rule.show(value as never);
 }
@@ -365,7 +413,7 @@ export function profileChanges(from: EditableProfile | null, to: EditableProfile
   const out: string[] = [];
   const field = (key: string) => FIELD_LABELS[key as keyof typeof FIELD_LABELS] ?? key;
 
-  for (const rule of RULES) {
+  for (const rule of RULE_PARTS) {
     const a = showRule(before, rule.key);
     const b = showRule(to, rule.key);
     if (a !== b) out.push(`${rule.label}: ${a} → ${b}`);
@@ -394,15 +442,14 @@ export function profileChanges(from: EditableProfile | null, to: EditableProfile
     if (old && contactLabel(old) !== contactLabel(c)) out.push(`Contacts: ${contactLabel(old)} → ${contactLabel(c)}`);
   }
 
-  for (const rule of RULES) sourceChange(rule.part);
-  for (const part of ["answers", "census_layout", "documents", "extra_questions", "contacts"] as ProfilePart[]) sourceChange(part);
+  for (const rule of RULE_PARTS) sourceChange(rule.part);
+  for (const part of PROFILE_PARTS.filter((p) => !PROFILE_PART_TABLE[p].rule)) sourceChange(part);
   return out;
 
   function sourceChange(part: ProfilePart) {
     const a = describeSource(before.sources[part]);
     const b = describeSource(to.sources[part]);
-    const plural = part.endsWith("s") && part !== "census_layout" && !part.startsWith("min_") ? "were" : "was";
-    if (a !== b) out.push(`Where the ${PART_LABELS[part]} ${plural} checked: ${a} → ${b}`);
+    if (a !== b) out.push(`${whereChecked(part)}: ${a} → ${b}`);
   }
 }
 
