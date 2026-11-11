@@ -72,6 +72,10 @@ _Avoid_: custom field, supplemental question, PEO question
 One PEO's own file beside the packet, "Additional questions from <PEO>": its **Extra questions** and the answers in the last certified version, which version that is, the ones not answered, and any answer certified to wording it no longer asks, under that wording. Offered to the prospect for their chosen PEO and any PEO whose questions they answered, and to advisors for every PEO with extra questions. Only that PEO's.
 _Avoid_: addendum, rider, PEO questionnaire
 
+**Workers' comp application data**:
+Our own PDF, "Workers' compensation application data", of what the last certified version holds that a workers' comp application asks, in the order of the standard application (applicant, locations, owners and officers, the rating table by state, prior carriers and loss history, nature of business, general questions), and which version it is from. It is not the ACORD form and never presents itself as it. Nothing is guessed: whatever the certified answers don't hold is printed "Not in the certified answers", and every blank is counted and listed at its start and beside the download. The rating table groups the certified census by work state and class code, counting full and part time and summing pay only where the census states them. The same for every PEO; offered to advisors on each PEO's card and to the prospect beside their packet.
+_Avoid_: ACORD 130, ACORD form, workers' comp form
+
 **Census**:
 The list of the employer's employees, one row per person, with the facts underwriting needs about each.
 _Avoid_: roster, employee list, employees

@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { Manuscript } from "@/data/manuscript";
 import type { Supplement } from "@/data/peoSupplement";
+import { workersCompFilename, type WorkersCompApplication } from "@/data/workersCompApplication";
 import type { SubmissionDetail } from "@/lib/advisorApi";
 import { toast } from "sonner";
 
@@ -33,6 +34,8 @@ const buildManuscriptPdf = vi.fn((m: Manuscript, _opts?: unknown) => ({ blob: ne
 vi.mock("@/lib/manuscriptPdf", () => ({ buildManuscriptPdf: (m: Manuscript, o: unknown) => buildManuscriptPdf(m, o) }));
 const buildSupplementPdf = vi.fn((s: Supplement) => ({ blob: new Blob(["%PDF"]), filename: `${s.fileId}-${s.peo}.pdf`, pageCount: 1 }));
 vi.mock("@/lib/supplementPdf", () => ({ buildSupplementPdf: (s: Supplement) => buildSupplementPdf(s) }));
+const buildWorkersCompPdf = vi.fn((a: WorkersCompApplication) => ({ blob: new Blob(["%PDF"]), filename: workersCompFilename(a), pageCount: 1 }));
+vi.mock("@/lib/workersCompPdf", () => ({ buildWorkersCompPdf: (a: WorkersCompApplication) => buildWorkersCompPdf(a) }));
 
 // The PEOs the database lists (public.peo_catalog()), as src/lib/peoCatalog.ts reads them.
 let peoCatalogRows: unknown = [];
@@ -1135,8 +1138,9 @@ describe("AdvisorSubmissionPage", () => {
       expect(within(justworks).getByRole("list", { name: "Eligibility checks for Justworks" })).toHaveTextContent("Doesn't meet · Minimum headcount: Justworks takes groups of 20 or more employees; this employer has 12.checked 2 Nov 2026");
       expect(justworks).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
       expect(justworks).toHaveTextContent("Justworks's profile was last checked 2 Mar 2026 and may be out of date.");
-      // Complete has no main action yet: the bundle comes later, and nothing is offered that does nothing.
-      expect(within(justworks).queryByRole("button")).not.toBeInTheDocument();
+      // Complete has no main action yet: the bundle comes later, and nothing is offered that does nothing. Its files
+      // are downloads, not actions on it.
+      expect(within(justworks).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Download Workers' compensation application data"]);
     });
 
     it("turns what a PEO still needs into a draft in Ask the prospect, for the advisor to edit and send: the click sends nothing", async () => {
@@ -1223,6 +1227,30 @@ describe("AdvisorSubmissionPage", () => {
       expect(needs).toHaveTextContent("The prospect has changed answers since certifying. What's listed here is as of version 3.");
       fireEvent.click(within(trinet).getByRole("button", { name: "Show what's missing" }));
       expect(within(trinet).getByRole("region", { name: "Needed to quote" })).toHaveTextContent("HRIS system: not provided");
+    });
+
+    it("offers the workers' comp application data on each PEO's card, from the last certified version, its blanks listed before the click", async () => {
+      // Certified as version 3 with Acme's carrier; the prospect has since changed answers, which withdrew it.
+      api.loadSubmission.mockResolvedValue(detail({
+        certified: false, intakeStatus: "in_progress", data: { ...signedData, wc_carrier: "Changed Mutual" }, currentVersion: 3,
+        signed: { data: { ...signedData, wc_carrier: "Sample Mutual" }, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: {} },
+      }));
+      renderPage();
+      const needs = await panel();
+      for (const name of ["Justworks", "TriNet"]) {
+        const card = (await within(needs).findByRole("heading", { name })).closest("article")!;
+        const app = within(card).getByRole("group", { name: "Workers' compensation application data" });
+        expect(card).toHaveTextContent("The prospect has changed answers since certifying. These files are from version 3.");
+        expect(app).toHaveTextContent("From certified version 3. Our own summary of the certified answers, in the standard application's order. It isn't the ACORD form. The same for every PEO.");
+        expect(app).toHaveTextContent(/Left blank, not in the certified answers: \d+ items/);
+        expect(within(app).getByRole("list", { name: "Left blank" })).toHaveTextContent("Applicant: Doing business as (DBA), FEIN");
+      }
+      const trinet = within(needs).getByRole("heading", { name: "TriNet" }).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Download Workers' compensation application data" }));
+      await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-workers-comp-application-v3.pdf"));
+      // Built from the version certified, never the answers given since.
+      const built = buildWorkersCompPdf.mock.calls.at(-1)![0];
+      expect(built.sections.find((s) => s.title === "Prior carriers and loss history")!.entries[0]).toEqual({ label: "Current workers' comp carrier", value: "Sample Mutual" });
     });
 
     it("offers each PEO's census in the layout its profile holds, on its card, from the last certified version", async () => {

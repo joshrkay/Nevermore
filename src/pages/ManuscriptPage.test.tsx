@@ -728,6 +728,23 @@ describe("ManuscriptPage", () => {
     expect(csv).toBe("Surname,Start Date\r\nPerson,\r\n");
   });
 
+  it("offers the workers' comp application data beside the packet, from the version certified, its blanks listed before the click", async () => {
+    row = certified();
+    renderAt("/manuscript/EAA-2026-0042");
+    const files = await screen.findByRole("region", { name: "Your workers' comp application data" });
+    expect(files).toHaveTextContent("From certified version 2.");
+    expect(files).toHaveTextContent(/Left blank, not in the certified answers: \d+ items/);
+    fireEvent.click(within(files).getByRole("button", { name: "Download Workers' compensation application data" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-workers-comp-application-v2.pdf"));
+  });
+
+  it("offers no workers' comp application data while the certification is withdrawn", async () => {
+    row = certified({ status: "in_progress" });
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Your workers' comp application data" })).not.toBeInTheDocument();
+  });
+
   it("offers no PEO's questions while the certification is withdrawn", async () => {
     peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] } }];
     row = certified({ status: "in_progress" });

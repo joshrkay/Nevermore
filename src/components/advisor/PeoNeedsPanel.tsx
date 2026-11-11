@@ -18,6 +18,8 @@ import type { QuoteRequestRow } from "@/lib/advisorApi";
 import { supplementFor } from "@/data/peoSupplement";
 import CensusDownload from "@/components/CensusDownload";
 import SupplementDownload from "@/components/SupplementDownload";
+import WorkersCompDownload from "@/components/WorkersCompDownload";
+import { workersCompApplication } from "@/data/workersCompApplication";
 
 interface PeoNeedsPanelProps {
   /** The last certified version (lastCertifiedVersion); null before the first certification. */
@@ -79,6 +81,8 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
   const anything = c.toQuote.length + c.beforeSigning.length > 0;
   const census = certified.intake.data.census;
   const supplement = supplementFor(peo, { certified: certified.intake.extraAnswers, fileId, version: certified.version, companyName });
+  // The same for every PEO: no profile asks anything else of it.
+  const application = workersCompApplication({ intake: certified.intake, fileId, version: certified.version, changedSince: certified.changedSince });
   return (
     <article aria-labelledby={`${id}-name`} className="bg-card border border-border rounded-xl p-4 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -115,17 +119,14 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
         </>
       )}
       <EligibilityChecks peo={peo.name} checks={peoFit(certified.intake.data, peo, today)} />
-      {/* Its files, built from the last certified version: the census in its layout, and its own questions, which go
-          to it alone. */}
-      {(census.length > 0 || supplement) && (
-        <div className="space-y-3 border-t border-border pt-3">
-          {certified.changedSince && (
-            <p className="text-xs text-muted-foreground">{`The prospect has changed answers since certifying. These files are from version ${certified.version ?? "on record"}.`}</p>
-          )}
-          {census.length > 0 && <CensusDownload census={census} fileId={fileId} version={certified.version} peo={peo.name} catalog={[peo]} />}
-          {supplement && <SupplementDownload supplement={supplement} />}
-        </div>
-      )}
+      {/* Its files, built from the last certified version: the census in its layout, the workers' comp application
+          data, and its own questions, which go to it alone. */}
+      <div className="space-y-3 border-t border-border pt-3">
+        {application.changedNotice && <p className="text-xs text-muted-foreground">{application.changedNotice}</p>}
+        {census.length > 0 && <CensusDownload census={census} fileId={fileId} version={certified.version} peo={peo.name} catalog={[peo]} />}
+        {supplement && <SupplementDownload supplement={supplement} />}
+        <WorkersCompDownload application={application} />
+      </div>
       {!c.complete && askBlocked !== null && (
         <p className="text-sm text-muted-foreground">{`The prospect can't be asked for it now: ${askBlocked.charAt(0).toLowerCase()}${askBlocked.slice(1)}`}</p>
       )}

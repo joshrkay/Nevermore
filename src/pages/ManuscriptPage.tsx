@@ -22,6 +22,8 @@ import { SITE_DOMAIN } from "@/data/site";
 import { downloadBlob } from "@/lib/downloadFile";
 import { recordManuscriptDownload } from "@/lib/milestones";
 import CensusDownload from "@/components/CensusDownload";
+import WorkersCompDownload from "@/components/WorkersCompDownload";
+import { workersCompApplication } from "@/data/workersCompApplication";
 import SupplementDownload from "@/components/SupplementDownload";
 import { parseCertifiedExtraAnswers } from "@/data/extraAnswers";
 import { supplementFor, supplementPeos } from "@/data/peoSupplement";
@@ -448,6 +450,25 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               Send it with your packet so the PEO's underwriters don't have to re-type it. It's the census you certified.
             </p>
             <CensusDownload census={state.data.census} fileId={state.fileId} version={state.submission.version ?? null} peo={state.submission.peo ?? null} catalog={peoCatalog.peos} />
+          </section>
+        )}
+
+        {/* The workers' comp application data (L-3.2), our own summary of the certified answers in the standard
+            application's order, the same for every PEO. Not while withdrawn. */}
+        {state.kind === "ready" && !withdrawn && (
+          <section aria-labelledby="workers-comp-heading" className="bg-card border border-border rounded-xl p-5 space-y-2">
+            <h2 id="workers-comp-heading" className="font-display text-lg font-bold">Your workers' comp application data</h2>
+            <p className="text-sm text-muted-foreground">
+              What you certified that a workers' comp application asks, laid out in its order, for your PEO. What we don't ask yet is listed as blank, for you or your advisor to fill in.
+            </p>
+            <WorkersCompDownload
+              application={workersCompApplication({
+                intake: { data: state.data, provenance: state.provenance, verified: state.verified },
+                fileId: state.fileId,
+                version: state.submission.version ?? null,
+                changedSince: false,
+              })}
+            />
           </section>
         )}
 
