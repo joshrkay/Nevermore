@@ -78,6 +78,10 @@ kind; the code never changes, because links carrying it are already out (`adviso
 (`?ref=<code>&utm_campaign=<campaign>`) and it still counts for the partner. Partners never see the console;
 they get only the counts an advisor sends them. Removing a partner is an admin's job (`docs/DATA_HANDLING.md`).
 
+## Held mail
+
+`/advisor/held` (the **Held mail** tab) is for admins; anyone else is told it is. It lists mail that reached a revoked, never-issued or ambiguous reply address, and mail an advisor moved off a thread, oldest first, each with why it is held, where it was moved from and why, its text and its attachments, and how many days are left before it is deleted. **Assign** places a message on the quote request chosen from the list (it then counts as new PEO mail on that thread, and its files move with it); **Discard** deletes it and its files after a confirmation. Neither tells the sender. On a thread, an advisor can **Move it off this thread** with an optional reason, which sends the message here instead of deleting it. A message nobody places is deleted 30 days after it was held. `docs/RUNBOOK.md`, "Held mail", says what to do when the alert is raised.
+
 ## Links
 
 No link that is stored, emailed or logged opens a document.

@@ -98,6 +98,7 @@
 \i supabase/migrations/20261111100000_quote_request_addresses.sql
 \i supabase/migrations/20261111110000_quote_request_messages.sql
 \i supabase/migrations/20261111120000_quote_request_threads.sql
+\i supabase/migrations/20261111130000_held_mail.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -821,6 +822,11 @@ BEGIN
     'SELECT public.record_inbound_mail(''probe'', ARRAY[''x''], ''a@b.example'', NULL, NULL, NULL, NULL, NULL, false, NULL, false, NULL)',
     'SELECT public.record_inbound_attachment(0, ''probe'', ''x.pdf'', NULL, 1, NULL)',
     'SELECT public.finish_inbound_attachment(0, ''clean'', NULL, ''peo-mail'', ''x'')',
+    format('SELECT public.plan_mail_move(0, NULL, %L)', nobody),
+    format('SELECT public.apply_mail_move(0, NULL, %L, NULL)', nobody),
+    format('SELECT public.plan_held_mail_discard(0, %L)', nobody),
+    format('SELECT public.finish_held_mail_discard(0, %L)', nobody),
+    'SELECT count(*) FROM public.held_mail_due(1)',
     'SELECT public.queue_retention_deletions(1)',
     'SELECT count(*) FROM public.claim_intake_deletions(1, 600)',
     'SELECT count(*) FROM public.claim_document_scans(1, 60)',

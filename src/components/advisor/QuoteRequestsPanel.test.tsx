@@ -316,7 +316,7 @@ describe("QuoteRequestsPanel", () => {
     const mail = (over: Record<string, unknown> = {}) => ({
       id: 1, provider_message_id: "re_1", quote_request_id: 7, session_id: "s1", address_local_part: "a.b.c", held_reason: null, direction: "received",
       is_automatic: false, new_sender: false, from_address: "dana@trinet.example", from_name: null, to_addresses: [], cc_addresses: [], subject: null,
-      body_text: "Hi", body_truncated: false, headers: {}, sent_at: null, recorded_at: "2026-11-10T15:00:05+00:00", ...over,
+      body_text: "Hi", body_truncated: false, headers: {}, held_at: null, moved_by: null, moved_by_email: null, moved_from_quote_request_id: null, moved_note: null,  sent_at: null, recorded_at: "2026-11-10T15:00:05+00:00", ...over,
     });
     const { unmount } = render(
       <QuoteRequestsPanel sessionId="s1" prospectUserId="p1" status="sent_to_carrier" currentVersion={1} requests={[request()]} events={[]} notes={[]}

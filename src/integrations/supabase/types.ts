@@ -367,9 +367,14 @@ export type Database = {
           from_address: string
           from_name: string | null
           headers: Json
+          held_at: string | null
           held_reason: string | null
           id: number
           is_automatic: boolean
+          moved_by: string | null
+          moved_by_email: string | null
+          moved_from_quote_request_id: number | null
+          moved_note: string | null
           new_sender: boolean
           provider_message_id: string
           quote_request_id: number | null
