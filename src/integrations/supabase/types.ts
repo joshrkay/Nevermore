@@ -355,6 +355,70 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      // Mail that reached a quote request's reply address (20261111110000). Advisors read it (admins also read held
+      // mail, which has no quote request); it is written only by the receive-mail function.
+      quote_request_messages: {
+        Row: {
+          address_local_part: string | null
+          body_text: string | null
+          body_truncated: boolean
+          cc_addresses: string[]
+          direction: string
+          from_address: string
+          from_name: string | null
+          headers: Json
+          held_reason: string | null
+          id: number
+          is_automatic: boolean
+          new_sender: boolean
+          provider_message_id: string
+          quote_request_id: number | null
+          recorded_at: string
+          sent_at: string | null
+          session_id: string | null
+          subject: string | null
+          to_addresses: string[]
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // What became of each attachment on that mail (20261111110000).
+      quote_request_message_attachments: {
+        Row: {
+          content_type: string | null
+          file_name: string
+          id: number
+          message_id: number
+          not_kept_reason: string | null
+          provider_attachment_id: string
+          recorded_at: string
+          scan_signature: string | null
+          scan_verdict: string | null
+          sha256: string | null
+          size_bytes: number
+          status: string
+          storage_bucket: string | null
+          storage_path: string | null
+          updated_at: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // When an advisor last opened a quote request's thread, for the whole team (20261111120000). Read-only from
+      // the browser: written only through advisor_open_quote_request_thread().
+      quote_request_thread_reads: {
+        Row: {
+          last_opened_at: string
+          last_opened_by: string | null
+          last_opened_by_email: string | null
+          quote_request_id: number
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       // What happened on a quote request outside the product (20261111090000). Advisors read it; it is written
       // only through advisor_add_quote_request_note and advisor_correct_quote_request_note.
       quote_request_notes: {
@@ -603,6 +667,7 @@ export type Database = {
           needs_action: boolean
           needs_action_note: string | null
           earliest_quote_expires_on: string | null
+          new_peo_mail_requests: number
           oldest_waiting_on: string | null
           open_fields: number
           pipeline_status: string
@@ -641,6 +706,10 @@ export type Database = {
       }
       advisor_note_underwriter_question: {
         Args: { p_question: string; p_quote_request_id: number }
+        Returns: Json
+      }
+      advisor_open_quote_request_thread: {
+        Args: { p_quote_request_id: number; p_seen_through?: string | null }
         Returns: Json
       }
       advisor_reissue_quote_request_address: {

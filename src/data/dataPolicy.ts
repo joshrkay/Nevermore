@@ -283,12 +283,21 @@ export const DATA_CLASSES: DataClass[] = [
     sensitivity: "confidential",
     examples: "Advisors' field reviews and corrections, internal notes, pipeline status and its history, the requests for information sent to the prospect, the PEOs each submission went to with what each quoted and every change to that, and who changed each uploaded document and when.",
     stored: {
-      tables: ["advisor_field_reviews", "advisor_review_events", "advisor_notes", "submission_workflow", "submission_status_history", "information_requests", "quote_requests", "quote_request_events", "quote_request_notes", "quote_request_addresses", "document_events"],
+      tables: ["advisor_field_reviews", "advisor_review_events", "advisor_notes", "submission_workflow", "submission_status_history", "information_requests", "quote_requests", "quote_request_events", "quote_request_notes", "quote_request_addresses", "quote_request_thread_reads", "document_events"],
       buckets: [],
       elsewhere: [],
     },
     retention: WITH_INTAKE,
     deletion: `${DELETED_WITH_INTAKE} The append-only history can only be removed by that process.`,
+  },
+  {
+    id: "peo_mail",
+    label: "PEO correspondence",
+    sensitivity: "restricted",
+    examples: "Mail a PEO sent to a quote request's reply address, and the advisor's own messages copied to it: who wrote it, when, the plain text, a few headers, and its attachments (a proposal can carry an employer's details and a PEO's pricing). Mail to an address that matched nothing is held until an admin deals with it.",
+    stored: { tables: ["quote_request_messages", "quote_request_message_attachments"], buckets: ["peo-mail"], elsewhere: ["Resend"] },
+    retention: `${WITH_INTAKE} Held mail nobody assigns is deleted after 30 days (story M-3.3). Resend keeps what it received too, under its own terms, until it is deleted there.`,
+    deletion: `${DELETED_WITH_INTAKE} An attachment is stored only once it has been scanned for malware; one the scanner flags is never stored, only its signature.`,
   },
   {
     id: "notifications",

@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { actorName, formatDateTime } from "./format";
 import { toast } from "sonner";
 import { PIPELINE_LABELS, type PipelineStatus } from "@/data/advisor";
+import { hasNewMail } from "@/data/mailThread";
 import { cleanPeoName, PEO_CATALOG, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
 import type { ChamberData } from "@/data/chamberTypes";
 import {
@@ -12,7 +13,8 @@ import {
 } from "@/data/quoteRequests";
 import {
   addQuoteRequestNote, correctQuoteRequestNote, recordQuoteSend, reissueQuoteRequestAddress, setStatus, updateQuoteRequest,
-  type QuoteAnswer, type QuoteRequestAddressRow, type QuoteRequestEventRow, type QuoteRequestNoteRow, type QuoteRequestRow,
+  type QuoteAnswer, type QuoteRequestAddressRow, type QuoteRequestEventRow, type QuoteRequestMessageRow, type QuoteRequestNoteRow, type QuoteRequestRow,
+  type QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
 
 interface QuoteRequestsPanelProps {
@@ -27,6 +29,9 @@ interface QuoteRequestsPanelProps {
   notes: readonly QuoteRequestNoteRow[];
   /** Each quote request's live reply address: the part before the @. */
   addresses: readonly QuoteRequestAddressRow[];
+  /** The mail on the quote requests and when each thread was last opened, for the "new PEO mail" mark. */
+  mail?: readonly QuoteRequestMessageRow[];
+  threadReads?: readonly QuoteRequestThreadReadRow[];
   /** The subdomain that receives mail; null keeps reply addresses off. The app's setting unless a test supplies one. */
   replyDomain?: string | null;
   /** The answers the advisor sees, to compare with each listed PEO's sourced facts. */
@@ -226,7 +231,7 @@ const NoteForm = ({ request, note, onSaved, onCancel }: { request: QuoteRequestR
  * The PEOs this submission went to, what each answered, and the notes on what happened outside the product.
  * Advisors send the packet outside the product and record it here; the prospect never sees any of it.
  */
-const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, events, notes, addresses, replyDomain = quoteReplyDomain(), currentVersion, data, catalog = PEO_CATALOG, onAskProspect, onChanged }: QuoteRequestsPanelProps) => {
+const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, events, notes, addresses, mail = [], threadReads = [], replyDomain = quoteReplyDomain(), currentVersion, data, catalog = PEO_CATALOG, onAskProspect, onChanged }: QuoteRequestsPanelProps) => {
   const [catalogPeo, setCatalogPeo] = useState("");
   const [otherPeo, setOtherPeo] = useState("");
   const [sentOn, setSentOn] = useState(today);
@@ -294,8 +299,13 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
             <li key={r.id} data-testid={`quote-request-${r.id}`} className="border-l-2 border-border pl-3 space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium">{r.peo_name}</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-muted">
-                  {isQuoteRequestStatus(r.status) ? QUOTE_REQUEST_LABELS[r.status] : r.status}
+                <span className="flex items-center gap-1.5">
+                  {hasNewMail(r.id, mail, threadReads) && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground font-semibold whitespace-nowrap">New PEO mail</span>
+                  )}
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-muted">
+                    {isQuoteRequestStatus(r.status) ? QUOTE_REQUEST_LABELS[r.status] : r.status}
+                  </span>
                 </span>
               </div>
               {r.sent_on && (

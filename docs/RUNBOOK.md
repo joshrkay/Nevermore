@@ -428,6 +428,20 @@ are stuck.
    `select public.requeue_document_scan(id) from public.documents where scan_verdict = 'failed';` as the
    service role.
 
+### PEO mail not arriving, or an attachment waiting
+
+Mail sent to a quote request's reply address reaches the `receive-mail` function (story M-3.2; `docs/adr/0004`). Nothing is lost while it is off or failing: the provider keeps the mail and retries the webhook, and a delivery can be replayed from the provider's dashboard.
+
+| What you see | What it means | What to do |
+|---|---|---|
+| `MAIL_RECEIVING_OFF` in the function's logs, answers 503 | `PEO_MAIL_RECEIVING` is not `on`. This is the switch that turns receiving off | Set it to `on` when receiving should run. The provider's retries then land |
+| `MAIL_CONFIG_MISSING` | A setting is missing; the log line names which of `RESEND_INBOUND_WEBHOOK_SECRET`, `QUOTE_REPLY_DOMAIN`, `RESEND_API_KEY` | Set it (`supabase/env.production.example`) |
+| `MAIL_REJECTED: reason=no_match` | The webhook's signature didn't verify: the secret is for another webhook, or it was rotated | Copy the signing secret of the webhook pointed at `receive-mail` into `RESEND_INBOUND_WEBHOOK_SECRET` |
+| `MAIL_SCAN_CONFIG_MISSING`, and a `scan_failed` ops event (`config_missing`) | No malware scanner is set, so attachments are recorded as pending and stay unreadable. The message itself is recorded | Set `MALWARE_SCANNER` (ADR 0002), then replay the webhook from the provider's dashboard (Webhooks, the event, Replay): pending attachments are scanned and stored, and nothing is recorded twice |
+| `MAIL_SCAN_UNAVAILABLE`, answers 500 | The scanner was reachable but could not answer. The provider retries, and each retry tries the pending attachments again | Nothing, unless it persists: then as for a scanner outage under "Scan failed" |
+| `MALWARE_DETECTED source=receive-mail` | An attachment was flagged. It is recorded as blocked with its signature, its bytes are not kept, and the message and its other attachments stay readable | As for "Malware detected" below: the sender is a PEO or someone copying its address, so tell the advisor on the quote request |
+| Mail in the holding list | It was sent to a revoked, unknown or ambiguous address (story M-3.3) | An admin assigns or discards it |
+
 ### Notification emails
 
 `OUTBOX_DEAD`, `OUTBOX_CONFIG_MISSING`, `OUTBOX_ENQUEUE_FAILED`: `docs/NOTIFICATIONS.md`, "Operating". Advisors

@@ -10,6 +10,7 @@ import InformationRequestPanel from "@/components/advisor/InformationRequestPane
 import ManuscriptPanel from "@/components/advisor/ManuscriptPanel";
 import NeedsActionPanel from "@/components/advisor/NeedsActionPanel";
 import NotesPanel from "@/components/advisor/NotesPanel";
+import PeoThreadPanel from "@/components/advisor/PeoThreadPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
 import { PEO_CATALOG } from "@/data/peoCatalog";
@@ -158,6 +159,16 @@ const Detail = ({
       <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
         <div className="space-y-6 min-w-0">
           {detail.signed && <ChangedSinceSigning detail={detail} signed={detail.signed} />}
+          <PeoThreadPanel
+            prospectUserId={detail.userId}
+            requests={detail.quoteRequests}
+            messages={detail.quoteRequestMessages}
+            attachments={detail.quoteRequestMailAttachments}
+            notes={detail.quoteRequestNotes}
+            events={detail.quoteRequestEvents}
+            reads={detail.quoteRequestThreadReads}
+            onOpened={reload}
+          />
           <FieldReviewPanel
             sessionId={detail.id}
             data={detail.data}
@@ -206,6 +217,8 @@ const Detail = ({
             events={detail.quoteRequestEvents}
             notes={detail.quoteRequestNotes}
             addresses={detail.quoteRequestAddresses}
+            mail={detail.quoteRequestMessages}
+            threadReads={detail.quoteRequestThreadReads}
             data={detail.data}
             onAskProspect={askProspect}
             onChanged={reload}

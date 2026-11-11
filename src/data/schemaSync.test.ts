@@ -32,7 +32,8 @@ import { OUTBOX_KIND_LABELS } from "@/data/outbox";
 import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
-import { QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
+import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
+import { MAX_BODY_CHARS } from "../../supabase/functions/receive-mail/inbound";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { CHAT_CANNOT_TAKE } from "../../supabase/functions/_shared/followUp";
@@ -254,6 +255,18 @@ describe("server and client intake rules agree", () => {
   it("caps a quote request note at the same length", () => {
     const [sql] = blocks("quote_request_note_length");
     expect(Number(/>\s*(\d+)/.exec(sql)?.[1])).toBe(QUOTE_NOTE_MAX);
+  });
+
+  // Received PEO mail (20261111110000): what became of an attachment, and how long a message's text can be.
+  it("holds the same attachment statuses and reasons for not keeping one", () => {
+    expect(quoted(blocks("mail_attachment_statuses").join("\n"))).toEqual([...MAIL_ATTACHMENT_STATUSES]);
+    expect(quoted(blocks("mail_not_kept_reasons").join("\n"))).toEqual([...MAIL_NOT_KEPT_REASONS]);
+  });
+
+  it("caps a received message's text at the same length in the database, the console and the function", () => {
+    const [sql] = blocks("mail_body_length");
+    expect(Number(/<=\s*(\d+)/.exec(sql)?.[1])).toBe(MAIL_BODY_MAX);
+    expect(MAX_BODY_CHARS).toBe(MAIL_BODY_MAX);
   });
 
   it("caps the PEO a packet went to at the longest PEO name", () => {

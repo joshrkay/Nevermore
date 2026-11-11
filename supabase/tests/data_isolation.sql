@@ -96,6 +96,8 @@
 \i supabase/migrations/20261110090000_quote_requests.sql
 \i supabase/migrations/20261111090000_quote_request_notes.sql
 \i supabase/migrations/20261111100000_quote_request_addresses.sql
+\i supabase/migrations/20261111110000_quote_request_messages.sql
+\i supabase/migrations/20261111120000_quote_request_threads.sql
 \i supabase/migrations/20261112090000_intake_schema_v3_version.sql
 \i supabase/migrations/20261112091000_intake_schema_v3_company_identity.sql
 \i supabase/migrations/20261112092000_intake_schema_v3_industry_code.sql
@@ -380,6 +382,26 @@ BEGIN
   -- scan hasn't is withheld, which document_scanning.sql checks. One more upload waits in quarantine.
   UPDATE public.documents SET scan_verdict = 'clean', scanned_at = now();
   INSERT INTO storage.objects (bucket_id, name) VALUES ('quarantine', ga || '/' || ga_open || '/held.pdf');
+  -- PEO mail (20261111110000): a message on prospect A's quote request with a stored attachment, an attachment still
+  -- pending (its file is in no bucket yet), and a held message that belongs to no intake. The receive-mail function
+  -- writes these as the service role; here they are written directly, as the superuser.
+  INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, body_text)
+  SELECT 'matrix_1', q.id, q.session_id, 'received', 'dana@trinet.example', 'Proposal attached'
+  FROM public.quote_requests q WHERE q.session_id = pa_cert;
+  INSERT INTO public.quote_request_messages (provider_message_id, held_reason, direction, from_address)
+  VALUES ('matrix_held', 'unknown_address', 'received', 'stranger@example.test');
+  INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
+  SELECT m.id, 'att_1', 'proposal.pdf', 100, 'stored', 'clean', 'peo-mail', pa_cert || '/' || m.id || '/1-proposal.pdf'
+  FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
+  INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status)
+  SELECT m.id, 'att_2', 'waiting.pdf', 100, 'pending' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
+  INSERT INTO storage.objects (bucket_id, name)
+  SELECT 'peo-mail', pa_cert || '/' || m.id || '/1-proposal.pdf' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
+  -- An advisor opened its thread (20261111120000), so the mark has a row to protect.
+  INSERT INTO public.quote_request_thread_reads (quote_request_id, last_opened_at)
+  SELECT q.id, now() FROM public.quote_requests q WHERE q.session_id = pa_cert;
+  -- A file in the bucket that no stored attachment names stays the service role's alone.
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', pa_cert || '/0/unrecorded.pdf');
   PERFORM set_config('request.jwt.claims', '', false);
   INSERT INTO fx VALUES
     ('ga_open', ga_open), ('ga_expired', ga_expired), ('ga_archived', ga_archived), ('ga_revoked', ga_revoked),
@@ -409,6 +431,8 @@ INSERT INTO matrix VALUES
   ('storage.objects WHERE bucket_id = ''manuscripts''', '{"prospect_a":1,"advisor":"all","admin":"all"}'),
   -- Uploads whose malware scan hasn't passed (20261104130000): the service role's alone.
   ('storage.objects WHERE bucket_id = ''quarantine''',  '{}'),
+  -- PEO mail attachments: advisors read the ones recorded as stored (one); nobody else reads any.
+  ('storage.objects WHERE bucket_id = ''peo-mail''',     '{"advisor":1,"admin":1}'),
   ('storage.buckets',                                   '{}'),
   -- Everyone sees their own profile; the advisor's account behind a guest token is still that account.
   ('public.profiles',                                   '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all","advisor_as_guest":1}'),
@@ -431,6 +455,10 @@ INSERT INTO matrix VALUES
   ('public.quote_request_events',                       '{"advisor":"all","admin":"all"}'),
   ('public.quote_request_notes',                        '{"advisor":"all","admin":"all"}'),
   ('public.quote_request_addresses',                    '{"advisor":"all","admin":"all"}'),
+  -- Mail on a quote request reaches advisors; held mail (none here) only admins. The prospect reads none.
+  ('public.quote_request_messages',                     '{"advisor":1,"admin":2}'),
+  ('public.quote_request_message_attachments',          '{"advisor":2,"admin":2}'),
+  ('public.quote_request_thread_reads',                 '{"advisor":1,"admin":1}'),
   -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
   ('public.intake_milestones',                          '{}'),
   -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
@@ -731,6 +759,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
   ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
                                                                      'SELECT public.advisor_note_underwriter_question(0, ''probe'')', 'noting an underwriter''s question'),
+  ('advisor_open_quote_request_thread(p_quote_request_id bigint, p_seen_through timestamp with time zone)', 'advisor',
+                                                                     'SELECT public.advisor_open_quote_request_thread(0)', 'marking a PEO thread as opened'),
   ('advisor_add_quote_request_note(p_quote_request_id bigint, p_kind text, p_noted_on date, p_body text)', 'advisor',
                                                                      'SELECT public.advisor_add_quote_request_note(0, ''call'', current_date, ''probe'')', 'adding a note to a quote request'),
   ('advisor_correct_quote_request_note(p_note_id bigint, p_kind text, p_noted_on date, p_body text)', 'advisor',
@@ -802,6 +832,9 @@ BEGIN
     'SELECT public.run_retention()',
     'SELECT public.queue_draft_expiry_reminders(1)',
     format('SELECT public.record_document_uploaded(%L)', nobody),
+    'SELECT public.record_inbound_mail(''probe'', ARRAY[''x''], ''a@b.example'', NULL, NULL, NULL, NULL, NULL, false, NULL, false, NULL)',
+    'SELECT public.record_inbound_attachment(0, ''probe'', ''x.pdf'', NULL, 1, NULL)',
+    'SELECT public.finish_inbound_attachment(0, ''clean'', NULL, ''peo-mail'', ''x'')',
     'SELECT public.queue_retention_deletions(1)',
     'SELECT count(*) FROM public.claim_intake_deletions(1, 600)',
     'SELECT count(*) FROM public.claim_document_scans(1, 60)',
@@ -991,8 +1024,8 @@ BEGIN
   -- (c) Every bucket is private.
   SELECT string_agg(id, ', ') INTO missing FROM storage.buckets WHERE public IS DISTINCT FROM false;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'FAIL: public storage buckets: %', missing; END IF;
-  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'quarantine'] THEN
-    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts and quarantine buckets';
+  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'peo-mail', 'quarantine'] THEN
+    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts, peo-mail and quarantine buckets';
   END IF;
 
   -- (d) The API roles hold no TRUNCATE (it ignores row security), REFERENCES or TRIGGER on any public table

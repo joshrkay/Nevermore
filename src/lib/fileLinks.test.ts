@@ -55,13 +55,15 @@ describe("private file links", () => {
     const api = read(join("src", "lib", "advisorApi.ts"));
     const signer = api.slice(api.indexOf("async function signedUrl"), api.indexOf("export const documentUrl"));
     // The name is required, and always sent.
-    expect(signer).toMatch(/async function signedUrl\(bucket: "documents" \| "manuscripts", path: string, download: string\)/);
+    expect(signer).toMatch(/async function signedUrl\(bucket: "documents" \| "manuscripts" \| "peo-mail", path: string, download: string\)/);
     expect(signer).toMatch(/\.createSignedUrl\(path, SIGNED_URL_SECONDS, \{ download: downloadName\(download\) \}\)/);
     for (const maker of ["documentUrl", "manuscriptUrl", "finalManuscriptUrl"]) {
       const line = api.split("\n").find((l) => l.startsWith(`export const ${maker} =`)) ?? "";
       const body = line + api.slice(api.indexOf(line) + line.length).split("\n")[1];
       expect(body, maker).toMatch(/signedUrl\("(documents|manuscripts)", [\w.]+, \w+(\.file_name)?\)/);
     }
+    // A PEO mail attachment's link is made the same way, and only from a stored path (a blocked or unscanned one has none).
+    expect(api).toContain('return signedUrl("peo-mail", a.storage_path, a.file_name);');
     for (const file of FUNCTIONS.filter((f) => /document-(upload|scan)/.test(f))) {
       const text = read(file);
       for (const call of text.match(/\.upload\([^)]*\)/g) ?? []) expect(call, file).toContain("contentType: STORED_CONTENT_TYPE");

@@ -312,6 +312,26 @@ describe("QuoteRequestsPanel", () => {
     expect(within(screen.getByTestId("quote-request-8")).queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("marks a quote request with PEO mail nobody has opened, and clears the mark once its thread was opened", () => {
+    const mail = (over: Record<string, unknown> = {}) => ({
+      id: 1, provider_message_id: "re_1", quote_request_id: 7, session_id: "s1", address_local_part: "a.b.c", held_reason: null, direction: "received",
+      is_automatic: false, new_sender: false, from_address: "dana@trinet.example", from_name: null, to_addresses: [], cc_addresses: [], subject: null,
+      body_text: "Hi", body_truncated: false, headers: {}, sent_at: null, recorded_at: "2026-11-10T15:00:05+00:00", ...over,
+    });
+    const { unmount } = render(
+      <QuoteRequestsPanel sessionId="s1" prospectUserId="p1" status="sent_to_carrier" currentVersion={1} requests={[request()]} events={[]} notes={[]}
+        addresses={[]} mail={[mail()]} threadReads={[]} data={EMPTY_CHAMBER_DATA} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
+    );
+    expect(within(screen.getByTestId("quote-request-7")).getByText("New PEO mail")).toBeInTheDocument();
+    unmount();
+    render(
+      <QuoteRequestsPanel sessionId="s1" prospectUserId="p1" status="sent_to_carrier" currentVersion={1} requests={[request()]} events={[]} notes={[]}
+        addresses={[]} mail={[mail()]} threadReads={[{ quote_request_id: 7, last_opened_at: "2026-11-10T15:00:05+00:00", last_opened_by: null, last_opened_by_email: null }]}
+        data={EMPTY_CHAMBER_DATA} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
+    );
+    expect(within(screen.getByTestId("quote-request-7")).queryByText("New PEO mail")).not.toBeInTheDocument();
+  });
+
   it("shows each quote request's reply address to copy, on the receiving subdomain", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });

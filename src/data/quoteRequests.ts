@@ -50,6 +50,16 @@ export function quoteReplyDomain(value: unknown = import.meta.env.VITE_QUOTE_REP
 /** A quote request's whole reply address, from the part the database holds and the receiving subdomain. */
 export const replyAddress = (localPart: string, domain: string) => `${localPart}@${domain}`;
 
+/**
+ * What became of an attachment on PEO mail. The database holds the same lists
+ * (20261111110000_quote_request_messages.sql); src/data/schemaSync.test.ts keeps them equal.
+ */
+export const MAIL_ATTACHMENT_STATUSES = ["pending", "stored", "blocked", "not_kept"] as const;
+export const MAIL_NOT_KEPT_REASONS = ["too_large", "unsupported_type", "type_mismatch", "executable"] as const;
+
+/** The longest a message's text can be; the receiving function cuts to it and the database refuses more. */
+export const MAIL_BODY_MAX = 100_000;
+
 /** The longest a note can be; the database refuses a longer one. */
 export const QUOTE_NOTE_MAX = 2000;
 

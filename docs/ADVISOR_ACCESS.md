@@ -112,6 +112,16 @@ a sign-out the app asked for is remembered until the event arrives.
     one and issues another (PT404 for no such quote request); the revoked row stays. Both are logged in
     `quote_request_events` (`reply_address`). Advisors read the addresses and prospects don't. The console shows
     an address only while `VITE_QUOTE_REPLY_DOMAIN` names the subdomain that receives mail.
+  - PEO mail (story M-3.2) is kept in `quote_request_messages` and `quote_request_message_attachments`, written only
+    by the `receive-mail` function as the service role (`record_inbound_mail`, `record_inbound_attachment`,
+    `finish_inbound_attachment`). Advisors read the mail on a quote request and the attachments of it; admins also
+    read held mail, which belongs to no quote request. A clean attachment's file is in the `peo-mail` bucket,
+    readable by an advisor through a signed link only while its row says `stored`. Prospects read none of it.
+  - `advisor_open_quote_request_thread(id, seen_through)` (story M-3.4) marks a quote request's thread opened, for
+    the whole team, in `quote_request_thread_reads`: through `seen_through`, the time of the latest message the page
+    showed (without one, now; never in the future, never backwards). A quote request has **new PEO mail** while a
+    message a person at the PEO wrote (received, not automatic) was recorded after that; the queue counts those in
+    `new_peo_mail_requests`. An advisor's own copied-in message, an automatic reply and held mail never count.
   - `advisor_note_underwriter_question(id, question)` is kept for the front end deployed before notes: it adds a
     note of kind `underwriter_question` dated today. Questions recorded before the migration were copied to
     notes; their log rows stay, and the console no longer shows them.
