@@ -308,8 +308,9 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
       { header: "Salary", width: 21, align: "right" },
       { header: "Type", width: 11 },
       { header: "Coverage Tier", width: 25 },
-      { header: "Class", width: 10, mono: true },
-      { header: "Note", width: CONTENT_W - 162 },
+      // Wide enough for a four-digit class code in the monospaced face.
+      { header: "Class", width: 14, mono: true },
+      { header: "Note", width: CONTENT_W - 166 },
     ];
     const notes: string[] = [];
     const flagged = new Set<number>();
