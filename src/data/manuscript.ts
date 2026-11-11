@@ -5,7 +5,8 @@ import { categoryInfo } from "./documentCategories";
 import { documentStatusInfo } from "./documentStatus";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
-import { describeSource, FIELD_LABELS, showsSource, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
+import { formatAnswer } from "./answerFormat";
+import { describeSource, FIELD_LABELS, isEmpty, showsSource, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
 import { isRequiredField } from "./readiness";
 import { NO_VERIFIED_FIELDS } from "./requiredItems";
 import { describeOpenItem, openItems } from "./openItems";
@@ -441,6 +442,9 @@ export function buildManuscript(
       return alsoFrom ? [label, shown, field, alsoFrom] : [label, shown, field];
     });
 
+  // An answer as formatAnswer writes it, or "Not provided".
+  const answer = (field: FieldKey): string => (isEmpty(data[field]) ? NOT_PROVIDED : formatAnswer(field, data[field]));
+
   // Everyone but a stated 1099 contractor is counted for coverage; whose classification is only the
   // default is reported as not provided rather than as W-2.
   const w2 = data.census.filter(isW2);
@@ -510,9 +514,16 @@ export function buildManuscript(
     submittedTo: opts.submission?.peo ?? null,
     companyRows: finish([
       ["Legal Name", orNotProvided(data.company_name), "company_name"],
+      // In full: a PEO's own form asks for all nine digits (K-1.1).
+      ["FEIN", answer("fein"), "fein"],
+      ["Entity Type", answer("entity_type"), "entity_type"],
+      ["Year Founded", answer("year_founded"), "year_founded"],
+      ["Street Address", answer("street_address"), "street_address"],
+      ["Website", answer("website"), "website"],
       ["Industry", orNotProvided(data.industry), "industry"],
       ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? "Multiple entities" : "Single entity", "multiple_entities"],
       ["FEINs", orNotProvided(data.fein_count), "fein_count"],
+      ["Legal Entities", answer("entities"), "entities"],
       ["Target Start", orNotProvided(data.start_month), "start_month"],
     ]),
     workforceRows: finish([

@@ -141,7 +141,7 @@
         "label": "Target start",
         "section": "company",
         "required": false,
-        "rank": 15
+        "rank": 20
       }
     },
     "multiple_entities": {
@@ -153,7 +153,7 @@
         "label": "Multiple entities",
         "section": "company",
         "required": false,
-        "rank": 16
+        "rank": 21
       }
     },
     "fein_count": {
@@ -167,7 +167,7 @@
         "label": "FEIN count",
         "section": "company",
         "required": false,
-        "rank": 17
+        "rank": 22
       }
     },
     "virgin_medical": {
@@ -179,7 +179,7 @@
         "label": "First-time medical coverage",
         "section": "benefits",
         "required": false,
-        "rank": 18
+        "rank": 23
       }
     },
     "current_carrier": {
@@ -218,7 +218,7 @@
         "label": "Rate history",
         "section": "benefits",
         "required": false,
-        "rank": 19
+        "rank": 24
       }
     },
     "benefits_waiting_period": {
@@ -231,7 +231,7 @@
         "label": "Waiting period",
         "section": "benefits",
         "required": false,
-        "rank": 20
+        "rank": 25
       }
     },
     "ancillary_benefits": {
@@ -245,7 +245,7 @@
         "label": "Ancillary benefits",
         "section": "benefits",
         "required": false,
-        "rank": 21
+        "rank": 26
       }
     },
     "has_401k": {
@@ -257,7 +257,7 @@
         "label": "Retirement plan",
         "section": "benefits",
         "required": false,
-        "rank": 22
+        "rank": 27
       }
     },
     "retirement_type": {
@@ -270,7 +270,7 @@
         "label": "Retirement plan type",
         "section": "benefits",
         "required": false,
-        "rank": 23
+        "rank": 28
       }
     },
     "employer_contributes": {
@@ -282,7 +282,7 @@
         "label": "Employer retirement contribution",
         "section": "benefits",
         "required": false,
-        "rank": 24
+        "rank": 29
       }
     },
     "payroll_vendor": {
@@ -322,7 +322,7 @@
         "label": "Funding lead time",
         "section": "payroll",
         "required": false,
-        "rank": 25
+        "rank": 30
       }
     },
     "has_nonexempt": {
@@ -334,7 +334,7 @@
         "label": "Nonexempt employees",
         "section": "payroll",
         "required": false,
-        "rank": 26
+        "rank": 31
       }
     },
     "nonexempt_count": {
@@ -348,7 +348,7 @@
         "label": "Nonexempt count",
         "section": "payroll",
         "required": false,
-        "rank": 27
+        "rank": 32
       }
     },
     "exempt_count": {
@@ -362,7 +362,7 @@
         "label": "Exempt count",
         "section": "payroll",
         "required": false,
-        "rank": 28
+        "rank": 33
       }
     },
     "pto_types": {
@@ -376,7 +376,7 @@
         "label": "PTO types",
         "section": "payroll",
         "required": false,
-        "rank": 29
+        "rank": 34
       }
     },
     "accrual_method": {
@@ -389,7 +389,7 @@
         "label": "Accrual method",
         "section": "payroll",
         "required": false,
-        "rank": 30
+        "rank": 35
       }
     },
     "has_handbook": {
@@ -401,7 +401,7 @@
         "label": "Employee handbook",
         "section": "operations",
         "required": false,
-        "rank": 31
+        "rank": 36
       }
     },
     "handbook_last_updated": {
@@ -414,7 +414,7 @@
         "label": "Handbook last updated",
         "section": "operations",
         "required": false,
-        "rank": 32
+        "rank": 37
       }
     },
     "hr_staff_count": {
@@ -428,7 +428,7 @@
         "label": "In-house HR staff",
         "section": "operations",
         "required": false,
-        "rank": 33
+        "rank": 38
       }
     },
     "has_1099": {
@@ -440,7 +440,7 @@
         "label": "1099 contractors",
         "section": "census",
         "required": false,
-        "rank": 34
+        "rank": 39
       }
     },
     "ca_contractors": {
@@ -452,7 +452,7 @@
         "label": "California contractors",
         "section": "census",
         "required": false,
-        "rank": 35
+        "rank": 40
       }
     },
     "uses_physical_clocks": {
@@ -464,7 +464,7 @@
         "label": "Physical time clocks",
         "section": "operations",
         "required": false,
-        "rank": 36
+        "rank": 41
       }
     },
     "uses_mobile_app": {
@@ -476,7 +476,7 @@
         "label": "Mobile timekeeping",
         "section": "operations",
         "required": false,
-        "rank": 37
+        "rank": 42
       }
     },
     "uses_computer_timekeeping": {
@@ -488,7 +488,7 @@
         "label": "Computer timekeeping",
         "section": "operations",
         "required": false,
-        "rank": 38
+        "rank": 43
       }
     },
     "shift_differentials": {
@@ -500,7 +500,7 @@
         "label": "Shift differentials",
         "section": "operations",
         "required": false,
-        "rank": 39
+        "rank": 44
       }
     },
     "hris_system": {
@@ -513,7 +513,7 @@
         "label": "HRIS system",
         "section": "operations",
         "required": false,
-        "rank": 40
+        "rank": 45
       }
     },
     "key_challenges": {
@@ -526,7 +526,7 @@
         "label": "Key challenges",
         "section": "operations",
         "required": false,
-        "rank": 41
+        "rank": 46
       }
     },
     "business_goals": {
@@ -539,7 +539,7 @@
         "label": "Business goals",
         "section": "operations",
         "required": false,
-        "rank": 42
+        "rank": 47
       }
     },
     "wc_carrier": {
@@ -594,6 +594,95 @@
         "section": "workers_comp",
         "required": false,
         "rank": 14
+      }
+    },
+    "fein": {
+      "title": "nine digits, such as 123456789",
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9]{9}$",
+      "x-intake": {
+        "label": "FEIN",
+        "section": "company",
+        "required": false,
+        "rank": 15
+      }
+    },
+    "entity_type": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "sole_proprietorship",
+        "partnership",
+        "llc",
+        "c_corporation",
+        "s_corporation",
+        "nonprofit",
+        "other",
+        null
+      ],
+      "x-intake": {
+        "label": "Entity type",
+        "section": "company",
+        "required": false,
+        "rank": 16
+      }
+    },
+    "year_founded": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1600,
+      "maximum": 2100,
+      "x-intake": {
+        "label": "Year founded",
+        "section": "company",
+        "required": false,
+        "rank": 17
+      }
+    },
+    "street_address": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Street address",
+        "section": "company",
+        "required": false,
+        "rank": 18
+      }
+    },
+    "website": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "Website",
+        "section": "company",
+        "required": false,
+        "rank": 19
+      }
+    },
+    "entities": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "$ref": "#/$defs/entity"
+      },
+      "x-intake": {
+        "label": "Legal entities",
+        "section": "company",
+        "required": false,
+        "rank": 48
       }
     },
     "census": {
@@ -838,6 +927,22 @@
               "annual_salary"
             ]
           }
+        }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "legal_name": {
+          "type": "string",
+          "maxLength": 1000,
+          "pattern": "[^ ]"
+        },
+        "fein": {
+          "title": "nine digits, such as 123456789",
+          "type": "string",
+          "pattern": "^[0-9]{9}$"
         }
       }
     },

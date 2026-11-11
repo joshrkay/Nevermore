@@ -243,6 +243,23 @@ describe("buildManuscript covers the whole intake", () => {
     expect(m.census.length).toBe(DEMO_CHAMBER_DATA.census.length);
   });
 
+  // K-1.1: a PEO's form needs all nine digits, so the packet prints the FEIN in full.
+  it("shows who the employer is: the FEIN in full, entity type, year founded, address and website", () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
+    const company = Object.fromEntries(m.companyRows.map(([label, value]) => [label, value]));
+    expect(company).toMatchObject({
+      FEIN: "84-1234567",
+      "Entity Type": "LLC",
+      "Year Founded": "2014",
+      "Street Address": "500 Harbor Street, Suite 300, San Francisco, CA 94107",
+      Website: "meridiancreative.example",
+      "Legal Entities": "Not provided",
+    });
+    const several = buildManuscript({ ...DEMO_CHAMBER_DATA, multiple_entities: true, entities: [{ legal_name: "Meridian Creative LLC", fein: "841234567" }, { legal_name: "Meridian Studios Inc", fein: "841234568" }] }, opts);
+    expect(Object.fromEntries(several.companyRows.map(([label, value]) => [label, value]))["Legal Entities"])
+      .toBe("Meridian Creative LLC (FEIN 84-1234567); Meridian Studios Inc (FEIN 84-1234568)");
+  });
+
   it("shows the workers' comp block and the census class codes", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
     expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toEqual({

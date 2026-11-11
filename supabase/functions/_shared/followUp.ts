@@ -11,6 +11,25 @@ export type FieldStatus = (typeof FIELD_STATUSES)[number];
 
 export type FieldInfo = { key: string } & IntakeFieldMeta;
 
+/**
+ * Answers the conversation can't take at all (extraction never returns them). The census is an uploaded file
+ * (D21). The FEIN, and each legal entity's, is typed into its own box in the workspace: nine digits in a chat
+ * message are redacted before they reach the model, as a Social Security number would be (K-1.1).
+ */
+export const CHAT_CANNOT_TAKE: ReadonlySet<string> = new Set(["census", "fein", "entities"]);
+
+/**
+ * Answers Lenore never asks for in conversation, with the workspace tab each is entered on. They are left out of
+ * what she asks about next and named on their own line of her prompt, so she can say where each goes.
+ */
+export const WORKSPACE_ANSWERS: Readonly<Record<string, string>> = {
+  fein: "the Company tab",
+  entities: "the Company tab",
+};
+
+/** What the conversation never asks about: the census (a file) and the answers entered in the workspace. */
+export const CHAT_NEVER_ASKS: ReadonlySet<string> = new Set(["census", ...Object.keys(WORKSPACE_ANSWERS)]);
+
 const isEmpty = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
 
 /**
@@ -41,6 +60,19 @@ export function unsettledFields(
     // or nothing else names states), unless that answer is itself in conflict or incomplete.
     if (f.key === "states" && opts.census?.workStates && isReadyState(requiredItemStates(answers, statuses, opts.census).states)) return false;
     return !isSettled(answers[f.key], status);
+  });
+}
+
+/**
+ * The answers entered in the workspace that are still open, in rank order, each with its tab: not settled, and
+ * relevant (each legal entity is listed only once the employer says it is more than one).
+ */
+export function workspaceAnswersOpen(answers: Record<string, unknown>, statuses: Record<string, string | undefined>): (FieldInfo & { where: string })[] {
+  return INTAKE_FIELDS.flatMap((f) => {
+    const where = WORKSPACE_ANSWERS[f.key];
+    if (!where || isSettled(answers[f.key], statuses[f.key])) return [];
+    if (f.key === "entities" && answers.multiple_entities !== true) return [];
+    return [{ ...f, where }];
   });
 }
 

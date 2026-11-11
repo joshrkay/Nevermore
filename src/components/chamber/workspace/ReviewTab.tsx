@@ -1,8 +1,9 @@
+import { formatAnswer } from "@/data/answerFormat";
 import { useEffect, useRef, type ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
-import { FIELD_LABELS, formatFieldValue, isEmpty, verificationSettles, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
+import { FIELD_LABELS, isEmpty, verificationSettles, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import { isSettled } from "@/data/followUp";
 import { openItems } from "@/data/openItems";
 import { REVIEW_FIELDS, REVIEW_SECTIONS } from "@/data/reviewFields";
@@ -43,11 +44,11 @@ interface Row {
 }
 
 /** A captured value as text, or null when there is nothing to show. 0 and "No" are answers. */
-const shown = (value: unknown): string | null =>
-  value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0) ? null : formatFieldValue(value);
+const shown = (field: FieldKey, value: unknown): string | null =>
+  value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0) ? null : formatAnswer(field, value);
 
 const displayOf = (field: FieldKey, value: unknown): string | null => {
-  const text = shown(value);
+  const text = shown(field, value);
   if (text === null) return null;
   if (field === "funding_days") return `${text} days`;
   if (field === "wc_annual_premium" && typeof value === "number") return `$${value.toLocaleString()}`;
@@ -246,7 +247,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
               <ProvenanceField
                 label={item.label}
                 field={item.field}
-                display={shown(data[item.field])}
+                display={shown(item.field, data[item.field])}
                 raw={data[item.field]}
                 provenance={provenance[item.field]}
                 onAction={onAction}

@@ -5,8 +5,9 @@ import type { ExtractionTool } from "../_shared/ai/model.ts";
 import { DOCUMENT_FIELDS } from "./parse.ts";
 
 // Recorded on every extraction event. Raise it with any change to SYSTEM_PROMPT or REPORT_TOOL: promptVersion.test.ts
-// fails until you do, so an event always says which prompt produced it.
-export const PROMPT_VERSION = 1;
+// fails until you do, so an event always says which prompt produced it. 2 is intake schema v3 (Epic K): the
+// common questions a document can state, and never a FEIN.
+export const PROMPT_VERSION = 2;
 
 export const SYSTEM_PROMPT = `You read business documents (benefits summaries, payroll reports, workers' comp pages, invoices) for an HR/PEO intake.
 Report only company-level facts the document clearly states. Never report details about an individual person.
@@ -19,6 +20,8 @@ Field meanings:
 - has_401k, retirement_type, employer_contributes (to retirement)
 - payroll_vendor, pay_frequency (weekly, bi-weekly, semi-monthly, monthly), nonexempt_count, exempt_count
 - has_handbook, has_1099 (uses 1099 contractors), ca_contractors (contractors in California)
+- entity_type (sole proprietorship, partnership, LLC, C corporation, S corporation or nonprofit), year_founded (four digits), street_address (the business's main address, with city, state and ZIP), website
+Never report a federal employer identification number (FEIN or EIN) or any other tax ID.
 Use "yes"/"no" for yes-or-no fields. Leave out anything not stated.`;
 
 export const REPORT_TOOL: ExtractionTool = {

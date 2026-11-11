@@ -1,7 +1,9 @@
 import type { ChamberData } from "@/data/chamberTypes";
 import type { FieldAction, FieldKey, ProvenanceMap } from "@/data/provenance";
 import { motion } from "framer-motion";
+import { formatAnswer } from "@/data/answerFormat";
 import ProvenanceField from "./ProvenanceField";
+import RowsField from "./RowsField";
 
 interface CompanyTabProps {
   data: ChamberData;
@@ -13,6 +15,11 @@ interface CompanyTabProps {
 const CompanyTab = ({ data, isDemo, provenance = {}, onAction }: CompanyTabProps) => {
   const fields: { label: string; field: FieldKey; value: string | null | undefined }[] = [
     { label: "Business Name", field: "company_name", value: data.company_name },
+    { label: "FEIN", field: "fein", value: data.fein && formatAnswer("fein", data.fein) },
+    { label: "Entity Type", field: "entity_type", value: data.entity_type && formatAnswer("entity_type", data.entity_type) },
+    { label: "Year Founded", field: "year_founded", value: data.year_founded?.toString() },
+    { label: "Street Address", field: "street_address", value: data.street_address },
+    { label: "Website", field: "website", value: data.website },
     { label: "Industry", field: "industry", value: data.industry },
     { label: "HQ State", field: "hq_state", value: data.hq_state },
     { label: "All States", field: "states", value: data.states.length > 0 ? data.states.join(", ") : null },
@@ -51,6 +58,17 @@ const CompanyTab = ({ data, isDemo, provenance = {}, onAction }: CompanyTabProps
           />
         ))}
       </div>
+
+      {/* Each legal entity, once the employer is more than one (K-1.1). */}
+      {(data.multiple_entities || data.entities.length > 0) && (
+        <RowsField
+          field="entities"
+          rows={data.entities}
+          provenance={provenance.entities}
+          onAction={isDemo ? undefined : onAction}
+          hint="List each legal entity with its FEIN."
+        />
+      )}
 
       {/* Virgin medical badge */}
       {data.virgin_medical !== null && (

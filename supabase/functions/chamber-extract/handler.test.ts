@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { guardReply, handleRequest, MAX_REQUEST_BYTES, NEXT_FIELDS, STOPPING_REPLY, WRAP_UP_REPLY, type HandlerDeps, type SupabaseLike } from "./handler";
 import { EXTRACT_TOOL, FIELD_TYPES, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
-import { INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema";
+import { INTAKE_FIELDS, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema";
 
 const USER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OTHER_USER = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
@@ -353,6 +353,17 @@ describe("chamber-extract handler: what is sent to the model", () => {
     expect(body.reply).not.toContain("team");
   });
 
+  // K-1.1: the FEIN is typed into the workspace, so with nothing left to ask Lenore's own wrap-up says where.
+  it("wraps up by saying where the answers entered in the workspace go, when the model gives no reply and nothing is left to ask", async () => {
+    const settled = Object.fromEntries(INTAKE_FIELDS.filter((f) => f.key !== "fein").map((f) => [f.key, "unknown"]));
+    const t = setup({ responses: [anthropicReply({})] });
+    const { body } = await read(await handleRequest(post({ message: "That's all I know", statuses: settled }), t.deps));
+    expect(body.reply).toBe("Thanks, that's everything I need to ask. Still to enter in the workspace: FEIN, on the Company tab. You can look over your intake on the Review tab.");
+    const done = setup({ responses: [anthropicReply({})] });
+    const all = await read(await handleRequest(post({ message: "That's all I know", statuses: { ...settled, fein: "unknown" } }), done.deps));
+    expect(all.body.reply).toBe(WRAP_UP_REPLY);
+  });
+
   it("asks again about an answer the model marked incomplete, rather than moving on or wrapping up", async () => {
     const t = setup({ responses: [anthropicReply({ states: ["CA", "OR"], field_status: { states: "incomplete" } })] });
     const { body } = await read(await handleRequest(post({ message: "CA, OR and some others", context: { company_name: "Acme" } }), t.deps));
@@ -697,6 +708,12 @@ describe("guardReply", () => {
   it("answers for a model that gave no reply: the next question, the wrap-up, or the goodbye", () => {
     expect(guardReply(null, NEXT, false)).toEqual({ reply: `Thanks, got it. ${NEXT}`, reason: null });
     expect(guardReply(null, null, false)).toEqual({ reply: WRAP_UP_REPLY, reason: null });
+    // K-1.1: with nothing left to ask, her own wrap-up says where the answers chat can't take are entered.
+    expect(guardReply(null, null, false, ["FEIN, on the Company tab"]).reply)
+      .toBe("Thanks, that's everything I need to ask. Still to enter in the workspace: FEIN, on the Company tab. You can look over your intake on the Review tab.");
+    expect(guardReply(null, null, false, ["FEIN, on the Company tab", "Legal entities, on the Company tab"]).reply)
+      .toBe("Thanks, that's everything I need to ask. Still to enter in the workspace: FEIN, on the Company tab; Legal entities, on the Company tab. You can look over your intake on the Review tab.");
+    expect(guardReply(null, null, false, [])).toEqual({ reply: WRAP_UP_REPLY, reason: null });
     expect(guardReply(null, NEXT, true)).toEqual({ reply: STOPPING_REPLY, reason: null });
   });
 });

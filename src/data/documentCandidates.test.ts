@@ -5,6 +5,8 @@ import {
   compareCensus,
   mergeCensus,
   parseExtraction,
+  formatValue,
+  fieldLabel,
   planCandidateMerge,
   resolutionFields,
   resolveCandidate,
@@ -335,5 +337,22 @@ describe("resolveCandidate", () => {
     expect(resolutionFields({ type: "apply", candidates: [candidate({}), candidate({ field: "current_carrier" })] })).toEqual({ fields: ["payroll_vendor", "current_carrier"], kept: false });
     expect(resolutionFields({ type: "keep_current", candidate: candidate({}) })).toEqual({ fields: ["payroll_vendor"], kept: true });
     expect(resolutionFields({ type: "merge_census", candidate: candidate({ field: "census" }) })).toEqual({ fields: ["census"], kept: false });
+  });
+});
+
+// K-1.1: what a document says of who the employer is, as the Upload tab offers it.
+describe("company identity candidates", () => {
+  it("keeps a document's entity type and year founded as the intake holds them, and shows them as written", () => {
+    const parsed = parseExtraction({ candidates: [
+      { field: "entity_type", value: "LLC", location: "Page 1" },
+      { field: "year_founded", value: "2014", location: "Page 1" },
+      // A FEIN is typed into the workspace by the prospect: a document never proposes one.
+      { field: "fein", value: "84-1234567", location: "Page 1" },
+    ] });
+    expect(parsed.candidates.map((c) => [c.field, c.value])).toEqual([["entity_type", "llc"], ["year_founded", 2014]]);
+    expect(formatValue("entity_type", "llc")).toBe("LLC");
+    expect(formatValue("fein", "841234567")).toBe("84-1234567");
+    expect(fieldLabel("entity_type")).toBe("Entity type");
+    expect(fieldLabel("street_address")).toBe("Street address");
   });
 });

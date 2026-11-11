@@ -623,6 +623,8 @@ export const DOCUMENT_FIELDS = [
   "ancillary_benefits", "has_401k", "retirement_type", "employer_contributes",
   "payroll_vendor", "pay_frequency", "nonexempt_count", "exempt_count",
   "has_handbook", "has_1099", "ca_contractors",
+  // v3 (K-1.1): who the employer is. Never the FEIN, which the prospect types into the workspace.
+  "entity_type", "year_founded", "street_address", "website",
 ] as const;
 
 const BOOLEAN_FIELDS = new Set([

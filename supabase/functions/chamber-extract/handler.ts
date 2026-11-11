@@ -19,7 +19,7 @@ import { FIELD_STATUSES as CONTEXT_STATUSES, type CensusSummary } from "../_shar
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactSensitive } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
-import { buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn } from "./prompt.ts";
+import { buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn, workspaceForTurn } from "./prompt.ts";
 import { guardReply } from "./reply.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, FIELD_QUESTION, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
 
@@ -267,7 +267,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
       ...Object.entries(shaped.field_status).flatMap(([k, v]) => (v === "unknown" ? [k] : [])),
     ]);
     const ask = unsettled.find((f) => !answered.has(f.key));
-    const guarded = guardReply(shaped.reply, ask ? FIELD_QUESTION[ask.key] : null, stopping);
+    const guarded = guardReply(shaped.reply, ask ? FIELD_QUESTION[ask.key] : null, stopping, workspaceForTurn(turn));
     if (guarded.reason) {
       deps.logError(`LENORE_REPLY_GUARDED request=${requestId} session=${event.sessionId ?? "-"} reason=${guarded.reason} next=${ask?.key ?? "-"}`);
     }

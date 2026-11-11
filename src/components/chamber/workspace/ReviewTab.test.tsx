@@ -226,7 +226,7 @@ describe("ReviewTab sections", () => {
       expect(row, f).not.toBeNull();
       expect(within(row).getByText("Lenore captured this — please confirm"), f).toBeInTheDocument();
     }
-    expect(screen.getByTestId("progress-company")).toHaveTextContent("2 of 5 settled");
+    expect(screen.getByTestId("progress-company")).toHaveTextContent("2 of 11 settled");
     expect(screen.getByTestId("progress-locations")).toHaveTextContent("1 of 2 settled");
     expect(screen.getByTestId("progress-workforce")).toHaveTextContent("1 of 7 settled");
   });

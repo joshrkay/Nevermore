@@ -474,6 +474,26 @@ describe("AI-read fields", () => {
     ]);
   });
 
+  // K-1.1: a document can state who the employer is; the FEIN is typed into the workspace, never read from a file.
+  it("reads the employer's entity type, year founded, address and website from a document, and never its FEIN", () => {
+    expect(shapeAiCandidates(
+      [
+        { field: "entity_type", value: "LLC", section: 1 },
+        { field: "year_founded", value: "2014", section: 1 },
+        { field: "street_address", value: "500 Harbor Street, San Francisco, CA 94107", section: 1 },
+        { field: "website", value: "meridiancreative.example", section: 2 },
+        { field: "fein", value: "84-1234567", section: 1 },
+        { field: "entities", value: "Meridian Creative LLC", section: 1 },
+      ],
+      sections,
+    )).toEqual([
+      { field: "entity_type", value: "LLC", location: "Page 1" },
+      { field: "year_founded", value: "2014", location: "Page 1" },
+      { field: "street_address", value: "500 Harbor Street, San Francisco, CA 94107", location: "Page 1" },
+      { field: "website", value: "meridiancreative.example", location: "Page 2" },
+    ]);
+  });
+
   it("never sends or keeps a sensitive number", () => {
     expect(buildPromptText([{ label: "Page 1", text: "Group 12345, owner SSN 123-45-6789" }])).toBe("[[Section 1]]\nGroup 12345, owner SSN [redacted]\n\n");
     expect(shapeAiCandidates([{ field: "rate_history", value: "acct 0012345 up 9%", section: 1 }], sections)).toEqual([

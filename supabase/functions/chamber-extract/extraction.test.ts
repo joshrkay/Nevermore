@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { emptyExtraction, MAX_UNKNOWN_PER_MESSAGE, quotesMessage, saysNotKnown, shapeExtraction } from "./extraction";
 import { INTAKE_SCHEMA, LIMITS } from "../_shared/intakeSchema";
-import { EXTRACT_TOOL, FIELD_GUIDE, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
+import { EXTRACT_TOOL, FIELD_GUIDE,
+  FIELD_QUESTION, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 
 // Most cases are about the arguments, not the message: evidence is checked against `message` where it matters.
 const shape = (args: Record<string, unknown>, message = "") => shapeExtraction(args, message);
@@ -311,23 +312,46 @@ describe("extraction tool schema", () => {
   });
 });
 
-// US-2.1b: the contract covers every top-level field of the intake schema but the census.
+// K-1.1: the FEIN goes in the workspace, so Lenore is told how to handle it in the conversation.
+describe("how Lenore handles answers entered in the workspace", () => {
+  const replyRules = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("How Lenore replies"));
+  const rule = (start: string) => replyRules.split("\n").find((l) => l.startsWith(start)) ?? "";
+
+  it("never asks for them, and says where each goes once nothing else is left to ask", () => {
+    expect(rule("- Never ask for an answer named in \"Entered in the workspace\"")).toMatch(/When "Not yet settled" is "none" and "Entered in the workspace" names any, end the wrap-up by saying where each one goes/);
+  });
+
+  it("sends a FEIN the prospect offers in chat to the FEIN box on the Company tab, and never repeats or keeps it", () => {
+    const fein = rule("- When the prospect gives or offers their FEIN");
+    expect(fein).toContain("FEIN box on the Company tab");
+    expect(fein).toMatch(/never repeat the number/);
+  });
+
+  it("tells the model never to extract a FEIN", () => {
+    expect(SYSTEM_PROMPT).toContain("Never extract a federal employer identification number (FEIN or EIN)");
+  });
+});
+
+// US-2.1b: the contract covers every top-level field of the intake schema that the conversation can take: not the
+// census (a file) and not the FEIN or the legal entities' FEINs (typed into the workspace, K-1.1).
 describe("the extraction contract", () => {
-  const PROPERTIES = INTAKE_SCHEMA.properties as Record<string, { type: unknown; enum?: unknown[] }>;
+  const PROPERTIES = INTAKE_SCHEMA.properties as Record<string, { type: unknown; enum?: unknown[]; minimum?: number }>;
+  const FROM_CHAT = Object.keys(PROPERTIES).filter((k) => !["census", "fein", "entities"].includes(k));
   // A value the schema accepts for each kind of field, as the model would send it.
   const sample = (key: string): unknown => {
     if (key === "hq_state") return "NY";
     if (key === "states") return ["NY", "NJ"];
     const types = Array.isArray(PROPERTIES[key].type) ? (PROPERTIES[key].type as string[]) : [PROPERTIES[key].type as string];
     if (types.includes("array")) return ["Dental"];
+    if (PROPERTIES[key].enum) return PROPERTIES[key].enum![0];
     if (types.includes("boolean")) return false;
-    if (types.includes("integer")) return 0;
+    if (types.includes("integer")) return PROPERTIES[key].minimum ?? 0;
     if (types.includes("number")) return 0.92;
     return "Acme";
   };
 
-  it("asks for every field of the intake schema but the census, each with a guide for the model and a type", () => {
-    expect([...FIELDS].sort()).toEqual(Object.keys(PROPERTIES).filter((k) => k !== "census").sort());
+  it("asks for every field of the intake schema the conversation can take, each with a guide for the model and a type", () => {
+    expect([...FIELDS].sort()).toEqual([...FROM_CHAT].sort());
     for (const key of FIELDS) {
       expect(FIELD_GUIDE[key], key).toBeTruthy();
       expect(SYSTEM_PROMPT).toContain(`- ${key} (`);
@@ -337,7 +361,25 @@ describe("the extraction contract", () => {
     expect(EXTRACT_TOOL.parameters.properties).not.toHaveProperty("census");
   });
 
-  it.each(Object.keys(PROPERTIES).filter((k) => k !== "census"))("takes an answer for %s, with its status and evidence", (key) => {
+  it("has a question of Lenore's own for every field, for when the model gives no reply", () => {
+    for (const key of FIELDS) expect(FIELD_QUESTION[key], key).toMatch(/\?$/);
+    expect(Object.keys(FIELD_QUESTION).sort()).toEqual([...FIELDS].sort());
+  });
+
+  it("never takes a FEIN from the conversation, the employer's or a legal entity's (K-1.1)", () => {
+    expect(EXTRACT_TOOL.parameters.properties).not.toHaveProperty("fein");
+    expect(EXTRACT_TOOL.parameters.properties).not.toHaveProperty("entities");
+    const shaped = shape({ fein: "841234567", entities: [{ legal_name: "Acme LLC", fein: "841234567" }], company_name: "Acme" }, "Our EIN is 84-1234567, we're Acme.");
+    expect(shaped.extracted).toEqual({ company_name: "Acme" });
+  });
+
+  it("offers the model an entity type as one of the listed values", () => {
+    expect((EXTRACT_TOOL.parameters.properties as Record<string, unknown>).entity_type).toEqual({
+      type: "string", enum: ["sole_proprietorship", "partnership", "llc", "c_corporation", "s_corporation", "nonprofit", "other"],
+    });
+  });
+
+  it.each(FROM_CHAT)("takes an answer for %s, with its status and evidence", (key) => {
     const value = sample(key);
     const shaped = shape({ [key]: value, field_status: { [key]: "confirmed" }, evidence: { [key]: "as they said" } }, "That's as they said.");
     expect(shaped.extracted).toEqual({ [key]: value });

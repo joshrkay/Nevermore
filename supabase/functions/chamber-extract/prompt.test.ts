@@ -29,6 +29,7 @@ describe("buildUserPrompt", () => {
       expect.stringMatching(/^Not yet settled, most important first: /),
       "Ready to certify: no",
       "Employee census: not uploaded",
+      "Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab)",
       'Recent conversation, oldest first: [{"sender":"lenore","text":"How many people work for you?"}]',
       'New user message: "We have 40 \\"full time\\" people"',
     ]);
@@ -60,8 +61,8 @@ describe("buildUserPrompt", () => {
     const prompt = buildUserPrompt({ message: "hello" });
     expect(parts(prompt)[0]).toBe("Captured so far (answers): {}");
     expect(parts(prompt)[1]).toBe("Field statuses: {}");
-    expect(parts(prompt)[5]).toBe("Recent conversation, oldest first: []");
-    expect(parts(prompt)[6]).toBe('New user message: "hello"');
+    expect(parts(prompt)[6]).toBe("Recent conversation, oldest first: []");
+    expect(parts(prompt)[7]).toBe('New user message: "hello"');
   });
 
   it("keeps a message that tries to close its quotes inside its slot", () => {
@@ -71,6 +72,36 @@ describe("buildUserPrompt", () => {
     // The message is one JSON string, with its line breaks escaped, ending the prompt.
     expect(last.split("\n")).toHaveLength(1);
     expect(JSON.parse(last)).toBe(attack);
+  });
+});
+
+// K-1.1: nine digits in a chat message are redacted before the model sees them, so the FEIN is typed into its own
+// box in the workspace. Lenore never asks for it; she is told where it goes, so she can say so.
+describe("answers entered in the workspace", () => {
+  const line = (turn: Parameters<typeof buildUserPrompt>[0]) => buildUserPrompt(turn).split("\n\n")[5];
+
+  it("are never among the fields Lenore asks about, however little else is left", () => {
+    expect(unsettledForTurn({}).map((f) => f.key)).not.toContain("fein");
+    expect(unsettledForTurn({}).map((f) => f.key)).not.toContain("entities");
+    expect(unsettledForTurn({ context: { multiple_entities: true } }).map((f) => f.key)).not.toContain("entities");
+  });
+
+  it("are named with where each goes while unanswered, and no longer once answered or closed", () => {
+    expect(line({ message: "hi" })).toBe("Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab)");
+    expect(line({ message: "hi", context: { fein: "**-***4567" } })).toBe("Entered in the workspace, never asked for in chat: none");
+    expect(line({ message: "hi", statuses: { fein: "not_applicable" } })).toBe("Entered in the workspace, never asked for in chat: none");
+  });
+
+  it("include each legal entity only once the employer is more than one", () => {
+    expect(line({ message: "hi", context: { fein: "**-***4567", multiple_entities: true } }))
+      .toBe("Entered in the workspace, never asked for in chat: entities (Legal entities, on the Company tab)");
+    expect(line({ message: "hi", context: { fein: "**-***4567", multiple_entities: true, entities: [{ legal_name: "Acme LLC" }] } }))
+      .toBe("Entered in the workspace, never asked for in chat: none");
+    expect(line({ message: "hi", context: { fein: "**-***4567", multiple_entities: false } })).toBe("Entered in the workspace, never asked for in chat: none");
+  });
+
+  it("are not asked about even when an advisor asked: the request shows on the answer in the workspace", () => {
+    expect(unsettledForTurn({ requested: ["fein", "company_name"] }).slice(0, 1).map((f) => f.key)).toEqual(["company_name"]);
   });
 });
 

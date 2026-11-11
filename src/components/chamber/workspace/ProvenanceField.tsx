@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import type { ReactNode } from "react";
+import { FIELD_CHOICES, formatFein } from "@/data/answerFormat";
 import { sanitizeChamberPatch } from "@/data/chamberValidation";
 import type { ChamberData } from "@/data/chamberTypes";
 import {
@@ -52,6 +53,7 @@ const toInput = (kind: FieldKind, raw: unknown): string => {
   if (raw === null || raw === undefined) return "";
   if (kind === "boolean") return raw ? "yes" : "no";
   if (kind === "list" && Array.isArray(raw)) return raw.join(", ");
+  if (kind === "fein" && typeof raw === "string") return formatFein(raw);
   return String(raw);
 };
 
@@ -84,7 +86,9 @@ interface ProvenanceFieldProps {
 
 const ProvenanceField = ({ label, field, display, raw, provenance, onAction, editable = true, children, required = isRequiredField(field), allowNotApplicable = false }: ProvenanceFieldProps) => {
   const kind = field === "census" ? null : FIELD_KINDS[field];
-  const canEdit = Boolean(onAction && editable && kind);
+  // A table of rows has its own editor (RowsField).
+  const canEdit = Boolean(onAction && editable && kind && kind !== "rows");
+  const choices = FIELD_CHOICES[field];
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [invalid, setInvalid] = useState(false);
@@ -150,16 +154,27 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
               <option value="yes">Yes</option>
               <option value="no">No</option>
             </select>
+          ) : kind === "choice" && choices ? (
+            <select
+              aria-label={label}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              className="text-xs bg-background border border-border rounded px-2 py-1"
+            >
+              <option value="">Not sure</option>
+              {choices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
           ) : (
             <input
               aria-label={label}
               aria-invalid={invalid}
+              inputMode={kind === "fein" ? "numeric" : undefined}
               type={kind === "number" || kind === "decimal" ? "number" : "text"}
               min={kind === "number" || kind === "decimal" ? 0 : undefined}
               step={kind === "decimal" ? "0.01" : undefined}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder={kind === "list" ? "Comma-separated" : undefined}
+              placeholder={kind === "list" ? "Comma-separated" : kind === "fein" ? "12-3456789" : undefined}
               className="text-xs bg-background border border-border rounded px-2 py-1 min-w-0 flex-1"
             />
           )}

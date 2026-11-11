@@ -1,5 +1,6 @@
 import { chatContext as requestContext, type ChatContext } from "../../supabase/functions/_shared/chatContext.ts";
 import type { ChamberData } from "./chamberTypes";
+import { maskFein } from "./answerFormat";
 import { censusSummary } from "./followUp";
 import type { ProvenanceMap } from "./provenance";
 import { redactSensitive } from "./sensitive";
@@ -133,11 +134,16 @@ export const CHAT_FALLBACK_REPLY = "Thanks, got it.";
 
 /**
  * The answers as Lenore's chat sends them to chamber-extract. The roster isn't extracted from chat and holds
- * personal details, so it is left out.
+ * personal details, so it is left out, and a FEIN is masked to its last four digits.
  */
 export function chatAnswers(data: ChamberData): Omit<ChamberData, "census"> {
   const { census: _census, ...context } = data;
-  return context;
+  // The model is never sent a whole FEIN (K-1.1): the last four digits say one is held.
+  return {
+    ...context,
+    fein: data.fein ? maskFein(data.fein) : null,
+    entities: data.entities.map((entity) => (entity.fein ? { ...entity, fein: maskFein(entity.fein) } : entity)),
+  };
 }
 
 /**

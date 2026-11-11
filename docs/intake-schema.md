@@ -4,7 +4,7 @@ The intake lives in `chamber_sessions`. The first section covers the answers the
 
 ## Intake data (`chamber_data`)
 
-`chamber_sessions.chamber_data` is a jsonb object with the 42 keys of `ChamberData` (`src/data/chamberTypes.ts`), the fields of intake schema v3, and the database also accepts `employees`, the roster's name before the census (migration `20261029092000` added `census`). The browser sanitises it (`src/data/chamberValidation.ts`) and the database refuses anything outside the same rules (`public.chamber_data_error`, migration `20261027090000_intake_validation_and_versioning.sql`). The client is the stricter side: it drops or truncates, so valid client output is never refused.
+`chamber_sessions.chamber_data` is a jsonb object with the keys of `ChamberData` (`src/data/chamberTypes.ts`), the fields of intake schema v3, and the database also accepts `employees`, the roster's name before the census (migration `20261029092000` added `census`). The browser sanitises it (`src/data/chamberValidation.ts`) and the database refuses anything outside the same rules (`public.chamber_data_error`, migration `20261027090000_intake_validation_and_versioning.sql`). The client is the stricter side: it drops or truncates, so valid client output is never refused.
 
 ### Rules by kind
 
@@ -15,6 +15,10 @@ The intake lives in `chamber_sessions`. The first section covers the answers the
 | boolean | `null`, `true` or `false` | Anything else is dropped |
 | experience mod | `null` or a JSON number from 0 to 10 (`EXPERIENCE_MOD_MAX`), such as 0.92 | Numeric text is read ("0.92"); kept to two decimal places; out of range is dropped |
 | dollars | `null` or a whole JSON number from 0 to 100,000,000 (`DOLLARS_MAX`) | `$`, commas and spaces are removed ("$18,400"); cents are rounded; over the cap is dropped, not capped |
+| FEIN | `null` or exactly nine digits, no hyphen (a federal employer identification number) | Read from the nine digits or from `12-3456789`; anything else is dropped, including the `123-45-6789` shape of a Social Security number. Never treated as free text, so it is not redacted |
+| choice | `null` or one of the field's listed values (an entity type: `sole_proprietorship`, `partnership`, `llc`, `c_corporation`, `s_corporation`, `nonprofit`, `other`) | Common spellings are mapped ("S-Corp", "LLC"); anything else is dropped |
+| year | `null` or a whole JSON number from 1600 to 2100 (`YEAR_MIN`, `YEAR_MAX`) | Four digits of text are read; anything else is dropped |
+| list of rows | Array of row objects, at most the list's own cap (see "Lists of rows"). Every key of a row is optional, none may be `null`, and an unknown key is refused | A key with an invalid value is dropped from its row; a row left empty is dropped; then truncated to the cap |
 | state | `null` or one of the 56 codes in "State codes" | Upper-cased after trimming; an unlisted value is dropped |
 | state list | Array of listed codes, at most 60 (`MAX_STATES`) | Comma strings accepted; unlisted entries and duplicates dropped |
 | text list | Array of text, at most 100 (`MAX_LIST_ITEMS`) | Invalid entries dropped, then truncated to 100 |
@@ -44,58 +48,72 @@ A census row needs a non-blank `first_name`; every other key may be absent. Unkn
 | `dependents[].last_name`, `.dob` | Text, at most 200 and 40 characters | `""` |
 | `dependents[].relationship` | `spouse`, `domestic_partner`, `child` or `other` | `other` |
 
+#### Lists of rows
+
+New in v3. The database checks each key of a row as the kind named here (`public.chamber_data_row_field_kind`) and holds each list to its cap (`public.chamber_data_row_list_max`); `src/data/schemaSync.test.ts` compares both with the schema's `$defs`. The workspace shows and edits each list as a table (`src/data/rowColumns.ts`, `RowsField`).
+
+| List | Cap | Row keys (kind) |
+| --- | --- | --- |
+| `entities` | 50 | `legal_name` (text), `fein` (FEIN) |
+
 Postgres jsonb refuses NUL and unpaired surrogate characters before any trigger runs, so the client removes them from every string.
 
 ### Fields
 
 Every field belongs to a section and is either required or recommended, with a rank: see "Sections, required fields and rank" below. The table is generated from the schema's `x-intake` annotations, and `src/data/intakeSchemaDoc.test.ts` fails while it differs from them.
 
-Writers: **C** chat extraction (`chamber-extract`, which asks for every field but the census, for typed and spoken messages alike: a voice call's answers go through it too, US-2.3b), **D** document candidates (`document-extract`; a census sheet also supplies `census`, `employee_count`, `states`, `has_1099` and `ca_contractors`), **E** hand edit in the workspace.
+Writers: **C** chat extraction (`chamber-extract`, which asks for every field but the census, for typed and spoken messages alike: a voice call's answers go through it too, US-2.3b), **D** document candidates (`document-extract`; a census sheet also supplies `census`, `employee_count`, `states`, `has_1099` and `ca_contractors`), **E** hand edit in the workspace. The FEIN and the legal entities are **E** only: nine digits in a chat message are redacted before the model sees them, so the FEIN is typed into its own box (K-1.1), and no document proposes one.
 
 | Section | Key | Label | Kind | Required | Rank | Writers |
 | --- | --- | --- | --- | --- | --- | --- |
 | Company | `company_name` | Company legal name | text | Required | 1 | C D E |
 | Company | `employee_count` | Employee count | count | Recommended | 5 | C D E |
 | Company | `industry` | Industry | text | Recommended | 6 | C D E |
-| Company | `start_month` | Target start | text | Recommended | 15 | C D E |
-| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 16 | C E |
-| Company | `fein_count` | FEIN count | count | Recommended | 17 | C |
+| Company | `fein` | FEIN | FEIN | Recommended | 15 | E |
+| Company | `entity_type` | Entity type | choice | Recommended | 16 | C D E |
+| Company | `year_founded` | Year founded | year | Recommended | 17 | C D E |
+| Company | `street_address` | Street address | text | Recommended | 18 | C D E |
+| Company | `website` | Website | text | Recommended | 19 | C D E |
+| Company | `start_month` | Target start | text | Recommended | 20 | C D E |
+| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 21 | C E |
+| Company | `fein_count` | FEIN count | count | Recommended | 22 | C |
+| Company | `entities` | Legal entities | list of rows | Recommended | 48 | E |
 | Locations | `states` | States of operation | state list | Required | 2 | C D E |
 | Locations | `hq_state` | HQ state | state | Recommended | 7 | C D E |
 | Census | `census` | Employee census | census (read-only in the workspace) | Recommended | 4 | D |
-| Census | `has_1099` | 1099 contractors | boolean | Recommended | 34 | C D |
-| Census | `ca_contractors` | California contractors | boolean | Recommended | 35 | C D |
+| Census | `has_1099` | 1099 contractors | boolean | Recommended | 39 | C D |
+| Census | `ca_contractors` | California contractors | boolean | Recommended | 40 | C D |
 | Benefits | `current_carrier` | Current carrier | text | Recommended | 8 | C D E |
 | Benefits | `renewal_date` | Renewal date | text | Recommended | 9 | C D E |
-| Benefits | `virgin_medical` | First-time medical coverage | boolean | Recommended | 18 | C D |
-| Benefits | `rate_history` | Rate history | text | Recommended | 19 | C D E |
-| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 20 | C D E |
-| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 21 | C D E |
-| Benefits | `has_401k` | Retirement plan | boolean | Recommended | 22 | C D E |
-| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 23 | C D |
-| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 24 | C D |
+| Benefits | `virgin_medical` | First-time medical coverage | boolean | Recommended | 23 | C D |
+| Benefits | `rate_history` | Rate history | text | Recommended | 24 | C D E |
+| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 25 | C D E |
+| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 26 | C D E |
+| Benefits | `has_401k` | Retirement plan | boolean | Recommended | 27 | C D E |
+| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 28 | C D |
+| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 29 | C D |
 | Payroll | `pay_frequency` | Pay frequency | text (free text, not an enum) | Required | 3 | C D E |
 | Payroll | `payroll_vendor` | Payroll vendor | text | Recommended | 10 | C D E |
-| Payroll | `funding_days` | Funding lead time | count | Recommended | 25 | C E |
-| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 26 | C |
-| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 27 | C D |
-| Payroll | `exempt_count` | Exempt count | count | Recommended | 28 | C D |
-| Payroll | `pto_types` | PTO types | text list | Recommended | 29 | C E |
-| Payroll | `accrual_method` | Accrual method | text | Recommended | 30 | C E |
+| Payroll | `funding_days` | Funding lead time | count | Recommended | 30 | C E |
+| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 31 | C |
+| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 32 | C D |
+| Payroll | `exempt_count` | Exempt count | count | Recommended | 33 | C D |
+| Payroll | `pto_types` | PTO types | text list | Recommended | 34 | C E |
+| Payroll | `accrual_method` | Accrual method | text | Recommended | 35 | C E |
 | Workers' comp | `wc_carrier` | Workers' comp carrier | text | Recommended | 11 | C |
 | Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | C |
 | Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | C |
 | Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | C |
-| Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 31 | C D |
-| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 32 | C |
-| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 33 | C |
-| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 36 | C |
-| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 37 | C |
-| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 38 | C |
-| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 39 | C |
-| Operations & HR | `hris_system` | HRIS system | text | Recommended | 40 | C |
-| Operations & HR | `key_challenges` | Key challenges | text | Recommended | 41 | C |
-| Operations & HR | `business_goals` | Business goals | text | Recommended | 42 | C |
+| Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 36 | C D |
+| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 37 | C |
+| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 38 | C |
+| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 41 | C |
+| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 42 | C |
+| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 43 | C |
+| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 44 | C |
+| Operations & HR | `hris_system` | HRIS system | text | Recommended | 45 | C |
+| Operations & HR | `key_challenges` | Key challenges | text | Recommended | 46 | C |
+| Operations & HR | `business_goals` | Business goals | text | Recommended | 47 | C |
 
 Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`, `dob`) are free text. `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks. `transcript` is checked message by message (see "The transcript" below).
 

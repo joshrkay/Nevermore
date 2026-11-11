@@ -7,6 +7,7 @@ import {
   DOLLARS_MAX,
   EXPERIENCE_MOD_MAX,
   MAX_DEPENDENTS,
+  MAX_ENTITIES,
   NAME_MAX,
   MAX_EMPLOYEES,
   MAX_LIST_ITEMS,
@@ -14,6 +15,8 @@ import {
   SALARY_MAX,
   TEXT_MAX,
   US_STATE_CODES,
+  YEAR_MAX,
+  YEAR_MIN,
   parseChamberData,
   sanitizeChamberPatch,
 } from "./chamberValidation";
@@ -267,6 +270,60 @@ describe("limits shared with the database", () => {
   });
 });
 
+describe("company identity (K-1.1)", () => {
+  it("keeps a FEIN as its nine digits, with or without the hyphen, and nothing shaped like an SSN", () => {
+    expect(sanitizeChamberPatch({ fein: "84-1234567" })).toEqual({ fein: "841234567" });
+    expect(sanitizeChamberPatch({ fein: " 841234567 " })).toEqual({ fein: "841234567" });
+    expect(sanitizeChamberPatch({ fein: null })).toEqual({ fein: null });
+    // 3-2-4 is how a Social Security number is written: never a FEIN.
+    expect(sanitizeChamberPatch({ fein: "123-45-6789" })).toEqual({});
+    expect(sanitizeChamberPatch({ fein: "84-123456" })).toEqual({});
+    expect(sanitizeChamberPatch({ fein: "84 1234567" })).toEqual({});
+    expect(sanitizeChamberPatch({ fein: 841234567 })).toEqual({});
+  });
+
+  it("reads an entity type however it is commonly written", () => {
+    expect(sanitizeChamberPatch({ entity_type: "llc" })).toEqual({ entity_type: "llc" });
+    expect(sanitizeChamberPatch({ entity_type: "LLC" })).toEqual({ entity_type: "llc" });
+    expect(sanitizeChamberPatch({ entity_type: "S-Corp" })).toEqual({ entity_type: "s_corporation" });
+    expect(sanitizeChamberPatch({ entity_type: "C corporation" })).toEqual({ entity_type: "c_corporation" });
+    expect(sanitizeChamberPatch({ entity_type: "Sole proprietor" })).toEqual({ entity_type: "sole_proprietorship" });
+    expect(sanitizeChamberPatch({ entity_type: "Non-profit" })).toEqual({ entity_type: "nonprofit" });
+    expect(sanitizeChamberPatch({ entity_type: "a family business" })).toEqual({});
+  });
+
+  it("keeps a year founded that is a real year", () => {
+    expect(sanitizeChamberPatch({ year_founded: "1998" })).toEqual({ year_founded: 1998 });
+    expect(sanitizeChamberPatch({ year_founded: 2014 })).toEqual({ year_founded: 2014 });
+    expect(sanitizeChamberPatch({ year_founded: 1599 })).toEqual({});
+    expect(sanitizeChamberPatch({ year_founded: 2101 })).toEqual({});
+    expect(sanitizeChamberPatch({ year_founded: 1998.5 })).toEqual({});
+  });
+
+  it("keeps a street address with its ZIP+4 and a website as text", () => {
+    expect(sanitizeChamberPatch({ street_address: " 500 Main St, Austin, TX 78701-1234 ", website: "meridian.example" })).toEqual({
+      street_address: "500 Main St, Austin, TX 78701-1234", website: "meridian.example",
+    });
+  });
+
+  it("keeps each legal entity that has a name or a FEIN, drops the rest, and stops at 50", () => {
+    expect(sanitizeChamberPatch({ entities: [
+      { legal_name: " Meridian Creative LLC ", fein: "84-1234567", dba: "Meridian" },
+      { legal_name: "Meridian Studios Inc", fein: "123-45-6789" },
+      { fein: "841234568" },
+      { legal_name: "  " },
+      "Meridian Holdings",
+      null,
+    ] })).toEqual({ entities: [
+      { legal_name: "Meridian Creative LLC", fein: "841234567" },
+      { legal_name: "Meridian Studios Inc" },
+      { fein: "841234568" },
+    ] });
+    expect(sanitizeChamberPatch({ entities: Array.from({ length: 60 }, (_, i) => ({ legal_name: `Entity ${i}` })) }).entities).toHaveLength(50);
+    expect(sanitizeChamberPatch({ entities: "Meridian Creative LLC" })).toEqual({});
+  });
+});
+
 // A TypeScript copy of the server's rules (public.chamber_data_error), used to prove that whatever
 // the sanitiser emits is accepted. The SQL tests prove the same against the real function.
 function serverRefusal(d: unknown): string | null {
@@ -279,10 +336,35 @@ function serverRefusal(d: unknown): string | null {
   for (const k of ["company_name", "industry", "start_month", "current_carrier", "renewal_date", "rate_history", "benefits_waiting_period", "retirement_type", "payroll_vendor", "pay_frequency", "accrual_method", "handbook_last_updated", "hris_system", "key_challenges", "business_goals", "wc_carrier", "wc_renewal_date"]) kinds[k] = "text";
   for (const k of ["employee_count", "fein_count", "funding_days", "nonexempt_count", "exempt_count", "hr_staff_count"]) kinds[k] = "count";
   for (const k of ["multiple_entities", "virgin_medical", "has_401k", "employer_contributes", "has_nonexempt", "has_handbook", "has_1099", "ca_contractors", "uses_physical_clocks", "uses_mobile_app", "uses_computer_timekeeping", "shift_differentials"]) kinds[k] = "bool";
+  for (const k of ["street_address", "website"]) kinds[k] = "text";
   for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"], ["wc_experience_mod", "experience_mod"], ["wc_annual_premium", "dollars"]]) kinds[k] = kind;
+  // New in v3: the scalar kinds public.chamber_data_scalar_reason checks, and the lists of rows.
+  for (const [k, kind] of [["fein", "fein"], ["entity_type", "entity_type"], ["year_founded", "year"], ["entities", "rows"]]) kinds[k] = kind;
+  const scalarOk = (kind: string, v: unknown): boolean => {
+    switch (kind) {
+      case "text": return isText(v, TEXT_MAX);
+      case "fein": return typeof v === "string" && /^[0-9]{9}$/.test(v);
+      case "entity_type": return typeof v === "string" && ["sole_proprietorship", "partnership", "llc", "c_corporation", "s_corporation", "nonprofit", "other"].includes(v);
+      case "year": return isCount(v, YEAR_MAX) && (v as number) >= YEAR_MIN;
+      default: return false;
+    }
+  };
+  const rowLists: Record<string, { max: number; keys: Record<string, string> }> = {
+    entities: { max: MAX_ENTITIES, keys: { legal_name: "text", fein: "fein" } },
+  };
   for (const [k, v] of Object.entries(d)) {
     switch (kinds[k]) {
       case "text": if (v !== null && !isText(v, TEXT_MAX)) return k; break;
+      case "fein": case "entity_type": case "year": if (v !== null && !scalarOk(kinds[k], v)) return k; break;
+      case "rows": {
+        const list = rowLists[k];
+        if (!Array.isArray(v) || v.length > list.max) return k;
+        for (const [i, row] of v.entries()) {
+          if (!isObj(row)) return `${k}[${i}]`;
+          for (const [rk, rv] of Object.entries(row)) if (!(rk in list.keys) || !scalarOk(list.keys[rk], rv)) return `${k}[${i}].${rk}`;
+        }
+        break;
+      }
       case "count": if (v !== null && !isCount(v, COUNT_MAX)) return k; break;
       case "experience_mod": if (v !== null && !(typeof v === "number" && v >= 0 && v <= EXPERIENCE_MOD_MAX)) return k; break;
       case "dollars": if (v !== null && !isCount(v, DOLLARS_MAX)) return k; break;
@@ -461,6 +543,7 @@ describe("sanitiser output the server must accept", () => {
       { hq_state: "ZZ" }, { states: ["CA", "ca"] }, { employee_count: 1_000_001 }, { employee_count: "5" },
       { census: [{ first_name: "A", work_state: "ZZ" }] }, { census: [{ first_name: "A", classification: "W2" }] },
       { census: [{ first_name: "A", annual_salary: 1_000_001 }] }, { census: [{ first_name: " " }] }, { extra: 1 }, [],
+      { fein: "12-3456789" }, { entity_type: "LLC" }, { year_founded: 1599 }, { entities: [{ dba: "x" }] }, { entities: [{ fein: "1" }] }, { entities: null },
     ]) {
       expect(serverRefusal(refused), JSON.stringify(refused)).not.toBeNull();
       expect(validateChamberData(refused), JSON.stringify(refused)).not.toEqual([]);

@@ -48,7 +48,10 @@ describe("intake schema v3", () => {
   // optional answers, and optional keys inside a census row, to the v2 published in docs/.
   const v2 = JSON.parse(readFileSync("docs/intake-schema.v2.json", "utf8")) as JsonSchema;
   const v2Props = v2.properties as Record<string, JsonSchema>;
-  const NEW_IN_V3: string[] = [];
+  const NEW_IN_V3: string[] = [
+    // K-1.1 company identity
+    "fein", "entity_type", "year_founded", "street_address", "website", "entities",
+  ];
 
   it("only adds the common questions to v2, changing nothing v2 had", () => {
     // The rank is the one thing v3 may change about a v2 field: new answers are asked among the old ones.
@@ -185,6 +188,34 @@ describe("validateChamberData", () => {
     ]);
     expect(paths({ wc_experience_mod: "0.92", wc_annual_premium: 1200.5 })).toEqual(["wc_experience_mod", "wc_annual_premium"]);
     expect(paths({ wc_experience_mod: -0.1, wc_annual_premium: "$18,400" })).toEqual(["wc_experience_mod", "wc_annual_premium"]);
+  });
+
+  it("holds the company's identity to its rules: a nine-digit FEIN, a listed entity type, a real year (K-1.1)", () => {
+    expect(validateChamberData({ fein: "123456789", entity_type: "llc", year_founded: 1998, street_address: "500 Main St, Austin, TX 78701", website: "meridian.example" })).toEqual([]);
+    expect(validateChamberData({ fein: null, entity_type: null, year_founded: null, street_address: null, website: null })).toEqual([]);
+    expect(validateChamberData({ fein: "12-3456789" })).toEqual([{ path: "fein", reason: "must be nine digits, such as 123456789" }]);
+    expect(paths({ fein: "12345678" })).toEqual(["fein"]);
+    expect(paths({ fein: 123456789 })).toEqual(["fein"]);
+    expect(validateChamberData({ entity_type: "LLC" })).toEqual([
+      { path: "entity_type", reason: "must be one of sole_proprietorship, partnership, llc, c_corporation, s_corporation, nonprofit, other" },
+    ]);
+    expect(paths({ year_founded: 1599 })).toEqual(["year_founded"]);
+    expect(paths({ year_founded: 2101 })).toEqual(["year_founded"]);
+    expect(paths({ year_founded: "1998" })).toEqual(["year_founded"]);
+  });
+
+  it("lists each legal entity with its name and FEIN when the employer is more than one (K-1.1)", () => {
+    expect(validateChamberData({ entities: [{ legal_name: "Meridian Creative LLC", fein: "123456789" }, { legal_name: "Meridian Studios Inc" }] })).toEqual([]);
+    expect(validateChamberData({ entities: [] })).toEqual([]);
+    expect(validateChamberData({ entities: [{ legal_name: " ", fein: "12-3456789", dba: "Meridian" }] })).toEqual([
+      { path: "entities[0].legal_name", reason: "must not be blank" },
+      { path: "entities[0].fein", reason: "must be nine digits, such as 123456789" },
+      { path: "entities[0].dba", reason: "is not a known intake field" },
+    ]);
+    expect(validateChamberData({ entities: Array.from({ length: 51 }, () => ({ legal_name: "A" })) })).toEqual([
+      { path: "entities", reason: "must have at most 50 entries" },
+    ]);
+    expect(paths({ entities: null })).toEqual(["entities"]);
   });
 
   it("refuses the legacy roster key, which no writer sends any more", () => {

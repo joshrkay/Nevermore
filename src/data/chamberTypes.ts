@@ -1,6 +1,16 @@
 import type { CensusEmployee } from "./census";
+import type { ENTITY_TYPES } from "../../supabase/functions/_shared/intakeSchema.ts";
 
 export type { CensusDependent, CensusEmployee } from "./census";
+
+export type EntityType = (typeof ENTITY_TYPES)[number];
+
+/** One legal entity of an employer that is more than one (K-1.1). */
+export interface LegalEntity {
+  legal_name?: string;
+  /** Nine digits, no hyphen. */
+  fein?: string;
+}
 
 export interface ChamberData {
   // Company
@@ -56,6 +66,16 @@ export interface ChamberData {
   /** Whole dollars a year. */
   wc_annual_premium: number | null;
 
+  // Company identity (intake schema v3, K-1.1)
+  /** The employer's federal employer identification number: nine digits, no hyphen. */
+  fein: string | null;
+  entity_type: EntityType | null;
+  year_founded: number | null;
+  street_address: string | null;
+  website: string | null;
+  /** Each legal entity, when the employer is more than one. */
+  entities: LegalEntity[];
+
   // Employees: the canonical census (see supabase/functions/_shared/census.ts)
   census: CensusEmployee[];
 }
@@ -102,6 +122,12 @@ export const EMPTY_CHAMBER_DATA: ChamberData = {
   wc_renewal_date: null,
   wc_experience_mod: null,
   wc_annual_premium: null,
+  fein: null,
+  entity_type: null,
+  year_founded: null,
+  street_address: null,
+  website: null,
+  entities: [],
   census: [],
 };
 
@@ -148,6 +174,12 @@ export const DEMO_CHAMBER_DATA: ChamberData = {
   wc_renewal_date: "July 2026",
   wc_experience_mod: 0.92,
   wc_annual_premium: 18400,
+  fein: "841234567",
+  entity_type: "llc",
+  year_founded: 2014,
+  street_address: "500 Harbor Street, Suite 300, San Francisco, CA 94107",
+  website: "meridiancreative.example",
+  entities: [],
   census: [
     { id: "6f1c2a40-0001-4c1e-9a7b-3d5e00000001", first_name: "Sarah", last_name: "Chen", dob: "1988-03-15", work_state: "CA", zip_code: "94107", job_title: "Senior Designer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "FAM", class_code: "8810", dependents: [{ first_name: "Michael", last_name: "Chen", dob: "1985-06-12", relationship: "spouse" }, { first_name: "Emma", last_name: "Chen", dob: "2018-03-22", relationship: "child" }] },
     { id: "6f1c2a40-0002-4c1e-9a7b-3d5e00000002", first_name: "Marcus", last_name: "Rivera", dob: "1985-07-22", work_state: "CA", zip_code: "94110", job_title: "Art Director", annual_salary: 125000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810", dependents: [{ first_name: "Ana", last_name: "Rivera", dob: "1987-09-04", relationship: "spouse" }] },

@@ -1,3 +1,4 @@
+import { formatAnswer } from "@/data/answerFormat";
 import { useMemo, useState, type ReactNode } from "react";
 import { Loader2, PencilLine, UserCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -22,7 +23,7 @@ import { REVIEW_FIELDS, REVIEW_SECTIONS } from "@/data/reviewFields";
 import {
   describeSource,
   FIELD_LABELS,
-  formatFieldValue,
+  FIELD_KINDS,
   showsSource,
   STATUS_LABELS,
   type FieldKey,
@@ -176,7 +177,8 @@ const FieldRow = ({
   const [draft, setDraft] = useState("");
   const [reason, setReason] = useState("");
   const label = FIELD_LABELS[field];
-  const correctable = field !== "census";
+  // The census and the tables of rows are corrected by the prospect, in the workspace, not by a typed value.
+  const correctable = field !== "census" && FIELD_KINDS[field] !== "rows";
   const source = prov?.source;
   const messageId = source?.kind === "transcript" && messageIds.has(source.message_id) ? source.message_id : null;
 
@@ -216,7 +218,7 @@ const FieldRow = ({
           <p className="text-xs text-muted-foreground">{label}</p>
           {badge && <AuditBadgeChip badge={badge} />}
         </div>
-        <p className="font-mono text-sm">{formatFieldValue(data[field])}</p>
+        <p className="font-mono text-sm">{formatAnswer(field, data[field])}</p>
         {prov && !showsSource(data[field]) ? (
           // No answer, so no source: a quote here would stand for nothing the prospect said (QA F11).
           <p className="text-xs text-muted-foreground mt-1">{STATUS_LABELS[prov.status]}</p>
@@ -235,12 +237,12 @@ const FieldRow = ({
         )}
         {prov?.status === "conflicting" && prov.candidates && (
           <p className="text-xs text-destructive mt-1">
-            Conflicting answers: {prov.candidates.map((c) => formatFieldValue(c.value)).join(" vs ")}
+            Conflicting answers: {prov.candidates.map((c) => formatAnswer(field, c.value)).join(" vs ")}
           </p>
         )}
         {prov && visibleAlsoHeard(prov).map((heard, i) => (
           <p key={i} className="text-xs text-muted-foreground mt-1">
-            {`Also heard: ${formatFieldValue(heard.value)} — ${describeSource(heard.source)}`}
+            {`Also heard: ${formatAnswer(field, heard.value)} — ${describeSource(heard.source)}`}
           </p>
         ))}
       </div>
@@ -249,13 +251,13 @@ const FieldRow = ({
         {review?.answer_changed_at && (
           <p className="text-xs text-warning mb-1" role="status">
             The prospect changed this answer after it was reviewed (it was{" "}
-            <span className="font-mono">{formatFieldValue(review.answer_changed_from)}</span>). Review it again.
+            <span className="font-mono">{formatAnswer(field, review.answer_changed_from)}</span>). Review it again.
           </p>
         )}
         {review?.has_correction && (
           <div className="text-sm">
             <p className="text-xs text-muted-foreground">Advisor correction</p>
-            <p className="font-mono">{formatFieldValue(review.corrected_value)}</p>
+            <p className="font-mono">{formatAnswer(field, review.corrected_value)}</p>
             {review.reason && <p className="text-xs text-muted-foreground italic">{review.reason}</p>}
             {review.review_state !== "verified" && (
               <p className="text-xs text-warning">Not used until verified</p>

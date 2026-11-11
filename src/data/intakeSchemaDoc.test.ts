@@ -20,12 +20,13 @@ const kindOf = (schema: JsonSchema): string => {
   const types = ([] as unknown[]).concat(schema.type);
   if (types.includes("array")) {
     const ref = (schema.items as JsonSchema).$ref;
-    return ref === "#/$defs/stateCode" ? "state list" : ref === "#/$defs/censusRow" ? "census" : "text list";
+    return ref === "#/$defs/stateCode" ? "state list" : ref === "#/$defs/censusRow" ? "census" : ref ? "list of rows" : "text list";
   }
-  if (schema.enum) return "state";
+  if (schema.enum) return (schema.enum as unknown[]).includes("CA") ? "state" : "choice";
   if (types.includes("number")) return "experience mod";
-  if (types.includes("integer")) return schema.maximum === LIMITS.dollars ? "dollars" : "count";
+  if (types.includes("integer")) return schema.maximum === LIMITS.dollars ? "dollars" : schema.minimum === 1600 ? "year" : "count";
   if (types.includes("boolean")) return "boolean";
+  if (typeof schema.pattern === "string") return "FEIN";
   return "text";
 };
 

@@ -1,7 +1,8 @@
 import type { CensusEmployee, ChamberData } from "./chamberTypes";
 import { CENSUS_FACTS, isAssumed, samePerson, type CensusFact } from "./census";
 import { sanitizeChamberPatch } from "./chamberValidation";
-import { applyChosenValue, applyExtraction, applyFieldAction, outranks, type FieldSource, type IntakeState, type ProvenanceMap } from "./provenance";
+import { formatAnswer } from "./answerFormat";
+import { applyChosenValue, applyExtraction, applyFieldAction, FIELD_LABELS as INTAKE_LABELS, outranks, type FieldSource, type IntakeState, type ProvenanceMap } from "./provenance";
 
 // Values read out of an uploaded document are candidates, not answers: they are stored on the
 // document (with where they were found) and only reach the intake when the prospect applies
@@ -40,6 +41,10 @@ export const EMPTY_EXTRACTION: DocumentExtraction = { message: null, notes: [], 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+// A FEIN is typed into the workspace by the prospect, the employer's and each legal entity's (K-1.1): a document
+// never proposes one, whatever a stored extraction holds.
+const NEVER_FROM_A_DOCUMENT: ReadonlySet<string> = new Set(["fein", "entities"]);
+
 // Documents read before the census contract proposed the roster as `employees`.
 const candidateField = (f: string) => (f === "employees" ? "census" : f);
 
@@ -50,6 +55,7 @@ export function parseExtraction(raw: unknown): DocumentExtraction {
   for (const c of Array.isArray(raw.candidates) ? raw.candidates : []) {
     if (!isPlainObject(c) || typeof c.field !== "string") continue;
     const field = candidateField(c.field) as CandidateField;
+    if (NEVER_FROM_A_DOCUMENT.has(field)) continue;
     const patch = sanitizeChamberPatch({ [field]: c.value });
     if (!(field in patch) || isEmpty(patch[field])) continue;
     const facts = Array.isArray(c.facts) ? CENSUS_FACTS.filter((f) => (c.facts as unknown[]).includes(f)) : undefined;
@@ -255,16 +261,14 @@ const FIELD_LABELS: Partial<Record<CandidateField, string>> = {
 };
 
 export function fieldLabel(field: CandidateField): string {
-  return FIELD_LABELS[field] ?? field.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+  return FIELD_LABELS[field] ?? INTAKE_LABELS[field];
 }
 
 /** A short, human-readable rendering of a candidate or current value. */
 export function formatValue(field: CandidateField, v: unknown): string {
   if (isEmpty(v)) return "—";
   if (field === "census" && Array.isArray(v)) return `${v.length} employee${v.length === 1 ? "" : "s"}`;
-  if (Array.isArray(v)) return v.join(", ");
-  if (typeof v === "boolean") return v ? "Yes" : "No";
-  return String(v);
+  return formatAnswer(field, v);
 }
 
 // ---------- The prospect's decision on a candidate ----------

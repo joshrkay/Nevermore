@@ -49,7 +49,14 @@ export const LIMITS = {
   censusId: 64,
   experienceMod: 10,
   dollars: 100_000_000,
+  // New in v3 (the migrations' sync block row_caps holds each list of rows to its cap).
+  yearMin: 1600,
+  yearMax: 2100,
+  entities: 50,
 } as const;
+
+/** How an employer is organised, as PEO and carrier forms ask it (K-1.1). */
+export const ENTITY_TYPES = ["sole_proprietorship", "partnership", "llc", "c_corporation", "s_corporation", "nonprofit", "other"] as const;
 
 // ---------- What the schema says about each field, beyond its rule ----------
 
@@ -89,6 +96,8 @@ export const REQUIRED_FIELDS = ["company_name", "states", "pay_frequency"] as co
 const RANKED_RECOMMENDED = [
   "census", "employee_count", "industry", "hq_state", "current_carrier", "renewal_date", "payroll_vendor",
   "wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium",
+  // New in v3: the single-value common questions follow the fields ranked before them (Epic K).
+  "fein", "entity_type", "year_founded", "street_address", "website",
 ] as const;
 
 /** A JSON Schema, as far as this module reads one. */
@@ -104,6 +113,13 @@ const textList: JsonSchema = { type: "array", maxItems: LIMITS.listItems, items:
 // An experience modification factor such as 0.92: a fraction, so not a count.
 const experienceMod: JsonSchema = { type: ["number", "null"], minimum: 0, maximum: LIMITS.experienceMod };
 const dollars: JsonSchema = { type: ["integer", "null"], minimum: 0, maximum: LIMITS.dollars };
+// A federal employer identification number: the nine digits, with no hyphen.
+const FEIN_PATTERN = "^[0-9]{9}$";
+const FEIN_TITLE = "nine digits, such as 123456789";
+const fein: JsonSchema = { title: FEIN_TITLE, type: ["string", "null"], pattern: FEIN_PATTERN };
+const choice = (values: readonly string[]): JsonSchema => ({ type: ["string", "null"], enum: [...values, null] });
+const year: JsonSchema = { type: ["integer", "null"], minimum: LIMITS.yearMin, maximum: LIMITS.yearMax };
+const rows = (def: string, maxItems: number): JsonSchema => ({ type: "array", maxItems, items: { $ref: `#/$defs/${def}` } });
 
 // Each answer's rule, section and label, in the order the schema lists them.
 const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: string][] = [
@@ -153,6 +169,14 @@ const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: stri
   ["wc_renewal_date", text(), "workers_comp", "Workers' comp renewal date"],
   ["wc_experience_mod", experienceMod, "workers_comp", "Experience mod"],
   ["wc_annual_premium", dollars, "workers_comp", "Workers' comp annual premium"],
+
+  // New in v3 (Epic K, the common questions). K-1.1: who the employer is.
+  ["fein", fein, "company", "FEIN"],
+  ["entity_type", choice(ENTITY_TYPES), "company", "Entity type"],
+  ["year_founded", year, "company", "Year founded"],
+  ["street_address", text(), "company", "Street address"],
+  ["website", text(), "company", "Website"],
+  ["entities", rows("entity", LIMITS.entities), "company", "Legal entities"],
 
   ["census", { type: "array", maxItems: LIMITS.census, items: { $ref: "#/$defs/censusRow" } }, "census", "Employee census"],
 ];
@@ -210,6 +234,15 @@ export const INTAKE_SCHEMA_V3: JsonSchema = {
         // Which of the row's values are defaults rather than answers (CENSUS_ASSUMABLE in census.ts).
         // Added to v1 without a new version: it is optional, and the database already tolerated it.
         assumed: { type: "array", maxItems: 3, items: { type: "string", enum: ["classification", "employment_type", "annual_salary"] } },
+      },
+    },
+    // One legal entity of an employer that is more than one (K-1.1). Every key of a v3 row is optional.
+    entity: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        legal_name: { type: "string", maxLength: LIMITS.text, pattern: NOT_BLANK },
+        fein: { title: FEIN_TITLE, type: "string", pattern: FEIN_PATTERN },
       },
     },
     dependent: {
@@ -322,7 +355,8 @@ function check(schema: JsonSchema, value: unknown, path: string, root: JsonSchem
       issues.push({ path: here, reason: `must be at most ${schema.maxLength} characters` });
     }
     if (typeof schema.pattern === "string" && !regex(schema.pattern).test(value)) {
-      issues.push({ path: here, reason: schema.pattern === NOT_BLANK ? "must not be blank" : "is not in the expected format" });
+      const reason = schema.pattern === NOT_BLANK ? "must not be blank" : typeof schema.title === "string" ? `must be ${schema.title}` : "is not in the expected format";
+      issues.push({ path: here, reason });
     }
   }
 

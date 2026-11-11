@@ -178,3 +178,17 @@ describe("greetings", () => {
     expect(dropped).not.toHaveProperty("kind");
   });
 });
+
+// K-1.1: what Lenore's model is sent of the answers so far never holds a whole FEIN.
+describe("chatAnswers and the FEIN", () => {
+  it("sends the model only the last four digits of the employer's FEIN and of each legal entity's", () => {
+    const sent = chatAnswers({ ...EMPTY_CHAMBER_DATA, fein: "841234567", entities: [{ legal_name: "Acme LLC", fein: "841234568" }, { legal_name: "Acme Inc" }] });
+    expect(sent.fein).toBe("**-***4567");
+    expect(sent.entities).toEqual([{ legal_name: "Acme LLC", fein: "**-***4568" }, { legal_name: "Acme Inc" }]);
+    expect(JSON.stringify(sent)).not.toMatch(/8412345/);
+  });
+
+  it("sends nothing for a FEIN that isn't held", () => {
+    expect(chatAnswers(EMPTY_CHAMBER_DATA).fein).toBeNull();
+  });
+});

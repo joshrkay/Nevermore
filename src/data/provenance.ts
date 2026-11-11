@@ -66,7 +66,11 @@ export const FIELD_LABELS = Object.fromEntries(
   Object.keys(INTAKE_SCHEMA.properties as object).map((key) => [key, LABEL_BY_KEY.get(key)!]),
 ) as Record<FieldKey, string>;
 
-export type FieldKind = "text" | "number" | "decimal" | "boolean" | "list";
+/**
+ * How an answer is edited. "fein" is nine digits typed into its own box; "choice" is one of a field's listed
+ * values (FIELD_CHOICES); "rows" is a table of rows, edited in its own tab rather than in one input.
+ */
+export type FieldKind = "text" | "number" | "decimal" | "boolean" | "list" | "fein" | "choice" | "rows";
 
 /** Input kind per field, for editing. The census has its own tab and isn't edited here. */
 export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
@@ -111,6 +115,12 @@ export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
   wc_renewal_date: "text",
   wc_experience_mod: "decimal",
   wc_annual_premium: "number",
+  fein: "fein",
+  entity_type: "choice",
+  year_founded: "number",
+  street_address: "text",
+  website: "text",
+  entities: "rows",
 };
 
 const FIELD_KEYS = Object.keys(FIELD_LABELS) as FieldKey[];

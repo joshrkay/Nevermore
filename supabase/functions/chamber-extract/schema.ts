@@ -3,6 +3,7 @@
 // (_shared/intakeSchema.ts), so chat can answer every top-level field but the census, and nothing the schema
 // doesn't know. Relative imports only, so it runs under Deno and Vitest alike.
 
+import { CHAT_CANNOT_TAKE } from "../_shared/followUp.ts";
 import { INTAKE_FIELDS, INTAKE_SCHEMA, LIMITS, type JsonSchema } from "../_shared/intakeSchema.ts";
 
 /**
@@ -51,6 +52,10 @@ export const FIELD_GUIDE: Record<string, string> = {
   wc_renewal_date: "When their workers' comp policy renews, as they said it",
   wc_experience_mod: "Their workers' comp experience modification factor, a decimal such as 0.92 (from 0 to 10)",
   wc_annual_premium: "Their annual workers' comp premium in whole US dollars (a whole number, from 0 to 100,000,000)",
+  entity_type: "How the business is organised: sole_proprietorship, partnership (including LP and LLP), llc, c_corporation, s_corporation, nonprofit, or other",
+  year_founded: "The year the business was founded, as four digits such as 2014 (work it out when they say how long they have been in business)",
+  street_address: "The street address of the business's main location, with city, state and ZIP code as they gave them",
+  website: "The business's website address",
 };
 
 /**
@@ -99,18 +104,27 @@ export const FIELD_QUESTION: Record<string, string> = {
   wc_renewal_date: "When does your workers' comp policy renew?",
   wc_experience_mod: "Do you know your workers' comp experience mod?",
   wc_annual_premium: "What is your annual workers' comp premium?",
+  entity_type: "How is the business organised: an LLC, a corporation, a partnership, or something else?",
+  year_founded: "What year was the business founded?",
+  street_address: "What is the street address of your main location?",
+  website: "Does the business have a website?",
 };
 
-// The census (the employee roster) comes only from an uploaded file (D21).
-const NOT_FROM_CHAT = new Set(["census"]);
+// The census (the employee roster) comes only from an uploaded file (D21), and the FEIN is typed into the workspace.
+const NOT_FROM_CHAT = CHAT_CANNOT_TAKE;
 
 const PROPERTIES = INTAKE_SCHEMA.properties as Record<string, JsonSchema>;
+
+const MAX_TOOL_CHOICES = 20;
 
 /** The tool type for a schema rule: its non-null type, and a list's item type. */
 function toolType(rule: JsonSchema): JsonSchema {
   const types = Array.isArray(rule.type) ? rule.type : [rule.type];
   const type = types.find((t) => t !== "null") as string;
   if (type === "array") return { type: "array", items: { type: "string" } };
+  // One of a short list of values (an entity type). A state code stays plain text: its guide says what it is.
+  const values = Array.isArray(rule.enum) ? rule.enum.filter((v) => v !== null) : [];
+  if (values.length > 0 && values.length <= MAX_TOOL_CHOICES) return { type, enum: values };
   return { type };
 }
 
@@ -144,7 +158,10 @@ const perField = (schema: unknown) => ({
 // fields an advisor asked about first in "Not yet settled", marked, and has Lenore say the advisor asked; 8 is the
 // Nevermore rebrand: Lenore is Nevermore's intake assistant, warm, quick and plain-spoken rather than a gothic,
 // literary advisor, and the app's own names replace the Chamber's. The extraction rules are unchanged.
-export const PROMPT_VERSION = 8;
+// 9 is intake schema v3 (Epic K): the common questions join the fields, an entity type is one of a listed set, the
+// FEIN and the legal entities are never taken in chat, and the user turn names the answers entered in the workspace
+// so Lenore can say where each goes.
+export const PROMPT_VERSION = 9;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 
@@ -159,6 +176,8 @@ ${fieldLines}
 Integers are whole numbers from 0 to ${LIMITS.count.toLocaleString("en-US")} unless a field says otherwise. Text is at most ${LIMITS.text.toLocaleString("en-US")} characters. An array holds at most ${LIMITS.listItems} items, one entry per item, never a comma-separated string.
 
 Never extract the employee census or details of individual employees: the roster comes only from an uploaded file.
+
+Never extract a federal employer identification number (FEIN or EIN), the employer's or a legal entity's: the prospect types it into the workspace.
 
 A short answer ("yes", "no", "about twelve", "weekly") answers the question Lenore asked last in the recent conversation: capture it against the field that question was about.
 
@@ -181,6 +200,8 @@ How Lenore replies (the reply field):
 - When the prospect asks to stop, pause or finish for now, set prospect_stopping to true and ask nothing more: tell them their answers are saved, that they can come back to carry on, and that they can review them on the Review tab.
 - When no employee census is uploaded and the next fields aren't required ones, you may invite them to share one with the census template: they download it on the Upload tab, fill in one row per employee and upload it there.
 - Whenever the prospect brings up their employees' details, their roster or census, or starts listing employees, point them to the census template on the Upload tab instead of taking the details in chat, then carry on with the next field. Never ask for Social Security or bank numbers: the template has no place for them.
+- Never ask for an answer named in "Entered in the workspace": the prospect types those into the app, not the chat. When "Not yet settled" is "none" and "Entered in the workspace" names any, end the wrap-up by saying where each one goes.
+- When the prospect gives or offers their FEIN (their EIN or federal tax ID), tell them to type it into the FEIN box on the Company tab, where it is kept out of the conversation; never repeat the number, and carry on with the next field.
 - Don't tell them the intake is ready to certify: the app tells them itself when it is.
 - Keep it short: one or two sentences.`;
 
