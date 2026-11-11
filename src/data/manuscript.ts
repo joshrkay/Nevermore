@@ -516,15 +516,19 @@ export function buildManuscript(
     const value = data[field];
     return value === null ? NOT_PROVIDED : value ? "Yes" : "No";
   };
-  tables.push({
-    section: "workers_comp", field: "wcq_01", title: `${ACORD_130_EDITION}: General Information`,
-    columns: ["No.", "Question", "Answer", "Explanation"],
-    rows: ACORD_130_QUESTIONS.map((q) => {
-      const answer = acordAnswerKey(q.number) as FieldKey;
-      const explanation = data[acordExplainKey(q.number) as FieldKey] as string | null;
-      return [String(q.number), q.text, acordAnswer(answer), data[answer] === true && explanation ? explanation : "—"];
-    }),
-  });
+  // Printed once any question is answered or closed: an intake that never reached them gets no table of blanks.
+  const acordKeys = ACORD_130_QUESTIONS.map((q) => acordAnswerKey(q.number) as FieldKey);
+  if (acordKeys.some((field) => data[field] !== null || provenance[field]?.status === "not_applicable")) {
+    tables.push({
+      section: "workers_comp", field: "wcq_01", title: `${ACORD_130_EDITION}: General Information`,
+      columns: ["No.", "Question", "Answer", "Explanation"],
+      rows: ACORD_130_QUESTIONS.map((q) => {
+        const answer = acordAnswerKey(q.number) as FieldKey;
+        const explanation = data[acordExplainKey(q.number) as FieldKey] as string | null;
+        return [String(q.number), q.text, acordAnswer(answer), data[answer] === true && explanation ? explanation : "—"];
+      }),
+    });
+  }
 
   // Payroll by class code and state is worked out from the census (K-3.2): a table with no field of its own.
   const payroll = classCodePayroll(data.census);

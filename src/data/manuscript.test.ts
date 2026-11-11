@@ -428,6 +428,9 @@ describe("buildManuscript covers the whole intake", () => {
     expect(table.rows[7]).toEqual(["8", "IS A WRITTEN SAFETY PROGRAM IN OPERATION?", "No", "—"]);
     expect(table.rows[16].slice(2)).toEqual(["Not applicable", "—"]);
     expect(table.rows[14].slice(2)).toEqual(["Not provided", "—"]);
+    // An intake that never reached the questions (one certified before they existed) prints no table of blanks.
+    const untouched = Object.fromEntries(Object.keys(DEMO_CHAMBER_DATA).filter((k) => k.startsWith("wcq_")).map((k) => [k, null]));
+    expect(buildManuscript({ ...DEMO_CHAMBER_DATA, ...untouched }, opts).tables.map((t) => t.title)).not.toContain("ACORD 130 (2017/05): General Information");
   });
 
   it("shows the workers' comp block and the census class codes", () => {
