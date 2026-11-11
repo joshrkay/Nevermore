@@ -254,7 +254,7 @@ application and the documents its profile lists.
 
 *One quote request, one email thread, one address.*
 
-Revised 2026-11-11 after a design review (joshrkay/Nevermore#92). The decisions are in `GLOSSARY.md`,
+Revised 2026-11-11 after a design review, then story by story (joshrkay/Nevermore#92). The decisions are in `GLOSSARY.md`,
 `docs/adr/0003-a-peo-gets-the-bundle-by-expiring-link.md` and
 `docs/adr/0004-peo-mail-is-received-before-the-product-sends.md`, on branch `claude/loving-clarke-ry2hb8`.
 
@@ -271,34 +271,43 @@ product storing PEO mail, so receiving ships behind one setting that can switch 
 
 **M-2.5 Record what happened elsewhere.** S · FE
 As an advisor, I want to record a send, a call or a portal entry made outside the product.
-- AC: today's hand-recorded quote request is kept.
-- AC: a quote request note can be added to the timeline: a date, text and a kind (call, portal entry, email sent elsewhere, underwriter's question, other). Today's underwriter question becomes one of the kinds.
+- AC: today's hand-recorded quote request is kept, and its single note field stays as the request's summary.
+- AC: a quote request note can be added to the timeline: a date, text and a kind (call, portal entry, email sent elsewhere, underwriter's question, other). Today's underwriter questions become notes of that kind.
+- AC: a note changes nothing else: it never records a send, sets the version sent or changes the status. It can be added to a closed quote request, which stays closed.
+- AC: a note's text, date and kind can be corrected; each correction is logged with the old value.
 
 **M-3.1 A reply address per quote request.** M · BE + OPS
 As the product, I need every reply about a quote request to land on it.
-- AC: each quote request has an unguessable address on a subdomain we receive mail for, issued when the advisor records the send; there is no new quote request status.
+- AC: each quote request has an address on a subdomain of nevermorepeo.com that we receive mail for, issued when the advisor records the send; there is no new quote request status.
+- AC: the address reads File ID, the PEO's short name and an unguessable random part, so an advisor can see it is the right one before pasting it.
 - AC: the quote request shows the address with a copy button, and says to put it in CC.
-- AC: any advisor can revoke and reissue it; mail to the old address goes to the holding list.
+- AC: the address keeps receiving after the quote request closes, until the intake is deleted or an advisor revokes it. Any advisor can revoke and reissue it; mail to the old address goes to the holding list.
 
 **M-3.2 Receive mail.** M · BE · needs M-3.1
 - AC: an edge function verifies the provider's signature, fetches and stores each inbound message (sender, time, headers, text, attachments) against its quote request, and is idempotent on the provider's message id.
-- AC: a message to a live address joins the thread whoever sent it; a sender not seen on that thread before is marked as new. A message from an advisor's own address is stored as sent by hand.
-- AC: attachments are scanned before anyone can open them (D13); a message that is too large or fails the scan is recorded as received and quarantined.
+- AC: a message to a live address joins the thread whoever sent it; a sender not seen on that thread before is marked as new. A message from an advisor's own address is stored as sent by hand, and an automatic reply is marked as one.
+- AC: the thread shows the plain-text body with earlier quoted messages collapsed; no HTML from outside is rendered.
+- AC: attachments follow the upload rules (the same file types, up to 20 MB) and are scanned before anyone can open them (D13). A file of another type or over the cap is listed by name and size as not kept.
+- AC: an attachment that fails the scan is blocked and can't be opened; the message and its clean attachments stay readable.
 - AC: an arriving message never changes the quote request status.
-- AC: messages and attachments are kept as long as the intake and deleted with it; `docs/DATA_HANDLING.md`, `src/data/dataPolicy.ts` and the service provider list are updated in the same release.
+- AC: messages and attachments are kept as long as the intake and deleted with it. `docs/DATA_HANDLING.md`, `src/data/dataPolicy.ts`, the service provider list and a Privacy Policy line saying we keep correspondence with PEOs about a submission are updated in the same release; the Privacy Policy line is put to counsel as its own question.
 
 **M-3.3 Mail that matches nothing.** S · FS · needs M-3.2
-- AC: a message to a revoked or unknown address goes to a holding list an admin can assign or discard; nothing is attached by guesswork.
+- AC: a message to a revoked or never-issued address goes to a holding list; nothing is attached by guesswork. Only an admin can assign a held message to a quote request or discard it.
 - AC: an advisor can move a message off a thread to the holding list.
-- AC: a message nobody assigns is deleted after 30 days.
+- AC: a message nobody assigns is deleted after 30 days. Its sender gets no reply.
+- AC: one ops alert is raised when the list stops being empty, not one per message.
 
 **M-3.4 The thread on the submission page.** M · FE · needs M-3.2
 As an advisor, I want to read the whole conversation with a PEO, with delivery and bounce marks on what we sent.
-- AC: the quote request shows every message, attachment, status change and quote request note on one timeline, newest first; a bounce or a suppressed address is shown on the message it belongs to.
+- AC: the quote request shows every message, attachment, send, status change and quote request note on one timeline, newest first; a bounce or a suppressed address is shown on the message it belongs to. Corrections to a quote request's fields stay in the change log.
+- AC: a "new PEO mail" mark shows on the quote request, and on its submission in the queue, until any advisor opens the thread. It is one mark for the team, not one per advisor.
+- AC: a combined timeline shows every PEO's entries for the submission together, each labelled with its PEO.
 - AC: the prospect never sees it.
 
 **M-3.6 Tell advisors something arrived.** S · BE · needs M-3.2
-- AC: each new inbound message sends one email through the outbox to the Advisor Alert recipients, with the File ID, the PEO's name and a link that needs sign-in, and no content from the message.
+- AC: each inbound message a person at the PEO wrote sends one email through the outbox to the Advisor Alert recipients. It identifies the submission as the Advisor Alert does, names the PEO, links to the thread behind sign-in, and carries no content from the message.
+- AC: an automatic reply and an advisor's own copied-in message send no email and set no "new PEO mail" mark.
 
 #### Part B: blocked on counsel (QP-D1)
 
@@ -306,37 +315,50 @@ As an advisor, I want to read the whole conversation with a PEO, with delivery a
 As a prospect, I want to say which PEOs may receive my packet, so that nothing about my employees goes anywhere I
 didn't choose.
 - AC: a market authorization names each PEO, the wording and its version, who signed and when; it is kept like `intake_consents`. It names no packet version, so certifying again leaves it in place.
+- AC: it names only PEOs on the product's list (L-1.1); an admin adds an unlisted PEO first. Each PEO is named: there is no "any PEO my advisor chooses".
 - AC: the prospect can add a PEO or withdraw one at any time; each change is appended, never edited.
 - AC: an advisor who wants another PEO asks through an information request that names no answers; the prospect adds the PEO themselves.
 - AC: no send is possible for a PEO without one; the database refuses it, not only the screen.
 - AC: withdrawing a PEO already sent to closes its quote request, revokes its download link and marks the submission Needs advisor action, so an advisor tells the PEO. The product sends the PEO nothing on its own.
+- AC: a quote request recorded before this ships stays open with its thread and its quote; a further send to that PEO is refused until the prospect authorizes it.
+- AC: a new version of the wording leaves signed authorizations in place; a PEO added later is authorized under the new wording.
 
 **M-1.2 Consent, terms and the copy guard say what is true.** S · PM + LEGAL
 - AC: the intake consent, the Terms, D9, D44 and the banned phrases are changed together, in the release that carries the first product send.
+- AC: a prospect who accepted the earlier intake consent accepts the new one before the market authorization is offered.
 
 **M-2.1 Send to a PEO.** M · FS · needs M-1.1, L-3.4, M-3.1
 As an advisor, I want to send the bundle to a PEO contact from the submission page, with my own cover note.
-- AC: sending creates or continues that PEO's quote request, records the version sent, and queues the email through the outbox with retries.
-- AC: the email carries the cover note and a link to the bundle, and no files. The link is unguessable, expires after 30 days, and every download shows on the timeline (ADR 0003).
-- AC: From shows the advisor's name at one product sending address; Reply-To is the quote request's address; the message sets its own `Message-ID`, `In-Reply-To` and `References`. The advisor's phone is in the signature and their own email address is not in the message.
+- AC: sending creates or continues that PEO's quote request, records the version sent, and queues the email through the outbox with retries. Only the latest certified version can be sent; while an answer has changed and isn't certified again, sending waits.
+- AC: a send is addressed to one or more people at that PEO, picked from its contacts or typed.
+- AC: the email carries the cover note and a link to the bundle, and no files. The link is unguessable and expires after 30 days. It opens a page, with no sign-in, showing the employer, the File ID and version, each file with its own download, and the open items; each download shows on the timeline (ADR 0003).
+- AC: under the advisor's note, a fixed block the advisor can't edit carries the link, the File ID and version, the open items, the advisor's name, firm and phone, and any line counsel requires.
+- AC: From shows the advisor's name at one product sending address; Reply-To is the quote request's address; the message sets its own `Message-ID`, `In-Reply-To` and `References`. The advisor's own email address is not in the message.
 - AC: a send that fails shows on the Outbox page with a retry, as other emails do.
 
 **M-2.2 Send to several PEOs at once.** S · FE · needs M-2.1, L-2.2
 - AC: one action sends to every chosen PEO, each on its own thread; no PEO sees another's address or name.
-- AC: a missing market authorization is the only block. A PEO that isn't ready (missing items or a failed eligibility check) is shown with what is missing and unticked by default; if sent to, its message lists the open items.
+- AC: the advisor writes one note; each PEO's message gets its own greeting, link, files and open items.
+- AC: a review step shows, for each PEO, its recipients, files and gaps. A missing market authorization or a missing contact address stops that PEO only; the rest go, and the result says sent or not sent for each.
+- AC: a PEO that isn't ready (missing items or a failed eligibility check) is shown with what is missing and unticked by default; if sent to, its message lists the open items.
 
 **M-2.3 Send an update.** S · FS · needs M-2.1
 As an advisor, I want to send a newer certified version on the same thread.
-- AC: the queue's "older version sent" clears; the message says what changed, by field label.
+- AC: the product offers the update for each PEO holding an older version; nothing goes until an advisor chooses to send it.
+- AC: the queue's "older version sent" clears; the message names the changed fields by label and the census changes by count, with no values.
 - AC: the old link is revoked and a new one issued.
+- AC: a quote request that was quoted stays quoted, and its quote is marked as given on the older version until the advisor records a new answer.
 
 **M-2.4 Follow up and withdraw.** S · FS · needs M-2.1
 - AC: a follow-up and a withdrawal are sent on the same thread. Each kind of message opens with default text kept in code, which the advisor edits before sending; there is no template store (a firm's own templates are P-3.2).
-- AC: a withdrawal closes the quote request and revokes its link.
+- AC: a follow-up carries a live link to the version already sent, issuing a new 30-day one if the earlier one expired.
+- AC: a withdrawal closes the quote request, revokes its link, and records a reason for advisors only: employer went elsewhere, prospect withdrew this PEO, PEO not a fit, or other.
+- AC: marking a submission Won, Lost or Archived offers one withdrawal to every PEO still open, written once and sent on each thread. The advisor can skip it; the links are revoked either way.
 
 **M-3.5 Reply from the product.** S · FS · needs M-3.4
-- AC: an advisor can answer on the thread; the reply is recorded before it is sent.
-- AC: documents from the intake go by the same expiring link, not as attachments.
+- AC: an advisor can answer on the thread; the reply is recorded before it is sent. It goes to everyone at the PEO on the message answered, and the advisor can add or remove addresses.
+- AC: any document on the intake that passed its scan can go with a reply, by the same expiring link and never as an attachment. The market authorization's wording covers the packet and supporting documents.
+- AC: after the prospect withdraws a PEO, a reply to it is text only; the database refuses a link, as it refuses a send.
 
 **Not in this epic:** reading a quote or a decline out of an email (Epic N; an advisor still records them), and a
 per-PEO option to attach files instead of a link, to reopen if the pilot shows a PEO desk won't follow links.
