@@ -5,13 +5,14 @@
 // Relative imports only, so it runs under Deno and Vitest alike.
 
 import type { RecentMessage } from "../_shared/chatContext.ts";
-import { readyToCertify, unsettledFields, type CensusSummary, type FieldInfo } from "../_shared/followUp.ts";
+import { CHAT_NEVER_ASKS, WORKSPACE_ANSWERS, readyToCertify, unsettledFields, workspaceAnswersOpen, type CensusSummary, type FieldInfo } from "../_shared/followUp.ts";
 import { INTAKE_FIELDS } from "../_shared/intakeSchema.ts";
 
 /** How many unsettled fields the prompt names, most important first. */
 export const NEXT_FIELDS = 8;
-// The census comes only from an uploaded file (D21), so chat never asks for it.
-const CHAT_EXCLUDES: ReadonlySet<string> = new Set(["census"]);
+// The census comes only from an uploaded file (D21) and some answers are entered in the workspace (the FEIN,
+// K-1.1), so chat never asks for them.
+const CHAT_EXCLUDES = CHAT_NEVER_ASKS;
 const NO_CENSUS: CensusSummary = { rows: 0, workStates: false };
 
 export interface UserTurn {
@@ -66,6 +67,14 @@ export function requestedForTurn(turn: Pick<UserTurn, "requested">): FieldInfo[]
   });
 }
 
+/** An answer entered in the workspace, as Lenore names it: its label and its tab ("FEIN, on the Company tab"). */
+export const describeWorkspaceAnswer = (f: { label: string; where: string }): string => `${f.label}, on ${f.where}`;
+
+/** The answers still to enter in the workspace for this turn, as Lenore names them. */
+export function workspaceForTurn(turn: Omit<UserTurn, "message">): string[] {
+  return workspaceAnswersOpen(isObject(turn.context) ? turn.context : {}, turn.statuses ?? {}).map(describeWorkspaceAnswer);
+}
+
 export function buildUserPrompt(turn: UserTurn): string {
   const { contextJson, statusesJson, recentJson } = serializeTurn(turn);
   const answers = isObject(turn.context) ? turn.context : {};
@@ -73,6 +82,15 @@ export function buildUserPrompt(turn: UserTurn): string {
   const next = unsettledForTurn(turn).slice(0, NEXT_FIELDS);
   const asked = new Set(requestedForTurn(turn).map((f) => f.key));
   const ready = readyToCertify(answers, turn.statuses ?? {}, census);
+  // The workspace answers still open, and any the advisor asked about (answered or not): Lenore can't ask for
+  // them, but she says the advisor asked and where each is.
+  const open = workspaceAnswersOpen(answers, turn.statuses ?? {});
+  const askedInWorkspace = (turn.requested ?? []).filter((key) => key in WORKSPACE_ANSWERS);
+  const workspace = INTAKE_FIELDS.flatMap((f) => {
+    const listed = open.find((o) => o.key === f.key);
+    const requested = askedInWorkspace.includes(f.key);
+    return listed || requested ? [{ ...f, where: WORKSPACE_ANSWERS[f.key], requested }] : [];
+  });
   // JSON.stringify quotes and escapes what the prospect wrote so it can't break out of its slot.
   return [
     `Captured so far (answers): ${contextJson || "{}"}`,
@@ -80,6 +98,7 @@ export function buildUserPrompt(turn: UserTurn): string {
     `Not yet settled, most important first: ${next.length > 0 ? next.map((f) => `${f.key} (${f.label})${asked.has(f.key) ? ` ${ADVISOR_ASKED}` : ""}`).join(", ") : "none"}`,
     `Ready to certify: ${ready ? "yes" : "no"}`,
     `Employee census: ${census.rows > 0 ? `uploaded, ${census.rows} rows` : "not uploaded"}`,
+    `Entered in the workspace, never asked for in chat: ${workspace.length > 0 ? workspace.map((f) => `${f.key} (${describeWorkspaceAnswer(f)})${f.requested ? ` ${ADVISOR_ASKED}` : ""}`).join(", ") : "none"}`,
     `Recent conversation, oldest first: ${recentJson}`,
     `New user message: ${JSON.stringify(turn.message)}`,
   ].join("\n\n");

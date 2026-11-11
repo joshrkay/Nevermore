@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { formatCensusFact } from "./census";
+import { applyExtraction, applyFieldAction } from "./provenance";
 import { EMPTY_CHAMBER_DATA, type CensusEmployee } from "./chamberTypes";
 import {
   applyDocumentCandidates,
+  censusAgrees,
   compareCensus,
   mergeCensus,
   parseExtraction,
+  formatValue,
+  fieldLabel,
   planCandidateMerge,
   resolutionFields,
   resolveCandidate,
@@ -335,5 +340,100 @@ describe("resolveCandidate", () => {
     expect(resolutionFields({ type: "apply", candidates: [candidate({}), candidate({ field: "current_carrier" })] })).toEqual({ fields: ["payroll_vendor", "current_carrier"], kept: false });
     expect(resolutionFields({ type: "keep_current", candidate: candidate({}) })).toEqual({ fields: ["payroll_vendor"], kept: true });
     expect(resolutionFields({ type: "merge_census", candidate: candidate({ field: "census" }) })).toEqual({ fields: ["census"], kept: false });
+  });
+});
+
+// K-1.1: what a document says of who the employer is, as the Upload tab offers it.
+describe("company identity candidates", () => {
+  it("keeps a document's entity type and year founded as the intake holds them, and shows them as written", () => {
+    const parsed = parseExtraction({ candidates: [
+      { field: "entity_type", value: "LLC", location: "Page 1" },
+      { field: "year_founded", value: "2014", location: "Page 1" },
+      // A FEIN is typed into the workspace by the prospect: a document never proposes one.
+      { field: "fein", value: "84-1234567", location: "Page 1" },
+    ] });
+    expect(parsed.candidates.map((c) => [c.field, c.value])).toEqual([["entity_type", "llc"], ["year_founded", 2014]]);
+    expect(formatValue("entity_type", "llc")).toBe("LLC");
+    expect(formatValue("fein", "841234567")).toBe("84-1234567");
+    expect(fieldLabel("entity_type")).toBe("Entity type");
+    expect(fieldLabel("street_address")).toBe("Street address");
+  });
+});
+
+// K-3.3: an uploaded loss run proposes a year's figures; the prospect applies them into the table.
+describe("a table's rows from a document", () => {
+  const doc = { id: "d7", file_name: "loss-run-2025.pdf" };
+  const now = new Date("2026-11-11T00:00:00Z");
+  const year2025 = { policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, claims: 2, paid: 12500, reserved: 4000, valuation_date: "09/30/2026" };
+  const stored = { candidates: [{ field: "loss_history", location: "Page 2", value: [{ ...year2025, premium: "18,400", policy_number: "x" }] }] };
+
+  it("keeps the rows a stored extraction holds as the intake would, with the valuation date", () => {
+    expect(parseExtraction(stored).candidates).toEqual([{ field: "loss_history", location: "Page 2", value: [year2025] }]);
+    expect(formatValue("loss_history", [year2025])).toBe("1 listed");
+  });
+
+  it("is new for an empty table, the same once its rows are in, and an update when it adds to or changes what the table holds", () => {
+    const [candidate] = parseExtraction(stored).candidates;
+    const kind = (loss_history: object[], provenance = {}) => planCandidateMerge({ ...EMPTY_CHAMBER_DATA, loss_history }, [candidate], provenance)[0].kind;
+    expect(kind([])).toBe("new");
+    expect(kind([year2025, { policy_year: 2024, claims: 0 }])).toBe("same");
+    expect(kind([{ policy_year: 2024, claims: 0 }])).toBe("replace");
+    expect(kind([{ policy_year: 2025, premium: 17000 }])).toBe("replace");
+  });
+
+  it("adds the year to the table, keeping the other years, and records the document as the source", () => {
+    const [candidate] = parseExtraction(stored).candidates;
+    const prev = applyExtraction({ data: EMPTY_CHAMBER_DATA, provenance: {} }, { loss_history: [{ policy_year: 2024, claims: 0 }, { policy_year: 2025, premium: 17000 }] }, { source: { kind: "transcript", message_id: "m1" } });
+    const next = applyDocumentCandidates(prev, doc, [candidate], { now, replace: true });
+    expect(next.data.loss_history).toEqual([{ policy_year: 2024, claims: 0 }, year2025]);
+    expect(next.provenance.loss_history).toMatchObject({ status: "confirmed", source: { kind: "document", document_id: "d7", location: "Page 2" } });
+  });
+
+  it("never changes a figure the prospect typed for that year, and still fills in what they left out", () => {
+    const [candidate] = parseExtraction(stored).candidates;
+    const typed = applyFieldAction({ data: EMPTY_CHAMBER_DATA, provenance: {} }, { type: "edit", field: "loss_history", value: [{ policy_year: 2025, premium: 17000 }] });
+    const next = applyDocumentCandidates(typed, doc, [candidate], { now });
+    expect(next.data.loss_history).toEqual([{ ...year2025, premium: 17000 }]);
+  });
+});
+
+// K-2.3: a census file that lists dependents supplies them; one that doesn't leaves them alone.
+describe("dependents from a census file", () => {
+  const person = (over: Partial<CensusEmployee> = {}): CensusEmployee => ({ id: "e1", first_name: "Ann", last_name: "Lee", dob: "1990-01-01", work_state: "CA", compensation_type: "salary", employment_type: "full_time", classification: "w2", ...over });
+  const raj = { first_name: "Raj", last_name: "Lee", dob: "1989-05-05", relationship: "spouse" as const };
+  const mia = { first_name: "Mia", last_name: "Lee", dob: "2019-03-02", relationship: "child" as const };
+
+  it("gives a person already in the intake the dependents the file lists for them", () => {
+    const merged = mergeCensus([person()], [person({ id: "x", dependents: [raj, mia] })], ["dependents"]);
+    expect(merged[0]).toMatchObject({ id: "e1", dependents: [raj, mia] });
+  });
+
+  it("sees no change when the file lists the same dependents", () => {
+    const same = compareCensus([person({ dependents: [raj] })], [person({ id: "x", dependents: [{ ...raj }] })], ["dependents"]);
+    expect(same.matched[0].changes).toEqual([]);
+    expect(censusAgrees(same)).toBe(true);
+  });
+
+  it("keeps the dependents a person has when the file has no relationship column, or lists none for them", () => {
+    expect(mergeCensus([person({ dependents: [raj] })], [person({ id: "x" })], ["dob"])[0].dependents).toEqual([raj]);
+    expect(mergeCensus([person({ dependents: [raj] })], [person({ id: "x" })], ["dependents"])[0].dependents).toEqual([raj]);
+    // The file lists someone else's dependents, and an empty list for this person: that is not "they have none".
+    const listedNone = compareCensus([person({ dependents: [raj] })], [person({ id: "x", dependents: [] })], ["dependents"]);
+    expect(listedNone.matched[0].changes).toEqual([]);
+    expect(mergeCensus([person({ dependents: [raj] })], [person({ id: "x", dependents: [] })], ["dependents"])[0].dependents).toEqual([raj]);
+  });
+
+  it("sees no change when the intake's copy holds the same dependents with their keys in another order", () => {
+    // Postgres hands jsonb back with its own key order.
+    const stored = { dob: raj.dob, last_name: raj.last_name, first_name: raj.first_name, relationship: raj.relationship };
+    const same = compareCensus([person({ dependents: [stored] })], [person({ id: "x", dependents: [raj] })], ["dependents"]);
+    expect(same.matched[0].changes).toEqual([]);
+    const other = compareCensus([person({ dependents: [stored] })], [person({ id: "x", dependents: [mia] })], ["dependents"]);
+    expect(other.matched[0].changes.map((c) => c.fact)).toEqual(["dependents"]);
+  });
+
+  it("says how many dependents a change is about", () => {
+    expect(formatCensusFact("dependents", [raj, mia])).toBe("2 dependents");
+    expect(formatCensusFact("dependents", [raj])).toBe("1 dependent");
   });
 });

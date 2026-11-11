@@ -3,6 +3,8 @@ import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import type { CensusEmployee } from "./chamberTypes";
 import type { ProvenanceMap } from "./provenance";
 import { REVIEW_FIELDS } from "./reviewFields";
+import { ROW_LISTS } from "./rowColumns";
+import { INTAKE_SCHEMA } from "./intakeSchema";
 import {
   buildManuscript,
   certificationFromRow,
@@ -233,7 +235,11 @@ describe("buildManuscript covers the whole intake", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
     const rows = rowsOf(m);
     // The census is a table of its own, in the Workforce section.
-    const renderedElsewhere: Record<string, string> = { census: "the census table and the state breakdown" };
+    const renderedElsewhere: Record<string, string> = {
+      census: "the census table and the state breakdown",
+      // K-3.4: 24 questions and their explanations read as one table, in the form's own words.
+      ...Object.fromEntries(Object.keys(EMPTY_CHAMBER_DATA).filter((f) => f.startsWith("wcq_")).map((f) => [f, "the ACORD 130 table in the workers' comp section"])),
+    };
     const keyed = new Map<string, string>(Object.entries(rows).flatMap(([section, list]) => list.flatMap(([, , field]) => (field ? [[field, section] as [string, string]] : []))));
     for (const field of Object.keys(EMPTY_CHAMBER_DATA)) {
       if (field in renderedElsewhere) continue;
@@ -243,9 +249,211 @@ describe("buildManuscript covers the whole intake", () => {
     expect(m.census.length).toBe(DEMO_CHAMBER_DATA.census.length);
   });
 
+  // K-5.3: the same rule for what a census row holds (D30 covered the top-level answers only). v3 added seven
+  // facts to a row; each is printed, or left out here with the reason.
+  it("prints every fact a census row holds, or leaves it out for a stated reason", () => {
+    const facts = Object.keys((INTAKE_SCHEMA.$defs as Record<string, { properties: object }>).censusRow.properties);
+    const inTheCensusTable = ["first_name", "last_name", "dob", "age", "work_state", "job_title", "annual_salary", "compensation_type", "employment_type", "classification", "coverage_tier", "class_code"];
+    const inTheDetailsTable = ["zip_code", "gender", "hire_date", "cobra", "home_state", "worksite", "remote", "travels"];
+    const leftOut: Record<string, string> = {
+      id: "an internal key, never shown",
+      dependents: "counted in the dependent summary; the packet names no dependent",
+      assumed: "shown on the fact it qualifies, as 'Not provided' or '(est.)'",
+    };
+    expect([...facts].sort()).toEqual([...inTheCensusTable, ...inTheDetailsTable, ...Object.keys(leftOut)].sort());
+
+    const sarah = { ...DEMO_CHAMBER_DATA.census[0], gender: "F" as const, hire_date: "2019-04-01", cobra: false, home_state: "NV", worksite: "Harbor Street studio", remote: false, travels: true };
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, census: [sarah, DEMO_CHAMBER_DATA.census[3]] }, opts);
+    const details = m.tables.find((t) => t.title === "Census Details")!;
+    expect([details.section, details.field]).toEqual(["workforce", "census"]);
+    expect(details.columns).toEqual(["Name", "ZIP", "Gender", "Hire date", "COBRA", "Home state", "Worksite", "Remote", "Travels"]);
+    expect(details.rows).toEqual([
+      ["Sarah Chen", "94107", "F", "2019-04-01", "No", "NV", "Harbor Street studio", "No", "Yes"],
+      ["James O'Brien", "78701", "—", "—", "—", "—", "—", "—", "—"],
+    ]);
+    // Every fact of the row reaches the packet: the census table holds the rest.
+    expect(m.census[0]).toMatchObject({ name: "Sarah Chen", dob: "1988-03-15", state: "CA", title: "Senior Designer", salary: "$105,000", classification: "W-2", tier: "Employee + Family", classCode: "8810" });
+  });
+
+  it("prints no census details table for a census that holds none of them", () => {
+    const bare = DEMO_CHAMBER_DATA.census.map(({ zip_code: _zip, ...e }) => e);
+    expect(buildManuscript({ ...DEMO_CHAMBER_DATA, census: bare }, opts).tables.map((t) => t.title)).not.toContain("Census Details");
+    expect(buildManuscript({ ...DEMO_CHAMBER_DATA, census: [] }, opts).tables.map((t) => t.title)).not.toContain("Census Details");
+  });
+
+  // Every answer that is a table of rows is printed as a table (or, for the legal entities, as a line of the company profile).
+  it("prints every table of rows the intake holds", () => {
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, entities: [{ legal_name: "Meridian Creative LLC" }] }, opts);
+    const asALine: Record<string, string> = { entities: "one line of the company profile: each entity's name and FEIN" };
+    const lists = Object.keys(ROW_LISTS).filter((field) => !(field in asALine));
+    expect(lists.filter((field) => !m.tables.some((t) => t.field === field))).toEqual([]);
+    for (const table of m.tables) expect(table.rows.length, table.title).toBeGreaterThan(0);
+  });
+
+  // K-1.1: a PEO's form needs all nine digits, so the packet prints the FEIN in full.
+  it("shows who the employer is: the FEIN in full, entity type, year founded, address and website", () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
+    const company = Object.fromEntries(m.companyRows.map(([label, value]) => [label, value]));
+    expect(company).toMatchObject({
+      FEIN: "84-1234567",
+      "Entity Type": "LLC",
+      "Year Founded": "2014",
+      "Street Address": "500 Harbor Street, Suite 300, San Francisco, CA 94107",
+      Website: "meridiancreative.example",
+      "Legal Entities": "Not provided",
+    });
+    const several = buildManuscript({ ...DEMO_CHAMBER_DATA, multiple_entities: true, entities: [{ legal_name: "Meridian Creative LLC", fein: "841234567" }, { legal_name: "Meridian Studios Inc", fein: "841234568" }] }, opts);
+    expect(Object.fromEntries(several.companyRows.map(([label, value]) => [label, value]))["Legal Entities"])
+      .toBe("Meridian Creative LLC (FEIN 84-1234567); Meridian Studios Inc (FEIN 84-1234568)");
+  });
+
+  // K-1.2: the free-text industry stays, with the code and the description of operations beside it.
+  it("shows the industry as the prospect put it, as a NAICS code with its title, and as a description of operations", () => {
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, naics_code: "541430", operations_description: "Brand and packaging design for consumer goods." }, opts);
+    const labels = m.companyRows.map(([label]) => label);
+    expect(labels.slice(labels.indexOf("Industry"), labels.indexOf("Industry") + 3)).toEqual(["Industry", "NAICS Code", "Description of Operations"]);
+    expect(Object.fromEntries(m.companyRows.map(([label, value]) => [label, value]))).toMatchObject({
+      Industry: "Creative Agency",
+      "NAICS Code": "541430 · Graphic Design Services",
+      "Description of Operations": "Brand and packaging design for consumer goods.",
+    });
+  });
+
+  it("shows whether the employer is in a PEO now, which one, and when its agreement renews (K-1.3)", () => {
+    const row = (data: typeof DEMO_CHAMBER_DATA, provenance = {}) => Object.fromEntries(buildManuscript(data, { ...opts, provenance }).companyRows.map(([label, value]) => [label, value]));
+    expect(row({ ...DEMO_CHAMBER_DATA, in_peo: true, current_peo: "Summit PEO", peo_renewal_date: "January 2027" })).toMatchObject({
+      "In a PEO Now": "Yes", "Current PEO": "Summit PEO", "PEO Agreement Renewal": "January 2027",
+    });
+    const na = { status: "not_applicable" as const, source: { kind: "prospect_edit" as const }, updated_at: AT };
+    expect(row({ ...DEMO_CHAMBER_DATA, in_peo: false, current_peo: null, peo_renewal_date: null }, { current_peo: na, peo_renewal_date: na })).toMatchObject({
+      "In a PEO Now": "No", "Current PEO": NOT_APPLICABLE, "PEO Agreement Renewal": NOT_APPLICABLE,
+    });
+  });
+
+  // K-3.1: each owner and officer, so an underwriter can price who is included and who is excluded.
+  it("lists each owner and officer in the workers' comp section, as a table", () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
+    expect(m.workersCompRows.find(([, , field]) => field === "owners_officers")).toEqual(["Owners and Officers", "2 listed", "owners_officers"]);
+    const owners = (built: typeof m) => built.tables.filter((t) => t.field === "owners_officers");
+    expect(owners(m).map((t) => [t.section, t.title])).toEqual([["workers_comp", "Owners and Officers"]]);
+    const [table] = owners(m);
+    expect(table.columns).toEqual(["Name", "Title", "Ownership %", "Duties", "Covered by workers' comp"]);
+    expect(table.rows).toEqual([
+      ["Dana Reyes", "Chief Executive Officer", "60%", "Runs the studio and client accounts; office work only", "No"],
+      ["Marcus Rivera", "Art Director", "40%", "Leads design; on the census as an employee", "Yes"],
+    ]);
+    const none = buildManuscript({ ...DEMO_CHAMBER_DATA, owners_officers: [] }, opts);
+    expect(none.workersCompRows.find(([, , field]) => field === "owners_officers")?.[1]).toBe("Not provided");
+    expect(owners(none)).toEqual([]);
+    const one = buildManuscript({ ...DEMO_CHAMBER_DATA, owners_officers: [{ name: "Dana Reyes" }] }, opts);
+    expect(owners(one)[0].rows).toEqual([["Dana Reyes", "—", "—", "—", "—"]]);
+  });
+
+  // K-3.2: worked out from the census; nobody types it.
+  it("prints payroll and headcount by class code and state in the workers' comp section", () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
+    const table = m.tables.find((t) => t.title === "Payroll by Class Code and State")!;
+    expect(table.section).toBe("workers_comp");
+    expect(table.columns).toEqual(["State", "Class code", "Full time", "Part time", "Annual payroll"]);
+    // The demo census: four W-2 employees in California and one in Texas, all 8810; the contractor is left out.
+    expect(table.rows).toEqual([["CA", "8810", "4", "0", "$438,000"], ["TX", "8810", "1", "0", "$78,000"]]);
+    const uncoded = buildManuscript({ ...DEMO_CHAMBER_DATA, census: DEMO_CHAMBER_DATA.census.map((e) => ({ ...e, class_code: undefined })) }, opts);
+    expect(uncoded.tables.find((t) => t.title === "Payroll by Class Code and State")!.rows).toEqual([
+      ["CA", "No class code yet", "4", "0", "$438,000"], ["TX", "No class code yet", "1", "0", "$78,000"],
+    ]);
+    expect(buildManuscript({ ...DEMO_CHAMBER_DATA, census: [] }, opts).tables.map((t) => t.title)).not.toContain("Payroll by Class Code and State");
+  });
+
+  // K-3.3
+  it("prints the loss history by year, newest first, with each year's valuation date", () => {
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, loss_history: [
+      { policy_year: 2023, no_coverage: true },
+      { policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, experience_mod: 0.92, claims: 2, paid: 12500, reserved: 4000, valuation_date: "2026-09-30" },
+      { policy_year: 2024, carrier: "Pinnacle Mutual", premium: 17100, claims: 0, paid: 0, reserved: 0 },
+    ] }, opts);
+    const table = m.tables.find((t) => t.field === "loss_history")!;
+    expect([table.section, table.title]).toEqual(["workers_comp", "Loss History by Year"]);
+    expect(table.columns).toEqual(["Policy year", "Carrier", "Premium", "Experience mod", "Claims", "Paid", "Reserved", "Valued as of", "No coverage"]);
+    expect(table.rows).toEqual([
+      ["2025", "Pinnacle Mutual", "$18,400", "0.92", "2", "$12,500", "$4,000", "2026-09-30", "—"],
+      ["2024", "Pinnacle Mutual", "$17,100", "—", "0", "$0", "$0", "—", "—"],
+      ["2023", "—", "—", "—", "—", "—", "—", "—", "Yes"],
+    ]);
+    expect(m.workersCompRows.find(([, , field]) => field === "loss_history")).toEqual(["Loss History", "3 listed", "loss_history"]);
+    // With coverage every year, the "No coverage" column is left out, leaving room for the figures.
+    const covered = buildManuscript({ ...DEMO_CHAMBER_DATA, loss_history: [{ policy_year: 2025, premium: 18400 }] }, opts).tables.find((t) => t.field === "loss_history")!;
+    expect(covered.columns).toEqual(["Policy year", "Carrier", "Premium", "Experience mod", "Claims", "Paid", "Reserved", "Valued as of"]);
+    expect(covered.rows).toEqual([["2025", "—", "$18,400", "—", "—", "—", "—", "—"]]);
+  });
+
+  // K-4.1: what the employer pays now, for a side-by-side; renewal rates beside current ones when it has them.
+  it("prints the current medical plans in the benefits section, and their renewal rates when any is held", () => {
+    const plans = [
+      { name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: 612.4, rate_ee_sp: 1286.04, rate_ee_ch: 1102.32, rate_fam: 1837.2, employer_contribution: "75% of employee-only", enrolled: 14 },
+      { name: "Silver HMO", carrier: "Blue Shield", rate_ee: 498 },
+    ];
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, medical_plans: plans }, opts);
+    const tables = m.tables.filter((t) => t.field === "medical_plans");
+    expect(tables.map((t) => [t.section, t.title])).toEqual([["benefits", "Current Medical Plans"]]);
+    expect(tables[0].columns).toEqual(["Plan", "Carrier", "EE", "EE + spouse", "EE + child(ren)", "Family", "Employer contribution", "Enrolled"]);
+    expect(tables[0].rows).toEqual([
+      ["Gold PPO 500", "Blue Shield", "$612.40", "$1,286.04", "$1,102.32", "$1,837.20", "75% of employee-only", "14"],
+      ["Silver HMO", "Blue Shield", "$498.00", "—", "—", "—", "—", "—"],
+    ]);
+    const renewing = buildManuscript({ ...DEMO_CHAMBER_DATA, medical_plans: [{ ...plans[0], renewal_rate_ee: 685.89, renewal_rate_fam: 2057.66 }, plans[1]] }, opts);
+    const renewal = renewing.tables.find((t) => t.title === "Medical Renewal Rates")!;
+    expect(renewal.columns).toEqual(["Plan", "EE", "EE + spouse", "EE + child(ren)", "Family"]);
+    expect(renewal.rows).toEqual([["Gold PPO 500", "$685.89", "—", "—", "$2,057.66"], ["Silver HMO", "—", "—", "—", "—"]]);
+    expect(m.benefitsRows.find(([, , field]) => field === "medical_plans")).toEqual(["Current Medical Plans", "2 listed", "medical_plans"]);
+  });
+
+  // K-4.2
+  it("prints each state's unemployment tax rate and effective year in the payroll section", () => {
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, suta_rates: [{ state: "TX", rate: 2.7 }, { state: "CA", rate: 3.4, year: 2026 }] }, opts);
+    const table = m.tables.find((t) => t.field === "suta_rates")!;
+    expect([table.section, table.title]).toEqual(["payroll", "State Unemployment Tax Rates"]);
+    expect(table.columns).toEqual(["State", "Rate", "Effective year"]);
+    expect(table.rows).toEqual([["CA", "3.4%", "2026"], ["TX", "2.7%", "—"]]);
+    expect(m.payrollRows.find(([, , field]) => field === "suta_rates")).toEqual(["State Unemployment Tax Rates", "2 listed", "suta_rates"]);
+  });
+
+  // K-3.4: every question of the form, in the form's words, so a PEO's supplemental form is already answered.
+  it("prints the ACORD 130 questions with each answer and explanation, naming the form's edition", () => {
+    const na = { status: "not_applicable" as const, source: { kind: "prospect_edit" as const }, updated_at: AT };
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, wcq_06: true, wcq_06_explain: "About 20% of the work", wcq_08: false }, { ...opts, provenance: { wcq_17: na } });
+    const table = m.tables.find((t) => t.title === "ACORD 130 (2017/05): General Information")!;
+    expect([table.section, table.columns]).toEqual(["workers_comp", ["No.", "Question", "Answer", "Explanation"]]);
+    expect(table.rows).toHaveLength(24);
+    expect(table.rows[5]).toEqual(["6", "ARE SUB-CONTRACTORS USED? (If \"YES\", give % of work subcontracted)", "Yes", "About 20% of the work"]);
+    expect(table.rows[7]).toEqual(["8", "IS A WRITTEN SAFETY PROGRAM IN OPERATION?", "No", "—"]);
+    expect(table.rows[16].slice(2)).toEqual(["Not applicable", "—"]);
+    expect(table.rows[14].slice(2)).toEqual(["Not provided", "—"]);
+    // An intake that never reached the questions (one certified before they existed) prints no table of blanks.
+    const untouched = Object.fromEntries(Object.keys(DEMO_CHAMBER_DATA).filter((k) => k.startsWith("wcq_")).map((k) => [k, null]));
+    expect(buildManuscript({ ...DEMO_CHAMBER_DATA, ...untouched }, opts).tables.map((t) => t.title)).not.toContain("ACORD 130 (2017/05): General Information");
+  });
+
+  // K-2.3: PEOs that want dependents one by one get them. Dates of birth are masked like employees'.
+  it("lists each dependent under the dependent summary, with their employee and relationship", () => {
+    const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
+    const table = m.tables.find((t) => t.title === "Dependents")!;
+    expect([table.section, table.field, table.dobColumn]).toEqual(["dependents", "census", 3]);
+    expect(table.columns).toEqual(["Employee", "Dependent", "Relationship", "Date of birth"]);
+    expect(table.rows.slice(0, 3)).toEqual([
+      ["Sarah Chen", "Michael Chen", "Spouse", "1985-06-12"],
+      ["Sarah Chen", "Emma Chen", "Child", "2018-03-22"],
+      ["Marcus Rivera", "Ana Rivera", "Spouse", "1987-09-04"],
+    ]);
+    expect(table.rows).toHaveLength(6);
+    const none = buildManuscript({ ...DEMO_CHAMBER_DATA, census: DEMO_CHAMBER_DATA.census.map(({ dependents: _d, ...e }) => e) }, opts);
+    expect(none.tables.map((t) => t.title)).not.toContain("Dependents");
+    const noDob = buildManuscript({ ...DEMO_CHAMBER_DATA, census: [{ ...DEMO_CHAMBER_DATA.census[0], dependents: [{ first_name: "Kim", last_name: "", dob: "", relationship: "domestic_partner" as const }] }] }, opts);
+    expect(noDob.tables.find((t) => t.title === "Dependents")!.rows).toEqual([["Sarah Chen", "Kim", "Domestic partner", "Not provided"]]);
+  });
+
   it("shows the workers' comp block and the census class codes", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
-    expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toEqual({
+    expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toMatchObject({
       "Current Carrier": "Pinnacle Mutual",
       "Renewal Date": "July 2026",
       "Experience Mod": "0.92",
@@ -433,9 +641,11 @@ describe("buildManuscript open items for missing core facts", () => {
       { ...EMPTY_CHAMBER_DATA, company_name: "Acme", industry: "Retail", states: ["CA"] },
       { fileId: "EAA-1", provenance: { industry: { status: "inferred", source, updated_at: AT }, states: { status: "incomplete", source, updated_at: AT } } },
     );
-    expect(open.slice(0, 4)).toEqual([
+    expect(open.slice(0, 5)).toEqual([
       "Pay frequency — not provided",
       "Employee census — document needed",
+      // A state of operation with no unemployment tax rate (K-4.2).
+      "Unemployment tax rate, CA — rate needed",
       "States of operation — incomplete",
       "Industry — please confirm",
     ]);
@@ -555,6 +765,7 @@ describe("buildManuscript payroll", () => {
       "Funding Lead Time": "2 days",
       "Accrual Method": "Per pay period",
       "PTO Types": "Vacation, Sick",
+      "State Unemployment Tax Rates": "Not provided",
     });
     // Payroll is no longer folded into the company profile; timekeeping and the HRIS sit under Operations & HR,
     // where Review lists them.

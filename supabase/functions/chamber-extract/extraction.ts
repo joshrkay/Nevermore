@@ -5,6 +5,7 @@
 // quote survives only when it is the prospect's own words from the message, and "unknown" only with such a quote that
 // says they don't know (QA F4, F11). No Deno or network imports, so it is unit-tested with the frontend suite.
 
+import { isNaicsCode } from "../_shared/naics2022.ts";
 import { type IntakeIssue, validateIntakeField } from "../_shared/intakeSchema.ts";
 import { FIELDS, FIELD_STATUSES, MAX_EVIDENCE_CHARS, PROMPT_VERSION } from "./schema.ts";
 
@@ -117,6 +118,8 @@ export function shapeExtraction(args: Record<string, unknown>, message: string, 
     if (v === null || v === undefined || v === "") continue;
     const issues = validateIntakeField(k, v);
     if (issues.length > 0) rejected.push(...issues);
+    // Six digits the model made up are not an industry (K-1.2).
+    else if (k === "naics_code" && !isNaicsCode(v)) rejected.push({ path: k, reason: "is not a 2022 NAICS code" });
     else extracted[k] = v;
   }
   // A value's status is confirmed, inferred or incomplete. "unknown" (the prospect doesn't know, D23) holds no
@@ -134,7 +137,9 @@ export function shapeExtraction(args: Record<string, unknown>, message: string, 
     for (const [k, v] of Object.entries(args.field_status)) {
       if (typeof v !== "string" || !FIELD_STATUSES.includes(v)) continue;
       if (k in extracted) {
-        if (v !== "unknown") field_status[k] = v;
+        // A NAICS code is the model's proposal for the prospect to confirm, unless their message gives the code itself.
+        if (k === "naics_code" && v === "confirmed" && !message.includes(String(extracted[k]))) field_status[k] = "inferred";
+        else if (v !== "unknown") field_status[k] = v;
       } else if (v === "unknown" && FIELDS.includes(k) && !(k in refused)) {
         const quote = rawEvidence[k];
         if (quoted(quote) && saysNotKnown(quote)) unknown.push(k);

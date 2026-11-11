@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { CENSUS_ASSUMABLE, CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES, MAX_ANNUAL_SALARY, MAX_CENSUS_ROWS, MAX_DEPENDENTS as CENSUS_MAX_DEPENDENTS } from "@/data/census";
+import { CENSUS_ASSUMABLE, CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES, GENDERS, MAX_ANNUAL_SALARY, MAX_CENSUS_ROWS, MAX_DEPENDENTS as CENSUS_MAX_DEPENDENTS } from "@/data/census";
 import {
   COUNT_MAX,
   DOB_MAX,
@@ -15,6 +15,8 @@ import {
   SALARY_MAX,
   TEXT_MAX,
   US_STATE_CODES,
+  YEAR_MAX,
+  MONEY_MAX,
 } from "@/data/chamberValidation";
 import { FIELD_KINDS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
@@ -34,9 +36,10 @@ import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_N
 import { MAX_BODY_CHARS } from "../../supabase/functions/receive-mail/inbound";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
+import { CHAT_CANNOT_TAKE } from "../../supabase/functions/_shared/followUp";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
-import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
+import { ENTITY_TYPES, INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
 
 // The server (supabase/migrations/20261027090000_intake_validation_and_versioning.sql, and later
 // migrations that replace its functions) refuses what the client sanitiser would never produce, so the
@@ -70,7 +73,7 @@ const blocks = (name: string): string[] => {
 describe("reading the migrations' sync blocks", () => {
   it("keeps each function's blocks from the latest migration that defines that function", () => {
     // 20261103120000 replaces chamber_data_error; the census row's caps stay those of 20261029092000.
-    expect(ownersOf("caps")).toEqual(["public.chamber_data_census_row_error", "public.chamber_data_error"]);
+    expect(ownersOf("caps")).toEqual(["public.chamber_data_census_row_error", "public.chamber_data_error", "public.chamber_data_scalar_reason"]);
     expect(ownersOf("field_kinds")).toEqual(["public.chamber_data_field_kind"]);
     expect(ownersOf("intake_schema_version")).toEqual(["chamber_sessions_schema_version_check"]);
   });
@@ -102,15 +105,15 @@ describe("server and client intake rules agree", () => {
   });
 
   it("checks each key as the kind the client edits it as", () => {
+    // Where the database's kind is narrower than the input the client edits the answer with.
+    const NARROWER: Record<string, string> = { wc_annual_premium: "dollars", year_founded: "year", entity_type: "entity_type", hq_state: "state" };
     const clientKind = (key: string) => {
       if (key === "employees" || key === "census") return key;
-      // Entered as a number, held to the dollars cap rather than the count cap.
-      if (key === "wc_annual_premium") return "dollars";
+      if (key in NARROWER) return NARROWER[key];
       const kind = FIELD_KINDS[key as keyof typeof FIELD_KINDS];
       if (kind === "decimal") return "experience_mod";
       if (kind === "number") return "count";
       if (kind === "list") return key === "states" ? "state_list" : "text_list";
-      if (key === "hq_state") return "state";
       return kind;
     };
     const mismatched = [...serverKinds].filter(([key, kind]) => clientKind(key) !== kind).map(([key]) => key);
@@ -139,6 +142,9 @@ describe("server and client intake rules agree", () => {
       max_salary: SALARY_MAX,
       max_experience_mod: EXPERIENCE_MOD_MAX,
       max_dollars: DOLLARS_MAX,
+      max_year: YEAR_MAX,
+      max_percent: 100,
+      max_money: MONEY_MAX,
     });
   });
 
@@ -149,6 +155,7 @@ describe("server and client intake rules agree", () => {
     expect(server("census_employment_types")).toEqual([...EMPLOYMENT_TYPES]);
     expect(server("census_classifications")).toEqual([...CLASSIFICATIONS]);
     expect(server("census_coverage_tiers")).toEqual([...COVERAGE_TIERS]);
+    expect(server("census_genders")).toEqual([...GENDERS]);
   });
 
   it("holds the same census limits as the shared census module", () => {
@@ -230,10 +237,8 @@ describe("server and client intake rules agree", () => {
     expect(quoted(blocks("prospect_outbox_kinds").join("\n")).sort()).toEqual([...PROSPECT_KINDS].sort());
   });
 
-  it("lets advisors review every answer of the intake schema", () => {
-    const reviewable = quoted(blocks("reviewable_fields").join("\n"));
-    expect(reviewable.filter((f) => f !== "employees").sort()).toEqual(Object.keys(INTAKE_SCHEMA.properties as object).sort());
-  });
+  // What an advisor can review is whatever the database knows as an answer (20261112091000): the SQL test
+  // supabase/tests/intake_schema_v3.sql holds it, and no list is kept to compare here.
 
   // Quote requests (20261110090000): the statuses the panel shows and the stages it offers a send at.
   it("holds the same quote request statuses, and records sends at the same stages", () => {
@@ -284,9 +289,11 @@ describe("server and client intake rules agree", () => {
   // chamber-extract keeps its own field list (it can't import from src/). Chat asks for every answer the
   // intake holds except the census, which comes from a document, so a field added to ChamberData and not
   // to the tool would never be extracted from chat.
-  it("has chamber-extract ask for every answer but the census, as the JSON type of the kind the client edits", () => {
-    const { census: _census, ...answers } = EMPTY_CHAMBER_DATA;
-    expect(Object.keys(CHAT_FIELD_TYPES).sort()).toEqual(Object.keys(answers).sort());
+  it("has chamber-extract ask for every answer chat can take, as the JSON type of the kind the client edits", () => {
+    const fromChat = (key: string) => !CHAT_CANNOT_TAKE.has(key);
+    expect(Object.keys(CHAT_FIELD_TYPES).sort()).toEqual(Object.keys(EMPTY_CHAMBER_DATA).filter(fromChat).sort());
+    // The census is a file, and the FEIN is typed into its own box, never into the conversation (K-1.1).
+    expect([...CHAT_CANNOT_TAKE].sort()).toEqual(["census", "entities", "fein"]);
     const kindOf = (schema: unknown) => {
       const json = JSON.stringify(schema);
       if (json === '{"type":"string"}') return "text";
@@ -294,9 +301,13 @@ describe("server and client intake rules agree", () => {
       if (json === '{"type":"number"}') return "decimal";
       if (json === '{"type":"boolean"}') return "boolean";
       if (json === '{"type":"array","items":{"type":"string"}}') return "list";
+      if (/^\{"type":"string","enum":\[/.test(json)) return "choice";
+      if (/^\{"type":"array","items":\{"type":"object"/.test(json)) return "rows";
       return json;
     };
-    expect(Object.fromEntries(Object.entries(CHAT_FIELD_TYPES).map(([key, schema]) => [key, kindOf(schema)]))).toEqual(FIELD_KINDS);
+    // An industry code is picked from a search in the app; the model sends it as text.
+    const expected = Object.fromEntries(Object.entries(FIELD_KINDS).filter(([key]) => fromChat(key)).map(([key, kind]) => [key, kind === "naics" ? "text" : kind]));
+    expect(Object.fromEntries(Object.entries(CHAT_FIELD_TYPES).map(([key, schema]) => [key, kindOf(schema)]))).toEqual(expected);
   });
 
   // The intake schema (supabase/functions/_shared/intakeSchema.ts) must never accept what the database
@@ -324,8 +335,10 @@ describe("server and client intake rules agree", () => {
       expect({
         max_employees: LIMITS.census, max_dependents: LIMITS.dependents, max_states: LIMITS.states, max_list_items: LIMITS.listItems,
         max_text: LIMITS.text, max_name: LIMITS.name, max_dob: LIMITS.dob, max_count: LIMITS.count, max_salary: LIMITS.salary,
-        max_experience_mod: LIMITS.experienceMod, max_dollars: LIMITS.dollars,
+        max_experience_mod: LIMITS.experienceMod, max_dollars: LIMITS.dollars, max_year: LIMITS.yearMax,
+        max_percent: LIMITS.percent, max_money: LIMITS.money,
       }).toEqual(Object.fromEntries(server));
+      expect(props.year_founded.maximum).toBe(server.get("max_year"));
       expect(props.wc_experience_mod.maximum).toBe(server.get("max_experience_mod"));
       expect(props.wc_annual_premium.maximum).toBe(server.get("max_dollars"));
       expect(props.census.maxItems).toBe(server.get("max_employees"));
@@ -343,6 +356,9 @@ describe("server and client intake rules agree", () => {
       expect(row.employment_type.enum).toEqual(server("census_employment_types"));
       expect(row.classification.enum).toEqual(server("census_classifications"));
       expect(row.coverage_tier.enum).toEqual(server("census_coverage_tiers"));
+      expect(row.gender.enum).toEqual(server("census_genders"));
+      expect(row.home_state.enum).toEqual([...SCHEMA_STATE_CODES]);
+      expect(row.hire_date.maxLength).toBe(LIMITS.dob);
     });
 
     it("lists the same defaulted facts a census row can carry", () => {
@@ -351,25 +367,60 @@ describe("server and client intake rules agree", () => {
       expect(row.assumed.maxItems).toBe(CENSUS_ASSUMABLE.length);
     });
 
-    it("checks each key as the kind the database checks it as", () => {
-      const kindOf = (schema: JsonSchema): string => {
+    // The kind the database checks one value as, read from its rule in the schema.
+    const scalarKindOf = (schema: JsonSchema): string => {
+      const types = ([] as unknown[]).concat(schema.type);
+      const values = ((schema.enum ?? []) as unknown[]).filter((v) => v !== null);
+      if (values.length > 0) return values.includes("CA") ? "state" : JSON.stringify(values) === JSON.stringify(ENTITY_TYPES) ? "entity_type" : "unknown enum";
+      if (types.includes("number")) return schema.maximum === LIMITS.percent ? "percent" : schema.maximum === LIMITS.money ? "money" : "experience_mod";
+      if (types.includes("integer")) return schema.maximum === LIMITS.dollars ? "dollars" : schema.maximum === LIMITS.yearMax ? "year" : "count";
+      if (types.includes("boolean")) return "boolean";
+      if (schema.pattern === "^[0-9]{9}$") return "fein";
+      if (schema.pattern === "^[0-9]{6}$") return "naics";
+      return schema.maxLength === LIMITS.name ? "name" : "text";
+    };
+
+    const kindOf = (schema: JsonSchema): string => {
         const types = ([] as unknown[]).concat(schema.type);
         if (types.includes("array")) {
           const items = schema.items as JsonSchema;
           if (items.$ref === "#/$defs/stateCode") return "state_list";
           if (items.$ref === "#/$defs/censusRow") return "census";
+          if (items.$ref) return "rows";
           return "text_list";
         }
-        if (schema.enum) return "state";
-        if (types.includes("number")) return "experience_mod";
-        if (types.includes("integer")) return schema.maximum === LIMITS.dollars ? "dollars" : "count";
-        if (types.includes("boolean")) return "boolean";
-        return "text";
-      };
+      return scalarKindOf(schema);
+    };
+
+    it("checks each key as the kind the database checks it as", () => {
       const schemaKinds = Object.fromEntries(Object.entries(props).map(([key, schema]) => [key, kindOf(schema)]));
       // The legacy roster is the one key the database knows and v1 does not.
       const dbKinds = Object.fromEntries([...serverKinds].filter(([key]) => !LEGACY_KEYS.includes(key)));
       expect(schemaKinds).toEqual(dbKinds);
+    });
+
+    // v3's lists of rows: the database names each list's keys, their kinds and the most rows it holds.
+    it("checks each key of a list of rows as the kind the database checks it as, and holds each list to the same cap", () => {
+      const dbRowKinds: Record<string, Record<string, string>> = {};
+      for (const m of blocks("row_field_kinds").join("\n").matchAll(/WHEN list = '(\w+)' AND key IN \(([^)]*)\) THEN '(\w+)'/g)) {
+        for (const key of quoted(m[2])) (dbRowKinds[m[1]] ??= {})[key] = m[3];
+      }
+      const dbCaps = Object.fromEntries([...blocks("row_caps").join("\n").matchAll(/WHEN list = '(\w+)' THEN (\d+)/g)].map((m) => [m[1], Number(m[2])]));
+      const lists = Object.entries(props).filter(([, schema]) => kindOf(schema) === "rows");
+      const defOf = (schema: JsonSchema) => defs[String((schema.items as JsonSchema).$ref).slice("#/$defs/".length)];
+      expect(Object.fromEntries(lists.map(([key, schema]) => [
+        key, Object.fromEntries(Object.entries(defOf(schema).properties as Record<string, JsonSchema>).map(([rowKey, rule]) => [rowKey, scalarKindOf(rule)])),
+      ]))).toEqual(dbRowKinds);
+      expect(Object.fromEntries(lists.map(([key, schema]) => [key, schema.maxItems]))).toEqual(dbCaps);
+      // A row is strict on both sides: no unknown key, no null.
+      for (const [, schema] of lists) {
+        expect(defOf(schema).additionalProperties).toBe(false);
+        for (const rule of Object.values(defOf(schema).properties as Record<string, JsonSchema>)) expect(([] as unknown[]).concat(rule.type)).not.toContain("null");
+      }
+    });
+
+    it("accepts the same entity types", () => {
+      expect(quoted(blocks("entity_types").join("\n"))).toEqual([...ENTITY_TYPES]);
     });
   });
 

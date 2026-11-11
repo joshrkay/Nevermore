@@ -4,7 +4,7 @@ The intake lives in `chamber_sessions`. The first section covers the answers the
 
 ## Intake data (`chamber_data`)
 
-`chamber_sessions.chamber_data` is a jsonb object with the 42 keys of `ChamberData` (`src/data/chamberTypes.ts`), the fields of intake schema v2, and the database also accepts `employees`, the roster's name before the census (migration `20261029092000` added `census`). The browser sanitises it (`src/data/chamberValidation.ts`) and the database refuses anything outside the same rules (`public.chamber_data_error`, migration `20261027090000_intake_validation_and_versioning.sql`). The client is the stricter side: it drops or truncates, so valid client output is never refused.
+`chamber_sessions.chamber_data` is a jsonb object with the keys of `ChamberData` (`src/data/chamberTypes.ts`), the fields of intake schema v3, and the database also accepts `employees`, the roster's name before the census (migration `20261029092000` added `census`). The browser sanitises it (`src/data/chamberValidation.ts`) and the database refuses anything outside the same rules (`public.chamber_data_error`, migration `20261027090000_intake_validation_and_versioning.sql`). The client is the stricter side: it drops or truncates, so valid client output is never refused.
 
 ### Rules by kind
 
@@ -15,6 +15,11 @@ The intake lives in `chamber_sessions`. The first section covers the answers the
 | boolean | `null`, `true` or `false` | Anything else is dropped |
 | experience mod | `null` or a JSON number from 0 to 10 (`EXPERIENCE_MOD_MAX`), such as 0.92 | Numeric text is read ("0.92"); kept to two decimal places; out of range is dropped |
 | dollars | `null` or a whole JSON number from 0 to 100,000,000 (`DOLLARS_MAX`) | `$`, commas and spaces are removed ("$18,400"); cents are rounded; over the cap is dropped, not capped |
+| FEIN | `null` or exactly nine digits, no hyphen (a federal employer identification number) | Read from the nine digits or from `12-3456789`; anything else is dropped, including the `123-45-6789` shape of a Social Security number. Never treated as free text, so it is not redacted |
+| NAICS code | `null` or exactly six digits | Trimmed; a number is read as its digits; kept only when it is one of the 1,012 industries of the 2022 edition (`supabase/functions/_shared/naics2022.ts`), which chat extraction checks too |
+| choice | `null` or one of the field's listed values (an entity type: `sole_proprietorship`, `partnership`, `llc`, `c_corporation`, `s_corporation`, `nonprofit`, `other`) | Common spellings are mapped ("S-Corp", "LLC"); anything else is dropped |
+| year | `null` or a whole JSON number from 1600 to 2100 (`YEAR_MIN`, `YEAR_MAX`) | Four digits of text are read; anything else is dropped |
+| list of rows | Array of row objects, at most the list's own cap (see "Lists of rows"). Every key of a row is optional, none may be `null`, and an unknown key is refused | A key with an invalid value is dropped from its row; a row left empty is dropped; then truncated to the cap |
 | state | `null` or one of the 56 codes in "State codes" | Upper-cased after trimming; an unlisted value is dropped |
 | state list | Array of listed codes, at most 60 (`MAX_STATES`) | Comma strings accepted; unlisted entries and duplicates dropped |
 | text list | Array of text, at most 100 (`MAX_LIST_ITEMS`) | Invalid entries dropped, then truncated to 100 |
@@ -39,10 +44,52 @@ A census row needs a non-blank `first_name`; every other key may be absent. Unkn
 | `classification` | `w2` or `1099` | Common spellings are mapped; a missing label is `w2`; an unrecognised one drops the row |
 | `coverage_tier` | `EE`, `EE+SP`, `EE+CH`, `FAM` or `WAIVE` | Omitted |
 | `class_code` | Four digits | Omitted |
+| `gender` | `F`, `M` or `X` (new in v3) | Common spellings are read ("Female", "male", "non-binary"); anything else is omitted |
+| `hire_date` | Text, at most 40 characters. The client keeps only a real `YYYY-MM-DD` date (new in v3) | Omitted |
+| `cobra` | `true` or `false` (new in v3) | "yes", "no", "COBRA" and "active" are read; anything else is omitted |
+| `home_state` | A listed code (new in v3) | A code or a state's name is read; anything else is omitted |
+| `worksite` | Text, at most 200 characters (new in v3) | Cut to 200 characters; omitted when blank |
+| `remote`, `travels` | `true` or `false` (new in v3) | "yes", "no", "remote", "onsite", "travels" and the like are read; anything else is omitted |
 | `dependents` | Array of dependents, at most 20 (`MAX_DEPENDENTS`) | Invalid ones dropped, then truncated to 20 |
 | `dependents[].first_name` | Text, 1 to 1,000 characters, not blank | The dependent is dropped |
 | `dependents[].last_name`, `.dob` | Text, at most 200 and 40 characters | `""` |
 | `dependents[].relationship` | `spouse`, `domestic_partner`, `child` or `other` | `other` |
+
+#### The ACORD 130 questions
+
+New in v3 (K-3.4). `wcq_01` to `wcq_24` are the 24 yes/no questions of ACORD 130 (2017/05), General Information, each a boolean, and `wcq_01_explain` to `wcq_24_explain` the text explanation the form asks for with a "yes". The form's wording is in `supabase/functions/_shared/acord130.ts`, taken from the form itself; a new edition is a new list and a new schema version. The Workers' comp tab and The Manuscript print every question in that wording.
+
+Lenore asks a question, then its explanation only after a yes (`fieldApplies` in `_shared/followUp.ts`). She is not asked to ask what the intake can work out (`src/data/acordRules.ts`, applied whenever an answer changes):
+
+| Question | Rule |
+| --- | --- |
+| No. 1 to 4 (aircraft or watercraft, hazardous material, work underground or at height, work on or over water) | Marked "Doesn't apply" for an office-only employer: every class code on the census is 8810, 8742, 8871, 8820 or 8803, or, with no class codes, the NAICS code starts with 52 (finance and insurance), 55 (management of companies), 5132 or 5112 (software publishing), 518 (data processing and hosting), 5411 (legal), 5412 (accounting), 5415 (computer systems design), 54161 (management consulting) or 5418 (advertising). A whole sector is too wide: surveyors, vets and film crews share sectors 51 and 54. The class code list is from general knowledge and awaits the advisory lead's check |
+| No. 10 (employees under 16 or over 60) | Answered from the dates of birth and ages of the census's W-2 employees (a 1099 contractor's age doesn't count), to confirm. Never asked |
+| No. 13 (employees with physical handicaps) | Never raised by Lenore, in chat or aloud. Answered on the Workers' comp tab |
+| No. 14 (travel out of state) | Answered "no", to confirm, when the census's `travels` column says nobody travels for work. The column doesn't say whether travel leaves the state, so a yes there leaves the question to be asked |
+| No. 22 (working at home, and how many) | Answered from the census's `remote` column, to confirm; the count follows the census |
+| No. 17 (other insurance with this insurer) | Marked "Doesn't apply" once the intake has an answer: there is no insurer yet |
+| No. 18 (coverage declined, cancelled or non-renewed) | Marked "Doesn't apply" when the headquarters state is Missouri, as the form says |
+| No. 19 (employee health plans provided) | Answered from `virgin_medical` and `medical_plans`, to confirm |
+| No. 21 (employees leased to or from other employers) | Answered from `in_peo`, to confirm |
+
+An answer worked out this way follows what it came from until the prospect confirms or changes it: it changes when the census or the earlier answer does, and is taken back when that no longer says anything.
+
+A question is closed once, when its rule becomes true, and only while unanswered and untouched, so one the prospect reopens stays open. An answer worked out from the intake follows its source until the prospect confirms or changes it.
+
+#### Lists of rows
+
+New in v3. The database checks each key of a row as the kind named here (`public.chamber_data_row_field_kind`) and holds each list to its cap (`public.chamber_data_row_list_max`); `src/data/schemaSync.test.ts` compares both with the schema's `$defs`. The workspace shows and edits each list as a table (`src/data/rowColumns.ts`, `RowsField`).
+
+| List | Cap | Row keys (kind) |
+| --- | --- | --- |
+| `entities` | 50 | `legal_name` (text), `fein` (FEIN) |
+| `owners_officers` | 20 | `name`, `title` (text of at most 200 characters), `ownership_percent` (a number from 0 to 100), `duties` (text), `covered` (true or false: whether workers' comp covers them) |
+| `loss_history` | 5 | `policy_year` (year), `carrier`, `valuation_date` (text of at most 200 characters), `premium`, `paid`, `reserved` (whole dollars), `experience_mod`, `claims` (a count; 0 is "no claims"), `no_coverage` (true when there was no coverage that year) |
+| `medical_plans` | 20 | `name`, `carrier`, `employer_contribution` (text of at most 200 characters), `rate_ee`, `rate_ee_sp`, `rate_ee_ch`, `rate_fam` and the same four with `renewal_` before them (dollars a month to the cent, from 0 to 1,000,000), `enrolled` (a count) |
+| `suta_rates` | 60 | `state` (a listed code), `rate` (a percentage from 0 to 100), `year`. The client keeps one row per state; each state of operation with no rate is one open item ("Rate needed"), never a blocker |
+
+Chat extraction adds to a table rather than replacing it (`mergeRows` in `src/data/rowColumns.ts`): a row for someone or something already listed, matched by the list's key column (a person's name, a legal name), fills in what that row lacked, and a new one is added at the end. Only a document the prospect applied changes a value a row already held, and never one the prospect typed. Lenore never asks for a table row by row; each is named in her prompt's "Entered in the workspace" line with its tab.
 
 Postgres jsonb refuses NUL and unpaired surrogate characters before any trigger runs, so the client removes them from every string.
 
@@ -50,52 +97,115 @@ Postgres jsonb refuses NUL and unpaired surrogate characters before any trigger 
 
 Every field belongs to a section and is either required or recommended, with a rank: see "Sections, required fields and rank" below. The table is generated from the schema's `x-intake` annotations, and `src/data/intakeSchemaDoc.test.ts` fails while it differs from them.
 
-Writers: **C** chat extraction (`chamber-extract`, which asks for every field but the census, for typed and spoken messages alike: a voice call's answers go through it too, US-2.3b), **D** document candidates (`document-extract`; a census sheet also supplies `census`, `employee_count`, `states`, `has_1099` and `ca_contractors`), **E** hand edit in the workspace.
+Writers: **C** chat extraction (`chamber-extract`, which asks for every field but the census, for typed and spoken messages alike: a voice call's answers go through it too, US-2.3b), **D** document candidates (`document-extract`; a census sheet also supplies `census`, `employee_count`, `states`, `has_1099` and `ca_contractors`), **E** hand edit in the workspace. The FEIN and the legal entities are **E** only: nine digits in a chat message are redacted before the model sees them, so the FEIN is typed into its own box (K-1.1), and no document proposes one.
 
 | Section | Key | Label | Kind | Required | Rank | Writers |
 | --- | --- | --- | --- | --- | --- | --- |
 | Company | `company_name` | Company legal name | text | Required | 1 | C D E |
 | Company | `employee_count` | Employee count | count | Recommended | 5 | C D E |
 | Company | `industry` | Industry | text | Recommended | 6 | C D E |
-| Company | `start_month` | Target start | text | Recommended | 15 | C D E |
-| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 16 | C E |
-| Company | `fein_count` | FEIN count | count | Recommended | 17 | C |
+| Company | `fein` | FEIN | FEIN | Recommended | 15 | E |
+| Company | `entity_type` | Entity type | choice | Recommended | 16 | C D E |
+| Company | `year_founded` | Year founded | year | Recommended | 17 | C D E |
+| Company | `street_address` | Street address | text | Recommended | 18 | C D E |
+| Company | `website` | Website | text | Recommended | 19 | C D E |
+| Company | `operations_description` | Description of operations | text | Recommended | 20 | C D E |
+| Company | `naics_code` | NAICS code | NAICS code | Recommended | 21 | C D E |
+| Company | `in_peo` | In a PEO now | boolean | Recommended | 22 | C D E |
+| Company | `current_peo` | Current PEO | text | Recommended | 23 | C D E |
+| Company | `peo_renewal_date` | PEO agreement renewal | text | Recommended | 24 | C D E |
+| Company | `start_month` | Target start | text | Recommended | 25 | C D E |
+| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 26 | C E |
+| Company | `fein_count` | FEIN count | count | Recommended | 27 | C |
+| Company | `entities` | Legal entities | list of rows | Recommended | 53 | E |
 | Locations | `states` | States of operation | state list | Required | 2 | C D E |
 | Locations | `hq_state` | HQ state | state | Recommended | 7 | C D E |
 | Census | `census` | Employee census | census (read-only in the workspace) | Recommended | 4 | D |
-| Census | `has_1099` | 1099 contractors | boolean | Recommended | 34 | C D |
-| Census | `ca_contractors` | California contractors | boolean | Recommended | 35 | C D |
+| Census | `has_1099` | 1099 contractors | boolean | Recommended | 44 | C D |
+| Census | `ca_contractors` | California contractors | boolean | Recommended | 45 | C D |
 | Benefits | `current_carrier` | Current carrier | text | Recommended | 8 | C D E |
 | Benefits | `renewal_date` | Renewal date | text | Recommended | 9 | C D E |
-| Benefits | `virgin_medical` | First-time medical coverage | boolean | Recommended | 18 | C D |
-| Benefits | `rate_history` | Rate history | text | Recommended | 19 | C D E |
-| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 20 | C D E |
-| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 21 | C D E |
-| Benefits | `has_401k` | Retirement plan | boolean | Recommended | 22 | C D E |
-| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 23 | C D |
-| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 24 | C D |
+| Benefits | `virgin_medical` | First-time medical coverage | boolean | Recommended | 28 | C D |
+| Benefits | `rate_history` | Rate history | text | Recommended | 29 | C D E |
+| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 30 | C D E |
+| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 31 | C D E |
+| Benefits | `has_401k` | Retirement plan | boolean | Recommended | 32 | C D E |
+| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 33 | C D |
+| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 34 | C D |
+| Benefits | `medical_plans` | Current medical plans | list of rows | Recommended | 56 | C E |
 | Payroll | `pay_frequency` | Pay frequency | text (free text, not an enum) | Required | 3 | C D E |
 | Payroll | `payroll_vendor` | Payroll vendor | text | Recommended | 10 | C D E |
-| Payroll | `funding_days` | Funding lead time | count | Recommended | 25 | C E |
-| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 26 | C |
-| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 27 | C D |
-| Payroll | `exempt_count` | Exempt count | count | Recommended | 28 | C D |
-| Payroll | `pto_types` | PTO types | text list | Recommended | 29 | C E |
-| Payroll | `accrual_method` | Accrual method | text | Recommended | 30 | C E |
+| Payroll | `funding_days` | Funding lead time | count | Recommended | 35 | C E |
+| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 36 | C |
+| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 37 | C D |
+| Payroll | `exempt_count` | Exempt count | count | Recommended | 38 | C D |
+| Payroll | `pto_types` | PTO types | text list | Recommended | 39 | C E |
+| Payroll | `accrual_method` | Accrual method | text | Recommended | 40 | C E |
+| Payroll | `suta_rates` | State unemployment tax rates | list of rows | Recommended | 57 | C E |
 | Workers' comp | `wc_carrier` | Workers' comp carrier | text | Recommended | 11 | C |
 | Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | C |
 | Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | C |
 | Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | C |
-| Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 31 | C D |
-| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 32 | C |
-| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 33 | C |
-| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 36 | C |
-| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 37 | C |
-| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 38 | C |
-| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 39 | C |
-| Operations & HR | `hris_system` | HRIS system | text | Recommended | 40 | C |
-| Operations & HR | `key_challenges` | Key challenges | text | Recommended | 41 | C |
-| Operations & HR | `business_goals` | Business goals | text | Recommended | 42 | C |
+| Workers' comp | `owners_officers` | Owners and officers | list of rows | Recommended | 54 | C E |
+| Workers' comp | `loss_history` | Loss history | list of rows | Recommended | 55 | C E |
+| Workers' comp | `wcq_01` | ACORD 130 No. 1: Aircraft or watercraft | boolean | Recommended | 58 | C E |
+| Workers' comp | `wcq_01_explain` | ACORD 130 No. 1, explanation: Aircraft or watercraft | text | Recommended | 59 | C E |
+| Workers' comp | `wcq_02` | ACORD 130 No. 2: Hazardous material | boolean | Recommended | 60 | C E |
+| Workers' comp | `wcq_02_explain` | ACORD 130 No. 2, explanation: Hazardous material | text | Recommended | 61 | C E |
+| Workers' comp | `wcq_03` | ACORD 130 No. 3: Work underground or above 15 feet | boolean | Recommended | 62 | C E |
+| Workers' comp | `wcq_03_explain` | ACORD 130 No. 3, explanation: Work underground or above 15 feet | text | Recommended | 63 | C E |
+| Workers' comp | `wcq_04` | ACORD 130 No. 4: Work on or over water | boolean | Recommended | 64 | C E |
+| Workers' comp | `wcq_04_explain` | ACORD 130 No. 4, explanation: Work on or over water | text | Recommended | 65 | C E |
+| Workers' comp | `wcq_05` | ACORD 130 No. 5: Any other type of business | boolean | Recommended | 66 | C E |
+| Workers' comp | `wcq_05_explain` | ACORD 130 No. 5, explanation: Any other type of business | text | Recommended | 67 | C E |
+| Workers' comp | `wcq_06` | ACORD 130 No. 6: Subcontractors used | boolean | Recommended | 68 | C E |
+| Workers' comp | `wcq_06_explain` | ACORD 130 No. 6, explanation: Subcontractors used | text | Recommended | 69 | C E |
+| Workers' comp | `wcq_07` | ACORD 130 No. 7: Work sublet without certificates of insurance | boolean | Recommended | 70 | C E |
+| Workers' comp | `wcq_07_explain` | ACORD 130 No. 7, explanation: Work sublet without certificates of insurance | text | Recommended | 71 | C E |
+| Workers' comp | `wcq_08` | ACORD 130 No. 8: Written safety program | boolean | Recommended | 72 | C E |
+| Workers' comp | `wcq_08_explain` | ACORD 130 No. 8, explanation: Written safety program | text | Recommended | 73 | C E |
+| Workers' comp | `wcq_09` | ACORD 130 No. 9: Group transportation | boolean | Recommended | 74 | C E |
+| Workers' comp | `wcq_09_explain` | ACORD 130 No. 9, explanation: Group transportation | text | Recommended | 75 | C E |
+| Workers' comp | `wcq_10` | ACORD 130 No. 10: Employees under 16 or over 60 | boolean | Recommended | 76 | C E |
+| Workers' comp | `wcq_10_explain` | ACORD 130 No. 10, explanation: Employees under 16 or over 60 | text | Recommended | 77 | C E |
+| Workers' comp | `wcq_11` | ACORD 130 No. 11: Seasonal employees | boolean | Recommended | 78 | C E |
+| Workers' comp | `wcq_11_explain` | ACORD 130 No. 11, explanation: Seasonal employees | text | Recommended | 79 | C E |
+| Workers' comp | `wcq_12` | ACORD 130 No. 12: Volunteer or donated labor | boolean | Recommended | 80 | C E |
+| Workers' comp | `wcq_12_explain` | ACORD 130 No. 12, explanation: Volunteer or donated labor | text | Recommended | 81 | C E |
+| Workers' comp | `wcq_13` | ACORD 130 No. 13: Employees with physical handicaps | boolean | Recommended | 82 | C E |
+| Workers' comp | `wcq_13_explain` | ACORD 130 No. 13, explanation: Employees with physical handicaps | text | Recommended | 83 | C E |
+| Workers' comp | `wcq_14` | ACORD 130 No. 14: Travel out of state | boolean | Recommended | 84 | C E |
+| Workers' comp | `wcq_14_explain` | ACORD 130 No. 14, explanation: Travel out of state | text | Recommended | 85 | C E |
+| Workers' comp | `wcq_15` | ACORD 130 No. 15: Athletic teams sponsored | boolean | Recommended | 86 | C E |
+| Workers' comp | `wcq_15_explain` | ACORD 130 No. 15, explanation: Athletic teams sponsored | text | Recommended | 87 | C E |
+| Workers' comp | `wcq_16` | ACORD 130 No. 16: Physicals after offers of employment | boolean | Recommended | 88 | C E |
+| Workers' comp | `wcq_16_explain` | ACORD 130 No. 16, explanation: Physicals after offers of employment | text | Recommended | 89 | C E |
+| Workers' comp | `wcq_17` | ACORD 130 No. 17: Other insurance with this insurer | boolean | Recommended | 90 | C E |
+| Workers' comp | `wcq_17_explain` | ACORD 130 No. 17, explanation: Other insurance with this insurer | text | Recommended | 91 | C E |
+| Workers' comp | `wcq_18` | ACORD 130 No. 18: Coverage declined, cancelled or non-renewed in the last three years | boolean | Recommended | 92 | C E |
+| Workers' comp | `wcq_18_explain` | ACORD 130 No. 18, explanation: Coverage declined, cancelled or non-renewed in the last three years | text | Recommended | 93 | C E |
+| Workers' comp | `wcq_19` | ACORD 130 No. 19: Employee health plans provided | boolean | Recommended | 94 | C E |
+| Workers' comp | `wcq_19_explain` | ACORD 130 No. 19, explanation: Employee health plans provided | text | Recommended | 95 | C E |
+| Workers' comp | `wcq_20` | ACORD 130 No. 20: Employees work for other businesses or subsidiaries | boolean | Recommended | 96 | C E |
+| Workers' comp | `wcq_20_explain` | ACORD 130 No. 20, explanation: Employees work for other businesses or subsidiaries | text | Recommended | 97 | C E |
+| Workers' comp | `wcq_21` | ACORD 130 No. 21: Employees leased to or from other employers | boolean | Recommended | 98 | C E |
+| Workers' comp | `wcq_21_explain` | ACORD 130 No. 21, explanation: Employees leased to or from other employers | text | Recommended | 99 | C E |
+| Workers' comp | `wcq_22` | ACORD 130 No. 22: Employees predominantly working at home | boolean | Recommended | 100 | C E |
+| Workers' comp | `wcq_22_explain` | ACORD 130 No. 22, explanation: Employees predominantly working at home | text | Recommended | 101 | C E |
+| Workers' comp | `wcq_23` | ACORD 130 No. 23: Tax liens or bankruptcy in the last five years | boolean | Recommended | 102 | C E |
+| Workers' comp | `wcq_23_explain` | ACORD 130 No. 23, explanation: Tax liens or bankruptcy in the last five years | text | Recommended | 103 | C E |
+| Workers' comp | `wcq_24` | ACORD 130 No. 24: Unpaid workers' comp premium due | boolean | Recommended | 104 | C E |
+| Workers' comp | `wcq_24_explain` | ACORD 130 No. 24, explanation: Unpaid workers' comp premium due | text | Recommended | 105 | C E |
+| Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 41 | C D |
+| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 42 | C |
+| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 43 | C |
+| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 46 | C |
+| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 47 | C |
+| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 48 | C |
+| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 49 | C |
+| Operations & HR | `hris_system` | HRIS system | text | Recommended | 50 | C |
+| Operations & HR | `key_challenges` | Key challenges | text | Recommended | 51 | C |
+| Operations & HR | `business_goals` | Business goals | text | Recommended | 52 | C |
 
 Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`, `dob`) are free text. `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks. `transcript` is checked message by message (see "The transcript" below).
 
@@ -161,11 +271,11 @@ Paths are zero-based: `hq_state`, `states[2]`, `census[3].dob`, `census[0].depen
 
 The migration must be deployed before the front end, which selects `data_version`.
 
-`chamber_sessions.schema_version` (smallint, migration `20261103091000`) records which version of the intake schema the row's answers follow. The current version is 2, the default, and the database refuses any other value. Version 2 (migrations `20261103120000` and `20261103120100`) is version 1 plus the workers' comp block, with nothing in v1 changed, so every row moved to 2 without its answers being rewritten. The move was not a save: no `data_version`, `updated_at` or `last_activity_at` changed. A later version changes the check in its own migration, says how rows move, and changes `INTAKE_SCHEMA_VERSION` with it.
+`chamber_sessions.schema_version` (smallint, migration `20261103091000`) records which version of the intake schema the row's answers follow. The current version is 3, the default, and the database refuses any other value. Version 2 (migrations `20261103120000` and `20261103120100`) is version 1 plus the workers' comp block. Version 3 (migration `20261112090000`, then one migration for each group of new answers) is version 2 plus the common questions: what PEOs and their carriers already ask on their own forms (Epic K). Neither changed an answer the version before it had, so every row moved on without its answers being rewritten. Each move was not a save: no `data_version`, `updated_at` or `last_activity_at` changed. A later version changes the check in its own migration, says how rows move, and changes `INTAKE_SCHEMA_VERSION` with it.
 
-### JSON Schema v2 and strict checks on the way in
+### JSON Schema v3 and strict checks on the way in
 
-The canonical schema is `supabase/functions/_shared/intakeSchema.ts`: `chamber_data` as a JSON Schema (draft 2020-12), published as [`docs/intake-schema.v2.json`](intake-schema.v2.json). Regenerate the file with `npm run schema:intake`; `src/data/intakeSchema.test.ts` fails while the two differ. [`docs/intake-schema.v1.json`](intake-schema.v1.json) is version 1 as it was published; the same test checks that v2 only adds to it.
+The canonical schema is `supabase/functions/_shared/intakeSchema.ts`: `chamber_data` as a JSON Schema (draft 2020-12), published as [`docs/intake-schema.v3.json`](intake-schema.v3.json). Regenerate the file with `npm run schema:intake`; `src/data/intakeSchema.test.ts` fails while the two differ. [`docs/intake-schema.v1.json`](intake-schema.v1.json) and [`docs/intake-schema.v2.json`](intake-schema.v2.json) are those versions as they were published; the same test checks that v3 only adds to v2, so a v2 intake opens and certifies unchanged.
 
 Each top-level property carries an `x-intake` annotation: `{ "label", "section", "required", "rank" }`. Validators ignore it; it is how the schema publishes each field's required status and the order Lenore asks in.
 
@@ -216,12 +326,14 @@ The roster is an array of rows (`CensusEmployee`, defined in `supabase/functions
 | `classification` | `w2` or `1099`. A blank label is stored as W-2 and recorded in `assumed`; a label that is neither (a K-1 owner) drops the row rather than guess. |
 | `coverage_tier` | `EE`, `EE+SP`, `EE+CH`, `FAM` or `WAIVE`. When absent, the Manuscript derives a tier from the `dependents` named, and otherwise shows it as not provided. |
 | `class_code` | Four-digit workers' comp code. |
-| `dependents` | Named in conversation, never read from a document. |
+| `gender`, `hire_date`, `cobra`, `home_state` | New in v3 (K-2.1): what a health underwriter rates the group on. `F`, `M` or `X`; `YYYY-MM-DD`; whether the person is covered under COBRA rather than as an active employee; and the state they live in. Each is optional: a census without one is accepted, and each column anyone lacks is one open item ("Missing from the census"), never one per person and never a blocker. |
+| `worksite`, `remote`, `travels` | New in v3 (K-2.2): the office, store or site the person works at, and whether they work remotely or travel for work, so a workers' comp underwriter can assign class codes. Each is optional and none is an open item. |
+| `dependents` | Read from a census file that lists them (K-2.3): a row whose `relationship` cell says spouse, domestic partner, child or anything else that is not the employee is a dependent of the nearest employee row above it. A relationship that isn't recognised is read as an employee, never as a dependent, and the prospect is told which labels those were. A dependent row with no readable employee row above it, with no first name, or past 20 for one employee is not read, and the prospect is told how many. A file that lists no dependent leaves the ones already held alone. Never asked for in chat. |
 | `assumed` | Which of `classification`, `employment_type` and `annual_salary` hold a default rather than an answer. Absent when none do. |
 
 #### The census template
 
-The Upload tab offers `employee-census-template.csv` (US-2.3d, D21): one header row whose columns are the row keys above, from `first_name` to `class_code`, without `age`, `dependents` or `assumed`, and with no SSN or bank column. The list is `CENSUS_TEMPLATE_COLUMNS` in `supabase/functions/_shared/censusTemplate.ts`, and the browser builds the file from it, so a filled-in template reads with every column matched (`document-extract/parse.test.ts`) and every fact stated, none of them a default. Lenore points prospects to it whenever the roster comes up. To add a column, add it to that list and its guide line (`CENSUS_TEMPLATE_GUIDE`, which the Upload tab shows), and make sure `document-extract` maps the header (`SYNONYMS` in `parse.ts`).
+The Upload tab offers `employee-census-template.csv` (US-2.3d, D21): one header row whose columns are the row keys above, from `first_name` to `class_code` and the v3 columns, without `age`, `dependents` or `assumed`, and with no SSN or bank column, plus `relationship` after `last_name`: blank on an employee's row, and `spouse`, `domestic_partner`, `child` or `other` on a dependent's, which goes on the rows directly under their employee (K-2.3). The census download writes the same layout back, and The Manuscript lists the dependents under its dependent summary, dates of birth masked to the year unless an advisor reveals them. The list is `CENSUS_TEMPLATE_COLUMNS` in `supabase/functions/_shared/censusTemplate.ts`, and the browser builds the file from it, so a filled-in template reads with every column matched (`document-extract/parse.test.ts`) and every fact stated, none of them a default. Lenore points prospects to it whenever the roster comes up. To add a column, add it to that list and its guide line (`CENSUS_TEMPLATE_GUIDE`, which the Upload tab shows), and make sure `document-extract` maps the header (`SYNONYMS` in `parse.ts`).
 
 #### Defaults are recorded, not passed off as answers
 

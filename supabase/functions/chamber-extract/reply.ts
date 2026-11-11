@@ -16,17 +16,27 @@ export const ACKNOWLEDGE = "Thanks, got it.";
 export const WRAP_UP_REPLY = "Thanks, that's everything I need. You can look over your intake on the Review tab.";
 export const STOPPING_REPLY = "No problem. Your answers are saved, so come back any time to carry on, or check them on the Review tab.";
 
+/**
+ * Lenore's wrap-up when the model gave none: with answers still to enter in the workspace (`workspace`, each as
+ * "FEIN, on the Company tab"), it says where they go, since she never asks for them in chat (K-1.1).
+ */
+export const wrapUpReply = (workspace: readonly string[]): string =>
+  workspace.length === 0
+    ? WRAP_UP_REPLY
+    : `Thanks, that's everything I need to ask. Still to enter in the workspace: ${workspace.join("; ")}. You can look over your intake on the Review tab.`;
+
 export type GuardReason = "claimed_complete" | "asked_nothing";
 
 /**
  * Lenore's reply as sent. With a field still to ask about (`next`, its question) and the prospect not stopping, it
  * always asks something and never says the intake is finished: a reply claiming completion is replaced by the next
  * question, and one that asks nothing gets it added (so an explanation she gives is kept). With nothing left, or the
- * prospect stopping, the model's reply stands. No reply of the model's own: the next question, or the wrap-up.
+ * prospect stopping, the model's reply stands. No reply of the model's own: the next question, or the wrap-up, which
+ * names where any answers still to enter in the workspace go (`workspace`).
  * `reason` says when the reply was changed.
  */
-export function guardReply(reply: string | null, next: string | null, stopping: boolean): { reply: string; reason: GuardReason | null } {
-  if (!reply) return { reply: !next ? WRAP_UP_REPLY : stopping ? STOPPING_REPLY : `${ACKNOWLEDGE} ${next}`, reason: null };
+export function guardReply(reply: string | null, next: string | null, stopping: boolean, workspace: readonly string[] = []): { reply: string; reason: GuardReason | null } {
+  if (!reply) return { reply: !next ? wrapUpReply(workspace) : stopping ? STOPPING_REPLY : `${ACKNOWLEDGE} ${next}`, reason: null };
   if (!next || stopping) return { reply, reason: null };
   if (CLAIMS_COMPLETE.test(reply)) return { reply: `${ACKNOWLEDGE} ${next}`, reason: "claimed_complete" };
   if (!reply.includes("?")) return { reply: `${reply.trim()} ${next}`, reason: "asked_nothing" };

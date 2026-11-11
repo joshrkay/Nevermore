@@ -178,3 +178,43 @@ describe("greetings", () => {
     expect(dropped).not.toHaveProperty("kind");
   });
 });
+
+// ADR 0006: a FEIN typed into the conversation is kept out of the transcript and away from the model.
+describe("a FEIN typed into the conversation", () => {
+  it("is removed from the message as it joins the transcript, and from a stored transcript as it is read", () => {
+    expect(createChatMessage("user", "Our EIN is 84-1234567").text).toBe("Our EIN is [redacted]");
+    expect(parseTranscript([{ id: "m1", sender: "user", text: "EIN 84-1234567", timestamp: "2026-11-11T00:00:00Z" }])[0].text).toBe("EIN [redacted]");
+  });
+});
+
+// K-1.1: what Lenore's model is sent of the answers so far never holds a whole FEIN.
+describe("chatAnswers and the FEIN", () => {
+  it("sends the model only the last four digits of the employer's FEIN, and no legal entity's FEIN at all", () => {
+    const sent = chatAnswers({ ...EMPTY_CHAMBER_DATA, fein: "841234567", entities: [{ legal_name: "Acme LLC", fein: "841234568" }, { legal_name: "Acme Inc" }] });
+    expect(sent.fein).toBe("**-***4567");
+    expect(sent.entities).toEqual([{ legal_name: "Acme LLC" }, { legal_name: "Acme Inc" }]);
+    expect(JSON.stringify(sent)).not.toMatch(/8412345/);
+  });
+
+  it("sends nothing for a FEIN that isn't held", () => {
+    expect(chatAnswers(EMPTY_CHAMBER_DATA).fein).toBeNull();
+  });
+
+  // Review finding: the answers go with every message and are capped, so a table travels as its key column only.
+  it("sends the model each table's key column only, so a long table can't crowd out the conversation", () => {
+    const duties = "x".repeat(1000);
+    const data = {
+      ...EMPTY_CHAMBER_DATA,
+      owners_officers: Array.from({ length: 20 }, (_, i) => ({ name: `Owner ${i}`, title: "Director", ownership_percent: 5, duties, covered: true })),
+      loss_history: [{ policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400 }, { carrier: "No year given" }],
+      medical_plans: [{ name: "Gold PPO", rate_ee: 612.4 }],
+      suta_rates: [{ state: "CA", rate: 3.4 }],
+    };
+    const sent = chatAnswers(data);
+    expect(sent.owners_officers[3]).toEqual({ name: "Owner 3" });
+    expect(sent.loss_history).toEqual([{ policy_year: 2025 }, {}]);
+    expect(sent.medical_plans).toEqual([{ name: "Gold PPO" }]);
+    expect(sent.suta_rates).toEqual([{ state: "CA" }]);
+    expect(JSON.stringify(sent).length).toBeLessThan(5000);
+  });
+});

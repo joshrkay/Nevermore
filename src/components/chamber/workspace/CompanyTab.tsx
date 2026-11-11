@@ -1,7 +1,9 @@
 import type { ChamberData } from "@/data/chamberTypes";
 import type { FieldAction, FieldKey, ProvenanceMap } from "@/data/provenance";
 import { motion } from "framer-motion";
+import { formatAnswer } from "@/data/answerFormat";
 import ProvenanceField from "./ProvenanceField";
+import RowsField from "./RowsField";
 
 interface CompanyTabProps {
   data: ChamberData;
@@ -13,11 +15,21 @@ interface CompanyTabProps {
 const CompanyTab = ({ data, isDemo, provenance = {}, onAction }: CompanyTabProps) => {
   const fields: { label: string; field: FieldKey; value: string | null | undefined }[] = [
     { label: "Business Name", field: "company_name", value: data.company_name },
+    { label: "FEIN", field: "fein", value: data.fein && formatAnswer("fein", data.fein) },
+    { label: "Entity Type", field: "entity_type", value: data.entity_type && formatAnswer("entity_type", data.entity_type) },
+    { label: "Year Founded", field: "year_founded", value: data.year_founded?.toString() },
+    { label: "Street Address", field: "street_address", value: data.street_address },
+    { label: "Website", field: "website", value: data.website },
     { label: "Industry", field: "industry", value: data.industry },
+    { label: "NAICS Code", field: "naics_code", value: data.naics_code && formatAnswer("naics_code", data.naics_code) },
+    { label: "Description of Operations", field: "operations_description", value: data.operations_description },
     { label: "HQ State", field: "hq_state", value: data.hq_state },
     { label: "All States", field: "states", value: data.states.length > 0 ? data.states.join(", ") : null },
     { label: "Employee Count", field: "employee_count", value: data.employee_count?.toString() },
     { label: "Target Start", field: "start_month", value: data.start_month },
+    { label: "In a PEO Now", field: "in_peo", value: data.in_peo === null ? null : data.in_peo ? "Yes" : "No" },
+    { label: "Current PEO", field: "current_peo", value: data.current_peo },
+    { label: "PEO Agreement Renewal", field: "peo_renewal_date", value: data.peo_renewal_date },
     { label: "Entity Structure", field: "multiple_entities", value: data.multiple_entities === null ? null : data.multiple_entities ? `Multiple (${data.fein_count ?? "?"} FEINs)` : "Single entity" },
   ];
 
@@ -51,6 +63,17 @@ const CompanyTab = ({ data, isDemo, provenance = {}, onAction }: CompanyTabProps
           />
         ))}
       </div>
+
+      {/* Each legal entity, once the employer is more than one (K-1.1). */}
+      {(data.multiple_entities || data.entities.length > 0) && (
+        <RowsField
+          field="entities"
+          rows={data.entities}
+          provenance={provenance.entities}
+          onAction={isDemo ? undefined : onAction}
+          hint="List each legal entity with its FEIN."
+        />
+      )}
 
       {/* Virgin medical badge */}
       {data.virgin_medical !== null && (

@@ -1,13 +1,18 @@
+import { fieldApplies } from "@/data/followUp";
+import { statesWithoutRate, SUTA_RATE_HINT } from "@/data/sutaRates";
+import { isRowListField } from "@/data/rowColumns";
+import RowsField from "./RowsField";
+import { formatAnswer } from "@/data/answerFormat";
 import { useEffect, useRef, type ReactNode } from "react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { eligibilityChecks, employeeFlag, headcount } from "@/data/manuscript";
 import { censusPay, classificationLabel, isAssumed } from "@/data/census";
-import { FIELD_LABELS, formatFieldValue, isEmpty, verificationSettles, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
+import { FIELD_LABELS, isEmpty, verificationSettles, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import { isSettled } from "@/data/followUp";
 import { openItems } from "@/data/openItems";
 import { REVIEW_FIELDS, REVIEW_SECTIONS } from "@/data/reviewFields";
 import { SECTION_STATUS_LABELS, sectionStatus, type SectionStatus } from "@/data/sectionStatus";
-import { isRequiredField, missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
+import { CENSUS_COLUMN_HINT, isRequiredField, missingCensusColumns, missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
 import { certificationBlockingItems, NO_VERIFIED_FIELDS, requiredItems, type RequiredItem } from "@/data/requiredItems";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
@@ -43,11 +48,11 @@ interface Row {
 }
 
 /** A captured value as text, or null when there is nothing to show. 0 and "No" are answers. */
-const shown = (value: unknown): string | null =>
-  value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0) ? null : formatFieldValue(value);
+const shown = (field: FieldKey, value: unknown): string | null =>
+  value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0) ? null : formatAnswer(field, value);
 
 const displayOf = (field: FieldKey, value: unknown): string | null => {
-  const text = shown(value);
+  const text = shown(field, value);
   if (text === null) return null;
   if (field === "funding_days") return `${text} days`;
   if (field === "wc_annual_premium" && typeof value === "number") return `$${value.toLocaleString()}`;
@@ -57,13 +62,14 @@ const displayOf = (field: FieldKey, value: unknown): string | null => {
 // Every answer the packet draws on, by section, each editable in place.
 function rowsBySection(data: ChamberData): Record<ReviewSection, Row[]> {
   return Object.fromEntries(
-    REVIEW_SECTIONS.map(({ key }) => [key, REVIEW_FIELDS[key].map((field) => ({ label: FIELD_LABELS[field], field, display: displayOf(field, data[field]) }))]),
+    // A field that doesn't apply yet (the explanation of a question not answered yes) has no row.
+    REVIEW_SECTIONS.map(({ key }) => [key, REVIEW_FIELDS[key].filter((field) => fieldApplies(field, data)).map((field) => ({ label: FIELD_LABELS[field], field, display: displayOf(field, data[field]) }))]),
   ) as Record<ReviewSection, Row[]>;
 }
 
 /** How many of a section's answers are settled (an answer, or "Doesn't apply" or "Not known yet"), of how many. */
 function sectionProgress(section: ReviewSection, data: ChamberData, provenance: ProvenanceMap, verified: ReadonlySet<string>): { settled: number; total: number } {
-  const fields = REVIEW_FIELDS[section];
+  const fields = REVIEW_FIELDS[section].filter((field) => fieldApplies(field, data));
   // An answer an advisor verified is settled too, as in the rows and the open items: not one in required
   // conflict (certification still needs it chosen) and not one with no answer (verifying never supplies one).
   const settled = fields.filter((f) =>
@@ -159,6 +165,10 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
   const missing = missingRecommended(uploaded);
   const submitted = submittedCategories(uploaded);
   const recommended = missingRecommendedItems(data).filter((item) => open.some((o) => o.key === item.key));
+  // Columns PEOs ask of every employee that this census lacks (K-2.1): one line each, never a blocker.
+  const censusColumns = missingCensusColumns(data);
+  // States of operation with no unemployment tax rate (K-4.2): one line each, never a blocker.
+  const unratedStates = statesWithoutRate(data);
   const rows = rowsBySection(data);
   const statuses = Object.fromEntries(REVIEW_SECTIONS.map(({ key }) => [key, sectionStatus(key, data, provenance, verified, open)])) as Record<ReviewSection, SectionStatus>;
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
@@ -181,6 +191,8 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
             editable={row.editable}
             allowNotApplicable
           />
+          {/* A table of rows is read here and edited on its own tab. */}
+          {isRowListField(row.field) && data[row.field].length > 0 && <RowsField field={row.field} rows={data[row.field]} />}
         </div>
       ))}
     </div>
@@ -222,13 +234,27 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
           Every required answer is here. You can certify once you've checked the rest.
         </div>
       )}
-      {recommended.length > 0 && (
+      {(recommended.length > 0 || censusColumns.length > 0 || unratedStates.length > 0) && (
         <div className="bg-card border border-border rounded-xl p-4 text-sm space-y-1">
           <p className="text-sm font-semibold text-muted-foreground">Recommended</p>
           {recommended.map((item) => (
             <p key={item.key}>
               <span className="font-medium">{item.label}</span>{" "}
               <span className="text-muted-foreground text-xs">{item.hint}</span>
+            </p>
+          ))}
+          {unratedStates.map((state) => (
+            <p key={state}>
+              <span className="font-medium">Unemployment tax rate, {state}</span>{" "}
+              <span className="text-muted-foreground text-xs">{SUTA_RATE_HINT}</span>
+            </p>
+          ))}
+          {censusColumns.map((column) => (
+            <p key={column.key}>
+              <span className="font-medium">{column.label} on the census</span>{" "}
+              <span className="text-muted-foreground text-xs">
+                Missing for {column.missing} of {column.of} {column.who === "employees" ? (column.of === 1 ? "employee" : "employees") : column.of === 1 ? "person" : "people"}. {CENSUS_COLUMN_HINT}
+              </span>
             </p>
           ))}
         </div>
@@ -246,7 +272,7 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
               <ProvenanceField
                 label={item.label}
                 field={item.field}
-                display={shown(data[item.field])}
+                display={shown(item.field, data[item.field])}
                 raw={data[item.field]}
                 provenance={provenance[item.field]}
                 onAction={onAction}

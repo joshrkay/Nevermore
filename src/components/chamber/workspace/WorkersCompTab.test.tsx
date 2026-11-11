@@ -1,0 +1,141 @@
+import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
+import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
+import { applyFieldAction, type IntakeState } from "@/data/provenance";
+import WorkersCompTab from "./WorkersCompTab";
+
+function Harness({ data = {}, show }: { data?: Partial<ChamberData>; show: (d: ChamberData) => unknown }) {
+  const [state, setState] = useState<IntakeState>({ data: { ...EMPTY_CHAMBER_DATA, ...data }, provenance: {} });
+  return (
+    <>
+      <WorkersCompTab data={state.data} isDemo={false} provenance={state.provenance} onAction={(a) => setState((s) => applyFieldAction(s, a))} />
+      <output data-testid="held">{JSON.stringify(show(state.data))}</output>
+    </>
+  );
+}
+const held = () => JSON.parse(screen.getByTestId("held").textContent ?? "null");
+
+describe("the Workers' comp tab", () => {
+  it("holds the workers' comp answers the intake already had, each editable", () => {
+    render(<Harness show={(d) => d.wc_carrier} />);
+    for (const label of ["Workers' Comp Carrier", "Renewal Date", "Experience Mod", "Annual Premium"]) {
+      expect(screen.getByRole("button", { name: `Add ${label}` })).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Add Workers' Comp Carrier" }));
+    fireEvent.change(screen.getByLabelText("Workers' Comp Carrier"), { target: { value: "Pinnacle Mutual" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(held()).toBe("Pinnacle Mutual");
+  });
+
+  // K-3.1
+  it("lets the prospect list each owner and officer with title, share, duties and whether they are covered", () => {
+    render(<Harness show={(d) => d.owners_officers} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add Owners and officers" }));
+    fireEvent.change(screen.getByLabelText("Name, row 1"), { target: { value: "Dana Reyes" } });
+    fireEvent.change(screen.getByLabelText("Title, row 1"), { target: { value: "President" } });
+    fireEvent.change(screen.getByLabelText("Ownership %, row 1"), { target: { value: "60" } });
+    fireEvent.change(screen.getByLabelText("Duties, row 1"), { target: { value: "Runs sales; no field work" } });
+    fireEvent.change(screen.getByLabelText("Covered by workers' comp, row 1"), { target: { value: "no" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(held()).toEqual([{ name: "Dana Reyes", title: "President", ownership_percent: 60, duties: "Runs sales; no field work", covered: false }]);
+    const row = within(screen.getByRole("table", { name: "Owners and officers" })).getAllByRole("row")[1];
+    expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual(["Dana Reyes", "President", "60%", "Runs sales; no field work", "No"]);
+  });
+
+  it("offers yes, no or not said for whether someone is covered, and starts an edit from what is held", () => {
+    render(<Harness data={{ owners_officers: [{ name: "Sam Okafor", ownership_percent: 12.5, covered: true }] }} show={(d) => d.owners_officers} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Owners and officers" }));
+    const covered = screen.getByLabelText("Covered by workers' comp, row 1");
+    expect(within(covered).getAllByRole("option").map((o) => o.textContent)).toEqual(["—", "Yes", "No"]);
+    expect(covered).toHaveValue("yes");
+    expect(screen.getByLabelText("Ownership %, row 1")).toHaveValue("12.5");
+  });
+
+  it("names a share that isn't a percentage, and saves nothing until it is fixed", () => {
+    render(<Harness show={(d) => d.owners_officers} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add Owners and officers" }));
+    fireEvent.change(screen.getByLabelText("Name, row 1"), { target: { value: "Dana Reyes" } });
+    fireEvent.change(screen.getByLabelText("Ownership %, row 1"), { target: { value: "150" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Row 1: Ownership % doesn't look right");
+    expect(held()).toEqual([]);
+  });
+
+  it("stops offering another row at 20 people", () => {
+    render(<Harness data={{ owners_officers: Array.from({ length: 20 }, (_, i) => ({ name: `Owner ${i + 1}` })) }} show={(d) => d.owners_officers.length} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Owners and officers" }));
+    expect(screen.queryByRole("button", { name: "Add a row" })).not.toBeInTheDocument();
+  });
+
+  // K-3.2
+  it("shows payroll by class code and state, worked out from the census, with nothing to edit", () => {
+    const emp = (over: object) => ({ id: Math.random().toString(36).slice(2), first_name: "A", last_name: "B", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const, ...over });
+    render(<Harness data={{ census: [emp({ class_code: "8810", annual_salary: 100000 }), emp({ annual_salary: 40000, employment_type: "part_time" })] }} show={() => null} />);
+    const table = screen.getByRole("table", { name: "Payroll by class code and state" });
+    expect(within(table).getAllByRole("row").map((r) => r.textContent)).toEqual([
+      "StateClass codeFull timePart timeAnnual payroll", "CA881010$100,000", "CANo class code yet01$40,000",
+    ]);
+    expect(screen.queryByRole("button", { name: /Payroll by class code/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/It changes only when your census does/)).toBeInTheDocument();
+  });
+
+  it("says the table comes from the census while there is none", () => {
+    render(<Harness show={() => null} />);
+    expect(screen.queryByRole("table", { name: "Payroll by class code and state" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Upload a census and this table fills itself in/)).toBeInTheDocument();
+  });
+
+  // K-3.3
+  it("lets the prospect enter each policy year's carrier, premium, mod, claims, paid and reserved", () => {
+    render(<Harness show={(d) => d.loss_history} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add Loss history" }));
+    fireEvent.change(screen.getByLabelText("Policy year, row 1"), { target: { value: "2025" } });
+    fireEvent.change(screen.getByLabelText("Carrier, row 1"), { target: { value: "Pinnacle Mutual" } });
+    fireEvent.change(screen.getByLabelText("Premium, row 1"), { target: { value: "$18,400" } });
+    fireEvent.change(screen.getByLabelText("Experience mod, row 1"), { target: { value: "0.92" } });
+    fireEvent.change(screen.getByLabelText("Claims, row 1"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(held()).toEqual([{ policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, experience_mod: 0.92, claims: 0 }]);
+    const row = within(screen.getByRole("table", { name: "Loss history" })).getAllByRole("row")[1];
+    expect(row).toHaveTextContent("2025Pinnacle Mutual$18,4000.920———");
+    // An edit starts from the figure itself, not the way it is printed.
+    fireEvent.click(screen.getByRole("button", { name: "Edit Loss history" }));
+    expect(screen.getByLabelText("Premium, row 1")).toHaveValue("18400");
+  });
+
+  it("takes 'no prior coverage' for a year as an answer, and stops at five years", () => {
+    render(<Harness data={{ loss_history: [2021, 2022, 2023, 2024].map((policy_year) => ({ policy_year })) }} show={(d) => d.loss_history} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Loss history" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add a row" }));
+    fireEvent.change(screen.getByLabelText("Policy year, row 5"), { target: { value: "2020" } });
+    fireEvent.change(screen.getByLabelText("No coverage, row 5"), { target: { value: "yes" } });
+    expect(screen.queryByRole("button", { name: "Add a row" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(held()[4]).toEqual({ policy_year: 2020, no_coverage: true });
+  });
+
+  // K-3.4
+  it("lists the 24 ACORD 130 questions in the form's words, naming the edition", () => {
+    render(<Harness show={() => null} />);
+    expect(screen.getByRole("heading", { name: "ACORD 130 (2017/05): General Information" })).toBeInTheDocument();
+    expect(screen.getByText("ANY WORK PERFORMED UNDERGROUND OR ABOVE 15 FEET?")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^Add No\. \d+:/ })).toHaveLength(24);
+  });
+
+  it("takes a yes with its explanation, and asks for no explanation of a no", () => {
+    render(<Harness show={(d) => [d.wcq_06, d.wcq_06_explain]} />);
+    expect(screen.queryByRole("button", { name: /explanation/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add No. 6: Subcontractors used" }));
+    fireEvent.change(screen.getByLabelText("No. 6: Subcontractors used"), { target: { value: "yes" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add No. 6: Subcontractors used (explanation)" }));
+    fireEvent.change(screen.getByLabelText("No. 6: Subcontractors used (explanation)"), { target: { value: "About 20% of the work" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(held()).toEqual([true, "About 20% of the work"]);
+    fireEvent.click(screen.getByRole("button", { name: "Edit No. 6: Subcontractors used" }));
+    fireEvent.change(screen.getByLabelText("No. 6: Subcontractors used"), { target: { value: "no" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.queryByRole("button", { name: /No\. 6: Subcontractors used \(explanation\)/ })).not.toBeInTheDocument();
+  });
+});

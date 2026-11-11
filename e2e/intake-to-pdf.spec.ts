@@ -156,7 +156,7 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await expect(page.getByText(String(INTAKE_EXTRACTION.employee_count), { exact: true })).toBeVisible();
     // HQ State and All States both read "NY".
     await expect(page.getByText(INTAKE_EXTRACTION.hq_state, { exact: true })).toHaveCount(2);
-    await expect(page.getByText("5 of 7 fields captured")).toBeVisible();
+    await expect(page.getByText("5 of 17 fields captured")).toBeVisible();
 
     // Industry is the one value Lenore inferred rather than read from the message.
     await expect(page.getByText("Lenore captured this — please confirm")).toHaveCount(1);
@@ -168,11 +168,11 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
     await page.getByRole("textbox", { name: "Target Start", exact: true }).fill(TARGET_START);
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText(TARGET_START, { exact: true })).toBeVisible();
-    await expect(page.getByText("6 of 7 fields captured")).toBeVisible();
+    await expect(page.getByText("6 of 17 fields captured")).toBeVisible();
   });
 
   await test.step("Review the intake", async () => {
-    await page.getByRole("button", { name: "⑦ Review", exact: true }).click();
+    await page.getByRole("button", { name: "⑧ Review", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
     await expect(page.getByText(COMPANY_NAME, { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "See Your PEO Matches →", exact: true }).click();
@@ -194,13 +194,13 @@ test("a guest's text intake becomes a certified, downloadable Manuscript", async
       .toBe(PEO);
     await page.reload();
     await expect(page).toHaveURL(`/start?session=${sessionId}`);
-    await page.getByRole("button", { name: "⑨ Certify & sign", exact: true }).click();
+    await page.getByRole("button", { name: "⑩ Certify & sign", exact: true }).click();
     await expect(page.getByText(`before your packet is prepared for ${PEO}.`)).toBeVisible();
     await expect(page.getByText(consentStatements(PEO)[2], { exact: true })).toBeVisible();
     // And it is the same intake: the answers given before the reload are still there.
     await page.getByRole("button", { name: "② Company", exact: true }).click();
     await expect(page.getByText(TARGET_START, { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "⑧ PEO Match", exact: true }).click();
+    await page.getByRole("button", { name: "⑨ PEO Match", exact: true }).click();
     await expect(page.getByText("✓ Selected")).toBeVisible();
     await page.getByRole("button", { name: `Proceed with ${PEO} →`, exact: true }).click();
     await expect(page.getByRole("heading", { name: "Certify & sign", exact: true })).toBeVisible();

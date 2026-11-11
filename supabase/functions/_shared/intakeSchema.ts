@@ -1,6 +1,7 @@
-// The canonical intake schema, version 2: chamber_data as JSON Schema (draft 2020-12), and a strict
-// validator for it. Version 2 is version 1 plus the workers' comp block (decision D18); nothing in v1
-// changed, so every v1 answer set is a v2 one.
+// The canonical intake schema, version 3: chamber_data as JSON Schema (draft 2020-12), and a strict
+// validator for it. Version 2 was version 1 plus the workers' comp block (decision D18). Version 3 adds the
+// common questions (Epic K): what PEOs and their carriers already ask on their own forms. Each version only
+// adds optional answers, so every v1 or v2 answer set is a v3 one.
 //
 // Each top-level property also carries an `x-intake` annotation (label, section, required, rank: see
 // IntakeFieldMeta). It is part of the published contract, and the validator ignores it. Strict means a value is accepted as it is or refused with a reason. Nothing is
@@ -19,13 +20,15 @@
 // older client can save a newer census), the legacy `employees` roster is not part of the schema, and a
 // census row must carry the fields every writer gives it.
 //
-// docs/intake-schema.v2.json is this schema, printed (npm run schema:intake). docs/intake-schema.v1.json is
-// version 1 as it was published. src/data/intakeSchema.test.ts keeps the first equal to this schema and
-// checks that v2 only adds to v1.
+// docs/intake-schema.v3.json is this schema, printed (npm run schema:intake). docs/intake-schema.v1.json and
+// v2.json are those versions as they were published, and are never rewritten. src/data/intakeSchema.test.ts
+// keeps v3.json equal to this schema and checks that v3 only adds to v2.
 //
-// No imports: it runs under Deno (the edge functions) and Vite (the app) alike.
+// Relative imports only: it runs under Deno (the edge functions) and Vite (the app) alike.
 
-export const INTAKE_SCHEMA_VERSION = 2;
+import { ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "./acord130.ts";
+
+export const INTAKE_SCHEMA_VERSION = 3;
 
 // The 50 states, DC and the five inhabited territories (the migrations' sync block us_state_codes).
 export const STATE_CODES = [
@@ -48,7 +51,21 @@ export const LIMITS = {
   censusId: 64,
   experienceMod: 10,
   dollars: 100_000_000,
+  // New in v3 (the migrations' sync block row_caps holds each list of rows to its cap).
+  yearMin: 1600,
+  yearMax: 2100,
+  entities: 50,
+  ownersOfficers: 20,
+  lossYears: 5,
+  medicalPlans: 20,
+  sutaRates: 60,
+  percent: 100,
+  // An amount with cents, such as a monthly premium rate.
+  money: 1_000_000,
 } as const;
+
+/** How an employer is organised, as PEO and carrier forms ask it (K-1.1). */
+export const ENTITY_TYPES = ["sole_proprietorship", "partnership", "llc", "c_corporation", "s_corporation", "nonprofit", "other"] as const;
 
 // ---------- What the schema says about each field, beyond its rule ----------
 
@@ -88,6 +105,9 @@ export const REQUIRED_FIELDS = ["company_name", "states", "pay_frequency"] as co
 const RANKED_RECOMMENDED = [
   "census", "employee_count", "industry", "hq_state", "current_carrier", "renewal_date", "payroll_vendor",
   "wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium",
+  // New in v3: the single-value common questions follow the fields ranked before them (Epic K).
+  "fein", "entity_type", "year_founded", "street_address", "website", "operations_description", "naics_code",
+  "in_peo", "current_peo", "peo_renewal_date",
 ] as const;
 
 /** A JSON Schema, as far as this module reads one. */
@@ -103,6 +123,18 @@ const textList: JsonSchema = { type: "array", maxItems: LIMITS.listItems, items:
 // An experience modification factor such as 0.92: a fraction, so not a count.
 const experienceMod: JsonSchema = { type: ["number", "null"], minimum: 0, maximum: LIMITS.experienceMod };
 const dollars: JsonSchema = { type: ["integer", "null"], minimum: 0, maximum: LIMITS.dollars };
+// A federal employer identification number: the nine digits, with no hyphen.
+const FEIN_PATTERN = "^[0-9]{9}$";
+const FEIN_TITLE = "nine digits, such as 123456789";
+const fein: JsonSchema = { title: FEIN_TITLE, type: ["string", "null"], pattern: FEIN_PATTERN };
+// A six-digit NAICS code. The schema holds its shape; the sanitiser and chat extraction also hold it to the 2022
+// industries (naics2022.ts).
+const naicsCode: JsonSchema = { title: "a six-digit NAICS code, such as 541430", type: ["string", "null"], pattern: "^[0-9]{6}$" };
+const choice = (values: readonly string[]): JsonSchema => ({ type: ["string", "null"], enum: [...values, null] });
+const year: JsonSchema = { type: ["integer", "null"], minimum: LIMITS.yearMin, maximum: LIMITS.yearMax };
+// An amount with cents inside a row, such as a monthly premium rate.
+const money: JsonSchema = { type: "number", minimum: 0, maximum: LIMITS.money };
+const rows = (def: string, maxItems: number): JsonSchema => ({ type: "array", maxItems, items: { $ref: `#/$defs/${def}` } });
 
 // Each answer's rule, section and label, in the order the schema lists them.
 const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: string][] = [
@@ -153,6 +185,36 @@ const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: stri
   ["wc_experience_mod", experienceMod, "workers_comp", "Experience mod"],
   ["wc_annual_premium", dollars, "workers_comp", "Workers' comp annual premium"],
 
+  // New in v3 (Epic K, the common questions). K-1.1: who the employer is.
+  ["fein", fein, "company", "FEIN"],
+  ["entity_type", choice(ENTITY_TYPES), "company", "Entity type"],
+  ["year_founded", year, "company", "Year founded"],
+  ["street_address", text(), "company", "Street address"],
+  ["website", text(), "company", "Website"],
+  ["entities", rows("entity", LIMITS.entities), "company", "Legal entities"],
+  // K-1.2: the industry as a code and a description, beside the free-text `industry`.
+  ["naics_code", naicsCode, "company", "NAICS code"],
+  ["operations_description", text(), "company", "Description of operations"],
+  // K-1.3: whether the employer is in a PEO now. "No" closes the other two (src/data/provenance.ts).
+  ["in_peo", flag, "company", "In a PEO now"],
+  ["current_peo", text(), "company", "Current PEO"],
+  ["peo_renewal_date", text(), "company", "PEO agreement renewal"],
+
+  // K-3.1: each owner and officer, for pricing workers' comp inclusions and exclusions.
+  ["owners_officers", rows("ownerOfficer", LIMITS.ownersOfficers), "workers_comp", "Owners and officers"],
+  // K-3.3: five policy years of workers' comp loss history.
+  ["loss_history", rows("lossYear", LIMITS.lossYears), "workers_comp", "Loss history"],
+  // K-4.1: each current medical plan, for a side-by-side with what the employer pays now.
+  ["medical_plans", rows("medicalPlan", LIMITS.medicalPlans), "benefits", "Current medical plans"],
+  // K-4.2: the employer's unemployment tax rate in each state of operation.
+  ["suta_rates", rows("sutaRate", LIMITS.sutaRates), "payroll", "State unemployment tax rates"],
+  // K-3.4: the yes/no questions of ACORD 130's general information section, each with the explanation a "yes"
+  // needs (acord130.ts holds the form's wording). A question is followed by its explanation.
+  ...ACORD_130_QUESTIONS.flatMap((q): [string, JsonSchema, FieldSection, string][] => [
+    [acordAnswerKey(q.number), flag, "workers_comp", `ACORD 130 No. ${q.number}: ${q.label}`],
+    [acordExplainKey(q.number), text(), "workers_comp", `ACORD 130 No. ${q.number}, explanation: ${q.label}`],
+  ]),
+
   ["census", { type: "array", maxItems: LIMITS.census, items: { $ref: "#/$defs/censusRow" } }, "census", "Employee census"],
 ];
 
@@ -162,14 +224,15 @@ const RANKED_KEYS: string[] = [
   ...FIELDS.map(([key]) => key).filter((key) => !(REQUIRED_FIELDS as readonly string[]).includes(key) && !(RANKED_RECOMMENDED as readonly string[]).includes(key)),
 ];
 
-export const INTAKE_SCHEMA_V2: JsonSchema = {
+export const INTAKE_SCHEMA_V3: JsonSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
-  $id: "urn:edgar-allan-advisory:intake:chamber-data:v2",
-  title: "Intake answers (chamber_data), version 2",
+  $id: "urn:edgar-allan-advisory:intake:chamber-data:v3",
+  title: "Intake answers (chamber_data), version 3",
   description:
     "What a prospect's intake holds. Every key is optional; an unanswered question is null (or an empty list). " +
     "Each property's x-intake gives its label, its section, whether an intake needs it to be ready to certify " +
-    "(required), and the order Lenore asks in (rank, 1 first). Version 2 adds the workers' comp block to version 1. " +
+    "(required), and the order Lenore asks in (rank, 1 first). Version 2 added the workers' comp block to version 1; " +
+    "version 3 adds the common questions PEOs ask on their own forms. " +
     "Generated from supabase/functions/_shared/intakeSchema.ts.",
   type: "object",
   additionalProperties: false,
@@ -204,10 +267,87 @@ export const INTAKE_SCHEMA_V2: JsonSchema = {
         classification: { type: "string", enum: ["w2", "1099"] },
         coverage_tier: { type: "string", enum: ["EE", "EE+SP", "EE+CH", "FAM", "WAIVE"] },
         class_code: { type: "string", pattern: "^[0-9]{4}$" },
+        // New in v3 (K-2.1): what a health underwriter rates the group on. Each is optional.
+        gender: { type: "string", enum: ["F", "M", "X"] },
+        hire_date: { type: "string", maxLength: LIMITS.dob },
+        cobra: { type: "boolean" },
+        home_state: { title: "a US state or territory code such as CA", type: "string", enum: [...STATE_CODES] },
+        // New in v3 (K-2.2): where and how each employee works, for assigning workers' comp class codes.
+        worksite: { type: "string", maxLength: LIMITS.name },
+        remote: { type: "boolean" },
+        travels: { type: "boolean" },
         dependents: { type: "array", maxItems: LIMITS.dependents, items: { $ref: "#/$defs/dependent" } },
         // Which of the row's values are defaults rather than answers (CENSUS_ASSUMABLE in census.ts).
         // Added to v1 without a new version: it is optional, and the database already tolerated it.
         assumed: { type: "array", maxItems: 3, items: { type: "string", enum: ["classification", "employment_type", "annual_salary"] } },
+      },
+    },
+    // One legal entity of an employer that is more than one (K-1.1). Every key of a v3 row is optional.
+    entity: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        legal_name: { type: "string", maxLength: LIMITS.text, pattern: NOT_BLANK },
+        fein: { title: FEIN_TITLE, type: "string", pattern: FEIN_PATTERN },
+      },
+    },
+    // One owner or officer (K-3.1): who they are, how much they own, what they do, and whether workers' comp covers them.
+    ownerOfficer: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { type: "string", maxLength: LIMITS.name, pattern: NOT_BLANK },
+        title: { type: "string", maxLength: LIMITS.name },
+        ownership_percent: { type: "number", minimum: 0, maximum: LIMITS.percent },
+        duties: { type: "string", maxLength: LIMITS.text },
+        covered: { type: "boolean" },
+      },
+    },
+    // One policy year of workers' comp loss history (K-3.3). `claims: 0` is "no claims", and `no_coverage` is "no
+    // prior coverage" that year: both are answers. `valuation_date` is the date the figures are valued as of.
+    lossYear: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        policy_year: { type: "integer", minimum: LIMITS.yearMin, maximum: LIMITS.yearMax },
+        carrier: { type: "string", maxLength: LIMITS.name },
+        premium: { type: "integer", minimum: 0, maximum: LIMITS.dollars },
+        experience_mod: { type: "number", minimum: 0, maximum: LIMITS.experienceMod },
+        claims: { type: "integer", minimum: 0, maximum: LIMITS.count },
+        paid: { type: "integer", minimum: 0, maximum: LIMITS.dollars },
+        reserved: { type: "integer", minimum: 0, maximum: LIMITS.dollars },
+        valuation_date: { type: "string", maxLength: LIMITS.name },
+        no_coverage: { type: "boolean" },
+      },
+    },
+    // One current medical plan (K-4.1): its monthly rate for each coverage tier, the renewal rates when the
+    // employer has them, what the employer contributes and how many are enrolled.
+    medicalPlan: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { type: "string", maxLength: LIMITS.name, pattern: NOT_BLANK },
+        carrier: { type: "string", maxLength: LIMITS.name },
+        rate_ee: money,
+        rate_ee_sp: money,
+        rate_ee_ch: money,
+        rate_fam: money,
+        renewal_rate_ee: money,
+        renewal_rate_ee_sp: money,
+        renewal_rate_ee_ch: money,
+        renewal_rate_fam: money,
+        employer_contribution: { type: "string", maxLength: LIMITS.name },
+        enrolled: { type: "integer", minimum: 0, maximum: LIMITS.count },
+      },
+    },
+    // One state's unemployment tax rate (K-4.2): the rate as a percentage, and the year it applies to.
+    sutaRate: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        state: { title: "a US state or territory code such as CA", type: "string", enum: [...STATE_CODES] },
+        rate: { type: "number", minimum: 0, maximum: LIMITS.percent },
+        year: { type: "integer", minimum: LIMITS.yearMin, maximum: LIMITS.yearMax },
       },
     },
     dependent: {
@@ -231,7 +371,7 @@ export interface IntakeIssue {
 }
 
 /** The schema the intake follows now. */
-export const INTAKE_SCHEMA = INTAKE_SCHEMA_V2;
+export const INTAKE_SCHEMA = INTAKE_SCHEMA_V3;
 
 /** Every top-level field with its x-intake metadata, in rank order (the order Lenore asks in). */
 export const INTAKE_FIELDS: readonly ({ key: string } & IntakeFieldMeta)[] = Object.entries(INTAKE_SCHEMA.properties as Record<string, JsonSchema>)
@@ -261,7 +401,7 @@ export function assertSupportedSchema(schema: JsonSchema, at = "#"): void {
   for (const [path, child] of children) assertSupportedSchema(child as JsonSchema, path);
 }
 
-assertSupportedSchema(INTAKE_SCHEMA_V2);
+assertSupportedSchema(INTAKE_SCHEMA_V3);
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -320,7 +460,8 @@ function check(schema: JsonSchema, value: unknown, path: string, root: JsonSchem
       issues.push({ path: here, reason: `must be at most ${schema.maxLength} characters` });
     }
     if (typeof schema.pattern === "string" && !regex(schema.pattern).test(value)) {
-      issues.push({ path: here, reason: schema.pattern === NOT_BLANK ? "must not be blank" : "is not in the expected format" });
+      const reason = schema.pattern === NOT_BLANK ? "must not be blank" : typeof schema.title === "string" ? `must be ${schema.title}` : "is not in the expected format";
+      issues.push({ path: here, reason });
     }
   }
 

@@ -2,6 +2,7 @@ import type { ChamberData } from "@/data/chamberTypes";
 import type { FieldAction, FieldKey, ProvenanceMap } from "@/data/provenance";
 import { motion } from "framer-motion";
 import ProvenanceField from "./ProvenanceField";
+import RowsField from "./RowsField";
 
 interface BenefitsTabProps {
   data: ChamberData;
@@ -87,6 +88,15 @@ const BenefitsTab = ({ data, provenance = {}, onAction }: BenefitsTabProps) => {
         raw={data.has_401k}
         provenance={provenance.has_401k}
         onAction={onAction}
+      />
+
+      {/* Each current medical plan, with its rates by tier (K-4.1). An invoice or renewal letter can fill it in. */}
+      <RowsField
+        field="medical_plans"
+        rows={data.medical_plans}
+        provenance={provenance.medical_plans}
+        onAction={onAction}
+        hint="List each medical plan with its monthly rate for each tier, the renewal rates if you have them, what you contribute and how many are enrolled."
       />
     </div>
   );

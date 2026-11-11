@@ -1,4 +1,4 @@
-import type { ChamberData } from "@/data/chamberTypes";
+import type { CensusEmployee, ChamberData } from "@/data/chamberTypes";
 import { censusAge, censusGaps, censusPay, classificationLabel, isAssumed } from "@/data/census";
 import { motion } from "framer-motion";
 import type { FieldAction, ProvenanceMap } from "@/data/provenance";
@@ -11,6 +11,13 @@ interface CensusWorkspaceTabProps {
   provenance?: ProvenanceMap;
   onAction?: (action: FieldAction) => void;
 }
+
+/** Where and how someone works (K-2.2): "Oakland warehouse · travels", "Remote", or a dash when the census doesn't say. */
+const worksiteCell = (emp: CensusEmployee): string => {
+  const how = [emp.remote ? "remote" : "", emp.travels ? "travels" : ""].filter(Boolean).join(" · ");
+  if (emp.worksite) return how ? `${emp.worksite} · ${how}` : emp.worksite;
+  return how ? how.replace(/^./, (c) => c.toUpperCase()) : "—";
+};
 
 const CensusWorkspaceTab = ({ data, isDemo, provenance = {}, onAction }: CensusWorkspaceTabProps) => {
   const { census } = data;
@@ -54,10 +61,15 @@ const CensusWorkspaceTab = ({ data, isDemo, provenance = {}, onAction }: CensusW
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">Name</th>
                   <th className="text-right px-3 py-2 text-muted-foreground font-medium">Age</th>
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">State</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">Worksite</th>
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">Title</th>
                   <th className="text-right px-3 py-2 text-muted-foreground font-medium">Pay</th>
                   <th className="text-center px-3 py-2 text-muted-foreground font-medium">Type</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">Gender</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">Hired</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">Home</th>
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">Tier</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">COBRA</th>
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">WC code</th>
                 </tr>
               </thead>
@@ -86,6 +98,7 @@ const CensusWorkspaceTab = ({ data, isDemo, provenance = {}, onAction }: CensusW
                         {emp.work_state || "—"}
                         {emp.zip_code && <span className="text-muted-foreground"> {emp.zip_code}</span>}
                       </td>
+                      <td className="px-3 py-2">{worksiteCell(emp)}</td>
                       <td className="px-3 py-2">{emp.job_title || "—"}</td>
                       <td className="px-3 py-2 text-right font-mono">{censusPay(emp)}</td>
                       <td className="px-3 py-2 text-center whitespace-nowrap">
@@ -103,7 +116,11 @@ const CensusWorkspaceTab = ({ data, isDemo, provenance = {}, onAction }: CensusW
                           <span className="ml-1 text-[9px] text-warning">⚠ AB5</span>
                         )}
                       </td>
+                      <td className="px-3 py-2 font-mono">{emp.gender ?? "—"}</td>
+                      <td className="px-3 py-2 font-mono whitespace-nowrap">{emp.hire_date ?? "—"}</td>
+                      <td className="px-3 py-2 font-mono">{emp.home_state ?? "—"}</td>
                       <td className="px-3 py-2 font-mono">{emp.coverage_tier ?? "—"}</td>
+                      <td className="px-3 py-2">{emp.cobra === undefined ? "—" : emp.cobra ? "Yes" : "No"}</td>
                       <td className="px-3 py-2 font-mono">{emp.class_code ?? "—"}</td>
                     </motion.tr>
                   );

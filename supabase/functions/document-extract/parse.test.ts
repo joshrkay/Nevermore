@@ -296,9 +296,9 @@ describe("the census template", () => {
   it("reads a filled-in template, as typed and as a spreadsheet saves it, with every fact stated and no notes", () => {
     const csv = [
       censusTemplateCsv().trim(),
-      "Ann,Lee,1990-01-01,CA,94105,Engineer,105000,salary,full_time,w2,EE+SP,8810",
+      "Ann,Lee,,1990-01-01,F,2019-04-01,CA,NV,94105,Oakland office,no,yes,Engineer,105000,salary,full_time,w2,EE+SP,no,8810",
       // Saved from a spreadsheet: a US date, the ZIP's leading zero gone.
-      "Bo,Ray,3/15/1988,NJ,7030,Cashier,31200,hourly,part_time,1099,WAIVE,8017",
+      "Bo,Ray,,3/15/1988,M,6/3/2021,NJ,NJ,7030,Store 12,no,no,Cashier,31200,hourly,part_time,1099,WAIVE,yes,8017",
     ].join("\r\n");
     const reading = readGrids([{ label: "CSV", rows: csvRows(csv) }], NOW);
 
@@ -309,13 +309,151 @@ describe("the census template", () => {
     expect(census.location).toBe("CSV, rows 2–3");
     expect(census.facts).toEqual([
       "dob", "work_state", "zip_code", "job_title", "annual_salary", "compensation_type", "employment_type",
-      "classification", "coverage_tier", "class_code",
+      "classification", "coverage_tier", "class_code", "gender", "hire_date", "cobra", "home_state",
+      "worksite", "remote", "travels",
     ]);
+    expect((census.value as CensusEmployee[]).map((e) => [e.worksite, e.remote, e.travels])).toEqual([["Oakland office", false, true], ["Store 12", false, false]]);
     // No fact is a default (no `assumed`): the template states each one.
     expect(census.value).toEqual([
-      { id: expect.any(String), first_name: "Ann", last_name: "Lee", dob: "1990-01-01", work_state: "CA", zip_code: "94105", job_title: "Engineer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810" },
-      { id: expect.any(String), first_name: "Bo", last_name: "Ray", dob: "1988-03-15", work_state: "NJ", zip_code: "07030", job_title: "Cashier", annual_salary: 31200, compensation_type: "hourly", employment_type: "part_time", classification: "1099", coverage_tier: "WAIVE", class_code: "8017" },
+      { id: expect.any(String), first_name: "Ann", last_name: "Lee", dob: "1990-01-01", work_state: "CA", zip_code: "94105", job_title: "Engineer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810", gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NV", worksite: "Oakland office", remote: false, travels: true },
+      { id: expect.any(String), first_name: "Bo", last_name: "Ray", dob: "1988-03-15", work_state: "NJ", zip_code: "07030", job_title: "Cashier", annual_salary: 31200, compensation_type: "hourly", employment_type: "part_time", classification: "1099", coverage_tier: "WAIVE", class_code: "8017", gender: "M", hire_date: "2021-06-03", cobra: true, home_state: "NJ", worksite: "Store 12", remote: false, travels: false },
     ]);
+  });
+
+  // K-2.1: the spellings payroll exports and carrier census forms use for the columns PEOs ask for.
+  it("reads gender, hire date, COBRA status and home state under their common headers", () => {
+    const { columns } = mapCensusColumns(["Employee Name", "Sex", "Date of Hire", "COBRA Participant", "Home State", "Work State", "DOB"]);
+    expect(columns).toMatchObject({ full_name: 0, gender: 1, hire_date: 2, cobra: 3, home_state: 4, work_state: 5, dob: 6 });
+    for (const header of ["Gender", "Sex", "M/F", "Gender (M/F)"]) expect(mapCensusColumns(["Name", header]).columns.gender, header).toBe(1);
+    for (const header of ["Hire Date", "Date of Hire", "DOH", "Original Hire Date", "Hired", "Start Date", "Hired Date", "Most Recent Hire Dt"]) expect(mapCensusColumns(["Name", header]).columns.hire_date, header).toBe(1);
+    for (const header of ["COBRA", "Cobra Status", "On COBRA", "COBRA (Y/N)"]) expect(mapCensusColumns(["Name", header]).columns.cobra, header).toBe(1);
+    // A date of birth is still a date of birth.
+    expect(mapCensusColumns(["Name", "Birth Date", "Hire Date"]).columns).toMatchObject({ dob: 1, hire_date: 2 });
+  });
+
+  // K-2.2
+  it("reads worksite, remote and travel columns under their common headers, and never takes a worksite for the work state", () => {
+    const { columns } = mapCensusColumns(["Name", "Work State", "Worksite", "Remote", "Travels"]);
+    expect(columns).toMatchObject({ full_name: 0, work_state: 1, worksite: 2, remote: 3, travels: 4 });
+    for (const header of ["Worksite", "Work Site", "Work Location", "Location", "Office", "Job Site"]) expect(mapCensusColumns(["Name", "State", header]).columns.worksite, header).toBe(2);
+    for (const header of ["Remote", "Remote Worker", "Works Remotely", "Work From Home", "WFH", "Telecommute"]) expect(mapCensusColumns(["Name", header]).columns.remote, header).toBe(1);
+    for (const header of ["Travels", "Travel", "Travels for Work", "Business Travel", "Travel Required"]) expect(mapCensusColumns(["Name", header]).columns.travels, header).toBe(1);
+    // "Worksite State" and "Work Location State" still name the state.
+    expect(mapCensusColumns(["Name", "Worksite State"]).columns).toMatchObject({ work_state: 1 });
+    expect(mapCensusColumns(["Name", "Work Location State"]).columns).toMatchObject({ work_state: 1 });
+    expect(mapCensusColumns(["Name", "Site State Code"]).columns).toEqual({ full_name: 0, work_state: 1 });
+  });
+
+  it("still takes the work state from a home state column when the sheet has no work state, and keeps the home state too", () => {
+    const found = findCensus([["Name", "Home State", "Salary"], ["Ann Lee", "NV", "50000"]], "Sheet1", 1, NOW)!;
+    expect(found.census[0]).toMatchObject({ work_state: "NV", home_state: "NV" });
+    expect(found.facts).toContain("home_state");
+  });
+
+  it("accepts a census that has none of them", () => {
+    const found = findCensus([["Name", "State", "Salary"], ["Ann Lee", "CA", "50000"]], "Sheet1", 1, NOW)!;
+    expect(found.census[0]).not.toHaveProperty("gender");
+    expect(found.facts).toEqual(["work_state", "annual_salary"]);
+  });
+
+  // K-2.3: dependents are read from the file when it lists them, one row each under their employee.
+  describe("dependents listed under their employee", () => {
+    const sheet = [
+      ["First Name", "Last Name", "Relationship", "DOB", "State", "Salary", "Coverage Tier"],
+      ["Ann", "Lee", "Employee", "1990-01-01", "CA", "105000", "FAM"],
+      ["Raj", "Lee", "Spouse", "1989-05-05", "", "", ""],
+      ["Mia", "Lee", "Daughter", "3/2/2019", "", "", ""],
+      ["Bo", "Ray", "", "1988-03-15", "NJ", "31200", "EE"],
+      ["Cy", "Ito", "EE", "1985-07-07", "NJ", "64000", "EE+SP"],
+      ["Kim", "Ito", "Domestic Partner", "", "", "", ""],
+    ];
+
+    it("reads each dependent onto the employee above, and counts only employees as people", () => {
+      const found = findCensus(sheet, "Sheet1", 1, NOW)!;
+      expect(found.census.map((e) => e.first_name)).toEqual(["Ann", "Bo", "Cy"]);
+      expect(found.census[0].dependents).toEqual([
+        { first_name: "Raj", last_name: "Lee", dob: "1989-05-05", relationship: "spouse" },
+        { first_name: "Mia", last_name: "Lee", dob: "2019-03-02", relationship: "child" },
+      ]);
+      expect(found.census[1]).not.toHaveProperty("dependents");
+      expect(found.census[2].dependents).toEqual([{ first_name: "Kim", last_name: "Ito", dob: "", relationship: "domestic_partner" }]);
+      expect(found.facts).toContain("dependents");
+      expect(found.skipped).toBe(0);
+      // The headcount is the employees: a dependent is nobody's employee.
+      expect(censusCandidates(found).find((c) => c.field === "employee_count")?.value).toBe(3);
+    });
+
+    it("reads the relationship however a carrier's file writes it", () => {
+      const rel = (label: string) => findCensus([["Name", "Relationship", "State", "Salary"], ["Ann Lee", "Subscriber", "CA", "1"], ["Pat Lee", label, "", ""]], "S", 1, NOW)!.census[0].dependents?.[0]?.relationship;
+      for (const label of ["Spouse", "Husband", "Wife", "SP"]) expect(rel(label), label).toBe("spouse");
+      for (const label of ["Domestic Partner", "DP", "Partner"]) expect(rel(label), label).toBe("domestic_partner");
+      for (const label of ["Child", "Son", "Daughter", "Dependent Child", "CH", "Stepchild"]) expect(rel(label), label).toBe("child");
+      for (const label of ["Dependent", "Other", "Parent", "Grandchild", "Sibling", "DEP"]) expect(rel(label), label).toBe("other");
+    });
+
+    it("reads a row whose relationship it doesn't recognise as an employee, and says which labels those were", () => {
+      const found = findCensus([["Name", "Relationship", "State", "Salary"], ["Ann Lee", "Emp", "CA", "1"], ["Bo Ray", "Owner", "NJ", "2"], ["Cy Ito", "Emp", "NJ", "3"], ["Pat Ito", "Spouse", "", ""]], "S", 1, NOW)!;
+      // A roster must never collapse into one person's dependents because a file words "employee" its own way.
+      expect(found.census.map((e) => e.first_name)).toEqual(["Ann", "Bo", "Cy"]);
+      expect(found.census[2].dependents).toHaveLength(1);
+      expect(found.unknownRelationships).toEqual({ rows: 3, labels: ["Emp", "Owner"] });
+      expect(censusNotes(found)).toContain('3 rows had a relationship that wasn\'t recognised ("Emp", "Owner") and were read as employees. For a dependent use spouse, domestic_partner, child or other; leave it blank for an employee.');
+      expect(findCensus(sheet, "Sheet1", 1, NOW)!.unknownRelationships).toEqual({ rows: 0, labels: [] });
+    });
+
+    it("does not take a 'member type' column for the relationship", () => {
+      const found = findCensus([["Name", "Member Type", "State", "Salary"], ["Ann Lee", "Active", "CA", "1"], ["Bo Ray", "COBRA", "NJ", "2"]], "S", 1, NOW)!;
+      expect(found.census.map((e) => e.first_name)).toEqual(["Ann", "Bo"]);
+      expect(found.unknownRelationships.rows).toBe(0);
+    });
+
+    it("gives nobody the dependents listed under an employee row it couldn't read", () => {
+      const found = findCensus([["First Name", "Last Name", "Relationship", "State", "Salary"], ["Ann", "Lee", "Employee", "CA", "1"], ["", "", "Employee", "NJ", "2"], ["Pat", "Ray", "Spouse", "", ""], ["Cy", "Ito", "Employee", "NJ", "3"], ["Kim", "Ito", "Child", "", ""]], "S", 1, NOW)!;
+      expect(found.census.map((e) => e.first_name)).toEqual(["Ann", "Cy"]);
+      // Pat belongs to the unreadable row, not to Ann.
+      expect(found.census[0]).not.toHaveProperty("dependents");
+      expect(found.census[1].dependents).toHaveLength(1);
+      expect(found.orphanDependents).toBe(1);
+    });
+
+    it("keeps a dependent it couldn't read from costing the employee their other dependents, and counts it", () => {
+      const found = findCensus([["First Name", "Last Name", "Relationship", "State", "Salary"], ["Ann", "Lee", "Employee", "CA", "1"], ["", "Lee", "Child", "", ""], ["Mia", "Lee", "Child", "", ""]], "S", 1, NOW)!;
+      expect(found.census[0].dependents?.map((d) => d.first_name)).toEqual(["Mia"]);
+      expect(found.droppedDependents).toBe(1);
+      expect(censusNotes(found)).toContain("1 dependent row wasn't read: a dependent needs a first name, and an employee can list at most 20.");
+    });
+
+    it("takes a row as an employee when its relationship is blank or says employee, self, subscriber or primary", () => {
+      for (const label of ["", "Employee", "EE", "Self", "Subscriber", "Primary", "Insured"]) {
+        const found = findCensus([["Name", "Relationship", "State", "Salary"], ["Ann Lee", label, "CA", "1"], ["Bo Ray", "", "NJ", "2"]], "S", 1, NOW)!;
+        expect(found.census.map((e) => e.first_name), label).toEqual(["Ann", "Bo"]);
+      }
+    });
+
+    it("skips a dependent with no employee above it, and says so", () => {
+      const found = findCensus([["Name", "Relationship", "State", "Salary"], ["Pat Lee", "Spouse", "", ""], ["Ann Lee", "Employee", "CA", "1"], ["Bo Ray", "Employee", "NJ", "2"]], "S", 1, NOW)!;
+      expect(found.census.map((e) => e.first_name)).toEqual(["Ann", "Bo"]);
+      expect(found.census[0]).not.toHaveProperty("dependents");
+      expect(found.orphanDependents).toBe(1);
+      expect(censusNotes(found)).toContain("1 dependent row had no employee row above it that could be read, and wasn't read. List each dependent directly under their employee.");
+    });
+
+    it("keeps the first 20 dependents of one employee", () => {
+      const many = [["Name", "Relationship", "State", "Salary"], ["Ann Lee", "Employee", "CA", "1"], ...Array.from({ length: 25 }, (_, i) => [`Kid${i} Lee`, "Child", "", ""])];
+      const found = findCensus(many, "S", 1, NOW)!;
+      expect(found.census[0].dependents).toHaveLength(20);
+      expect(found.droppedDependents).toBe(5);
+      expect(censusNotes(found)).toContain("5 dependent rows weren't read: a dependent needs a first name, and an employee can list at most 20.");
+    });
+
+    it("leaves a census with coverage tiers only exactly as it was read before", () => {
+      const tiersOnly = findCensus([["Name", "State", "Salary", "Coverage Tier"], ["Ann Lee", "CA", "105000", "FAM"]], "S", 1, NOW)!;
+      expect(tiersOnly.census[0]).toMatchObject({ first_name: "Ann", coverage_tier: "FAM" });
+      expect(tiersOnly.census[0]).not.toHaveProperty("dependents");
+      expect(tiersOnly.facts).not.toContain("dependents");
+      expect(tiersOnly.orphanDependents).toBe(0);
+      expect(tiersOnly.droppedDependents).toBe(0);
+    });
   });
 
   it("finds no census in the template before it is filled in", () => {
@@ -472,6 +610,85 @@ describe("AI-read fields", () => {
       { field: "pay_frequency", value: "Bi-weekly", location: "Page 2" },
       { field: "has_401k", value: true, location: "Page 2" },
     ]);
+  });
+
+  // K-1.1: a document can state who the employer is; the FEIN is typed into the workspace, never read from a file.
+  it("reads the employer's entity type, year founded, address and website from a document, and never its FEIN", () => {
+    expect(shapeAiCandidates(
+      [
+        { field: "entity_type", value: "LLC", section: 1 },
+        { field: "year_founded", value: "2014", section: 1 },
+        { field: "street_address", value: "500 Harbor Street, San Francisco, CA 94107", section: 1 },
+        { field: "website", value: "meridiancreative.example", section: 2 },
+        { field: "fein", value: "84-1234567", section: 1 },
+        { field: "entities", value: "Meridian Creative LLC", section: 1 },
+      ],
+      sections,
+    )).toEqual([
+      { field: "entity_type", value: "LLC", location: "Page 1" },
+      { field: "year_founded", value: "2014", location: "Page 1" },
+      { field: "street_address", value: "500 Harbor Street, San Francisco, CA 94107", location: "Page 1" },
+      { field: "website", value: "meridiancreative.example", location: "Page 2" },
+    ]);
+  });
+
+  it("reads a NAICS code and a description of operations a document states (K-1.2)", () => {
+    expect(shapeAiCandidates([{ field: "naics_code", value: "541430", section: 1 }, { field: "operations_description", value: "Brand and packaging design", section: 2 }], sections)).toEqual([
+      { field: "naics_code", value: "541430", location: "Page 1" },
+      { field: "operations_description", value: "Brand and packaging design", location: "Page 2" },
+    ]);
+  });
+
+  it("reads whether the employer is in a PEO, which one and when it renews (K-1.3)", () => {
+    expect(shapeAiCandidates([{ field: "in_peo", value: "yes", section: 1 }, { field: "current_peo", value: "Summit PEO", section: 1 }, { field: "peo_renewal_date", value: "January 2027", section: 2 }], sections)).toEqual([
+      { field: "in_peo", value: true, location: "Page 1" },
+      { field: "current_peo", value: "Summit PEO", location: "Page 1" },
+      { field: "peo_renewal_date", value: "January 2027", location: "Page 2" },
+    ]);
+  });
+
+  // K-3.3: a loss run states a policy year's figures; the prospect applies them as a row of the loss history.
+  it("reads a loss run's years as rows, each with the figures stated, and never a sensitive number in one", () => {
+    expect(shapeAiCandidates([
+      { field: "loss_history", section: 2, rows: [
+        { policy_year: 2025, carrier: "Pinnacle Mutual", premium: "18,400", claims: 2, paid: 12500, reserved: 4000, valuation_date: "09/30/2026", policy_number: "acct 0012345" },
+        { policy_year: 2024, claims: 0, nested: { a: 1 }, blank: " " },
+        "2023",
+        {},
+      ] },
+      { field: "loss_history", section: 1, rows: [{ policy_year: 2022 }] },
+      { field: "wc_carrier", value: "Pinnacle Mutual", section: 1, rows: [{ policy_year: 1 }] },
+      { field: "loss_history", section: 1, value: "five years clean" },
+    ], sections)).toEqual([
+      { field: "loss_history", location: "Page 2", value: [
+        { policy_year: 2025, carrier: "Pinnacle Mutual", premium: "18,400", claims: 2, paid: 12500, reserved: 4000, valuation_date: "09/30/2026", policy_number: "acct [redacted]" },
+        { policy_year: 2024, claims: 0 },
+      ] },
+      { field: "wc_carrier", value: "Pinnacle Mutual", location: "Page 1" },
+    ]);
+  });
+
+  // K-4.1: an invoice or a renewal letter states each plan's rates.
+  it("reads an invoice's medical plans as rows", () => {
+    expect(shapeAiCandidates([{ field: "medical_plans", section: 1, rows: [{ name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: "$612.40", renewal_rate_ee: 685.89, enrolled: 14 }] }], sections)).toEqual([
+      { field: "medical_plans", location: "Page 1", value: [{ name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: "$612.40", renewal_rate_ee: 685.89, enrolled: 14 }] },
+    ]);
+  });
+
+  // K-4.2: a state's rate notice states the rate and the year it applies to.
+  it("reads a rate notice's unemployment tax rate as a row", () => {
+    expect(shapeAiCandidates([{ field: "suta_rates", section: 1, rows: [{ state: "CA", rate: "3.4%", year: 2026 }] }], sections)).toEqual([
+      { field: "suta_rates", location: "Page 1", value: [{ state: "CA", rate: "3.4%", year: 2026 }] },
+    ]);
+  });
+
+  it("proposes no table when a document states no usable row of it", () => {
+    expect(shapeAiCandidates([{ field: "loss_history", section: 1, rows: [{}, "2023", { note: " " }] }, { field: "loss_history", section: 1, value: "five years clean" }], sections)).toEqual([]);
+  });
+
+  // ADR 0006
+  it("never sends a FEIN printed on a document to the model", () => {
+    expect(buildPromptText([{ label: "Page 1", text: "Acme LLC, FEIN 84-1234567" }])).toBe("[[Section 1]]\nAcme LLC, FEIN [redacted]\n\n");
   });
 
   it("never sends or keeps a sensitive number", () => {

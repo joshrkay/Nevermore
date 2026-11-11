@@ -18,7 +18,7 @@ Only publishable values go in `.env`; it is git-ignored. Secrets (AI provider ke
 npm run lint && npm run typecheck:functions && npm test && npm run build
 ```
 
-`npm run schema:intake` rewrites `docs/intake-schema.v2.json` (the current version) from the intake schema
+`npm run schema:intake` rewrites `docs/intake-schema.v3.json` (the current version) from the intake schema
 (`supabase/functions/_shared/intakeSchema.ts`); the tests fail while the two differ.
 
 `typecheck:functions` type-checks the Deno edge functions with `tsc` (`tsconfig.functions.json`). Their

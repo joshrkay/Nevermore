@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PROMPT_VERSION } from "../../supabase/functions/chamber-extract/schema.ts";
-import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
+import { ACORD_DERIVED } from "./acordRules";
+import { EMPTY_CHAMBER_DATA, type ChamberData } from "./chamberTypes";
 import {
   applyChosenValue,
   applyExtraction,
@@ -755,5 +756,272 @@ describe("fieldOpenItems and advisor verification", () => {
     const verified = new Set(["industry", "hq_state", "company_name"]);
     expect(fieldOpenItems(provenance, verified).map((i) => i.field)).toEqual(["company_name"]);
     expect(fieldOpenItems(provenance).map((i) => i.field)).toEqual(["company_name", "hq_state", "industry"]);
+  });
+});
+
+// K-1.3: an employer in no PEO has no current PEO and no agreement to renew, so that answer closes both.
+describe("answers that close other answers", () => {
+  const spoken = { kind: "transcript" as const, message_id: "m9" };
+  const empty: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
+  const closed = (s: IntakeState) => [s.provenance.current_peo?.status, s.provenance.peo_renewal_date?.status];
+
+  it("closes which PEO and when it renews once Lenore hears the employer is in no PEO", () => {
+    const next = applyExtraction(empty, { in_peo: false }, { source: spoken, statuses: { in_peo: "confirmed" } });
+    expect(next.data.in_peo).toBe(false);
+    expect(closed(next)).toEqual(["not_applicable", "not_applicable"]);
+    // Each says where it was closed: the message that said so, with no quote of its own.
+    const said = applyExtraction(empty, { in_peo: false }, { source: spoken, evidence: { in_peo: "we're not in a PEO" } });
+    expect(said.provenance.current_peo?.source).toEqual({ kind: "transcript", message_id: "m9" });
+    expect(fieldOpenItems(next.provenance).map((i) => i.field)).not.toContain("current_peo");
+  });
+
+  it("closes them when the prospect says so in the workspace, and when a document does", () => {
+    expect(closed(applyFieldAction(empty, { type: "edit", field: "in_peo", value: false }))).toEqual(["not_applicable", "not_applicable"]);
+    expect(closed(applyChosenValue(empty, "in_peo", false, { kind: "document", document_id: "d1" }))).toEqual(["not_applicable", "not_applicable"]);
+  });
+
+  it("leaves them open while the employer is in a PEO, or hasn't said", () => {
+    expect(closed(applyExtraction(empty, { in_peo: true }, { source: spoken }))).toEqual([undefined, undefined]);
+    expect(closed(applyExtraction(empty, { company_name: "Acme" }, { source: spoken }))).toEqual([undefined, undefined]);
+  });
+
+  it("opens them again when the answer changes to being in a PEO", () => {
+    const out = applyFieldAction(empty, { type: "edit", field: "in_peo", value: false });
+    const back = applyFieldAction(out, { type: "edit", field: "in_peo", value: true });
+    expect(closed(back)).toEqual([undefined, undefined]);
+  });
+
+  it("never closes an answer that is already given: the prospect settles what doesn't fit", () => {
+    const held: IntakeState = { data: { ...EMPTY_CHAMBER_DATA, current_peo: "Summit PEO" }, provenance: { current_peo: { status: "confirmed", source: spoken, updated_at: "2026-11-11T00:00:00Z" } } };
+    const next = applyFieldAction(held, { type: "edit", field: "in_peo", value: false });
+    expect(next.data.current_peo).toBe("Summit PEO");
+    expect(closed(next)).toEqual(["confirmed", "not_applicable"]);
+  });
+
+  it("changes nothing about them when another answer changes", () => {
+    const out = applyFieldAction(empty, { type: "edit", field: "in_peo", value: false });
+    const later = applyExtraction(out, { company_name: "Acme" }, { source: spoken });
+    expect(closed(later)).toEqual(["not_applicable", "not_applicable"]);
+    // In a PEO, and the prospect then says the renewal doesn't apply: a later answer elsewhere leaves that alone.
+    const inPeo = applyFieldAction(applyFieldAction(empty, { type: "edit", field: "in_peo", value: true }), { type: "not_applicable", field: "peo_renewal_date" });
+    expect(applyExtraction(inPeo, { company_name: "Acme" }, { source: spoken }).provenance.peo_renewal_date?.status).toBe("not_applicable");
+  });
+});
+
+// K-3.1 on: what Lenore hears of a table of rows is added to the table, never traded for it.
+describe("rows heard in conversation or read from a document", () => {
+  const heard = { kind: "transcript" as const, message_id: "m3" };
+  const empty: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
+  const owners = (s: IntakeState) => s.data.owners_officers;
+
+  it("starts the table from the first rows heard, with their status", () => {
+    const next = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60 }] }, { source: heard, statuses: { owners_officers: "confirmed" } });
+    expect(owners(next)).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }]);
+    expect(next.provenance.owners_officers?.status).toBe("confirmed");
+  });
+
+  it("adds a row for someone new and keeps everyone already listed, for the prospect to confirm again", () => {
+    const one = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60 }] }, { source: heard, statuses: { owners_officers: "confirmed" } });
+    const two = applyExtraction(one, { owners_officers: [{ name: "Sam Okafor", title: "Secretary" }] }, { source: { ...heard, message_id: "m4" }, statuses: { owners_officers: "confirmed" } });
+    expect(owners(two)).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }, { name: "Sam Okafor", title: "Secretary" }]);
+    expect(two.provenance.owners_officers?.status).toBe("inferred");
+  });
+
+  it("fills in what a listed person's row was missing, matching the name whatever its case, and never changes what the row held", () => {
+    const one = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60 }] }, { source: heard });
+    const more = applyExtraction(one, { owners_officers: [{ name: "dana reyes", title: "President", ownership_percent: 55 }] }, { source: { ...heard, message_id: "m4" } });
+    expect(owners(more)).toEqual([{ name: "Dana Reyes", ownership_percent: 60, title: "President" }]);
+  });
+
+  it("adds to a table the prospect typed, without touching their rows", () => {
+    const typed = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: [{ name: "Dana Reyes", ownership_percent: 60 }] });
+    const next = applyExtraction(typed, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 10 }, { name: "Sam Okafor" }] }, { source: heard });
+    expect(owners(next)).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }, { name: "Sam Okafor" }]);
+  });
+
+  it("changes nothing when what was heard is already in the table, or the prospect said the table doesn't apply", () => {
+    const one = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60 }] }, { source: heard, statuses: { owners_officers: "confirmed" } });
+    expect(applyExtraction(one, { owners_officers: [{ name: "Dana Reyes" }] }, { source: { ...heard, message_id: "m4" } })).toEqual(one);
+    const closed = applyFieldAction(empty, { type: "not_applicable", field: "owners_officers" });
+    expect(owners(applyExtraction(closed, { owners_officers: [{ name: "Dana Reyes" }] }, { source: heard }))).toEqual([]);
+  });
+
+  // ADR 0007: the prospect correcting a row in conversation changes it, unless they typed that row themselves.
+  it("changes a row's value when the prospect corrects it in conversation", () => {
+    const one = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60, title: "President" }] }, { source: heard, statuses: { owners_officers: "confirmed" } });
+    const fixed = applyExtraction(one, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: { ...heard, message_id: "m5" }, corrections: ["owners_officers"] });
+    expect(owners(fixed)).toEqual([{ name: "Dana Reyes", ownership_percent: 55, title: "President" }]);
+    expect(fixed.provenance.owners_officers).toMatchObject({ status: "inferred", source: { message_id: "m5" } });
+  });
+
+  it("never changes a row the prospect typed, even when the conversation corrects it", () => {
+    const typed = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: [{ name: "Dana Reyes", ownership_percent: 60 }] });
+    const next = applyExtraction(typed, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: heard, corrections: ["owners_officers"] });
+    expect(owners(next)).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }]);
+  });
+
+  // Review finding: a table has one source, so adding a heard row must not make the typed rows fair game.
+  it("keeps a typed table the prospect's own after the conversation adds a row to it", () => {
+    const typed = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: [{ name: "Dana Reyes", ownership_percent: 60 }] });
+    const added = applyExtraction(typed, { owners_officers: [{ name: "Sam Okafor" }] }, { source: heard });
+    expect(added.provenance.owners_officers?.status).toBe("inferred");
+    const doc = applyExtraction(added, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: { kind: "document", document_id: "d1" }, statuses: { owners_officers: "confirmed" } });
+    expect(owners(doc)[0]).toEqual({ name: "Dana Reyes", ownership_percent: 60 });
+    const corrected = applyExtraction(added, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: { ...heard, message_id: "m6" }, corrections: ["owners_officers"] });
+    expect(owners(corrected)[0]).toEqual({ name: "Dana Reyes", ownership_percent: 60 });
+  });
+
+  // Review finding: a row with no key column can't be matched, so the same row heard twice must not be listed twice.
+  it("lists a row that has no name once, however often it is heard", () => {
+    const one = applyExtraction(empty, { owners_officers: [{ title: "Treasurer" }] }, { source: heard });
+    const again = applyExtraction(one, { owners_officers: [{ title: "Treasurer" }, { title: "Secretary" }] }, { source: { ...heard, message_id: "m4" } });
+    expect(owners(again)).toEqual([{ title: "Treasurer" }, { title: "Secretary" }]);
+  });
+
+  // Review finding: saving a table with nothing in it must not shut out what Lenore hears or a document says later.
+  it("takes rows heard after the prospect saved the table empty", () => {
+    const saved = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: [] });
+    expect(owners(applyExtraction(saved, { owners_officers: [{ name: "Dana Reyes" }] }, { source: heard }))).toEqual([{ name: "Dana Reyes" }]);
+  });
+
+  it("stops adding people once the table is full", () => {
+    const full = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: Array.from({ length: 20 }, (_, i) => ({ name: `Owner ${i + 1}` })) });
+    const next = applyExtraction(full, { owners_officers: [{ name: "One Too Many" }, { name: "Owner 3", title: "Treasurer" }] }, { source: heard });
+    expect(owners(next)).toHaveLength(20);
+    expect(owners(next)[2]).toEqual({ name: "Owner 3", title: "Treasurer" });
+  });
+
+  it("lets a document's figures replace what was only heard in conversation, and never what the prospect typed", () => {
+    const doc = { kind: "document" as const, document_id: "d1" };
+    const one = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60 }] }, { source: heard });
+    expect(owners(applyExtraction(one, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: doc, statuses: { owners_officers: "confirmed" } }))).toEqual([{ name: "Dana Reyes", ownership_percent: 55 }]);
+    const typed = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: [{ name: "Dana Reyes", ownership_percent: 60 }] });
+    expect(owners(applyExtraction(typed, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: doc }))).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }]);
+  });
+});
+
+// K-3.4: the ACORD 130 questions. The rules below run whenever an answer changes; none of them asks the prospect
+// anything, and each leaves alone a question the prospect has answered or reopened.
+describe("the ACORD 130 questions: what closes them and what answers them", () => {
+  const heard = { kind: "transcript" as const, message_id: "m7" };
+  const empty: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
+  const emp = (over: Record<string, unknown> = {}) => ({ id: Math.random().toString(36).slice(2), first_name: "A", last_name: "B", work_state: "CA", compensation_type: "salary", employment_type: "full_time", classification: "w2", ...over });
+  const withCensus = (state: IntakeState, rows: Record<string, unknown>[]) => applyExtraction(state, { census: rows }, { source: { kind: "document", document_id: "d1" }, statuses: { census: "confirmed" } });
+  const status = (s: IntakeState, field: string) => (s.provenance as Record<string, { status?: string } | undefined>)[field]?.status;
+  const value = (s: IntakeState, field: string) => (s.data as unknown as Record<string, unknown>)[field];
+  const hazards = ["wcq_01", "wcq_02", "wcq_03", "wcq_04"];
+
+  it("marks 'other insurance with this insurer' as not applying once the intake has begun: there is no insurer yet", () => {
+    const begun = applyExtraction(empty, { company_name: "Acme" }, { source: heard });
+    expect(status(begun, "wcq_17")).toBe("not_applicable");
+    // The prospect can reopen it, and it then stays open.
+    const reopened = applyFieldAction(begun, { type: "reopen", field: "wcq_17" });
+    expect(status(applyExtraction(reopened, { industry: "Print" }, { source: heard }), "wcq_17")).toBeUndefined();
+  });
+
+  it("closes the four hazard questions for an employer whose every class code is an office code", () => {
+    const office = withCensus(empty, [emp({ class_code: "8810" }), emp({ class_code: "8742" })]);
+    expect(hazards.map((f) => status(office, f))).toEqual(Array(4).fill("not_applicable"));
+    expect(status(office, "wcq_05")).toBeUndefined();
+  });
+
+  it("leaves them open when anyone has another class code, or a class code is missing", () => {
+    expect(hazards.map((f) => status(withCensus(empty, [emp({ class_code: "8810" }), emp({ class_code: "5551" })]), f))).toEqual(Array(4).fill(undefined));
+    expect(hazards.map((f) => status(withCensus(empty, [emp({ class_code: "8810" }), emp()]), f))).toEqual(Array(4).fill(undefined));
+  });
+
+  it("goes by the industry when the census has no class codes: finance, management, and the desk-bound parts of information and professional services", () => {
+    for (const naics_code of ["541110", "541211", "541511", "541611", "541810", "513210", "518210", "522110", "551112"]) {
+      expect(hazards.map((f) => status(applyFieldAction(empty, { type: "edit", field: "naics_code", value: naics_code }), f)), naics_code).toEqual(Array(4).fill("not_applicable"));
+    }
+    expect(hazards.map((f) => status(applyFieldAction(empty, { type: "edit", field: "naics_code", value: "238160" }), f))).toEqual(Array(4).fill(undefined));
+    // Class codes outrank the industry: a design firm whose census has a roofer is not office-only.
+    // A sector is not enough: surveyors, vets, environmental consultants, film crews and telecom installers
+    // share a sector with office work and do none of it.
+    for (const naics_code of ["541370", "541940", "541620", "512110", "517111"]) {
+      expect(hazards.map((f) => status(applyFieldAction(empty, { type: "edit", field: "naics_code", value: naics_code }), f)), naics_code).toEqual(Array(4).fill(undefined));
+    }
+    const mixed = withCensus(applyFieldAction(empty, { type: "edit", field: "naics_code", value: "541511" }), [emp({ class_code: "5551" })]);
+    expect(hazards.map((f) => status(mixed, f))).toEqual(Array(4).fill(undefined));
+  });
+
+  it("lets the prospect reopen a hazard question and answer it, and never closes one already answered", () => {
+    const office = withCensus(empty, [emp({ class_code: "8810" })]);
+    const reopened = applyFieldAction(office, { type: "reopen", field: "wcq_03" });
+    const later = applyExtraction(reopened, { company_name: "Acme" }, { source: heard });
+    expect(status(later, "wcq_03")).toBeUndefined();
+    const answered = applyFieldAction(empty, { type: "edit", field: "wcq_01", value: true });
+    expect(status(withCensus(answered, [emp({ class_code: "8810" })]), "wcq_01")).toBe("confirmed");
+  });
+
+  it("does not ask a Missouri applicant about declined or cancelled coverage, as the form says", () => {
+    expect(status(applyFieldAction(empty, { type: "edit", field: "hq_state", value: "MO" }), "wcq_18")).toBe("not_applicable");
+    expect(status(applyFieldAction(empty, { type: "edit", field: "hq_state", value: "KS" }), "wcq_18")).toBeUndefined();
+  });
+
+  it("answers 'employees under 16 or over 60' from the census's ages, for the prospect to confirm", () => {
+    const old = withCensus(empty, [emp({ class_code: "5551", dob: "1950-01-01" }), emp({ class_code: "5551", dob: "1990-01-01" })]);
+    expect([value(old, "wcq_10"), status(old, "wcq_10")]).toEqual([true, "inferred"]);
+    const none = withCensus(empty, [emp({ class_code: "5551", dob: "1990-01-01" }), emp({ class_code: "5551", age: 40 })]);
+    expect([value(none, "wcq_10"), status(none, "wcq_10")]).toEqual([false, "inferred"]);
+    // The form says under 16 or over 60: someone who is 16 or 60 is neither.
+    expect(value(withCensus(empty, [emp({ class_code: "5551", age: 16 }), emp({ class_code: "5551", age: 60 })]), "wcq_10")).toBe(false);
+    expect(value(withCensus(empty, [emp({ class_code: "5551", age: 61 })]), "wcq_10")).toBe(true);
+    expect(value(withCensus(empty, [emp({ class_code: "5551", age: 15 })]), "wcq_10")).toBe(true);
+    // The question is about employees: a 1099 contractor's age doesn't answer it.
+    expect(value(withCensus(empty, [emp({ class_code: "5551", age: 40 }), emp({ class_code: "5551", age: 67, classification: "1099" })]), "wcq_10")).toBe(false);
+    expect(value(withCensus(empty, [emp({ class_code: "5551", age: 67, classification: "1099" })]), "wcq_10")).toBeNull();
+    // A date of birth that can't be read is an unknown age, not one inside the range.
+    const q10 = ACORD_DERIVED.find((r) => r.field === "wcq_10")!;
+    const unread = { ...EMPTY_CHAMBER_DATA, census: [emp({ dob: "not a date" })] } as unknown as ChamberData;
+    expect(q10.answer(unread, new Date("2026-11-11T00:00:00Z"))).toBeUndefined();
+    // With someone's age unknown and nobody known to be under 16 or over 60, the census can't say.
+    expect(value(withCensus(empty, [emp({ class_code: "5551", dob: "1990-01-01" }), emp({ class_code: "5551" })]), "wcq_10")).toBeNull();
+  });
+
+  it("answers travel and working at home from the census, with how many work at home", () => {
+    const s = withCensus(empty, [emp({ class_code: "5551", remote: true, travels: false }), emp({ class_code: "5551", remote: true, travels: true }), emp({ class_code: "5551", remote: false, travels: false })]);
+    // The census says who travels for work, not whether they leave the state: a yes there leaves the question
+    // to be asked. Nobody travelling does answer it.
+    expect([value(s, "wcq_14"), status(s, "wcq_14"), value(s, "wcq_22"), value(s, "wcq_22_explain")]).toEqual([null, undefined, true, "2 employees"]);
+    const no = withCensus(empty, [emp({ class_code: "5551", remote: false, travels: false })]);
+    expect([value(no, "wcq_14"), value(no, "wcq_22"), value(no, "wcq_22_explain")]).toEqual([false, false, null]);
+    expect(value(withCensus(empty, [emp({ class_code: "5551" })]), "wcq_22")).toBeNull();
+  });
+
+  it("keeps the count of people working at home in step with the census while the answer stays yes", () => {
+    const two = withCensus(empty, [emp({ class_code: "5551", remote: true }), emp({ class_code: "5551", remote: true }), emp({ class_code: "5551", remote: false })]);
+    const three = withCensus(two, [emp({ class_code: "5551", remote: true }), emp({ class_code: "5551", remote: true }), emp({ class_code: "5551", remote: true })]);
+    expect([value(three, "wcq_22"), value(three, "wcq_22_explain")]).toEqual([true, "3 employees"]);
+    // An explanation the prospect wrote is theirs.
+    const own = applyFieldAction(two, { type: "edit", field: "wcq_22_explain", value: "Two engineers, full time" });
+    expect(value(withCensus(own, [emp({ class_code: "5551", remote: true })]), "wcq_22_explain")).toBe("Two engineers, full time");
+  });
+
+  it("takes back an answer it worked out when what it came from no longer says anything", () => {
+    const answered = withCensus(empty, [emp({ class_code: "5551", remote: true, travels: false })]);
+    expect([value(answered, "wcq_14"), value(answered, "wcq_22"), value(answered, "wcq_22_explain")]).toEqual([false, true, "1 employee"]);
+    const silent = withCensus(answered, [emp({ class_code: "5551" })]);
+    expect([value(silent, "wcq_14"), status(silent, "wcq_14"), value(silent, "wcq_22"), status(silent, "wcq_22"), value(silent, "wcq_22_explain"), status(silent, "wcq_22_explain")]).toEqual([null, undefined, null, undefined, null, undefined]);
+    // One the prospect confirmed is theirs, and stays.
+    const confirmed = applyFieldAction(answered, { type: "confirm", field: "wcq_14" });
+    expect(value(withCensus(confirmed, [emp({ class_code: "5551" })]), "wcq_14")).toBe(false);
+  });
+
+  it("answers 'health plans provided' and 'employees leased' from the answers already given", () => {
+    expect(value(applyExtraction(empty, { virgin_medical: false }, { source: heard }), "wcq_19")).toBe(true);
+    expect(value(applyExtraction(empty, { virgin_medical: true }, { source: heard }), "wcq_19")).toBe(false);
+    expect(value(applyFieldAction(empty, { type: "edit", field: "medical_plans", value: [{ name: "Gold PPO" }] }), "wcq_19")).toBe(true);
+    expect(value(applyExtraction(empty, { in_peo: true }, { source: heard }), "wcq_21")).toBe(true);
+    expect(value(applyExtraction(empty, { in_peo: false }, { source: heard }), "wcq_21")).toBe(false);
+  });
+
+  it("follows what it was worked out from until the prospect confirms or changes it, and never after", () => {
+    const yes = applyExtraction(empty, { in_peo: true }, { source: heard });
+    expect(value(applyExtraction(yes, { in_peo: false }, { source: { ...heard, message_id: "m8" }, corrections: ["in_peo"] }), "wcq_21")).toBe(false);
+    const confirmed = applyFieldAction(yes, { type: "confirm", field: "wcq_21" });
+    expect(value(applyExtraction(confirmed, { in_peo: false }, { source: { ...heard, message_id: "m8" }, corrections: ["in_peo"] }), "wcq_21")).toBe(true);
+    const own = applyFieldAction(empty, { type: "edit", field: "wcq_19", value: false });
+    expect(value(applyExtraction(own, { virgin_medical: false }, { source: heard }), "wcq_19")).toBe(false);
   });
 });

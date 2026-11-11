@@ -3,6 +3,7 @@
 // disagree about what is left. Derived from the answers and their field statuses; nothing is stored.
 // Relative imports only, so it runs under Deno and Vitest alike.
 
+import { acordAnswerKey, acordField } from "./acord130.ts";
 import { INTAKE_FIELDS, type IntakeFieldMeta } from "./intakeSchema.ts";
 
 /** The field statuses of GLOSSARY.md, as the browser keeps them in field_provenance. */
@@ -10,6 +11,49 @@ export const FIELD_STATUSES = ["confirmed", "inferred", "incomplete", "conflicti
 export type FieldStatus = (typeof FIELD_STATUSES)[number];
 
 export type FieldInfo = { key: string } & IntakeFieldMeta;
+
+/**
+ * Answers the conversation can't take at all (extraction never returns them). The census is an uploaded file
+ * (D21). The FEIN, and each legal entity's, is typed into its own box in the workspace: nine digits in a chat
+ * message are redacted before they reach the model, as a Social Security number would be (K-1.1).
+ */
+export const CHAT_CANNOT_TAKE: ReadonlySet<string> = new Set(["census", "fein", "entities"]);
+
+/**
+ * Answers Lenore never asks for in conversation, with the workspace tab each is entered on. They are left out of
+ * what she asks about next and named on their own line of her prompt, so she can say where each goes.
+ */
+export const WORKSPACE_ANSWERS: Readonly<Record<string, string>> = {
+  fein: "the Company tab",
+  entities: "the Company tab",
+  // Lenore proposes a NAICS code from the description of operations, and the prospect can search for one on the
+  // Company tab; she never asks a prospect to recite a code (K-1.2).
+  naics_code: "the Company tab",
+  // Tables: Lenore takes what the prospect volunteers of one, and never asks for it row by row (Epic K).
+  owners_officers: "the Workers' comp tab",
+  loss_history: "the Workers' comp tab",
+  medical_plans: "the Benefits tab",
+  suta_rates: "the Payroll tab",
+};
+
+/**
+ * ACORD 130 questions Lenore never raises, in chat or aloud, and never names as still to enter (K-3.4): whether
+ * any employee has a physical handicap, which the prospect answers on the Workers' comp tab if a PEO's form needs
+ * it, and whether any is under 16 or over 60, which is answered from the census's ages.
+ */
+export const NEVER_RAISED: readonly string[] = ["wcq_10", "wcq_10_explain", "wcq_13", "wcq_13_explain"];
+
+/** What the conversation never asks about: the census (a file), the answers entered in the workspace, and those. */
+export const CHAT_NEVER_ASKS: ReadonlySet<string> = new Set(["census", ...Object.keys(WORKSPACE_ANSWERS), ...NEVER_RAISED]);
+
+/**
+ * Whether a field is one to ask for or show at all, given the answers: the explanation of an ACORD 130 question
+ * is, only once its question is answered yes.
+ */
+export function fieldApplies(field: string, answers: object): boolean {
+  const acord = acordField(field);
+  return acord?.part !== "explain" || (answers as Record<string, unknown>)[acordAnswerKey(acord.question.number)] === true;
+}
 
 const isEmpty = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
 
@@ -35,12 +79,25 @@ export function unsettledFields(
   opts: { exclude?: ReadonlySet<string>; census?: CensusSummary } = {},
 ): FieldInfo[] {
   return INTAKE_FIELDS.filter((f) => {
-    if (opts.exclude?.has(f.key)) return false;
+    if (opts.exclude?.has(f.key) || !fieldApplies(f.key, answers)) return false;
     const status = statuses[f.key];
     // The census answers the states question when B-2.2's rule says it does (it names work states and is settled,
     // or nothing else names states), unless that answer is itself in conflict or incomplete.
     if (f.key === "states" && opts.census?.workStates && isReadyState(requiredItemStates(answers, statuses, opts.census).states)) return false;
     return !isSettled(answers[f.key], status);
+  });
+}
+
+/**
+ * The answers entered in the workspace that are still open, in rank order, each with its tab: not settled, and
+ * relevant (each legal entity is listed only once the employer says it is more than one).
+ */
+export function workspaceAnswersOpen(answers: Record<string, unknown>, statuses: Record<string, string | undefined>): (FieldInfo & { where: string })[] {
+  return INTAKE_FIELDS.flatMap((f) => {
+    const where = WORKSPACE_ANSWERS[f.key];
+    if (!where || isSettled(answers[f.key], statuses[f.key])) return [];
+    if (f.key === "entities" && answers.multiple_entities !== true) return [];
+    return [{ ...f, where }];
   });
 }
 
