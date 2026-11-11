@@ -10,7 +10,7 @@ The bundle holds the census: every employee's facts, classified Restricted (`doc
 - Every download is recorded and shown on the quote request's timeline.
 - Sending a newer certified version revokes the old link and issues a new one. Withdrawing the quote request, or the prospect withdrawing that PEO's market authorization, revokes it.
 - A reply from the product (M-3.5) sends the intake's documents the same way, not as attachments.
-- The message's From shows the advisor's name at one product sending address. Reply-To is the quote request's reply address, so every answer lands on the thread. The advisor's own email address is not in the message.
+- **Who the message is from:** superseded on 2026-11-11 by `docs/adr/0005-brokers-send-through-their-own-mailbox.md`. The message is sent from the broker's own connected mailbox, so its From is the broker's own address, and Reply-To lists the quote request's reply address first and the broker's second. The earlier rule (the advisor's name at one product sending address, with the advisor's own address kept out of the message) applies only to a broker with no connected mailbox, and in that case the product sends nothing: they send by hand.
 
 ## What a send carries
 
