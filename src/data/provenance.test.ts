@@ -859,6 +859,30 @@ describe("rows heard in conversation or read from a document", () => {
     expect(owners(next)).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }]);
   });
 
+  // Review finding: a table has one source, so adding a heard row must not make the typed rows fair game.
+  it("keeps a typed table the prospect's own after the conversation adds a row to it", () => {
+    const typed = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: [{ name: "Dana Reyes", ownership_percent: 60 }] });
+    const added = applyExtraction(typed, { owners_officers: [{ name: "Sam Okafor" }] }, { source: heard });
+    expect(added.provenance.owners_officers?.status).toBe("inferred");
+    const doc = applyExtraction(added, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: { kind: "document", document_id: "d1" }, statuses: { owners_officers: "confirmed" } });
+    expect(owners(doc)[0]).toEqual({ name: "Dana Reyes", ownership_percent: 60 });
+    const corrected = applyExtraction(added, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: { ...heard, message_id: "m6" }, corrections: ["owners_officers"] });
+    expect(owners(corrected)[0]).toEqual({ name: "Dana Reyes", ownership_percent: 60 });
+  });
+
+  // Review finding: a row with no key column can't be matched, so the same row heard twice must not be listed twice.
+  it("lists a row that has no name once, however often it is heard", () => {
+    const one = applyExtraction(empty, { owners_officers: [{ title: "Treasurer" }] }, { source: heard });
+    const again = applyExtraction(one, { owners_officers: [{ title: "Treasurer" }, { title: "Secretary" }] }, { source: { ...heard, message_id: "m4" } });
+    expect(owners(again)).toEqual([{ title: "Treasurer" }, { title: "Secretary" }]);
+  });
+
+  // Review finding: saving a table with nothing in it must not shut out what Lenore hears or a document says later.
+  it("takes rows heard after the prospect saved the table empty", () => {
+    const saved = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: [] });
+    expect(owners(applyExtraction(saved, { owners_officers: [{ name: "Dana Reyes" }] }, { source: heard }))).toEqual([{ name: "Dana Reyes" }]);
+  });
+
   it("stops adding people once the table is full", () => {
     const full = applyFieldAction(empty, { type: "edit", field: "owners_officers", value: Array.from({ length: 20 }, (_, i) => ({ name: `Owner ${i + 1}` })) });
     const next = applyExtraction(full, { owners_officers: [{ name: "One Too Many" }, { name: "Owner 3", title: "Treasurer" }] }, { source: heard });

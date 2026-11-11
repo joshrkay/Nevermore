@@ -1,3 +1,5 @@
+import RowsField from "@/components/chamber/workspace/RowsField";
+import { isRowListField } from "@/data/rowColumns";
 import { formatAnswer } from "@/data/answerFormat";
 import { useMemo, useState, type ReactNode } from "react";
 import { Loader2, PencilLine, UserCheck } from "lucide-react";
@@ -219,6 +221,8 @@ const FieldRow = ({
           {badge && <AuditBadgeChip badge={badge} />}
         </div>
         <p className="font-mono text-sm">{formatAnswer(field, data[field])}</p>
+        {/* A table is read here row by row: an advisor can't verify "3 listed". */}
+        {isRowListField(field) && data[field].length > 0 && <RowsField field={field} rows={data[field]} />}
         {prov && !showsSource(data[field]) ? (
           // No answer, so no source: a quote here would stand for nothing the prospect said (QA F11).
           <p className="text-xs text-muted-foreground mt-1">{STATUS_LABELS[prov.status]}</p>

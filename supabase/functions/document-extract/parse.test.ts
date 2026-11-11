@@ -586,6 +586,11 @@ describe("AI-read fields", () => {
     expect(shapeAiCandidates([{ field: "loss_history", section: 1, rows: [{}, "2023", { note: " " }] }, { field: "loss_history", section: 1, value: "five years clean" }], sections)).toEqual([]);
   });
 
+  // ADR 0003
+  it("never sends a FEIN printed on a document to the model", () => {
+    expect(buildPromptText([{ label: "Page 1", text: "Acme LLC, FEIN 84-1234567" }])).toBe("[[Section 1]]\nAcme LLC, FEIN [redacted]\n\n");
+  });
+
   it("never sends or keeps a sensitive number", () => {
     expect(buildPromptText([{ label: "Page 1", text: "Group 12345, owner SSN 123-45-6789" }])).toBe("[[Section 1]]\nGroup 12345, owner SSN [redacted]\n\n");
     expect(shapeAiCandidates([{ field: "rate_history", value: "acct 0012345 up 9%", section: 1 }], sections)).toEqual([

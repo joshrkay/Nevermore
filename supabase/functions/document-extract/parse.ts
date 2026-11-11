@@ -2,7 +2,7 @@
 // with the frontend suite (vitest includes supabase/functions/**/*.test.ts).
 
 import { isW2, MAX_CENSUS_ROWS, normalizeCensus, parseMoney, US_STATE_CODES, type CensusEmployee } from "../_shared/census.ts";
-import { isSensitiveHeader, redactSensitive } from "../_shared/sensitive.ts";
+import { isSensitiveHeader, redactForModel, redactSensitive } from "../_shared/sensitive.ts";
 
 // The most people an intake's census holds and the states it accepts, which the intake database enforces
 // (src/data/schemaSync.test.ts compares them with the app's copies): a census or state column past
@@ -427,7 +427,7 @@ export function censusNotes({ skipped, ignoredColumns, cutOff }: CensusResult): 
  * A sheet as text for the model: comma-separated rows with SSN and bank columns blanked and any
  * sensitive number in the remaining cells removed.
  */
-export function sheetText(rows: unknown[][], redact: (text: string) => string = redactSensitive): string {
+export function sheetText(rows: unknown[][], redact: (text: string) => string = redactForModel): string {
   const sensitive = new Set<number>();
   for (const row of rows.slice(0, 10)) mapCensusColumns(row).sensitive.forEach((i) => sensitive.add(i));
   // Only the first MAX_AI_TEXT_CHARS of any text reach the model, so rows past that are never joined or
@@ -678,7 +678,7 @@ export interface TextSection {
 }
 
 /** Joins sections under numbered markers the model cites back, capped at the AI text limit. */
-export function buildPromptText(sections: TextSection[], redact: (text: string) => string = redactSensitive): string {
+export function buildPromptText(sections: TextSection[], redact: (text: string) => string = redactForModel): string {
   let out = "";
   for (const [i, s] of sections.entries()) {
     const header = `[[Section ${i + 1}]]\n`;

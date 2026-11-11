@@ -5,7 +5,7 @@
 // Relative imports only, so it runs under Deno and Vitest alike.
 
 import type { RecentMessage } from "../_shared/chatContext.ts";
-import { CHAT_NEVER_ASKS, readyToCertify, unsettledFields, workspaceAnswersOpen, type CensusSummary, type FieldInfo } from "../_shared/followUp.ts";
+import { CHAT_NEVER_ASKS, WORKSPACE_ANSWERS, readyToCertify, unsettledFields, workspaceAnswersOpen, type CensusSummary, type FieldInfo } from "../_shared/followUp.ts";
 import { INTAKE_FIELDS } from "../_shared/intakeSchema.ts";
 
 /** How many unsettled fields the prompt names, most important first. */
@@ -82,7 +82,15 @@ export function buildUserPrompt(turn: UserTurn): string {
   const next = unsettledForTurn(turn).slice(0, NEXT_FIELDS);
   const asked = new Set(requestedForTurn(turn).map((f) => f.key));
   const ready = readyToCertify(answers, turn.statuses ?? {}, census);
-  const workspace = workspaceAnswersOpen(answers, turn.statuses ?? {});
+  // The workspace answers still open, and any the advisor asked about (answered or not): Lenore can't ask for
+  // them, but she says the advisor asked and where each is.
+  const open = workspaceAnswersOpen(answers, turn.statuses ?? {});
+  const askedInWorkspace = (turn.requested ?? []).filter((key) => key in WORKSPACE_ANSWERS);
+  const workspace = INTAKE_FIELDS.flatMap((f) => {
+    const listed = open.find((o) => o.key === f.key);
+    const requested = askedInWorkspace.includes(f.key);
+    return listed || requested ? [{ ...f, where: WORKSPACE_ANSWERS[f.key], requested }] : [];
+  });
   // JSON.stringify quotes and escapes what the prospect wrote so it can't break out of its slot.
   return [
     `Captured so far (answers): ${contextJson || "{}"}`,
@@ -90,7 +98,7 @@ export function buildUserPrompt(turn: UserTurn): string {
     `Not yet settled, most important first: ${next.length > 0 ? next.map((f) => `${f.key} (${f.label})${asked.has(f.key) ? ` ${ADVISOR_ASKED}` : ""}`).join(", ") : "none"}`,
     `Ready to certify: ${ready ? "yes" : "no"}`,
     `Employee census: ${census.rows > 0 ? `uploaded, ${census.rows} rows` : "not uploaded"}`,
-    `Entered in the workspace, never asked for in chat: ${workspace.length > 0 ? workspace.map((f) => `${f.key} (${describeWorkspaceAnswer(f)})`).join(", ") : "none"}`,
+    `Entered in the workspace, never asked for in chat: ${workspace.length > 0 ? workspace.map((f) => `${f.key} (${describeWorkspaceAnswer(f)})${f.requested ? ` ${ADVISOR_ASKED}` : ""}`).join(", ") : "none"}`,
     `Recent conversation, oldest first: ${recentJson}`,
     `New user message: ${JSON.stringify(turn.message)}`,
   ].join("\n\n");

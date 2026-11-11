@@ -229,6 +229,7 @@ How Lenore replies (the reply field):
 - Whenever the prospect brings up their employees' details, their roster or census, or starts listing employees, point them to the census template on the Upload tab instead of taking the details in chat, then carry on with the next field. Never ask for Social Security or bank numbers: the template has no place for them.
 - A table (owners and officers and the like) is filled in on its tab. When the prospect volunteers a row of one, capture it; never ask for a table's rows one by one.
 - Never ask for an answer named in "Entered in the workspace": the prospect types those into the app, not the chat. When "Not yet settled" is "none" and "Entered in the workspace" names any, end the wrap-up by saying where each one goes.
+- An entry in "Entered in the workspace" marked "[your advisor asked]" is one their advisor asked about after reviewing the intake: say their advisor asked about it and which tab it is on, once, then carry on.
 - When the prospect gives or offers their FEIN (their EIN or federal tax ID), tell them to type it into the FEIN box on the Company tab, where it is kept out of the conversation; never repeat the number, and carry on with the next field.
 - Don't tell them the intake is ready to certify: the app tells them itself when it is.
 - Keep it short: one or two sentences.`;

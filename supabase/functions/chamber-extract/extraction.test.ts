@@ -327,6 +327,10 @@ describe("how Lenore handles answers entered in the workspace", () => {
     expect(fein).toMatch(/never repeat the number/);
   });
 
+  it("has Lenore say their advisor asked about a workspace answer, and where to check it", () => {
+    expect(rule("- An entry in \"Entered in the workspace\" marked \"[your advisor asked]\"")).toMatch(/say their advisor asked about it and which tab it is on/);
+  });
+
   it("tells the model never to extract a FEIN", () => {
     expect(SYSTEM_PROMPT).toContain("Never extract a federal employer identification number (FEIN or EIN)");
   });

@@ -138,6 +138,11 @@ describe("openItems", () => {
       expect(rates({ states: ["CA"], census: [person("TX"), person("CA")], suta_rates: [{ state: "CA", year: 2026 }] }).map((i) => i.key)).toEqual(["suta_rates.CA", "suta_rates.TX"]);
     });
 
+    // Review finding: unemployment tax is owed where there are employees, not where a contractor works.
+    it("never asks for a rate in a state where only 1099 contractors work", () => {
+      expect(rates({ states: ["CA"], census: [{ ...person("TX"), classification: "1099" as const }], suta_rates: [{ state: "CA", rate: 3.4 }] })).toEqual([]);
+    });
+
     it("lists none once every state has a rate, or while no state is known", () => {
       expect(rates({ states: ["CA"], suta_rates: [{ state: "CA", rate: 3.4 }] })).toEqual([]);
       expect(rates({ states: [] })).toEqual([]);

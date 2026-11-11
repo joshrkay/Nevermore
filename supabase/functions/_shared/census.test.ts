@@ -282,6 +282,11 @@ describe("normalizeCensusRow: gender, hire date, COBRA status and home state (K-
     for (const v of ["", "maybe", null, 3]) expect(read({ cobra: v }), String(v)).not.toHaveProperty("cobra");
   });
 
+  // Review finding: a cell that says no in other words is a no.
+  it("reads a negative COBRA status however it is worded", () => {
+    for (const v of ["No COBRA", "Non-COBRA", "Not COBRA", "No - active", "never on cobra"]) expect(read({ cobra: v })?.cobra, v).toBe(false);
+  });
+
   it("reads a home state by code or name, apart from the work state", () => {
     expect(read({ work_state: "CA", home_state: "Nevada" })).toMatchObject({ work_state: "CA", home_state: "NV" });
     expect(read({ work_state: "CA", home_state: "Atlantis" })).not.toHaveProperty("home_state");
@@ -315,6 +320,12 @@ describe("normalizeCensusRow: worksite, remote and travels (K-2.2)", () => {
     for (const v of ["Y", "yes", true, "Travels", "Frequent travel"]) expect(read({ travels: v })?.travels, String(v)).toBe(true);
     for (const v of ["N", "no", false, "None", "No travel"]) expect(read({ travels: v })?.travels, String(v)).toBe(false);
     for (const v of ["", null, 7]) expect(read({ travels: v }), String(v)).not.toHaveProperty("travels");
+  });
+
+  // Review finding: a cell that says no in other words is a no.
+  it("reads a negative remote or travel answer however it is worded", () => {
+    for (const v of ["Not remote", "Non-remote", "No remote work", "never remote"]) expect(read({ remote: v })?.remote, v).toBe(false);
+    for (const v of ["Does not travel", "Doesn't travel", "Never travels", "Non-travel", "No business travel"]) expect(read({ travels: v })?.travels, v).toBe(false);
   });
 
   it("survives being saved and read again", () => {

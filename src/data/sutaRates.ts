@@ -2,9 +2,13 @@
 // them have no rate yet. A state with no rate is one open item, never a blocker.
 import type { ChamberData } from "./chamberTypes";
 
-/** The states the employer operates in: the ones it listed, then any others its census names, each once. */
+/**
+ * The states the employer operates in: the ones it listed, then any others its employees work in, each once. A
+ * state where only 1099 contractors work is not one: unemployment tax is owed where there are employees.
+ */
 export function statesOfOperation(data: Pick<ChamberData, "states" | "census">): string[] {
-  return [...new Set([...data.states, ...data.census.map((e) => e.work_state)].filter(Boolean))];
+  const employees = data.census.filter((e) => e.classification !== "1099");
+  return [...new Set([...data.states, ...employees.map((e) => e.work_state)].filter(Boolean))];
 }
 
 /** The states of operation with no unemployment tax rate held. A state listed with no rate has none. */

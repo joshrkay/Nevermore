@@ -220,11 +220,14 @@ export const normalizeGender = (v: unknown): Gender | undefined => GENDER_SPELLI
 /** A hire date as YYYY-MM-DD, read as a date of birth is: no date before 1900 or after `now`. */
 export const normalizeHireDate = (v: unknown, now: Date = new Date()): string | undefined => normalizeDob(v, now);
 
+// A cell that says no in so many words: "No COBRA", "Not remote", "Does not travel", "Non-travel".
+const NEGATED = /^(n|no|false|none)$|\b(no|not|non|never|doesn t|don t)\b/;
+
 /** Whether someone is on COBRA: yes or no however a roster writes it. Undefined when it doesn't say. */
 export function normalizeCobra(v: unknown): boolean | undefined {
   if (typeof v === "boolean") return v;
   const said = key(v);
-  if (/^(n|no|false|active|not on cobra|none)$/.test(said)) return false;
+  if (NEGATED.test(said) || said === "active") return false;
   if (/^(y|yes|true)$/.test(said) || /\bcobra\b/.test(said)) return true;
   return undefined;
 }
@@ -235,7 +238,7 @@ export function normalizeCobra(v: unknown): boolean | undefined {
 export function normalizeRemote(v: unknown): boolean | undefined {
   if (typeof v === "boolean") return v;
   const said = key(v);
-  if (/^(n|no|false|onsite|on site|in office|office)$/.test(said)) return false;
+  if (NEGATED.test(said) || /^(onsite|on site|in office|office)$/.test(said)) return false;
   if (/^(y|yes|true|wfh|hybrid)$/.test(said) || /\bremote\b/.test(said) || said === "work from home") return true;
   return undefined;
 }
@@ -244,7 +247,7 @@ export function normalizeRemote(v: unknown): boolean | undefined {
 export function normalizeTravels(v: unknown): boolean | undefined {
   if (typeof v === "boolean") return v;
   const said = key(v);
-  if (/^(n|no|false|none|no travel)$/.test(said)) return false;
+  if (NEGATED.test(said)) return false;
   if (/^(y|yes|true)$/.test(said) || /\btravels?\b/.test(said)) return true;
   return undefined;
 }

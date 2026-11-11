@@ -126,6 +126,13 @@ describe("answers entered in the workspace", () => {
   it("are not asked about even when an advisor asked: the request shows on the answer in the workspace", () => {
     expect(unsettledForTurn({ requested: ["fein", "company_name"] }).slice(0, 1).map((f) => f.key)).toEqual(["company_name"]);
   });
+
+  // Review finding: Lenore still has to say the advisor asked, and where to look.
+  it("are named as the advisor's ask, even when they already hold an answer, so Lenore can say so", () => {
+    const asked = line({ message: "hi", context: { fein: "**-***4567", naics_code: "541430" }, requested: ["fein", "loss_history", "company_name"] });
+    expect(asked).toBe(`Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab) ${ADVISOR_ASKED}, loss_history (Loss history, on the Workers' comp tab) ${ADVISOR_ASKED}`);
+    expect(line({ message: "hi", context: { naics_code: "541430" }, requested: ["fein"] })).toBe(`Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab) ${ADVISOR_ASKED}`);
+  });
 });
 
 describe("fields an advisor asked about", () => {

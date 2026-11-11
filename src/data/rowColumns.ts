@@ -133,7 +133,9 @@ export function mergeRows<R extends object>(field: RowListField, held: readonly 
   for (const row of incoming as readonly Row[]) {
     const at = out.findIndex((existing) => sameKey(existing[key], row[key]));
     if (at === -1) {
-      if (out.length < max) out.push({ ...row });
+      // A row with no key can't be matched, so the same row heard twice is recognised by being identical.
+      const listed = row[key] === undefined && out.some((existing) => JSON.stringify(existing) === JSON.stringify(row));
+      if (!listed && out.length < max) out.push({ ...row });
       continue;
     }
     for (const [column, value] of Object.entries(row)) {

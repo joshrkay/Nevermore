@@ -31,8 +31,8 @@ const GROUPED_AMEX = /\b\d{4}[- ]\d{6}[- ]\d{5}\b/g;
 const CARD_START = /^(?:2[2-7]|[3-6])/;
 // A federal employer identification number as it is written: two digits, a hyphen (or the en or em dash a word
 // processor substitutes) and seven. The FEIN is typed into its own box in the workspace (ADR 0003), so one
-// written in a message or a document is removed like the rest. A digit on either side means it is part of
-// something longer (an order number, a ZIP+4).
+// written in a chat message or a document's text is removed (redactForModel). A digit on either side means it
+// is part of something longer (an order number, a ZIP+4).
 const FORMATTED_FEIN = /(?<!\d)\d{2}[-\u2013\u2014]\d{7}(?!\d)/g;
 // Nine or more digits in a row: an unformatted SSN, a routing number or an account number.
 const LONG_DIGIT_RUN = /\b\d{9,17}\b/g;
@@ -79,9 +79,17 @@ export function redactSensitive(text: string): string {
   const withoutIds = text
     .replace(LABELLED_ACCOUNT, (_match, label: string) => `${label} ${REDACTED}`)
     .replace(GLUED_SSN, (_match, label: string) => `${label}${REDACTED}`)
-    .replace(FORMATTED_SSN, REDACTED)
-    .replace(FORMATTED_FEIN, REDACTED);
+    .replace(FORMATTED_SSN, REDACTED);
   return redactCards(redactCards(withoutIds, GROUPED_CARD), GROUPED_AMEX).replace(LONG_DIGIT_RUN, REDACTED);
+}
+
+/**
+ * What a chat message or a document's text is put through before it joins the transcript or reaches the model:
+ * everything redactSensitive removes, and a FEIN written as one (ADR 0003). A stored answer is held to
+ * redactSensitive alone, since a policy or account number can share a FEIN's shape.
+ */
+export function redactForModel(text: string): string {
+  return redactSensitive(text).replace(FORMATTED_FEIN, REDACTED);
 }
 
 /** True when the text holds something redactSensitive would remove. */
