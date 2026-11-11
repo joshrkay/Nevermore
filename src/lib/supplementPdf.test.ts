@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { pdfText } from "@/test/blob";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ExtraAnswers } from "@/data/extraAnswers";
 import { buildManuscript, type ChamberSubmission } from "@/data/manuscript";
@@ -7,13 +8,6 @@ import type { ExtraQuestion } from "@/data/peoProfiles";
 import { buildManuscriptPdf } from "./manuscriptPdf";
 import { buildSupplementPdf } from "./supplementPdf";
 
-const readPdf = (blob: Blob) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve((reader.result as string).replace(/\x97/g, "—").replace(/\x85/g, "…"));
-    reader.onerror = reject;
-    reader.readAsBinaryString(blob);
-  });
 
 const by = { status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "2026-11-13T10:00:00Z" };
 const TRINET: ExtraQuestion[] = [
@@ -34,13 +28,13 @@ const GENERATED = new Date(2026, 10, 13);
 const supplement = (peo: { id: number; name: string }, questions: ExtraQuestion[]) =>
   buildSupplement({ peo, questions, certified, fileId: "EAA-2026-0007", version: 3, companyName: "Meridian Creative Group" });
 const text = async (peo: { id: number; name: string }, questions: ExtraQuestion[]) =>
-  readPdf(buildSupplementPdf(supplement(peo, questions), { generatedOn: GENERATED, compress: false }).blob);
+  pdfText(buildSupplementPdf(supplement(peo, questions), { generatedOn: GENERATED, compress: false }).blob);
 
 describe("buildSupplementPdf: Additional questions from <PEO>", () => {
   it("is a PDF of that PEO's questions and the certified answers, saying which version, with what wasn't answered listed", async () => {
     const pdf = buildSupplementPdf(supplement({ id: 5, name: "TriNet" }, TRINET), { generatedOn: GENERATED, compress: false });
     expect(pdf.filename).toBe("EAA-2026-0007-additional-questions-trinet-v3.pdf");
-    const t = await readPdf(pdf.blob);
+    const t = await pdfText(pdf.blob);
     expect(t.startsWith("%PDF-")).toBe(true);
     for (const expected of [
       "Additional questions from TriNet", "Meridian Creative Group", "EAA-2026-0007", "From certified version 3",
@@ -65,7 +59,7 @@ describe("the packet never carries extra answers", () => {
     } as ChamberSubmission;
     const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: "EAA-2026-0007", submission });
     expect(JSON.stringify(m)).not.toMatch(/Paint thinner|drive for work|pets at work/);
-    const t = await readPdf(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob);
+    const t = await pdfText(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob);
     expect(t).toContain("Meridian Creative Group");
     expect(t).not.toMatch(/Paint thinner|drive for work|pets at work|Additional questions/);
   });

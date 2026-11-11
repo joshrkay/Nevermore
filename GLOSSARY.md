@@ -77,7 +77,7 @@ Our own PDF, "Workers' compensation application data", of what the last certifie
 _Avoid_: ACORD 130, ACORD form, workers' comp form
 
 **Answers as JSON**:
-The certified answers as one JSON file for a PEO's or advisor's own system: the File ID, the certified version, the certification, and the answers, census included, which validate against the published intake schema, each with its field status as certified. Offered beside the packet to the prospect and to advisors, only while the certification stands. Never a PEO's **Extra question** answers, and never anything an advisor wrote.
+The certified answers as one JSON file for a PEO's or advisor's own system: the File ID, the certified version, the certification, and the answers, census included, which validate against the published intake schema, each with its field status as certified. Offered beside the packet to the prospect and to advisors, only while the certification stands. Never a PEO's **Extra question** answers, and never anything an advisor wrote. Its stored data hash identifies the stored record the certification covers; it can't be recomputed from the answers in the file, which are laid out in the schema's order.
 _Avoid_: export, data dump, API file
 
 **Census**:

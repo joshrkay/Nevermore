@@ -365,18 +365,20 @@ When the prospect signs, `submission.field_provenance` snapshots the provenance 
 
 #### Certified answers as JSON
 
-The prospect's packet page and the advisor's packet panel offer the certified answers as one JSON file (L-3.3, `src/data/certifiedAnswersExport.ts`), named `<File ID>-answers-v<n>.json`, only while the certification stands. The schema above describes `chamber_data` alone and refuses unknown keys, so the file is an envelope around it:
+The prospect's packet page and the advisor's packet panel offer the certified answers as one JSON file (L-3.3, `src/data/certifiedAnswersDocument.ts`), named `<File ID>-answers-v<n>.json`, only while the certification stands; a page left open across a withdrawal or a new certification gives no file (`src/lib/certificationCheck.ts` reads the certification again at the click). The schema above describes `chamber_data` alone and refuses unknown keys, so the file is an envelope around it:
 
 | Key | What it holds |
 | --- | --- |
 | `kind`, `kind_version` | `"certified_intake_answers"` and `1`: the envelope's own name and version |
 | `file_id`, `version` | The File ID and which certification it is (null when the certification predates numbering) |
-| `certification` | `signer_name`, `signer_title`, `signed_at` (the signer's browser), `certified_at` (the database), `statement_version` (the certification statement signed), `data_version` and `data_sha256` (the database's SHA-256 of `chamber_data` as it stored it); null for what an older certification didn't record |
+| `certification` | `signer_name`, `signer_title`, `signed_at` (the signer's browser), `certified_at` (the database), `statement_version` (the certification statement signed), `data_version`, and `stored_data_sha256`; null for what an older certification didn't record |
 | `answers_schema` | `{ "id": "urn:edgar-allan-advisory:intake:chamber-data:v2", "version": 2 }`: the schema `answers` validates against |
 | `answers` | The certified `chamber_data`, census included, every key of the schema |
-| `answer_status` | Each field's status as certified (Field provenance, below), or null where none was recorded. An advisor's later verification doesn't change it |
+| `answer_status` | Each field's status as certified (Field provenance, below), or null where none was recorded. An advisor's later verification doesn't change it. `unreadable` where the certification recorded an answer (confirmed, inferred or incomplete) that `answers` doesn't hold: the stored value is one this file couldn't read, so `answers` leaves it empty rather than pass it off as certified |
 
 It never holds a PEO's own questions and answers (each PEO's supplement carries those), the transcript, the documents, or anything an advisor wrote: notes, reviews, corrections or verifications. The envelope has no JSON Schema of its own yet.
+
+`stored_data_sha256` is the SHA-256 the database took of `chamber_data` as it stored it when the prospect certified: the hex digest of its jsonb text, in jsonb's own key order and with only the keys stored (`20261104120000_submission_records.sql`). It identifies the stored record the certification covers, so it can be matched with that record, as The Manuscript's stored versions are. It can't be recomputed from `answers`, which lays the same answers out in the schema's order with every key: a SHA-256 taken over `answers` never matches it, and that says nothing about whether the file is genuine.
 
 ### Required answers
 

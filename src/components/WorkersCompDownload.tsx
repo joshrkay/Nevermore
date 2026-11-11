@@ -2,15 +2,17 @@ import { useId, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { WorkersCompApplication } from "@/data/workersCompApplication";
+import { unchangedSinceOpened, type BuiltFrom } from "@/lib/certificationCheck";
 import { downloadBlob } from "@/lib/downloadFile";
 
 /**
  * The workers' comp application data (L-3.2), offered beside the packet: which certified version it is from, that it
  * is our own summary and not the form, and every item it leaves blank, said before the download, not found afterwards.
  * The PDF library loads only when it is downloaded; when that fails (after a deploy its old file is gone) or the PDF
- * can't be built, it says so, as the packet's download does.
+ * can't be built, it says so, as the packet's download does. A tab that outlived the certification gives no file
+ * (`builtFrom`, checked at the click).
  */
-const WorkersCompDownload = ({ application: a }: { application: WorkersCompApplication }) => {
+const WorkersCompDownload = ({ application: a, builtFrom }: { application: WorkersCompApplication; builtFrom: BuiltFrom }) => {
   const id = useId();
   const [busy, setBusy] = useState(false);
   // The blanks section by section: "Applicant: Doing business as (DBA), FEIN, ...".
@@ -20,6 +22,7 @@ const WorkersCompDownload = ({ application: a }: { application: WorkersCompAppli
   const download = async () => {
     setBusy(true);
     try {
+      if (!(await unchangedSinceOpened(builtFrom))) return;
       const { buildWorkersCompPdf } = await import("@/lib/workersCompPdf");
       const pdf = buildWorkersCompPdf(a);
       downloadBlob(pdf.blob, pdf.filename);

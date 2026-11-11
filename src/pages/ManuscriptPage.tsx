@@ -31,6 +31,8 @@ import { supplementFor, supplementPeos } from "@/data/peoSupplement";
 import FitIcon from "@/components/peo/FitIcon";
 import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import { finalManuscriptUrl } from "@/lib/advisorApi";
+import { certificationOf } from "@/lib/certificationCheck";
+import { certifiedAnswersSource } from "@/data/certifiedAnswersDocument";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
 import LegalLinks from "@/components/LegalLinks";
 
@@ -96,6 +98,8 @@ type LoadState =
   | {
       kind: "ready";
       sessionId: string;
+      /** The intake's status as loaded: what each download checks again at its click. */
+      status: string;
       data: ChamberData;
       provenance: ProvenanceMap;
       /** Fields an advisor has verified since: settled, so not open items. */
@@ -192,6 +196,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         setState({
           kind: "ready",
           sessionId: data.id,
+          status: data.status,
           // Render what was signed, not whatever the session holds now. Without a snapshot the intake is
           // still certified, and the database keeps its saved answers equal to what was signed.
           data: parseChamberData(hasSnapshot ? submission.chamber_data : data.chamber_data),
@@ -361,6 +366,10 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
     );
   }
 
+  // The certification every file below was built from, checked again at each download's click.
+  const builtFrom = state.kind === "ready" ? certificationOf(state.sessionId, state.status, state.submission) : null;
+  const answersJson = state.kind === "ready" ? certifiedAnswersSource(state) : null;
+
   const versionLine = d.version ? `v${d.version}${d.dataVersion ? ` · data version ${d.dataVersion}` : ""}` : isSample ? "Sample" : "Not recorded";
 
   return (
@@ -444,15 +453,11 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
         {/* The certified answers as JSON against the published intake schema (L-3.3), for a PEO's or advisor's own system.
             Never a PEO's own answers or anything an advisor wrote. Not while withdrawn, as every file here. */}
-        {state.kind === "ready" && !withdrawn && (
+        {builtFrom && answersJson && !withdrawn && (
           <section aria-labelledby="answers-json-heading" className="bg-card border border-border rounded-xl p-5 space-y-2">
             <h2 id="answers-json-heading" className="font-display text-lg font-bold">Your answers as a JSON file</h2>
-            <p className="text-sm text-muted-foreground">
-              For a PEO or advisor whose own system reads intake answers. Send the packet too: people read that.
-            </p>
-            <AnswersJsonDownload
-              source={{ intake: { data: state.data, provenance: state.provenance, verified: state.verified, extraAnswers: null }, submission: state.submission, fileId: state.fileId }}
-            />
+            <p className="text-sm text-muted-foreground">For a PEO or advisor whose own system reads intake answers.</p>
+            <AnswersJsonDownload source={answersJson} builtFrom={builtFrom} />
           </section>
         )}
 
@@ -464,7 +469,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             <p className="text-sm text-muted-foreground">
               Send it with your packet so the PEO's underwriters don't have to re-type it. It's the census you certified.
             </p>
-            <CensusDownload census={state.data.census} fileId={state.fileId} version={state.submission.version ?? null} peo={state.submission.peo ?? null} catalog={peoCatalog.peos} />
+            <CensusDownload census={state.data.census} fileId={state.fileId} version={state.submission.version ?? null} peo={state.submission.peo ?? null} catalog={peoCatalog.peos} builtFrom={builtFrom!} />
           </section>
         )}
 
@@ -483,6 +488,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
                 version: state.submission.version ?? null,
                 changedSince: false,
               })}
+              builtFrom={builtFrom!}
             />
           </section>
         )}
@@ -500,7 +506,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               <p className="text-sm text-muted-foreground">
                 Each PEO's extra questions and your answers are their own file, for that PEO only. They aren't in the packet. Send each one with the packet to its PEO.
               </p>
-              {supplements.map((s) => <SupplementDownload key={s.peo} supplement={s} />)}
+              {supplements.map((s) => <SupplementDownload key={s.peo} supplement={s} builtFrom={builtFrom!} />)}
             </section>
           );
         })()}

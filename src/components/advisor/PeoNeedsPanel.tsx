@@ -15,6 +15,7 @@ import {
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import { formatDay } from "@/data/quoteRequests";
 import type { QuoteRequestRow } from "@/lib/advisorApi";
+import type { BuiltFrom } from "@/lib/certificationCheck";
 import { supplementFor } from "@/data/peoSupplement";
 import CensusDownload from "@/components/CensusDownload";
 import SupplementDownload from "@/components/SupplementDownload";
@@ -37,6 +38,8 @@ interface PeoNeedsPanelProps {
   /** The submission's File ID and company, which each PEO's supplement is named and headed with. */
   fileId: string;
   companyName: string;
+  /** The certification the files were built from, checked again at each download's click. */
+  builtFrom: BuiltFrom;
 }
 
 const chip = "inline-flex items-center text-xs px-2 py-0.5 rounded-full whitespace-nowrap";
@@ -63,7 +66,7 @@ const MissingBox = ({ title, items, quiet }: { title: string; items: readonly Ne
   );
 };
 
-const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, fileId, companyName }: {
+const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, fileId, companyName, builtFrom }: {
   entry: PeoCompletenessEntry;
   certified: CertifiedVersion;
   chosen: boolean;
@@ -73,6 +76,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
   today: string;
   fileId: string;
   companyName: string;
+  builtFrom: BuiltFrom;
 }) => {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -123,9 +127,9 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
           data, and its own questions, which go to it alone. */}
       <div className="space-y-3 border-t border-border pt-3">
         {application.changedNotice && <p className="text-xs text-muted-foreground">{application.changedNotice}</p>}
-        {census.length > 0 && <CensusDownload census={census} fileId={fileId} version={certified.version} peo={peo.name} catalog={[peo]} />}
-        {supplement && <SupplementDownload supplement={supplement} />}
-        <WorkersCompDownload application={application} />
+        {census.length > 0 && <CensusDownload census={census} fileId={fileId} version={certified.version} peo={peo.name} catalog={[peo]} builtFrom={builtFrom} />}
+        {supplement && <SupplementDownload supplement={supplement} builtFrom={builtFrom} />}
+        <WorkersCompDownload application={application} builtFrom={builtFrom} />
       </div>
       {!c.complete && askBlocked !== null && (
         <p className="text-sm text-muted-foreground">{`The prospect can't be asked for it now: ${askBlocked.charAt(0).toLowerCase()}${askBlocked.slice(1)}`}</p>
@@ -149,7 +153,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
  * apart, what it needs only before signing, with its eligibility checks as warnings beside it, and drafts an
  * information request from what is missing. Nothing here ranks a PEO or sends anything.
  */
-const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, askBlocked, onDraft, fileId, companyName }: PeoNeedsPanelProps) => {
+const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, askBlocked, onDraft, fileId, companyName, builtFrom }: PeoNeedsPanelProps) => {
   const today = localToday();
   const body = () => {
     if (!certified) return <p className="text-sm text-muted-foreground">Available once the prospect has certified their intake: each PEO's list is built from what they certified.</p>;
@@ -186,7 +190,7 @@ const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chos
           <ul aria-label={title} className="space-y-3">
             {entries.map((e) => (
               <li key={e.peo.name}>
-                <PeoCard entry={e} certified={certified} chosen={isChosen(e.peo)} sent={sentTo(e.peo)} askBlocked={askBlocked} onDraft={onDraft} today={today} fileId={fileId} companyName={companyName} />
+                <PeoCard entry={e} certified={certified} chosen={isChosen(e.peo)} sent={sentTo(e.peo)} askBlocked={askBlocked} onDraft={onDraft} today={today} fileId={fileId} companyName={companyName} builtFrom={builtFrom} />
               </li>
             ))}
           </ul>

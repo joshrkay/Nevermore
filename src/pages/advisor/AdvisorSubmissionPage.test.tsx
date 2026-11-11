@@ -7,6 +7,7 @@ import type { Supplement } from "@/data/peoSupplement";
 import { workersCompFilename, type WorkersCompApplication } from "@/data/workersCompApplication";
 import type { SubmissionDetail } from "@/lib/advisorApi";
 import { toast } from "sonner";
+import { blobText } from "@/test/blob";
 
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
@@ -28,6 +29,17 @@ const api = {
   noteUnderwriterQuestion: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
+// The intake as the database holds it at a download's click: what the page loaded, unless a test changes it since.
+let intakeNow: { status: string; data_sha256: string | null; version: string | null } | null = null;
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: {
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => {
+      const loaded = (await api.loadSubmission.mock.results.at(-1)?.value) as SubmissionDetail;
+      const v = loaded.submission?.version;
+      return { data: intakeNow ?? { status: loaded.intakeStatus, data_sha256: loaded.submission?.data_sha256 ?? null, version: v === undefined ? null : String(v) }, error: null };
+    } }) }) }),
+  },
+}));
 const downloadBlob = vi.fn();
 vi.mock("@/lib/downloadFile", () => ({ downloadBlob: (...a: unknown[]) => downloadBlob(...a) }));
 const buildManuscriptPdf = vi.fn((m: Manuscript, _opts?: unknown) => ({ blob: new Blob(["%PDF"]), filename: `${m.fileId}.pdf`, pageCount: 1 }));
@@ -133,6 +145,7 @@ describe("AdvisorSubmissionPage", () => {
     buildManuscriptPdf.mockClear();
     api.loadSubmission.mockResolvedValue(detail());
     api.listEmailProblems.mockResolvedValue([]);
+    intakeNow = null;
   });
 
   it("shows every captured field with its source, the transcript and the documents", async () => {
@@ -970,16 +983,17 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.click(within(packet).getByRole("button", { name: "Download the answers as JSON" }));
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-answers-v1.json"));
     const blob = downloadBlob.mock.calls.find((c) => c[1] === "EAA-2026-S1-answers-v1.json")![0] as Blob;
-    const json = await new Promise<string>((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.readAsText(blob); });
+    const json = await blobText(blob);
     const doc = JSON.parse(json);
     // The prospect's answer and its status as certified: the advisor's correction and verification are not in it.
     expect(doc.answers.employee_count).toBe(12);
     expect(doc.answer_status.employee_count).toBe("inferred");
     expect(doc.certification).toEqual({
       signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-10-01T12:00:00Z", certified_at: "2026-10-01T12:00:05Z",
-      statement_version: "2026-04-01", data_version: 9, data_sha256: "c".repeat(64),
+      statement_version: "2026-04-01", data_version: 9, stored_data_sha256: "c".repeat(64),
     });
-    expect(json).not.toMatch(/vehicles|drive for work|Call the CFO|Payroll register|14/);
+    expect(json).not.toMatch(/vehicles|drive for work|Call the CFO|Payroll register|advisor_value|verified/);
+    expect(doc.answers.employee_count).not.toBe(14);
   });
 
   it("offers no answers as JSON while the certification is withdrawn, saying why as the packet does", async () => {
@@ -1036,6 +1050,30 @@ describe("AdvisorSubmissionPage", () => {
       peoCatalogRows = catalog();
     });
 
+    it("gives no file from a page left open across a withdrawal: the JSON, the census and each PEO's files check at the click", async () => {
+      const census = [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
+      api.loadSubmission.mockResolvedValue(detail({ data: { ...signedData, census } }));
+      renderPage();
+      const packet = await screen.findByRole("region", { name: "Advisor packet" });
+      const trinet = (await within(await screen.findByRole("region", { name: "What each PEO still needs" })).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      // The prospect changed an answer since the page loaded: the database withdrew the certification.
+      intakeNow = { status: "in_progress", data_sha256: "c".repeat(64), version: null };
+      const refused = "This intake changed since you opened the page. Reload to get the certified version.";
+      const clicks = [
+        within(packet).getByRole("button", { name: "Download the answers as JSON" }),
+        within(screen.getByRole("region", { name: "Employee census" })).getByRole("button", { name: "Download the census" }),
+        within(trinet).getByRole("button", { name: "Download the census" }),
+        within(trinet).getByRole("button", { name: "Download Workers' compensation application data" }),
+      ];
+      for (const [n, button] of clicks.entries()) {
+        fireEvent.click(button);
+        await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(n + 1));
+      }
+      expect(vi.mocked(toast.error).mock.calls.map((c) => c[0])).toEqual([refused, refused, refused, refused]);
+      expect(downloadBlob).not.toHaveBeenCalled();
+      expect(buildWorkersCompPdf).not.toHaveBeenCalled();
+    });
+
     it("groups every listed PEO with a profile by whether the certified version is complete for it, alphabetical and never ranked", async () => {
       renderPage();
       const needs = await panel();
@@ -1079,9 +1117,9 @@ describe("AdvisorSubmissionPage", () => {
       expect(trinet).toHaveTextContent("From certified version 1, for TriNet only. 1 of 2 answered.");
       expect(trinet).toHaveTextContent("Listed as not answered: How many vans?");
       fireEvent.click(within(trinet).getByRole("button", { name: "Download Additional questions from TriNet" }));
-      expect(buildSupplementPdf).toHaveBeenCalledWith(expect.objectContaining({ peo: "TriNet", fileId: "EAA-2026-S1", version: 1, rows: [
+      await waitFor(() => expect(buildSupplementPdf).toHaveBeenCalledWith(expect.objectContaining({ peo: "TriNet", fileId: "EAA-2026-S1", version: 1, rows: [
         { question: "Do employees drive for work?", answer: "Yes" }, { question: "How many vans?", answer: null },
-      ] }));
+      ] })));
       expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-TriNet.pdf");
       // A PEO that asks no questions of its own has no supplement.
       const justworks = within(await panel()).getByRole("heading", { name: "Justworks" }).closest("article")!;

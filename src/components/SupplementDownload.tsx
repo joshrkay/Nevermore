@@ -1,16 +1,33 @@
-import { Download } from "lucide-react";
+import { useState } from "react";
+import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { Supplement } from "@/data/peoSupplement";
+import { unchangedSinceOpened, type BuiltFrom } from "@/lib/certificationCheck";
 import { downloadBlob } from "@/lib/downloadFile";
 import { buildSupplementPdf } from "@/lib/supplementPdf";
 
 /**
  * A PEO's supplement, "Additional questions from <PEO>", offered beside the packet: which certified version it is from
  * and which questions it leaves unanswered are said before the download, not found afterwards. A PDF that can't be
- * built is said, as the packet's download does. Built at once, in the click, so there is no busy state to show.
+ * built is said, as the packet's download does. Busy while the certification is checked again (a tab can outlive it:
+ * `builtFrom`) and the PDF is made.
  */
-const SupplementDownload = ({ supplement }: { supplement: Supplement }) => {
+const SupplementDownload = ({ supplement, builtFrom }: { supplement: Supplement; builtFrom: BuiltFrom }) => {
+  const [busy, setBusy] = useState(false);
   const { rows, notAnswered } = supplement;
+  const download = async () => {
+    setBusy(true);
+    try {
+      if (!(await unchangedSinceOpened(builtFrom))) return;
+      const pdf = buildSupplementPdf(supplement);
+      downloadBlob(pdf.blob, pdf.filename);
+    } catch (err) {
+      console.error("Failed to generate a PEO's supplement PDF:", err);
+      toast.error("We couldn't generate the PDF. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
   if (supplement.cantTell) {
     // A file of blanks would read as "not answered"; the certification simply didn't keep these answers.
     return (
@@ -34,19 +51,13 @@ const SupplementDownload = ({ supplement }: { supplement: Supplement }) => {
       )}
       <button
         type="button"
-        onClick={() => {
-          try {
-            const pdf = buildSupplementPdf(supplement);
-            downloadBlob(pdf.blob, pdf.filename);
-          } catch (err) {
-            console.error("Failed to generate a PEO's supplement PDF:", err);
-            toast.error("We couldn't generate the PDF. Please try again.");
-          }
-        }}
-        className="min-h-11 inline-flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-md border border-border hover:border-primary/40"
+        onClick={() => void download()}
+        disabled={busy}
+        className="min-h-11 inline-flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-md border border-border hover:border-primary/40 disabled:opacity-60"
         aria-label={`Download ${supplement.title}`}
       >
-        <Download className="w-4 h-4" aria-hidden="true" /> Download
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Download className="w-4 h-4" aria-hidden="true" />}
+        {busy ? "Preparing the PDF…" : "Download"}
       </button>
     </div>
   );

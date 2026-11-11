@@ -3,6 +3,7 @@ import { Download, Loader2 } from "lucide-react";
 import type { CensusEmployee } from "@/data/census";
 import { blankColumnsOf, censusLayoutFor, OUR_CENSUS_LAYOUT, type PeoCensusLayout } from "@/data/censusExport";
 import { findPeo, type PeoRecord } from "@/data/peoCatalog";
+import { unchangedSinceOpened, type BuiltFrom } from "@/lib/certificationCheck";
 import { censusFile, templateWorkbookFits } from "@/lib/censusWorkbook";
 import { downloadBlob } from "@/lib/downloadFile";
 
@@ -16,6 +17,8 @@ interface CensusDownloadProps {
   peo: string | null;
   /** The PEOs the database lists, with their profiles in use. */
   catalog: readonly PeoRecord[];
+  /** The certification the page was built from, checked again at the click (a tab can outlive it). */
+  builtFrom: BuiltFrom;
   /** Reads a PEO template workbook's file (only a clean one can be read); the app's unless a test supplies one. */
   readTemplate?: (peoId: number, templateId: number) => Promise<Uint8Array | null>;
 }
@@ -39,7 +42,7 @@ const readFromStorage = async (peoId: number, templateId: number) => (await impo
  * file is, which certified version it comes from, the columns it leaves blank, and why a template workbook can't take
  * this census (its headers don't match, or an employee would go over what it holds) are said before the click.
  */
-const CensusDownload = ({ census, fileId, version, peo, catalog, readTemplate = readFromStorage }: CensusDownloadProps) => {
+const CensusDownload = ({ census, fileId, version, peo, catalog, builtFrom, readTemplate = readFromStorage }: CensusDownloadProps) => {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // A template workbook is read and checked as soon as the download is shown, so a refusal comes before the click.
@@ -77,6 +80,7 @@ const CensusDownload = ({ census, fileId, version, peo, catalog, readTemplate = 
     setBusy(true);
     setProblem(null);
     try {
+      if (!(await unchangedSinceOpened(builtFrom))) return;
       let bytes: Uint8Array | null = template;
       if (layout.template && !bytes) {
         bytes = peoId === undefined ? null : await readTemplate(peoId, layout.template.id);

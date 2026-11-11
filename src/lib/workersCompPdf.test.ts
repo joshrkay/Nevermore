@@ -1,15 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { pdfText } from "@/test/blob";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { workersCompApplication } from "@/data/workersCompApplication";
 import { buildWorkersCompPdf } from "./workersCompPdf";
 
-const readPdf = (blob: Blob) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve((reader.result as string).replace(/\x97/g, "—").replace(/\x85/g, "…"));
-    reader.onerror = reject;
-    reader.readAsBinaryString(blob);
-  });
 
 // Made up for the test: nobody real.
 const app = (changedSince = false) => workersCompApplication({
@@ -34,7 +28,7 @@ describe("buildWorkersCompPdf: the workers' comp application data, our own layou
   it("prints the title, the version, that it is our own summary, every blank listed first, the sections in order and the rating table", async () => {
     const pdf = buildWorkersCompPdf(app(), { generatedOn: new Date(2026, 10, 13), compress: false });
     expect(pdf.filename).toBe("EAA-2026-0042-workers-comp-application-v3.pdf");
-    const text = await readPdf(pdf.blob);
+    const text = await pdfText(pdf.blob);
     expect(text).toContain("Workers' compensation application data");
     expect(text).toContain("Meridian Creative Group · EAA-2026-0042 · From certified version 3");
     expect(text).toContain("not the ACORD form, and it is not filled in on it.");
@@ -53,7 +47,7 @@ describe("buildWorkersCompPdf: the workers' comp application data, our own layou
   });
 
   it("shows people the census marks 1099 in their own column, out of the payroll, and leaves rating them to the carrier", async () => {
-    const text = await readPdf(buildWorkersCompPdf(app(), { compress: false }).blob);
+    const text = await pdfText(buildWorkersCompPdf(app(), { compress: false }).blob);
     expect(text).toContain("(1099, not in payroll)");
     expect(text).toContain("(1 · $30,000)");
     // The employees' pay is theirs alone.
@@ -62,12 +56,12 @@ describe("buildWorkersCompPdf: the workers' comp application data, our own layou
     // A contractor the census states no pay for.
     const unpaid = app();
     unpaid.ratingTable[0].rows[0] = { ...unpaid.ratingTable[0].rows[0], contractorPay: null };
-    expect(await readPdf(buildWorkersCompPdf(unpaid, { compress: false }).blob)).toContain("(1 · no pay stated)");
+    expect(await pdfText(buildWorkersCompPdf(unpaid, { compress: false }).blob)).toContain("(1 · no pay stated)");
   });
 
   it("says there is no rating table when the certified answers hold no census", async () => {
     const none = workersCompApplication({ intake: { data: { ...EMPTY_CHAMBER_DATA, company_name: "Meridian Creative Group" }, provenance: {}, verified: new Set() }, fileId: "EAA-2026-0042", version: 3, changedSince: false });
-    const text = await readPdf(buildWorkersCompPdf(none, { compress: false }).blob);
+    const text = await pdfText(buildWorkersCompPdf(none, { compress: false }).blob);
     expect(text).toContain("(No rating table: there is no census in the certified answers.)");
     expect(text).not.toContain("1099, not in payroll");
   });
@@ -81,7 +75,7 @@ describe("buildWorkersCompPdf: the workers' comp application data, our own layou
     }));
     const long = workersCompApplication({ intake: { data: { ...EMPTY_CHAMBER_DATA, company_name: "Meridian Creative Group", census }, provenance: {}, verified: new Set() }, fileId: "EAA-2026-0042", version: 3, changedSince: false });
     const pdf = buildWorkersCompPdf(long, { compress: false });
-    const text = await readPdf(pdf.blob);
+    const text = await pdfText(pdf.blob);
     const n = pdf.pageCount;
     expect(n).toBeGreaterThan(2);
     for (let i = 1; i <= n; i++) expect(text).toContain(`(Page ${i} of ${n})`);
@@ -100,7 +94,7 @@ describe("buildWorkersCompPdf: the workers' comp application data, our own layou
   });
 
   it("says when the prospect has changed answers since certifying", async () => {
-    const text = await readPdf(buildWorkersCompPdf(app(true), { compress: false }).blob);
+    const text = await pdfText(buildWorkersCompPdf(app(true), { compress: false }).blob);
     expect(text).toContain("The prospect has changed answers since certifying. These files are from version 3.");
   });
 });

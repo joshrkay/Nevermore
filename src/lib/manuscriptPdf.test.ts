@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { pdfText } from "@/test/blob";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { buildManuscript, type ChamberSubmission } from "@/data/manuscript";
 import { parsePeoCatalog } from "@/data/peoProfiles";
@@ -24,18 +25,11 @@ const submission: ChamberSubmission = {
 // jsdom's Blob has no arrayBuffer(); read it the old way. latin1 keeps bytes 1:1 so text is greppable. The
 // built-in fonts write an em dash and an ellipsis as the Windows-1252 bytes 0x97 and 0x85; read them back as
 // the characters, so expectations can be written as the page shows them.
-const readPdf = (blob: Blob) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve((reader.result as string).replace(/\x97/g, "—").replace(/\x85/g, "…"));
-    reader.onerror = reject;
-    reader.readAsBinaryString(blob);
-  });
 
 const render = async (data = DEMO_CHAMBER_DATA, opts: Parameters<typeof buildManuscriptPdf>[1] = {}, sub: ChamberSubmission | null = submission) => {
   const m = buildManuscript(data, { fileId: FILE_ID, submission: sub });
   const pdf = buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false, ...opts });
-  return { ...pdf, text: await readPdf(pdf.blob) };
+  return { ...pdf, text: await pdfText(pdf.blob) };
 };
 
 const bigCensus = {
@@ -182,7 +176,7 @@ describe("buildManuscriptPdf", () => {
   it("prints approved consent wording with no draft mark or watermark", async () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: FILE_ID, submission });
     const approved = { ...m, signer: { ...m.signer!, consentDraft: false } };
-    const text = await readPdf(buildManuscriptPdf(approved, { generatedOn: GENERATED, compress: false }).blob);
+    const text = await pdfText(buildManuscriptPdf(approved, { generatedOn: GENERATED, compress: false }).blob);
     expect(text).toContain("I certify the answers are accurate.");
     expect(text).not.toContain("DRAFT");
   });
@@ -234,7 +228,7 @@ describe("buildManuscriptPdf", () => {
       },
     );
     // Text-drawing operators escape parentheses; the reader here drops the dash.
-    const text = (await readPdf(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob)).replace(/\\([()])/g, "$1");
+    const text = (await pdfText(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob)).replace(/\\([()])/g, "$1");
     const unresolved = (value: string) => new RegExp(`\\(${value} \\(unresolved \\W*see open items\\)\\)`);
     expect(text).toMatch(unresolved("Bi-weekly"));
     expect(text).toMatch(unresolved(DEMO_CHAMBER_DATA.current_carrier!));
@@ -270,7 +264,7 @@ describe("pdfSafe", () => {
     const provenance = { company_name: { status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "2026-05-01T00:00:00Z" } };
     const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: FILE_ID, submission, provenance });
     const pdf = buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false });
-    const text = await readPdf(pdf.blob);
+    const text = await pdfText(pdf.blob);
     expect(text).toContain("Company legal name — confirmed by the prospect");
     expect(text).toContain("ELIGIBILITY CHECKS");
     expect(text).toContain("US headquarters — Passes");
@@ -280,14 +274,14 @@ describe("pdfSafe", () => {
   it("prints, beside the eligibility checks, that the PEO's profile they read is out of date", async () => {
     const catalog = parsePeoCatalog([{ id: 1, name: "Acme PEO", profile: { version: 1, min_headcount: 5, sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-01-05" } } } }]);
     const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: FILE_ID, submission, catalog, today: "2026-11-11" });
-    const text = await readPdf(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob);
+    const text = await pdfText(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob);
     expect(text).toContain("Acme PEO's profile was last checked 5 Jan 2026 and may be out of date.");
   });
 
   it("prints each check against the PEO's rules with when the rule was checked, and that one not met is a warning", async () => {
     const catalog = parsePeoCatalog([{ id: 1, name: "Acme PEO", profile: { version: 1, min_headcount: 50, sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-11-02" } } } }]);
     const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: FILE_ID, submission, catalog, today: "2026-11-11" });
-    const text = await readPdf(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob);
+    const text = await pdfText(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob);
     // Long lines wrap, so each is matched in pieces that stay on one line.
     expect(text).toContain("Minimum headcount: Acme PEO takes groups of 50 or more employees;");
     // In the same words as every eligibility check: never "Not met" or "Passes", which are for what was collected.
@@ -307,7 +301,7 @@ describe("pdfSafe", () => {
       },
     });
     const pdf = buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false });
-    const text = await readPdf(pdf.blob);
+    const text = await pdfText(pdf.blob);
     expect(text).toContain("v3");
     expect(text).toContain("ADVISOR CORRECTIONS");
     expect(text).toContain("Meridian LLC");
@@ -326,7 +320,7 @@ describe("pdfSafe", () => {
     expect(text).toContain("As certified, before advisor review");
     expect((await render(DEMO_CHAMBER_DATA, { sample: true }, null)).text).not.toContain("before advisor review");
     const advisor = buildManuscript(DEMO_CHAMBER_DATA, { fileId: FILE_ID, submission, advisor: { version: 1, corrections: [], followUps: [] } });
-    const advisorText = await readPdf(buildManuscriptPdf(advisor, { generatedOn: GENERATED, compress: false }).blob);
+    const advisorText = await pdfText(buildManuscriptPdf(advisor, { generatedOn: GENERATED, compress: false }).blob);
     expect(advisorText).not.toContain("before advisor review");
     expect(advisorText).toContain("reviewed by Nevermore");
   });

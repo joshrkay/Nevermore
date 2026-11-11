@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { rowProvenance } from "@/data/manuscript";
+import { blobText } from "@/test/blob";
 
 let row: Record<string, unknown> | null = null;
 // What the page asked the database for: the column it filtered on and the value.
@@ -33,8 +34,14 @@ vi.mock("@/integrations/supabase/client", () => ({
     },
     storage: { from: () => ({ createSignedUrl: (...a: unknown[]) => createSignedUrl(...a) }) },
     from: () => ({
-      select: () => ({
+      select: (columns: string) => ({
         eq: (column: string, value: unknown) => {
+          // The check a download makes at its click: the status, and the certification's hash and version as text.
+          if (columns.includes("->>")) {
+            const sub = (row?.submission ?? null) as Record<string, unknown> | null;
+            const text = (v: unknown) => (v === undefined || v === null ? null : String(v));
+            return { maybeSingle: async () => ({ data: row ? { status: row.status, data_sha256: text(sub?.data_sha256), version: text(sub?.version) } : null, error: null }) };
+          }
           lastQuery = { column, value };
           return { maybeSingle: async () => ({ data: row ? { id: "s1", file_id: null, ...row } : null, error: null }) };
         },
@@ -665,11 +672,7 @@ describe("ManuscriptPage", () => {
     await waitFor(() => expect(downloadBlob).toHaveBeenCalled());
     const [blob, name] = downloadBlob.mock.calls.at(-1)!;
     expect(name).toBe("EAA-2026-0042-census-v2.csv");
-    const csv = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.readAsText(blob as Blob);
-    });
+    const csv = await blobText(blob as Blob);
     expect(csv).toContain("Signed,Person");
     expect(csv).not.toContain("Added");
   });
@@ -692,7 +695,7 @@ describe("ManuscriptPage", () => {
     expect(within(files).queryByText("Additional questions from TriNet")).not.toBeInTheDocument();
     expect(files).toHaveTextContent("From certified version 2, for Justworks only. 1 of 2 answered.Listed as not answered: How many vans?");
     fireEvent.click(within(files).getByRole("button", { name: "Download Additional questions from Justworks" }));
-    expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-additional-questions-justworks-v2.pdf");
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-additional-questions-justworks-v2.pdf"));
     // The packet itself shows none of them.
     const packet = screen.getByText("Underwriting packet").closest("div.bg-card")!;
     expect(packet).not.toHaveTextContent(/Do employees drive|pets at work/);
@@ -720,11 +723,7 @@ describe("ManuscriptPage", () => {
     await waitFor(() => expect(downloadBlob).toHaveBeenCalled());
     const [blob, name] = downloadBlob.mock.calls.at(-1)!;
     expect(name).toBe("EAA-2026-0042-census-justworks-v2.csv");
-    const csv = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.readAsText(blob as Blob);
-    });
+    const csv = await blobText(blob as Blob);
     expect(csv).toBe("Surname,Start Date\r\nPerson,\r\n");
   });
 
@@ -754,12 +753,34 @@ describe("ManuscriptPage", () => {
     fireEvent.click(within(files).getByRole("button", { name: "Download the answers as JSON" }));
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-answers-v2.json"));
     const blob = downloadBlob.mock.calls.find((c) => c[1] === "EAA-2026-0042-answers-v2.json")![0] as Blob;
-    const json = await new Promise<string>((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.readAsText(blob); });
+    const json = await blobText(blob);
     const doc = JSON.parse(json);
     expect(doc.answers.company_name).toBe("Signed Co");
     expect(doc.answer_status.company_name).toBe("confirmed");
     expect(doc.certification).toMatchObject({ signer_name: "Jo Doe", certified_at: "2026-05-01T12:00:03Z", data_version: 17 });
     expect(json).not.toContain("vehicles");
+  });
+
+  it("gives no file from a tab left open across a withdrawal: each download checks the certification at its click", async () => {
+    const { toast } = await import("sonner");
+    const error = vi.spyOn(toast, "error").mockImplementation(() => "");
+    downloadBlob.mockClear();
+    const base = certified();
+    row = certified({ submission: { ...base.submission, data_sha256: "a".repeat(64), chamber_data: { ...signed, census: [{ id: "1", first_name: "Signed", last_name: "Person", work_state: "CA" }] } } });
+    renderAt("/manuscript/EAA-2026-0042");
+    const json = await screen.findByRole("region", { name: "Your answers as a JSON file" });
+    // The prospect changes an answer in another tab: the database withdraws the certification.
+    row = { ...row, status: "in_progress" };
+    const refused = "This intake changed since you opened the page. Reload to get the certified version.";
+    fireEvent.click(within(json).getByRole("button", { name: "Download the answers as JSON" }));
+    await waitFor(() => expect(error).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Download the census" }));
+    await waitFor(() => expect(error).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Download Workers' compensation application data" }));
+    await waitFor(() => expect(error).toHaveBeenCalledTimes(3));
+    expect(error.mock.calls.map((c) => c[0])).toEqual([refused, refused, refused]);
+    expect(downloadBlob).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 
   it("offers no answers as JSON while the certification is withdrawn", async () => {

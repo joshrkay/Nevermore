@@ -6,11 +6,12 @@ import { applyAdvisorReview, isCurrentVersion, isStaleRefusal, verifiedFieldsOf 
 import { buildManuscript, manuscriptFilename } from "@/data/manuscript";
 import type { PeoRecord } from "@/data/peoCatalog";
 import { localToday } from "@/data/peoProfiles";
-import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
 import { manuscriptUrl, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
+import { certificationOf } from "@/lib/certificationCheck";
+import { certifiedAnswersSource } from "@/data/certifiedAnswersDocument";
 import { formatDateTime } from "./format";
 
 /**
@@ -50,6 +51,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
   const current = (v: ManuscriptVersion) => detail.certified && isCurrentVersion(v, detail.submission);
 
   const catalogReady = catalogStatus === "ready";
+  const answersJson = certifiedAnswersSource(detail);
 
   const generate = async () => {
     setGenerating(true);
@@ -178,11 +180,9 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
           </button>
           {/* The certified answers as JSON (L-3.3): the prospect's certification alone, never the review, the
               corrections, the notes or a PEO's own answers. */}
-          {detail.submission && detail.fileId && (
+          {answersJson && (
             <div className="border-t border-border pt-3">
-              <AnswersJsonDownload
-                source={{ intake: { data: detail.data, provenance: detail.provenance, verified: NO_VERIFIED_FIELDS, extraAnswers: null }, submission: detail.submission, fileId: detail.fileId }}
-              />
+              <AnswersJsonDownload source={answersJson} builtFrom={certificationOf(detail.id, detail.intakeStatus, answersJson.submission)} />
             </div>
           )}
         </div>

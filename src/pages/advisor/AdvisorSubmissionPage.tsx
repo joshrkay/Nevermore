@@ -26,6 +26,7 @@ import { lastCertifiedVersion } from "@/data/peoCompleteness";
 import type { FieldKey } from "@/data/provenance";
 import type { ExtraQuestionRef } from "@/data/extraAnswers";
 import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
+import { certificationOf } from "@/lib/certificationCheck";
 
 type Load =
   | { kind: "loading" }
@@ -138,6 +139,8 @@ const Detail = ({
   // What each PEO still needs is built from the last certified version, never from answers given since.
   const certifiedVersion = lastCertifiedVersion(detail, verifiedFieldsOf(detail.reviews));
   const sub = detail.submission;
+  // The certification the page's files were built from, checked again at each download's click.
+  const builtFrom = certificationOf(detail.id, detail.intakeStatus, sub ?? {});
   return (
     <>
       {emailProblem && (
@@ -184,6 +187,7 @@ const Detail = ({
             askBlocked={informationRequestBlockedReason(detail.pipelineStatus, !!sub?.signer_name, detail.intakeStatus)}
             onDraft={(draft) => askProspect(draft.message, draft.fields, draft.questions)}
             fileId={detail.fileId ?? "No File ID"}
+            builtFrom={builtFrom}
             companyName={certifiedVersion?.intake.data.company_name ?? "Company not provided"}
           />
           <FieldReviewPanel
@@ -315,7 +319,7 @@ const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
         own layout is on its card in What each PEO still needs (L-3.1). */}
     {detail.certified && detail.fileId && detail.data.census.length > 0 && (
       <div className="mb-3">
-        <CensusDownload census={detail.data.census} fileId={detail.fileId} version={detail.currentVersion} peo={null} catalog={[]} />
+        <CensusDownload census={detail.data.census} fileId={detail.fileId} version={detail.currentVersion} peo={null} catalog={[]} builtFrom={certificationOf(detail.id, detail.intakeStatus, detail.submission ?? {})} />
       </div>
     )}
     {detail.data.census.length === 0 ? (
