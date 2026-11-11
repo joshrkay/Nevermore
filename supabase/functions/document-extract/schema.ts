@@ -2,7 +2,7 @@
 // pure helpers, so it runs under Deno and Vitest alike.
 
 import type { ExtractionTool } from "../_shared/ai/model.ts";
-import { DOCUMENT_FIELDS } from "./parse.ts";
+import { DOCUMENT_FIELDS, DOCUMENT_ROW_FIELDS } from "./parse.ts";
 
 // Recorded on every extraction event. Raise it with any change to SYSTEM_PROMPT or REPORT_TOOL: promptVersion.test.ts
 // fails until you do, so an event always says which prompt produced it. 2 is intake schema v3 (Epic K): the
@@ -23,6 +23,9 @@ Field meanings:
 - entity_type (sole proprietorship, partnership, LLC, C corporation, S corporation or nonprofit), year_founded (four digits), street_address (the business's main address, with city, state and ZIP), website
 - naics_code (the six-digit NAICS industry code, only when the document prints one), operations_description (what the business does, as the document describes it)
 - in_peo (whether the business is in a PEO now), current_peo (that PEO's name), peo_renewal_date (when its agreement renews)
+- wc_carrier (the current workers' comp carrier), wc_renewal_date, wc_experience_mod (a decimal such as 0.92), wc_annual_premium (whole dollars)
+Tables are reported as rows (one object per row) in place of a value:
+- loss_history, from a workers' comp loss run or experience rating worksheet: one row per policy year with policy_year (four digits), carrier, premium, experience_mod, claims (the number of claims; 0 when the run shows none), paid, reserved (whole dollars), and valuation_date (the date the run is valued as of). Include only what the document prints for that year.
 Never report a federal employer identification number (FEIN or EIN) or any other tax ID.
 Use "yes"/"no" for yes-or-no fields. Leave out anything not stated.`;
 
@@ -37,11 +40,12 @@ export const REPORT_TOOL: ExtractionTool = {
         items: {
           type: "object",
           properties: {
-            field: { type: "string", enum: [...DOCUMENT_FIELDS] },
+            field: { type: "string", enum: [...DOCUMENT_FIELDS, ...DOCUMENT_ROW_FIELDS] },
             value: { type: "string" },
+            rows: { type: "array", items: { type: "object" }, description: "For a table field only: one object per row, in place of value" },
             section: { type: "integer" },
           },
-          required: ["field", "value", "section"],
+          required: ["field", "section"],
           additionalProperties: false,
         },
       },

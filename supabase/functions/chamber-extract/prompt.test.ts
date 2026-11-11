@@ -79,7 +79,7 @@ describe("buildUserPrompt", () => {
 // box in the workspace. Lenore never asks for it; she is told where it goes, so she can say so.
 describe("answers entered in the workspace", () => {
   // Every table already holds a row, so a line names only the answers its case is about. Add each new table here.
-  const TABLES = { owners_officers: [{ name: "Dana Reyes" }] };
+  const TABLES = { owners_officers: [{ name: "Dana Reyes" }], loss_history: [{ policy_year: 2025 }] };
   const line = (turn: Parameters<typeof buildUserPrompt>[0], tables: object = TABLES) =>
     buildUserPrompt({ ...turn, context: { ...tables, ...((turn.context ?? {}) as object) } }).split("\n\n")[5];
 
@@ -116,8 +116,11 @@ describe("answers entered in the workspace", () => {
   it("include the tables, each with its tab, until one holds a row", () => {
     const known = { fein: "**-***4567", naics_code: "541430" };
     expect(unsettledForTurn({}).map((f) => f.key)).not.toContain("owners_officers");
-    expect(line({ message: "hi", context: known }, {})).toBe("Entered in the workspace, never asked for in chat: owners_officers (Owners and officers, on the Workers' comp tab)");
-    expect(line({ message: "hi", context: { ...known, owners_officers: [{ name: "Dana Reyes" }] } }, {})).toBe("Entered in the workspace, never asked for in chat: none");
+    const named = (context: object) => [...line({ message: "hi", context }, {}).matchAll(/(\w+) \(/g)].map((m) => m[1]);
+    expect(named(known)).toEqual(Object.keys(TABLES));
+    expect(line({ message: "hi", context: known }, {})).toContain("owners_officers (Owners and officers, on the Workers' comp tab)");
+    expect(named({ ...known, owners_officers: [{ name: "Dana Reyes" }] })).toEqual(Object.keys(TABLES).filter((table) => table !== "owners_officers"));
+    expect(named({ ...known, ...TABLES })).toEqual([]);
   });
 
   it("are not asked about even when an advisor asked: the request shows on the answer in the workspace", () => {

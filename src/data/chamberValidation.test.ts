@@ -371,6 +371,29 @@ describe("owners and officers (K-3.1)", () => {
   });
 });
 
+describe("loss history by year (K-3.3)", () => {
+  it("reads each year's figures as people and loss runs write them", () => {
+    expect(sanitizeChamberPatch({ loss_history: [
+      { policy_year: "2025", carrier: " Pinnacle Mutual ", premium: "$18,400", experience_mod: "0.92", claims: "2", paid: "$12,500.40", reserved: 4000, valuation_date: "9/30/2026" },
+      { policy_year: 2024, claims: 0, paid: 0, reserved: 0 },
+      { policy_year: 2023, no_coverage: "yes" },
+      { policy_year: "last year", premium: "a lot", claims: -1 },
+      { carrier: "Pinnacle Mutual" },
+    ] })).toEqual({ loss_history: [
+      { policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, experience_mod: 0.92, claims: 2, paid: 12500, reserved: 4000, valuation_date: "9/30/2026" },
+      // No claims is an answer: the zeros are kept.
+      { policy_year: 2024, claims: 0, paid: 0, reserved: 0 },
+      // So is no prior coverage.
+      { policy_year: 2023, no_coverage: true },
+      { carrier: "Pinnacle Mutual" },
+    ] });
+  });
+
+  it("stops at five years", () => {
+    expect(sanitizeChamberPatch({ loss_history: Array.from({ length: 8 }, (_, i) => ({ policy_year: 2018 + i })) }).loss_history).toHaveLength(5);
+  });
+});
+
 // A TypeScript copy of the server's rules (public.chamber_data_error), used to prove that whatever
 // the sanitiser emits is accepted. The SQL tests prove the same against the real function.
 function serverRefusal(d: unknown): string | null {
@@ -388,7 +411,7 @@ function serverRefusal(d: unknown): string | null {
   kinds.naics_code = "naics";
   for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"], ["wc_experience_mod", "experience_mod"], ["wc_annual_premium", "dollars"]]) kinds[k] = kind;
   // New in v3: the scalar kinds public.chamber_data_scalar_reason checks, and the lists of rows.
-  for (const [k, kind] of [["fein", "fein"], ["entity_type", "entity_type"], ["year_founded", "year"], ["entities", "rows"], ["owners_officers", "rows"]]) kinds[k] = kind;
+  for (const [k, kind] of [["fein", "fein"], ["entity_type", "entity_type"], ["year_founded", "year"], ["entities", "rows"], ["owners_officers", "rows"], ["loss_history", "rows"]]) kinds[k] = kind;
   const scalarOk = (kind: string, v: unknown): boolean => {
     switch (kind) {
       case "text": return isText(v, TEXT_MAX);
@@ -399,11 +422,15 @@ function serverRefusal(d: unknown): string | null {
       case "name": return isText(v, NAME_MAX);
       case "percent": return typeof v === "number" && v >= 0 && v <= 100;
       case "boolean": return typeof v === "boolean";
+      case "count": return isCount(v, COUNT_MAX);
+      case "dollars": return isCount(v, DOLLARS_MAX);
+      case "experience_mod": return typeof v === "number" && v >= 0 && v <= EXPERIENCE_MOD_MAX;
       default: return false;
     }
   };
   const rowLists: Record<string, { max: number; keys: Record<string, string> }> = {
     entities: { max: MAX_ENTITIES, keys: { legal_name: "text", fein: "fein" } },
+    loss_history: { max: 5, keys: { policy_year: "year", carrier: "name", premium: "dollars", experience_mod: "experience_mod", claims: "count", paid: "dollars", reserved: "dollars", valuation_date: "name", no_coverage: "boolean" } },
     owners_officers: { max: 20, keys: { name: "name", title: "name", ownership_percent: "percent", duties: "text", covered: "boolean" } },
   };
   for (const [k, v] of Object.entries(d)) {
@@ -598,6 +625,7 @@ describe("sanitiser output the server must accept", () => {
       { census: [{ first_name: "A", work_state: "ZZ" }] }, { census: [{ first_name: "A", classification: "W2" }] },
       { census: [{ first_name: "A", annual_salary: 1_000_001 }] }, { census: [{ first_name: " " }] }, { extra: 1 }, [],
       { fein: "12-3456789" }, { entity_type: "LLC" }, { year_founded: 1599 }, { entities: [{ dba: "x" }] }, { entities: [{ fein: "1" }] }, { entities: null }, { naics_code: "54143" }, { naics_code: 541430 },
+      { loss_history: [{ policy_year: 1599 }] }, { loss_history: [{ premium: 1.5 }] }, { loss_history: [{ claims: "2" }] },
       { owners_officers: [{ ownership_percent: 101 }] }, { owners_officers: [{ covered: "yes" }] }, { owners_officers: [{ name: "x".repeat(201) }] },
     ]) {
       expect(serverRefusal(refused), JSON.stringify(refused)).not.toBeNull();

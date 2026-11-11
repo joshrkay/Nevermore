@@ -314,8 +314,10 @@ export interface ManuscriptTable {
 }
 
 /** Each table's title in The Manuscript, and the section it is printed in. */
-const TABLES: { field: RowListField; title: string; section: ReviewSection }[] = [
+const TABLES: { field: RowListField; title: string; section: ReviewSection; order?: (a: Record<string, unknown>, b: Record<string, unknown>) => number }[] = [
   { field: "owners_officers", title: "Owners and Officers", section: "workers_comp" },
+  // Newest policy year first, as a loss run reads.
+  { field: "loss_history", title: "Loss History by Year", section: "workers_comp", order: (a, b) => Number(b.policy_year ?? 0) - Number(a.policy_year ?? 0) },
 ];
 
 /**
@@ -460,8 +462,9 @@ export function buildManuscript(
       return alsoFrom ? [label, shown, field, alsoFrom] : [label, shown, field];
     });
 
-  const tables: ManuscriptTable[] = TABLES.flatMap(({ field, title, section }) => {
-    const rows = data[field] as Record<string, unknown>[];
+  const tables: ManuscriptTable[] = TABLES.flatMap(({ field, title, section, order }) => {
+    const held = data[field] as Record<string, unknown>[];
+    const rows = order ? [...held].sort(order) : held;
     const { columns } = ROW_LISTS[field];
     return rows.length === 0 ? [] : [{ section, field, title, columns: columns.map((c) => c.label), rows: rows.map((row) => columns.map((c) => formatCell(c, row[c.key]))) }];
   });
@@ -624,6 +627,7 @@ export function buildManuscript(
       ["Annual Premium", dollars(data.wc_annual_premium), "wc_annual_premium"],
       ["Class Codes on Census", classCodes(data.census)],
       ["Owners and Officers", answer("owners_officers"), "owners_officers"],
+      ["Loss History", answer("loss_history"), "loss_history"],
     ]),
     operationsRows: finish([
       ["Employee Handbook", yesNo(data.has_handbook), "has_handbook"],

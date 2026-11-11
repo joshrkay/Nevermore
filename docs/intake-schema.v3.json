@@ -763,6 +763,19 @@
         "rank": 54
       }
     },
+    "loss_history": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "$ref": "#/$defs/lossYear"
+      },
+      "x-intake": {
+        "label": "Loss history",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 55
+      }
+    },
     "census": {
       "type": "array",
       "maxItems": 5000,
@@ -1134,6 +1147,53 @@
           "maxLength": 1000
         },
         "covered": {
+          "type": "boolean"
+        }
+      }
+    },
+    "lossYear": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "policy_year": {
+          "type": "integer",
+          "minimum": 1600,
+          "maximum": 2100
+        },
+        "carrier": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "premium": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000000
+        },
+        "experience_mod": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "claims": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "paid": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000000
+        },
+        "reserved": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000000
+        },
+        "valuation_date": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "no_coverage": {
           "type": "boolean"
         }
       }

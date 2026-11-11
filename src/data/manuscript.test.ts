@@ -317,6 +317,24 @@ describe("buildManuscript covers the whole intake", () => {
     expect(buildManuscript({ ...DEMO_CHAMBER_DATA, census: [] }, opts).tables.map((t) => t.title)).not.toContain("Payroll by Class Code and State");
   });
 
+  // K-3.3
+  it("prints the loss history by year, newest first, with each year's valuation date", () => {
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, loss_history: [
+      { policy_year: 2023, no_coverage: true },
+      { policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, experience_mod: 0.92, claims: 2, paid: 12500, reserved: 4000, valuation_date: "2026-09-30" },
+      { policy_year: 2024, carrier: "Pinnacle Mutual", premium: 17100, claims: 0, paid: 0, reserved: 0 },
+    ] }, opts);
+    const table = m.tables.find((t) => t.field === "loss_history")!;
+    expect([table.section, table.title]).toEqual(["workers_comp", "Loss History by Year"]);
+    expect(table.columns).toEqual(["Policy year", "Carrier", "Premium", "Experience mod", "Claims", "Paid", "Reserved", "Valued as of", "No coverage"]);
+    expect(table.rows).toEqual([
+      ["2025", "Pinnacle Mutual", "$18,400", "0.92", "2", "$12,500", "$4,000", "2026-09-30", "—"],
+      ["2024", "Pinnacle Mutual", "$17,100", "—", "0", "$0", "$0", "—", "—"],
+      ["2023", "—", "—", "—", "—", "—", "—", "—", "Yes"],
+    ]);
+    expect(m.workersCompRows.find(([, , field]) => field === "loss_history")).toEqual(["Loss History", "3 listed", "loss_history"]);
+  });
+
   it("shows the workers' comp block and the census class codes", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
     expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toMatchObject({

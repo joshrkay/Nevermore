@@ -658,7 +658,15 @@ export const DOCUMENT_FIELDS = [
   "naics_code", "operations_description",
   // K-1.3: the PEO the employer is in now.
   "in_peo", "current_peo", "peo_renewal_date",
+  // The workers' comp answers a declarations page or a loss run states (v2's, which no document proposed until now).
+  "wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium",
 ] as const;
+
+/**
+ * Answers that are tables of rows a document can state (K-3.3 on): the model reports each as `rows`, a list of
+ * objects of that table's keys, and the browser keeps what the intake's rules accept of them.
+ */
+export const DOCUMENT_ROW_FIELDS = ["loss_history"] as const;
 
 const BOOLEAN_FIELDS = new Set([
   "virgin_medical", "has_401k", "employer_contributes", "has_handbook", "has_1099", "ca_contractors", "in_peo",
@@ -712,12 +720,29 @@ export function redactedPrefix(text: string, chars: number, redact: (text: strin
 export function shapeAiCandidates(raw: unknown, sections: TextSection[]): Candidate[] {
   if (!Array.isArray(raw)) return [];
   const allowed = new Set<string>(DOCUMENT_FIELDS);
+  const rowFields = new Set<string>(DOCUMENT_ROW_FIELDS);
   const seen = new Set<string>();
   const out: Candidate[] = [];
   for (const item of raw) {
     if (typeof item !== "object" || item === null) continue;
-    const { field, value, section } = item as Record<string, unknown>;
-    if (typeof field !== "string" || !allowed.has(field) || seen.has(field)) continue;
+    const { field, value, section, rows } = item as Record<string, unknown>;
+    if (typeof field !== "string" || !(allowed.has(field) || rowFields.has(field)) || seen.has(field)) continue;
+    if (rowFields.has(field)) {
+      // A table's rows: each a flat object of text, numbers and yes-or-no values, text redacted as everywhere.
+      const kept = (Array.isArray(rows) ? rows : []).flatMap((row) => {
+        if (typeof row !== "object" || row === null || Array.isArray(row)) return [];
+        const cells = Object.entries(row).flatMap(([key, cell]): [string, unknown][] => {
+          if (typeof cell === "string") return redactSensitive(cell).trim() ? [[key, redactSensitive(cell).trim()]] : [];
+          return typeof cell === "number" || typeof cell === "boolean" ? [[key, cell]] : [];
+        });
+        return cells.length > 0 ? [Object.fromEntries(cells)] : [];
+      });
+      if (kept.length === 0) continue;
+      const at = typeof section === "number" ? section - 1 : Number(section) - 1;
+      seen.add(field);
+      out.push({ field, value: kept, location: sections[at]?.label ?? null });
+      continue;
+    }
     let v: unknown = value;
     if (typeof v === "string") v = redactSensitive(v).trim();
     if (v === null || v === undefined || v === "") continue;

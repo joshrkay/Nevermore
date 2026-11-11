@@ -12,7 +12,7 @@ export const REVIEW_FIELDS: Record<ReviewSection, FieldKey[]> = {
   locations: ["hq_state", "states"],
   payroll: ["payroll_vendor", "pay_frequency", "funding_days", "pto_types", "accrual_method"],
   benefits: ["virgin_medical", "current_carrier", "renewal_date", "rate_history", "benefits_waiting_period", "ancillary_benefits", "has_401k", "retirement_type", "employer_contributes"],
-  workers_comp: ["wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium", "owners_officers"],
+  workers_comp: ["wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium", "owners_officers", "loss_history"],
   operations: ["has_handbook", "handbook_last_updated", "hr_staff_count", "uses_physical_clocks", "uses_mobile_app", "uses_computer_timekeeping", "shift_differentials", "hris_system", "key_challenges", "business_goals"],
 };
 

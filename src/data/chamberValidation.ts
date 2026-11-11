@@ -34,6 +34,7 @@ export const YEAR_MAX = 2100;
 export const MAX_ENTITIES = 50;
 export const MAX_OWNERS_OFFICERS = 20;
 export const MONEY_MAX = 1_000_000;
+export const MAX_LOSS_YEARS = 5;
 
 const STATE_CODE_SET: ReadonlySet<string> = new Set(US_STATE_CODES);
 
@@ -223,6 +224,10 @@ const FIELD_SCHEMAS: FieldSchemas = {
   owners_officers: rowsOf<ChamberData["owners_officers"][number]>(
     { name: nameText, title: nameText, ownership_percent: percent, duties: text, covered: yesNo },
     MAX_OWNERS_OFFICERS,
+  ),
+  loss_history: rowsOf<ChamberData["loss_history"][number]>(
+    { policy_year: year, carrier: nameText, premium: dollars, experience_mod: experienceMod, claims: count, paid: dollars, reserved: dollars, valuation_date: nameText, no_coverage: yesNo },
+    MAX_LOSS_YEARS,
   ),
   naics_code: naicsCode.nullable(),
   operations_description: nullableText,

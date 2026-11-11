@@ -85,4 +85,33 @@ describe("the Workers' comp tab", () => {
     expect(screen.queryByRole("table", { name: "Payroll by class code and state" })).not.toBeInTheDocument();
     expect(screen.getByText(/Upload a census and this table fills itself in/)).toBeInTheDocument();
   });
+
+  // K-3.3
+  it("lets the prospect enter each policy year's carrier, premium, mod, claims, paid and reserved", () => {
+    render(<Harness show={(d) => d.loss_history} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add Loss history" }));
+    fireEvent.change(screen.getByLabelText("Policy year, row 1"), { target: { value: "2025" } });
+    fireEvent.change(screen.getByLabelText("Carrier, row 1"), { target: { value: "Pinnacle Mutual" } });
+    fireEvent.change(screen.getByLabelText("Premium, row 1"), { target: { value: "$18,400" } });
+    fireEvent.change(screen.getByLabelText("Experience mod, row 1"), { target: { value: "0.92" } });
+    fireEvent.change(screen.getByLabelText("Claims, row 1"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(held()).toEqual([{ policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, experience_mod: 0.92, claims: 0 }]);
+    const row = within(screen.getByRole("table", { name: "Loss history" })).getAllByRole("row")[1];
+    expect(row).toHaveTextContent("2025Pinnacle Mutual$18,4000.920———");
+    // An edit starts from the figure itself, not the way it is printed.
+    fireEvent.click(screen.getByRole("button", { name: "Edit Loss history" }));
+    expect(screen.getByLabelText("Premium, row 1")).toHaveValue("18400");
+  });
+
+  it("takes 'no prior coverage' for a year as an answer, and stops at five years", () => {
+    render(<Harness data={{ loss_history: [2021, 2022, 2023, 2024].map((policy_year) => ({ policy_year })) }} show={(d) => d.loss_history} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Loss history" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add a row" }));
+    fireEvent.change(screen.getByLabelText("Policy year, row 5"), { target: { value: "2020" } });
+    fireEvent.change(screen.getByLabelText("No coverage, row 5"), { target: { value: "yes" } });
+    expect(screen.queryByRole("button", { name: "Add a row" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(held()[4]).toEqual({ policy_year: 2020, no_coverage: true });
+  });
 });

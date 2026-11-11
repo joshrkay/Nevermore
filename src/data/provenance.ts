@@ -129,6 +129,7 @@ export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
   current_peo: "text",
   peo_renewal_date: "text",
   owners_officers: "rows",
+  loss_history: "rows",
 };
 
 const FIELD_KEYS = Object.keys(FIELD_LABELS) as FieldKey[];

@@ -37,6 +37,7 @@ CREATE TABLE auth.users (id uuid PRIMARY KEY, raw_user_meta_data jsonb);
 \i supabase/migrations/20261111094000_intake_schema_v3_census_columns.sql
 \i supabase/migrations/20261111095000_intake_schema_v3_census_worksite.sql
 \i supabase/migrations/20261111096000_intake_schema_v3_owners_officers.sql
+\i supabase/migrations/20261111097000_intake_schema_v3_loss_history.sql
 
 -- ---------- helpers ----------
 -- The path chamber_data_error names for d, or NULL when d is acceptable.
@@ -188,4 +189,25 @@ BEGIN
   PERFORM pg_temp.must_accept('{"entities":[{"legal_name":"A","fein":"841234567"}]}', 'legal entities after K-3.1');
   PERFORM pg_temp.must_refuse('{"entities":[{"name":"A"}]}', 'entities[0].name', 'an owner''s key on a legal entity');
   RAISE NOTICE 'intake_schema_v3: owners and officers cases passed';
+END $$;
+
+-- ---------- K-3.3 loss history by year ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.must_accept('{"loss_history":[{"policy_year":2025,"carrier":"Pinnacle Mutual","premium":18400,"experience_mod":0.92,"claims":2,"paid":12500,"reserved":4000,"valuation_date":"2026-09-30"},{"policy_year":2024,"claims":0,"paid":0,"reserved":0},{"policy_year":2023,"no_coverage":true}]}', 'loss history');
+  PERFORM pg_temp.must_refuse('{"loss_history":[{"policy_year":1599}]}', 'loss_history[0].policy_year', 'a policy year before 1600');
+  PERFORM pg_temp.must_refuse('{"loss_history":[{"policy_year":"2025"}]}', 'loss_history[0].policy_year', 'a policy year sent as text');
+  PERFORM pg_temp.must_refuse('{"loss_history":[{"premium":1.5}]}', 'loss_history[0].premium', 'a premium with cents');
+  PERFORM pg_temp.must_refuse('{"loss_history":[{"paid":100000001}]}', 'loss_history[0].paid', 'paid over the cap');
+  PERFORM pg_temp.must_refuse('{"loss_history":[{"reserved":-1}]}', 'loss_history[0].reserved', 'a negative reserve');
+  PERFORM pg_temp.must_refuse('{"loss_history":[{"experience_mod":10.5}]}', 'loss_history[0].experience_mod', 'a mod over 10');
+  PERFORM pg_temp.must_refuse('{"loss_history":[{"experience_mod":"0.92"}]}', 'loss_history[0].experience_mod', 'a mod sent as text');
+  PERFORM pg_temp.must_refuse('{"loss_history":[{"claims":1.5}]}', 'loss_history[0].claims', 'a fractional claim count');
+  PERFORM pg_temp.must_refuse('{"loss_history":[{"no_coverage":"yes"}]}', 'loss_history[0].no_coverage', 'no coverage sent as text');
+  PERFORM pg_temp.must_refuse('{"loss_history":[{"carrier":7}]}', 'loss_history[0].carrier', 'a carrier that is not text');
+  PERFORM pg_temp.must_refuse('{"loss_history":[{"adjuster":"x"}]}', 'loss_history[0].adjuster', 'an unknown key on a year');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('loss_history', (SELECT jsonb_agg(jsonb_build_object('policy_year', 2019 + n)) FROM generate_series(1, 6) n)), 'loss_history', 'six years');
+  PERFORM pg_temp.must_accept(jsonb_build_object('loss_history', (SELECT jsonb_agg(jsonb_build_object('policy_year', 2019 + n)) FROM generate_series(1, 5) n)), 'five years');
+  PERFORM pg_temp.must_accept('{"owners_officers":[{"name":"Dana Reyes","ownership_percent":60}]}', 'owners after K-3.3');
+  RAISE NOTICE 'intake_schema_v3: loss history cases passed';
 END $$;

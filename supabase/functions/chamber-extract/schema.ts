@@ -62,6 +62,7 @@ export const FIELD_GUIDE: Record<string, string> = {
   current_peo: "The PEO the business is in now, by name; report in_peo with it",
   peo_renewal_date: "When the agreement with their current PEO renews or ends, as they said it; report in_peo with it",
   owners_officers: "Owners and officers the prospect names, one row per person: name, title, ownership_percent (their share, a number from 0 to 100), duties (what they do in the business), covered (true if workers' comp covers them, false if they are excluded). Give only the rows and keys this message states; never ask for the rest",
+  loss_history: "Workers' comp loss history the prospect states, one row per policy year: policy_year (four digits), carrier, premium (whole dollars), experience_mod, claims (how many; 0 when they say there were none), paid and reserved (whole dollars), valuation_date (the date the figures are as of), no_coverage (true when they had no workers' comp coverage that year). Give only the years and keys this message states; never ask for the rest",
 };
 
 /**
@@ -120,6 +121,7 @@ export const FIELD_QUESTION: Record<string, string> = {
   current_peo: "Which PEO are you with now?",
   peo_renewal_date: "When does your agreement with your current PEO renew?",
   owners_officers: "Who are the owners and officers of the business?",
+  loss_history: "What has your workers' comp claims history been over the last five years?",
 };
 
 // The census (the employee roster) comes only from an uploaded file (D21), and the FEIN is typed into the workspace.

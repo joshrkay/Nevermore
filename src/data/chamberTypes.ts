@@ -24,6 +24,25 @@ export interface OwnerOfficer {
   covered?: boolean;
 }
 
+/** One policy year of workers' comp loss history (K-3.3). */
+export interface LossYear {
+  policy_year?: number;
+  carrier?: string;
+  /** Whole dollars. */
+  premium?: number;
+  experience_mod?: number;
+  /** How many claims; 0 is "no claims". */
+  claims?: number;
+  /** Whole dollars paid on the year's claims. */
+  paid?: number;
+  /** Whole dollars reserved for the year's open claims. */
+  reserved?: number;
+  /** The date the figures are valued as of, as the loss run prints it. */
+  valuation_date?: string;
+  /** True when the employer had no workers' comp coverage that year. */
+  no_coverage?: boolean;
+}
+
 export interface ChamberData {
   // Company
   company_name: string | null;
@@ -102,6 +121,8 @@ export interface ChamberData {
   // Workers' comp tables (intake schema v3)
   /** Each owner and officer (K-3.1). */
   owners_officers: OwnerOfficer[];
+  /** Up to five policy years of loss history (K-3.3). */
+  loss_history: LossYear[];
 
   // Employees: the canonical census (see supabase/functions/_shared/census.ts)
   census: CensusEmployee[];
@@ -161,6 +182,7 @@ export const EMPTY_CHAMBER_DATA: ChamberData = {
   current_peo: null,
   peo_renewal_date: null,
   owners_officers: [],
+  loss_history: [],
   census: [],
 };
 
@@ -221,6 +243,11 @@ export const DEMO_CHAMBER_DATA: ChamberData = {
   owners_officers: [
     { name: "Dana Reyes", title: "Chief Executive Officer", ownership_percent: 60, duties: "Runs the studio and client accounts; office work only", covered: false },
     { name: "Marcus Rivera", title: "Art Director", ownership_percent: 40, duties: "Leads design; on the census as an employee", covered: true },
+  ],
+  loss_history: [
+    { policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, experience_mod: 0.92, claims: 1, paid: 3200, reserved: 0, valuation_date: "2026-09-30" },
+    { policy_year: 2024, carrier: "Pinnacle Mutual", premium: 17100, experience_mod: 0.95, claims: 0, paid: 0, reserved: 0, valuation_date: "2026-09-30" },
+    { policy_year: 2023, carrier: "Pinnacle Mutual", premium: 16300, experience_mod: 0.97, claims: 0, paid: 0, reserved: 0, valuation_date: "2026-09-30" },
   ],
   census: [
     { id: "6f1c2a40-0001-4c1e-9a7b-3d5e00000001", first_name: "Sarah", last_name: "Chen", dob: "1988-03-15", work_state: "CA", zip_code: "94107", job_title: "Senior Designer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "FAM", class_code: "8810", dependents: [{ first_name: "Michael", last_name: "Chen", dob: "1985-06-12", relationship: "spouse" }, { first_name: "Emma", last_name: "Chen", dob: "2018-03-22", relationship: "child" }] },

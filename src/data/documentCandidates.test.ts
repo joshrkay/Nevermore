@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { applyExtraction, applyFieldAction } from "./provenance";
 import { EMPTY_CHAMBER_DATA, type CensusEmployee } from "./chamberTypes";
 import {
   applyDocumentCandidates,
@@ -354,5 +355,42 @@ describe("company identity candidates", () => {
     expect(formatValue("fein", "841234567")).toBe("84-1234567");
     expect(fieldLabel("entity_type")).toBe("Entity type");
     expect(fieldLabel("street_address")).toBe("Street address");
+  });
+});
+
+// K-3.3: an uploaded loss run proposes a year's figures; the prospect applies them into the table.
+describe("a table's rows from a document", () => {
+  const doc = { id: "d7", file_name: "loss-run-2025.pdf" };
+  const now = new Date("2026-11-11T00:00:00Z");
+  const year2025 = { policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, claims: 2, paid: 12500, reserved: 4000, valuation_date: "09/30/2026" };
+  const stored = { candidates: [{ field: "loss_history", location: "Page 2", value: [{ ...year2025, premium: "18,400", policy_number: "x" }] }] };
+
+  it("keeps the rows a stored extraction holds as the intake would, with the valuation date", () => {
+    expect(parseExtraction(stored).candidates).toEqual([{ field: "loss_history", location: "Page 2", value: [year2025] }]);
+    expect(formatValue("loss_history", [year2025])).toBe("1 listed");
+  });
+
+  it("is new for an empty table, the same once its rows are in, and an update when it adds to or changes what the table holds", () => {
+    const [candidate] = parseExtraction(stored).candidates;
+    const kind = (loss_history: object[], provenance = {}) => planCandidateMerge({ ...EMPTY_CHAMBER_DATA, loss_history }, [candidate], provenance)[0].kind;
+    expect(kind([])).toBe("new");
+    expect(kind([year2025, { policy_year: 2024, claims: 0 }])).toBe("same");
+    expect(kind([{ policy_year: 2024, claims: 0 }])).toBe("replace");
+    expect(kind([{ policy_year: 2025, premium: 17000 }])).toBe("replace");
+  });
+
+  it("adds the year to the table, keeping the other years, and records the document as the source", () => {
+    const [candidate] = parseExtraction(stored).candidates;
+    const prev = applyExtraction({ data: EMPTY_CHAMBER_DATA, provenance: {} }, { loss_history: [{ policy_year: 2024, claims: 0 }, { policy_year: 2025, premium: 17000 }] }, { source: { kind: "transcript", message_id: "m1" } });
+    const next = applyDocumentCandidates(prev, doc, [candidate], { now, replace: true });
+    expect(next.data.loss_history).toEqual([{ policy_year: 2024, claims: 0 }, year2025]);
+    expect(next.provenance.loss_history).toMatchObject({ status: "confirmed", source: { kind: "document", document_id: "d7", location: "Page 2" } });
+  });
+
+  it("never changes a figure the prospect typed for that year, and still fills in what they left out", () => {
+    const [candidate] = parseExtraction(stored).candidates;
+    const typed = applyFieldAction({ data: EMPTY_CHAMBER_DATA, provenance: {} }, { type: "edit", field: "loss_history", value: [{ policy_year: 2025, premium: 17000 }] });
+    const next = applyDocumentCandidates(typed, doc, [candidate], { now });
+    expect(next.data.loss_history).toEqual([{ ...year2025, premium: 17000 }]);
   });
 });

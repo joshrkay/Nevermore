@@ -54,6 +54,7 @@ export const LIMITS = {
   yearMax: 2100,
   entities: 50,
   ownersOfficers: 20,
+  lossYears: 5,
   percent: 100,
   // An amount with cents, such as a monthly premium rate.
   money: 1_000_000,
@@ -195,6 +196,8 @@ const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: stri
 
   // K-3.1: each owner and officer, for pricing workers' comp inclusions and exclusions.
   ["owners_officers", rows("ownerOfficer", LIMITS.ownersOfficers), "workers_comp", "Owners and officers"],
+  // K-3.3: five policy years of workers' comp loss history.
+  ["loss_history", rows("lossYear", LIMITS.lossYears), "workers_comp", "Loss history"],
 
   ["census", { type: "array", maxItems: LIMITS.census, items: { $ref: "#/$defs/censusRow" } }, "census", "Employee census"],
 ];
@@ -282,6 +285,23 @@ export const INTAKE_SCHEMA_V3: JsonSchema = {
         ownership_percent: { type: "number", minimum: 0, maximum: LIMITS.percent },
         duties: { type: "string", maxLength: LIMITS.text },
         covered: { type: "boolean" },
+      },
+    },
+    // One policy year of workers' comp loss history (K-3.3). `claims: 0` is "no claims", and `no_coverage` is "no
+    // prior coverage" that year: both are answers. `valuation_date` is the date the figures are valued as of.
+    lossYear: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        policy_year: { type: "integer", minimum: LIMITS.yearMin, maximum: LIMITS.yearMax },
+        carrier: { type: "string", maxLength: LIMITS.name },
+        premium: { type: "integer", minimum: 0, maximum: LIMITS.dollars },
+        experience_mod: { type: "number", minimum: 0, maximum: LIMITS.experienceMod },
+        claims: { type: "integer", minimum: 0, maximum: LIMITS.count },
+        paid: { type: "integer", minimum: 0, maximum: LIMITS.dollars },
+        reserved: { type: "integer", minimum: 0, maximum: LIMITS.dollars },
+        valuation_date: { type: "string", maxLength: LIMITS.name },
+        no_coverage: { type: "boolean" },
       },
     },
     dependent: {

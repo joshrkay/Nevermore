@@ -547,6 +547,31 @@ describe("AI-read fields", () => {
     ]);
   });
 
+  // K-3.3: a loss run states a policy year's figures; the prospect applies them as a row of the loss history.
+  it("reads a loss run's years as rows, each with the figures stated, and never a sensitive number in one", () => {
+    expect(shapeAiCandidates([
+      { field: "loss_history", section: 2, rows: [
+        { policy_year: 2025, carrier: "Pinnacle Mutual", premium: "18,400", claims: 2, paid: 12500, reserved: 4000, valuation_date: "09/30/2026", policy_number: "acct 0012345" },
+        { policy_year: 2024, claims: 0, nested: { a: 1 }, blank: " " },
+        "2023",
+        {},
+      ] },
+      { field: "loss_history", section: 1, rows: [{ policy_year: 2022 }] },
+      { field: "wc_carrier", value: "Pinnacle Mutual", section: 1, rows: [{ policy_year: 1 }] },
+      { field: "loss_history", section: 1, value: "five years clean" },
+    ], sections)).toEqual([
+      { field: "loss_history", location: "Page 2", value: [
+        { policy_year: 2025, carrier: "Pinnacle Mutual", premium: "18,400", claims: 2, paid: 12500, reserved: 4000, valuation_date: "09/30/2026", policy_number: "acct [redacted]" },
+        { policy_year: 2024, claims: 0 },
+      ] },
+      { field: "wc_carrier", value: "Pinnacle Mutual", location: "Page 1" },
+    ]);
+  });
+
+  it("proposes no table when a document states no usable row of it", () => {
+    expect(shapeAiCandidates([{ field: "loss_history", section: 1, rows: [{}, "2023", { note: " " }] }, { field: "loss_history", section: 1, value: "five years clean" }], sections)).toEqual([]);
+  });
+
   it("never sends or keeps a sensitive number", () => {
     expect(buildPromptText([{ label: "Page 1", text: "Group 12345, owner SSN 123-45-6789" }])).toBe("[[Section 1]]\nGroup 12345, owner SSN [redacted]\n\n");
     expect(shapeAiCandidates([{ field: "rate_history", value: "acct 0012345 up 9%", section: 1 }], sections)).toEqual([

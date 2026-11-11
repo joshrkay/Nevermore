@@ -52,6 +52,14 @@ const WorkersCompTab = ({ data, isDemo, provenance = {}, onAction }: WorkersComp
         hint="List each owner and officer, with their share of the business and whether workers' comp covers them."
       />
 
+      <RowsField
+        field="loss_history"
+        rows={data.loss_history}
+        provenance={provenance.loss_history}
+        onAction={act}
+        hint="Up to five policy years: carrier, premium, experience mod, claims, paid and reserved. A loss run you upload can fill a year in."
+      />
+
       {/* Worked out from the census, never typed (K-3.2). */}
       <section className="space-y-2">
         <h4 className="text-[10px] uppercase tracking-wider text-muted-foreground">Payroll by class code and state</h4>

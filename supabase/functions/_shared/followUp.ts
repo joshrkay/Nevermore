@@ -30,6 +30,7 @@ export const WORKSPACE_ANSWERS: Readonly<Record<string, string>> = {
   naics_code: "the Company tab",
   // Tables: Lenore takes what the prospect volunteers of one, and never asks for it row by row (Epic K).
   owners_officers: "the Workers' comp tab",
+  loss_history: "the Workers' comp tab",
 };
 
 /** What the conversation never asks about: the census (a file) and the answers entered in the workspace. */

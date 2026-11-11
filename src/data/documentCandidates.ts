@@ -1,3 +1,4 @@
+import { isRowListField, mergeRows, type RowListField } from "./rowColumns";
 import type { CensusEmployee, ChamberData } from "./chamberTypes";
 import { CENSUS_FACTS, isAssumed, samePerson, type CensusFact } from "./census";
 import { sanitizeChamberPatch } from "./chamberValidation";
@@ -121,12 +122,17 @@ export function planCandidateMerge(data: ChamberData, candidates: DocumentCandid
   return candidates.map((candidate) => {
     const current = data[candidate.field];
     const entry = provenance[candidate.field];
+    // A table of rows merges row by row (mergeRows): it is the same once every row and figure is in the table, and
+    // otherwise an update, never a conflict, since applying it changes nothing the prospect typed.
+    const table = isRowListField(candidate.field);
     const same =
       candidate.field === "census"
         ? censusAgrees(compareCensus(data.census, candidate.value as CensusEmployee[], candidate.facts))
-        : normalize(current) === normalize(candidate.value);
+        : table
+          ? JSON.stringify(mergeRows(candidate.field as RowListField, current as object[], candidate.value as object[], true)) === JSON.stringify(current)
+          : normalize(current) === normalize(candidate.value);
     // A census is always compared in the dialog, since it merges person by person.
-    const replaces = candidate.field !== "census" && entry !== undefined && outranks("document", entry);
+    const replaces = table || (candidate.field !== "census" && entry !== undefined && outranks("document", entry));
     const kind: MergeKind = isEmpty(current) ? "new" : same ? "same" : replaces ? "replace" : "conflict";
     return { candidate, kind, current };
   });
@@ -232,7 +238,8 @@ export function applyDocumentCandidates(
   const now = opts.now ?? new Date();
   return chosen.reduce<IntakeState>((acc, c) => {
     const source = documentSource(doc, c);
-    return opts.replace
+    // A table's rows are always merged in, never traded for the table (applyExtraction's row rule).
+    return opts.replace && !isRowListField(c.field)
       ? applyChosenValue(acc, c.field, c.value, source, now)
       : applyExtraction(acc, { [c.field]: c.value }, { source, statuses: { [c.field]: "confirmed" }, now });
   }, state);

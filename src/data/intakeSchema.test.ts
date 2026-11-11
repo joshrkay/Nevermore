@@ -57,6 +57,8 @@ describe("intake schema v3", () => {
     "in_peo", "current_peo", "peo_renewal_date",
     // K-3.1 owners and officers
     "owners_officers",
+    // K-3.3 loss history by year
+    "loss_history",
   ];
 
   it("only adds the common questions to v2, changing nothing v2 had", () => {
@@ -110,7 +112,7 @@ describe("intake schema v3", () => {
 
   it("puts the workers' comp block in its own section", () => {
     expect(INTAKE_FIELDS.filter((f) => f.section === "workers_comp").map((f) => f.key).sort()).toEqual([
-      "owners_officers", "wc_annual_premium", "wc_carrier", "wc_experience_mod", "wc_renewal_date",
+      "loss_history", "owners_officers", "wc_annual_premium", "wc_carrier", "wc_experience_mod", "wc_renewal_date",
     ]);
   });
 
@@ -279,6 +281,19 @@ describe("validateChamberData", () => {
     expect(paths({ owners_officers: [{ ownership_percent: -1 }] })).toEqual(["owners_officers[0].ownership_percent"]);
     expect(paths({ owners_officers: [{ name: "x".repeat(201) }] })).toEqual(["owners_officers[0].name"]);
     expect(validateChamberData({ owners_officers: Array.from({ length: 21 }, () => ({ name: "A" })) })).toEqual([{ path: "owners_officers", reason: "must have at most 20 entries" }]);
+  });
+
+  it("holds up to five policy years of workers' comp loss history (K-3.3)", () => {
+    expect(validateChamberData({ loss_history: [
+      { policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, experience_mod: 0.92, claims: 2, paid: 12500, reserved: 4000, valuation_date: "2026-09-30" },
+      { policy_year: 2024, carrier: "Pinnacle Mutual", premium: 17100, claims: 0, paid: 0, reserved: 0 },
+      { policy_year: 2023, no_coverage: true },
+    ] })).toEqual([]);
+    expect(validateChamberData({ loss_history: [{ policy_year: 1599, carrier: 7, premium: 1.5, experience_mod: 11, claims: -1, paid: "0", reserved: 100_000_001, valuation_date: "x".repeat(201), no_coverage: "yes", adjuster: "x" }] }).map((i) => i.path)).toEqual([
+      "loss_history[0].policy_year", "loss_history[0].carrier", "loss_history[0].premium", "loss_history[0].experience_mod", "loss_history[0].claims",
+      "loss_history[0].paid", "loss_history[0].reserved", "loss_history[0].valuation_date", "loss_history[0].no_coverage", "loss_history[0].adjuster",
+    ]);
+    expect(validateChamberData({ loss_history: Array.from({ length: 6 }, (_, i) => ({ policy_year: 2020 + i })) })).toEqual([{ path: "loss_history", reason: "must have at most 5 entries" }]);
   });
 
   it("refuses the legacy roster key, which no writer sends any more", () => {

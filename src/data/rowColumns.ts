@@ -5,7 +5,7 @@ import { formatFein } from "./answerFormat";
 import type { ChamberData } from "./chamberTypes";
 
 /** How a cell is typed and shown. */
-export type RowCellKind = "text" | "fein" | "percent" | "boolean";
+export type RowCellKind = "text" | "fein" | "percent" | "boolean" | "year" | "dollars" | "decimal" | "count";
 
 export interface RowColumn {
   key: string;
@@ -50,6 +50,22 @@ export const ROW_LISTS: Record<RowListField, RowList> = {
     max: 20,
     key: "name",
   },
+  loss_history: {
+    title: "Loss history",
+    columns: [
+      { key: "policy_year", label: "Policy year", kind: "year", placeholder: "2025" },
+      { key: "carrier", label: "Carrier", kind: "text" },
+      { key: "premium", label: "Premium", kind: "dollars" },
+      { key: "experience_mod", label: "Experience mod", kind: "decimal", placeholder: "0.92" },
+      { key: "claims", label: "Claims", kind: "count", placeholder: "0 for none" },
+      { key: "paid", label: "Paid", kind: "dollars" },
+      { key: "reserved", label: "Reserved", kind: "dollars" },
+      { key: "valuation_date", label: "Valued as of", kind: "text" },
+      { key: "no_coverage", label: "No coverage", kind: "boolean" },
+    ],
+    max: 5,
+    key: "policy_year",
+  },
 };
 
 export const isRowListField = (field: string): field is RowListField => field in ROW_LISTS;
@@ -59,6 +75,7 @@ export function formatCell(column: RowColumn, value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   if (column.kind === "fein" && typeof value === "string") return formatFein(value);
   if (column.kind === "percent") return `${value}%`;
+  if (column.kind === "dollars" && typeof value === "number") return `$${value.toLocaleString("en-US")}`;
   if (column.kind === "boolean") return value ? "Yes" : "No";
   return String(value);
 }
@@ -67,7 +84,7 @@ export function formatCell(column: RowColumn, value: unknown): string {
 export function cellInput(column: RowColumn, value: unknown): string {
   if (value === null || value === undefined) return "";
   if (column.kind === "boolean") return value ? "yes" : "no";
-  if (column.kind === "percent") return String(value);
+  if (column.kind === "percent" || column.kind === "dollars") return String(value);
   return formatCell(column, value);
 }
 
