@@ -1434,6 +1434,17 @@ describe("AdvisorSubmissionPage", () => {
         expect(parts.map((p) => p.name).filter((n) => n.startsWith("documents/"))).toEqual([]);
       });
 
+      it("warns on the contents page when the PEO's profile is out of date, as its card does, by today's date", async () => {
+        // Today is pinned to 11 Nov 2026: checked 2 Mar 2026 is more than 180 days ago.
+        peoCatalogRows = catalog().map((p) => (p.name === "Justworks" ? { ...p, profile: { ...p.profile!, sources: { answers: { ...sourced, checked_on: "2026-03-02" } } } } : p));
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market" }));
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        const { parts } = await zipOf();
+        expect(parts[0].text.split("\r\n")[3]).toBe("Justworks's profile was last checked 2 Mar 2026 and may be out of date.");
+      });
+
       it("carries the documents on file, fetched as the page opens them, and holds no advisor notes or reviews", async () => {
         api.loadSubmission.mockResolvedValue(detail({
           pipelineStatus: "ready_for_market", documents: [lossRuns, blocked],
@@ -1492,6 +1503,50 @@ describe("AdvisorSubmissionPage", () => {
         fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
         fireEvent.click(await within(justworks).findByRole("button", { name: "Record it" }));
         expect(await within(justworks).findByRole("alert")).toHaveTextContent("Move this submission to Ready for market first. It is submitted");
+      });
+
+      describe("for a PEO that already has a quote request", () => {
+        const request = (status: string) => ({ id: 7, session_id: "s1", peo_name: "justworks", status, sent_version: 1, sent_on: "2026-11-03",
+          quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null });
+        const downloaded = async (status: string, stage = "sent_to_carrier") => {
+          api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: stage as SubmissionDetail["pipelineStatus"], quoteRequests: [request(status)] as SubmissionDetail["quoteRequests"] }));
+          api.recordQuoteSend.mockResolvedValue(undefined);
+          renderPage();
+          const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+          fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+          await zipOf();
+          await within(justworks).findByText("Already recorded as sent to Justworks on Nov 3, 2026.");
+          return justworks;
+        };
+
+        it("says when it was sent, and while it is still waiting offers only to record it again as sent today", async () => {
+          const justworks = await downloaded("sent");
+          expect(within(justworks).queryByText("Sent this to Justworks?")).not.toBeInTheDocument();
+          expect(within(justworks).queryByRole("button", { name: "Record it" })).not.toBeInTheDocument();
+          fireEvent.click(within(justworks).getByRole("button", { name: "Record it again as sent today" }));
+          await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "Justworks", "2026-11-11"));
+        });
+
+        it("records nothing on Not yet", async () => {
+          const justworks = await downloaded("sent");
+          fireEvent.click(within(justworks).getByRole("button", { name: "Not yet" }));
+          expect(within(justworks).queryByText("Already recorded as sent to Justworks on Nov 3, 2026.")).not.toBeInTheDocument();
+          expect(api.recordQuoteSend).not.toHaveBeenCalled();
+        });
+
+        it.each(["quoted", "declined", "closed"])("offers no send to record once it is %s, so its send date is never lost", async (status) => {
+          const justworks = await downloaded(status);
+          expect(within(justworks).queryByRole("button", { name: /Record it/ })).not.toBeInTheDocument();
+          fireEvent.click(within(justworks).getByRole("button", { name: "Close" }));
+          expect(within(justworks).queryByText("Already recorded as sent to Justworks on Nov 3, 2026.")).not.toBeInTheDocument();
+          expect(api.recordQuoteSend).not.toHaveBeenCalled();
+        });
+
+        it("still says what the stage needs before a waiting one can be recorded again", async () => {
+          const justworks = await downloaded("sent", "submitted");
+          expect(justworks).toHaveTextContent("To record a send to Justworks, move this submission to Ready for market first.");
+          expect(within(justworks).queryByRole("button", { name: /Record it/ })).not.toBeInTheDocument();
+        });
       });
 
       it("offers no Record it where the stage allows no send, and says what would", async () => {

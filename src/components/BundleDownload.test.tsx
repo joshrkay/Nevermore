@@ -54,12 +54,13 @@ describe("BundleDownload", () => {
     fetchDocument.mockClear();
     vi.mocked(toast.error).mockReset();
     intakeIs("submitted", submission);
+    loseTheBuilder = false;
   });
 
   it("says what is in it and what is missing before the click", () => {
     render(<BundleDownload source={source()} builtFrom={built} label="Download bundle" fetchDocument={fetchDocument} />);
     expect(screen.getByText("Includes: packet, workers' comp application, 2 documents. No census file: the certified version holds none. Nothing it requires is missing.")).toBeInTheDocument();
-    expect(screen.getByText("From certified version 3: one .zip with a contents page.")).toBeInTheDocument();
+    expect(screen.getByText("From certified version 3: one file with a contents page.")).toBeInTheDocument();
     expect(button()).toBeEnabled();
   });
 
@@ -98,8 +99,21 @@ describe("BundleDownload", () => {
 
     fireEvent.click(button());
     fireEvent.click(within(await screen.findByRole("alert")).getByRole("button", { name: "Save the bundle anyway" }));
-    expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-sample-peo-v3.zip");
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-sample-peo-v3.zip"));
     expect(onSaved).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves a held bundle only while the certification is still the one it was made from", async () => {
+    const onSaved = vi.fn();
+    render(<BundleDownload source={source()} builtFrom={built} label="Download bundle" fetchDocument={fetchDocument} onSaved={onSaved} />);
+    fireEvent.click(button());
+    const alert = await screen.findByRole("alert");
+    // The prospect certifies again while the advisor reads what couldn't be included.
+    intakeIs("in_progress", submission);
+    fireEvent.click(within(alert).getByRole("button", { name: "Save the bundle anyway" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(CHANGED_SINCE_OPENED));
+    expect(downloadBlob).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
   });
 
   it("gives no file once the certification has changed since the page was opened, and says to reload", async () => {
@@ -120,6 +134,5 @@ describe("BundleDownload", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("We couldn't make the bundle. Please try again."));
     expect(downloadBlob).not.toHaveBeenCalled();
     await waitFor(() => expect(button()).toBeEnabled());
-    loseTheBuilder = false;
   });
 });

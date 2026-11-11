@@ -630,4 +630,11 @@ describe("documentFile: an uploaded document's file, for a bundle", () => {
     const err = await caught(() => documentFile({ storage_path: "u1/loss-runs.pdf" }));
     expect(err.message).toBe("Couldn't open that file.");
   });
+
+  it("says the session ended, for a lapsed token, so the page can send the advisor to sign in", async () => {
+    download.mockResolvedValue({ data: null, error: { message: "jwt expired" } });
+    const err = await caught(() => documentFile({ storage_path: "u1/loss-runs.pdf" }));
+    expect(err.message).toBe("Your session has expired. Sign in again to continue.");
+    expect(err.unauthenticated).toBe(true);
+  });
 });

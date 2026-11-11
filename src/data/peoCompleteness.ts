@@ -155,7 +155,8 @@ export function groupByCompleteness(intake: CertifiedIntake, documents: readonly
   };
 }
 
-const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+/** "1 document", "2 documents": a count with its noun, for a noun that takes an "s". */
+export const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
 /** How many answers, questions and documents, such as "3 answers, 1 of its own questions and 1 document"; empty for none. */
 export function counted(items: readonly NeededItem[]): string {

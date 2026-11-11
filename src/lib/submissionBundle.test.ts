@@ -6,10 +6,15 @@ import type { ChamberSubmission } from "@/data/manuscript";
 import type { PeoRecord } from "@/data/peoCatalog";
 import type { CertifiedIntake } from "@/data/peoCompleteness";
 import type { RequirementProfile } from "@/data/peoProfiles";
-import { planBundle, type BundleSource } from "@/data/submissionBundle";
+import { certifiedAnswersDocument } from "@/data/certifiedAnswersDocument";
+import { bundleSummary, planBundle, type BundleSource } from "@/data/submissionBundle";
 import { blobBytes, inflatedPdf } from "@/test/blob";
 import { unzip } from "@/test/zip";
-import { buildBundle } from "./submissionBundle";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildBundle, safeFileName } from "./submissionBundle";
 
 // Made up for the tests: no real PEO's profile, and nobody real.
 const by = { source: { kind: "prospect_edit" as const }, updated_at: "2026-05-01T00:00:00Z" };
@@ -177,5 +182,123 @@ describe("buildBundle: one zip of a PEO's files from one certified version", () 
     const parts = await partsOf((await buildBundle(planBundle(source({ audience: "prospect" })), deps)).blob);
     expect(parts.map((p) => p.name).filter((n) => n.startsWith("documents/"))).toEqual([]);
     expect(fetchDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe("safeFileName: a name every unzip tool and operating system takes as one file", () => {
+  it.each([
+    ["an empty name", "", "document"],
+    ["a dot", ".", "document"],
+    ["two dots", "..", "document"],
+    ["an extension with no name", ".pdf", "document.pdf"],
+    ["a path up and out", "../../etc/passwd", ".._.._etc_passwd"],
+    ["Windows' forbidden characters", 'a:b*c?"d<e>f|g.pdf', "a_b_c__d_e_f_g.pdf"],
+    ["control characters", "line\nbreak\u0000\u0007\u007f\u0085.pdf", "line_break____.pdf"],
+    ["either slash", "2025\\Q1/register.xlsx", "2025_Q1_register.xlsx"],
+    ["trailing dots and spaces", "report.pdf. . ", "report.pdf"],
+    ["a name Windows keeps for a device", "CON.txt", "_CON.txt"],
+    ["a name in any language", "Nómina año 2025.pdf", "Nómina año 2025.pdf"],
+    // macOS writes accents as separate marks: one way of writing it, so two spellings of one name are one name.
+    ["a name with its accents written apart", "Nómina año 2025.pdf".normalize("NFD"), "Nómina año 2025.pdf"],
+  ])("makes %s safe", (_label, name, expected) => {
+    expect(safeFileName(name)).toBe(expected);
+  });
+
+  it("caps a long name at 100 characters, keeping its extension and never cutting a character in two", () => {
+    expect(safeFileName(`${"x".repeat(300)}.pdf`)).toBe(`${"x".repeat(96)}.pdf`);
+    expect(safeFileName(`${"😀".repeat(200)}.pdf`)).toBe(`${"😀".repeat(96)}.pdf`);
+    // Cut so it ends in a space: still trimmed.
+    expect(safeFileName(`${"x".repeat(95)} ${"y".repeat(10)}.pdf`)).toBe(`${"x".repeat(95)}.pdf`);
+  });
+});
+
+describe("buildBundle: every entry's name is safe, and the contents page lists each as the zip holds it", () => {
+  const names = ["", "..", ".", "register.xlsx", "Register.xlsx", 'loss:runs*"2025"?.pdf', "notes\r\n.txt", "../../escape.pdf", "Nómina año 2025.pdf"];
+  const awkward = names.map((file_name, i) => doc({ id: `n${i}`, file_name, storage_path: "u/register.xlsx" }));
+
+  it("names every awkward document as one safe file, case-insensitively apart", async () => {
+    const built = await buildBundle(planBundle(source({ documents: awkward })), deps);
+    const parts = await partsOf(built.blob);
+    expect(parts.map((p) => p.name).filter((n) => n.startsWith("documents/"))).toEqual([
+      "documents/document",
+      "documents/document (2)",
+      "documents/document (3)",
+      "documents/register.xlsx",
+      "documents/Register (2).xlsx",
+      "documents/loss_runs__2025__.pdf",
+      "documents/notes__.txt",
+      "documents/.._.._escape.pdf",
+      "documents/Nómina año 2025.pdf",
+    ]);
+    // No entry is a folder, and none climbs out.
+    for (const p of parts) {
+      expect(p.name.endsWith("/")).toBe(false);
+      expect(p.name.split("/")).not.toContain("..");
+      expect(p.name).not.toMatch(/[\p{Cc}<>:"|?*\\]/u);
+    }
+    // The contents page lists exactly the files the zip holds, under the names they have there.
+    const listed = built.contents.slice(built.contents.indexOf("IN THIS BUNDLE"), built.contents.indexOf("LEFT BLANK"))
+      .split("\r\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2, l.indexOf(": ")));
+    expect(listed).toEqual(parts.map((p) => p.name));
+    expect(built.contents).toContain("IN THIS BUNDLE (14 files)");
+  });
+
+  it("names apart any file whose name matches another's in any case, however they arrived", async () => {
+    const named = ["register.xlsx", "Register.xlsx", "REGISTER (2).xlsx", ".x y", ".x y"].map((file_name, i) => doc({ id: `c${i}`, file_name, storage_path: "u/register.xlsx" }));
+    const parts = await partsOf((await buildBundle(planBundle(source({ documents: named })), deps)).blob);
+    expect(parts.map((p) => p.name).filter((n) => n.startsWith("documents/"))).toEqual([
+      "documents/register.xlsx",
+      "documents/Register (2).xlsx",
+      "documents/REGISTER (2) (2).xlsx",
+      "documents/.x y",
+      "documents/.x y (2)",
+    ]);
+  });
+
+  it("makes the files it makes safe too, and never breaks a contents line with a name it couldn't include", async () => {
+    const plan = planBundle(source({ fileId: "EAA/2026:0042", documents: [doc({ file_name: "loss\nruns.pdf", storage_path: "u/gone.pdf" })] }));
+    const built = await buildBundle(plan, deps);
+    const names = (await partsOf(built.blob)).map((p) => p.name);
+    expect(names.slice(2, 4)).toEqual(["EAA_2026_0042-census-sample-peo-v3.csv", "EAA_2026_0042-workers-comp-application-v3.pdf"]);
+    expect(built.contents).toContain("\r\n- loss_runs.pdf (Payroll report): It couldn't be downloaded.");
+  });
+
+  it.runIf(spawnSync("unzip", ["-v"]).status === 0)("passes the real unzip's own test, every entry a file the contents page names", async () => {
+    const built = await buildBundle(planBundle(source({ documents: awkward })), deps);
+    const dir = mkdtempSync(join(tmpdir(), "bundle-"));
+    const path = join(dir, built.filename);
+    writeFileSync(path, await blobBytes(built.blob));
+    try {
+      const test = spawnSync("unzip", ["-t", path], { encoding: "utf8" });
+      expect(test.status, test.stdout + test.stderr).toBe(0);
+      expect(test.stdout).toContain("No errors detected");
+      const listing = spawnSync("unzip", ["-Z1", path], { encoding: "utf8" }).stdout.split("\n").filter(Boolean);
+      expect(listing).toHaveLength(14);
+      for (const name of listing) expect(built.contents).toContain(`- ${name}: `);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("what the prospect reads in their files uses their words, never ours", () => {
+  // GLOSSARY.md's Avoid words for anything a prospect reads. A ZIP code is a postal code, not the file.
+  const AVOID = /\b(manuscript|chamber|reckoning|package|PEO requirements|ready)\b|\bzip\b(?!\s+codes?\b|\s+given\b)/i;
+
+  it("in every file of their bundle, its contents page and comment, and what is said before the click", async () => {
+    const plan = planBundle(source({ audience: "prospect" }));
+    const built = await buildBundle(plan, deps);
+    const zip = await blobBytes(built.blob);
+    const texts = [bundleSummary(plan), built.contents, latin1(zip.subarray(zip.length - 200)), ...(await partsOf(built.blob)).map((p) => readable(p.data))];
+    for (const text of texts) expect(text).not.toMatch(AVOID);
+    // Each word is caught where it would be written.
+    for (const word of ["The Manuscript", "the Chamber", "The Reckoning", "a package", "the zip", "one .zip", "PEO requirements", "ready"]) expect(word).toMatch(AVOID);
+    expect("Work states and ZIP codes in the census, no ZIP given").not.toMatch(AVOID);
+  });
+
+  it("in the answers as JSON, outside the answers themselves (named by the published schema)", () => {
+    const json = certifiedAnswersDocument({ data: intake.data, provenance: intake.provenance, submission, fileId: "EAA-2026-0042" });
+    const { answers: _answers, answer_status: _status, answers_schema: _schema, ...envelope } = json;
+    expect(JSON.stringify(envelope)).not.toMatch(AVOID);
   });
 });

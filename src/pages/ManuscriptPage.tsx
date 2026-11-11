@@ -512,13 +512,13 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           );
         })()}
 
-        {/* The chosen PEO's bundle (L-3.4): one zip of what is offered above, with a contents page. Never the documents:
+        {/* The chosen PEO's bundle (L-3.4): one file of what is offered above, with a contents page. Never the documents:
             the prospect uploaded those and adds their own copies. Not while withdrawn, and not until the PEOs are read. */}
         {state.kind === "ready" && !withdrawn && state.submission.peo && peoCatalog.status === "ready" && (
           <section aria-labelledby="bundle-heading" className="bg-card border border-border rounded-xl p-5 space-y-2">
             <h2 id="bundle-heading" className="font-display text-lg font-bold">{`Everything for ${state.submission.peo} in one file`}</h2>
             <p className="text-sm text-muted-foreground">
-              The packet and the files above for your PEO, as one .zip with a contents page that lists what's in it and what's still missing.
+              The packet and the files above for your PEO, as one file with a contents page that lists what's in it and what's still missing.
             </p>
             <BundleDownload
               source={{

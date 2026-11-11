@@ -1,7 +1,17 @@
-import { crc32 } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { unzip } from "@/test/zip";
 import { storedZip } from "./storedZip";
+
+// A reference CRC-32 worked bit by bit, as the zip format defines it (no table, unlike storedZip's), so the test runs
+// on any Node: zlib's crc32 needs Node 22.2 or later.
+const crc32 = (data: Uint8Array) => {
+  let c = 0xffffffff;
+  for (const b of data) {
+    c ^= b;
+    for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xedb88320 : c >>> 1;
+  }
+  return (c ^ 0xffffffff) >>> 0;
+};
 
 const view = (b: Uint8Array) => new DataView(b.buffer, b.byteOffset, b.byteLength);
 const endRecord = (b: Uint8Array) => {
@@ -44,7 +54,10 @@ describe("storedZip: a zip any unzip tool opens, its files stored as they are", 
     expect(v.getUint32(central + 24, true)).toBe(data.length);
   });
 
-  it("gets the CRC-32 right for every byte value, as zlib does", () => {
+  it("gets the CRC-32 right for every byte value", () => {
+    // The standard check value: CRC-32 of "123456789".
+    expect(crc32(new TextEncoder().encode("123456789"))).toBe(0xcbf43926);
+    expect(view(storedZip([{ name: "a", data: new TextEncoder().encode("123456789") }])).getUint32(14, true)).toBe(0xcbf43926);
     const all = Uint8Array.from({ length: 1024 }, (_, i) => (i * 7) & 0xff);
     const zip = storedZip([{ name: "all.bin", data: all }]);
     expect(view(zip).getUint32(14, true)).toBe(crc32(all));

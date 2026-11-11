@@ -33,25 +33,53 @@ export interface BuiltBundle {
 
 const SEND_IT_YOURSELF = "Download it from the submission page and send it with this bundle.";
 
-/** "register.xlsx", then "register (2).xlsx" for a second file of that name. */
+/** The longest name a bundle gives a file, extension included: room left for " (2)" and the folder it is unzipped into. */
+const NAME_MAX = 100;
+/** Names Windows keeps for devices: a file called "CON.txt" can't be made there. */
+const DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i;
+
+/**
+ * A name every unzip tool and operating system takes as one file, as the zip names it and the contents page lists it:
+ * control characters, Windows' forbidden characters and either slash become "_"; no trailing dots or spaces; a name left
+ * empty (or ".", "..") is "document", keeping an extension it had; at most 100 characters, never cutting one in two.
+ * Any language is kept.
+ */
+export function safeFileName(name: string): string {
+  const trim = (s: string) => s.replace(/[. ]+$/, "");
+  const clean = trim(name.normalize("NFC").replace(/[\p{Cc}<>:"|?*/\\]/gu, "_"));
+  const dot = clean.lastIndexOf(".");
+  const ext = dot >= 0 && /^\.[\p{L}\p{N}]{1,15}$/u.test(clean.slice(dot)) ? clean.slice(dot) : "";
+  const stem = trim(Array.from(ext ? clean.slice(0, dot) : clean).slice(0, NAME_MAX - Array.from(ext).length).join(""));
+  const whole = `${stem || "document"}${ext}`;
+  return DEVICE.test(whole) ? `_${whole}` : whole;
+}
+
+/** "register.xlsx", then "Register (2).xlsx": a second file of that name in any case, as Windows and macOS see it. */
 function uniqueName(name: string, taken: Set<string>): string {
   const dot = name.lastIndexOf(".");
-  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  const slash = name.lastIndexOf("/");
+  const [stem, ext] = dot > slash + 1 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
   let candidate = name;
-  for (let n = 2; taken.has(candidate); n++) candidate = `${stem} (${n})${ext}`;
-  taken.add(candidate);
+  for (let n = 2; taken.has(candidate.toLowerCase()); n++) candidate = `${stem} (${n})${ext}`;
+  taken.add(candidate.toLowerCase());
   return candidate;
 }
+
+/** A name as the contents page mentions a file left out: never a control character that would break its lines. */
+const printable = (name: string) => name.replace(/\p{Cc}/gu, "_");
 
 /** The bundle as one zip: CONTENTS.txt first, then each file, the documents under documents/. */
 export async function buildBundle(plan: BundlePlan, deps: BundleDeps): Promise<BuiltBundle> {
   const maxBytes = deps.maxBytes ?? BUNDLE_MAX_BYTES;
   const entries: (ZipEntry & { what: string })[] = [];
   const notIncluded: BundleOutcome["notIncluded"] = [];
-  const add = async (name: string, blob: Blob, what: string) => entries.push({ name, data: await readBytes(blob), what });
+  // Every entry, made or uploaded, under a safe name no other entry has.
+  const taken = new Set<string>();
+  const entryName = (folder: string, name: string) => uniqueName(`${folder}${safeFileName(name)}`, taken);
+  const add = async (name: string, blob: Blob, what: string) => entries.push({ name: entryName("", name), data: await readBytes(blob), what });
 
   const packet = buildManuscriptPdf(plan.manuscript, { revealSensitive: false });
-  await add(packet.filename, packet.blob, "the packet (The Manuscript), as certified, dates of birth masked");
+  await add(packet.filename, packet.blob, "the packet, as certified, dates of birth masked");
 
   if (plan.census) {
     const { layout } = plan.census;
@@ -76,10 +104,9 @@ export async function buildBundle(plan: BundlePlan, deps: BundleDeps): Promise<B
   }
 
   let size = entries.reduce((n, e) => n + e.data.length, 0);
-  const taken = new Set<string>();
   for (const [i, d] of plan.documents.entries()) {
     deps.onProgress?.({ done: i, total: plan.documents.length });
-    const name = d.certifiedFileName ?? d.file_name;
+    const name = printable(d.certifiedFileName ?? d.file_name);
     const kind = categoryInfo(d.certifiedCategory ?? d.category).label;
     let data: Uint8Array;
     try {
@@ -93,7 +120,7 @@ export async function buildBundle(plan: BundlePlan, deps: BundleDeps): Promise<B
       continue;
     }
     size += data.length;
-    entries.push({ name: `documents/${uniqueName(name.replace(/[/\\]/g, "_"), taken)}`, data, what: kind });
+    entries.push({ name: entryName("documents/", d.certifiedFileName ?? d.file_name), data, what: kind });
   }
   if (plan.documents.length) deps.onProgress?.({ done: plan.documents.length, total: plan.documents.length });
 

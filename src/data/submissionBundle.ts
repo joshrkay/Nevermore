@@ -12,8 +12,8 @@ import { blankColumnsOf, censusLayoutFor, OUR_CENSUS_LAYOUT, type PeoCensusLayou
 import { categoryInfo } from "./documentCategories";
 import { buildManuscript, type ChamberSubmission, type Manuscript } from "./manuscript";
 import { findPeo, peoSlug, type PeoRecord } from "./peoCatalog";
-import { counted, documentsOnFile, peoCompleteness, type CertifiedIntake, type NeededItem } from "./peoCompleteness";
-import type { ProfileDocument, RequirementProfile } from "./peoProfiles";
+import { count, counted, documentsOnFile, peoCompleteness, type CertifiedIntake, type NeededItem } from "./peoCompleteness";
+import { staleProfileWarning, type ProfileDocument, type RequirementProfile } from "./peoProfiles";
 import { supplementFor, type Supplement } from "./peoSupplement";
 import { workersCompApplication, type WorkersCompApplication } from "./workersCompApplication";
 
@@ -61,6 +61,8 @@ export interface BundlePlan {
   documentsAskedFor: ProfileDocument[];
   /** False for a PEO with no profile in use: nothing can be said about what it requires. */
   hasProfile: boolean;
+  /** "<PEO>'s profile was last checked <date> and may be out of date.", as its card says; null while current. */
+  staleWarning: string | null;
 }
 
 /** "EAA-2026-0042-sample-peo-v3.zip". */
@@ -106,12 +108,12 @@ export function planBundle(s: BundleSource): BundlePlan {
     missing: completeness ? completeness.toQuote.filter((i) => advisor || i.kind !== "document") : [],
     documentsAskedFor: profile?.documents ?? [],
     hasProfile: profile !== null,
+    staleWarning: profile && listed ? staleProfileWarning(listed, s.today) : null,
   };
 }
 
 const NO_CENSUS = "No census file: the certified version holds none.";
 
-const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 const asDocument = (i: NeededItem): i is Extract<NeededItem, { kind: "document" }> => i.kind === "document";
 
 /** "Includes: packet, census in Sample PEO's layout, ... Missing: Workers' comp loss runs, 1 answer.", said before the click. */
@@ -160,6 +162,8 @@ export function bundleContents(p: BundlePlan, outcome: BundleOutcome): string {
   out.push(`Bundle for ${p.peo}`);
   out.push(`${p.companyName} · File ID ${p.fileId} · ${version}, certified on ${p.manuscript.date}`);
   out.push(p.application.changedNotice ?? `Everything in it is from ${version}. Nothing comes from answers given since.`);
+  // A stale profile is still used, with the warning its card carries (L-1.2).
+  if (p.staleWarning) out.push(p.staleWarning);
   out.push("");
 
   out.push("MISSING");

@@ -793,6 +793,9 @@ describe("ManuscriptPage", () => {
     renderAt("/manuscript/EAA-2026-0042");
     const bundle = await screen.findByRole("region", { name: "Everything for Justworks in one file" });
     expect(bundle).toHaveTextContent("Includes: packet, census in our layout, workers' comp application. Not included: the documents Justworks asks for (Workers' comp loss runs). Add your own copies when you send it.");
+    expect(bundle).toHaveTextContent("The packet and the files above for your PEO, as one file with a contents page that lists what's in it and what's still missing.");
+    // Nothing the prospect reads here uses GLOSSARY.md's Avoid words: not the file's format, nor our own names.
+    expect(bundle.textContent).not.toMatch(/\b(manuscript|chamber|reckoning|package|zip|PEO requirements|ready)\b/i);
     fireEvent.click(within(bundle).getByRole("button", { name: "Download bundle" }));
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-justworks-v2.zip"));
     const blob = downloadBlob.mock.calls.find((c) => c[1] === "EAA-2026-0042-justworks-v2.zip")![0] as Blob;

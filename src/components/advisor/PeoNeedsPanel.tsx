@@ -181,6 +181,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
           peo={peo.name}
           stage={bundle.stage}
           builtFrom={builtFrom}
+          existing={sent}
           onClose={() => setAsking(false)}
           onRecorded={() => { setAsking(false); bundle.onSendRecorded(); }}
         />

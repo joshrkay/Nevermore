@@ -136,7 +136,7 @@ describe("planBundle: what one PEO's bundle holds, from one certified version", 
 
 describe("bundleContents: the contents page, leading with what is missing", () => {
   const files = [
-    { name: "Nevermore_Packet_EAA-2026-0042.pdf", what: "the packet (The Manuscript), as certified" },
+    { name: "Nevermore_Packet_EAA-2026-0042.pdf", what: "the packet, as certified" },
     { name: "EAA-2026-0042-census-sample-peo-v3.csv", what: "the census in Sample PEO's layout" },
     { name: "documents/register.xlsx", what: "Payroll report" },
   ];
@@ -167,7 +167,7 @@ describe("bundleContents: the contents page, leading with what is missing", () =
     expect(inBundle).toBe([
       "IN THIS BUNDLE (4 files)",
       "- CONTENTS.txt: this page",
-      "- Nevermore_Packet_EAA-2026-0042.pdf: the packet (The Manuscript), as certified",
+      "- Nevermore_Packet_EAA-2026-0042.pdf: the packet, as certified",
       "- EAA-2026-0042-census-sample-peo-v3.csv: the census in Sample PEO's layout",
       "- documents/register.xlsx: Payroll report",
       "",
@@ -182,6 +182,21 @@ describe("bundleContents: the contents page, leading with what is missing", () =
   it("says when the prospect has changed answers since, and that the files are still the certified version", () => {
     const text = bundleContents(planBundle(source({ changedSince: true })), { files, notIncluded: [] });
     expect(text.split("\r\n")[2]).toBe("The prospect has changed answers since certifying. These files are from version 3.");
+  });
+
+  it("warns when the PEO's profile in use is out of date, giving the date it was last checked, for the prospect too", () => {
+    // Checked 15 May 2026: 180 days later it is still current; the day after, it is out of date.
+    const checked = { ...samplePeo, lastVerified: "2026-05-15" };
+    const warning = "Sample PEO's profile was last checked 15 May 2026 and may be out of date.";
+    const current = bundleContents(planBundle(source({ peo: checked, today: "2026-11-11" })), { files, notIncluded: [] });
+    expect(current).not.toContain("may be out of date");
+    const stale = bundleContents(planBundle(source({ peo: checked, today: "2026-11-12" })), { files, notIncluded: [] });
+    expect(stale.split("\r\n").slice(2, 5)).toEqual(["Everything in it is from certified version 3. Nothing comes from answers given since.", warning, ""]);
+    expect(bundleContents(planBundle(source({ audience: "prospect", peo: checked, today: "2026-11-12" })), { files: [], notIncluded: [] })).toContain(`\r\n${warning}\r\n`);
+    // A PEO taken off the list has no profile in use, so none to be out of date.
+    expect(bundleContents(planBundle(source({ peo: { ...checked, listed: false }, today: "2026-11-12" })), { files, notIncluded: [] })).not.toContain("may be out of date");
+    // A PEO typed in has no profile to be out of date.
+    expect(bundleContents(planBundle(source({ peo: { name: "Typed In PEO" }, catalog: [], today: "2027-11-12" })), { files, notIncluded: [] })).not.toContain("may be out of date");
   });
 
   it("says plainly when nothing it requires is missing", () => {
