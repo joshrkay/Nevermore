@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeQuoteRequestEvent, isChangeLogEvent, quoteNoteKindLabel, quoteReplyDomain, replyAddress } from "./quoteRequests";
+import { describeQuoteRequestEvent, HELD_REASON_LABELS, heldDaysLeft, isChangeLogEvent, quoteNoteKindLabel, quoteReplyDomain, replyAddress } from "./quoteRequests";
 
 describe("the receiving subdomain for reply addresses", () => {
   it("is off unless a subdomain is set", () => {
@@ -47,5 +47,24 @@ describe("a quote request's change log", () => {
   it("shows a kind it doesn't know as stored", () => {
     expect(quoteNoteKindLabel("underwriter_question")).toBe("Underwriter's question");
     expect(quoteNoteKindLabel("meeting")).toBe("meeting");
+  });
+});
+
+describe("held mail", () => {
+  it("describes a message moved on or off a thread by its id alone", () => {
+    expect(describeQuoteRequestEvent({ field: "mail_moved_off", old_value: null, new_value: "17" })).toBe("A message was moved off this thread to the holding list (message 17)");
+    expect(describeQuoteRequestEvent({ field: "mail_assigned", old_value: null, new_value: "17" })).toBe("A held message was assigned to this thread (message 17)");
+  });
+
+  it("names every reason the database holds a message for", () => {
+    expect(Object.keys(HELD_REASON_LABELS).sort()).toEqual(["ambiguous_address", "moved_by_advisor", "revoked_address", "unknown_address"]);
+  });
+
+  it("counts the days left of the 30 a message is held, rounding up and never below zero", () => {
+    const now = new Date("2026-11-11T12:00:00Z");
+    expect(heldDaysLeft("2026-11-11T12:00:00Z", now)).toBe(30);
+    expect(heldDaysLeft("2026-11-10T00:00:00Z", now)).toBe(29);
+    expect(heldDaysLeft("2026-10-13T00:00:00Z", now)).toBe(1);
+    expect(heldDaysLeft("2026-09-01T00:00:00Z", now)).toBe(0);
   });
 });

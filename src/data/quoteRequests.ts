@@ -134,6 +134,12 @@ const FIELD_NAMES: Record<string, string> = {
   note_body: "Note text",
 };
 
+// A message moved on or off a thread (story M-3.3): the event names the message by id and carries nothing from it.
+const MAIL_EVENT_LABELS: Record<string, string> = {
+  mail_assigned: "A held message was assigned to this thread",
+  mail_moved_off: "A message was moved off this thread to the holding list",
+};
+
 const shown = (field: string, value: string | null) => {
   if (value === null) return "—";
   if (field === "note_kind") return quoteNoteKindLabel(value);
@@ -148,6 +154,7 @@ export const isChangeLogEvent = (e: { field: string }) => e.field !== "underwrit
 
 /** One line for a recorded change to a quote request, or a correction to one of its notes. */
 export function describeQuoteRequestEvent(e: { field: string; old_value: string | null; new_value: string | null }): string {
+  if (e.field in MAIL_EVENT_LABELS) return `${MAIL_EVENT_LABELS[e.field]} (message ${e.new_value ?? "?"})`;
   return `${FIELD_NAMES[e.field] ?? e.field}: ${shown(e.field, e.old_value)} → ${shown(e.field, e.new_value)}`;
 }
 
@@ -162,3 +169,17 @@ export const waitingLabel = (sentOn: string, now?: Date) => {
   const days = daysSince(sentOn, now);
   return `Waiting ${days} day${days === 1 ? "" : "s"}`;
 };
+
+/** Why a message is on the holding list, in the words an admin sees. */
+export const HELD_REASON_LABELS: Record<string, string> = {
+  revoked_address: "Revoked address",
+  unknown_address: "Address never issued",
+  ambiguous_address: "Address on more than one quote request",
+  moved_by_advisor: "Moved off a thread",
+};
+
+/** Whole days left before an unassigned held message is deleted (30 days after it was held), never below 0. */
+export function heldDaysLeft(heldAt: string, now: Date = new Date(), keepDays = 30): number {
+  const left = keepDays - (now.getTime() - new Date(heldAt).getTime()) / 86_400_000;
+  return Math.max(0, Math.ceil(left));
+}

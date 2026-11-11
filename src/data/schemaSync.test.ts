@@ -444,6 +444,7 @@ describe("server and client intake rules agree", () => {
     ["email_event_retention", "days", RETENTION.emailEventDays],
     ["ai_event_retention", "days", RETENTION.aiEventDays],
     ["funnel_retention", "days", RETENTION.funnelDays],
+    ["held_mail_retention", "days", RETENTION.heldMailDays],
   ] as const)("states the %s window the database enforces", (block, unit, value) => {
     const found = new RegExp(`interval\\s+'(\\d+) ${unit}'`).exec(blocks(block).join("\n"))?.[1];
     expect(Number(found)).toBe(value);
@@ -457,7 +458,7 @@ describe("server and client intake rules agree", () => {
       threshold: Number(m[3]),
       cooldown: Number(m[4]),
     }));
-    expect(rules.map((r) => r.kind).sort()).toEqual(["ai_failed", "app_error", "auth_denied", "deletion_failed", "malware_detected", "scan_failed", "upload_failed", "voice_failed"]);
+    expect(rules.map((r) => r.kind).sort()).toEqual(["ai_failed", "app_error", "auth_denied", "deletion_failed", "held_mail", "malware_detected", "scan_failed", "upload_failed", "voice_failed"]);
     const runbook = readFileSync("docs/RUNBOOK.md", "utf8");
     for (const r of rules) {
       const row = new RegExp(

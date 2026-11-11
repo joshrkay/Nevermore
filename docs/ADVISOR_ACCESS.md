@@ -117,6 +117,12 @@ a sign-out the app asked for is remembered until the event arrives.
     `finish_inbound_attachment`). Advisors read the mail on a quote request and the attachments of it; admins also
     read held mail, which belongs to no quote request. A clean attachment's file is in the `peo-mail` bucket,
     readable by an advisor through a signed link only while its row says `stored`. Prospects read none of it.
+  - The holding list (story M-3.3) is worked through the `held-mail` function, never the tables: it moves or removes a
+    message's files in storage and calls the service-role-only `plan_mail_move`, `apply_mail_move`,
+    `plan_held_mail_discard` and `finish_held_mail_discard`, passing the signed-in person, and each checks their role
+    again. An advisor (or admin) moves a message off a thread; only an admin assigns a held message or discards it.
+    The daily schedule discards what has been held 30 days, with no person named. An assignment and a move off are
+    logged on the quote request (`mail_assigned`, `mail_moved_off`: the message's id and nothing of its content).
   - `advisor_open_quote_request_thread(id, seen_through)` (story M-3.4) marks a quote request's thread opened, for
     the whole team, in `quote_request_thread_reads`: through `seen_through`, the time of the latest message the page
     showed (without one, now; never in the future, never backwards). A quote request has **new PEO mail** while a
