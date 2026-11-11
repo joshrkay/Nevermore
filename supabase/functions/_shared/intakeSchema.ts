@@ -56,6 +56,7 @@ export const LIMITS = {
   ownersOfficers: 20,
   lossYears: 5,
   medicalPlans: 20,
+  sutaRates: 60,
   percent: 100,
   // An amount with cents, such as a monthly premium rate.
   money: 1_000_000,
@@ -203,6 +204,8 @@ const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: stri
   ["loss_history", rows("lossYear", LIMITS.lossYears), "workers_comp", "Loss history"],
   // K-4.1: each current medical plan, for a side-by-side with what the employer pays now.
   ["medical_plans", rows("medicalPlan", LIMITS.medicalPlans), "benefits", "Current medical plans"],
+  // K-4.2: the employer's unemployment tax rate in each state of operation.
+  ["suta_rates", rows("sutaRate", LIMITS.sutaRates), "payroll", "State unemployment tax rates"],
 
   ["census", { type: "array", maxItems: LIMITS.census, items: { $ref: "#/$defs/censusRow" } }, "census", "Employee census"],
 ];
@@ -327,6 +330,16 @@ export const INTAKE_SCHEMA_V3: JsonSchema = {
         renewal_rate_fam: money,
         employer_contribution: { type: "string", maxLength: LIMITS.name },
         enrolled: { type: "integer", minimum: 0, maximum: LIMITS.count },
+      },
+    },
+    // One state's unemployment tax rate (K-4.2): the rate as a percentage, and the year it applies to.
+    sutaRate: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        state: { title: "a US state or territory code such as CA", type: "string", enum: [...STATE_CODES] },
+        rate: { type: "number", minimum: 0, maximum: LIMITS.percent },
+        year: { type: "integer", minimum: LIMITS.yearMin, maximum: LIMITS.yearMax },
       },
     },
     dependent: {

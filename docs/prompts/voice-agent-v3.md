@@ -13,7 +13,7 @@ Intake update. Field names only: an update never holds the prospect's answers.
 Ask about next, most important first: States of operation (required); Pay frequency (required); Employee count; Industry; HQ state; Current carrier; Renewal date; Payroll vendor
 Already settled, never ask again: Company legal name
 Employee census: not uploaded
-Entered in the workspace, never ask aloud: FEIN, on the Company tab; NAICS code, on the Company tab; Owners and officers, on the Workers' comp tab; Loss history, on the Workers' comp tab; Current medical plans, on the Benefits tab
+Entered in the workspace, never ask aloud: FEIN, on the Company tab; NAICS code, on the Company tab; Owners and officers, on the Workers' comp tab; Loss history, on the Workers' comp tab; Current medical plans, on the Benefits tab; State unemployment tax rates, on the Payroll tab
 ```
 
 The next fields follow the same rule, rank order and count (8) as typed chat's prompt (`unsettledForTurn` in `supabase/functions/chamber-extract/prompt.ts`). The census is never in the lists: it comes only from an uploaded file (D21).

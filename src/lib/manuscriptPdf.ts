@@ -364,6 +364,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   // ---------- 6 Payroll ----------
   sectionHeading("6 — Payroll & Time");
   keyValues(m.payrollRows);
+  tablesOf("payroll");
 
   // ---------- 7 Benefits ----------
   sectionHeading("7 — Current Benefits");

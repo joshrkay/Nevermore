@@ -347,8 +347,8 @@ describe("the extraction contract", () => {
     const ref = (PROPERTIES[key] as { items?: { $ref?: string } }).items?.$ref;
     if (ref && ref !== "#/$defs/stateCode") {
       const row = (INTAKE_SCHEMA.$defs as Record<string, { properties: Record<string, unknown> }>)[ref.slice("#/$defs/".length)];
-      const text = Object.entries(row.properties).find(([, cell]) => (cell as { type?: string }).type === "string")!;
-      return [{ [text[0]]: "Acme" }];
+      const [name, cell] = Object.entries(row.properties).find(([, each]) => (each as { type?: string }).type === "string")! as [string, { enum?: string[] }];
+      return [{ [name]: cell.enum ? cell.enum[0] : "Acme" }];
     }
     if (types.includes("array")) return ["Dental"];
     if (PROPERTIES[key].enum) return PROPERTIES[key].enum![0];

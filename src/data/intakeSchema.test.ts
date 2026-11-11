@@ -61,6 +61,8 @@ describe("intake schema v3", () => {
     "loss_history",
     // K-4.1 current medical plans
     "medical_plans",
+    // K-4.2 state unemployment rates
+    "suta_rates",
   ];
 
   it("only adds the common questions to v2, changing nothing v2 had", () => {
@@ -308,6 +310,15 @@ describe("validateChamberData", () => {
       "medical_plans[0].employer_contribution", "medical_plans[0].enrolled", "medical_plans[0].deductible",
     ]);
     expect(validateChamberData({ medical_plans: Array.from({ length: 21 }, () => ({ name: "P" })) })).toEqual([{ path: "medical_plans", reason: "must have at most 20 entries" }]);
+  });
+
+  it("holds an unemployment tax rate and its effective year for each state (K-4.2)", () => {
+    expect(validateChamberData({ suta_rates: [{ state: "CA", rate: 3.4, year: 2026 }, { state: "TX", rate: 2.7 }, { state: "NY" }] })).toEqual([]);
+    expect(validateChamberData({ suta_rates: [{ state: "California", rate: 101, year: 1599, wage_base: 7000 }] }).map((i) => i.path)).toEqual([
+      "suta_rates[0].state", "suta_rates[0].rate", "suta_rates[0].year", "suta_rates[0].wage_base",
+    ]);
+    expect(paths({ suta_rates: [{ rate: "3.4%" }] })).toEqual(["suta_rates[0].rate"]);
+    expect(validateChamberData({ suta_rates: Array.from({ length: 61 }, () => ({ state: "CA" })) })).toEqual([{ path: "suta_rates", reason: "must have at most 60 entries" }]);
   });
 
   it("refuses the legacy roster key, which no writer sends any more", () => {

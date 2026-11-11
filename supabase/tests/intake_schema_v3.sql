@@ -39,6 +39,7 @@ CREATE TABLE auth.users (id uuid PRIMARY KEY, raw_user_meta_data jsonb);
 \i supabase/migrations/20261111096000_intake_schema_v3_owners_officers.sql
 \i supabase/migrations/20261111097000_intake_schema_v3_loss_history.sql
 \i supabase/migrations/20261111098000_intake_schema_v3_medical_plans.sql
+\i supabase/migrations/20261111099000_intake_schema_v3_suta_rates.sql
 
 -- ---------- helpers ----------
 -- The path chamber_data_error names for d, or NULL when d is acceptable.
@@ -228,4 +229,19 @@ BEGIN
   PERFORM pg_temp.must_refuse(jsonb_build_object('medical_plans', (SELECT jsonb_agg(jsonb_build_object('name', 'P')) FROM generate_series(1, 21))), 'medical_plans', '21 plans');
   PERFORM pg_temp.must_accept('{"loss_history":[{"policy_year":2025,"premium":18400}]}', 'loss history after K-4.1');
   RAISE NOTICE 'intake_schema_v3: medical plan cases passed';
+END $$;
+
+-- ---------- K-4.2 state unemployment rates ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.must_accept('{"suta_rates":[{"state":"CA","rate":3.4,"year":2026},{"state":"TX","rate":2.7},{"state":"NY"}]}', 'unemployment rates');
+  PERFORM pg_temp.must_accept('{"suta_rates":[{"rate":0},{"rate":100}]}', 'rates at the limits');
+  PERFORM pg_temp.must_refuse('{"suta_rates":[{"state":"California"}]}', 'suta_rates[0].state', 'a state by name');
+  PERFORM pg_temp.must_refuse('{"suta_rates":[{"state":"CA"},{"rate":100.1}]}', 'suta_rates[1].rate', 'a rate over 100');
+  PERFORM pg_temp.must_refuse('{"suta_rates":[{"rate":"3.4%"}]}', 'suta_rates[0].rate', 'a rate sent as text');
+  PERFORM pg_temp.must_refuse('{"suta_rates":[{"year":2101}]}', 'suta_rates[0].year', 'a year after 2100');
+  PERFORM pg_temp.must_refuse('{"suta_rates":[{"wage_base":7000}]}', 'suta_rates[0].wage_base', 'an unknown key on a rate');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('suta_rates', (SELECT jsonb_agg(jsonb_build_object('state', 'CA')) FROM generate_series(1, 61))), 'suta_rates', '61 rates');
+  PERFORM pg_temp.must_accept('{"medical_plans":[{"name":"Gold PPO","rate_ee":612.4}]}', 'medical plans after K-4.2');
+  RAISE NOTICE 'intake_schema_v3: unemployment rate cases passed';
 END $$;

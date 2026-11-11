@@ -579,6 +579,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         <section>
           <SectionHeader>6 — Payroll &amp; Time</SectionHeader>
           <Card>{renderRows(d.payrollRows, d)}</Card>
+          {renderTables(d, "payroll")}
         </section>
 
         <section>

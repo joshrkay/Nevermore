@@ -196,7 +196,7 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(pay).queryByTestId("audit-prospect_confirmed")).not.toBeInTheDocument();
     // A correction not yet verified overrides nothing, and an inferred answer isn't the prospect's confirmation.
     expect(within(screen.getByTestId("field-employee_count")).queryByTestId(/^audit-/)).not.toBeInTheDocument();
-    expect(screen.getByTestId("section-summary-payroll")).toHaveTextContent("1 of 5 verified · 1 advisor overridden");
+    expect(screen.getByTestId("section-summary-payroll")).toHaveTextContent("1 of 6 verified · 1 advisor overridden");
     expect(screen.getByTestId("section-summary-company")).toHaveTextContent("0 of 16 verified · 1 prospect confirmed");
   });
 

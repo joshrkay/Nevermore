@@ -575,6 +575,13 @@ describe("AI-read fields", () => {
     ]);
   });
 
+  // K-4.2: a state's rate notice states the rate and the year it applies to.
+  it("reads a rate notice's unemployment tax rate as a row", () => {
+    expect(shapeAiCandidates([{ field: "suta_rates", section: 1, rows: [{ state: "CA", rate: "3.4%", year: 2026 }] }], sections)).toEqual([
+      { field: "suta_rates", location: "Page 1", value: [{ state: "CA", rate: "3.4%", year: 2026 }] },
+    ]);
+  });
+
   it("proposes no table when a document states no usable row of it", () => {
     expect(shapeAiCandidates([{ field: "loss_history", section: 1, rows: [{}, "2023", { note: " " }] }, { field: "loss_history", section: 1, value: "five years clean" }], sections)).toEqual([]);
   });

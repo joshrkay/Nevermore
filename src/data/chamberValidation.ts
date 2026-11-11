@@ -36,6 +36,7 @@ export const MAX_OWNERS_OFFICERS = 20;
 export const MONEY_MAX = 1_000_000;
 export const MAX_LOSS_YEARS = 5;
 export const MAX_MEDICAL_PLANS = 20;
+export const MAX_SUTA_RATES = 60;
 
 const STATE_CODE_SET: ReadonlySet<string> = new Set(US_STATE_CODES);
 
@@ -173,6 +174,12 @@ const money = z.preprocess(
   z.number().finite().nonnegative().transform((n) => Math.round(n * 100) / 100).pipe(z.number().max(MONEY_MAX)),
 );
 
+// A tax rate as a percentage, as a state's notice prints it ("2.68125%"), kept to four decimal places.
+const taxRate = z.preprocess(
+  numberText(/[\s%,]/g),
+  z.number().finite().min(0).max(100).transform((n) => Math.round(n * 10_000) / 10_000),
+);
+
 type FieldSchemas = { [K in keyof ChamberData]: z.ZodType<ChamberData[K], z.ZodTypeDef, unknown> };
 
 const FIELD_SCHEMAS: FieldSchemas = {
@@ -245,6 +252,11 @@ const FIELD_SCHEMAS: FieldSchemas = {
     },
     MAX_MEDICAL_PLANS,
   ),
+  // One rate per state: a second row for a state already listed is dropped.
+  suta_rates: rowsOf<ChamberData["suta_rates"][number]>({ state: stateCode, rate: taxRate, year }, Number.POSITIVE_INFINITY).transform((rates) => {
+    const seen = new Set<string>();
+    return rates.filter((r) => r.state === undefined || (!seen.has(r.state) && seen.add(r.state))).slice(0, MAX_SUTA_RATES);
+  }),
   naics_code: naicsCode.nullable(),
   operations_description: nullableText,
   in_peo: z.boolean().nullable(),

@@ -382,9 +382,10 @@ describe("ReviewTab section status and nav (C-1)", () => {
 describe("ReviewTab: columns the census lacks", () => {
   const complete = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY"], pay_frequency: "bi-weekly" };
   const person = { id: "e1", first_name: "Ada", last_name: "L", work_state: "NY", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const, class_code: "8810" };
+  const rated = { suta_rates: [{ state: "NY", rate: 4.1 }] };
 
   it("lists each missing column under Recommended with how many people lack it, and still lets the prospect certify", () => {
-    render(<ReviewTab data={{ ...complete, census: [{ ...person, gender: "F" }, { ...person, id: "e2", first_name: "Bo" }] }} provenance={{}} onProceed={() => {}} />);
+    render(<ReviewTab data={{ ...complete, ...rated, census: [{ ...person, gender: "F" }, { ...person, id: "e2", first_name: "Bo" }] }} provenance={{}} onProceed={() => {}} />);
     const recommended = screen.getByText("Recommended", { selector: "p" }).parentElement!;
     expect([...recommended.querySelectorAll("p")].slice(1).map((p) => p.textContent)).toEqual([
       "Gender on the census Missing for 1 of 2 people. Add it to your census file and upload the file again. You can certify without it.",
@@ -398,12 +399,20 @@ describe("ReviewTab: columns the census lacks", () => {
   // K-3.2: a class code is asked of employees, not contractors.
   it("counts employees, not everyone, for a missing class code", () => {
     const full = { ...person, gender: "F" as const, hire_date: "2019-04-01", cobra: false, home_state: "NY" };
-    render(<ReviewTab data={{ ...complete, census: [{ ...full, class_code: undefined }, { ...full, id: "e2", first_name: "Bo", classification: "1099" as const, class_code: undefined }] }} provenance={{}} onProceed={() => {}} />);
+    render(<ReviewTab data={{ ...complete, ...rated, census: [{ ...full, class_code: undefined }, { ...full, id: "e2", first_name: "Bo", classification: "1099" as const, class_code: undefined }] }} provenance={{}} onProceed={() => {}} />);
     expect(screen.getByText(/Missing for 1 of 1 employee\./)).toBeInTheDocument();
   });
 
+  // K-4.2
+  it("lists each state of operation with no unemployment tax rate under Recommended", () => {
+    render(<ReviewTab data={{ ...complete, states: ["NY", "NJ"], suta_rates: [{ state: "NJ", rate: 2.8 }] }} provenance={{}} onProceed={() => {}} />);
+    expect(screen.getByText("Unemployment tax rate, NY")).toBeInTheDocument();
+    expect(screen.queryByText("Unemployment tax rate, NJ")).not.toBeInTheDocument();
+    expect(screen.getByText("Add it on the Payroll tab, or upload the state's rate notice. You can certify without it.")).toBeInTheDocument();
+  });
+
   it("lists none once every person has them", () => {
-    render(<ReviewTab data={{ ...complete, census: [{ ...person, gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NY" }] }} provenance={{}} onProceed={() => {}} />);
+    render(<ReviewTab data={{ ...complete, ...rated, census: [{ ...person, gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NY" }] }} provenance={{}} onProceed={() => {}} />);
     expect(screen.queryByText(/on the census/)).not.toBeInTheDocument();
   });
 });

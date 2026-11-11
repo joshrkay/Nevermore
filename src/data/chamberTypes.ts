@@ -61,6 +61,15 @@ export interface MedicalPlan {
   enrolled?: number;
 }
 
+/** The employer's unemployment tax rate in one state (K-4.2). */
+export interface SutaRate {
+  state?: string;
+  /** The rate as a percentage, such as 3.4. */
+  rate?: number;
+  /** The year the rate applies to. */
+  year?: number;
+}
+
 export interface ChamberData {
   // Company
   company_name: string | null;
@@ -145,6 +154,8 @@ export interface ChamberData {
   // Benefits and payroll tables (intake schema v3)
   /** Each current medical plan (K-4.1). */
   medical_plans: MedicalPlan[];
+  /** The unemployment tax rate in each state of operation (K-4.2). */
+  suta_rates: SutaRate[];
 
   // Employees: the canonical census (see supabase/functions/_shared/census.ts)
   census: CensusEmployee[];
@@ -206,6 +217,7 @@ export const EMPTY_CHAMBER_DATA: ChamberData = {
   owners_officers: [],
   loss_history: [],
   medical_plans: [],
+  suta_rates: [],
   census: [],
 };
 
@@ -275,6 +287,7 @@ export const DEMO_CHAMBER_DATA: ChamberData = {
   medical_plans: [
     { name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: 612.4, rate_ee_sp: 1286.04, rate_ee_ch: 1102.32, rate_fam: 1837.2, renewal_rate_ee: 685.89, renewal_rate_ee_sp: 1440.36, renewal_rate_ee_ch: 1234.6, renewal_rate_fam: 2057.66, employer_contribution: "75% of employee-only", enrolled: 4 },
   ],
+  suta_rates: [{ state: "CA", rate: 3.4, year: 2026 }, { state: "TX", rate: 2.7, year: 2026 }],
   census: [
     { id: "6f1c2a40-0001-4c1e-9a7b-3d5e00000001", first_name: "Sarah", last_name: "Chen", dob: "1988-03-15", work_state: "CA", zip_code: "94107", job_title: "Senior Designer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "FAM", class_code: "8810", dependents: [{ first_name: "Michael", last_name: "Chen", dob: "1985-06-12", relationship: "spouse" }, { first_name: "Emma", last_name: "Chen", dob: "2018-03-22", relationship: "child" }] },
     { id: "6f1c2a40-0002-4c1e-9a7b-3d5e00000002", first_name: "Marcus", last_name: "Rivera", dob: "1985-07-22", work_state: "CA", zip_code: "94110", job_title: "Art Director", annual_salary: 125000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810", dependents: [{ first_name: "Ana", last_name: "Rivera", dob: "1987-09-04", relationship: "spouse" }] },

@@ -32,6 +32,7 @@ export const WORKSPACE_ANSWERS: Readonly<Record<string, string>> = {
   owners_officers: "the Workers' comp tab",
   loss_history: "the Workers' comp tab",
   medical_plans: "the Benefits tab",
+  suta_rates: "the Payroll tab",
 };
 
 /** What the conversation never asks about: the census (a file) and the answers entered in the workspace. */

@@ -789,6 +789,19 @@
         "rank": 56
       }
     },
+    "suta_rates": {
+      "type": "array",
+      "maxItems": 60,
+      "items": {
+        "$ref": "#/$defs/sutaRate"
+      },
+      "x-intake": {
+        "label": "State unemployment tax rates",
+        "section": "payroll",
+        "required": false,
+        "rank": 57
+      }
+    },
     "census": {
       "type": "array",
       "maxItems": 5000,
@@ -1272,6 +1285,84 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 1000000
+        }
+      }
+    },
+    "sutaRate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "title": "a US state or territory code such as CA",
+          "type": "string",
+          "enum": [
+            "AL",
+            "AK",
+            "AZ",
+            "AR",
+            "CA",
+            "CO",
+            "CT",
+            "DE",
+            "FL",
+            "GA",
+            "HI",
+            "ID",
+            "IL",
+            "IN",
+            "IA",
+            "KS",
+            "KY",
+            "LA",
+            "ME",
+            "MD",
+            "MA",
+            "MI",
+            "MN",
+            "MS",
+            "MO",
+            "MT",
+            "NE",
+            "NV",
+            "NH",
+            "NJ",
+            "NM",
+            "NY",
+            "NC",
+            "ND",
+            "OH",
+            "OK",
+            "OR",
+            "PA",
+            "RI",
+            "SC",
+            "SD",
+            "TN",
+            "TX",
+            "UT",
+            "VT",
+            "VA",
+            "WA",
+            "WV",
+            "WI",
+            "WY",
+            "DC",
+            "AS",
+            "GU",
+            "MP",
+            "PR",
+            "VI"
+          ]
+        },
+        "rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "year": {
+          "type": "integer",
+          "minimum": 1600,
+          "maximum": 2100
         }
       }
     },

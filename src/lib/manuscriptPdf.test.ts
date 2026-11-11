@@ -117,6 +117,9 @@ describe("buildManuscriptPdf", () => {
     const benefits = text.slice(text.indexOf("7 — Current Benefits"), text.indexOf("8 — Workers' Compensation"));
     // (A table's title is printed in capitals.)
     for (const expected of ["CURRENT MEDICAL PLANS", "Gold PPO 500", "$612.40", "MEDICAL RENEWAL RATES", "$685.89"]) expect(benefits).toContain(expected);
+    // K-4.2: each state's unemployment tax rate prints under the payroll answers.
+    const payroll = text.slice(text.indexOf("6 — Payroll & Time"), text.indexOf("7 — Current Benefits"));
+    for (const expected of ["STATE UNEMPLOYMENT TAX RATES", "3.4%", "2026"]) expect(payroll).toContain(expected);
     const none = await render({ ...DEMO_CHAMBER_DATA, owners_officers: [] });
     expect(none.text).not.toContain("OWNERS AND OFFICERS");
   });

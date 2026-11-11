@@ -5,7 +5,7 @@ import { formatFein } from "./answerFormat";
 import type { ChamberData } from "./chamberTypes";
 
 /** How a cell is typed and shown. */
-export type RowCellKind = "text" | "fein" | "percent" | "boolean" | "year" | "dollars" | "decimal" | "count" | "money";
+export type RowCellKind = "text" | "fein" | "percent" | "boolean" | "year" | "dollars" | "decimal" | "count" | "money" | "state";
 
 export interface RowColumn {
   key: string;
@@ -84,6 +84,16 @@ export const ROW_LISTS: Record<RowListField, RowList> = {
     ],
     max: 20,
     key: "name",
+  },
+  suta_rates: {
+    title: "State unemployment tax rates",
+    columns: [
+      { key: "state", label: "State", kind: "state", placeholder: "CA" },
+      { key: "rate", label: "Rate %", kind: "percent", placeholder: "3.4" },
+      { key: "year", label: "Effective year", kind: "year", placeholder: "2026" },
+    ],
+    max: 60,
+    key: "state",
   },
 };
 

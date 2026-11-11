@@ -1,3 +1,4 @@
+import { statesWithoutRate, SUTA_RATE_HINT } from "@/data/sutaRates";
 import { isRowListField } from "@/data/rowColumns";
 import RowsField from "./RowsField";
 import { formatAnswer } from "@/data/answerFormat";
@@ -164,6 +165,8 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
   const recommended = missingRecommendedItems(data).filter((item) => open.some((o) => o.key === item.key));
   // Columns PEOs ask of every employee that this census lacks (K-2.1): one line each, never a blocker.
   const censusColumns = missingCensusColumns(data);
+  // States of operation with no unemployment tax rate (K-4.2): one line each, never a blocker.
+  const unratedStates = statesWithoutRate(data);
   const rows = rowsBySection(data);
   const statuses = Object.fromEntries(REVIEW_SECTIONS.map(({ key }) => [key, sectionStatus(key, data, provenance, verified, open)])) as Record<ReviewSection, SectionStatus>;
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
@@ -229,13 +232,19 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
           Every required answer is here. You can certify once you've checked the rest.
         </div>
       )}
-      {(recommended.length > 0 || censusColumns.length > 0) && (
+      {(recommended.length > 0 || censusColumns.length > 0 || unratedStates.length > 0) && (
         <div className="bg-card border border-border rounded-xl p-4 text-sm space-y-1">
           <p className="text-sm font-semibold text-muted-foreground">Recommended</p>
           {recommended.map((item) => (
             <p key={item.key}>
               <span className="font-medium">{item.label}</span>{" "}
               <span className="text-muted-foreground text-xs">{item.hint}</span>
+            </p>
+          ))}
+          {unratedStates.map((state) => (
+            <p key={state}>
+              <span className="font-medium">Unemployment tax rate, {state}</span>{" "}
+              <span className="text-muted-foreground text-xs">{SUTA_RATE_HINT}</span>
             </p>
           ))}
           {censusColumns.map((column) => (

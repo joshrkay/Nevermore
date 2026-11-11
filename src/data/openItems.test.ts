@@ -21,7 +21,8 @@ const asQueue = (data: ChamberData, items: OpenItem[]) => {
   const required = new Set(missingRequired(data).map((i) => i.key));
   const missing = items.filter((i) => required.has(i.key));
   // Nor does the queue count a column the census lacks (K-2.1): like the census itself, it is something to upload.
-  const uploads = new Set(["Document needed", "Missing from the census"]);
+  // Nor a state with no unemployment tax rate (K-4.2), which the prospect adds on the Payroll tab or from a notice.
+  const uploads = new Set(["Document needed", "Missing from the census", "Rate needed"]);
   return { missing: missing.map((i) => i.label), open_fields: items.filter((i) => !required.has(i.key) && !uploads.has(i.reason)).length };
 };
 
@@ -42,6 +43,8 @@ describe("openItems", () => {
       ["census.cobra", "Missing from the census"],
       ["census.home_state", "Missing from the census"],
       ["census.class_code", "Missing from the census"],
+      // The fixture's state of operation has no unemployment tax rate (K-4.2).
+      ["suta_rates.NY", "Rate needed"],
       ["current_carrier", "Conflicting answers"],
       ["hq_state", "Incomplete"],
       ["renewal_date", "Prospect to provide"],
@@ -64,7 +67,7 @@ describe("openItems", () => {
   });
 
   it("never lists a recommended field with no answer, or one marked doesn't apply", () => {
-    const items = openItems({ ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY"], pay_frequency: "weekly" }, {
+    const items = openItems({ ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY"], pay_frequency: "weekly", suta_rates: [{ state: "NY", rate: 4.1 }] }, {
       wc_carrier: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: "2026-11-04T00:00:00Z" },
     });
     expect(items.map((i) => i.key)).toEqual(["census"]);
@@ -102,7 +105,7 @@ describe("openItems", () => {
     it("lists none for a census that has them all, and none when there is no census (the census itself is the item)", () => {
       const full = { gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NY" };
       expect(columns(withCensus([person(full)]))).toEqual([]);
-      expect(openItems(parseChamberData({ company_name: "Acme", states: ["NY"], pay_frequency: "weekly" }), {}).map((i) => i.key)).toEqual(["census"]);
+      expect(openItems(parseChamberData({ company_name: "Acme", states: ["NY"], pay_frequency: "weekly", suta_rates: [{ state: "NY", rate: 4.1 }] }), {}).map((i) => i.key)).toEqual(["census"]);
     });
 
     // K-3.2: people with no class code are one open item, however many there are; contractors need none.
@@ -115,6 +118,29 @@ describe("openItems", () => {
 
     it("never holds an intake back from certifying", () => {
       expect(missingRequired(withCensus([person()]))).toEqual([]);
+    });
+  });
+
+  // K-4.2: one rate per state of operation; a state with none is one open item.
+  describe("states with no unemployment tax rate", () => {
+    const rates = (data: Partial<ChamberData>) => openItems({ ...EMPTY_CHAMBER_DATA, company_name: "Acme", pay_frequency: "weekly", ...data }, {}).filter((i) => i.reason === "Rate needed");
+    const person = (work_state: string) => ({ id: work_state, first_name: "Ada", last_name: "L", work_state, compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const });
+
+    it("lists each state of operation that has no rate, once", () => {
+      const items = rates({ states: ["CA", "TX", "NY"], suta_rates: [{ state: "TX", rate: 2.7 }] });
+      expect(items.map((i) => [i.key, describeOpenItem(i)])).toEqual([
+        ["suta_rates.CA", "Unemployment tax rate, CA — rate needed"],
+        ["suta_rates.NY", "Unemployment tax rate, NY — rate needed"],
+      ]);
+    });
+
+    it("counts the states the census names as states of operation, and a state listed with no rate as having none", () => {
+      expect(rates({ states: ["CA"], census: [person("TX"), person("CA")], suta_rates: [{ state: "CA", year: 2026 }] }).map((i) => i.key)).toEqual(["suta_rates.CA", "suta_rates.TX"]);
+    });
+
+    it("lists none once every state has a rate, or while no state is known", () => {
+      expect(rates({ states: ["CA"], suta_rates: [{ state: "CA", rate: 3.4 }] })).toEqual([]);
+      expect(rates({ states: [] })).toEqual([]);
     });
   });
 });

@@ -12,6 +12,8 @@ interface RowsFieldProps {
   onAction?: (action: FieldAction) => void;
   /** Shown under the title while the table is empty. */
   hint?: string;
+  /** Rows to offer, part filled in, when an edit starts (a row for each state still without a rate). */
+  offer?: Record<string, string>[];
 }
 
 type Draft = Record<string, string>[];
@@ -21,7 +23,7 @@ type Draft = Record<string, string>[];
  * the rows through the same sanitiser every other source does; a cell it would drop is named, and nothing is
  * saved until it is fixed or cleared.
  */
-const RowsField = ({ field, rows, provenance, onAction, hint }: RowsFieldProps) => {
+const RowsField = ({ field, rows, provenance, onAction, hint, offer = [] }: RowsFieldProps) => {
   const { title, columns, max } = ROW_LISTS[field];
   const [draft, setDraft] = useState<Draft | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -29,7 +31,8 @@ const RowsField = ({ field, rows, provenance, onAction, hint }: RowsFieldProps) 
 
   const startEdit = () => {
     const current = (rows as Record<string, unknown>[]).map((row) => Object.fromEntries(columns.map((c) => [c.key, cellInput(c, row[c.key])])));
-    setDraft(current.length > 0 ? current : [blank()]);
+    const started = [...current, ...offer.map((row) => ({ ...blank(), ...row }))];
+    setDraft(started.length > 0 ? started : [blank()]);
     setProblem(null);
   };
 

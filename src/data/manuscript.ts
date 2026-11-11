@@ -329,6 +329,7 @@ const TABLES: {
   { field: "owners_officers", title: "Owners and Officers", section: "workers_comp" },
   // Newest policy year first, as a loss run reads.
   { field: "loss_history", title: "Loss History by Year", section: "workers_comp", order: (a, b) => Number(b.policy_year ?? 0) - Number(a.policy_year ?? 0) },
+  { field: "suta_rates", title: "State Unemployment Tax Rates", section: "payroll", columns: ["state", ["rate", "Rate"], "year"], order: (a, b) => String(a.state ?? "").localeCompare(String(b.state ?? "")) },
   // Twelve columns don't fit a page, so the renewal rates are a table of their own, printed when any is held.
   { field: "medical_plans", title: "Current Medical Plans", section: "benefits", columns: ["name", "carrier", "rate_ee", "rate_ee_sp", "rate_ee_ch", "rate_fam", "employer_contribution", "enrolled"] },
   {
@@ -632,6 +633,7 @@ export function buildManuscript(
       ["Funding Lead Time", data.funding_days === null ? NOT_PROVIDED : `${data.funding_days} day${data.funding_days === 1 ? "" : "s"}`, "funding_days"],
       ["Accrual Method", orNotProvided(data.accrual_method), "accrual_method"],
       ["PTO Types", data.pto_types.length ? data.pto_types.join(", ") : NOT_PROVIDED, "pto_types"],
+      ["State Unemployment Tax Rates", answer("suta_rates"), "suta_rates"],
     ]),
     benefitsRows: finish([
       ["Coverage Status", data.virgin_medical === null ? NOT_PROVIDED : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage", "virgin_medical"],

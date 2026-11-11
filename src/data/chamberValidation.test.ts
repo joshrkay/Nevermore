@@ -410,6 +410,24 @@ describe("current medical plans (K-4.1)", () => {
   });
 });
 
+describe("state unemployment rates (K-4.2)", () => {
+  it("reads each state's rate as a rate notice prints it, and keeps one rate per state", () => {
+    expect(sanitizeChamberPatch({ suta_rates: [
+      { state: "ca", rate: "3.4%", year: "2026" },
+      { state: "TX", rate: 2.7 },
+      // A second rate for a state already listed is dropped: one rate per state.
+      { state: "CA", rate: 9.9 },
+      { state: "Atlantis", rate: 1 },
+      { state: "NY", rate: "low" },
+      { rate: 2 },
+    ] })).toEqual({ suta_rates: [{ state: "CA", rate: 3.4, year: 2026 }, { state: "TX", rate: 2.7 }, { rate: 1 }, { state: "NY" }, { rate: 2 }] });
+  });
+
+  it("keeps a rate to four decimal places, which state notices print", () => {
+    expect(sanitizeChamberPatch({ suta_rates: [{ state: "NJ", rate: "2.68125" }] }).suta_rates).toEqual([{ state: "NJ", rate: 2.6813 }]);
+  });
+});
+
 // A TypeScript copy of the server's rules (public.chamber_data_error), used to prove that whatever
 // the sanitiser emits is accepted. The SQL tests prove the same against the real function.
 function serverRefusal(d: unknown): string | null {
@@ -427,7 +445,7 @@ function serverRefusal(d: unknown): string | null {
   kinds.naics_code = "naics";
   for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"], ["wc_experience_mod", "experience_mod"], ["wc_annual_premium", "dollars"]]) kinds[k] = kind;
   // New in v3: the scalar kinds public.chamber_data_scalar_reason checks, and the lists of rows.
-  for (const [k, kind] of [["fein", "fein"], ["entity_type", "entity_type"], ["year_founded", "year"], ["entities", "rows"], ["owners_officers", "rows"], ["loss_history", "rows"], ["medical_plans", "rows"]]) kinds[k] = kind;
+  for (const [k, kind] of [["fein", "fein"], ["entity_type", "entity_type"], ["year_founded", "year"], ["entities", "rows"], ["owners_officers", "rows"], ["loss_history", "rows"], ["medical_plans", "rows"], ["suta_rates", "rows"]]) kinds[k] = kind;
   const scalarOk = (kind: string, v: unknown): boolean => {
     switch (kind) {
       case "text": return isText(v, TEXT_MAX);
@@ -440,6 +458,7 @@ function serverRefusal(d: unknown): string | null {
       case "boolean": return typeof v === "boolean";
       case "count": return isCount(v, COUNT_MAX);
       case "money": return typeof v === "number" && v >= 0 && v <= 1_000_000;
+      case "state": return isState(v);
       case "dollars": return isCount(v, DOLLARS_MAX);
       case "experience_mod": return typeof v === "number" && v >= 0 && v <= EXPERIENCE_MOD_MAX;
       default: return false;
@@ -449,6 +468,7 @@ function serverRefusal(d: unknown): string | null {
     entities: { max: MAX_ENTITIES, keys: { legal_name: "text", fein: "fein" } },
     loss_history: { max: 5, keys: { policy_year: "year", carrier: "name", premium: "dollars", experience_mod: "experience_mod", claims: "count", paid: "dollars", reserved: "dollars", valuation_date: "name", no_coverage: "boolean" } },
     medical_plans: { max: 20, keys: { name: "name", carrier: "name", employer_contribution: "name", enrolled: "count", ...Object.fromEntries(["rate_ee", "rate_ee_sp", "rate_ee_ch", "rate_fam", "renewal_rate_ee", "renewal_rate_ee_sp", "renewal_rate_ee_ch", "renewal_rate_fam"].map((k) => [k, "money"])) } },
+    suta_rates: { max: 60, keys: { state: "state", rate: "percent", year: "year" } },
     owners_officers: { max: 20, keys: { name: "name", title: "name", ownership_percent: "percent", duties: "text", covered: "boolean" } },
   };
   for (const [k, v] of Object.entries(d)) {
@@ -644,6 +664,7 @@ describe("sanitiser output the server must accept", () => {
       { census: [{ first_name: "A", annual_salary: 1_000_001 }] }, { census: [{ first_name: " " }] }, { extra: 1 }, [],
       { fein: "12-3456789" }, { entity_type: "LLC" }, { year_founded: 1599 }, { entities: [{ dba: "x" }] }, { entities: [{ fein: "1" }] }, { entities: null }, { naics_code: "54143" }, { naics_code: 541430 },
       { medical_plans: [{ rate_ee: 1_000_001 }] }, { medical_plans: [{ rate_ee: "612.40" }] }, { medical_plans: [{ enrolled: 1.5 }] },
+      { suta_rates: [{ state: "California" }] }, { suta_rates: [{ rate: 101 }] }, { suta_rates: [{ year: "2026" }] },
       { loss_history: [{ policy_year: 1599 }] }, { loss_history: [{ premium: 1.5 }] }, { loss_history: [{ claims: "2" }] },
       { owners_officers: [{ ownership_percent: 101 }] }, { owners_officers: [{ covered: "yes" }] }, { owners_officers: [{ name: "x".repeat(201) }] },
     ]) {

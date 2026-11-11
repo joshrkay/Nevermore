@@ -65,6 +65,7 @@ New in v3. The database checks each key of a row as the kind named here (`public
 | `owners_officers` | 20 | `name`, `title` (text of at most 200 characters), `ownership_percent` (a number from 0 to 100), `duties` (text), `covered` (true or false: whether workers' comp covers them) |
 | `loss_history` | 5 | `policy_year` (year), `carrier`, `valuation_date` (text of at most 200 characters), `premium`, `paid`, `reserved` (whole dollars), `experience_mod`, `claims` (a count; 0 is "no claims"), `no_coverage` (true when there was no coverage that year) |
 | `medical_plans` | 20 | `name`, `carrier`, `employer_contribution` (text of at most 200 characters), `rate_ee`, `rate_ee_sp`, `rate_ee_ch`, `rate_fam` and the same four with `renewal_` before them (dollars a month to the cent, from 0 to 1,000,000), `enrolled` (a count) |
+| `suta_rates` | 60 | `state` (a listed code), `rate` (a percentage from 0 to 100), `year`. The client keeps one row per state; each state of operation with no rate is one open item ("Rate needed"), never a blocker |
 
 Chat extraction adds to a table rather than replacing it (`mergeRows` in `src/data/rowColumns.ts`): a row for someone or something already listed, matched by the list's key column (a person's name, a legal name), fills in what that row lacked, and a new one is added at the end. Only a document the prospect applied changes a value a row already held, and never one the prospect typed. Lenore never asks for a table row by row; each is named in her prompt's "Entered in the workspace" line with its tab.
 
@@ -118,6 +119,7 @@ Writers: **C** chat extraction (`chamber-extract`, which asks for every field bu
 | Payroll | `exempt_count` | Exempt count | count | Recommended | 38 | C D |
 | Payroll | `pto_types` | PTO types | text list | Recommended | 39 | C E |
 | Payroll | `accrual_method` | Accrual method | text | Recommended | 40 | C E |
+| Payroll | `suta_rates` | State unemployment tax rates | list of rows | Recommended | 57 | C E |
 | Workers' comp | `wc_carrier` | Workers' comp carrier | text | Recommended | 11 | C |
 | Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | C |
 | Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | C |

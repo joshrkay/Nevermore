@@ -79,7 +79,7 @@ describe("buildUserPrompt", () => {
 // box in the workspace. Lenore never asks for it; she is told where it goes, so she can say so.
 describe("answers entered in the workspace", () => {
   // Every table already holds a row, so a line names only the answers its case is about. Add each new table here.
-  const TABLES = { owners_officers: [{ name: "Dana Reyes" }], loss_history: [{ policy_year: 2025 }], medical_plans: [{ name: "Gold PPO" }] };
+  const TABLES = { owners_officers: [{ name: "Dana Reyes" }], loss_history: [{ policy_year: 2025 }], medical_plans: [{ name: "Gold PPO" }], suta_rates: [{ state: "CA" }] };
   const line = (turn: Parameters<typeof buildUserPrompt>[0], tables: object = TABLES) =>
     buildUserPrompt({ ...turn, context: { ...tables, ...((turn.context ?? {}) as object) } }).split("\n\n")[5];
 

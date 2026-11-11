@@ -10,7 +10,7 @@ export const REVIEW_FIELDS: Record<ReviewSection, FieldKey[]> = {
   company: ["company_name", "fein", "entity_type", "year_founded", "street_address", "website", "industry", "naics_code", "operations_description", "start_month", "multiple_entities", "fein_count", "entities", "in_peo", "current_peo", "peo_renewal_date"],
   workforce: ["employee_count", "has_nonexempt", "nonexempt_count", "exempt_count", "has_1099", "ca_contractors"],
   locations: ["hq_state", "states"],
-  payroll: ["payroll_vendor", "pay_frequency", "funding_days", "pto_types", "accrual_method"],
+  payroll: ["payroll_vendor", "pay_frequency", "funding_days", "pto_types", "accrual_method", "suta_rates"],
   benefits: ["virgin_medical", "current_carrier", "renewal_date", "rate_history", "benefits_waiting_period", "medical_plans", "ancillary_benefits", "has_401k", "retirement_type", "employer_contributes"],
   workers_comp: ["wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium", "owners_officers", "loss_history"],
   operations: ["has_handbook", "handbook_last_updated", "hr_staff_count", "uses_physical_clocks", "uses_mobile_app", "uses_computer_timekeeping", "shift_differentials", "hris_system", "key_challenges", "business_goals"],

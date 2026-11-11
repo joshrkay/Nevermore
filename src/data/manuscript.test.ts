@@ -356,6 +356,16 @@ describe("buildManuscript covers the whole intake", () => {
     expect(m.benefitsRows.find(([, , field]) => field === "medical_plans")).toEqual(["Current Medical Plans", "2 listed", "medical_plans"]);
   });
 
+  // K-4.2
+  it("prints each state's unemployment tax rate and effective year in the payroll section", () => {
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, suta_rates: [{ state: "TX", rate: 2.7 }, { state: "CA", rate: 3.4, year: 2026 }] }, opts);
+    const table = m.tables.find((t) => t.field === "suta_rates")!;
+    expect([table.section, table.title]).toEqual(["payroll", "State Unemployment Tax Rates"]);
+    expect(table.columns).toEqual(["State", "Rate", "Effective year"]);
+    expect(table.rows).toEqual([["CA", "3.4%", "2026"], ["TX", "2.7%", "—"]]);
+    expect(m.payrollRows.find(([, , field]) => field === "suta_rates")).toEqual(["State Unemployment Tax Rates", "2 listed", "suta_rates"]);
+  });
+
   it("shows the workers' comp block and the census class codes", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
     expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toMatchObject({
@@ -546,9 +556,11 @@ describe("buildManuscript open items for missing core facts", () => {
       { ...EMPTY_CHAMBER_DATA, company_name: "Acme", industry: "Retail", states: ["CA"] },
       { fileId: "EAA-1", provenance: { industry: { status: "inferred", source, updated_at: AT }, states: { status: "incomplete", source, updated_at: AT } } },
     );
-    expect(open.slice(0, 4)).toEqual([
+    expect(open.slice(0, 5)).toEqual([
       "Pay frequency — not provided",
       "Employee census — document needed",
+      // A state of operation with no unemployment tax rate (K-4.2).
+      "Unemployment tax rate, CA — rate needed",
       "States of operation — incomplete",
       "Industry — please confirm",
     ]);
@@ -668,6 +680,7 @@ describe("buildManuscript payroll", () => {
       "Funding Lead Time": "2 days",
       "Accrual Method": "Per pay period",
       "PTO Types": "Vacation, Sick",
+      "State Unemployment Tax Rates": "Not provided",
     });
     // Payroll is no longer folded into the company profile; timekeeping and the HRIS sit under Operations & HR,
     // where Review lists them.
