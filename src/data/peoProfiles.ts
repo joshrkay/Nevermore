@@ -3,7 +3,7 @@
 // it; a published version never changes, and the newest published one is the profile in use. The browser reads
 // the PEOs and their profiles in use through public.peo_catalog(), which never includes a PEO contact, and gives
 // anyone but an advisor a person at the PEO by their role only.
-import type { CensusTemplateRef, PeoCensusLayout } from "./censusExport";
+import type { TemplateWorkbookRef, PeoCensusLayout } from "./censusExport";
 import type { DocumentCategory } from "./documentCategories";
 import type { PeoRecord } from "./peoCatalog";
 import type { FieldKey } from "./provenance";
@@ -156,7 +156,7 @@ const num = (v: unknown): number | null => (typeof v === "number" ? v : typeof v
 const text = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
 /** The PEO's own template a layout fills, as the database holds it ({ id, sheet, header_row, first_row }), or null. */
-function parseTemplateRef(v: unknown): CensusTemplateRef | null {
+function parseTemplateRef(v: unknown): TemplateWorkbookRef | null {
   if (!isRow(v)) return null;
   const id = num(v.id), headerRow = num(v.header_row), firstRow = num(v.first_row), sheet = text(v.sheet);
   return id !== null && headerRow !== null && firstRow !== null && sheet ? { id, sheet, headerRow, firstRow } : null;

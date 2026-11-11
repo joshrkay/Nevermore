@@ -415,7 +415,7 @@ export type Database = {
           id: number
           peo_id: number
           scan_signature: string | null
-          // One of CENSUS_TEMPLATE_STATUSES (src/lib/censusTemplates.ts).
+          // One of TEMPLATE_WORKBOOK_STATUSES (src/lib/templateWorkbooks.ts).
           scan_status: string
           scanned_at: string | null
           size_bytes: number
@@ -593,6 +593,11 @@ export type Database = {
       admin_discard_peo_draft: {
         Args: { p_peo_id: number }
         Returns: undefined
+      }
+      // Where a clean PEO template workbook of this PEO is stored, or null (20261114090000).
+      clean_template_workbook_path: {
+        Args: { p_peo_id: number; p_template_id: number }
+        Returns: string | null
       }
       advisor_email_problems: {
         Args: Record<PropertyKey, never>

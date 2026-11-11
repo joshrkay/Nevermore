@@ -7,7 +7,7 @@ import { ANSWER_FIELDS, EXTRA_QUESTION_LABELS, isStaleDraftError, PROFILE_PART_T
 import { EXTRA_QUESTION_KINDS, PROFILE_PARTS, utcToday, type ProfilePart } from "@/data/peoProfiles";
 import { FIELD_LABELS } from "@/data/provenance";
 import { savePeoDraft } from "@/lib/advisorApi";
-import { listCensusTemplates, templateStatusProblem, uploadCensusTemplate, type CensusTemplateRecord } from "@/lib/censusTemplates";
+import { listTemplateWorkbooks, TEMPLATE_WORKBOOK_STATUS_WORDS, templateWorkbookProblem, uploadTemplateWorkbook, type TemplateWorkbookRecord } from "@/lib/templateWorkbooks";
 import { buttonClass, columnLabel, inputClass, primaryClass, problemAt, sourceDraft, sourceFrom, suggestQuestionKey, type SectionKey, type SourceDraft } from "./shared";
 import { Field, SourceFields } from "./SourceFields";
 
@@ -345,18 +345,18 @@ export const AnswersEditor = ({ peoId, base, basis, today, onSaved, onCancel, on
 type TemplateFields = { templateId: string; sheet: string; headerRow: string; firstRow: string };
 
 /**
- * The PEO's own template the census fills, when it has one (L-3.1): one uploaded for this PEO, or a new upload, which
+ * The PEO template workbook the census fills, when it has one (L-3.1): one uploaded for this PEO, or a new upload, which
  * is checked for viruses as every upload is (docs/adr/0002); and where in it the census goes. A template that isn't
  * clean is never used, and this says why.
  */
 const TemplatePicker = ({ peoId, value, onChange, problem }: { peoId: number; value: TemplateFields; onChange: (patch: Partial<TemplateFields>) => void; problem?: string }) => {
-  const [list, setList] = useState<CensusTemplateRecord[] | null>(null);
+  const [list, setList] = useState<TemplateWorkbookRecord[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProblem, setUploadProblem] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
-      setList(await listCensusTemplates(peoId));
+      setList(await listTemplateWorkbooks(peoId));
       setLoadFailed(false);
     } catch {
       setLoadFailed(true);
@@ -364,7 +364,7 @@ const TemplatePicker = ({ peoId, value, onChange, problem }: { peoId: number; va
   }, [peoId]);
   useEffect(() => { void load(); }, [load]);
   const chosen = list?.find((t) => String(t.id) === value.templateId);
-  const status = chosen ? templateStatusProblem(chosen.status) : null;
+  const status = chosen ? templateWorkbookProblem(chosen.status) : null;
   const id = `peo-${peoId}-census-template`;
 
   const upload = async (file: File | undefined) => {
@@ -372,7 +372,7 @@ const TemplatePicker = ({ peoId, value, onChange, problem }: { peoId: number; va
     setUploading(true);
     setUploadProblem(null);
     try {
-      const added = await uploadCensusTemplate(peoId, file);
+      const added = await uploadTemplateWorkbook(peoId, file);
       await load();
       onChange({ templateId: String(added.id) });
     } catch (err) {
@@ -384,20 +384,20 @@ const TemplatePicker = ({ peoId, value, onChange, problem }: { peoId: number; va
 
   return (
     <div className="space-y-3 border border-border rounded-lg p-3">
-      <Field id={id} label="The PEO's template file" hint="Only when the PEO wants its own spreadsheet filled in. Its headers must match the columns below." problem={problem}>
+      <Field id={id} label="The PEO template workbook" hint="Only when the PEO wants its own spreadsheet filled in. Its headers must match the columns below." problem={problem}>
         {(p) => (
           <select {...p} value={value.templateId} onChange={(e) => onChange({ templateId: e.target.value })} className={inputClass}>
             <option value="">None: we write the file</option>
             {(list ?? []).map((t) => (
-              <option key={t.id} value={String(t.id)}>{`${t.fileName}${t.status === "clean" ? "" : ` (${t.status === "pending" ? "being checked" : t.status === "blocked" ? "blocked" : "not checked"})`}`}</option>
+              <option key={t.id} value={String(t.id)}>{`${t.fileName}${TEMPLATE_WORKBOOK_STATUS_WORDS[t.status].tag ? ` (${TEMPLATE_WORKBOOK_STATUS_WORDS[t.status].tag})` : ""}`}</option>
             ))}
           </select>
         )}
       </Field>
-      {loadFailed && <p role="alert" className="text-xs text-destructive">The PEO's template files couldn't be loaded. <button type="button" onClick={() => void load()} className="underline min-h-11">Try again</button></p>}
+      {loadFailed && <p role="alert" className="text-xs text-destructive">The PEO's template workbooks couldn't be loaded. <button type="button" onClick={() => void load()} className="underline min-h-11">Try again</button></p>}
       {status && <p className="text-xs text-warning">{status}</p>}
       <div className="space-y-1">
-        <label htmlFor={`${id}-upload`} className="block text-sm font-medium">Upload the PEO's template (.xlsx)</label>
+        <label htmlFor={`${id}-upload`} className="block text-sm font-medium">Upload the PEO template workbook (.xlsx)</label>
         <input
           id={`${id}-upload`}
           type="file"

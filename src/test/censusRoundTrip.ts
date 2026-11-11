@@ -4,8 +4,8 @@
 // the layout fills one.
 import { expect } from "vitest";
 import type { PeoCensusLayout } from "@/data/censusExport";
-import { censusRoundTrip, SAMPLE_CENSUS } from "@/lib/censusWorkbook";
+import { checkLayoutRoundTrip } from "@/lib/censusWorkbook";
 
 export async function expectCensusRoundTrip(layout: PeoCensusLayout, template: Uint8Array | null = null): Promise<void> {
-  expect(await censusRoundTrip(layout, SAMPLE_CENSUS, template)).toEqual({ ok: true });
+  expect(await checkLayoutRoundTrip(layout, template)).toEqual({ ok: true });
 }

@@ -158,6 +158,9 @@ export function cleanPeoName(name: unknown): string | null {
   return cleaned === "" ? null : cleaned;
 }
 
+/** A PEO's name as it goes in a file name: "TriNet HR" is "trinet-hr". */
+export const peoSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
 /**
  * The PEO in the catalog with this name, compared ignoring case, listed or not: one an admin took off the list is
  * still found, so what was sent to it reads against its profile. Undefined for a name the catalog doesn't hold.

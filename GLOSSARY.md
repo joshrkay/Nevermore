@@ -76,9 +76,17 @@ _Avoid_: addendum, rider, PEO questionnaire
 The list of the employer's employees, one row per person, with the facts underwriting needs about each.
 _Avoid_: roster, employee list, employees
 
+**Census template**:
+Our own census layout: the columns the census upload reads, offered to prospects as a CSV to fill in, and the layout a PEO's census file takes when the PEO has none of its own.
+_Avoid_: census format, PEO template workbook (that is a PEO's own file)
+
 **PEO census layout**:
-A PEO's own column layout for a census, so the certified census can be sent in the shape its underwriters read: its columns in order, each filled from one of our census columns or left blank, and the file it takes, CSV or xlsx. Where the PEO wants its own spreadsheet filled in, the layout names that template (an upload like any other, scanned before anyone can use it) with the sheet, the row its headers are on and the first row of data, and the census is written under its headers, matched by their text, the rest of the workbook kept. Columns the intake doesn't collect are left blank and named before the download. Every file is built from the last certified version and says which. A PEO whose profile in use holds no layout, or a PEO typed in that isn't on the list, gets the census template's own layout. It is part of the PEO's **Requirement profile**.
+A PEO's own column layout for a census, so the certified census can be sent in the shape its underwriters read: its columns in order, each filled from one of our census columns or left blank, and the file it takes, CSV or xlsx. Where the PEO wants its own spreadsheet filled in, the layout names its **PEO template workbook** with the sheet, the row its headers are on and the first row of data, and the census is written under its headers, matched by their text, the rest of the workbook kept. Columns the intake doesn't collect are left blank and named before the download. Every file is built from the last certified version and says which. A PEO whose profile in use holds no layout, or a PEO typed in that isn't on the list, gets the **Census template**'s layout. It is part of the PEO's **Requirement profile**.
 _Avoid_: census template (that is our own layout), census format
+
+**PEO template workbook**:
+A PEO's own blank census spreadsheet (.xlsx) that an admin uploads so the census can be written into it. An upload like any other: scanned before anyone can use it, and only a clean one is used. The rows from its first row of data down to the end of the sheet must be empty, so no employee is ever written over the PEO's own words (a footer, a totals row, a signature line, example rows); one with anything there, or with parts that filling it would lose (charts, pivot tables, macros, slicers, data connections and the like), is refused, saying what is in the way.
+_Avoid_: census template (that is our own layout), template file, PEO template
 
 **Employee**:
 One person in the census.

@@ -6,7 +6,7 @@ import { CENSUS_TEMPLATE_COLUMNS, type CensusEmployee, type CensusTemplateColumn
 import { findPeo, type PeoRecord } from "./peoCatalog";
 
 /** Which of a PEO's own templates the census fills, and where: the sheet, its header row and its first row of data. */
-export interface CensusTemplateRef {
+export interface TemplateWorkbookRef {
   /** The template's record (peo_census_templates). */
   id: number;
   sheet: string;
@@ -22,7 +22,7 @@ export interface PeoCensusLayout {
   /** The file it is written as. */
   format: "csv" | "xlsx";
   /** The PEO's own template the census fills, when it has one; then the file is that workbook. */
-  template: CensusTemplateRef | null;
+  template: TemplateWorkbookRef | null;
 }
 
 /** Our own layout: the census template's columns under their own names, as CSV. */

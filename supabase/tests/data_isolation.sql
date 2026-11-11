@@ -367,7 +367,7 @@ BEGIN
   PERFORM public.admin_publish_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'),
     (SELECT revision FROM public.peo_profile_versions v JOIN public.peos p ON p.id = v.peo_id WHERE p.name = 'TriNet' AND v.status = 'draft'));
 
-  -- The admin uploads TriNet's census template (20261114090000), which its scan finds clean.
+  -- The admin uploads TriNet's template workbook (20261114090000), which its scan finds clean.
   PERFORM public.admin_register_census_template((SELECT id FROM public.peos WHERE name = 'TriNet'), 'TriNet census.xlsx', 2048, repeat('c', 64));
 
   -- Email delivery, and the AI rate-limit counters.
@@ -446,7 +446,7 @@ INSERT INTO matrix VALUES
   ('public.peos',                                       '{"advisor":"all","admin":"all"}'),
   ('public.peo_profile_versions',                       '{"advisor":1,"admin":"all"}'),
   ('public.peo_contacts',                               '{"advisor":"all","admin":"all"}'),
-  -- A PEO's census templates (20261114090000): advisors read the records; anyone signed in reads a clean one's file
+  -- PEO template workbooks (20261114090000): advisors read the records; anyone signed in reads a clean one's file
   -- (a PEO's blank form, filled in the reader's browser), nobody signed out.
   ('public.peo_census_templates',                       '{"advisor":"all","admin":"all"}'),
   ('storage.objects WHERE bucket_id = ''peo-templates''', '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all"}'),
@@ -779,8 +779,9 @@ INSERT INTO callable VALUES
   ('admin_recheck_peo_profile(p_peo_id bigint, p_sources jsonb)', 'admin', 'SELECT public.admin_recheck_peo_profile(0, ''{"answers": {}}'')', 'checked again: a new published version with new sources'),
   ('admin_discard_peo_draft(p_peo_id bigint)', 'admin', 'SELECT public.admin_discard_peo_draft(0)', 'discarding a PEO''s draft profile'),
   ('admin_register_census_template(p_peo_id bigint, p_file_name text, p_size_bytes integer, p_sha256 text)', 'admin',
-                                                                     'SELECT public.admin_register_census_template(0, ''x.xlsx'', 1, NULL)', 'recording an upload of a PEO''s census template, before its scan'),
-  ('is_clean_census_template_file(p_name text)', 'signed_in', NULL, 'the storage policy on peo-templates: whether a file is a clean template''s; names no one');
+                                                                     'SELECT public.admin_register_census_template(0, ''x.xlsx'', 1, NULL)', 'recording an upload of a PEO template workbook, before its scan'),
+  ('is_clean_census_template_file(p_name text)', 'signed_in', NULL, 'the storage policy on peo-templates: whether a file is a clean template''s; names no one'),
+  ('clean_template_workbook_path(p_peo_id bigint, p_template_id bigint)', 'signed_in', NULL, 'where a clean PEO template workbook''s file is, to read it; a PEO''s blank form, names no one');
 
 DO $$
 DECLARE
@@ -924,7 +925,7 @@ BEGIN
   -- The advisor's account behind a guest token is a guest: none of the advisor-only data.
   PERFORM pg_temp.become('advisor_as_guest');
   IF pg_temp.visible('public.chamber_sessions') <> 0 OR pg_temp.visible('public.advisor_notes') <> 0
-     -- A clean PEO census template is anyone's who is signed in (the matrix above); no other file is a guest's.
+     -- A clean PEO template workbook is anyone's who is signed in (the matrix above); no other file is a guest's.
      OR pg_temp.visible('public.intake_consents') <> 0 OR pg_temp.visible('storage.objects WHERE bucket_id <> ''peo-templates''') <> 0 THEN
     RAISE EXCEPTION 'FAIL: a guest token on an advisor''s account reads advisor data';
   END IF;

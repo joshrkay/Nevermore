@@ -2,17 +2,19 @@
 // the real Supabase client and a connection for the scanner; the tests wire in fakes. No remote imports, so it runs
 // under Deno and Vitest alike.
 //
-// The only way a PEO's own census template reaches storage (L-3.1; migration 20261114090000_peo_census_templates.sql).
+// The only way a PEO template workbook reaches storage (L-3.1; migration 20261114090000_peo_census_templates.sql).
 // It is an upload like any other (docs/adr/0002), so it reuses document-upload's checks: an admin's browser sends
 // the file as multipart form data (peo_id, file), and
 //
 //   1. with no usable scanner it is refused before anything is read, stored or recorded (scanner_missing);
-//   2. its bytes are checked: not empty, at most 20 MB, and an .xlsx in fact as in name (fileSignature.ts). Only a
-//      spreadsheet can be filled;
+//   2. its bytes are checked: not empty, at most 20 MB, an .xlsx in fact as in name (fileSignature.ts), and its
+//      parts, as its zip directory declares them, unpack to at most 100 MB (zipDirectory.ts). Only a spreadsheet can
+//      be filled;
 //   3. its record is written as the admin (admin_register_census_template, which refuses anyone else), pending;
 //   4. it is scanned (malwareScan.ts) and stored with the service role: in peo-templates once clean, otherwise in
 //      quarantine (templates/<path>), which nobody but the service role reads;
-//   5. the verdict is recorded once: clean, blocked (malware, alerted at once) or failed. A template the scanner
+//   5. the verdict is recorded once: clean, blocked (malware, alerted at once) or failed; when it can't be recorded
+//      the reply is an error asking for the upload again, never a verdict the database doesn't hold. A template the scanner
 //      couldn't check now, or one that couldn't be stored, is failed rather than held: an admin uploads it again,
 //      and nothing waits in quarantine with no way out. A template that isn't clean is never used.
 //
@@ -21,6 +23,7 @@
 import { readBodyCapped } from "../_shared/body.ts";
 import { cleanFileName, MAX_UPLOAD_BYTES, sha256Hex, SNIFF_BYTES, sniffUpload, STORED_CONTENT_TYPE } from "../_shared/fileSignature.ts";
 import { postScanAlert, selectScanner, type ScannerDeps } from "../_shared/malwareScan.ts";
+import { unpacksTooLarge, zipEntries } from "../_shared/zipDirectory.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -57,7 +60,7 @@ export interface TemplateDeps {
 
 export type TemplateErrorCode =
   | "bad_request" | "unauthorized" | "forbidden" | "not_found" | "too_large" | "empty" | "mismatch" | "executable" | "unsupported"
-  | "storage" | "unavailable" | "scanner_missing" | "internal";
+  | "unpacks_too_large" | "storage" | "unavailable" | "scanner_missing" | "internal";
 
 const errorCode = (error: unknown): string => {
   const e = error as { code?: unknown; statusCode?: unknown; status?: unknown } | null;
@@ -99,7 +102,7 @@ export async function handleTemplateUpload(req: Request, deps: TemplateDeps): Pr
 
     // 2. The bytes.
     const body = await readBodyCapped(req, MAX_UPLOAD_BYTES + FORM_OVERHEAD_BYTES);
-    if (!body) return refuse(413, "too_large", "A template can be up to 20 MB.");
+    if (!body) return refuse(413, "too_large", "A template workbook can be up to 20 MB.");
     let form: FormData;
     try {
       form = await new Response(body as Uint8Array<ArrayBuffer>, { headers: { "Content-Type": req.headers.get("Content-Type") ?? "" } }).formData();
@@ -111,14 +114,19 @@ export async function handleTemplateUpload(req: Request, deps: TemplateDeps): Pr
     if (typeof peoId !== "string" || !PEO_ID.test(peoId)) return refuse(400, "bad_request", "peo_id is required.");
     if (!file || typeof file === "string") return refuse(400, "bad_request", "file is required.");
     if (file.size === 0) return refuse(422, "empty", "This file is empty.");
-    if (file.size > MAX_UPLOAD_BYTES) return refuse(413, "too_large", "A template can be up to 20 MB.");
+    if (file.size > MAX_UPLOAD_BYTES) return refuse(413, "too_large", "A template workbook can be up to 20 MB.");
     const fileName = cleanFileName((file as File).name ?? "");
     const bytes = new Uint8Array(await file.arrayBuffer());
     const sniff = sniffUpload(bytes.subarray(0, SNIFF_BYTES), fileName);
     if (!sniff.ok || sniff.contentType !== XLSX_TYPE) {
       const reason = sniff.ok ? "unsupported" : sniff.reason;
-      return refuse(415, reason, reason === "unsupported" ? "A PEO's template is an Excel workbook (.xlsx)." : "This file isn't the Excel workbook its name says.");
+      return refuse(415, reason, reason === "unsupported" ? "A PEO template workbook is an Excel workbook (.xlsx)." : "This file isn't the Excel workbook its name says.");
     }
+    // What it says it unpacks to, from its central directory, nothing unpacked: a zip bomb is refused here, and again
+    // before a browser reads it (src/lib/censusWorkbook.ts). A workbook whose parts can't be listed is no workbook.
+    const entries = zipEntries(bytes);
+    if (!entries) return refuse(415, "mismatch", "This file isn't the Excel workbook its name says.");
+    if (unpacksTooLarge(entries)) return refuse(413, "unpacks_too_large", "A template workbook can unpack to at most 100 MB.");
 
     // 3. The record, as the admin: the database decides who may.
     const { data: registered, error: registerError } = await admin.rpc("admin_register_census_template", {
@@ -128,17 +136,22 @@ export async function handleTemplateUpload(req: Request, deps: TemplateDeps): Pr
       p_sha256: await sha256Hex(bytes),
     });
     if (registerError || !registered) {
-      if (registerError?.code === "42501") return refuse(403, "forbidden", "Only an admin uploads a PEO's template.");
+      if (registerError?.code === "42501") return refuse(403, "forbidden", "Only an admin uploads a PEO template workbook.");
       if (registerError?.code === "P0002") return refuse(404, "not_found", "PEO not found.");
       deps.log(`TEMPLATE_RECORD_FAILED request=${requestId} peo=${peoId} code=${errorCode(registerError)}`);
-      return refuse(500, "internal", "The template couldn't be saved. Try again.");
+      return refuse(500, "internal", "The template workbook couldn't be saved. Try again.");
     }
     const { id, storage_path: storagePath } = registered as { id: number; storage_path: string };
     const service = deps.createClient(supabaseUrl, serviceRoleKey);
-    const record = async (verdict: "clean" | "blocked" | "failed", signature: string | null) => {
+    // Whether the verdict was recorded. One that wasn't leaves the record pending, and nothing scans a template again
+    // (document-upload's files have document-scan for that), so the admin is told to upload it again, never told a
+    // verdict the database doesn't hold.
+    const record = async (verdict: "clean" | "blocked" | "failed", signature: string | null): Promise<boolean> => {
       const { error } = await service.rpc("record_census_template_scan", { p_template_id: id, p_verdict: verdict, p_signature: signature });
       if (error) deps.log(`TEMPLATE_SCAN_NOT_RECORDED request=${requestId} template=${id} code=${errorCode(error)}`);
+      return !error;
     };
+    const notRecorded = () => refuse(500, "internal", "The template workbook's virus check couldn't be recorded. Upload it again.");
 
     // 4. The scan, then the file: in peo-templates once clean, otherwise in quarantine.
     const scan = await choice.scanner.scan(bytes);
@@ -148,20 +161,21 @@ export async function handleTemplateUpload(req: Request, deps: TemplateDeps): Pr
     if (storeError) {
       await record("failed", null);
       deps.log(`TEMPLATE_STORE_FAILED request=${requestId} template=${id} bucket=${bucket} code=${errorCode(storeError)}`);
-      return refuse(502, "storage", "The template couldn't be stored. Upload it again.");
+      return refuse(502, "storage", "The template workbook couldn't be stored. Upload it again.");
     }
 
     // 5. The verdict, once.
     let status: "clean" | "blocked" | "failed";
+    let recorded: boolean;
     if (clean) {
       status = "clean";
-      await record("clean", null);
+      recorded = await record("clean", null);
     } else if (scan.verdict === "infected") {
       status = "blocked";
-      await record("blocked", scan.signature);
+      recorded = await record("blocked", scan.signature);
       deps.log(`MALWARE_DETECTED source=census-template-upload template=${id} peo=${peoId} engine=${scan.engine} signature=${scan.signature}`);
       await postScanAlert(deps, {
-        text: `MALWARE_DETECTED: a PEO's census template matched ${scan.signature} (${scan.engine}) and is quarantined; nobody can open it. template=${id} peo=${peoId}. Follow the "Malware detected" playbook in docs/RUNBOOK.md.`,
+        text: `MALWARE_DETECTED: a PEO template workbook matched ${scan.signature} (${scan.engine}) and is quarantined; nobody can open it. template=${id} peo=${peoId}. Follow the "Malware detected" playbook in docs/RUNBOOK.md.`,
         source: "census-template-upload",
         alert: "MALWARE_DETECTED",
         template: id,
@@ -171,12 +185,13 @@ export async function handleTemplateUpload(req: Request, deps: TemplateDeps): Pr
       });
     } else {
       status = "failed";
-      await record("failed", null);
+      recorded = await record("failed", null);
       deps.log(`TEMPLATE_SCAN_FAILED request=${requestId} template=${id} engine=${scan.engine} reason=${scan.reason}`);
     }
+    if (!recorded) return notRecorded();
     return reply({ template: { id, file_name: fileName, scan_status: status } }, 200);
   } catch {
     deps.log(`TEMPLATE_UPLOAD_ERROR request=${requestId}`);
-    return refuse(500, "internal", "The template couldn't be saved. Try again.");
+    return refuse(500, "internal", "The template workbook couldn't be saved. Try again.");
   }
 }

@@ -67,18 +67,26 @@ describe("CensusDownload", () => {
     expect(screen.getByText("TriNet's census layout, as an Excel file. From certified version 3.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Download the census in TriNet's layout" }));
     await waitFor(() => expect(downloadBlob).toHaveBeenCalled());
-    expect(downloadBlob.mock.calls[0][1]).toBe("EAA-2026-0042-census-trinet-v3.xlsx");
+    const [blob, name] = downloadBlob.mock.calls[0];
+    expect(name).toBe("EAA-2026-0042-census-trinet-v3.xlsx");
+    const out = new ExcelJS.Workbook();
+    await out.xlsx.load((await bytes(blob)) as unknown as ArrayBuffer);
+    const ws = out.getWorksheet("Census")!;
+    expect(ws.getRow(1).values).toEqual([undefined, "Last Name", "Hire Date", "Gender"]);
+    expect(ws.getRow(2).values).toEqual([undefined, "Chen"]);
+    expect(ws.rowCount).toBe(2);
+    expect(out.title).toBe("Census for TriNet, certified version 3");
   });
 
-  it("fills the PEO's own template, read when the download is asked for", async () => {
+  it("fills the PEO template workbook, read and checked as soon as the download is shown", async () => {
     const wb = new ExcelJS.Workbook();
     wb.addWorksheet("Census").getRow(1).values = ["Gender", "Last Name", "Hire Date"];
     const template = new Uint8Array(await wb.xlsx.writeBuffer());
     const readTemplate = vi.fn(async () => template);
     const layout: PeoCensusLayout = { ...csvLayout, format: "xlsx", template: { id: 12, sheet: "Census", headerRow: 1, firstRow: 2 } };
     render(<CensusDownload census={census} fileId="EAA-2026-0042" version={3} peo="TriNet" catalog={[peo("TriNet", layout)]} readTemplate={readTemplate} />);
-    expect(screen.getByText("TriNet's own template, filled in. From certified version 3.")).toBeInTheDocument();
-    expect(readTemplate).not.toHaveBeenCalled();
+    expect(screen.getByText("TriNet's own template workbook, filled in. From certified version 3.")).toBeInTheDocument();
+    await waitFor(() => expect(readTemplate).toHaveBeenCalledWith(5, 12));
     fireEvent.click(screen.getByRole("button", { name: "Download the census in TriNet's layout" }));
     await waitFor(() => expect(downloadBlob).toHaveBeenCalled());
     expect(readTemplate).toHaveBeenCalledWith(5, 12);
@@ -89,22 +97,37 @@ describe("CensusDownload", () => {
     expect(out.getWorksheet("Census")!.getRow(2).values).toEqual([undefined, undefined, "Chen"]);
   });
 
+  it("says before the click, and won't download, when the census would be written over what the template workbook holds", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Census");
+    ws.getRow(1).values = ["Last Name", "Hire Date", "Gender"];
+    ws.getCell("A3").value = "Signature of employer";
+    const template = new Uint8Array(await wb.xlsx.writeBuffer());
+    const layout: PeoCensusLayout = { ...csvLayout, format: "xlsx", template: { id: 12, sheet: "Census", headerRow: 1, firstRow: 2 } };
+    const two = [...census, { ...census[0], id: "2", last_name: "Okafor" }];
+    render(<CensusDownload census={two} fileId="EAA-2026-0042" version={3} peo="TriNet" catalog={[peo("TriNet", layout)]} readTemplate={async () => template} />);
+    expect(await screen.findByText("The PEO template workbook has \"Signature of employer\" in A3, where employee 2 would go. Remove it, or use a template workbook with more room.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download the census in TriNet's layout" })).toBeDisabled();
+    expect(downloadBlob).not.toHaveBeenCalled();
+  });
+
   it("says plainly why, and downloads nothing, when the template can't be read or doesn't match", async () => {
     const layout: PeoCensusLayout = { ...csvLayout, format: "xlsx", template: { id: 12, sheet: "Census", headerRow: 1, firstRow: 2 } };
     render(<CensusDownload census={census} fileId="EAA-2026-0042" version={3} peo="TriNet" catalog={[peo("TriNet", layout)]} readTemplate={async () => null} />);
     fireEvent.click(screen.getByRole("button", { name: "Download the census in TriNet's layout" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't get TriNet's template file, so the census couldn't be filled in. Try again.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't get TriNet's template workbook, so the census couldn't be filled in. Try again.");
     expect(downloadBlob).not.toHaveBeenCalled();
   });
 
-  it("says why, and downloads nothing, when the template's headers don't match the layout", async () => {
+  it("says why before the click, and downloads nothing, when the template workbook's headers don't match the layout", async () => {
     const wb = new ExcelJS.Workbook();
     wb.addWorksheet("Census").getRow(1).values = ["Surname"];
     const template = new Uint8Array(await wb.xlsx.writeBuffer());
     const layout: PeoCensusLayout = { ...csvLayout, format: "xlsx", template: { id: 12, sheet: "Census", headerRow: 1, firstRow: 2 } };
     render(<CensusDownload census={census} fileId="EAA-2026-0042" version={3} peo="TriNet" catalog={[peo("TriNet", layout)]} readTemplate={async () => template} />);
-    fireEvent.click(screen.getByRole("button", { name: "Download the census in TriNet's layout" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The template's headers don't match the census layout: row 1 of the sheet \"Census\" has no \"Last Name\", \"Hire Date\" or \"Gender\".");
+    // Said before the click.
+    expect(await screen.findByRole("alert")).toHaveTextContent("The PEO template workbook's headers don't match the census layout: row 1 of the sheet \"Census\" has no \"Last Name\", \"Hire Date\" or \"Gender\".");
+    expect(screen.getByRole("button", { name: "Download the census in TriNet's layout" })).toBeDisabled();
     expect(downloadBlob).not.toHaveBeenCalled();
   });
 

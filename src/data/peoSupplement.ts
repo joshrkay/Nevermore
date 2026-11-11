@@ -2,7 +2,7 @@
 // the answers to them in the last certified version, for that PEO only. It is its own file beside the packet: the
 // packet (The Manuscript), the emails and every other PEO's files never carry these answers.
 import { answerFor, isAnswerTo, type ExtraAnswer, type ExtraAnswers } from "./extraAnswers";
-import { findPeo, type PeoRecord } from "./peoCatalog";
+import { findPeo, peoSlug, type PeoRecord } from "./peoCatalog";
 import type { ExtraQuestion } from "./peoProfiles";
 import { formatFieldValue } from "./provenance";
 
@@ -92,11 +92,9 @@ export function supplementFor(peo: PeoRecord, from: SupplementSource): Supplemen
   return buildSupplement({ peo: { id: peo.id, name: peo.name }, questions: peo.profile.extraQuestions, ...from });
 }
 
-const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-
 /** "EAA-2026-0007-additional-questions-trinet-v3.pdf". */
 export const supplementFilename = (s: Supplement) =>
-  `${s.fileId}-additional-questions-${slug(s.peo)}${s.version !== null ? `-v${s.version}` : ""}.pdf`;
+  `${s.fileId}-additional-questions-${peoSlug(s.peo)}${s.version !== null ? `-v${s.version}` : ""}.pdf`;
 
 /**
  * The PEOs whose supplement is offered for a certified version: the PEO chosen, then each other PEO whose questions it

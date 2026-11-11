@@ -74,7 +74,7 @@ Alerts that come from elsewhere:
 |---|---|---|
 | `OUTBOX_DEAD` (webhook and log) | `dispatch-outbox`, when a notification email gives up | `docs/NOTIFICATIONS.md`, "Operating" |
 | `DELETION_FAILED` (webhook and log) | `purge-intakes`, when a deletion gives up. The same failure also raises `OPS_ALERT kind=deletion_failed` within five minutes, so expect both | [Deletion failed](#deletion-failed) |
-| `MALWARE_DETECTED` (webhook and log) | `document-upload`, `census-template-upload` (a PEO's census template, `template=` and `peo=`) or `document-scan`, at once, for every detection. The first in an hour also raises `OPS_ALERT kind=malware_detected`, so expect both | [Malware detected](#malware-detected) |
+| `MALWARE_DETECTED` (webhook and log) | `document-upload`, `census-template-upload` (a PEO template workbook, `template=` and `peo=`) or `document-scan`, at once, for every detection. The first in an hour also raises `OPS_ALERT kind=malware_detected`, so expect both | [Malware detected](#malware-detected) |
 | `SCAN_FAILED` (webhook and log) | `document-scan`, when an upload gives up after six attempts. Also raises `OPS_ALERT kind=scan_failed` | [Scan failed](#scan-failed) |
 
 Log lines to know (fixed fields only, never names, paths, messages or provider text):
@@ -380,7 +380,7 @@ SEV-2 until step 2 says otherwise.
 1. Which one: `select id, user_id, session_id, scan_signature, scanned_at, file_sha256 from public.documents
    where scan_verdict = 'infected' order by scanned_at desc;` The alert names the document and intake ids;
    look the intake up in the advisor console for who it is. An alert from `census-template-upload` is an admin's
-   upload of a PEO's census template: `select id, peo_id, file_name, scan_signature, uploaded_by, file_sha256 from
+   upload of a PEO template workbook: `select id, peo_id, file_name, scan_signature, uploaded_by, file_sha256 from
    public.peo_census_templates where scan_status = 'blocked' order by id desc;` (its file is in `quarantine` under
    `templates/`, and it is never used).
 2. Is it real? A signature naming EICAR (Scanii reports a `content.malicious.…` finding; clamd says

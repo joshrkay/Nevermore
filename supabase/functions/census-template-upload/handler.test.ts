@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { EICAR } from "../_shared/eicar";
 import { STORED_CONTENT_TYPE } from "../_shared/fileSignature";
+import { zipOf } from "../../../src/test/zip";
 import { handleTemplateUpload, type TemplateClient, type TemplateDeps } from "./handler";
 
 const ADMIN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -16,8 +17,8 @@ const ENV: Record<string, string | undefined> = {
   ENGINEERING_ALERT_WEBHOOK_URL: "https://hooks.example.com/alerts",
 };
 
-// An .xlsx is a zip file: its bytes start "PK\x03\x04".
-const XLSX = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0, 0, 0, 8, 0, ...new Array(40).fill(1)]);
+// An .xlsx is a zip file: its bytes start "PK\x03\x04", and its central directory names its parts.
+const XLSX = zipOf([{ name: "[Content_Types].xml", data: "<Types/>" }, { name: "xl/workbook.xml", data: "<workbook/>" }]);
 const CSV = new TextEncoder().encode("Last Name,First Name\n");
 
 interface Setup {
@@ -25,6 +26,8 @@ interface Setup {
   user?: { id: string } | null;
   /** What admin_register_census_template answers with; an admin by default. */
   registerError?: { code?: string; message?: string };
+  /** What record_census_template_scan answers with; recorded by default. */
+  recordError?: { code?: string; message?: string };
   storeError?: unknown;
   /** The scanner's answer; by default EICAR is malware and everything else clean. */
   scan?: (body: Uint8Array) => Response | Promise<Response>;
@@ -42,6 +45,7 @@ const setup = (opts: Setup = {}) => {
       if (fn === "admin_register_census_template") {
         return opts.registerError ? { data: null, error: opts.registerError } : { data: { id: 12, storage_path: "5/12.xlsx" }, error: null };
       }
+      if (fn === "record_census_template_scan" && opts.recordError) return { data: null, error: opts.recordError };
       return { data: null, error: null };
     },
     storage: {
@@ -102,7 +106,7 @@ const post = (fields: { peo_id?: string; file?: Upload }, headers: Record<string
 const file = (bytes: Uint8Array, name: string): Upload => ({ bytes, name });
 const read = async (r: Response) => ({ status: r.status, body: await r.json() });
 
-describe("census-template-upload: a PEO's own census template, an upload like any other (ADR 0002)", () => {
+describe("census-template-upload: a PEO template workbook, an upload like any other (ADR 0002)", () => {
   it("records it as the admin, scans it, stores a clean one in peo-templates and records it clean", async () => {
     const t = setup();
     const { status, body } = await read(await handleTemplateUpload(post({ peo_id: "5", file: file(XLSX, "TriNet census.xlsx") }), t.deps));
@@ -175,6 +179,55 @@ describe("census-template-upload: a PEO's own census template, an upload like an
     expect((await handleTemplateUpload(post({ peo_id: "5", file: file(XLSX, "t.xlsx") }, {}), setup().deps)).status).toBe(401);
     expect((await handleTemplateUpload(post({ peo_id: "5", file: file(XLSX, "t.xlsx") }), setup({ user: null }).deps)).status).toBe(401);
     expect((await handleTemplateUpload(post({ peo_id: "TriNet", file: file(XLSX, "t.xlsx") }), setup().deps)).status).toBe(400);
+  });
+
+  it("never says a template workbook is clean, blocked or failed when that couldn't be recorded: it asks for it again", async () => {
+    const verdicts: [string, Uint8Array, ((b: Uint8Array) => Response) | undefined][] = [
+      ["clean", XLSX, undefined],
+      ["blocked", XLSX, () => new Response(JSON.stringify({ verdict: "infected", signature: "Eicar-Test-Signature" }), { status: 200 })],
+      ["failed", XLSX, () => new Response("busy", { status: 503 })],
+    ];
+    for (const [verdict, bytes, scan] of verdicts) {
+      const t = setup({ recordError: { code: "08006" }, scan });
+      const { status, body } = await read(await handleTemplateUpload(post({ peo_id: "5", file: file(bytes, "template.xlsx") }), t.deps));
+      expect({ verdict, status, body }).toEqual({
+        verdict,
+        status: 500,
+        body: { error: "The template workbook's virus check couldn't be recorded. Upload it again.", code: "internal", request_id: REQUEST },
+      });
+      expect(t.rpcs.find((r) => r.fn === "record_census_template_scan")?.args).toMatchObject({ p_verdict: verdict });
+      expect(t.logs.join("\n")).toContain("TEMPLATE_SCAN_NOT_RECORDED request=cccccccc-cccc-4ccc-8ccc-cccccccccccc template=12 code=08006");
+    }
+  });
+
+  it("says a PEO it doesn't know is not found, and any other failure to record the upload is ours, storing nothing", async () => {
+    const missing = setup({ registerError: { code: "P0002", message: "PEO not found" } });
+    expect(await read(await handleTemplateUpload(post({ peo_id: "999", file: file(XLSX, "t.xlsx") }), missing.deps))).toEqual({
+      status: 404, body: { error: "PEO not found.", code: "not_found", request_id: REQUEST },
+    });
+    expect(missing.stored).toEqual([]);
+    const broken = setup({ registerError: { code: "08006", message: "connection lost" } });
+    expect(await read(await handleTemplateUpload(post({ peo_id: "5", file: file(XLSX, "t.xlsx") }), broken.deps))).toEqual({
+      status: 500, body: { error: "The template workbook couldn't be saved. Try again.", code: "internal", request_id: REQUEST },
+    });
+    expect(broken.stored).toEqual([]);
+    expect(broken.scanFetch).not.toHaveBeenCalled();
+    expect(broken.logs.join("\n")).toContain("TEMPLATE_RECORD_FAILED request=cccccccc-cccc-4ccc-8ccc-cccccccccccc peo=5 code=08006");
+  });
+
+  it("refuses a template workbook that says it unpacks to more than 100 MB, or isn't a zip it can read, before recording anything", async () => {
+    // Nothing large is made: the central directory only says so.
+    const bomb = zipOf([{ name: "[Content_Types].xml", data: "<Types/>" }, { name: "xl/worksheets/sheet1.xml", data: "", declaredSize: 101 * 1024 * 1024 }]);
+    const t = setup();
+    expect(await read(await handleTemplateUpload(post({ peo_id: "5", file: file(bomb, "template.xlsx") }), t.deps))).toEqual({
+      status: 413, body: { error: "A template workbook can unpack to at most 100 MB.", code: "unpacks_too_large", request_id: REQUEST },
+    });
+    expect(t.rpcs).toEqual([]);
+    expect(t.stored).toEqual([]);
+    const notZip = setup();
+    const res = await read(await handleTemplateUpload(post({ peo_id: "5", file: file(new Uint8Array([0x50, 0x4b, 0x03, 0x04, ...new Array(40).fill(1)]), "template.xlsx") }), notZip.deps));
+    expect(res).toMatchObject({ status: 415, body: { code: "mismatch" } });
+    expect(notZip.rpcs).toEqual([]);
   });
 
   it("says the file couldn't be stored, and records it failed so it is never taken for one still being checked", async () => {

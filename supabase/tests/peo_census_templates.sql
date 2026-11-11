@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh peo_census_templates
--- A PEO's own census template (joshrkay/Nevermore#91, L-3.1, 20261114090000_peo_census_templates.sql): an upload like
+-- A PEO template workbook (joshrkay/Nevermore#91, L-3.1, 20261114090000_peo_census_templates.sql): an upload like
 -- any other (docs/adr/0002). An admin's upload is recorded pending, and only the service role (census-template-upload,
 -- after the malware scan) records it clean, blocked or failed, once. A census layout names a template of its own PEO,
 -- and a version that names one is published only once that template is clean. Advisors read the templates' records;
@@ -307,6 +307,20 @@ BEGIN
     RAISE EXCEPTION 'FAIL: an admin stored a template file directly';
   END IF;
   RAISE NOTICE 'peo_census_templates: only a clean template''s file is read';
+
+  -- Where a clean template workbook's file is, for anyone signed in to read it (the browser never builds the path):
+  -- only a clean one, and only under the PEO it belongs to.
+  IF pg_temp.run(prospect, format('SELECT to_jsonb(public.clean_template_workbook_path(%s, %s))', trinet, clean ->> 'id')) <> to_jsonb(clean ->> 'storage_path') THEN
+    RAISE EXCEPTION 'FAIL: a clean template workbook''s path wasn''t given';
+  END IF;
+  IF pg_temp.run(prospect, format('SELECT to_jsonb(public.clean_template_workbook_path(%s, %s))', trinet, pending ->> 'id')) <> 'null'::jsonb
+     OR pg_temp.run(prospect, format('SELECT to_jsonb(public.clean_template_workbook_path(%s, %s))', pg_temp.peo('Justworks'), clean ->> 'id')) <> 'null'::jsonb THEN
+    RAISE EXCEPTION 'FAIL: the path of a template workbook not clean, or under another PEO, was given';
+  END IF;
+  IF pg_temp.try(NULL, 'SET LOCAL ROLE anon; SELECT public.clean_template_workbook_path(1, 1)') <> '42501' THEN
+    RAISE EXCEPTION 'FAIL: someone not signed in was given a template workbook''s path';
+  END IF;
+  RAISE NOTICE 'peo_census_templates: a clean template workbook''s path, from the database alone';
 END $$;
 
 DO $$ BEGIN RAISE NOTICE 'peo_census_templates: all cases passed'; END $$;

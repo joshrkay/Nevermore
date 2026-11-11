@@ -8,8 +8,7 @@ import { categoryInfo, DOCUMENT_CATEGORIES } from "./documentCategories";
 import { capitalised, CENSUS_FILE_FORMATS, codesPhrase, EXTRA_QUESTION_KINDS, formatCheckedOn, isProfileStale, oldestCheck, PART_LABELS, PART_NAMES, parsePeoCatalog, PROFILE_CAPS, PROFILE_PARTS, RULE_KEYS, type PartName, type ProfilePart, type ProfileSource, type RequirementProfile } from "./peoProfiles";
 import { FIELD_LABELS } from "./provenance";
 
-/** A contact's limits, in characters. */
-/** Where a PEO's template is filled (peo_profile_version_error's template rules); schemaSync.test.ts keeps them equal. */
+/** Where a PEO template workbook is filled (peo_profile_version_error's template rules); schemaSync.test.ts keeps them equal. */
 export const TEMPLATE_LIMITS = {
   /** The longest sheet name a workbook can have. */
   sheet: 31,
@@ -19,6 +18,7 @@ export const TEMPLATE_LIMITS = {
   lastRow: 1048576,
 } as const;
 
+/** A contact's limits, in characters. */
 export const CONTACT_LIMITS = { name: 200, role: 100, email: 254, phone: 40 } as const;
 
 /** A source may be dated one day ahead of the database's clock, so an admin ahead of UTC can enter their own today. */
@@ -227,8 +227,8 @@ export function profileProblems(p: EditableProfile, today: string): ProfileProbl
       const row = (n: number, max: number) => Number.isInteger(n) && n >= 1 && n <= max;
       if (!Number.isInteger(t.id) || t.id < 1 || !between(t.sheet, 1, TEMPLATE_LIMITS.sheet) || !row(t.headerRow, TEMPLATE_LIMITS.headerRow)
           || !row(t.firstRow, TEMPLATE_LIMITS.lastRow) || t.firstRow <= t.headerRow) {
-        add("censusLayout.template", "A template file is the template uploaded, a sheet named in 1 to 31 characters, the row its headers are on (1 to 1,000) and the first row of data below them");
-      } else if (layout.format !== "xlsx") add("censusLayout.template", "Only an xlsx census fills the PEO's template file");
+        add("censusLayout.template", "A template workbook is the one uploaded, a sheet named in 1 to 31 characters, the row its headers are on (1 to 1,000) and the first row of data below them");
+      } else if (layout.format !== "xlsx") add("censusLayout.template", "Only an xlsx census fills the PEO template workbook");
     }
     if (layout.columns.length < 1 || layout.columns.length > caps.censusColumns) {
       add("censusLayout.columns", `A census layout has 1 to ${caps.censusColumns} columns`);
@@ -487,7 +487,7 @@ export function profileChanges(from: EditableProfile | null, to: EditableProfile
       const t = l?.template;
       return t ? `${templateNames.get(t.id) ?? `template ${t.id}`}, sheet ${t.sheet}, headers on row ${t.headerRow}, data from row ${t.firstRow}` : "None";
     };
-    if (templateName(l0) !== templateName(l1)) out.push(`Template file: ${templateName(l0)} → ${templateName(l1)}`);
+    if (templateName(l0) !== templateName(l1)) out.push(`Template workbook: ${templateName(l0)} → ${templateName(l1)}`);
     if (!l0 || !sameMeaning(l0.columns, l1.columns)) out.push(`Census layout: columns now ${l1.columns.map((c) => c.header).join(", ")}`);
   }
   out.push(...listChange("Documents", before.documents.map(documentLabel), to.documents.map(documentLabel)));

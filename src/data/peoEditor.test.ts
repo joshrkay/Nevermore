@@ -54,12 +54,12 @@ describe("profileProblems: the database's rules, next to each field", () => {
     expect(problems(layout({ columns: [{ header: "SSN", from: "ssn" }] }))).toEqual([{ path: "censusLayout.columns.0.from", message: "ssn isn't one of our census columns" }]);
     const where = { id: 12, sheet: "Census", headerRow: 3, firstRow: 4 };
     expect(problems(layout({ format: "xlsx", template: where }))).toEqual([]);
-    const wrong = "A template file is the template uploaded, a sheet named in 1 to 31 characters, the row its headers are on (1 to 1,000) and the first row of data below them";
+    const wrong = "A template workbook is the one uploaded, a sheet named in 1 to 31 characters, the row its headers are on (1 to 1,000) and the first row of data below them";
     for (const bad of [{ sheet: " " }, { sheet: "s".repeat(32) }, { headerRow: 0 }, { headerRow: 1001, firstRow: 1002 }, { firstRow: 3 }, { headerRow: 2.5 }]) {
       expect(problems(layout({ format: "xlsx", template: { ...where, ...bad } }))).toEqual([{ path: "censusLayout.template", message: wrong }]);
     }
     expect(problems(layout({ format: "xlsx", template: { ...where, sheet: "s".repeat(31), headerRow: 1000, firstRow: 1048576 } }))).toEqual([]);
-    expect(problems(layout({ format: "csv", template: where }))).toEqual([{ path: "censusLayout.template", message: "Only an xlsx census fills the PEO's template file" }]);
+    expect(problems(layout({ format: "csv", template: where }))).toEqual([{ path: "censusLayout.template", message: "Only an xlsx census fills the PEO template workbook" }]);
     expect(problems(layout({ columns: Array.from({ length: 201 }, (_, i) => ({ header: `C${i}`, from: null })) }))[0].path).toBe("censusLayout.columns");
     expect(problems(layout({ columns: Array.from({ length: 200 }, (_, i) => ({ header: `C${i}`, from: null })) }))).toEqual([]);
   });
@@ -232,7 +232,7 @@ describe("profileChanges: what publishing a draft changes", () => {
     };
     expect(profileChanges(FULL, next, new Map([[12, "TriNet census.xlsx"]]))).toEqual([
       "Census file: xlsx → CSV",
-      "Template file: None → TriNet census.xlsx, sheet Census, headers on row 3, data from row 4",
+      "Template workbook: None → TriNet census.xlsx, sheet Census, headers on row 3, data from row 4",
       "Its own questions: Do any employees drive for work? (yes or no) → Do any employees drive for work? (text)",
       "Contacts: Dana Reyes, Broker desk, dana@trinet.example, 555-0100 → Dana Reyes, Broker desk, dana@trinet.example, 555-0199",
     ]);

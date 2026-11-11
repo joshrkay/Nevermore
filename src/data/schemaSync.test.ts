@@ -35,7 +35,7 @@ import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS,
 import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS, profileProblems, TEMPLATE_LIMITS } from "@/data/peoEditor";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
 import { EXTRA_ANSWER_LIMITS } from "@/data/extraAnswers";
-import { CENSUS_TEMPLATE_STATUSES } from "@/lib/censusTemplates";
+import { TEMPLATE_WORKBOOK_STATUSES } from "@/lib/templateWorkbooks";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
@@ -345,7 +345,7 @@ describe("server and client intake rules agree", () => {
   });
 
   it("knows every state a PEO's census template's virus check can leave it in", () => {
-    expect(quoted(blocks("census_template_statuses").join("\n"))).toEqual([...CENSUS_TEMPLATE_STATUSES]);
+    expect(quoted(blocks("template_workbook_statuses").join("\n"))).toEqual([...TEMPLATE_WORKBOOK_STATUSES]);
   });
 
   // A census layout's template file (L-3.1): where it is filled, with the editor's words.

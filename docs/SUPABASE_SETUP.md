@@ -88,7 +88,7 @@ It must be https (http only for localhost).
 
 ### Malware scanning
 
-Every upload goes through `document-upload` (a PEO's own census template, through `census-template-upload`, the same way), which checks the file's bytes, scans it, and stores it: in the
+Every upload goes through `document-upload` (a PEO template workbook, through `census-template-upload`, the same way), which checks the file's bytes, scans it, and stores it: in the
 `documents` bucket once the scan passed, in the private `quarantine` bucket otherwise. Nobody signed in can
 read a quarantined file, and Lenore and advisors can open a file only once its scan passed. The scanner is
 chosen by the `MALWARE_SCANNER` secret. Production uses Scanii (decision D13):

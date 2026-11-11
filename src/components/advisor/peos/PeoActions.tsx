@@ -5,7 +5,7 @@ import { capitalised, isStaleDraftError, PART_LABELS, profileChanges, profilePro
 import { formatCheckedOn, PROFILE_PARTS, utcToday, type ProfilePart } from "@/data/peoProfiles";
 import { discardPeoDraft, loadVersionContacts, publishPeoDraft, recheckPeoProfile } from "@/lib/advisorApi";
 import { checkCensusLayout } from "@/lib/censusLayoutCheck";
-import { listCensusTemplates } from "@/lib/censusTemplates";
+import { listTemplateWorkbooks } from "@/lib/templateWorkbooks";
 import { buttonClass, primaryClass, sourceDraft, sourceFrom, type SourceDraft } from "./shared";
 import { SourceFields } from "./SourceFields";
 
@@ -29,7 +29,7 @@ export const ReviewAndPublish = ({ peo, draft, inUse, onDone, onCancel, onReload
   useEffect(() => {
     if (!namesTemplate) return;
     let cancelled = false;
-    listCensusTemplates(peo.id)
+    listTemplateWorkbooks(peo.id)
       .then((list) => { if (!cancelled) setTemplateNames(new Map(list.map((t) => [t.id, t.fileName]))); })
       .catch(() => {});
     return () => { cancelled = true; };

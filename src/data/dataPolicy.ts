@@ -372,7 +372,7 @@ export const DATA_CLASSES: DataClass[] = [
   },
   {
     id: "peo_census_templates",
-    label: "PEOs' own census templates",
+    label: "PEO template workbooks",
     sensitivity: "confidential",
     examples: "The blank census spreadsheet a PEO asks to have filled, as an admin uploaded it, with its file name, size, hash and virus-check result. Nothing about an intake: the census is written into a copy in the browser of whoever downloads it.",
     stored: { tables: ["peo_census_templates"], buckets: ["peo-templates", "quarantine"], elsewhere: ["The malware scanner, while it checks an upload (docs/adr/0002)"] },

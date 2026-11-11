@@ -1,4 +1,4 @@
--- A PEO's own census template (joshrkay/Nevermore#91, L-3.1).
+-- A PEO template workbook (joshrkay/Nevermore#91, L-3.1).
 --
 -- Some PEOs want the census in their own spreadsheet. An admin uploads it to the census layout section of a draft
 -- profile on /advisor/peos, and the layout names it (census_layout.template_file, checked in
@@ -16,7 +16,11 @@
 -- * A profile version's census layout names a template of its own PEO, and is published (or re-checked into a new
 --   version) only once that template is clean: a template still held, blocked or failed is never used.
 --
--- Advisors read the templates' records (the PEOs page says why one isn't used); prospects don't.
+-- Advisors read the templates' records (the PEOs page says why one isn't used); prospects don't. Where a clean one's
+-- file is stored is built here alone; anyone signed in asks clean_template_workbook_path() for it.
+--
+-- The tables, functions and bucket keep the names they were written with ("census template"); in GLOSSARY.md, and in
+-- everything people read, a PEO's own file is a PEO template workbook, and the census template is our own layout.
 --
 -- Deploy this migration before the front end that uploads templates or fills them, and before
 -- census-template-upload.
@@ -32,9 +36,9 @@ CREATE TABLE public.peo_census_templates (
   file_sha256 text NOT NULL CHECK (file_sha256 ~ '^[0-9a-f]{64}$'),
   storage_path text NOT NULL UNIQUE,
   scan_status text NOT NULL DEFAULT 'pending' CHECK (scan_status IN (
-    -- sync:begin census_template_statuses
+    -- sync:begin template_workbook_statuses
     'pending', 'clean', 'blocked', 'failed'
-    -- sync:end census_template_statuses
+    -- sync:end template_workbook_statuses
   )),
   -- The malware signature of a blocked template; nothing else.
   scan_signature text CHECK ((scan_status = 'blocked') = (scan_signature IS NOT NULL)),
@@ -44,7 +48,7 @@ CREATE TABLE public.peo_census_templates (
 );
 
 COMMENT ON TABLE public.peo_census_templates IS
-  'A PEO''s own census template an admin uploaded (L-3.1): pending until scanned, then clean, blocked or failed. Only a clean one is used.';
+  'A PEO template workbook an admin uploaded (L-3.1): pending until scanned, then clean, blocked or failed. Only a clean one is used.';
 
 CREATE INDEX peo_census_templates_peo ON public.peo_census_templates (peo_id);
 
@@ -56,11 +60,11 @@ SET search_path = public
 AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
-    RAISE EXCEPTION 'A census template is kept with the profile versions that name it' USING ERRCODE = '42501';
+    RAISE EXCEPTION 'A PEO template workbook is kept with the profile versions that name it' USING ERRCODE = '42501';
   END IF;
   IF OLD.scan_status <> 'pending' OR NEW.scan_status = 'pending'
      OR (to_jsonb(NEW) - 'scan_status' - 'scan_signature' - 'scanned_at') IS DISTINCT FROM (to_jsonb(OLD) - 'scan_status' - 'scan_signature' - 'scanned_at') THEN
-    RAISE EXCEPTION 'A census template''s record changes only once, when it is scanned' USING ERRCODE = '22023';
+    RAISE EXCEPTION 'A PEO template workbook''s record changes only once, when it is scanned' USING ERRCODE = '22023';
   END IF;
   RETURN NEW;
 END;
@@ -172,9 +176,25 @@ $$;
 REVOKE ALL ON FUNCTION public.is_clean_census_template_file(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.is_clean_census_template_file(text) TO authenticated;
 
+-- Where a clean template workbook of PEO p_peo_id is stored, for anyone signed in to read its file (a prospect fills
+-- their chosen PEO's from their packet page, and can't read the records themselves); null for one not clean, or not
+-- this PEO's. The path is built here alone, by admin_register_census_template; the browser never builds it.
+CREATE OR REPLACE FUNCTION public.clean_template_workbook_path(p_peo_id bigint, p_template_id bigint)
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT t.storage_path FROM public.peo_census_templates t WHERE t.id = p_template_id AND t.peo_id = p_peo_id AND t.scan_status = 'clean';
+$$;
+
+REVOKE ALL ON FUNCTION public.clean_template_workbook_path(bigint, bigint) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.clean_template_workbook_path(bigint, bigint) TO authenticated;
+
 -- Read by anyone signed in, a clean template only. No policy writes: only the service role stores one.
-DROP POLICY IF EXISTS "Signed-in readers read clean census templates" ON storage.objects;
-CREATE POLICY "Signed-in readers read clean census templates"
+DROP POLICY IF EXISTS "Signed-in readers read clean PEO template workbooks" ON storage.objects;
+CREATE POLICY "Signed-in readers read clean PEO template workbooks"
   ON storage.objects FOR SELECT TO authenticated
   USING (bucket_id = 'peo-templates' AND public.is_clean_census_template_file(name));
 
@@ -195,13 +215,13 @@ BEGIN
   IF wanted IS NULL THEN RETURN NEW; END IF;
   SELECT * INTO t FROM public.peo_census_templates WHERE id = wanted::bigint AND peo_id = NEW.peo_id;
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'That template file isn''t one uploaded for this PEO' USING ERRCODE = '22023';
+    RAISE EXCEPTION 'That template workbook isn''t one uploaded for this PEO' USING ERRCODE = '22023';
   END IF;
   IF NEW.status = 'published' AND t.scan_status <> 'clean' THEN
     RAISE EXCEPTION '%', CASE t.scan_status
-      WHEN 'pending' THEN 'The PEO''s template file is still being checked for viruses, so it can''t be published yet'
-      WHEN 'blocked' THEN 'The PEO''s template file was blocked by the virus check, so it can''t be used. Upload a clean copy'
-      ELSE 'The PEO''s template file couldn''t be checked for viruses, so it can''t be used. Upload it again'
+      WHEN 'pending' THEN 'The PEO template workbook is still being checked for viruses, so it can''t be published yet'
+      WHEN 'blocked' THEN 'The PEO template workbook was blocked by the virus check, so it can''t be used. Upload a clean copy'
+      ELSE 'The PEO template workbook couldn''t be checked for viruses, so it can''t be used. Upload it again'
     END USING ERRCODE = '22023';
   END IF;
   RETURN NEW;

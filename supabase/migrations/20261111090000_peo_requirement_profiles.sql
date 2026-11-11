@@ -210,10 +210,10 @@ BEGIN
          OR (layout #>> '{template_file,header_row}')::integer > 1000
          OR (layout #>> '{template_file,first_row}')::integer > 1048576
          OR (layout #>> '{template_file,first_row}')::integer <= (layout #>> '{template_file,header_row}')::integer) THEN
-      RETURN 'A template file is the template uploaded, a sheet named in 1 to 31 characters, the row its headers are on (1 to 1,000) and the first row of data below them';
+      RETURN 'A template workbook is the one uploaded, a sheet named in 1 to 31 characters, the row its headers are on (1 to 1,000) and the first row of data below them';
     END IF;
     IF jsonb_typeof(layout -> 'template_file') = 'object' AND layout ->> 'format' <> 'xlsx' THEN
-      RETURN 'Only an xlsx census fills the PEO''s template file';
+      RETURN 'Only an xlsx census fills the PEO template workbook';
     END IF;
     -- sync:end peo_template_rules
     IF jsonb_typeof(layout -> 'columns') IS DISTINCT FROM 'array' OR jsonb_array_length(layout -> 'columns') NOT BETWEEN 1 AND max_census_columns THEN
