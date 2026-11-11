@@ -199,7 +199,7 @@ describe("supabase-setup", () => {
       ["link", "--project-ref", REF],
       ["db", "push", "--remote", "--yes"],
       ["secrets", "set", "--env-file", secretsFile, `--remote=${REF}`, "--yes"],
-      ...["chamber-extract", "document-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "receive-mail", "purge-intakes", "ops-monitor"]
+      ...["chamber-extract", "document-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "receive-mail", "held-mail", "purge-intakes", "ops-monitor"]
         .map((fn) => ["functions", "deploy", fn, `--remote=${REF}`, "--yes"]),
     ]);
 
@@ -212,7 +212,7 @@ describe("supabase-setup", () => {
     // The summary: every migration (a new project), the secret names (no values) and the functions.
     expect(out).toContain(`Migrations applied: ${MIGRATIONS} (${MIGRATION_FILES[0]} … ${MIGRATION_FILES[MIGRATIONS - 1]})`);
     expect(out).toContain("Secrets set (names only): 9 (ADVISORY_NOTIFY_EMAIL, ANTHROPIC_API_KEY, APP_BASE_URL, EMAIL_FROM, IP_HASH_SECRET, PROSPECT_RESPONSE_TIME, RESEND_API_KEY, RESEND_WEBHOOK_SECRET, SUPPORT_EMAIL)");
-    expect(out).toContain("Functions deployed: 9 (chamber-extract, document-upload, document-extract, document-scan, dispatch-outbox, resend-webhook, receive-mail, purge-intakes, ops-monitor)");
+    expect(out).toContain("Functions deployed: 10 (chamber-extract, document-upload, document-extract, document-scan, dispatch-outbox, resend-webhook, receive-mail, held-mail, purge-intakes, ops-monitor)");
 
     const secretsCall = cliCalls().find((c) => c.secrets);
     expect(secretsCall.mode).toBe(0o600);
@@ -231,7 +231,7 @@ describe("supabase-setup", () => {
       smtp_pass: SECRETS.RESEND_API_KEY,
     });
     expect(fake.queries.some((q) => q.includes("vault.create_secret") && q.includes(SERVICE_KEY))).toBe(true);
-    for (const fn of ["dispatch-outbox", "purge-intakes", "ops-monitor", "document-scan"]) {
+    for (const fn of ["dispatch-outbox", "purge-intakes", "ops-monitor", "document-scan", "held-mail"]) {
       expect(fake.queries.some((q) => q.includes(`https://${REF}.supabase.co/functions/v1/${fn}`))).toBe(true);
     }
     expect(fake.queries.some((q) => q.includes("cron.schedule('run-retention'"))).toBe(true);

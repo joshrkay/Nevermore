@@ -855,7 +855,7 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue(detail({
       pipelineStatus: "sent_to_carrier",
       quoteRequests: [request],
-      quoteRequestMessages: [{ id: 1, provider_message_id: "re_1", quote_request_id: 7, session_id: "s1", address_local_part: "a.b.c", held_reason: null,
+      quoteRequestMessages: [{ id: 1, provider_message_id: "re_1", quote_request_id: 7, session_id: "s1", address_local_part: "a.b.c", held_reason: null, held_at: null, moved_by: null, moved_by_email: null, moved_from_quote_request_id: null, moved_note: null, 
         direction: "received", is_automatic: false, new_sender: true, from_address: "dana@trinet.example", from_name: "Dana", to_addresses: [], cc_addresses: [],
         subject: "Proposal", body_text: "Proposal attached.", body_truncated: false, headers: {}, sent_at: "2026-11-10T15:00:00Z", recorded_at: "2026-11-10T15:00:05.5+00:00" }],
     }));

@@ -527,6 +527,94 @@ export async function openQuoteRequestThread(quoteRequestId: number, seenThrough
   if (error) fail(error, "Couldn't mark the thread as read.");
 }
 
+type HeldMailAction =
+  | { action: "move_off"; message_id: number; note?: string }
+  | { action: "assign"; message_id: number; quote_request_id: number }
+  | { action: "discard"; message_id: number };
+
+/** Asks the held-mail function to move, assign or discard a message and its files. The database checks who may. */
+async function heldMail(body: HeldMailAction, fallback: string): Promise<void> {
+  const { error } = await supabase.functions.invoke("held-mail", { body });
+  if (!error) return;
+  let message = fallback;
+  const context = (error as { context?: unknown }).context;
+  if (context instanceof Response) {
+    const said = await context.json().catch(() => null) as { error?: unknown } | null;
+    if (typeof said?.error === "string") message = said.error;
+    if (context.status === 403) throw new AdvisorApiError(message, "42501");
+  }
+  throw new AdvisorApiError(message);
+}
+
+/** An advisor moves a message off its thread to the holding list, with the files, and may say why. */
+export const moveMessageOffThread = (messageId: number, note?: string) =>
+  heldMail({ action: "move_off", message_id: messageId, note: note?.trim() || undefined }, "Couldn't move the message.");
+
+/** An admin assigns a held message to a quote request. */
+export const assignHeldMessage = (messageId: number, quoteRequestId: number) =>
+  heldMail({ action: "assign", message_id: messageId, quote_request_id: quoteRequestId }, "Couldn't assign the message.");
+
+/** An admin discards a held message and its files. Nobody is told. */
+export const discardHeldMessage = (messageId: number) => heldMail({ action: "discard", message_id: messageId }, "Couldn't discard the message.");
+
+export async function fetchIsAdmin(): Promise<boolean> {
+  const { data, error } = await supabase.rpc("has_role", { _role: "admin" });
+  if (error) fail(error, "Couldn't check admin access.");
+  return data === true;
+}
+
+/** A quote request an admin can assign held mail to: its PEO and employer, and the address it once had. */
+export interface AssignableRequest {
+  id: number;
+  fileId: string;
+  company: string;
+  peo: string;
+  localParts: string[];
+}
+
+export interface HeldMail {
+  messages: QuoteRequestMessageRow[];
+  attachments: QuoteRequestMailAttachmentRow[];
+  requests: AssignableRequest[];
+  /** The file ID and PEO of each quote request an advisor moved a message from, for the "moved from" line. */
+  names: Map<number, string>;
+}
+
+/** The holding list, oldest first, with what an admin needs to place each message. Admins only: row security returns nothing else. */
+export async function loadHeldMail(): Promise<HeldMail> {
+  const held = await supabase.from("quote_request_messages").select("*").is("quote_request_id", null).order("held_at", { ascending: true });
+  if (held.error) fail(held.error, "Couldn't load the holding list.");
+  const messages = held.data ?? [];
+  const attachments = messages.length
+    ? await supabase.from("quote_request_message_attachments").select("*").in("message_id", messages.map((m) => m.id))
+    : { data: [], error: null };
+  if (attachments.error) fail(attachments.error, "Couldn't load the holding list.");
+  const requests = await supabase.from("quote_requests").select("id, session_id, peo_name").order("id", { ascending: false });
+  if (requests.error) fail(requests.error, "Couldn't load the quote requests.");
+  const rows = requests.data ?? [];
+  const sessionIds = [...new Set(rows.map((r) => r.session_id))];
+  const [summaries, addresses] = await Promise.all([
+    sessionIds.length ? supabase.from("chamber_sessions").select("id, file_id, chamber_data").in("id", sessionIds) : { data: [], error: null },
+    rows.length ? supabase.from("quote_request_addresses").select("quote_request_id, local_part").in("quote_request_id", rows.map((r) => r.id)) : { data: [], error: null },
+  ]);
+  if (summaries.error) fail(summaries.error, "Couldn't load the quote requests.");
+  if (addresses.error) fail(addresses.error, "Couldn't load the quote requests.");
+  const bySession = new Map((summaries.data ?? []).map((r) => [r.id, r]));
+  const requestsOut: AssignableRequest[] = rows.map((r) => ({
+    id: r.id,
+    fileId: bySession.get(r.session_id)?.file_id ?? "",
+    company: String((bySession.get(r.session_id)?.chamber_data as { company_name?: unknown } | null)?.company_name ?? "Unnamed"),
+    peo: r.peo_name,
+    localParts: (addresses.data ?? []).filter((a) => a.quote_request_id === r.id).map((a) => a.local_part),
+  }));
+  return {
+    messages,
+    attachments: attachments.data ?? [],
+    requests: requestsOut,
+    names: new Map(requestsOut.map((r) => [r.id, `${r.fileId || `quote request ${r.id}`}, ${r.peo}`])),
+  };
+}
+
 /** A quote request note as the form holds it: its kind, the day it happened (YYYY-MM-DD) and its text. */
 export interface QuoteNoteInput {
   kind: QuoteNoteKind;

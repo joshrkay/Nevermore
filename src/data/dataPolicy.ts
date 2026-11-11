@@ -77,6 +77,8 @@ export const RETENTION = {
   submittedYears: 3,
   /** Unsaved answers kept in the prospect's own browser. */
   browserBackupDays: Math.round(BACKUP_MAX_AGE_MS / (24 * 60 * 60 * 1000)),
+  /** Held PEO mail nobody assigns (story M-3.3). */
+  heldMailDays: 30,
   /** Operational monitoring events. */
   opsEventDays: 90,
   /** Email delivery events (sent, delivered, bounced, complained). */
@@ -296,7 +298,7 @@ export const DATA_CLASSES: DataClass[] = [
     sensitivity: "restricted",
     examples: "Mail a PEO sent to a quote request's reply address, and the advisor's own messages copied to it: who wrote it, when, the plain text, a few headers, and its attachments (a proposal can carry an employer's details and a PEO's pricing). Mail to an address that matched nothing is held until an admin deals with it.",
     stored: { tables: ["quote_request_messages", "quote_request_message_attachments"], buckets: ["peo-mail"], elsewhere: ["Resend"] },
-    retention: `${WITH_INTAKE} Held mail nobody assigns is deleted after 30 days (story M-3.3). Resend keeps what it received too, under its own terms, until it is deleted there.`,
+    retention: `${WITH_INTAKE} Held mail nobody assigns is deleted ${RETENTION.heldMailDays} days after it was held (story M-3.3), files first. Resend keeps what it received too, under its own terms, until it is deleted there.`,
     deletion: `${DELETED_WITH_INTAKE} An attachment is stored only once it has been scanned for malware; one the scanner flags is never stored, only its signature.`,
   },
   {

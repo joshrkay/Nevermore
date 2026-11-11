@@ -6,7 +6,7 @@ import type {
 
 const toast = { success: vi.fn(), error: vi.fn() };
 vi.mock("sonner", () => ({ toast }));
-const api = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn() };
+const api = { openQuoteRequestThread: vi.fn(), mailAttachmentUrl: vi.fn(), moveMessageOffThread: vi.fn() };
 vi.mock("@/lib/advisorApi", () => api);
 
 const { default: PeoThreadPanel } = await import("./PeoThreadPanel");
@@ -16,7 +16,7 @@ const request = (over: Partial<QuoteRequestRow> = {}): QuoteRequestRow => ({
   quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null, ...over,
 });
 const message = (over: Partial<QuoteRequestMessageRow> = {}): QuoteRequestMessageRow => ({
-  id: 1, provider_message_id: "re_1", quote_request_id: 7, session_id: "s1", address_local_part: "a.b.c", held_reason: null, direction: "received",
+  id: 1, provider_message_id: "re_1", quote_request_id: 7, session_id: "s1", address_local_part: "a.b.c", held_reason: null, held_at: null, moved_by: null, moved_by_email: null, moved_from_quote_request_id: null, moved_note: null, direction: "received",
   is_automatic: false, new_sender: false, from_address: "dana@trinet.example", from_name: "Dana Whitfield", to_addresses: [], cc_addresses: [],
   subject: "Re: Harbor Street", body_text: "Proposal attached.", body_truncated: false, headers: {}, sent_at: "2026-11-10T15:00:00Z",
   recorded_at: "2026-11-10T15:00:05.123456+00:00", ...over,
@@ -184,6 +184,27 @@ describe("PeoThreadPanel", () => {
     it("is marked as automatic when a machine wrote it", () => {
       const thread = open({ is_automatic: true, body_text: "Out of office" });
       expect(thread.getByText("Automatic reply")).toBeInTheDocument();
+    });
+
+    it("can be moved off the thread to the holding list, with a reason, and the page reloads", async () => {
+      api.moveMessageOffThread.mockResolvedValue(undefined);
+      const thread = open({ id: 41 });
+      fireEvent.click(thread.getByRole("button", { name: /Move it off this thread/ }));
+      expect(thread.getByText(/not deleted, and the sender is not told/)).toBeInTheDocument();
+      fireEvent.change(thread.getByLabelText(/Why \(optional/), { target: { value: "This is Justworks answering." } });
+      fireEvent.click(thread.getByRole("button", { name: "Move to the holding list" }));
+      await waitFor(() => expect(api.moveMessageOffThread).toHaveBeenCalledWith(41, "This is Justworks answering."));
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    });
+
+    it("stays where it is, and says why, when the move fails or is cancelled", async () => {
+      api.moveMessageOffThread.mockRejectedValue(new Error("That message is not where it was; reload the list."));
+      const thread = open({});
+      fireEvent.click(thread.getByRole("button", { name: /Move it off this thread/ }));
+      fireEvent.click(thread.getByRole("button", { name: "Move to the holding list" }));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("That message is not where it was; reload the list."));
+      fireEvent.click(thread.getByRole("button", { name: "Cancel" }));
+      expect(thread.getByRole("button", { name: /Move it off this thread/ })).toBeInTheDocument();
     });
 
     it("folds its quoted history behind a button", () => {

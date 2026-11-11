@@ -7,7 +7,7 @@ import {
   buildTimeline, describeAttachment, hasNewMail, isThreadEvent, latestRecordedAt, splitQuotedText, type ThreadAttachment, type TimelineEntry,
 } from "@/data/mailThread";
 import {
-  mailAttachmentUrl, openQuoteRequestThread,
+  mailAttachmentUrl, moveMessageOffThread, openQuoteRequestThread,
   type QuoteRequestEventRow, type QuoteRequestMailAttachmentRow, type QuoteRequestMessageRow, type QuoteRequestNoteRow, type QuoteRequestRow,
   type QuoteRequestThreadReadRow,
 } from "@/lib/advisorApi";
@@ -29,10 +29,25 @@ const badge = "text-xs px-2 py-0.5 rounded-full whitespace-nowrap";
 const statusLabel = (s: string) => (isQuoteRequestStatus(s) ? QUOTE_REQUEST_LABELS[s] : s);
 
 /** One message: who wrote it, its text with the quoted history behind a button, and its attachments. */
-const MessageEntry = ({ entry, showPeo }: { entry: Extract<TimelineEntry, { kind: "message" }>; showPeo: boolean }) => {
+const MessageEntry = ({ entry, showPeo, onMoved }: { entry: Extract<TimelineEntry, { kind: "message" }>; showPeo: boolean; onMoved?: () => void }) => {
   const { message: m, attachments } = entry;
   const [showQuoted, setShowQuoted] = useState(false);
   const [opening, setOpening] = useState<number | null>(null);
+  const [moving, setMoving] = useState<"closed" | "asking" | "busy">("closed");
+  const [note, setNote] = useState("");
+
+  // Mail that landed on the wrong thread goes to the holding list, where an admin assigns it. Nothing is deleted.
+  const moveOff = async () => {
+    setMoving("busy");
+    try {
+      await moveMessageOffThread(m.id, note);
+      toast.success("Moved to the holding list. An admin will place it.");
+      onMoved?.();
+    } catch (err) {
+      toast.error((err as Error).message);
+      setMoving("asking");
+    }
+  };
   const { visible, quoted } = splitQuotedText(m.body_text ?? "");
   const byHand = m.direction === "sent_by_hand";
 
@@ -90,13 +105,34 @@ const MessageEntry = ({ entry, showPeo }: { entry: Extract<TimelineEntry, { kind
           })}
         </ul>
       )}
+      {moving === "closed" ? (
+        <button onClick={() => setMoving("asking")} className="text-xs text-muted-foreground underline py-2">Not for this quote request? Move it off this thread</button>
+      ) : (
+        <div className="border border-border rounded-md p-3 space-y-2 text-sm">
+          <p>It goes to the holding list for an admin to assign to the right quote request. It is not deleted, and the sender is not told.</p>
+          <label htmlFor={`move-note-${m.id}`} className="text-xs text-muted-foreground block">Why (optional, shown to the admin)</label>
+          <input
+            id={`move-note-${m.id}`}
+            value={note}
+            maxLength={500}
+            onChange={(e) => setNote(e.target.value)}
+            className="w-full min-h-11 bg-muted border border-border rounded-md px-3 text-sm"
+          />
+          <div className="flex gap-2">
+            <button onClick={moveOff} disabled={moving === "busy"} className="min-h-11 px-4 rounded-md border border-border hover:bg-muted disabled:opacity-50">
+              {moving === "busy" ? <Loader2 className="w-4 h-4 animate-spin" aria-label="Moving" /> : "Move to the holding list"}
+            </button>
+            <button onClick={() => setMoving("closed")} disabled={moving === "busy"} className="min-h-11 px-4 rounded-md border border-border hover:bg-muted disabled:opacity-50">Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 /** One line of a thread, whatever it is. */
-const Entry = ({ entry, showPeo, prospectUserId, corrected }: { entry: TimelineEntry; showPeo: boolean; prospectUserId: string; corrected: boolean }) => {
-  if (entry.kind === "message") return <MessageEntry entry={entry} showPeo={showPeo} />;
+const Entry = ({ entry, showPeo, prospectUserId, corrected, onMoved }: { entry: TimelineEntry; showPeo: boolean; prospectUserId: string; corrected: boolean; onMoved?: () => void }) => {
+  if (entry.kind === "message") return <MessageEntry entry={entry} showPeo={showPeo} onMoved={onMoved} />;
   const peo = showPeo ? <span className={`${badge} bg-foreground text-background font-semibold`}>{entry.peo}</span> : null;
   if (entry.kind === "note") {
     const n = entry.note;
@@ -218,7 +254,7 @@ const PeoThreadPanel = ({ prospectUserId, requests, messages, attachments, notes
         <ol aria-label={selected === "all" ? "All PEOs, newest first" : `${shown[0]?.peo_name} thread, newest first`} className="space-y-3">
           {entries.map((e) => (
             <li key={e.key} className="border border-border rounded-xl bg-card p-3">
-              <Entry entry={e} showPeo={selected === "all"} prospectUserId={prospectUserId} corrected={e.kind === "note" && correctedNotes.has(e.note.id)} />
+              <Entry entry={e} showPeo={selected === "all"} prospectUserId={prospectUserId} corrected={e.kind === "note" && correctedNotes.has(e.note.id)} onMoved={onOpened} />
             </li>
           ))}
         </ol>
