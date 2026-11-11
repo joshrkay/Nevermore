@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { capitalised, isStaleDraftError, PART_LABELS, profileChanges, profileProblems, publishProblems, type PeoContact, type ProfileProblem, type ProfileVersion } from "@/data/peoEditor";
 import { formatCheckedOn, PROFILE_PARTS, utcToday, type ProfilePart } from "@/data/peoProfiles";
 import { discardPeoDraft, loadVersionContacts, publishPeoDraft, recheckPeoProfile } from "@/lib/advisorApi";
+import { checkCensusLayout } from "@/lib/censusLayoutCheck";
+import { listCensusTemplates } from "@/lib/censusTemplates";
 import { buttonClass, primaryClass, sourceDraft, sourceFrom, type SourceDraft } from "./shared";
 import { SourceFields } from "./SourceFields";
 
@@ -21,7 +23,18 @@ export const ReviewAndPublish = ({ peo, draft, inUse, onDone, onCancel, onReload
   const [failed, setFailed] = useState<string | null>(null);
   // The draft changed since this review opened: it publishes only the draft reviewed.
   const [stale, setStale] = useState(false);
-  const changes = profileChanges(inUse?.profile ?? null, draft.profile);
+  // The templates' names, so a change of template reads as the file, not its number.
+  const [templateNames, setTemplateNames] = useState<ReadonlyMap<number, string>>(new Map());
+  const namesTemplate = Boolean(draft.profile.censusLayout?.template || inUse?.profile.censusLayout?.template);
+  useEffect(() => {
+    if (!namesTemplate) return;
+    let cancelled = false;
+    listCensusTemplates(peo.id)
+      .then((list) => { if (!cancelled) setTemplateNames(new Map(list.map((t) => [t.id, t.fileName]))); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [peo.id, namesTemplate]);
+  const changes = profileChanges(inUse?.profile ?? null, draft.profile, templateNames);
   const blockers = publishProblems(draft.profile);
   const id = `peo-${peo.id}-review`;
 
@@ -30,6 +43,15 @@ export const ReviewAndPublish = ({ peo, draft, inUse, onDone, onCancel, onReload
     setFailed(null);
     setStale(false);
     try {
+      // A census layout is published only once the census, written in it on sample rows, reads back the same.
+      const layout = draft.profile.censusLayout;
+      if (layout) {
+        const check = await checkCensusLayout(peo.id, layout);
+        if (check.ok === false) {
+          setFailed(`The census layout didn't pass its check, so it isn't published: ${check.message}`);
+          return;
+        }
+      }
       await publishPeoDraft(peo.id, draft.revision);
       toast.success(`Version ${draft.version} of ${peo.name}'s profile is published.`);
       onDone();

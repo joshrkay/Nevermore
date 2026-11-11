@@ -9,6 +9,16 @@ import { capitalised, CENSUS_FILE_FORMATS, codesPhrase, EXTRA_QUESTION_KINDS, fo
 import { FIELD_LABELS } from "./provenance";
 
 /** A contact's limits, in characters. */
+/** Where a PEO's template is filled (peo_profile_version_error's template rules); schemaSync.test.ts keeps them equal. */
+export const TEMPLATE_LIMITS = {
+  /** The longest sheet name a workbook can have. */
+  sheet: 31,
+  /** The lowest row a template's headers can be on. */
+  headerRow: 1000,
+  /** A workbook's last row. */
+  lastRow: 1048576,
+} as const;
+
 export const CONTACT_LIMITS = { name: 200, role: 100, email: 254, phone: 40 } as const;
 
 /** A source may be dated one day ahead of the database's clock, so an admin ahead of UTC can enter their own today. */
@@ -212,8 +222,13 @@ export function profileProblems(p: EditableProfile, today: string): ProfileProbl
   const layout = p.censusLayout;
   if (layout) {
     if (!(CENSUS_FILE_FORMATS as readonly string[]).includes(layout.format)) add("censusLayout.format", "A census file is CSV or xlsx");
-    if (layout.templateFile !== null && !between(layout.templateFile, 1, caps.sourceName)) {
-      add("censusLayout.templateFile", `A template file is named by its path, up to ${caps.sourceName} characters, or not at all`);
+    const t = layout.template;
+    if (t !== null) {
+      const row = (n: number, max: number) => Number.isInteger(n) && n >= 1 && n <= max;
+      if (!Number.isInteger(t.id) || t.id < 1 || !between(t.sheet, 1, TEMPLATE_LIMITS.sheet) || !row(t.headerRow, TEMPLATE_LIMITS.headerRow)
+          || !row(t.firstRow, TEMPLATE_LIMITS.lastRow) || t.firstRow <= t.headerRow) {
+        add("censusLayout.template", "A template file is the template uploaded, a sheet named in 1 to 31 characters, the row its headers are on (1 to 1,000) and the first row of data below them");
+      } else if (layout.format !== "xlsx") add("censusLayout.template", "Only an xlsx census fills the PEO's template file");
     }
     if (layout.columns.length < 1 || layout.columns.length > caps.censusColumns) {
       add("censusLayout.columns", `A census layout has 1 to ${caps.censusColumns} columns`);
@@ -341,7 +356,13 @@ export function profilePayload(p: EditableProfile): Record<string, unknown> {
     needed_to_quote: p.neededToQuote,
     needed_before_signing: p.neededBeforeSigning,
     census_layout: p.censusLayout
-      ? { format: p.censusLayout.format, template_file: p.censusLayout.templateFile, columns: p.censusLayout.columns.map((c) => ({ header: c.header, from: c.from })) }
+      ? {
+          format: p.censusLayout.format,
+          template_file: p.censusLayout.template
+            ? { id: p.censusLayout.template.id, sheet: p.censusLayout.template.sheet, header_row: p.censusLayout.template.headerRow, first_row: p.censusLayout.template.firstRow }
+            : null,
+          columns: p.censusLayout.columns.map((c) => ({ header: c.header, from: c.from })),
+        }
       : null,
     documents: p.documents,
     // Each rule's column is named after its part.
@@ -445,7 +466,7 @@ export const EXTRA_QUESTION_LABELS: Record<EditableProfile["extraQuestions"][num
  * history: each rule's old and new value, what was added to or removed from each list, and every source that
  * changed. `from` is null for a PEO's first version.
  */
-export function profileChanges(from: EditableProfile | null, to: EditableProfile): string[] {
+export function profileChanges(from: EditableProfile | null, to: EditableProfile, templateNames: ReadonlyMap<number, string> = new Map()): string[] {
   const before = from ?? EMPTY_PROFILE;
   const out: string[] = [];
   const field = (key: string) => FIELD_LABELS[key as keyof typeof FIELD_LABELS] ?? key;
@@ -462,7 +483,11 @@ export function profileChanges(from: EditableProfile | null, to: EditableProfile
   if (l1) {
     const formatName = (l: typeof l1 | null) => (l ? (l.format === "xlsx" ? "xlsx" : "CSV") : "Not checked yet");
     if (formatName(l0) !== formatName(l1)) out.push(`Census file: ${formatName(l0)} → ${formatName(l1)}`);
-    if ((l0?.templateFile ?? null) !== l1.templateFile) out.push(`Template file: ${l0?.templateFile ?? "None"} → ${l1.templateFile ?? "None"}`);
+    const templateName = (l: typeof l1 | null) => {
+      const t = l?.template;
+      return t ? `${templateNames.get(t.id) ?? `template ${t.id}`}, sheet ${t.sheet}, headers on row ${t.headerRow}, data from row ${t.firstRow}` : "None";
+    };
+    if (templateName(l0) !== templateName(l1)) out.push(`Template file: ${templateName(l0)} → ${templateName(l1)}`);
     if (!l0 || !sameMeaning(l0.columns, l1.columns)) out.push(`Census layout: columns now ${l1.columns.map((c) => c.header).join(", ")}`);
   }
   out.push(...listChange("Documents", before.documents.map(documentLabel), to.documents.map(documentLabel)));

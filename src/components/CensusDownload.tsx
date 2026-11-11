@@ -1,60 +1,95 @@
 import { useState } from "react";
-import { Download } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import type { CensusEmployee } from "@/data/census";
-import { censusExport, layoutFor, OUR_CENSUS_LAYOUT, PEO_CENSUS_LAYOUTS, type PeoCensusLayout } from "@/data/censusExport";
+import { blankColumnsOf, censusLayoutFor, OUR_CENSUS_LAYOUT, type PeoCensusLayout } from "@/data/censusExport";
+import { findPeo, type PeoRecord } from "@/data/peoCatalog";
+import { censusFile } from "@/lib/censusWorkbook";
 import { downloadBlob } from "@/lib/downloadFile";
 
 interface CensusDownloadProps {
   /** The certified census: never the draft. */
   census: readonly CensusEmployee[];
   fileId: string;
-  /** The PEOs offered as layouts, alphabetically. */
-  peos: readonly string[];
-  /** The PEO census layouts held; the app's unless a test supplies some. */
-  layouts?: readonly PeoCensusLayout[];
+  /** The certified version the census is from; null when none is recorded. */
+  version: number | null;
+  /** The PEO the file is for, as named (on the list or typed in); null for our own layout. */
+  peo: string | null;
+  /** The PEOs the database lists, with their profiles in use. */
+  catalog: readonly PeoRecord[];
+  /** Reads a PEO's own template file (only a clean one can be read); the app's unless a test supplies one. */
+  readTemplate?: (peoId: number, templateId: number) => Promise<Uint8Array | null>;
 }
 
-const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+/** What the file is, in a sentence, before the click. */
+function whatItIs(layout: PeoCensusLayout, version: number | null): string {
+  const what = layout === OUR_CENSUS_LAYOUT
+    ? "Our layout, every column named, as a CSV file"
+    : layout.template
+      ? `${layout.peo}'s own template, filled in`
+      : `${layout.peo}'s census layout, as ${layout.format === "xlsx" ? "an Excel file" : "a CSV file"}`;
+  return `${what}. ${version !== null ? `From certified version ${version}.` : "From the certification on record."}`;
+}
 
 /**
- * Downloads the certified census as a CSV, in a PEO's own census layout when we hold it, or in ours, so whoever
- * sends the packet can send a file the PEO's underwriters don't have to re-key (joshrkay/Nevermore#86).
+ * Downloads the certified census as a file for one PEO (L-3.1): in the census layout its requirement profile in use
+ * holds, as CSV or xlsx or written into the PEO's own template, or in our own layout for a PEO with none. What the
+ * file is, which certified version it comes from and the columns it leaves blank are said before the click.
  */
-const CensusDownload = ({ census, fileId, peos, layouts = PEO_CENSUS_LAYOUTS }: CensusDownloadProps) => {
-  const [peo, setPeo] = useState("");
-  const layout = peo ? layoutFor(peo, layouts) : OUR_CENSUS_LAYOUT;
-  const { blankColumns } = censusExport([], layout);
-  const ours = layout === OUR_CENSUS_LAYOUT;
+/** Reads a clean template's file from storage, loading the client only when a template is filled. */
+const readFromStorage = async (peoId: number, templateId: number) => (await import("@/lib/censusTemplates")).readCensusTemplate(peoId, templateId);
 
-  const download = () => {
-    const { csv } = censusExport(census, layout);
-    const name = `${fileId}-census${ours ? "" : `-${slug(peo)}`}.csv`;
-    downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), name);
+const CensusDownload = ({ census, fileId, version, peo, catalog, readTemplate = readFromStorage }: CensusDownloadProps) => {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const layout = censusLayoutFor(peo, catalog);
+  const ours = layout === OUR_CENSUS_LAYOUT;
+  const blank = blankColumnsOf(layout);
+
+  const download = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      let template: Uint8Array | null = null;
+      if (layout.template) {
+        const id = findPeo(catalog, layout.peo ?? "")?.id;
+        template = id === undefined ? null : await readTemplate(id, layout.template.id);
+        if (!template) {
+          setProblem(`We couldn't get ${layout.peo}'s template file, so the census couldn't be filled in. Try again.`);
+          return;
+        }
+      }
+      const file = await censusFile(census, layout, { fileId, version, template });
+      if (file.ok === false) setProblem(file.message);
+      else downloadBlob(file.blob, file.filename);
+    } catch {
+      setProblem("The census file couldn't be made. Try again.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <div className="space-y-2">
-      <label htmlFor="census-layout" className="block text-xs text-muted-foreground">Layout</label>
-      <select id="census-layout" value={peo} onChange={(e) => setPeo(e.target.value)} className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm">
-        <option value="">Our layout (every column named)</option>
-        {peos.map((p) => (
-          <option key={p} value={p}>{p}</option>
-        ))}
-      </select>
+      <p className="text-xs text-muted-foreground">{whatItIs(layout, version)}</p>
       {peo && ours && (
         <p className="text-xs text-muted-foreground">We don't have {peo}'s census layout yet, so this is ours: every column is named.</p>
       )}
-      {blankColumns.length > 0 && (
+      {blank.length > 0 && (
         <p className="text-xs text-warning">
-          {peo}'s layout also asks for: {blankColumns.join(", ")}. Fill these in before sending.
+          {layout.peo}'s layout also asks for: {blank.join(", ")}. Fill these in before sending.
         </p>
       )}
       <button
-        onClick={download}
-        className="inline-flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-md border border-border hover:border-primary/40"
+        type="button"
+        onClick={() => void download()}
+        disabled={busy}
+        aria-label={ours ? "Download the census" : `Download the census in ${layout.peo}'s layout`}
+        className="min-h-11 inline-flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-md border border-border hover:border-primary/40 disabled:opacity-60"
       >
-        <Download className="w-4 h-4" aria-hidden="true" /> Download the census
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Download className="w-4 h-4" aria-hidden="true" />}
+        {busy ? "Preparing the census…" : "Download the census"}
       </button>
+      {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
     </div>
   );
 };

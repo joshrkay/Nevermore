@@ -358,7 +358,8 @@ export type Database = {
       }
       peo_profile_versions: {
         Row: {
-          // Each { format, template_file, columns: [{ header, from }] } (src/data/peoProfiles.ts), or null.
+          // Each { format, template_file, columns: [{ header, from }] } (src/data/peoProfiles.ts), or null. template_file is
+          // null or { id, sheet, header_row, first_row }: the PEO's own template the census fills (L-3.1).
           census_layout: Json | null
           created_at: string
           created_by: string | null
@@ -401,6 +402,26 @@ export type Database = {
           position: number
           profile_version_id: number
           role: string | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      peo_census_templates: {
+        // A PEO's own census template (20261114090000). Read by advisors; written only by census-template-upload.
+        Row: {
+          file_name: string
+          file_sha256: string
+          id: number
+          peo_id: number
+          scan_signature: string | null
+          // One of CENSUS_TEMPLATE_STATUSES (src/lib/censusTemplates.ts).
+          scan_status: string
+          scanned_at: string | null
+          size_bytes: number
+          storage_path: string
+          uploaded_at: string
+          uploaded_by: string | null
         }
         Insert: never
         Update: never

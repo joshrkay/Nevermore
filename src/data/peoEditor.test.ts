@@ -10,7 +10,7 @@ const dana: ProfileSource = { kind: "person", name: "Dana Reyes", role: "Broker 
 const FULL: EditableProfile = {
   neededToQuote: ["company_name", "states", "census"],
   neededBeforeSigning: ["payroll_vendor"],
-  censusLayout: { peo: "TriNet", format: "xlsx", templateFile: null, columns: [
+  censusLayout: { peo: "TriNet", format: "xlsx", template: null, columns: [
     { header: "Last Name", from: "last_name" }, { header: "First Name", from: "first_name" }, { header: "SSN", from: null },
   ] },
   documents: [{ category: "workers_comp_loss_runs", description: "Three years of loss runs" }],
@@ -43,7 +43,7 @@ describe("profileProblems: the database's rules, next to each field", () => {
   });
 
   it("refuses a census layout the database refuses, at the column it is about", () => {
-    const layout = (over: object) => ({ censusLayout: { peo: "TriNet", format: "csv", templateFile: null, columns: [{ header: "Name", from: "first_name" }], ...over } as EditableProfile["censusLayout"] });
+    const layout = (over: object) => ({ censusLayout: { peo: "TriNet", format: "csv", template: null, columns: [{ header: "Name", from: "first_name" }], ...over } as EditableProfile["censusLayout"] });
     expect(problems(layout({ columns: [] }))).toEqual([{ path: "censusLayout.columns", message: "A census layout has 1 to 200 columns" }]);
     expect(problems(layout({ columns: [{ header: " ", from: null }] }))).toEqual([
       { path: "censusLayout.columns.0.header", message: "Each census column has a header of 1 to 100 characters" },
@@ -52,9 +52,14 @@ describe("profileProblems: the database's rules, next to each field", () => {
       { path: "censusLayout.columns.1.header", message: "Each census column has a header of its own" },
     ]);
     expect(problems(layout({ columns: [{ header: "SSN", from: "ssn" }] }))).toEqual([{ path: "censusLayout.columns.0.from", message: "ssn isn't one of our census columns" }]);
-    expect(problems(layout({ templateFile: " " }))).toEqual([
-      { path: "censusLayout.templateFile", message: "A template file is named by its path, up to 300 characters, or not at all" },
-    ]);
+    const where = { id: 12, sheet: "Census", headerRow: 3, firstRow: 4 };
+    expect(problems(layout({ format: "xlsx", template: where }))).toEqual([]);
+    const wrong = "A template file is the template uploaded, a sheet named in 1 to 31 characters, the row its headers are on (1 to 1,000) and the first row of data below them";
+    for (const bad of [{ sheet: " " }, { sheet: "s".repeat(32) }, { headerRow: 0 }, { headerRow: 1001, firstRow: 1002 }, { firstRow: 3 }, { headerRow: 2.5 }]) {
+      expect(problems(layout({ format: "xlsx", template: { ...where, ...bad } }))).toEqual([{ path: "censusLayout.template", message: wrong }]);
+    }
+    expect(problems(layout({ format: "xlsx", template: { ...where, sheet: "s".repeat(31), headerRow: 1000, firstRow: 1048576 } }))).toEqual([]);
+    expect(problems(layout({ format: "csv", template: where }))).toEqual([{ path: "censusLayout.template", message: "Only an xlsx census fills the PEO's template file" }]);
     expect(problems(layout({ columns: Array.from({ length: 201 }, (_, i) => ({ header: `C${i}`, from: null })) }))[0].path).toBe("censusLayout.columns");
     expect(problems(layout({ columns: Array.from({ length: 200 }, (_, i) => ({ header: `C${i}`, from: null })) }))).toEqual([]);
   });
@@ -213,16 +218,21 @@ describe("profileChanges: what publishing a draft changes", () => {
     ]);
   });
 
+  it("sends the template a census layout fills as the database holds it, and reads it back", () => {
+    const withTemplate: EditableProfile = { ...FULL, censusLayout: { ...FULL.censusLayout!, template: { id: 12, sheet: "Census", headerRow: 3, firstRow: 4 } } };
+    expect(profilePayload(withTemplate).census_layout).toMatchObject({ template_file: { id: 12, sheet: "Census", header_row: 3, first_row: 4 } });
+  });
+
   it("names a contact's changed details, a question answered another way, and the census file and template", () => {
     const next: EditableProfile = {
       ...FULL,
       contacts: [{ ...FULL.contacts[0], phone: "555-0199" }],
       extraQuestions: [{ ...FULL.extraQuestions[0], kind: "text" }, FULL.extraQuestions[1]],
-      censusLayout: { ...FULL.censusLayout!, format: "csv", templateFile: "peo-templates/trinet.xlsx" },
+      censusLayout: { ...FULL.censusLayout!, format: "csv", template: { id: 12, sheet: "Census", headerRow: 3, firstRow: 4 } },
     };
-    expect(profileChanges(FULL, next)).toEqual([
+    expect(profileChanges(FULL, next, new Map([[12, "TriNet census.xlsx"]]))).toEqual([
       "Census file: xlsx → CSV",
-      "Template file: None → peo-templates/trinet.xlsx",
+      "Template file: None → TriNet census.xlsx, sheet Census, headers on row 3, data from row 4",
       "Its own questions: Do any employees drive for work? (yes or no) → Do any employees drive for work? (text)",
       "Contacts: Dana Reyes, Broker desk, dana@trinet.example, 555-0100 → Dana Reyes, Broker desk, dana@trinet.example, 555-0199",
     ]);

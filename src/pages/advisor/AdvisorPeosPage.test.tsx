@@ -21,6 +21,17 @@ const api = {
   loadVersionContacts: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
+vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
+// A PEO's own census templates (L-3.1): uploaded through census-template-upload, read from storage once clean.
+const templates = { listCensusTemplates: vi.fn(), uploadCensusTemplate: vi.fn(), readCensusTemplate: vi.fn() };
+vi.mock("@/lib/censusTemplates", async (importActual) => ({ ...(await importActual<typeof import("@/lib/censusTemplates")>()), ...templates }));
+const ExcelJS = (await import("exceljs")).default;
+/** A template built here, its headers on row 3 of the sheet "Census". Nothing about a real PEO's file. */
+const templateWith = async (headers: string[]) => {
+  const wb = new ExcelJS.Workbook();
+  wb.addWorksheet("Census").getRow(3).values = headers;
+  return new Uint8Array(await wb.xlsx.writeBuffer());
+};
 
 const { default: AdvisorPeosPage } = await import("./AdvisorPeosPage");
 
@@ -31,7 +42,7 @@ const TRINET_V1: EditableProfile = {
   ...EMPTY_PROFILE,
   neededToQuote: ["company_name", "states"],
   neededBeforeSigning: ["payroll_vendor"],
-  censusLayout: { peo: "TriNet", format: "xlsx", templateFile: null, columns: [{ header: "Last Name", from: "last_name" }, { header: "First Name", from: "first_name" }, { header: "SSN", from: null }] },
+  censusLayout: { peo: "TriNet", format: "xlsx", template: null, columns: [{ header: "Last Name", from: "last_name" }, { header: "First Name", from: "first_name" }, { header: "SSN", from: null }] },
   documents: [{ category: "workers_comp_loss_runs", description: "Three years of loss runs" }],
   rules: { ...EMPTY_PROFILE.rules, minHeadcount: 5, statesServed: ["CA", "NY"] },
   extraQuestions: [{ key: "uses_drivers", text: "Do any employees drive for work?", kind: "yes_no" }],
@@ -59,6 +70,8 @@ describe("AdvisorPeosPage", () => {
     vi.mocked(toast.error).mockReset();
     api.loadPeoDirectory.mockResolvedValue(directory());
     api.fetchIsAdmin.mockResolvedValue(false);
+    for (const fn of Object.values(templates)) fn.mockReset();
+    templates.listCensusTemplates.mockResolvedValue([]);
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 10, 11, 12));
   });
@@ -476,6 +489,42 @@ describe("AdvisorPeosPage", () => {
       await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalledWith(5, expect.anything(), { draftRevision: null, inUseVersion: 2 }));
     });
 
+    it("checks the census layout reads back before publishing, and blocks with a plain message when it doesn't", async () => {
+      const template = { id: 12, sheet: "Census", headerRow: 3, firstRow: 4 };
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, censusLayout: { ...TRINET_V1.censusLayout!, template } }));
+      templates.listCensusTemplates.mockResolvedValue([{ id: 12, fileName: "TriNet census.xlsx", status: "clean", uploadedAt: "2026-11-01T10:00:00Z" }]);
+      // The template has no "SSN" header, which the layout names.
+      templates.readCensusTemplate.mockResolvedValue(await templateWith(["Last Name", "First Name"]));
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Review and publish" }));
+      const review = screen.getByRole("region", { name: "Publish version 3?" });
+      expect(await within(review).findByText("Template file: None → TriNet census.xlsx, sheet Census, headers on row 3, data from row 4")).toBeInTheDocument();
+      fireEvent.click(within(review).getByRole("button", { name: "Publish version 3" }));
+      expect(await within(review).findByRole("alert")).toHaveTextContent(
+        "The census layout didn't pass its check, so it isn't published: The template's headers don't match the census layout: row 3 of the sheet \"Census\" has no \"SSN\".",
+      );
+      expect(templates.readCensusTemplate).toHaveBeenCalledWith(5, 12);
+      expect(api.publishPeoDraft).not.toHaveBeenCalled();
+
+      // With the headers it names, it reads back, and publishes.
+      templates.readCensusTemplate.mockResolvedValue(await templateWith(["SSN", "First Name", "Last Name"]));
+      api.publishPeoDraft.mockResolvedValue(undefined);
+      fireEvent.click(within(review).getByRole("button", { name: "Publish version 3" }));
+      await waitFor(() => expect(api.publishPeoDraft).toHaveBeenCalledWith(5, "rev-3"));
+    });
+
+    it("won't publish a layout whose template isn't clean, and says why", async () => {
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, censusLayout: { ...TRINET_V1.censusLayout!, template: { id: 12, sheet: "Census", headerRow: 3, firstRow: 4 } } }));
+      templates.listCensusTemplates.mockResolvedValue([{ id: 12, fileName: "TriNet census.xlsx", status: "pending", uploadedAt: "2026-11-01T10:00:00Z" }]);
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Review and publish" }));
+      const review = screen.getByRole("region", { name: "Publish version 3?" });
+      fireEvent.click(within(review).getByRole("button", { name: "Publish version 3" }));
+      expect(await within(review).findByRole("alert")).toHaveTextContent("The census layout didn't pass its check, so it isn't published: TriNet census.xlsx: It is still being checked for viruses, so it can't be used yet.");
+      expect(templates.readCensusTemplate).not.toHaveBeenCalled();
+      expect(api.publishPeoDraft).not.toHaveBeenCalled();
+    });
+
     it("won't publish a draft other than the one reviewed: it says so, and reloads on request", async () => {
       api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, rules: { ...TRINET_V1.rules, minHeadcount: 12 } }));
       api.publishPeoDraft.mockRejectedValueOnce(Object.assign(new Error("This draft changed since you opened it. Reload to see the latest"), { code: "PT409" }));
@@ -592,10 +641,48 @@ describe("AdvisorPeosPage", () => {
       fireEvent.change(screen.getByLabelText("File"), { target: { value: "csv" } });
       fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
       await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalledWith(5, expect.objectContaining({
-        censusLayout: { peo: "TriNet", format: "csv", templateFile: null, columns: [
+        censusLayout: { peo: "TriNet", format: "csv", template: null, columns: [
           { header: "First Name", from: "first_name" }, { header: "SSN", from: null }, { header: "Last Name", from: "last_name" }, { header: "Work State", from: "work_state" },
         ] },
       }), { draftRevision: null, inUseVersion: 2 }));
+    });
+
+    it("fills the PEO's own template: one uploaded and clean is chosen, with its sheet and rows; one that isn't says why", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      templates.listCensusTemplates.mockResolvedValue([
+        { id: 13, fileName: "TriNet census (old).xlsx", status: "blocked", uploadedAt: "2026-11-02T10:00:00Z" },
+        { id: 12, fileName: "TriNet census.xlsx", status: "clean", uploadedAt: "2026-11-01T10:00:00Z" },
+      ]);
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Census layout" }));
+      const picker = await screen.findByLabelText("The PEO's template file");
+      fireEvent.change(picker, { target: { value: "13" } });
+      expect(screen.getByText("The virus check blocked it, so it can't be used. Upload a clean copy.")).toBeInTheDocument();
+      fireEvent.change(picker, { target: { value: "12" } });
+      expect(screen.queryByText(/The virus check blocked it/)).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Sheet"), { target: { value: "Census" } });
+      fireEvent.change(screen.getByLabelText("Row the headers are on"), { target: { value: "3" } });
+      fireEvent.change(screen.getByLabelText("First row of data"), { target: { value: "4" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalledWith(5, expect.objectContaining({
+        censusLayout: expect.objectContaining({ format: "xlsx", template: { id: 12, sheet: "Census", headerRow: 3, firstRow: 4 } }),
+      }), expect.anything()));
+    });
+
+    it("uploads the PEO's template, scanned like any upload, and says what the check found", async () => {
+      templates.uploadCensusTemplate.mockResolvedValue({ id: 14, fileName: "TriNet 2026.xlsx", status: "failed", uploadedAt: "2026-11-11T12:00:00Z" });
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Census layout" }));
+      const file = new File([new Uint8Array([0x50, 0x4b, 3, 4])], "TriNet 2026.xlsx");
+      templates.listCensusTemplates.mockResolvedValue([{ id: 14, fileName: "TriNet 2026.xlsx", status: "failed", uploadedAt: "2026-11-11T12:00:00Z" }]);
+      fireEvent.change(await screen.findByLabelText("Upload the PEO's template (.xlsx)"), { target: { files: [file] } });
+      await waitFor(() => expect(templates.uploadCensusTemplate).toHaveBeenCalledWith(5, file));
+      expect(await screen.findByText("It couldn't be checked for viruses, so it can't be used. Upload it again.")).toBeInTheDocument();
+      expect(screen.getByLabelText("The PEO's template file")).toHaveValue("14");
+
+      templates.uploadCensusTemplate.mockRejectedValue(new Error("A PEO's template is an Excel workbook (.xlsx)."));
+      fireEvent.change(screen.getByLabelText("Upload the PEO's template (.xlsx)"), { target: { files: [new File(["a,b"], "census.csv")] } });
+      expect(await screen.findByText("A PEO's template is an Excel workbook (.xlsx).")).toBeInTheDocument();
     });
 
     it("says next to a column what is wrong with it", async () => {

@@ -3,7 +3,7 @@
 // it; a published version never changes, and the newest published one is the profile in use. The browser reads
 // the PEOs and their profiles in use through public.peo_catalog(), which never includes a PEO contact, and gives
 // anyone but an advisor a person at the PEO by their role only.
-import type { PeoCensusLayout } from "./censusExport";
+import type { CensusTemplateRef, PeoCensusLayout } from "./censusExport";
 import type { DocumentCategory } from "./documentCategories";
 import type { PeoRecord } from "./peoCatalog";
 import type { FieldKey } from "./provenance";
@@ -55,8 +55,6 @@ export const PROFILE_CAPS = {
 /** A PEO's census layout: its columns in order, the file it takes, and its own template file when it has one. */
 export interface ProfileCensusLayout extends PeoCensusLayout {
   format: CensusFileFormat;
-  /** Where the PEO's own template file is kept, when the census must fill it. */
-  templateFile: string | null;
 }
 
 export interface ProfileDocument {
@@ -157,6 +155,13 @@ const list = <T = string>(v: unknown): T[] | null => (Array.isArray(v) ? (v as T
 const num = (v: unknown): number | null => (typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
 const text = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
+/** The PEO's own template a layout fills, as the database holds it ({ id, sheet, header_row, first_row }), or null. */
+function parseTemplateRef(v: unknown): CensusTemplateRef | null {
+  if (!isRow(v)) return null;
+  const id = num(v.id), headerRow = num(v.header_row), firstRow = num(v.first_row), sheet = text(v.sheet);
+  return id !== null && headerRow !== null && firstRow !== null && sheet ? { id, sheet, headerRow, firstRow } : null;
+}
+
 function parseProfile(peo: string, p: Row): RequirementProfile {
   const layout = isRow(p.census_layout) ? p.census_layout : null;
   const rules: EligibilityRules = {
@@ -191,7 +196,7 @@ function parseProfile(peo: string, p: Row): RequirementProfile {
       ? {
           peo,
           format: layout.format as CensusFileFormat,
-          templateFile: text(layout.template_file),
+          template: parseTemplateRef(layout.template_file),
           columns: list<PeoCensusLayout["columns"][number]>(layout.columns) ?? [],
         }
       : null,

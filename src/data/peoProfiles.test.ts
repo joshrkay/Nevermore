@@ -54,7 +54,7 @@ describe("parsePeoCatalog", () => {
       version: 2,
       neededToQuote: ["company_name", "states", "census"],
       neededBeforeSigning: ["payroll_vendor"],
-      censusLayout: { peo: "TriNet", format: "xlsx", templateFile: null, columns: [{ header: "Last Name", from: "last_name" }, { header: "SSN", from: null }] },
+      censusLayout: { peo: "TriNet", format: "xlsx", template: null, columns: [{ header: "Last Name", from: "last_name" }, { header: "SSN", from: null }] },
       documents: [{ category: "workers_comp_loss_runs", description: "Three years of loss runs" }],
       rules: { minHeadcount: 5, statesServed: ["CA", "NY"], excludedIndustries: ["Trucking"], excludedClassCodes: ["7219"], minEnrolmentPercent: 75 },
       extraQuestions: [
@@ -68,6 +68,13 @@ describe("parsePeoCatalog", () => {
       },
       publishedAt: "2026-11-03T10:00:00+00:00",
     });
+  });
+
+  it("reads the PEO's own template a census layout fills: which one, the sheet, the header row and the first row of data", () => {
+    const row = { ...TRINET_ROW, profile: { ...TRINET_ROW.profile, census_layout: { ...TRINET_ROW.profile.census_layout, template_file: { id: 12, sheet: "Census", header_row: 3, first_row: 4 } } } };
+    expect(parsePeoCatalog([row])[0].profile?.censusLayout?.template).toEqual({ id: 12, sheet: "Census", headerRow: 3, firstRow: 4 });
+    const broken = { ...row, profile: { ...row.profile, census_layout: { ...row.profile.census_layout, template_file: { id: 12, header_row: 3, first_row: 4 } } } };
+    expect(parsePeoCatalog([broken])[0].profile?.censusLayout?.template).toBeNull();
   });
 
   it("reads a person at the PEO whose name the catalog leaves out (anyone but an advisor) as their role and date only", () => {

@@ -935,9 +935,9 @@ describe("AdvisorSubmissionPage", () => {
     expect(await within(within(panel).getByTestId("quote-request-7")).findByText("TriNet takes groups of 20 or more employees; this employer has 12.", { exact: false })).toBeInTheDocument();
     expect(within(panel).getByTestId("quote-request-7")).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
     expect(within(within(panel).getByLabelText("PEO")).getAllByRole("option").map((o) => o.textContent).slice(1)).toEqual(["Insperity", "TriNet"]);
-    // A PEO that isn't listed isn't offered anywhere, the census layouts included.
+    // The census beside the table is in our own layout; each PEO's is on its card in What each PEO still needs.
     const census = screen.getByRole("region", { name: "Employee census" });
-    expect(within(within(census).getByLabelText("Layout")).getAllByRole("option").map((o) => o.textContent).slice(1)).toEqual(["Insperity", "TriNet"]);
+    expect(within(census).getByText("Our layout, every column named, as a CSV file. From certified version 1.")).toBeInTheDocument();
   });
 
   it("offers the certified census as a file in a PEO's layout, only while the intake is certified", async () => {
@@ -1223,6 +1223,29 @@ describe("AdvisorSubmissionPage", () => {
       expect(needs).toHaveTextContent("The prospect has changed answers since certifying. What's listed here is as of version 3.");
       fireEvent.click(within(trinet).getByRole("button", { name: "Show what's missing" }));
       expect(within(trinet).getByRole("region", { name: "Needed to quote" })).toHaveTextContent("HRIS system: not provided");
+    });
+
+    it("offers each PEO's census in the layout its profile holds, on its card, from the last certified version", async () => {
+      const census = [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
+      peoCatalogRows = catalog().map((p) => (p.name === "TriNet"
+        ? { ...p, profile: { ...p.profile!, census_layout: { format: "csv", template_file: null, columns: [{ header: "Surname", from: "last_name" }, { header: "Gender", from: null }] } } }
+        : p));
+      // Certified as version 3 with Ana; the prospect has since changed answers, which withdrew it.
+      api.loadSubmission.mockResolvedValue(detail({
+        certified: false, intakeStatus: "in_progress", data: { ...signedData, census: [] }, currentVersion: 3,
+        signed: { data: { ...signedData, census }, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: {} },
+      }));
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      expect(trinet).toHaveTextContent("The prospect has changed answers since certifying. These files are from version 3.");
+      expect(trinet).toHaveTextContent("TriNet's census layout, as a CSV file. From certified version 3.");
+      expect(trinet).toHaveTextContent("TriNet's layout also asks for: Gender. Fill these in before sending.");
+      fireEvent.click(within(trinet).getByRole("button", { name: "Download the census in TriNet's layout" }));
+      await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-census-trinet-v3.csv"));
+      // A PEO whose profile has no census layout gets ours.
+      const justworks = within(needs).getByRole("heading", { name: "Justworks" }).closest("article")!;
+      expect(justworks).toHaveTextContent("We don't have Justworks's census layout yet, so this is ours: every column is named.");
     });
 
     it("can't tell what a PEO still needs from a certification older than its kept field status and documents", async () => {

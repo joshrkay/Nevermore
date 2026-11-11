@@ -22,7 +22,6 @@ import { censusPay, isW2 } from "@/data/census";
 import { coverageTier, NOT_PROVIDED } from "@/data/manuscript";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
 import { describeSource } from "@/data/referralPartners";
-import { listedPeos } from "@/data/peoCatalog";
 import { lastCertifiedVersion } from "@/data/peoCompleteness";
 import type { FieldKey } from "@/data/provenance";
 import type { ExtraQuestionRef } from "@/data/extraAnswers";
@@ -196,7 +195,7 @@ const Detail = ({
             messageIds={messageIds}
             onShowMessage={onShowMessage}
             onChanged={reload}
-            census={<CensusTable detail={detail} peos={listedPeos(peoCatalog.peos).map((p) => p.name)} />}
+            census={<CensusTable detail={detail} />}
           />
           <TranscriptEvidence
             messages={detail.transcript}
@@ -309,13 +308,14 @@ const ChangedSinceSigning = ({ detail, signed }: { detail: SubmissionDetail; sig
 };
 
 /** The census as the Manuscript prints it, under the census's row in the Workforce section. */
-const CensusTable = ({ detail, peos }: { detail: SubmissionDetail; peos: string[] }) => (
+const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
   <section aria-labelledby="census-heading" className="border border-border rounded-lg p-4">
     <h4 id="census-heading" className="text-sm font-medium mb-3">Employee census</h4>
-    {/* The certified census as a file for a PEO (#86): only from the certified copy, never a draft. */}
+    {/* The certified census as a file in our own layout (#86): only from the certified copy, never a draft. Each PEO's
+        own layout is on its card in What each PEO still needs (L-3.1). */}
     {detail.certified && detail.fileId && detail.data.census.length > 0 && (
       <div className="mb-3">
-        <CensusDownload census={detail.data.census} fileId={detail.fileId} peos={peos} />
+        <CensusDownload census={detail.data.census} fileId={detail.fileId} version={detail.currentVersion} peo={null} catalog={[]} />
       </div>
     )}
     {detail.data.census.length === 0 ? (

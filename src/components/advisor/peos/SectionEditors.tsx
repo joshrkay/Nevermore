@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, Loader2, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
@@ -7,6 +7,7 @@ import { ANSWER_FIELDS, EXTRA_QUESTION_LABELS, isStaleDraftError, PROFILE_PART_T
 import { EXTRA_QUESTION_KINDS, PROFILE_PARTS, utcToday, type ProfilePart } from "@/data/peoProfiles";
 import { FIELD_LABELS } from "@/data/provenance";
 import { savePeoDraft } from "@/lib/advisorApi";
+import { listCensusTemplates, templateStatusProblem, uploadCensusTemplate, type CensusTemplateRecord } from "@/lib/censusTemplates";
 import { buttonClass, columnLabel, inputClass, primaryClass, problemAt, sourceDraft, sourceFrom, suggestQuestionKey, type SectionKey, type SourceDraft } from "./shared";
 import { Field, SourceFields } from "./SourceFields";
 
@@ -341,17 +342,105 @@ export const AnswersEditor = ({ peoId, base, basis, today, onSaved, onCancel, on
 
 // ---------- Census layout ----------
 
+type TemplateFields = { templateId: string; sheet: string; headerRow: string; firstRow: string };
+
+/**
+ * The PEO's own template the census fills, when it has one (L-3.1): one uploaded for this PEO, or a new upload, which
+ * is checked for viruses as every upload is (docs/adr/0002); and where in it the census goes. A template that isn't
+ * clean is never used, and this says why.
+ */
+const TemplatePicker = ({ peoId, value, onChange, problem }: { peoId: number; value: TemplateFields; onChange: (patch: Partial<TemplateFields>) => void; problem?: string }) => {
+  const [list, setList] = useState<CensusTemplateRecord[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProblem, setUploadProblem] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      setList(await listCensusTemplates(peoId));
+      setLoadFailed(false);
+    } catch {
+      setLoadFailed(true);
+    }
+  }, [peoId]);
+  useEffect(() => { void load(); }, [load]);
+  const chosen = list?.find((t) => String(t.id) === value.templateId);
+  const status = chosen ? templateStatusProblem(chosen.status) : null;
+  const id = `peo-${peoId}-census-template`;
+
+  const upload = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(true);
+    setUploadProblem(null);
+    try {
+      const added = await uploadCensusTemplate(peoId, file);
+      await load();
+      onChange({ templateId: String(added.id) });
+    } catch (err) {
+      setUploadProblem((err as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 border border-border rounded-lg p-3">
+      <Field id={id} label="The PEO's template file" hint="Only when the PEO wants its own spreadsheet filled in. Its headers must match the columns below." problem={problem}>
+        {(p) => (
+          <select {...p} value={value.templateId} onChange={(e) => onChange({ templateId: e.target.value })} className={inputClass}>
+            <option value="">None: we write the file</option>
+            {(list ?? []).map((t) => (
+              <option key={t.id} value={String(t.id)}>{`${t.fileName}${t.status === "clean" ? "" : ` (${t.status === "pending" ? "being checked" : t.status === "blocked" ? "blocked" : "not checked"})`}`}</option>
+            ))}
+          </select>
+        )}
+      </Field>
+      {loadFailed && <p role="alert" className="text-xs text-destructive">The PEO's template files couldn't be loaded. <button type="button" onClick={() => void load()} className="underline min-h-11">Try again</button></p>}
+      {status && <p className="text-xs text-warning">{status}</p>}
+      <div className="space-y-1">
+        <label htmlFor={`${id}-upload`} className="block text-sm font-medium">Upload the PEO's template (.xlsx)</label>
+        <input
+          id={`${id}-upload`}
+          type="file"
+          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          disabled={uploading}
+          onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = ""; }}
+          className="block w-full text-sm min-h-11"
+        />
+        <p className="text-xs text-muted-foreground">It is checked for viruses before anyone can use it.</p>
+        {uploading && <p aria-live="polite" className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" /> Uploading and checking it…</p>}
+        {uploadProblem && <p role="alert" className="text-xs text-destructive">{uploadProblem}</p>}
+      </div>
+      {value.templateId !== "" && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field id={`${id}-sheet`} label="Sheet">
+            {(p) => <input {...p} value={value.sheet} onChange={(e) => onChange({ sheet: e.target.value })} className={inputClass} />}
+          </Field>
+          <Field id={`${id}-header-row`} label="Row the headers are on">
+            {(p) => <input {...p} type="number" min={1} value={value.headerRow} onChange={(e) => onChange({ headerRow: e.target.value })} className={inputClass} />}
+          </Field>
+          <Field id={`${id}-first-row`} label="First row of data">
+            {(p) => <input {...p} type="number" min={2} value={value.firstRow} onChange={(e) => onChange({ firstRow: e.target.value })} className={inputClass} />}
+          </Field>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const CensusEditor = ({ peoId, base, basis, today, onSaved, onCancel, onReload }: EditorProps) => {
   const [census, setCensus] = useEdited(() => {
     const layout = base.censusLayout;
     return {
       held: layout !== null,
       format: (layout?.format ?? "xlsx") as string,
-      templateFile: layout?.templateFile ?? "",
+      templateId: layout?.template ? String(layout.template.id) : "",
+      sheet: layout?.template?.sheet ?? "",
+      headerRow: layout?.template ? String(layout.template.headerRow) : "1",
+      firstRow: layout?.template ? String(layout.template.firstRow) : "2",
       columns: (layout?.columns ?? [{ header: "", from: null }]).map((c) => ({ key: rowKey(), header: c.header, from: c.from as string | null })),
     };
   }, base);
-  const { held, format, templateFile, columns } = census;
+  const { held, format, templateId, sheet, headerRow, firstRow, columns } = census;
   const set = (patch: Partial<typeof census>) => setCensus({ ...census, ...patch });
   const setColumns = (next: typeof columns) => set({ columns: next });
   const [problems, setProblems] = useState<ProfileProblem[]>([]);
@@ -360,7 +449,12 @@ export const CensusEditor = ({ peoId, base, basis, today, onSaved, onCancel, onR
   const sources = useSectionSources(base, today, ["census_layout"], () => ({
     ...base,
     censusLayout: held
-      ? { peo: base.censusLayout?.peo ?? null, format: format as "csv" | "xlsx", templateFile: templateFile.trim() === "" ? null : templateFile.trim(), columns: columns.map((c) => ({ header: c.header.trim(), from: (c.from || null) as never })) }
+      ? {
+          peo: base.censusLayout?.peo ?? null,
+          format: format as "csv" | "xlsx",
+          template: templateId === "" ? null : { id: Number(templateId), sheet: sheet.trim(), headerRow: Number(headerRow), firstRow: Number(firstRow) },
+          columns: columns.map((c) => ({ header: c.header.trim(), from: (c.from || null) as never })),
+        }
       : null,
   } as EditableProfile));
 
@@ -396,10 +490,14 @@ export const CensusEditor = ({ peoId, base, basis, today, onSaved, onCancel, onR
                 </select>
               )}
             </Field>
-            <Field id={`peo-${peoId}-census-template`} label="The PEO's template file (optional)" hint="Where the file we fill is kept, when the PEO has one." problem={problemAt(problems, "censusLayout.templateFile")}>
-              {(p) => <input {...p} value={templateFile} onChange={(e) => set({ templateFile: e.target.value })} className={inputClass} />}
-            </Field>
           </div>
+          <TemplatePicker
+            peoId={peoId}
+            value={{ templateId, sheet, headerRow, firstRow }}
+            // A template is an xlsx file filled in, so choosing one makes the file xlsx.
+            onChange={(patch) => set({ ...patch, ...(patch.templateId ? { format: "xlsx" } : {}) })}
+            problem={problemAt(problems, "censusLayout.template")}
+          />
           <div className="space-y-2">
             <h4 className="text-sm font-medium">Columns, in the PEO's order</h4>
             <p className="text-xs text-muted-foreground">Copy each header as the PEO's form writes it. Alt and the up or down arrow moves the column you are in.</p>

@@ -370,6 +370,15 @@ export const DATA_CLASSES: DataClass[] = [
     retention: "For good: a published profile version never changes, so a packet can always be read against what the PEO asked for at the time. A PEO contact stays with the version that names them.",
     deletion: "Nothing about an intake is in them, so deleting an intake leaves them. A PEO contact who asks to be removed is removed by hand (docs/DATA_HANDLING.md).",
   },
+  {
+    id: "peo_census_templates",
+    label: "PEOs' own census templates",
+    sensitivity: "confidential",
+    examples: "The blank census spreadsheet a PEO asks to have filled, as an admin uploaded it, with its file name, size, hash and virus-check result. Nothing about an intake: the census is written into a copy in the browser of whoever downloads it.",
+    stored: { tables: ["peo_census_templates"], buckets: ["peo-templates", "quarantine"], elsewhere: ["The malware scanner, while it checks an upload (docs/adr/0002)"] },
+    retention: "For good, as the profile versions that name them are, so a census can always be filled as the PEO asked at the time. A blocked one stays in quarantine for incident review.",
+    deletion: "Nothing about an intake is in them, so deleting an intake leaves them. A template is removed by hand if a PEO asks (docs/DATA_HANDLING.md).",
+  },
 ];
 
 /** The classes a table or bucket belongs to. */

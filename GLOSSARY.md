@@ -77,7 +77,7 @@ The list of the employer's employees, one row per person, with the facts underwr
 _Avoid_: roster, employee list, employees
 
 **PEO census layout**:
-A PEO's own column layout for a census, so the certified census can be sent in the shape its underwriters read. Columns the intake doesn't collect are left blank and named. A PEO whose layout isn't held gets the census template's own layout. It is part of the PEO's **Requirement profile**.
+A PEO's own column layout for a census, so the certified census can be sent in the shape its underwriters read: its columns in order, each filled from one of our census columns or left blank, and the file it takes, CSV or xlsx. Where the PEO wants its own spreadsheet filled in, the layout names that template (an upload like any other, scanned before anyone can use it) with the sheet, the row its headers are on and the first row of data, and the census is written under its headers, matched by their text, the rest of the workbook kept. Columns the intake doesn't collect are left blank and named before the download. Every file is built from the last certified version and says which. A PEO whose profile in use holds no layout, or a PEO typed in that isn't on the list, gets the census template's own layout. It is part of the PEO's **Requirement profile**.
 _Avoid_: census template (that is our own layout), census format
 
 **Employee**:

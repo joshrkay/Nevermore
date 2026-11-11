@@ -21,7 +21,7 @@ const buckets = new Set(
 describe("data classification against the schema", () => {
   it("finds the tables and buckets it checks", () => {
     expect(tables.size).toBeGreaterThanOrEqual(22);
-    expect([...buckets].sort()).toEqual(["documents", "manuscripts", "quarantine"]);
+    expect([...buckets].sort()).toEqual(["documents", "manuscripts", "peo-templates", "quarantine"]);
   });
 
   it.each([...tables].sort())("classifies the table %s", (table) => {
@@ -40,10 +40,11 @@ describe("data classification against the schema", () => {
   });
 
   it("gives each bucket the sensitivity of the most sensitive thing it holds", () => {
-    // Every bucket holds census data, so every one is restricted.
-    for (const bucket of buckets) {
+    // Every bucket but the PEOs' blank templates holds census data, so every other one is restricted.
+    for (const bucket of [...buckets].filter((b) => b !== "peo-templates")) {
       expect(classesStoredIn({ bucket }).some((c) => c.sensitivity === "restricted"), bucket).toBe(true);
     }
+    expect(classesStoredIn({ bucket: "peo-templates" }).map((c) => [c.id, c.sensitivity])).toEqual([["peo_census_templates", "confidential"]]);
   });
 });
 

@@ -12,7 +12,7 @@ import { CONSENT_DRAFT_LABEL } from "@/data/certification";
 import { buildManuscript, CHECK_OUTCOME, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, rowSourceLine, type ChamberSubmission, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
 import { parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { checkedLine, localToday } from "@/data/peoProfiles";
-import { FIT_WORDS, listedPeos, NOT_MET_NOTE } from "@/data/peoCatalog";
+import { FIT_WORDS, NOT_MET_NOTE } from "@/data/peoCatalog";
 
 /** A packet check's outcome in the words the eligibility checks use everywhere. */
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
@@ -439,15 +439,15 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           </div>
         )}
 
-        {/* The certified census as a file, in a PEO's layout when we hold it (#86). Not while withdrawn: nothing
-            here may pass as a current certification. */}
+        {/* The certified census as a file for the PEO the prospect chose, in the census layout its profile holds (L-3.1),
+            or ours. Not while withdrawn: nothing here may pass as a current certification. */}
         {state.kind === "ready" && !withdrawn && state.data.census.length > 0 && (
           <section aria-labelledby="census-file-heading" className="bg-card border border-border rounded-xl p-5 space-y-2">
             <h2 id="census-file-heading" className="font-display text-lg font-bold">Your census, as a file</h2>
             <p className="text-sm text-muted-foreground">
               Send it with your packet so the PEO's underwriters don't have to re-type it. It's the census you certified.
             </p>
-            <CensusDownload census={state.data.census} fileId={state.fileId} peos={listedPeos(peoCatalog.peos).map((p) => p.name)} />
+            <CensusDownload census={state.data.census} fileId={state.fileId} version={state.submission.version ?? null} peo={state.submission.peo ?? null} catalog={peoCatalog.peos} />
           </section>
         )}
 

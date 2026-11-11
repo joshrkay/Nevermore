@@ -1,7 +1,7 @@
 // Pure helpers for scripts/supabase-setup.mjs: parsing, validation, the SQL it runs and how it
 // reads the results. No I/O, so they are unit-tested (scripts/supabase-setup-lib.test.ts).
 
-export const FUNCTIONS = ["chamber-extract", "document-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "purge-intakes", "ops-monitor"];
+export const FUNCTIONS = ["chamber-extract", "document-upload", "census-template-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "purge-intakes", "ops-monitor"];
 
 /** What MALWARE_SCANNER may be (supabase/functions/_shared/malwareScan.ts). */
 export const MALWARE_SCANNERS = ["scanii", "clamav", "http", "none"];

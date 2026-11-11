@@ -57,7 +57,9 @@ export const SectionContents = ({ section, profile }: { section: SectionKey; pro
         <div className="space-y-2 text-sm">
           <p>
             {profile.censusLayout.format === "xlsx" ? "An xlsx file" : "A CSV file"}
-            {profile.censusLayout.templateFile ? `, filling the PEO's template ${profile.censusLayout.templateFile}` : ""}, with these columns in order:
+            {profile.censusLayout.template
+              ? `, filling the PEO's own template (sheet ${profile.censusLayout.template.sheet}, headers on row ${profile.censusLayout.template.headerRow}, data from row ${profile.censusLayout.template.firstRow})`
+              : ""}, with these columns in order:
           </p>
           <ol className="list-decimal pl-5">
             {profile.censusLayout.columns.map((c) => <li key={c.header}>{c.header}{c.from ? "" : " (left blank)"}</li>)}

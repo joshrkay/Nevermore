@@ -656,13 +656,15 @@ describe("ManuscriptPage", () => {
       chamber_data: { ...base.chamber_data, census: [{ id: "2", first_name: "Added", last_name: "Later" }] },
       submission: { ...base.submission, chamber_data: { ...signed, census: signedCensus } },
     });
+    // The prospect chose Justworks, whose profile in use has no census layout: ours, and the page says so.
     peoCatalogRows = [{ id: 3, name: "Justworks", profile: null }, { id: 5, name: "TriNet", listed: false, profile: null }];
     renderAt("/manuscript/EAA-2026-0042");
-    fireEvent.click(await screen.findByRole("button", { name: "Download the census" }));
-    // The layouts offered are the listed PEOs' only.
-    await waitFor(() => expect(screen.getAllByRole("option").map((o) => o.textContent).slice(1)).toEqual(["Justworks"]));
+    expect(await screen.findByText("We don't have Justworks's census layout yet, so this is ours: every column is named.")).toBeInTheDocument();
+    expect(screen.getByText("Our layout, every column named, as a CSV file. From certified version 2.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download the census" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalled());
     const [blob, name] = downloadBlob.mock.calls.at(-1)!;
-    expect(name).toBe("EAA-2026-0042-census.csv");
+    expect(name).toBe("EAA-2026-0042-census-v2.csv");
     const csv = await new Promise<string>((resolve) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
@@ -704,6 +706,26 @@ describe("ManuscriptPage", () => {
     expect(files).toHaveTextContent("Version 2 was certified before we kept the answers to Justworks's own questions, so we can't tell them from it. Certifying again adds them.");
     expect(within(files).queryByText(/not answered/)).not.toBeInTheDocument();
     expect(within(files).queryByRole("button", { name: /Download/ })).not.toBeInTheDocument();
+  });
+
+  it("offers the census in the chosen PEO's own census layout, from its profile in use", async () => {
+    downloadBlob.mockClear();
+    const base = certified();
+    row = certified({ submission: { ...base.submission, chamber_data: { ...signed, census: [{ id: "1", first_name: "Signed", last_name: "Person", work_state: "CA" }] } } });
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 4, census_layout: { format: "csv", template_file: null, columns: [{ header: "Surname", from: "last_name" }, { header: "Start Date", from: null }] } } }];
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Justworks's census layout, as a CSV file. From certified version 2.")).toBeInTheDocument();
+    expect(screen.getByText("Justworks's layout also asks for: Start Date. Fill these in before sending.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download the census in Justworks's layout" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalled());
+    const [blob, name] = downloadBlob.mock.calls.at(-1)!;
+    expect(name).toBe("EAA-2026-0042-census-justworks-v2.csv");
+    const csv = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.readAsText(blob as Blob);
+    });
+    expect(csv).toBe("Surname,Start Date\r\nPerson,\r\n");
   });
 
   it("offers no PEO's questions while the certification is withdrawn", async () => {

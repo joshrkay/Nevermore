@@ -364,6 +364,14 @@ BEGIN
     ('a census column with an unknown part', '{"census_layout": {"format": "csv", "template_file": null, "columns": [{"header": "Name", "from": null, "width": 9}]}}'),
     ('a census layout with an unknown part', '{"census_layout": {"format": "csv", "template_file": null, "columns": [{"header": "Name", "from": null}], "sheet": "A"}}'),
     ('a template file reference that is empty', '{"census_layout": {"format": "xlsx", "template_file": "", "columns": [{"header": "Name", "from": null}]}}'),
+    ('a template file named by a path, not by the template uploaded', '{"census_layout": {"format": "xlsx", "template_file": "peo-templates/justworks.xlsx", "columns": [{"header": "Name", "from": null}]}}'),
+    ('a template file with no sheet', '{"census_layout": {"format": "xlsx", "template_file": {"id": 1, "header_row": 1, "first_row": 2}, "columns": [{"header": "Name", "from": null}]}}'),
+    ('a template sheet named longer than a sheet can be', jsonb_build_object('census_layout', jsonb_build_object('format', 'xlsx', 'template_file', jsonb_build_object('id', 1, 'sheet', repeat('s', 32), 'header_row', 1, 'first_row', 2), 'columns', '[{"header": "Name", "from": null}]'::jsonb))),
+    ('a template whose headers are on row 0', '{"census_layout": {"format": "xlsx", "template_file": {"id": 1, "sheet": "Census", "header_row": 0, "first_row": 2}, "columns": [{"header": "Name", "from": null}]}}'),
+    ('a template whose data starts above its headers', '{"census_layout": {"format": "xlsx", "template_file": {"id": 1, "sheet": "Census", "header_row": 3, "first_row": 3}, "columns": [{"header": "Name", "from": null}]}}'),
+    ('a template that isn''t an uploaded one', '{"census_layout": {"format": "xlsx", "template_file": {"id": 0, "sheet": "Census", "header_row": 1, "first_row": 2}, "columns": [{"header": "Name", "from": null}]}}'),
+    ('a template with an unknown part', '{"census_layout": {"format": "xlsx", "template_file": {"id": 1, "sheet": "Census", "header_row": 1, "first_row": 2, "macro": true}, "columns": [{"header": "Name", "from": null}]}}'),
+    ('a template filled into a CSV', '{"census_layout": {"format": "csv", "template_file": {"id": 1, "sheet": "Census", "header_row": 1, "first_row": 2}, "columns": [{"header": "Name", "from": null}]}}'),
     ('a census layout with more than 200 columns', jsonb_build_object('census_layout', jsonb_build_object('format', 'csv', 'template_file', NULL, 'columns', cols))),
     ('a document of a kind we don''t take', '{"documents": [{"category": "tax_return", "description": "Last year''s return"}]}'),
     ('a document with no description', '{"documents": [{"category": "payroll_report", "description": ""}]}'),
@@ -419,10 +427,11 @@ BEGIN
     'contacts', pg_temp.full_profile() -> 'contacts'));
   PERFORM pg_temp.must_raise(admin, pg_temp.publish_sql(justworks), '22023', 'publishing contacts with no source');
 
-  -- What the caps allow is stored: 200 columns, 30 questions, a template file; and a section with nothing in it,
-  -- sourced, says the PEO asks for none (no documents, here).
+  -- What the caps allow is stored: 200 columns, 30 questions, a template file (the sheet, the row of its headers
+  -- and the first row of data); and a section with nothing in it, sourced, says the PEO asks for none (no
+  -- documents, here). Which uploaded template it names is checked where templates are kept (20261114090000).
   PERFORM pg_temp.save(admin, justworks, jsonb_build_object(
-    'census_layout', jsonb_build_object('format', 'csv', 'template_file', 'peo-templates/justworks.xlsx', 'columns', cols - 200),
+    'census_layout', jsonb_build_object('format', 'xlsx', 'template_file', jsonb_build_object('id', 1, 'sheet', repeat('s', 31), 'header_row', 3, 'first_row', 4), 'columns', cols - 200),
     'extra_questions', qs - 30,
     'sources', jsonb_build_object('census_layout', pg_temp.guide((current_date + 1)::text), 'extra_questions', pg_temp.guide(), 'documents', pg_temp.guide())));
   PERFORM pg_temp.publish(admin, justworks);

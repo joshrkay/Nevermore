@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { CENSUS_ASSUMABLE, CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES, MAX_ANNUAL_SALARY, MAX_CENSUS_ROWS, MAX_DEPENDENTS as CENSUS_MAX_DEPENDENTS } from "@/data/census";
 import {
@@ -32,15 +32,19 @@ import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
 import { QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
-import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS, profileProblems } from "@/data/peoEditor";
+import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS, profileProblems, TEMPLATE_LIMITS } from "@/data/peoEditor";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
 import { EXTRA_ANSWER_LIMITS } from "@/data/extraAnswers";
+import { CENSUS_TEMPLATE_STATUSES } from "@/lib/censusTemplates";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
+
+// censusTemplates reads storage through the client; nothing here does.
+vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 
 // The server (supabase/migrations/20261027090000_intake_validation_and_versioning.sql, and later
 // migrations that replace its functions) refuses what the client sanitiser would never produce, so the
@@ -338,6 +342,23 @@ describe("server and client intake rules agree", () => {
     expect(EXTRA_ANSWER_LIMITS.text).toBe(TEXT_MAX);
     // An answer's key is a profile question's key.
     expect(readFileSync("supabase/migrations/20261113090000_extra_answers.sql", "utf8")).toContain(`'${PROFILE_PATTERNS.questionKey}'`);
+  });
+
+  it("knows every state a PEO's census template's virus check can leave it in", () => {
+    expect(quoted(blocks("census_template_statuses").join("\n"))).toEqual([...CENSUS_TEMPLATE_STATUSES]);
+  });
+
+  // A census layout's template file (L-3.1): where it is filled, with the editor's words.
+  it("checks where a PEO's template is filled as the database does, with the editor's words", () => {
+    const [sql] = blocks("peo_template_rules");
+    expect(Number(/BETWEEN 1 AND (\d+)/.exec(sql)?.[1])).toBe(TEMPLATE_LIMITS.sheet);
+    expect(Number(/header_row\}'\)::integer > (\d+)/.exec(sql)?.[1])).toBe(TEMPLATE_LIMITS.headerRow);
+    expect(Number(/first_row\}'\)::integer > (\d+)/.exec(sql)?.[1])).toBe(TEMPLATE_LIMITS.lastRow);
+    const layout = (template: object, format = "xlsx") => ({ ...EMPTY_PROFILE, censusLayout: { peo: "TriNet", format, template, columns: [{ header: "Name", from: null }] } }) as never;
+    const [shape] = profileProblems(layout({ id: 1, sheet: " ", headerRow: 1, firstRow: 2 }), "2026-11-11");
+    const [csv] = profileProblems(layout({ id: 1, sheet: "Census", headerRow: 1, firstRow: 2 }, "csv"), "2026-11-11");
+    expect(sql).toContain(`RETURN '${shape.message}'`);
+    expect(sql).toContain(`RETURN '${csv.message.replace("'", "''")}'`);
   });
 
   it("keeps a listed PEO's name to the longest PEO name", () => {

@@ -16,6 +16,7 @@ import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import { formatDay } from "@/data/quoteRequests";
 import type { QuoteRequestRow } from "@/lib/advisorApi";
 import { supplementFor } from "@/data/peoSupplement";
+import CensusDownload from "@/components/CensusDownload";
 import SupplementDownload from "@/components/SupplementDownload";
 
 interface PeoNeedsPanelProps {
@@ -76,6 +77,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
   const { peo, completeness: c } = entry;
   const stale = staleProfileWarning(peo, today);
   const anything = c.toQuote.length + c.beforeSigning.length > 0;
+  const census = certified.intake.data.census;
   const supplement = supplementFor(peo, { certified: certified.intake.extraAnswers, fileId, version: certified.version, companyName });
   return (
     <article aria-labelledby={`${id}-name`} className="bg-card border border-border rounded-xl p-4 space-y-3">
@@ -113,8 +115,17 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
         </>
       )}
       <EligibilityChecks peo={peo.name} checks={peoFit(certified.intake.data, peo, today)} />
-      {/* Its own questions go to it alone, as their own file built from the certified version. */}
-      {supplement && <SupplementDownload supplement={supplement} />}
+      {/* Its files, built from the last certified version: the census in its layout, and its own questions, which go
+          to it alone. */}
+      {(census.length > 0 || supplement) && (
+        <div className="space-y-3 border-t border-border pt-3">
+          {certified.changedSince && (
+            <p className="text-xs text-muted-foreground">{`The prospect has changed answers since certifying. These files are from version ${certified.version ?? "on record"}.`}</p>
+          )}
+          {census.length > 0 && <CensusDownload census={census} fileId={fileId} version={certified.version} peo={peo.name} catalog={[peo]} />}
+          {supplement && <SupplementDownload supplement={supplement} />}
+        </div>
+      )}
       {!c.complete && askBlocked !== null && (
         <p className="text-sm text-muted-foreground">{`The prospect can't be asked for it now: ${askBlocked.charAt(0).toLowerCase()}${askBlocked.slice(1)}`}</p>
       )}

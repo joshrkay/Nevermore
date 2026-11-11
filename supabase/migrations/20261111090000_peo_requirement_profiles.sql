@@ -64,7 +64,8 @@ CREATE TABLE public.peo_profile_versions (
   -- before the client signs.
   needed_to_quote text[] NOT NULL DEFAULT '{}',
   needed_before_signing text[] NOT NULL DEFAULT '{}',
-  -- The PEO's census layout: { format, template_file, columns: [{ header, from }] }; null until sourced.
+  -- The PEO's census layout: { format, template_file, columns: [{ header, from }] }; null until sourced. template_file
+  -- is null, or { id, sheet, header_row, first_row }: the PEO's own template the census fills (L-3.1).
   census_layout jsonb,
   -- The documents the PEO asks for: [{ category, description }].
   documents jsonb NOT NULL DEFAULT '[]',
@@ -191,10 +192,30 @@ BEGIN
     IF NOT COALESCE(layout ->> 'format' = ANY (census_formats), false) THEN
       RETURN 'A census file is CSV or xlsx';
     END IF;
-    IF jsonb_typeof(layout -> 'template_file') NOT IN ('null', 'string')
-       OR char_length(btrim(COALESCE(layout ->> 'template_file', 'x'))) NOT BETWEEN 1 AND max_source_name THEN
-      RETURN format('A template file is named by its path, up to %s characters, or not at all', max_source_name);
+    -- The PEO's own template file, when the census fills one (L-3.1): the template uploaded (its id in
+    -- peo_census_templates, 20261114090000, which checks it is this PEO's), the sheet, the row its headers are on and
+    -- the first row of data below them. Only an xlsx file can fill it.
+    -- sync:begin peo_template_rules
+    IF jsonb_typeof(layout -> 'template_file') IS DISTINCT FROM 'null' AND (
+         jsonb_typeof(layout -> 'template_file') IS DISTINCT FROM 'object'
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(layout -> 'template_file') k WHERE k NOT IN ('id', 'sheet', 'header_row', 'first_row'))
+         OR jsonb_typeof(layout #> '{template_file,id}') IS DISTINCT FROM 'number'
+         OR (layout #>> '{template_file,id}') !~ '^[1-9][0-9]{0,18}$'
+         OR jsonb_typeof(layout #> '{template_file,sheet}') IS DISTINCT FROM 'string'
+         OR char_length(btrim(layout #>> '{template_file,sheet}')) NOT BETWEEN 1 AND 31
+         OR jsonb_typeof(layout #> '{template_file,header_row}') IS DISTINCT FROM 'number'
+         OR jsonb_typeof(layout #> '{template_file,first_row}') IS DISTINCT FROM 'number'
+         OR (layout #>> '{template_file,header_row}') !~ '^[1-9][0-9]{0,6}$'
+         OR (layout #>> '{template_file,first_row}') !~ '^[1-9][0-9]{0,6}$'
+         OR (layout #>> '{template_file,header_row}')::integer > 1000
+         OR (layout #>> '{template_file,first_row}')::integer > 1048576
+         OR (layout #>> '{template_file,first_row}')::integer <= (layout #>> '{template_file,header_row}')::integer) THEN
+      RETURN 'A template file is the template uploaded, a sheet named in 1 to 31 characters, the row its headers are on (1 to 1,000) and the first row of data below them';
     END IF;
+    IF jsonb_typeof(layout -> 'template_file') = 'object' AND layout ->> 'format' <> 'xlsx' THEN
+      RETURN 'Only an xlsx census fills the PEO''s template file';
+    END IF;
+    -- sync:end peo_template_rules
     IF jsonb_typeof(layout -> 'columns') IS DISTINCT FROM 'array' OR jsonb_array_length(layout -> 'columns') NOT BETWEEN 1 AND max_census_columns THEN
       RETURN format('A census layout has 1 to %s columns', max_census_columns);
     END IF;

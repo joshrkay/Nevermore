@@ -99,6 +99,7 @@
 \i supabase/migrations/20261112090000_peo_industry_class_codes.sql
 \i supabase/migrations/20261113090000_extra_answers.sql
 \i supabase/migrations/20261113100000_information_request_extra_questions.sql
+\i supabase/migrations/20261114090000_peo_census_templates.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -366,8 +367,12 @@ BEGIN
   PERFORM public.admin_publish_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'),
     (SELECT revision FROM public.peo_profile_versions v JOIN public.peos p ON p.id = v.peo_id WHERE p.name = 'TriNet' AND v.status = 'draft'));
 
+  -- The admin uploads TriNet's census template (20261114090000), which its scan finds clean.
+  PERFORM public.admin_register_census_template((SELECT id FROM public.peos WHERE name = 'TriNet'), 'TriNet census.xlsx', 2048, repeat('c', 64));
+
   -- Email delivery, and the AI rate-limit counters.
   PERFORM pg_temp.become('service');
+  PERFORM public.record_census_template_scan((SELECT max(id) FROM public.peo_census_templates), 'clean', NULL);
   PERFORM public.record_email_delivery_event('evt_matrix_1', 'email.bounced', 'msg_matrix_1', ARRAY['prospect_a@example.test'], 'Permanent', 'Mailbox does not exist', now());
   IF NOT public.consume_ip_quota(repeat('a', 64), 20, 400) THEN RAISE EXCEPTION 'setup: ip quota refused'; END IF;
   IF NOT public.consume_global_ai_budget(2000) THEN RAISE EXCEPTION 'setup: global budget refused'; END IF;
@@ -379,6 +384,7 @@ BEGIN
   -- scan hasn't is withheld, which document_scanning.sql checks. One more upload waits in quarantine.
   UPDATE public.documents SET scan_verdict = 'clean', scanned_at = now();
   INSERT INTO storage.objects (bucket_id, name) VALUES ('quarantine', ga || '/' || ga_open || '/held.pdf');
+  INSERT INTO storage.objects (bucket_id, name) SELECT 'peo-templates', storage_path FROM public.peo_census_templates;
   PERFORM set_config('request.jwt.claims', '', false);
   INSERT INTO fx VALUES
     ('ga_open', ga_open), ('ga_expired', ga_expired), ('ga_archived', ga_archived), ('ga_revoked', ga_revoked),
@@ -440,6 +446,10 @@ INSERT INTO matrix VALUES
   ('public.peos',                                       '{"advisor":"all","admin":"all"}'),
   ('public.peo_profile_versions',                       '{"advisor":1,"admin":"all"}'),
   ('public.peo_contacts',                               '{"advisor":"all","admin":"all"}'),
+  -- A PEO's census templates (20261114090000): advisors read the records; anyone signed in reads a clean one's file
+  -- (a PEO's blank form, filled in the reader's browser), nobody signed out.
+  ('public.peo_census_templates',                       '{"advisor":"all","admin":"all"}'),
+  ('storage.objects WHERE bucket_id = ''peo-templates''', '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all"}'),
   ('public.intake_lifecycle_events',                    '{"advisor":"all","admin":"all"}'),
   ('public.intake_deletions',                           '{"advisor":"all","admin":"all"}'),
   -- Monitoring is the admin's: advisors don't need failure codes, routes or account ids.
@@ -767,7 +777,10 @@ INSERT INTO callable VALUES
   ('admin_publish_peo_profile(p_peo_id bigint, p_draft_revision uuid)', 'admin', 'SELECT public.admin_publish_peo_profile(0, NULL)', 'publishing the draft the admin reviewed'),
   ('admin_set_peo_listed(p_peo_id bigint, p_listed boolean)', 'admin', 'SELECT public.admin_set_peo_listed(0, true)', 'listing a PEO, or not'),
   ('admin_recheck_peo_profile(p_peo_id bigint, p_sources jsonb)', 'admin', 'SELECT public.admin_recheck_peo_profile(0, ''{"answers": {}}'')', 'checked again: a new published version with new sources'),
-  ('admin_discard_peo_draft(p_peo_id bigint)', 'admin', 'SELECT public.admin_discard_peo_draft(0)', 'discarding a PEO''s draft profile');
+  ('admin_discard_peo_draft(p_peo_id bigint)', 'admin', 'SELECT public.admin_discard_peo_draft(0)', 'discarding a PEO''s draft profile'),
+  ('admin_register_census_template(p_peo_id bigint, p_file_name text, p_size_bytes integer, p_sha256 text)', 'admin',
+                                                                     'SELECT public.admin_register_census_template(0, ''x.xlsx'', 1, NULL)', 'recording an upload of a PEO''s census template, before its scan'),
+  ('is_clean_census_template_file(p_name text)', 'signed_in', NULL, 'the storage policy on peo-templates: whether a file is a clean template''s; names no one');
 
 DO $$
 DECLARE
@@ -813,7 +826,8 @@ BEGIN
     'SELECT count(*) FROM public.document_scan_orphans(10)',
     format('SELECT count(*) FROM public.intake_stored_files(%L, %L)', sid, pg_temp.id('prospect_a')),
     format('SELECT public.complete_intake_deletion(%L, 0)', nobody),
-    format('SELECT public.fail_intake_deletion(%L, ''probe'', 60)', nobody)
+    format('SELECT public.fail_intake_deletion(%L, ''probe'', 60)', nobody),
+    'SELECT public.record_census_template_scan(0, ''failed'', NULL)'
   ] LOOP
     FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'prospect_a', 'advisor', 'admin'] LOOP
       PERFORM pg_temp.become(who);
@@ -910,7 +924,8 @@ BEGIN
   -- The advisor's account behind a guest token is a guest: none of the advisor-only data.
   PERFORM pg_temp.become('advisor_as_guest');
   IF pg_temp.visible('public.chamber_sessions') <> 0 OR pg_temp.visible('public.advisor_notes') <> 0
-     OR pg_temp.visible('public.intake_consents') <> 0 OR pg_temp.visible('storage.objects') <> 0 THEN
+     -- A clean PEO census template is anyone's who is signed in (the matrix above); no other file is a guest's.
+     OR pg_temp.visible('public.intake_consents') <> 0 OR pg_temp.visible('storage.objects WHERE bucket_id <> ''peo-templates''') <> 0 THEN
     RAISE EXCEPTION 'FAIL: a guest token on an advisor''s account reads advisor data';
   END IF;
 
@@ -1023,8 +1038,8 @@ BEGIN
   -- (c) Every bucket is private.
   SELECT string_agg(id, ', ') INTO missing FROM storage.buckets WHERE public IS DISTINCT FROM false;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'FAIL: public storage buckets: %', missing; END IF;
-  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'quarantine'] THEN
-    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts and quarantine buckets';
+  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'peo-templates', 'quarantine'] THEN
+    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts, peo-templates and quarantine buckets';
   END IF;
 
   -- (d) The API roles hold no TRUNCATE (it ignores row security), REFERENCES or TRIGGER on any public table
