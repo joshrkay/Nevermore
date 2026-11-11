@@ -82,8 +82,8 @@ describe("RequireAdvisor", () => {
   it("refuses a signed-in prospect", async () => {
     fetchIsAdvisor.mockResolvedValue(false);
     renderGuarded();
-    expect(await screen.findByText("Advisor access required")).toBeInTheDocument();
-    expect(screen.getByText(/pat@example.com isn't an advisor account/)).toBeInTheDocument();
+    expect(await screen.findByText("Waiting for access")).toBeInTheDocument();
+    expect(screen.getByText(/Your account \(pat@example.com\) is created. An administrator has to give you access/)).toBeInTheDocument();
     expect(screen.queryByText("Advisor tools")).not.toBeInTheDocument();
   });
 

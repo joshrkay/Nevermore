@@ -36,12 +36,30 @@ Every way into an advisor page ends somewhere that says what happened:
 | Signed out on purpose | Sign-in page with "You've been signed out." The page is *not* remembered: the next person to sign in may be someone else, and lands on the queue |
 | Session ended on its own (refresh token expired, or sign-out in another tab) | Sign-in page with "Your session expired. Sign in again to continue." and a return to the same page |
 | The server rejects the token mid-use (`PGRST301`-`303`, "JWT expired") | "Your session has expired." The app ends the session and takes them to sign-in as above |
-| Signed in but not an advisor | "Advisor access required", with a way home or to another account |
+| Signed in but not an advisor (a new broker, say) | "Waiting for access": the account is created and an administrator has to grant the role; nothing is shared until then. A way home or to another account |
 | Role revoked while signed in (database refuses with `42501`) | "You no longer have advisor access.", no retry offered |
 | Anything else (network, timeout) | "We couldn't load …" with the reason and Try again |
 
 `useAuth().sessionEnded` is `"signed_out"` or `"expired"`; Supabase reports both as `SIGNED_OUT`, so
 a sign-out the app asked for is remembered until the event arrives.
+
+### Signing in with Google or Microsoft (story M-4.1)
+
+`/broker/sign-in` is a sign-in page for advisors and brokers, separate from the prospect's: "Sign in with Google" and "Sign in
+with Microsoft" ask for the send-only permission with the sign-in (`src/data/mailboxScopes.ts`), and the page says what that
+lets the product do and that it never reads a mailbox. The prospect's sign-in page never offers it. The advisor sign-in at
+`/login` links to it, and it links back to the password sign-in, which keeps working.
+
+- It uses its own PKCE client (`src/lib/brokerAuth.ts`): the app's main client never reads a session out of the address, so a
+  link someone sends can't sign a browser in as them. The provider returns to `/broker/callback` with a code, which is
+  redeemed once; the page then reloads so the whole app sees the session. A refusal at the provider, or a code that no longer
+  works, shows "We couldn't sign you in" in our own words.
+- A broker who unticks the send permission still gets an account and the console, and sends by hand with the thread's address
+  in CC.
+- The same verified email as an existing advisor links to that account (Supabase's default for a provider-verified email):
+  same role and history. A new account without the role sees "Waiting for access" until an administrator grants it. How a role
+  can be granted without an administrator, by organisation, is story M-4.2.
+- Nothing the provider returns is kept yet; that is story M-4.3.
 
 ## What advisors can and can't do
 

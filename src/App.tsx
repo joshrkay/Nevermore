@@ -22,6 +22,8 @@ import NotFound from "./pages/NotFound";
 // jsPDF and html2canvas are only needed here, so keep them out of the main bundle.
 const ManuscriptPage = lazy(() => import("./pages/ManuscriptPage"));
 // Advisor tools are only for advisors; keep them out of the prospect's bundle.
+const BrokerSignInPage = lazy(() => import("./pages/BrokerSignInPage"));
+const BrokerCallbackPage = lazy(() => import("./pages/BrokerCallbackPage"));
 const AdvisorDashboardPage = lazy(() => import("./pages/advisor/AdvisorDashboardPage"));
 const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissionPage"));
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
@@ -58,6 +60,8 @@ const App = () => (
                 />
                 <Route path="/login" element={<AuthPage />} />
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
+                <Route path="/broker/sign-in" element={<BrokerSignInPage />} />
+                <Route path="/broker/callback" element={<BrokerCallbackPage />} />
                 {/* Nothing of the Chamber opens until the account has agreed to how intake information is used. */}
                 <Route path="/start" element={<RequireAuth><IntakeConsentGate><ChamberPage /></IntakeConsentGate></RequireAuth>} />
                 <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />

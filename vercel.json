@@ -25,7 +25,7 @@
       ]
     },
     {
-      "source": "/(start|profile|login|auth/.*|advisor|advisor/.*|manuscript|manuscript/(?!demo$).*)",
+      "source": "/(start|profile|login|auth/.*|broker/.*|advisor|advisor/.*|manuscript|manuscript/(?!demo$).*)",
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex" }]
     },
     {

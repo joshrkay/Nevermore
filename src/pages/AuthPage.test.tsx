@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 const auth = {
@@ -58,6 +58,14 @@ describe("AuthPage", () => {
     expect(screen.getByLabelText("Company Name")).toHaveAttribute("maxlength", "200");
     expect(screen.getByLabelText("Email")).toHaveAttribute("autocomplete", "email");
     expect(screen.getByLabelText("Password")).toHaveAttribute("autocomplete", "new-password");
+  });
+
+  it("offers an advisor the broker sign-in with Google or Microsoft, and never offers it to a prospect", () => {
+    renderLogin({ audience: "advisor", from: { pathname: "/advisor" } });
+    expect(screen.getByRole("link", { name: "Sign in with Google or Microsoft" })).toHaveAttribute("href", "/broker/sign-in");
+    cleanup();
+    renderLogin();
+    expect(screen.queryByText(/Google|Microsoft/)).not.toBeInTheDocument();
   });
 
   it("says so when an advisor's session expired", () => {

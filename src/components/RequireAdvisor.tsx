@@ -72,10 +72,10 @@ const RequireAdvisor = ({ children }: { children: ReactNode }) => {
   }
   if (access === "denied") {
     return (
-      <Message title="Advisor access required">
+      <Message title="Waiting for access">
         <p className="text-muted-foreground mb-4">
-          {user.email ?? "This account"} isn't an advisor account. If you should have access, ask an administrator to
-          grant it.
+          Your account{user.email ? ` (${user.email})` : ""} is created. An administrator has to give you access before you can see
+          submissions, and nothing is shared with you until then. If you should have access already, ask an administrator to grant it.
         </p>
         <div className="flex gap-4 justify-center">
           <Link to="/" className="text-primary underline hover:text-primary/90">Home</Link>

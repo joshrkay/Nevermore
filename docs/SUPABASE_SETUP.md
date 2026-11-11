@@ -280,6 +280,32 @@ only rejects a localhost or non-https Site URL.
 5. **The plan.** A Free project pauses after a week without activity and has no downloadable
    backups. Move to Pro before relying on it.
 
+## Broker sign-in with Google and Microsoft
+
+Brokers can sign in at `/broker/sign-in` with a Google or Microsoft account, and let the product send a submission from
+their own address (joshrkay/Nevermore#92, story M-4.1; `docs/adr/0005-brokers-send-through-their-own-mailbox.md`). The
+setup script does not do this: it needs an app registered with each company, which only a person with an account there can
+create. Until both are set, the buttons start a sign-in that Supabase refuses, and the page says it could not start.
+
+1. **Redirect URL.** Add `https://<your domain>/broker/callback` to Supabase's Redirect URLs. The script's `<origin>/**` entry
+   already covers it.
+2. **Google.** In Google Cloud, create an OAuth client (Web), add Supabase's callback URL as an authorized redirect, and enable
+   the Gmail API. The consent screen asks for `https://www.googleapis.com/auth/gmail.send` and nothing else (a sensitive
+   scope, not a restricted one). While the app is in Google's "testing" status the permission is believed to expire after
+   seven days: use an **internal** app for the advisory's own Workspace, or Google's verification for outside brokers. This has
+   not been confirmed against Google's current rules and has to be before release. Then turn the Google provider on in
+   Supabase (Authentication, Sign In / Providers) with the client ID and secret.
+3. **Microsoft.** In Microsoft Entra, register an application with the account types you will allow, add Supabase's callback
+   URL as a Web redirect, give it the delegated Microsoft Graph permission `Mail.Send` (and `offline_access`), and note that a
+   tenant's administrator may have to approve it. Turn the Azure provider on in Supabase with the application (client) ID,
+   the secret and the tenant URL. Not yet researched against Microsoft's current rules.
+4. **Check.** Sign in with each from a private window. A new account lands on "Waiting for access" until an administrator
+   grants the role; an existing advisor with the same verified email lands in the console with their role and history. The
+   product asks for only the permissions in `src/data/mailboxScopes.ts` (a test fails if a read permission is added).
+
+What this release does with the mailbox permission: it asks for it and notes whether it was granted, and keeps nothing.
+Storing what lets the product send is story M-4.3.
+
 ## Moving to a new domain or Vercel project
 
 The front end reads the site's address from the browser (`window.location.origin`), so no code changes.
