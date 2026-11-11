@@ -79,6 +79,18 @@ _Avoid_: census row, worker, member
 **Dependent**:
 A spouse, domestic partner, child or other person covered through an employee in the census.
 
+**Workspace answer**:
+A field Lenore never asks for in conversation, because the prospect enters it on a workspace tab: the FEIN, the NAICS code and every table. Lenore says which tab it is on, and takes what the prospect volunteers of one where the conversation can hold it. The FEIN is the exception: it is never taken from the conversation or from a document.
+_Avoid_: manual field, typed answer, offline field
+
+**Table**:
+A field whose answer is rows rather than one value: the legal entities, the owners and officers, the loss history, the current medical plans and the state unemployment tax rates. What is heard or read later is added to a table, never traded for it.
+_Avoid_: list of rows, grid, roster (the roster is the census)
+
+**FEIN**:
+The employer's federal employer identification number, nine digits. The prospect, the advisors and the packet see all nine; everything else sees the last four.
+_Avoid_: EIN (in the app's own words), tax ID, TIN
+
 **Required field**:
 A field an intake needs before it can be certified: company legal name, states of operation and pay frequency (D2). The census is recommended: it can only come from an upload, so it never blocks, though Lenore points to the Upload tab for it. (The intake schema's `x-intake.required` still marks the census, for Lenore's ask order.)
 _Avoid_: core item, required for submission, mandatory field
@@ -92,7 +104,7 @@ An intake is ready to certify when every required field holds an answer that isn
 _Avoid_: ready for review, complete, done, discovery complete
 
 **Open item**:
-Something the prospect still owes on a field: a required field with no answer, or any field that is inferred, incomplete, conflicting or unknown. A recommended field with no answer is not an open item, except the census: a missing census is listed as an open item, under Recommended, and never blocks.
+Something the prospect still owes on an intake: a required field with no answer, or any field that is inferred, incomplete, conflicting or unknown. Four things are open items though they are not a field's status, and none of them ever blocks certification: a missing census, a fact PEOs ask of every employee that people on the census lack (once per fact, however many people lack it), employees with no workers' comp class code, and a state of operation with no unemployment tax rate (once per state). A recommended field with no answer is otherwise not an open item.
 _Avoid_: gap, missing item, to-do, issue
 
 **Eligibility check**:
