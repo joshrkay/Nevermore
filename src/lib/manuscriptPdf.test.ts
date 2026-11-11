@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { buildManuscript, type ChamberSubmission } from "@/data/manuscript";
+import { parsePeoCatalog } from "@/data/peoProfiles";
 import { buildManuscriptPdf, pdfSafe } from "./manuscriptPdf";
 
 const FILE_ID = "EAA-2026-ABC12345";
@@ -274,6 +275,13 @@ describe("pdfSafe", () => {
     expect(text).toContain("ELIGIBILITY CHECKS");
     expect(text).toContain("US headquarters — Passes");
     expect(text).toContain("OPEN ITEMS");
+  });
+
+  it("prints, beside the eligibility checks, that the PEO's profile they read is out of date", async () => {
+    const catalog = parsePeoCatalog([{ id: 1, name: "Acme PEO", profile: { version: 1, min_headcount: 5, sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-01-05" } } } }]);
+    const m = buildManuscript(DEMO_CHAMBER_DATA, { fileId: FILE_ID, submission, catalog, today: "2026-11-11" });
+    const text = await readPdf(buildManuscriptPdf(m, { generatedOn: GENERATED, compress: false }).blob);
+    expect(text).toContain("Acme PEO's profile was last checked 5 Jan 2026 and may be out of date.");
   });
 
   it("prints an advisor version and its corrections beside the values the prospect certified", async () => {

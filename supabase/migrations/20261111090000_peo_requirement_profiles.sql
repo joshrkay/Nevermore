@@ -124,6 +124,9 @@ DECLARE
   max_list_items constant integer := 100;
   max_header constant integer := 100;
   max_text constant integer := 500;
+  max_source_name constant integer := 300;
+  max_link constant integer := 2000;
+  max_headcount constant integer := 100000;
   -- sync:end peo_profile_caps
   census_columns constant text[] := ARRAY[
     -- sync:begin peo_census_columns
@@ -182,8 +185,8 @@ BEGIN
       RETURN 'A census file is CSV or xlsx';
     END IF;
     IF jsonb_typeof(layout -> 'template_file') NOT IN ('null', 'string')
-       OR char_length(btrim(COALESCE(layout ->> 'template_file', 'x'))) NOT BETWEEN 1 AND 300 THEN
-      RETURN 'A template file is named by its path, up to 300 characters, or not at all';
+       OR char_length(btrim(COALESCE(layout ->> 'template_file', 'x'))) NOT BETWEEN 1 AND max_source_name THEN
+      RETURN format('A template file is named by its path, up to %s characters, or not at all', max_source_name);
     END IF;
     IF jsonb_typeof(layout -> 'columns') IS DISTINCT FROM 'array' OR jsonb_array_length(layout -> 'columns') NOT BETWEEN 1 AND max_census_columns THEN
       RETURN format('A census layout has 1 to %s columns', max_census_columns);
@@ -218,7 +221,7 @@ BEGIN
   END LOOP;
 
   -- The eligibility rules, each null until sourced.
-  IF v.min_headcount IS NOT NULL AND v.min_headcount NOT BETWEEN 1 AND 100000 THEN
+  IF v.min_headcount IS NOT NULL AND v.min_headcount NOT BETWEEN 1 AND max_headcount THEN
     RETURN 'A minimum headcount is a whole number of employees from 1 to 100,000';
   END IF;
   IF v.states_served IS NOT NULL AND (cardinality(v.states_served) = 0
@@ -289,9 +292,9 @@ BEGIN
        OR NOT COALESCE(item ->> 'kind' = ANY (source_kinds), false) THEN
       RETURN 'A source is a document, or a named person at the PEO';
     END IF;
-    IF jsonb_typeof(item -> 'name') IS DISTINCT FROM 'string' OR char_length(btrim(item ->> 'name')) NOT BETWEEN 1 AND 300
+    IF jsonb_typeof(item -> 'name') IS DISTINCT FROM 'string' OR char_length(btrim(item ->> 'name')) NOT BETWEEN 1 AND max_source_name
        OR item ->> 'name' <> btrim(item ->> 'name') THEN
-      RETURN 'A source is named, by its title or the person''s name, in 1 to 300 characters';
+      RETURN format('A source is named, by its title or the person''s name, in 1 to %s characters', max_source_name);
     END IF;
     -- A document: its title, with a link when there is one. A person at the PEO: their name and role.
     IF item ->> 'kind' = 'person' AND (item ? 'link'
@@ -299,7 +302,7 @@ BEGIN
       RETURN format('A person at the PEO is named with their role, of 1 to %s characters, and has no link', max_header);
     END IF;
     IF item ->> 'kind' = 'document' AND (item ? 'role' OR (item ? 'link' AND (jsonb_typeof(item -> 'link') <> 'string'
-         OR item ->> 'link' !~ '^https?://[^\s]+$' OR char_length(item ->> 'link') > 2000))) THEN
+         OR item ->> 'link' !~ '^https?://[^\s]+$' OR char_length(item ->> 'link') > max_link))) THEN
       RETURN 'A document has no role, and its link, when it has one, is a web address starting http:// or https://';
     END IF;
     IF NOT COALESCE(item ->> 'checked_on' ~ '^\d{4}-\d{2}-\d{2}$', false) THEN
@@ -311,7 +314,11 @@ BEGIN
       RETURN format('%s isn''t a date', item ->> 'checked_on');
     END;
     -- One day of grace: an admin ahead of the database's clock enters their own today.
-    IF checked > current_date + 1 THEN
+    IF checked > current_date
+      -- sync:begin peo_check_grace_days
+      + 1
+      -- sync:end peo_check_grace_days
+    THEN
       RETURN 'A source can''t be checked on a date that hasn''t come';
     END IF;
   END LOOP;
@@ -370,10 +377,12 @@ IMMUTABLE
 SET search_path = public, pg_temp
 AS $$
   SELECT CASE
+    -- sync:begin peo_contact_limits
     WHEN char_length(btrim(COALESCE(p_name, ''))) NOT BETWEEN 1 AND 200 OR p_name <> btrim(p_name) THEN 'Each contact has a name of 1 to 200 characters'
     WHEN char_length(p_role) > 100 THEN 'A contact''s role is up to 100 characters'
     WHEN p_email IS NOT NULL AND (char_length(p_email) > 254 OR p_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$') THEN 'A contact''s email must be an email address'
     WHEN char_length(p_phone) > 40 THEN 'A contact''s phone number is up to 40 characters'
+    -- sync:end peo_contact_limits
   END;
 $$;
 
@@ -542,7 +551,11 @@ BEGIN
        OR EXISTS (SELECT 1 FROM jsonb_array_elements(p_profile -> 'contacts') c WHERE jsonb_typeof(c) <> 'object') THEN
       RAISE EXCEPTION 'The contacts must be a list of people' USING ERRCODE = '22023';
     END IF;
-    IF jsonb_array_length(p_profile -> 'contacts') > 20 THEN
+    IF jsonb_array_length(p_profile -> 'contacts') >
+      -- sync:begin peo_max_contacts
+      20
+      -- sync:end peo_max_contacts
+    THEN
       RAISE EXCEPTION 'A profile names up to 20 contacts' USING ERRCODE = '22023';
     END IF;
     FOR contact IN SELECT c FROM jsonb_array_elements(p_profile -> 'contacts') c LOOP

@@ -390,6 +390,7 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     const word = c.status === "pass" ? "Passes" : c.status === "fail" ? "Not met" : "Not yet verified";
     paragraph(`•  ${c.label} — ${word}`, 9, "normal", c.status === "pass" ? OK : c.status === "fail" ? WARN : MUTED, 1);
   });
+  if (m.checksNote) paragraph(m.checksNote, 9, "normal", WARN, 1);
   if (m.open.length > 0) {
     y += 2;
     subheading("Open items");

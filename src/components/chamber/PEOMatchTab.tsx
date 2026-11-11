@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Users, UserPlus, DollarSign, MapPin, Shield, Zap } from "lucide-react";
+import { AlertTriangle, Users, UserPlus, DollarSign, MapPin, Shield, Zap } from "lucide-react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { PEO_NAME_MAX, findPeo, listedPeos, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
+import { formatCheckedOn, localToday, staleProfileWarning } from "@/data/peoProfiles";
 import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 
 export interface PEOMatchTabProps {
@@ -26,6 +27,9 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog: everyPeo
   // Only the PEOs an admin lists are offered; one chosen before it stopped being listed reads as the prospect's own.
   const catalog = listedPeos(everyPeo);
   const [otherName, setOtherName] = useState("");
+  // A stale profile is still offered, with when it was last checked (the one rule, src/data/peoProfiles.ts).
+  const today = localToday();
+  const stale = (peo: PeoRecord) => staleProfileWarning(peo, today);
 
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
   const avgSalary = data.census.length > 0
@@ -128,9 +132,16 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog: everyPeo
                 </li>
               ))}
             </ul>
-            <p className="text-xs text-muted-foreground mt-3">
-              {peo.lastVerified ? `Facts checked ${peo.lastVerified}.` : "Not yet checked against this PEO's own materials."}
-            </p>
+            {stale(peo) ? (
+              <p className="text-xs text-warning mt-3 flex items-start gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
+                {stale(peo)}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground mt-3">
+                {peo.lastVerified ? `Facts checked ${formatCheckedOn(peo.lastVerified)}.` : "Not yet checked against this PEO's own materials."}
+              </p>
+            )}
           </div>
           );
         })}

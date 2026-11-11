@@ -42,6 +42,10 @@ const {
   recordQuoteSend,
   updateQuoteRequest,
   noteUnderwriterQuestion,
+  fetchIsAdmin,
+  loadPeoDirectory,
+  savePeoDraft,
+  recheckPeoProfile,
 } = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
@@ -460,4 +464,56 @@ describe("quote requests", () => {
     expect(rpc).toHaveBeenLastCalledWith("advisor_list_submissions", expect.objectContaining({ p_waiting: null, p_sort: null }));
   });
 });
+});
+
+describe("the PEOs page's reads and writes", () => {
+  beforeEach(() => {
+    rpc.mockReset();
+    for (const t of Object.keys(tables)) delete tables[t];
+  });
+
+  it("learns whether the signed-in advisor is an admin from the database's own role check", async () => {
+    rpc.mockResolvedValue({ data: true, error: null });
+    expect(await fetchIsAdmin()).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("has_role", { _role: "admin" });
+    rpc.mockResolvedValue({ data: false, error: null });
+    expect(await fetchIsAdmin()).toBe(false);
+  });
+
+  it("reads each PEO with its versions, newest first, and each version's contacts", async () => {
+    tables.peos = [{ id: 1, name: "TriNet", listed: true }, { id: 2, name: "Justworks", listed: false }];
+    tables.peo_profile_versions = [
+      { id: 10, peo_id: 1, version: 1, status: "published", published_at: "2026-11-01T00:00:00Z", created_at: "2026-10-30T00:00:00Z", min_headcount: 5,
+        sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-10-30" } } },
+      { id: 11, peo_id: 1, version: 2, status: "draft", published_at: null, created_at: "2026-11-05T00:00:00Z", min_headcount: 10, sources: {} },
+    ];
+    tables.peo_contacts = [{ profile_version_id: 10, position: 1, name: "Dana Reyes", role: "Broker desk", email: null, phone: null }];
+    // Alphabetical, whatever order the rows come in.
+    const [justworks, trinet] = await loadPeoDirectory();
+    expect(trinet).toMatchObject({ id: 1, name: "TriNet", listed: true });
+    expect(trinet.versions.map((v) => [v.version, v.status, v.profile.rules.minHeadcount, v.profile.contacts.map((c) => c.name)])).toEqual([
+      [2, "draft", 10, []],
+      [1, "published", 5, ["Dana Reyes"]],
+    ]);
+    expect(justworks).toMatchObject({ id: 2, name: "Justworks", listed: false, versions: [] });
+  });
+
+  it("saves the whole draft, and records a re-check with the new sources, as the database takes them", async () => {
+    rpc.mockResolvedValue({ data: {}, error: null });
+    await savePeoDraft(1, { neededToQuote: [], neededBeforeSigning: [], censusLayout: null, documents: [], extraQuestions: [], contacts: [],
+      rules: { minHeadcount: 5, statesServed: null, excludedIndustries: null, excludedClassCodes: null, minEnrolmentPercent: null },
+      sources: { min_headcount: { kind: "document", name: "Guide", checkedOn: "2026-11-01" } } });
+    expect(rpc).toHaveBeenCalledWith("admin_save_peo_profile", { p_peo_id: 1, p_profile: expect.objectContaining({
+      min_headcount: 5, sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-11-01" } } }) });
+    await recheckPeoProfile(1, ["min_headcount", "answers"], { kind: "person", name: "Dana Reyes", role: "Broker desk", checkedOn: "2026-11-10" });
+    const source = { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-10" };
+    expect(rpc).toHaveBeenLastCalledWith("admin_recheck_peo_profile", { p_peo_id: 1, p_sources: { min_headcount: source, answers: source } });
+  });
+
+  it("shows the database's own words when it refuses a save", async () => {
+    failWith({ message: "A census file is CSV or xlsx", code: "22023" });
+    const err = await caught(() => savePeoDraft(1, { neededToQuote: [], neededBeforeSigning: [], censusLayout: null, documents: [], extraQuestions: [], contacts: [],
+      rules: { minHeadcount: null, statesServed: null, excludedIndustries: null, excludedClassCodes: null, minEnrolmentPercent: null }, sources: {} }));
+    expect(err.message).toBe("A census file is CSV or xlsx");
+  });
 });

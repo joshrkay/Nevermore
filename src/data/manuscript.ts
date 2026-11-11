@@ -5,6 +5,7 @@ import { categoryInfo } from "./documentCategories";
 import { documentStatusInfo } from "./documentStatus";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
+import { localToday, staleProfileWarning } from "./peoProfiles";
 import { describeSource, FIELD_LABELS, showsSource, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
 import { isRequiredField } from "./readiness";
 import { NO_VERIFIED_FIELDS } from "./requiredItems";
@@ -377,6 +378,8 @@ export interface Manuscript {
   resolved: string[];
   /** The eligibility checks, each passing, failing or not yet verifiable. */
   checks: EligibilityCheck[];
+  /** Beside the checks: that the PEO's profile they read is out of date, with when it was last checked; else null. */
+  checksNote: string | null;
   open: string[];
   /** Status and source of each field, as shown beside its row. */
   provenance: ProvenanceMap;
@@ -426,6 +429,11 @@ export function buildManuscript(
     peo?: PeoRecord;
     /** The PEOs the database lists (usePeoCatalog), to find the chosen one in. */
     catalog?: readonly PeoRecord[];
+    /**
+     * The reader's today (YYYY-MM-DD), to tell whether the PEO's profile is stale; otherwise the packet's own date.
+     * Passed in, so the packet stays pure.
+     */
+    today?: string;
   },
 ): Manuscript {
   const certifiedAt = opts.submission ? (opts.submission.certified_at ?? opts.submission.signed_at) : null;
@@ -479,7 +487,10 @@ export function buildManuscript(
   if (estimatedPay > 0) unstatedItems.push(`Annual pay — estimated at full-time hours for ${counted(estimatedPay, census, "people on the census")}; confirm their hours`);
   if (unknownTier > 0) unstatedItems.push(`Coverage tier — not provided for ${counted(unknownTier, w2.length, "employees")}`);
 
-  const checks = eligibilityChecks(data, opts.peo ?? (opts.submission?.peo ? findPeo(opts.catalog ?? [], opts.submission.peo) : undefined));
+  const checkedPeo = opts.peo ?? (opts.submission?.peo ? findPeo(opts.catalog ?? [], opts.submission.peo) : undefined);
+  const checks = eligibilityChecks(data, checkedPeo);
+  const asOf = opts.today ?? (date ? localToday(date) : null);
+  const checksNote = checkedPeo && asOf ? staleProfileWarning(checkedPeo, asOf) : null;
   // The intake's open items, the one list Review and the advisor queue use too (src/data/openItems.ts): the answers
   // certification requires (always present on a certified packet), the census, then fields by status, less any an
   // advisor verified.
@@ -596,6 +607,7 @@ export function buildManuscript(
       : null,
     resolved,
     checks,
+    checksNote,
     open: [
       ...intakeItems,
       ...unstatedItems,

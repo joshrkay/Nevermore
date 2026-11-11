@@ -41,6 +41,13 @@ export const PROFILE_CAPS = {
   listItems: 100,
   header: 100,
   text: 500,
+  /** A source's name (a document's title or a person's name), and a template file's path. */
+  sourceName: 300,
+  link: 2000,
+  /** The largest minimum headcount a rule can hold. */
+  headcount: 100000,
+  /** Contacts a profile version names. */
+  contacts: 20,
 } as const;
 
 /** A PEO's census layout: its columns in order, the file it takes, and its own template file when it has one. */
@@ -144,7 +151,7 @@ function parseProfile(peo: string, p: Row): RequirementProfile {
 }
 
 /** The date of a profile's oldest sourced part, which says how long ago it was checked; null when none is sourced. */
-export function oldestCheck(profile: RequirementProfile): string | null {
+export function oldestCheck(profile: Pick<RequirementProfile, "sources">): string | null {
   const dates = Object.values(profile.sources).map((s) => s.checkedOn).sort();
   return dates[0] ?? null;
 }
@@ -170,4 +177,43 @@ export function parsePeoCatalog(raw: unknown): PeoRecord[] {
       profile,
     }];
   });
+}
+
+/** How long a profile's checks hold: one whose oldest sourced part was checked longer ago than this is stale. */
+export const STALE_AFTER_DAYS = 180;
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** A date checked (YYYY-MM-DD) as people read it, such as "3 Nov 2026". */
+export function formatCheckedOn(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return MONTHS[m - 1] ? `${d} ${MONTHS[m - 1]} ${y}` : isoDate;
+}
+
+/** Days from one YYYY-MM-DD date to another, by the calendar. */
+function daysBetween(from: string, to: string): number {
+  const day = (iso: string) => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return Date.UTC(y, m - 1, d) / 86_400_000;
+  };
+  return day(to) - day(from);
+}
+
+/**
+ * The one staleness rule: a profile is stale when its oldest sourced part (`lastChecked`, oldestCheck) was checked
+ * more than 180 days before `today` (YYYY-MM-DD, the reader's own date). A profile with nothing checked is not stale:
+ * it is no profile yet. A stale profile is still used everywhere, with a warning.
+ */
+export function isProfileStale(lastChecked: string | null, today: string): boolean {
+  return lastChecked !== null && daysBetween(lastChecked, today) > STALE_AFTER_DAYS;
+}
+
+/** The warning a stale profile carries wherever it is used, naming when it was last checked; null when it isn't stale. */
+export function staleProfileWarning(peo: Pick<PeoRecord, "name" | "lastVerified">, today: string): string | null {
+  return isProfileStale(peo.lastVerified, today) ? `${peo.name}'s profile was last checked ${formatCheckedOn(peo.lastVerified!)} and may be out of date.` : null;
+}
+
+/** Today in the reader's own calendar, as YYYY-MM-DD. */
+export function localToday(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }

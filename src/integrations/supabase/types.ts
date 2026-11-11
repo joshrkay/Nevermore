@@ -335,9 +335,10 @@ export type Database = {
       }
       // Who refers employers, by the code in their link (20261106100000). Advisors read it; it is written only
       // through advisor_add_referral_partner and advisor_update_referral_partner.
-      // PEOs and their requirement profiles (20261111090000). Signed-in callers read the PEOs and the published
-      // versions (admins read drafts too); only admins write, through admin_add_peo(), admin_save_peo_profile() and
-      // admin_publish_peo_profile(), admin_set_peo_listed(). A published version never changes; a PEO is never deleted.
+      // PEOs and their requirement profiles (20261111090000). Advisors read the PEOs and the published versions
+      // (admins read drafts too); everyone else signed in reads peo_catalog(). Only admins write, through admin_add_peo(),
+      // admin_save_peo_profile(), admin_publish_peo_profile(), admin_set_peo_listed(), admin_recheck_peo_profile() and
+      // admin_discard_peo_draft() (20261111100000). A published version never changes; a PEO is never deleted.
       peos: {
         Row: {
           created_at: string
@@ -555,6 +556,14 @@ export type Database = {
       admin_set_peo_listed: {
         Args: { p_listed: boolean; p_peo_id: number }
         Returns: Json
+      }
+      admin_recheck_peo_profile: {
+        Args: { p_peo_id: number; p_sources: Json }
+        Returns: Json
+      }
+      admin_discard_peo_draft: {
+        Args: { p_peo_id: number }
+        Returns: undefined
       }
       advisor_email_problems: {
         Args: Record<PropertyKey, never>

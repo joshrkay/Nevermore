@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePeoCatalog } from "./peoProfiles";
+import { isProfileStale, parsePeoCatalog, staleProfileWarning } from "./peoProfiles";
 
 // What public.peo_catalog() returns (20261111090000): each PEO alphabetically, with its newest published version.
 const TRINET_ROW = {
@@ -94,5 +94,25 @@ describe("parsePeoCatalog", () => {
   it("reads anything but a list of PEOs as no PEOs, and leaves out an entry with no name", () => {
     for (const raw of [null, undefined, "TriNet", { id: 1 }]) expect(parsePeoCatalog(raw)).toEqual([]);
     expect(parsePeoCatalog([{ id: 1, name: "" }, { id: 2 }, 7]).length).toBe(0);
+  });
+});
+
+describe("profile staleness", () => {
+  // 2026-05-14 is 180 days before 2026-11-10.
+  it("is stale when its oldest sourced part was checked more than 180 days ago", () => {
+    expect(isProfileStale("2026-05-14", "2026-11-10")).toBe(false);
+    expect(isProfileStale("2026-05-13", "2026-11-10")).toBe(true);
+    expect(isProfileStale("2026-11-10", "2026-11-10")).toBe(false);
+  });
+
+  it("is never stale with nothing checked: that is no profile, not an old one", () => {
+    expect(isProfileStale(null, "2026-11-10")).toBe(false);
+  });
+
+  it("warns with the date the PEO's profile was last checked, only when it is stale", () => {
+    const [trinet] = parsePeoCatalog([TRINET_ROW]);
+    expect(staleProfileWarning(trinet, "2027-03-01")).toBe("TriNet's profile was last checked 1 Sep 2026 and may be out of date.");
+    expect(staleProfileWarning(trinet, "2026-11-10")).toBeNull();
+    expect(staleProfileWarning({ name: "TriNet", lastVerified: null }, "2030-01-01")).toBeNull();
   });
 });

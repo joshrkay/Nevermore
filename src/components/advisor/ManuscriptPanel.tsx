@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { applyAdvisorReview, isCurrentVersion, isStaleRefusal, verifiedFieldsOf } from "@/data/advisor";
 import { buildManuscript, manuscriptFilename } from "@/data/manuscript";
 import type { PeoRecord } from "@/data/peoCatalog";
+import { localToday } from "@/data/peoProfiles";
 import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
@@ -57,6 +58,7 @@ const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onCha
         fileId: detail.fileId ?? "EAA-UNCERTIFIED",
         submission: detail.submission,
         catalog,
+        today: localToday(),
         provenance: packet.provenance,
         verified: verifiedFieldsOf(detail.reviews),
         advisor: { version, corrections: packet.corrections, followUps: packet.followUps },

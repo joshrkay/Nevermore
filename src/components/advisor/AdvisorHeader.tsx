@@ -40,6 +40,12 @@ const AdvisorHeader = () => {
           >
             Partners
           </NavLink>
+          <NavLink
+            to="/advisor/peos"
+            className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
+          >
+            PEOs
+          </NavLink>
         </nav>
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
           <LegalLinks compact />

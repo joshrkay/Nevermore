@@ -27,6 +27,7 @@ const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissi
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
 const AdvisorFunnelPage = lazy(() => import("./pages/advisor/AdvisorFunnelPage"));
 const AdvisorPartnersPage = lazy(() => import("./pages/advisor/AdvisorPartnersPage"));
+const AdvisorPeosPage = lazy(() => import("./pages/advisor/AdvisorPeosPage"));
 // Read rarely, so kept out of the main bundle too.
 const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
 const TermsPage = lazy(() => import("./pages/TermsPage"));
@@ -71,6 +72,7 @@ const App = () => (
                 <Route path="/advisor/outbox" element={<RequireAdvisor><AdvisorOutboxPage /></RequireAdvisor>} />
                 <Route path="/advisor/funnel" element={<RequireAdvisor><AdvisorFunnelPage /></RequireAdvisor>} />
                 <Route path="/advisor/partners" element={<RequireAdvisor><AdvisorPartnersPage /></RequireAdvisor>} />
+                <Route path="/advisor/peos" element={<RequireAdvisor><AdvisorPeosPage /></RequireAdvisor>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
               </AuthRedirectGate>

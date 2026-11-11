@@ -78,6 +78,21 @@ kind; the code never changes, because links carrying it are already out (`adviso
 (`?ref=<code>&utm_campaign=<campaign>`) and it still counts for the partner. Partners never see the console;
 they get only the counts an advisor sends them. Removing a partner is an admin's job (`docs/DATA_HANDLING.md`).
 
+## PEOs
+
+`/advisor/peos` ("PEOs" in the header) lists every PEO with one line on where its profile stands (the version in use
+and when it was last checked, "out of date", "No profile yet", "Not listed · hidden from prospects"). Every advisor
+reads the chosen PEO's requirement profile in use section by section (what it won't take on, the answers it needs to
+quote and only before signing, its census layout, documents, its own questions and its contacts), each with where and
+when it was checked, and its history. Only admins (the `admin` role, read with `has_role('admin')`) see the controls:
+add a PEO; edit a section, which saves into the PEO's draft; review the draft against the version in use and publish
+it, or discard it; "Checked again, nothing changed", which publishes a new version with the same content and a new
+source and date for the parts re-checked (`admin_recheck_peo_profile()`); and take a PEO off the list or put it back.
+The editor checks the database's rules next to each field before saving (`src/data/peoEditor.ts`), and a failed save
+keeps what was typed. A profile whose oldest check is more than 180 days old is out of date: PEO Match, the packet's
+eligibility checks, the quote requests panel and this page still use it, with a warning giving the date last checked
+(`isProfileStale()` in `src/data/peoProfiles.ts`).
+
 ## Links
 
 No link that is stored, emailed or logged opens a document.

@@ -253,6 +253,21 @@ describe("QuoteRequestsPanel", () => {
     expect(within(screen.getByTestId("quote-request-8")).queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("warns, on its row, that a PEO's profile is out of date, with when it was last checked", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
+    panel({
+      catalog: [
+        { name: "TriNet", listed: true, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-03-02" },
+        { name: "Justworks", listed: true, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01" },
+      ],
+      requests: [request(), request({ id: 8, peo_name: "Justworks" })],
+    });
+    vi.useRealTimers();
+    expect(within(screen.getByTestId("quote-request-7")).getByText("TriNet's profile was last checked 2 Mar 2026 and may be out of date.")).toBeInTheDocument();
+    expect(within(screen.getByTestId("quote-request-8")).queryByText(/may be out of date/)).not.toBeInTheDocument();
+  });
+
   it("turns an underwriter's question into an ask of the prospect, and offers that only on questions", () => {
     const onAskProspect = vi.fn();
     const at = "2026-11-12T15:00:00Z";

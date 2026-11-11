@@ -113,4 +113,20 @@ describe("PEOMatchTab", () => {
     expect(screen.getAllByRole("button", { name: /^Choose / }).map((b) => b.textContent)).toEqual(["Choose Insperity"]);
     expect(screen.getByText("Prepared for TriNet.")).toBeInTheDocument();
   });
+
+  it("still offers a PEO whose profile is out of date, with a warning that says when it was last checked", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
+    const profile = (checked: string) => ({ version: 1, min_headcount: 5, sources: { min_headcount: { kind: "document", name: "Broker guide", checked_on: checked } } });
+    const catalog = parsePeoCatalog([
+      { id: 1, name: "Justworks", profile: profile("2026-05-15") },
+      { id: 2, name: "TriNet", profile: profile("2026-05-01") },
+    ]);
+    render(<PEOMatchTab data={DEMO_CHAMBER_DATA} selectedPeo={null} onSelect={vi.fn()} onProceed={vi.fn()} catalog={catalog} catalogStatus="ready" />);
+    vi.useRealTimers();
+    expect(screen.getByRole("button", { name: "Choose TriNet" })).toBeInTheDocument();
+    expect(screen.getByText("TriNet's profile was last checked 1 May 2026 and may be out of date.")).toBeInTheDocument();
+    // Justworks was checked 180 days ago: not yet stale.
+    expect(screen.queryByText(/Justworks's profile was last checked/)).not.toBeInTheDocument();
+  });
 });

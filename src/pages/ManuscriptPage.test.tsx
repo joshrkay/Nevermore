@@ -274,6 +274,18 @@ describe("ManuscriptPage", () => {
     await waitFor(() => expect(readiness).toHaveTextContent("Headcount meets Justworks minimum (4 of 10 employees) — not met"));
   });
 
+  it("notes beside the eligibility checks that the chosen PEO's profile is out of date, and still checks against it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 10, sources: { min_headcount: { kind: "document", name: "Broker guide", checked_on: "2026-04-01" } } } }];
+    row = certified({ submission: { ...certified().submission, chamber_data: { ...signed, employee_count: 4 } } });
+    renderAt("/manuscript?session=s1");
+    const readiness = (await screen.findByRole("heading", { name: "11 — Underwriting Readiness" })).closest("section")!;
+    await waitFor(() => expect(readiness).toHaveTextContent("Justworks's profile was last checked 1 Apr 2026 and may be out of date."));
+    expect(readiness).toHaveTextContent("Headcount meets Justworks minimum (4 of 10 employees) — not met");
+    vi.useRealTimers();
+  });
+
   it("says when a certification predates the document record", async () => {
     row = certified({ submission: { signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-2026-0042", chamber_data: signed } });
     renderAt("/manuscript/EAA-2026-0042");

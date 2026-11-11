@@ -95,6 +95,7 @@
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 \i supabase/migrations/20261110090000_quote_requests.sql
 \i supabase/migrations/20261111090000_peo_requirement_profiles.sql
+\i supabase/migrations/20261111100000_peo_profile_editor.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -757,7 +758,9 @@ INSERT INTO callable VALUES
   ('admin_add_peo(p_name text)',               'admin',   'SELECT public.admin_add_peo(''Probe PEO'')', 'adding a PEO'),
   ('admin_save_peo_profile(p_peo_id bigint, p_profile jsonb)', 'admin', 'SELECT public.admin_save_peo_profile(0, ''{}'')', 'saving a PEO''s draft profile'),
   ('admin_publish_peo_profile(p_peo_id bigint)', 'admin', 'SELECT public.admin_publish_peo_profile(0)', 'publishing a PEO''s profile'),
-  ('admin_set_peo_listed(p_peo_id bigint, p_listed boolean)', 'admin', 'SELECT public.admin_set_peo_listed(0, true)', 'listing a PEO, or not');
+  ('admin_set_peo_listed(p_peo_id bigint, p_listed boolean)', 'admin', 'SELECT public.admin_set_peo_listed(0, true)', 'listing a PEO, or not'),
+  ('admin_recheck_peo_profile(p_peo_id bigint, p_sources jsonb)', 'admin', 'SELECT public.admin_recheck_peo_profile(0, ''{"answers": {}}'')', 'checked again: a new published version with new sources'),
+  ('admin_discard_peo_draft(p_peo_id bigint)', 'admin', 'SELECT public.admin_discard_peo_draft(0)', 'discarding a PEO''s draft profile');
 
 DO $$
 DECLARE

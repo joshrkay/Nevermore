@@ -32,6 +32,7 @@ import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
 import { QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
+import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, PROFILE_PATTERNS } from "@/data/peoEditor";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
@@ -275,7 +276,28 @@ describe("server and client intake rules agree", () => {
       list_items: PROFILE_CAPS.listItems,
       header: PROFILE_CAPS.header,
       text: PROFILE_CAPS.text,
+      source_name: PROFILE_CAPS.sourceName,
+      link: PROFILE_CAPS.link,
+      headcount: PROFILE_CAPS.headcount,
     });
+  });
+
+  // The PEOs page's editor (L-1.2) refuses, next to each field, what the database would refuse on saving.
+  it("holds the same contact limits, contact cap and date grace as the editor", () => {
+    const [contact] = blocks("peo_contact_limits");
+    expect({
+      name: Number(/btrim\(COALESCE\(p_name, ''\)\)\) NOT BETWEEN 1 AND (\d+)/.exec(contact)?.[1]),
+      role: Number(/char_length\(p_role\) > (\d+)/.exec(contact)?.[1]),
+      email: Number(/char_length\(p_email\) > (\d+)/.exec(contact)?.[1]),
+      phone: Number(/char_length\(p_phone\) > (\d+)/.exec(contact)?.[1]),
+    }).toEqual(CONTACT_LIMITS);
+    expect(Number(blocks("peo_max_contacts")[0].trim())).toBe(PROFILE_CAPS.contacts);
+    expect(Number(/\+\s*(\d+)/.exec(blocks("peo_check_grace_days")[0])?.[1])).toBe(CHECKED_ON_GRACE_DAYS);
+  });
+
+  it("checks a question's key, a class code, a link and a contact's email with the database's own patterns", () => {
+    const sql = readFileSync("supabase/migrations/20261111090000_peo_requirement_profiles.sql", "utf8");
+    for (const pattern of Object.values(PROFILE_PATTERNS)) expect(sql).toContain(`'${pattern}'`);
   });
 
   it("keeps a listed PEO's name to the longest PEO name", () => {

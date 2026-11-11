@@ -12,6 +12,7 @@ import { CONSENT_DRAFT_LABEL } from "@/data/certification";
 import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, rowSourceLine, type ChamberSubmission, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
 import { parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
 import { listedPeos } from "@/data/peoCatalog";
+import { localToday } from "@/data/peoProfiles";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { readVerifiedFields } from "@/lib/verifiedFields";
@@ -214,7 +215,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
   const d = useMemo(() => {
     if (state.kind === "ready") {
-      return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, catalog: peoCatalog.peos, provenance: state.provenance, verified: state.verified });
+      return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, catalog: peoCatalog.peos, provenance: state.provenance, verified: state.verified, today: localToday() });
     }
     if (state.kind === "sample") return buildManuscript(DEMO_CHAMBER_DATA, { fileId: SAMPLE_FILE_ID, date: SAMPLE_DATE, provenance: SAMPLE_PROVENANCE });
     return null;
@@ -637,6 +638,12 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
                 </span>
               </div>
             ))}
+            {d.checksNote && (
+              <p className="flex items-start gap-2.5 text-sm text-warning">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                {d.checksNote}
+              </p>
+            )}
             {d.open.length > 0 && (
               <div className="mt-4 bg-warning/10 border border-warning/30 rounded-lg p-4 space-y-2">
                 <p className="text-warning text-xs font-medium mb-1">Open items</p>

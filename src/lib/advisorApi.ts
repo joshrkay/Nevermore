@@ -8,6 +8,8 @@ import type { ChamberSubmission } from "@/data/manuscript";
 import { parseProvenance, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import type { OutboxStatus } from "@/data/outbox";
 import type { IntakeSource } from "@/data/intakeSource";
+import { EMPTY_PROFILE, parseProfileVersion, profilePayload, type EditableProfile, type ProfileVersion } from "@/data/peoEditor";
+import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
 import {
   isPipelineStatus,
   manuscriptStoragePath,
@@ -567,4 +569,85 @@ export async function saveManuscriptVersion(opts: {
     fail(error, "Couldn't record the packet version.");
   }
   return data!;
+}
+
+// ---------- PEOs and their requirement profiles (L-1.2, the PEOs page) ----------
+
+/** Whether the signed-in advisor is also an admin: only admins edit profiles. The database checks it again on every write. */
+export async function fetchIsAdmin(): Promise<boolean> {
+  const { data, error } = await supabase.rpc("has_role", { _role: "admin" });
+  if (error) fail(error, "Couldn't check admin access.");
+  return data === true;
+}
+
+/** A PEO on the PEOs page: whether it is listed, and every version an advisor may read (drafts for admins), newest first. */
+export interface PeoDirectoryEntry {
+  id: number;
+  name: string;
+  listed: boolean;
+  versions: ProfileVersion[];
+}
+
+/**
+ * Every PEO with its profile versions and their contacts, as row security lets the reader see them: advisors read
+ * the published versions and their contacts, admins drafts too (20261111090000). Alphabetical.
+ */
+export async function loadPeoDirectory(): Promise<PeoDirectoryEntry[]> {
+  const [peos, versions, contacts] = await Promise.all([
+    supabase.from("peos").select("id, name, listed").order("name"),
+    supabase.from("peo_profile_versions").select("*").order("version", { ascending: false }),
+    supabase.from("peo_contacts").select("*").order("position"),
+  ]);
+  for (const r of [peos, versions, contacts]) if (r.error) fail(r.error, "Couldn't load the PEOs.");
+  const rows = (versions.data ?? []) as Record<string, unknown>[];
+  const contactRows = (contacts.data ?? []) as Record<string, unknown>[];
+  return [...(peos.data ?? [])]
+    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      listed: p.listed,
+      versions: rows
+        .filter((v) => Number(v.peo_id) === p.id)
+        .map((v) => parseProfileVersion(p.name, v, contactRows))
+        .sort((a, b) => b.version - a.version),
+    }));
+}
+
+/** Adds a PEO, listed, with no profile. The database refuses a name already listed, in words to show. */
+export async function addPeo(name: string): Promise<{ id: number }> {
+  const { data, error } = await supabase.rpc("admin_add_peo", { p_name: name });
+  if (error || !data) fail(error, "Couldn't add the PEO.");
+  return data as { id: number };
+}
+
+/** Saves the PEO's draft from the whole profile, making the draft when there is none. */
+export async function savePeoDraft(peoId: number, profile: EditableProfile): Promise<void> {
+  const { error } = await supabase.rpc("admin_save_peo_profile", { p_peo_id: peoId, p_profile: profilePayload(profile) as Json });
+  if (error) fail(error, "Couldn't save the draft.");
+}
+
+/** Publishes the PEO's draft: it is the profile in use from now on, and never changes. */
+export async function publishPeoDraft(peoId: number): Promise<void> {
+  const { error } = await supabase.rpc("admin_publish_peo_profile", { p_peo_id: peoId });
+  if (error) fail(error, "Couldn't publish the draft.");
+}
+
+/** Drops the PEO's draft. Nobody but admins ever saw it. */
+export async function discardPeoDraft(peoId: number): Promise<void> {
+  const { error } = await supabase.rpc("admin_discard_peo_draft", { p_peo_id: peoId });
+  if (error) fail(error, "Couldn't discard the draft.");
+}
+
+/** "Checked again, nothing changed": a new published version, with `source` for each part re-checked. */
+export async function recheckPeoProfile(peoId: number, parts: readonly ProfilePart[], source: ProfileSource): Promise<void> {
+  const payload = profilePayload({ ...EMPTY_PROFILE, sources: Object.fromEntries(parts.map((p) => [p, source])) }).sources as Json;
+  const { error } = await supabase.rpc("admin_recheck_peo_profile", { p_peo_id: peoId, p_sources: payload });
+  if (error) fail(error, "Couldn't record the re-check.");
+}
+
+/** Lists a PEO again, or takes it off the list. Nothing else about it changes. */
+export async function setPeoListed(peoId: number, listed: boolean): Promise<void> {
+  const { error } = await supabase.rpc("admin_set_peo_listed", { p_peo_id: peoId, p_listed: listed });
+  if (error) fail(error, "Couldn't change whether the PEO is listed.");
 }

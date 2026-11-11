@@ -675,6 +675,24 @@ describe("AdvisorSubmissionPage", () => {
     expect(manuscript.checks[0]).toEqual({ label: "Headcount meets Justworks minimum (12 of 20 employees)", status: "fail" });
   });
 
+  it("notes in the packet that the chosen PEO's profile is out of date as of the day it is generated", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 20,
+      sources: { min_headcount: { kind: "document", name: "Broker guide", checked_on: "2026-05-01" } } } }];
+    // Fresh when it was certified (1 Oct), stale by the day the packet is generated.
+    api.loadSubmission.mockResolvedValue(detail({ submission: { ...detail().submission!, peo: "Justworks" } }));
+    api.saveManuscriptVersion.mockResolvedValue({});
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Generate packet/ })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /Generate packet/ }));
+    await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
+    vi.useRealTimers();
+    const [manuscript] = buildManuscriptPdf.mock.calls[0] as unknown as [Manuscript];
+    expect(manuscript.checksNote).toBe("Justworks's profile was last checked 1 May 2026 and may be out of date.");
+  });
+
   it("won't generate a packet while the PEOs are loading: its eligibility checks would all read can't tell", async () => {
     peoCatalogReads.push(() => new Promise(() => {}));
     renderPage();

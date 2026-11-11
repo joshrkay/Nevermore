@@ -162,6 +162,21 @@ describe("buildManuscript", () => {
     expect(JSON.stringify(m)).not.toMatch(/Meridian/);
   });
 
+  it("notes, beside the checks, that the chosen PEO's profile is out of date, as of the day it is built", () => {
+    const catalog = parsePeoCatalog([
+      { id: 3, name: "Justworks", profile: { version: 1, min_headcount: 10, sources: { min_headcount: { kind: "document", name: "Broker guide", checked_on: "2026-03-02" } } } },
+    ]);
+    const submission = { signer_name: "Jo", signer_title: "", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1", peo: "Justworks" };
+    const built = (today?: string) => buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission, catalog, today });
+    expect(built("2026-11-11").checksNote).toBe("Justworks's profile was last checked 2 Mar 2026 and may be out of date.");
+    expect(built("2026-08-29").checksNote).toBeNull();
+    // Still used: the checks read its rules.
+    expect(built("2026-11-11").checks[0].status).toBe("fail");
+    // With no day given, the packet's own date (its certification): pure, whenever it is built.
+    expect(built().checksNote).toBeNull();
+    expect(buildManuscript(EMPTY_CHAMBER_DATA, { fileId: "EAA-1", submission: { ...submission, peo: "Acme PEO" }, catalog, today: "2030-01-01" }).checksNote).toBeNull();
+  });
+
   it("runs the checks against the chosen PEO's profile in the catalog it is given, whatever the capitalisation", () => {
     const catalog = parsePeoCatalog([
       { id: 3, name: "Justworks", profile: { version: 1, min_headcount: 10, states_served: null, excluded_class_codes: null, sources: { min_headcount: { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-02" } } } },
