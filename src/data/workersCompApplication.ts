@@ -40,18 +40,24 @@ export interface WorkersCompSection {
   entries: WorkersCompEntry[];
 }
 
-/** One row of the rating table: the census's people in one state with one class code. */
+/**
+ * One row of the rating table: the census's people in one state with one class code. People the census marks 1099 are
+ * independent contractors: they are never counted as employees and their pay is never payroll; they are shown apart.
+ */
 export interface RatingRow {
   /** Null for people the census gives no class code. */
   classCode: string | null;
+  /** The employees: everyone in the row the census doesn't mark 1099. */
   employees: number;
   fullTime: number;
   partTime: number;
-  /** People whose full or part time the census doesn't state (a default, not an answer). */
+  /** Employees whose full or part time the census doesn't state (a default, not an answer). */
   hoursNotStated: number;
-  /** People the census marks 1099. Counted in the row, as the census lists them. */
+  /** People the census marks 1099: not in any count above, nor in the pay. */
   contractors: number;
-  /** The sum of the annual pay the census states for them; null when it states none. */
+  /** The sum of the annual pay the census states for the people it marks 1099; null when it states none. */
+  contractorPay: number | null;
+  /** The sum of the annual pay the census states for the employees; null when it states none. */
   pay: number | null;
   /** How `pay` is made up, in a sentence. */
   basis: string;
@@ -78,13 +84,16 @@ export interface WorkersCompApplication {
   intakeGaps: string;
   sections: WorkersCompSection[];
   ratingTable: RatingState[];
+  /** That people marked 1099 are left out of the payroll, and whether to rate them is the carrier's call; null with none. */
+  contractorsNote: string | null;
   /** Every blank, "Section: Label (why)", in the order printed. */
   blanks: string[];
 }
 
 const blank = (label: string, note?: string): WorkersCompEntry => (note ? { label, value: null, note } : { label, value: null });
 
-const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })}`;
+/** "$41,600.50", "$85,000": an amount as printed on every file made from the certified answers. */
+export const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })}`;
 
 /** A certified answer as an entry: its value in words, marked when it wasn't confirmed or is incomplete; a blank otherwise. */
 function answer(intake: WorkersCompSource["intake"], field: FieldKey, label: string, words: (v: NonNullable<unknown>) => string = formatFieldValue): WorkersCompEntry {
@@ -100,33 +109,50 @@ function answer(intake: WorkersCompSource["intake"], field: FieldKey, label: str
   return { label, value };
 }
 
-const byCode = (a: string | null, b: string | null) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b));
+/** Alphabetical, with null (a state or class code the census doesn't give) last. */
+const nullsLast = (a: string | null, b: string | null) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b));
 
 /** People, in words: "1 person", "3 people". */
 const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
 
-function ratingRow(classCode: string | null, group: readonly CensusEmployee[]): RatingRow {
-  const statedPay = group.filter((e) => typeof e.annual_salary === "number" && !isAssumed(e, "annual_salary")).map((e) => e.annual_salary as number);
+/** Only W-2 is ever a default (CENSUS_ASSUMABLE), so a person marked 1099 is marked so by the census. */
+const isContractor = (e: CensusEmployee) => e.classification === "1099";
+
+/** The annual pay the census states for these people, leaving out pay worked out from an hourly rate. */
+const statedPayOf = (group: readonly CensusEmployee[]) =>
+  group.filter((e) => typeof e.annual_salary === "number" && !isAssumed(e, "annual_salary")).map((e) => e.annual_salary as number);
+
+/** A sum to the cent; null for no amounts. */
+const sumOf = (amounts: readonly number[]) => (amounts.length ? Math.round(amounts.reduce((a, b) => a + b, 0) * 100) / 100 : null);
+
+function ratingRow(classCode: string | null, everyone: readonly CensusEmployee[]): RatingRow {
+  const group = everyone.filter((e) => !isContractor(e));
+  const contractors = everyone.filter(isContractor);
+  const statedPay = statedPayOf(group);
   const workedOut = group.filter((e) => typeof e.annual_salary === "number" && isAssumed(e, "annual_salary")).length;
   const hoursNotStated = group.filter((e) => isAssumed(e, "employment_type")).length;
-  // Only W-2 is ever a default (CENSUS_ASSUMABLE), so a row marked 1099 says so.
-  const contractors = group.filter((e) => e.classification === "1099").length;
-  const pay = statedPay.length ? Math.round(statedPay.reduce((a, b) => a + b, 0) * 100) / 100 : null;
+  const pay = sumOf(statedPay);
+  const contractorPay = sumOf(statedPayOf(contractors));
   const notes: string[] = [];
-  if (pay === null) notes.push(`No pay in the census for the ${people(group.length)} here.`);
+  if (group.length === 0) notes.push("No employees here: only people the census marks 1099.");
+  else if (pay === null) notes.push(`No pay in the census for the ${people(group.length)} here.`);
   else {
     const sum = statedPay.length === 1 ? money(pay) : statedPay.length <= 10 ? `${statedPay.map(money).join(" + ")} = ${money(pay)}` : `The sum of ${statedPay.length} amounts, ${money(pay)}`;
     notes.push(`${sum}, the pay the census states for ${statedPay.length} of ${group.length}.`);
   }
   if (workedOut > 0) notes.push(`${workedOut} ${workedOut === 1 ? "has" : "have"} a year's pay worked out from an hourly rate at full-time hours, which isn't counted.`);
-  if (contractors > 0) notes.push(`Includes ${contractors} the census marks 1099.`);
+  if (contractors.length > 0) {
+    const stated = contractorPay === null ? "no pay stated" : `${money(contractorPay)} stated`;
+    notes.push(`${contractors.length} the census marks 1099 ${contractors.length === 1 ? "is" : "are"} left out of the counts and the pay, with ${stated}.`);
+  }
   return {
     classCode,
     employees: group.length,
     fullTime: group.filter((e) => e.employment_type === "full_time" && !isAssumed(e, "employment_type")).length,
     partTime: group.filter((e) => e.employment_type === "part_time" && !isAssumed(e, "employment_type")).length,
     hoursNotStated,
-    contractors,
+    contractors: contractors.length,
+    contractorPay,
     pay,
     basis: notes.join(" "),
   };
@@ -143,8 +169,8 @@ export function ratingTable(census: readonly CensusEmployee[]): RatingState[] {
     states.set(state, codes);
   }
   return [...states.entries()]
-    .sort(([a], [b]) => byCode(a, b))
-    .map(([state, codes]) => ({ state, rows: [...codes.entries()].sort(([a], [b]) => byCode(a, b)).map(([code, group]) => ratingRow(code, group)) }));
+    .sort(([a], [b]) => nullsLast(a, b))
+    .map(([state, codes]) => ({ state, rows: [...codes.entries()].sort(([a], [b]) => nullsLast(a, b)).map(([code, group]) => ratingRow(code, group)) }));
 }
 
 /** "CA: 94107, 94110 · NY: no ZIP given": where the census says people work. */
@@ -162,7 +188,8 @@ function censusPlaces(census: readonly CensusEmployee[]): string {
     .join(" · ");
 }
 
-/** What the census lacks for the rating table, as blanks: never estimated. */
+/** What the census lacks for the rating table, as blanks: never estimated. Called with the employees alone: what a
+ * contractor lacks is no gap in the payroll. */
 function censusGaps(census: readonly CensusEmployee[]): WorkersCompEntry[] {
   const n = census.length;
   const of = (k: number) => `the census has none for ${k} of ${n}`;
@@ -209,11 +236,15 @@ export function workersCompApplication(from: WorkersCompSource): WorkersCompAppl
   const d: ChamberData = intake.data;
   const census = d.census ?? [];
   const n = census.length;
+  // The header names the company as the Applicant section prints it, marks and blanks included.
+  const legalName = answer(intake, "company_name", "Legal name");
+  const employees = census.filter((e) => !isContractor(e));
+  const contractors = n - employees.length;
   const sections: WorkersCompSection[] = [
     {
       title: "Applicant",
       entries: [
-        answer(intake, "company_name", "Legal name"),
+        legalName,
         blank("Doing business as (DBA)"),
         blank("FEIN"),
         answer(intake, "fein_count", "Number of FEINs"),
@@ -242,7 +273,9 @@ export function workersCompApplication(from: WorkersCompSource): WorkersCompAppl
       title: "Rating by state",
       entries: [
         answer(intake, "employee_count", "Employees, as answered"),
-        ...(n ? [{ label: "Employees in the census", value: String(n) }, ...censusGaps(census)] : [blank("Census")]),
+        ...(n
+          ? [{ label: "Employees in the census", value: contractors ? `${employees.length}, not counting ${contractors} the census marks 1099` : String(n) }, ...censusGaps(employees)]
+          : [blank("Census")]),
         blank("Description of each class code"),
         blank("Estimated pay for the policy period"),
       ],
@@ -279,7 +312,7 @@ export function workersCompApplication(from: WorkersCompSource): WorkersCompAppl
   const version = from.version;
   return {
     title: WORKERS_COMP_TITLE,
-    companyName: d.company_name ?? "Company not provided",
+    companyName: legalName.value ?? "Company not provided",
     fileId: from.fileId,
     version,
     fromVersion: version !== null ? `From certified version ${version}` : "From the certification on record",
@@ -288,6 +321,9 @@ export function workersCompApplication(from: WorkersCompSource): WorkersCompAppl
     intakeGaps: "The intake doesn't ask most of what a workers' comp application needs yet, such as owners and officers, addresses and loss history, so much of this is blank. Fill the blanks in with the employer before sending.",
     sections,
     ratingTable: ratingTable(census),
+    contractorsNote: contractors
+      ? "People the census marks 1099 are independent contractors, so they are not counted as employees and their pay is not in the payroll. They are shown apart, with the pay the census states for them. Whether any of them must be rated is for the carrier."
+      : null,
     blanks: sections.flatMap((s) => s.entries.filter((e) => e.value === null).map((e) => `${s.title}: ${e.label}${e.note ? ` (${e.note})` : ""}`)),
   };
 }

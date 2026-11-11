@@ -1,11 +1,13 @@
 import { Download } from "lucide-react";
+import { toast } from "sonner";
 import type { Supplement } from "@/data/peoSupplement";
 import { downloadBlob } from "@/lib/downloadFile";
 import { buildSupplementPdf } from "@/lib/supplementPdf";
 
 /**
  * A PEO's supplement, "Additional questions from <PEO>", offered beside the packet: which certified version it is from
- * and which questions it leaves unanswered are said before the download, not found afterwards.
+ * and which questions it leaves unanswered are said before the download, not found afterwards. A PDF that can't be
+ * built is said, as the packet's download does. Built at once, in the click, so there is no busy state to show.
  */
 const SupplementDownload = ({ supplement }: { supplement: Supplement }) => {
   const { rows, notAnswered } = supplement;
@@ -33,8 +35,13 @@ const SupplementDownload = ({ supplement }: { supplement: Supplement }) => {
       <button
         type="button"
         onClick={() => {
-          const pdf = buildSupplementPdf(supplement);
-          downloadBlob(pdf.blob, pdf.filename);
+          try {
+            const pdf = buildSupplementPdf(supplement);
+            downloadBlob(pdf.blob, pdf.filename);
+          } catch (err) {
+            console.error("Failed to generate a PEO's supplement PDF:", err);
+            toast.error("We couldn't generate the PDF. Please try again.");
+          }
         }}
         className="min-h-11 inline-flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-md border border-border hover:border-primary/40"
         aria-label={`Download ${supplement.title}`}

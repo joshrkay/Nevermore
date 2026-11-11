@@ -1,5 +1,5 @@
 import jsPDF from "jspdf";
-import { NOT_IN_CERTIFIED, workersCompFilename, type RatingRow, type WorkersCompApplication } from "@/data/workersCompApplication";
+import { money, NOT_IN_CERTIFIED, workersCompFilename, type RatingRow, type WorkersCompApplication } from "@/data/workersCompApplication";
 import { PACKET_STYLE, pdfSafe } from "./manuscriptPdf";
 
 export interface WorkersCompPdfOptions {
@@ -15,17 +15,19 @@ const TOP = MARGIN + 10;
 const BOTTOM = PAGE_H - MARGIN - 10;
 type RGB = readonly [number, number, number];
 
-const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })}`;
-
 /** The rating table's columns: heading, where it sits from the left margin (mm), and how it lines up. */
 const COLUMNS: readonly [string, number, "left" | "right"][] = [
   ["Class code", 0, "left"],
-  ["Employees", 60, "right"],
-  ["Full time", 85, "right"],
-  ["Part time", 108, "right"],
-  ["Not stated", 133, "right"],
-  ["Annual pay in the census", CONTENT_W, "right"],
+  ["Employees", 45, "right"],
+  ["Full time", 64, "right"],
+  ["Part time", 83, "right"],
+  ["Not stated", 103, "right"],
+  ["Annual pay", 140, "right"],
+  ["1099, not in payroll", CONTENT_W, "right"],
 ];
+
+/** The 1099 column's cell: how many, and the pay the census states for them. */
+const contractorsCell = (r: RatingRow) => (r.contractors === 0 ? "None" : `${r.contractors} · ${r.contractorPay === null ? "no pay stated" : money(r.contractorPay)}`);
 
 /**
  * The workers' comp application data as a PDF in the packet's style (L-3.2): a thin renderer of
@@ -78,7 +80,7 @@ export function buildWorkersCompPdf(a: WorkersCompApplication, opts: WorkersComp
       spaceFor(lh(9) + lh(8) * 2);
       font("normal", 9);
       ink(INK);
-      const cells = [r.classCode ?? "None given", String(r.employees), String(r.fullTime), String(r.partTime), String(r.hoursNotStated), r.pay === null ? "None stated" : money(r.pay)];
+      const cells = [r.classCode ?? "None given", String(r.employees), String(r.fullTime), String(r.partTime), String(r.hoursNotStated), r.pay === null ? "None stated" : money(r.pay), contractorsCell(r)];
       cells.forEach((c, i) => pdf.text(pdfSafe(c), MARGIN + COLUMNS[i][1], y + lh(9) * 0.75, { align: COLUMNS[i][2] }));
       y += lh(9);
       lines(r.basis, 8, "italic", MUTED, 2);
@@ -122,6 +124,7 @@ export function buildWorkersCompPdf(a: WorkersCompApplication, opts: WorkersComp
       if (a.ratingTable.length > 0) {
         lines("Each row counts the people in the certified census with that work state and class code. Full or part time is counted only where the census states it, and pay is summed only where it states an amount; each row says how.", 8, "normal", MUTED);
       }
+      if (a.contractorsNote) lines(a.contractorsNote, 8, "bold", INK);
     }
   }
 

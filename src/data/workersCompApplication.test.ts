@@ -72,6 +72,14 @@ describe("workersCompApplication: what the certified answers hold, and blanks fo
     ]);
   });
 
+  it("names the company in the header as the Applicant section prints it: marked when not confirmed, and never a name the answers leave blank", () => {
+    expect(workersCompApplication(source({ company_name: "Acme" }, { company_name: { status: "inferred", ...by } })).companyName).toBe("Acme (not confirmed by the prospect)");
+    expect(workersCompApplication(source({ company_name: "Acme" }, { company_name: { status: "conflicting", ...by } })).companyName).toBe("Company not provided");
+    expect(workersCompApplication(source({ company_name: "Acme" }, { company_name: { status: "unknown", ...by } })).companyName).toBe("Company not provided");
+    expect(workersCompApplication(source({ company_name: "" })).companyName).toBe("Company not provided");
+    expect(workersCompApplication(source({ company_name: "Acme" }, { company_name: { status: "confirmed", ...by } })).companyName).toBe("Acme");
+  });
+
   it("takes an answer an advisor verified as it stands", () => {
     const from = source({ company_name: "Acme" }, { company_name: { status: "inferred", ...by } });
     const app = workersCompApplication({ ...from, intake: { ...from.intake, verified: new Set(["company_name"]) } });
@@ -116,35 +124,49 @@ describe("workersCompApplication: the rating table, by state and class code, fro
     person({ work_state: "CA", class_code: "8810", annual_salary: 41600.5, employment_type: "part_time", compensation_type: "hourly" }),
     // Pay worked out from an hourly rate at full-time hours, and hours not stated: neither is counted as given.
     person({ work_state: "CA", class_code: "8810", annual_salary: 52000, compensation_type: "hourly", assumed: ["employment_type", "annual_salary"] }),
-    person({ work_state: "", class_code: "8810", annual_salary: 60000 }),
+    // A contractor beside employees: not an employee, and its pay is not payroll.
+    person({ work_state: "CA", class_code: "8810", annual_salary: 30000, classification: "1099" }),
+    person({ work_state: "", annual_salary: 60000 }),
     person({ work_state: "CA", class_code: "5183" }),
+    person({ work_state: "CA", class_code: "5183", classification: "1099", employment_type: "part_time" }),
   ];
   const app = workersCompApplication(source({ census, employee_count: 6 }));
 
   it("groups by state then class code, counts full and part time as stated, and sums only the pay the census states", () => {
     expect(app.ratingTable).toEqual([
       { state: "CA", rows: [
-        { classCode: "5183", employees: 1, fullTime: 1, partTime: 0, hoursNotStated: 0, contractors: 0, pay: null, basis: "No pay in the census for the 1 person here." },
-        { classCode: "8810", employees: 3, fullTime: 1, partTime: 1, hoursNotStated: 1, contractors: 0, pay: 126600.5,
-          basis: "$85,000 + $41,600.50 = $126,600.50, the pay the census states for 2 of 3. 1 has a year's pay worked out from an hourly rate at full-time hours, which isn't counted." },
+        { classCode: "5183", employees: 1, fullTime: 1, partTime: 0, hoursNotStated: 0, contractors: 1, contractorPay: null, pay: null,
+          basis: "No pay in the census for the 1 person here. 1 the census marks 1099 is left out of the counts and the pay, with no pay stated." },
+        { classCode: "8810", employees: 3, fullTime: 1, partTime: 1, hoursNotStated: 1, contractors: 1, contractorPay: 30000, pay: 126600.5,
+          basis: "$85,000 + $41,600.50 = $126,600.50, the pay the census states for 2 of 3. 1 has a year's pay worked out from an hourly rate at full-time hours, which isn't counted. 1 the census marks 1099 is left out of the counts and the pay, with $30,000 stated." },
       ] },
       { state: "NY", rows: [
-        { classCode: null, employees: 1, fullTime: 1, partTime: 0, hoursNotStated: 0, contractors: 1, pay: 70000,
-          basis: "$70,000, the pay the census states for 1 of 1. Includes 1 the census marks 1099." },
+        { classCode: null, employees: 0, fullTime: 0, partTime: 0, hoursNotStated: 0, contractors: 1, contractorPay: 70000, pay: null,
+          basis: "No employees here: only people the census marks 1099. 1 the census marks 1099 is left out of the counts and the pay, with $70,000 stated." },
       ] },
       { state: null, rows: [
-        { classCode: "8810", employees: 1, fullTime: 1, partTime: 0, hoursNotStated: 0, contractors: 0, pay: 60000, basis: "$60,000, the pay the census states for 1 of 1." },
+        { classCode: null, employees: 1, fullTime: 1, partTime: 0, hoursNotStated: 0, contractors: 0, contractorPay: null, pay: 60000, basis: "$60,000, the pay the census states for 1 of 1." },
       ] },
     ]);
+  });
+
+  it("leaves people the census marks 1099 out of the payroll, says so once, and leaves whether to rate them to the carrier", () => {
+    expect(app.contractorsNote).toBe(
+      "People the census marks 1099 are independent contractors, so they are not counted as employees and their pay is not in the payroll. They are shown apart, with the pay the census states for them. Whether any of them must be rated is for the carrier.",
+    );
+    expect(workersCompApplication(source({ census: [person({ annual_salary: 1000 })] })).contractorsNote).toBeNull();
+    const two = workersCompApplication(source({ census: [person({ annual_salary: 1000 }), person({ classification: "1099", annual_salary: 500 }), person({ classification: "1099", annual_salary: 500.25 })] }));
+    expect(two.ratingTable[0].rows[0].basis).toBe("$1,000, the pay the census states for 1 of 1. 2 the census marks 1099 are left out of the counts and the pay, with $1,000.25 stated.");
   });
 
   it("lists what the census lacks as blanks, rather than estimating it", () => {
     expect(section(app, "Rating by state")).toEqual([
       { label: "Employees, as answered", value: "6" },
-      { label: "Employees in the census", value: "6" },
-      { label: "Class code", value: null, note: "the census has none for 1 of 6" },
-      { label: "Annual pay", value: null, note: "the census has none for 1 of 6, and 1 is worked out from an hourly rate" },
-      { label: "Work state", value: null, note: "the census has none for 1 of 6" },
+      { label: "Employees in the census", value: "5, not counting 3 the census marks 1099" },
+      // Over the employees alone: what a contractor lacks is not a gap in the payroll.
+      { label: "Class code", value: null, note: "the census has none for 1 of 5" },
+      { label: "Annual pay", value: null, note: "the census has none for 1 of 5, and 1 is worked out from an hourly rate" },
+      { label: "Work state", value: null, note: "the census has none for 1 of 5" },
       { label: "Description of each class code", value: null },
       { label: "Estimated pay for the policy period", value: null },
     ]);
