@@ -35,6 +35,7 @@ CREATE TABLE auth.users (id uuid PRIMARY KEY, raw_user_meta_data jsonb);
 \i supabase/migrations/20261111092000_intake_schema_v3_industry_code.sql
 \i supabase/migrations/20261111093000_intake_schema_v3_current_peo.sql
 \i supabase/migrations/20261111094000_intake_schema_v3_census_columns.sql
+\i supabase/migrations/20261111095000_intake_schema_v3_census_worksite.sql
 
 -- ---------- helpers ----------
 -- The path chamber_data_error names for d, or NULL when d is acceptable.
@@ -152,4 +153,17 @@ BEGIN
   PERFORM pg_temp.must_refuse('{"census":[{"first_name":" "}]}', 'census[0].first_name', 'a blank first name');
   PERFORM pg_temp.must_accept('{"census":[{"first_name":"Ann","nickname":"A"}]}', 'an unknown key on a census row');
   RAISE NOTICE 'intake_schema_v3: census column cases passed';
+END $$;
+
+-- ---------- K-2.2 where and how each employee works ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.must_accept('{"census":[{"first_name":"Ann","worksite":"Oakland warehouse","remote":false,"travels":true}]}', 'a census row with a worksite');
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","worksite":4}]}', 'census[0].worksite', 'a worksite that is not text');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('census', jsonb_build_array(jsonb_build_object('first_name', 'Ann', 'worksite', repeat('x', 201)))), 'census[0].worksite', 'a worksite of 201 characters');
+  PERFORM pg_temp.must_accept(jsonb_build_object('census', jsonb_build_array(jsonb_build_object('first_name', 'Ann', 'worksite', repeat('x', 200)))), 'a worksite of 200 characters');
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","remote":"no"}]}', 'census[0].remote', 'remote sent as text');
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","travels":1}]}', 'census[0].travels', 'travels sent as a number');
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","gender":"female"}]}', 'census[0].gender', 'a gender written out, after K-2.2');
+  RAISE NOTICE 'intake_schema_v3: worksite cases passed';
 END $$;

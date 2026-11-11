@@ -296,9 +296,9 @@ describe("the census template", () => {
   it("reads a filled-in template, as typed and as a spreadsheet saves it, with every fact stated and no notes", () => {
     const csv = [
       censusTemplateCsv().trim(),
-      "Ann,Lee,1990-01-01,F,2019-04-01,CA,NV,94105,Engineer,105000,salary,full_time,w2,EE+SP,no,8810",
+      "Ann,Lee,1990-01-01,F,2019-04-01,CA,NV,94105,Oakland office,no,yes,Engineer,105000,salary,full_time,w2,EE+SP,no,8810",
       // Saved from a spreadsheet: a US date, the ZIP's leading zero gone.
-      "Bo,Ray,3/15/1988,M,6/3/2021,NJ,NJ,7030,Cashier,31200,hourly,part_time,1099,WAIVE,yes,8017",
+      "Bo,Ray,3/15/1988,M,6/3/2021,NJ,NJ,7030,Store 12,no,no,Cashier,31200,hourly,part_time,1099,WAIVE,yes,8017",
     ].join("\r\n");
     const reading = readGrids([{ label: "CSV", rows: csvRows(csv) }], NOW);
 
@@ -310,11 +310,13 @@ describe("the census template", () => {
     expect(census.facts).toEqual([
       "dob", "work_state", "zip_code", "job_title", "annual_salary", "compensation_type", "employment_type",
       "classification", "coverage_tier", "class_code", "gender", "hire_date", "cobra", "home_state",
+      "worksite", "remote", "travels",
     ]);
+    expect((census.value as CensusEmployee[]).map((e) => [e.worksite, e.remote, e.travels])).toEqual([["Oakland office", false, true], ["Store 12", false, false]]);
     // No fact is a default (no `assumed`): the template states each one.
     expect(census.value).toEqual([
-      { id: expect.any(String), first_name: "Ann", last_name: "Lee", dob: "1990-01-01", work_state: "CA", zip_code: "94105", job_title: "Engineer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810", gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NV" },
-      { id: expect.any(String), first_name: "Bo", last_name: "Ray", dob: "1988-03-15", work_state: "NJ", zip_code: "07030", job_title: "Cashier", annual_salary: 31200, compensation_type: "hourly", employment_type: "part_time", classification: "1099", coverage_tier: "WAIVE", class_code: "8017", gender: "M", hire_date: "2021-06-03", cobra: true, home_state: "NJ" },
+      { id: expect.any(String), first_name: "Ann", last_name: "Lee", dob: "1990-01-01", work_state: "CA", zip_code: "94105", job_title: "Engineer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810", gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NV", worksite: "Oakland office", remote: false, travels: true },
+      { id: expect.any(String), first_name: "Bo", last_name: "Ray", dob: "1988-03-15", work_state: "NJ", zip_code: "07030", job_title: "Cashier", annual_salary: 31200, compensation_type: "hourly", employment_type: "part_time", classification: "1099", coverage_tier: "WAIVE", class_code: "8017", gender: "M", hire_date: "2021-06-03", cobra: true, home_state: "NJ", worksite: "Store 12", remote: false, travels: false },
     ]);
   });
 
@@ -327,6 +329,19 @@ describe("the census template", () => {
     for (const header of ["COBRA", "Cobra Status", "On COBRA", "COBRA (Y/N)"]) expect(mapCensusColumns(["Name", header]).columns.cobra, header).toBe(1);
     // A date of birth is still a date of birth.
     expect(mapCensusColumns(["Name", "Birth Date", "Hire Date"]).columns).toMatchObject({ dob: 1, hire_date: 2 });
+  });
+
+  // K-2.2
+  it("reads worksite, remote and travel columns under their common headers, and never takes a worksite for the work state", () => {
+    const { columns } = mapCensusColumns(["Name", "Work State", "Worksite", "Remote", "Travels"]);
+    expect(columns).toMatchObject({ full_name: 0, work_state: 1, worksite: 2, remote: 3, travels: 4 });
+    for (const header of ["Worksite", "Work Site", "Work Location", "Location", "Office", "Job Site"]) expect(mapCensusColumns(["Name", "State", header]).columns.worksite, header).toBe(2);
+    for (const header of ["Remote", "Remote Worker", "Works Remotely", "Work From Home", "WFH", "Telecommute"]) expect(mapCensusColumns(["Name", header]).columns.remote, header).toBe(1);
+    for (const header of ["Travels", "Travel", "Travels for Work", "Business Travel", "Travel Required"]) expect(mapCensusColumns(["Name", header]).columns.travels, header).toBe(1);
+    // "Worksite State" and "Work Location State" still name the state.
+    expect(mapCensusColumns(["Name", "Worksite State"]).columns).toMatchObject({ work_state: 1 });
+    expect(mapCensusColumns(["Name", "Work Location State"]).columns).toMatchObject({ work_state: 1 });
+    expect(mapCensusColumns(["Name", "Site State Code"]).columns).toEqual({ full_name: 0, work_state: 1 });
   });
 
   it("still takes the work state from a home state column when the sheet has no work state, and keeps the home state too", () => {

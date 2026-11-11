@@ -293,3 +293,33 @@ describe("normalizeCensusRow: gender, hire date, COBRA status and home state (K-
     expect(normalizeCensusRow(JSON.parse(JSON.stringify(row)), NOW)).toEqual(row);
   });
 });
+
+// K-2.2: what a workers' comp underwriter needs to assign class codes.
+describe("normalizeCensusRow: worksite, remote and travels (K-2.2)", () => {
+  const base = { first_name: "Ana", last_name: "Diaz", classification: "w2", employment_type: "full_time" };
+  const read = (extra: Record<string, unknown>) => normalizeCensusRow({ ...base, ...extra }, NOW);
+
+  it("keeps a worksite as text, cut to 200 characters, and none when blank", () => {
+    expect(read({ worksite: "  Oakland   warehouse " })?.worksite).toBe("Oakland warehouse");
+    expect(read({ worksite: "x".repeat(250) })?.worksite).toHaveLength(200);
+    expect(read({ worksite: "  " })).not.toHaveProperty("worksite");
+  });
+
+  it("reads whether someone works remotely", () => {
+    for (const v of ["Y", "yes", true, "Remote", "WFH", "Work from home", "Hybrid", "Fully remote"]) expect(read({ remote: v })?.remote, String(v)).toBe(true);
+    for (const v of ["N", "no", false, "Onsite", "On-site", "In office", "Office"]) expect(read({ remote: v })?.remote, String(v)).toBe(false);
+    for (const v of ["", "sometimes?", null]) expect(read({ remote: v }), String(v)).not.toHaveProperty("remote");
+  });
+
+  it("reads whether someone travels for work", () => {
+    for (const v of ["Y", "yes", true, "Travels", "Frequent travel"]) expect(read({ travels: v })?.travels, String(v)).toBe(true);
+    for (const v of ["N", "no", false, "None", "No travel"]) expect(read({ travels: v })?.travels, String(v)).toBe(false);
+    for (const v of ["", null, 7]) expect(read({ travels: v }), String(v)).not.toHaveProperty("travels");
+  });
+
+  it("survives being saved and read again", () => {
+    const row = read({ worksite: "Oakland warehouse", remote: "no", travels: "yes" })!;
+    expect(row).toMatchObject({ worksite: "Oakland warehouse", remote: false, travels: true });
+    expect(normalizeCensusRow(JSON.parse(JSON.stringify(row)), NOW)).toEqual(row);
+  });
+});

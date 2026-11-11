@@ -132,7 +132,7 @@ export type ColumnKey =
   | "first_name" | "last_name" | "full_name" | "dob" | "age" | "work_state" | "home_state" | "zip_code"
   | "job_title" | "annual_salary" | "hourly_rate" | "hours_per_week" | "compensation_type"
   | "employment_type" | "classification" | "coverage_tier" | "class_code"
-  | "gender" | "hire_date" | "cobra";
+  | "gender" | "hire_date" | "cobra" | "worksite" | "remote" | "travels";
 
 // Header spellings, after normaliseHeader ("Work State:" -> "work state").
 const SYNONYMS: Record<ColumnKey, string[]> = {
@@ -157,6 +157,10 @@ const SYNONYMS: Record<ColumnKey, string[]> = {
   gender: ["gender", "sex", "m f", "f m", "male female", "gender identity"],
   hire_date: ["hire date", "date of hire", "doh", "hired", "hired on", "original hire date", "start date", "date hired", "employment date", "service date"],
   cobra: ["cobra", "cobra status", "on cobra", "cobra participant", "cobra enrolled", "cobra y n"],
+  // K-2.2
+  worksite: ["worksite", "work site", "work location", "location", "office", "site", "job site", "work address", "branch", "facility", "store"],
+  remote: ["remote", "remote worker", "works remotely", "work from home", "wfh", "telecommute", "telework", "remote status", "remote y n"],
+  travels: ["travels", "travel", "travels for work", "business travel", "travel required", "work travel"],
 };
 
 // Words a header may carry that don't change what the column holds ("Employee DOB", "Current Salary").
@@ -168,6 +172,9 @@ const KEYWORDS: [ColumnKey, (t: Set<string>) => boolean][] = [
   ["hire_date", (t) => t.has("hire") || t.has("doh")],
   ["gender", (t) => t.has("gender") || t.has("sex")],
   ["cobra", (t) => t.has("cobra")],
+  ["remote", (t) => t.has("remote") || t.has("wfh") || t.has("telecommute")],
+  ["travels", (t) => t.has("travel") || t.has("travels")],
+  ["worksite", (t) => t.has("worksite") || t.has("site") || t.has("location")],
   ["zip_code", (t) => t.has("zip") || t.has("postal")],
   ["home_state", (t) => t.has("state") && (t.has("home") || t.has("residence") || t.has("resident"))],
   ["work_state", (t) => t.has("state") && !t.has("status")],
@@ -324,6 +331,9 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
         hire_date: cell(row, c.hire_date),
         cobra: cell(row, c.cobra),
         home_state: cell(row, c.home_state),
+        worksite: cell(row, c.worksite),
+        remote: cell(row, c.remote),
+        travels: cell(row, c.travels),
       });
       if (firstData === -1) firstData = r;
       lastData = r;
@@ -348,6 +358,9 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
       ["hire_date", has("hire_date")],
       ["cobra", has("cobra")],
       ["home_state", has("home_state")],
+      ["worksite", has("worksite")],
+      ["remote", has("remote")],
+      ["travels", has("travels")],
     ];
     return {
       census,

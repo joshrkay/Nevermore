@@ -246,6 +246,10 @@ export const INTAKE_SCHEMA_V3: JsonSchema = {
         hire_date: { type: "string", maxLength: LIMITS.dob },
         cobra: { type: "boolean" },
         home_state: { title: "a US state or territory code such as CA", type: "string", enum: [...STATE_CODES] },
+        // New in v3 (K-2.2): where and how each employee works, for assigning workers' comp class codes.
+        worksite: { type: "string", maxLength: LIMITS.name },
+        remote: { type: "boolean" },
+        travels: { type: "boolean" },
         dependents: { type: "array", maxItems: LIMITS.dependents, items: { $ref: "#/$defs/dependent" } },
         // Which of the row's values are defaults rather than answers (CENSUS_ASSUMABLE in census.ts).
         // Added to v1 without a new version: it is optional, and the database already tolerated it.

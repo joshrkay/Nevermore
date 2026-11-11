@@ -59,6 +59,8 @@ export const CENSUS_FACTS = [
   "employment_type", "classification", "coverage_tier", "class_code",
   // New in intake schema v3 (K-2.1).
   "gender", "hire_date", "cobra", "home_state",
+  // K-2.2
+  "worksite", "remote", "travels",
 ] as const;
 export type CensusFact = (typeof CENSUS_FACTS)[number];
 
@@ -78,6 +80,9 @@ export const CENSUS_FACT_LABELS: Record<CensusFact, string> = {
   hire_date: "hire date",
   cobra: "COBRA status",
   home_state: "home state",
+  worksite: "worksite",
+  remote: "works remotely",
+  travels: "travels for work",
 };
 
 /** One census fact for display: "$95,000", "Part time", "W-2", "Employee + Spouse", or "—". */
@@ -96,6 +101,9 @@ export function formatCensusFact(fact: CensusFact, v: unknown): string {
       return COVERAGE_TIER_LABELS[v as keyof typeof COVERAGE_TIER_LABELS] ?? String(v);
     case "cobra":
       return v === true ? "On COBRA" : "Not on COBRA";
+    case "remote":
+    case "travels":
+      return v === true ? "Yes" : "No";
     default:
       return String(v);
   }

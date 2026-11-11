@@ -48,6 +48,8 @@ A census row needs a non-blank `first_name`; every other key may be absent. Unkn
 | `hire_date` | Text, at most 40 characters. The client keeps only a real `YYYY-MM-DD` date (new in v3) | Omitted |
 | `cobra` | `true` or `false` (new in v3) | "yes", "no", "COBRA" and "active" are read; anything else is omitted |
 | `home_state` | A listed code (new in v3) | A code or a state's name is read; anything else is omitted |
+| `worksite` | Text, at most 200 characters (new in v3) | Cut to 200 characters; omitted when blank |
+| `remote`, `travels` | `true` or `false` (new in v3) | "yes", "no", "remote", "onsite", "travels" and the like are read; anything else is omitted |
 | `dependents` | Array of dependents, at most 20 (`MAX_DEPENDENTS`) | Invalid ones dropped, then truncated to 20 |
 | `dependents[].first_name` | Text, 1 to 1,000 characters, not blank | The dependent is dropped |
 | `dependents[].last_name`, `.dob` | Text, at most 200 and 40 characters | `""` |
@@ -245,6 +247,7 @@ The roster is an array of rows (`CensusEmployee`, defined in `supabase/functions
 | `coverage_tier` | `EE`, `EE+SP`, `EE+CH`, `FAM` or `WAIVE`. When absent, the Manuscript derives a tier from the `dependents` named, and otherwise shows it as not provided. |
 | `class_code` | Four-digit workers' comp code. |
 | `gender`, `hire_date`, `cobra`, `home_state` | New in v3 (K-2.1): what a health underwriter rates the group on. `F`, `M` or `X`; `YYYY-MM-DD`; whether the person is covered under COBRA rather than as an active employee; and the state they live in. Each is optional: a census without one is accepted, and each column anyone lacks is one open item ("Missing from the census"), never one per person and never a blocker. |
+| `worksite`, `remote`, `travels` | New in v3 (K-2.2): the office, store or site the person works at, and whether they work remotely or travel for work, so a workers' comp underwriter can assign class codes. Each is optional and none is an open item. |
 | `dependents` | Named in conversation, never read from a document. |
 | `assumed` | Which of `classification`, `employment_type` and `annual_salary` hold a default rather than an answer. Absent when none do. |
 

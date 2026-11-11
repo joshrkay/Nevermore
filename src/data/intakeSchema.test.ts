@@ -250,6 +250,16 @@ describe("validateChamberData", () => {
     expect(paths({ census: [row({ hire_date: "x".repeat(41) })] })).toEqual(["census[0].hire_date"]);
   });
 
+  it("takes each employee's worksite, and whether they work remotely or travel, each optional (K-2.2)", () => {
+    expect(validateChamberData({ census: [row({ worksite: "Oakland warehouse", remote: false, travels: true })] })).toEqual([]);
+    expect(validateChamberData({ census: [row({ worksite: 4, remote: "no", travels: 1 })] })).toEqual([
+      { path: "census[0].worksite", reason: "must be a string" },
+      { path: "census[0].remote", reason: "must be a boolean" },
+      { path: "census[0].travels", reason: "must be a boolean" },
+    ]);
+    expect(paths({ census: [row({ worksite: "x".repeat(201) })] })).toEqual(["census[0].worksite"]);
+  });
+
   it("refuses the legacy roster key, which no writer sends any more", () => {
     expect(paths({ employees: [] })).toEqual(["employees"]);
   });

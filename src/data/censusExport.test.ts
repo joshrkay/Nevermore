@@ -12,9 +12,9 @@ describe("censusExport in our own layout", () => {
   it("writes the census template's header, then one row per employee in the same column order", () => {
     const { csv, blankColumns } = censusExport([sarah, { ...sarah, id: "2", first_name: "Marcus", last_name: "Rivera", dob: undefined, work_state: "", zip_code: undefined, job_title: undefined, annual_salary: undefined, class_code: undefined, coverage_tier: undefined }], OUR_CENSUS_LAYOUT);
     expect(csv.split("\r\n")).toEqual([
-      "first_name,last_name,dob,gender,hire_date,work_state,home_state,zip_code,job_title,annual_salary,compensation_type,employment_type,classification,coverage_tier,cobra,class_code",
-      "Sarah,Chen,1988-03-15,,,CA,,94107,Senior Designer,105000,salary,full_time,w2,FAM,,8810",
-      "Marcus,Rivera,,,,,,,,,salary,full_time,w2,,,",
+      "first_name,last_name,dob,gender,hire_date,work_state,home_state,zip_code,worksite,remote,travels,job_title,annual_salary,compensation_type,employment_type,classification,coverage_tier,cobra,class_code",
+      "Sarah,Chen,1988-03-15,,,CA,,94107,,,,Senior Designer,105000,salary,full_time,w2,FAM,,8810",
+      "Marcus,Rivera,,,,,,,,,,,,salary,full_time,w2,,,",
       "",
     ]);
     expect(blankColumns).toEqual([]);
@@ -58,7 +58,7 @@ describe("censusExport writes values a spreadsheet reads back as they are", () =
     const row = csv.split("\r\n")[1];
     expect(row.startsWith('"\'=HYPERLINK(""https://x.example"",""x"")",\'@SUM(A1),')).toBe(true);
     // The job title, between the ZIP and the salary.
-    expect(row).toContain(",94107,'+1,105000,");
+    expect(row).toContain(",94107,,,,'+1,105000,");
   });
 });
 

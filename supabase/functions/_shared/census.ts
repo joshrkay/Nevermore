@@ -64,6 +64,10 @@ export interface CensusEmployee {
   /** Whether they are covered under COBRA continuation rather than as an active employee. */
   cobra?: boolean;
   home_state?: string; // 2-letter uppercase, where they live; absent until known
+  // New in intake schema v3 (K-2.2): where and how they work, for assigning workers' comp class codes.
+  worksite?: string;
+  remote?: boolean;
+  travels?: boolean;
   /** Dependents the prospect named in conversation. Not read from documents. */
   dependents?: CensusDependent[];
   /** The facts whose values are defaults, not answers (see CENSUS_ASSUMABLE). Absent when none are. */
@@ -222,6 +226,26 @@ export function normalizeCobra(v: unknown): boolean | undefined {
   const said = key(v);
   if (/^(n|no|false|active|not on cobra|none)$/.test(said)) return false;
   if (/^(y|yes|true)$/.test(said) || /\bcobra\b/.test(said)) return true;
+  return undefined;
+}
+
+// ---------- Where and how they work (K-2.2) ----------
+
+/** Whether someone works remotely, at least some of the time. Undefined when the roster doesn't say. */
+export function normalizeRemote(v: unknown): boolean | undefined {
+  if (typeof v === "boolean") return v;
+  const said = key(v);
+  if (/^(n|no|false|onsite|on site|in office|office)$/.test(said)) return false;
+  if (/^(y|yes|true|wfh|hybrid)$/.test(said) || /\bremote\b/.test(said) || said === "work from home") return true;
+  return undefined;
+}
+
+/** Whether someone travels for work. Undefined when the roster doesn't say. */
+export function normalizeTravels(v: unknown): boolean | undefined {
+  if (typeof v === "boolean") return v;
+  const said = key(v);
+  if (/^(n|no|false|none|no travel)$/.test(said)) return false;
+  if (/^(y|yes|true)$/.test(said) || /\btravels?\b/.test(said)) return true;
   return undefined;
 }
 
@@ -400,6 +424,12 @@ export function normalizeCensusRow(raw: unknown, now: Date = new Date()): Omit<C
   if (cobra !== undefined) row.cobra = cobra;
   const homeState = normalizeState(raw.home_state);
   if (homeState) row.home_state = homeState;
+  const worksite = cleanText(raw.worksite);
+  if (worksite) row.worksite = worksite;
+  const remote = normalizeRemote(raw.remote);
+  if (remote !== undefined) row.remote = remote;
+  const travels = normalizeTravels(raw.travels);
+  if (travels !== undefined) row.travels = travels;
   const dependents = normalizeDependents(raw.dependents, now);
   if (dependents.length > 0) row.dependents = dependents;
   if (assumed.size > 0) row.assumed = CENSUS_ASSUMABLE.filter((a) => assumed.has(a));

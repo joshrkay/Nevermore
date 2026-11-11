@@ -1051,6 +1051,16 @@
             "VI"
           ]
         },
+        "worksite": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "remote": {
+          "type": "boolean"
+        },
+        "travels": {
+          "type": "boolean"
+        },
         "dependents": {
           "type": "array",
           "maxItems": 20,

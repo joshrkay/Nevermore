@@ -46,4 +46,18 @@ describe("CensusWorkspaceTab", () => {
     expect(cells(1)).toEqual(["F", "2019-04-01", "Yes", "NJ"]);
     expect(cells(2)).toEqual(["—", "—", "No", "—"]);
   });
+
+  // K-2.2
+  it("shows where each person works, and who works remotely or travels", () => {
+    render(
+      <CensusWorkspaceTab
+        data={{ ...EMPTY_CHAMBER_DATA, census: [{ ...census[0], worksite: "Oakland warehouse", remote: false, travels: true }, { ...census[0], id: "e2", first_name: "Bo", remote: true }, { ...census[0], id: "e3", first_name: "Cy" }] }}
+        isDemo
+      />,
+    );
+    const table = screen.getByRole("table");
+    const column = within(table).getAllByRole("columnheader").findIndex((h) => h.textContent === "Worksite");
+    const cell = (row: number) => within(within(table).getAllByRole("row")[row]).getAllByRole("cell")[column].textContent;
+    expect([cell(1), cell(2), cell(3)]).toEqual(["Oakland warehouse · travels", "Remote", "—"]);
+  });
 });
