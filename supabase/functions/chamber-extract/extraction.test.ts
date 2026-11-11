@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { emptyExtraction, MAX_UNKNOWN_PER_MESSAGE, quotesMessage, saysNotKnown, shapeExtraction } from "./extraction";
 import { INTAKE_SCHEMA, LIMITS } from "../_shared/intakeSchema";
-import { EXTRACT_TOOL, FIELD_GUIDE, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
+import { EXTRACT_TOOL, FIELD_GUIDE,
+  FIELD_QUESTION, FIELDS, MAX_EVIDENCE_CHARS, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema";
 
 // Most cases are about the arguments, not the message: evidence is checked against `message` where it matters.
 const shape = (args: Record<string, unknown>, message = "") => shapeExtraction(args, message);
@@ -311,23 +312,58 @@ describe("extraction tool schema", () => {
   });
 });
 
-// US-2.1b: the contract covers every top-level field of the intake schema but the census.
+// K-1.1: the FEIN goes in the workspace, so Lenore is told how to handle it in the conversation.
+describe("how Lenore handles answers entered in the workspace", () => {
+  const replyRules = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("How Lenore replies"));
+  const rule = (start: string) => replyRules.split("\n").find((l) => l.startsWith(start)) ?? "";
+
+  it("never asks for them, and says where each goes once nothing else is left to ask", () => {
+    expect(rule("- Never ask for an answer named in \"Entered in the workspace\"")).toMatch(/When "Not yet settled" is "none" and "Entered in the workspace" names any, end the wrap-up by saying where each one goes/);
+  });
+
+  it("sends a FEIN the prospect offers in chat to the FEIN box on the Company tab, and never repeats or keeps it", () => {
+    const fein = rule("- When the prospect gives or offers their FEIN");
+    expect(fein).toContain("FEIN box on the Company tab");
+    expect(fein).toMatch(/never repeat the number/);
+  });
+
+  it("has Lenore say their advisor asked about a workspace answer, and where to check it", () => {
+    expect(rule("- An entry in \"Entered in the workspace\" marked \"[your advisor asked]\"")).toMatch(/say their advisor asked about it and which tab it is on/);
+  });
+
+  it("tells the model never to extract a FEIN", () => {
+    expect(SYSTEM_PROMPT).toContain("Never extract a federal employer identification number (FEIN or EIN)");
+  });
+});
+
+// US-2.1b: the contract covers every top-level field of the intake schema that the conversation can take: not the
+// census (a file) and not the FEIN or the legal entities' FEINs (typed into the workspace, K-1.1).
 describe("the extraction contract", () => {
-  const PROPERTIES = INTAKE_SCHEMA.properties as Record<string, { type: unknown; enum?: unknown[] }>;
+  const PROPERTIES = INTAKE_SCHEMA.properties as Record<string, { type: unknown; enum?: unknown[]; minimum?: number }>;
+  const FROM_CHAT = Object.keys(PROPERTIES).filter((k) => !["census", "fein", "entities"].includes(k));
   // A value the schema accepts for each kind of field, as the model would send it.
   const sample = (key: string): unknown => {
     if (key === "hq_state") return "NY";
     if (key === "states") return ["NY", "NJ"];
+    if (key === "naics_code") return "541430";
     const types = Array.isArray(PROPERTIES[key].type) ? (PROPERTIES[key].type as string[]) : [PROPERTIES[key].type as string];
+    // A table of rows: one row holding the list's first key.
+    const ref = (PROPERTIES[key] as { items?: { $ref?: string } }).items?.$ref;
+    if (ref && ref !== "#/$defs/stateCode") {
+      const row = (INTAKE_SCHEMA.$defs as Record<string, { properties: Record<string, unknown> }>)[ref.slice("#/$defs/".length)];
+      const [name, cell] = Object.entries(row.properties).find(([, each]) => (each as { type?: string }).type === "string")! as [string, { enum?: string[] }];
+      return [{ [name]: cell.enum ? cell.enum[0] : "Acme" }];
+    }
     if (types.includes("array")) return ["Dental"];
+    if (PROPERTIES[key].enum) return PROPERTIES[key].enum![0];
     if (types.includes("boolean")) return false;
-    if (types.includes("integer")) return 0;
+    if (types.includes("integer")) return PROPERTIES[key].minimum ?? 0;
     if (types.includes("number")) return 0.92;
     return "Acme";
   };
 
-  it("asks for every field of the intake schema but the census, each with a guide for the model and a type", () => {
-    expect([...FIELDS].sort()).toEqual(Object.keys(PROPERTIES).filter((k) => k !== "census").sort());
+  it("asks for every field of the intake schema the conversation can take, each with a guide for the model and a type", () => {
+    expect([...FIELDS].sort()).toEqual([...FROM_CHAT].sort());
     for (const key of FIELDS) {
       expect(FIELD_GUIDE[key], key).toBeTruthy();
       expect(SYSTEM_PROMPT).toContain(`- ${key} (`);
@@ -337,7 +373,65 @@ describe("the extraction contract", () => {
     expect(EXTRACT_TOOL.parameters.properties).not.toHaveProperty("census");
   });
 
-  it.each(Object.keys(PROPERTIES).filter((k) => k !== "census"))("takes an answer for %s, with its status and evidence", (key) => {
+  it("has a question of Lenore's own for every field, for when the model gives no reply", () => {
+    for (const key of FIELDS) expect(FIELD_QUESTION[key], key).toMatch(/\?$/);
+    expect(Object.keys(FIELD_QUESTION).sort()).toEqual([...FIELDS].sort());
+  });
+
+  it("never takes a FEIN from the conversation, the employer's or a legal entity's (K-1.1)", () => {
+    expect(EXTRACT_TOOL.parameters.properties).not.toHaveProperty("fein");
+    expect(EXTRACT_TOOL.parameters.properties).not.toHaveProperty("entities");
+    const shaped = shape({ fein: "841234567", entities: [{ legal_name: "Acme LLC", fein: "841234567" }], company_name: "Acme" }, "Our EIN is 84-1234567, we're Acme.");
+    expect(shaped.extracted).toEqual({ company_name: "Acme" });
+  });
+
+  // K-1.2: Lenore proposes a NAICS code from the description of operations; the prospect confirms it.
+  it("takes a NAICS code the model proposes as inferred, however sure the model says it is", () => {
+    const shaped = shape(
+      { operations_description: "We design packaging for consumer brands", naics_code: "541430", field_status: { operations_description: "confirmed", naics_code: "confirmed" }, evidence: { naics_code: "design packaging" } },
+      "We design packaging for consumer brands.",
+    );
+    expect(shaped.extracted).toEqual({ operations_description: "We design packaging for consumer brands", naics_code: "541430" });
+    expect(shaped.field_status).toEqual({ operations_description: "confirmed", naics_code: "inferred" });
+  });
+
+  it("takes a NAICS code as confirmed only when the prospect's own message gives the code", () => {
+    const shaped = shape({ naics_code: "541430", field_status: { naics_code: "confirmed" }, evidence: { naics_code: "541430" } }, "Our NAICS code is 541430.");
+    expect(shaped.field_status).toEqual({ naics_code: "confirmed" });
+  });
+
+  it("refuses a NAICS code that isn't a 2022 industry, so a made-up code never reaches the intake", () => {
+    const shaped = shape({ naics_code: "999999", company_name: "Acme", field_status: { naics_code: "inferred" } }, "We're Acme, a design shop.");
+    expect(shaped.extracted).toEqual({ company_name: "Acme" });
+    expect(shaped.rejected).toEqual([{ path: "naics_code", reason: "is not a 2022 NAICS code" }]);
+    expect(shaped.field_status).not.toHaveProperty("naics_code");
+  });
+
+  // K-3.1: Lenore doesn't ask for a table row by row, but takes what the prospect volunteers of one.
+  it("takes owners and officers the prospect volunteers, as rows of the table's own keys", () => {
+    expect((EXTRACT_TOOL.parameters.properties as Record<string, unknown>).owners_officers).toEqual({
+      type: "array",
+      items: {
+        type: "object",
+        properties: { name: { type: "string" }, title: { type: "string" }, ownership_percent: { type: "number" }, duties: { type: "string" }, covered: { type: "boolean" } },
+        additionalProperties: false,
+      },
+    });
+    const shaped = shape({ owners_officers: [{ name: "Dana Reyes", ownership_percent: 60, covered: false }], field_status: { owners_officers: "confirmed" } }, "I own 60% and I'm excluded from comp.");
+    expect(shaped.extracted).toEqual({ owners_officers: [{ name: "Dana Reyes", ownership_percent: 60, covered: false }] });
+    const bad = shape({ owners_officers: [{ name: "Dana Reyes", ownership_percent: "60%" }] }, "I own 60%.");
+    expect(bad.extracted).toEqual({});
+    expect(bad.rejected).toEqual([{ path: "owners_officers[0].ownership_percent", reason: "must be a number" }]);
+  });
+
+  it("offers the model an entity type as one of the listed values", () => {
+    expect((EXTRACT_TOOL.parameters.properties as Record<string, unknown>).entity_type).toEqual({
+      type: "string", enum: ["sole_proprietorship", "partnership", "llc", "c_corporation", "s_corporation", "nonprofit", "other"],
+    });
+  });
+
+  // A NAICS code is the one answer that never arrives confirmed unless the message holds it: its own cases are above.
+  it.each(FROM_CHAT.filter((k) => k !== "naics_code"))("takes an answer for %s, with its status and evidence", (key) => {
     const value = sample(key);
     const shaped = shape({ [key]: value, field_status: { [key]: "confirmed" }, evidence: { [key]: "as they said" } }, "That's as they said.");
     expect(shaped.extracted).toEqual({ [key]: value });

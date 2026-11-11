@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { selectAdapter } from "../_shared/ai/providers";
 import type { AllowanceResult, Refusal } from "../_shared/ai/allowance";
 import { AiCallError, AiQuotaError, AiUnavailableError, askForCandidates, askWithinBudget, DOCUMENT_MAX_TOKENS, DOCUMENT_TIMEOUT_MS, refusalError, retryLater, type AskDeps } from "./ask";
-import { buildPromptText, DOCUMENT_FIELDS, type TextSection } from "./parse";
+import { buildPromptText, DOCUMENT_FIELDS, type TextSection, DOCUMENT_ROW_FIELDS } from "./parse";
 import { REPORT_TOOL, SYSTEM_PROMPT } from "./schema";
 
 const sections: TextSection[] = [
@@ -246,11 +246,11 @@ describe("document tool schema", () => {
   const fieldSchema = (REPORT_TOOL.parameters.properties as { fields: { items: { properties: { field: { enum: string[] } } } } }).fields.items.properties.field;
 
   it("lets the model report exactly the fields the shaping code accepts", () => {
-    expect(fieldSchema.enum).toEqual([...DOCUMENT_FIELDS]);
+    expect(fieldSchema.enum).toEqual([...DOCUMENT_FIELDS, ...DOCUMENT_ROW_FIELDS]);
   });
 
   it("explains every one of those fields in the prompt", () => {
-    for (const field of DOCUMENT_FIELDS) expect(SYSTEM_PROMPT).toContain(field);
+    for (const field of [...DOCUMENT_FIELDS, ...DOCUMENT_ROW_FIELDS]) expect(SYSTEM_PROMPT).toContain(field);
   });
 
   it("asks for the section each fact came from, and never for a person's details", () => {

@@ -29,6 +29,7 @@ describe("buildUserPrompt", () => {
       expect.stringMatching(/^Not yet settled, most important first: /),
       "Ready to certify: no",
       "Employee census: not uploaded",
+      expect.stringMatching(/^Entered in the workspace, never asked for in chat: fein \(FEIN, on the Company tab\), naics_code \(NAICS code, on the Company tab\)/),
       'Recent conversation, oldest first: [{"sender":"lenore","text":"How many people work for you?"}]',
       'New user message: "We have 40 \\"full time\\" people"',
     ]);
@@ -60,8 +61,8 @@ describe("buildUserPrompt", () => {
     const prompt = buildUserPrompt({ message: "hello" });
     expect(parts(prompt)[0]).toBe("Captured so far (answers): {}");
     expect(parts(prompt)[1]).toBe("Field statuses: {}");
-    expect(parts(prompt)[5]).toBe("Recent conversation, oldest first: []");
-    expect(parts(prompt)[6]).toBe('New user message: "hello"');
+    expect(parts(prompt)[6]).toBe("Recent conversation, oldest first: []");
+    expect(parts(prompt)[7]).toBe('New user message: "hello"');
   });
 
   it("keeps a message that tries to close its quotes inside its slot", () => {
@@ -71,6 +72,75 @@ describe("buildUserPrompt", () => {
     // The message is one JSON string, with its line breaks escaped, ending the prompt.
     expect(last.split("\n")).toHaveLength(1);
     expect(JSON.parse(last)).toBe(attack);
+  });
+});
+
+// K-1.1: nine digits in a chat message are redacted before the model sees them, so the FEIN is typed into its own
+// box in the workspace. Lenore never asks for it; she is told where it goes, so she can say so.
+describe("answers entered in the workspace", () => {
+  // Every table already holds a row, so a line names only the answers its case is about. Add each new table here.
+  const TABLES = { owners_officers: [{ name: "Dana Reyes" }], loss_history: [{ policy_year: 2025 }], medical_plans: [{ name: "Gold PPO" }], suta_rates: [{ state: "CA" }] };
+  const line = (turn: Parameters<typeof buildUserPrompt>[0], tables: object = TABLES) =>
+    buildUserPrompt({ ...turn, context: { ...tables, ...((turn.context ?? {}) as object) } }).split("\n\n")[5];
+
+  it("are never among the fields Lenore asks about, however little else is left", () => {
+    expect(unsettledForTurn({}).map((f) => f.key)).not.toContain("fein");
+    expect(unsettledForTurn({}).map((f) => f.key)).not.toContain("entities");
+    expect(unsettledForTurn({ context: { multiple_entities: true } }).map((f) => f.key)).not.toContain("entities");
+  });
+
+  it("are named with where each goes while unanswered, and no longer once answered or closed", () => {
+    const known = { naics_code: "541430" };
+    expect(line({ message: "hi", context: known })).toBe("Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab)");
+    expect(line({ message: "hi", context: { ...known, fein: "**-***4567" } })).toBe("Entered in the workspace, never asked for in chat: none");
+    expect(line({ message: "hi", context: known, statuses: { fein: "not_applicable" } })).toBe("Entered in the workspace, never asked for in chat: none");
+  });
+
+  it("include each legal entity only once the employer is more than one", () => {
+    expect(line({ message: "hi", context: { fein: "**-***4567", naics_code: "541430", multiple_entities: true } }))
+      .toBe("Entered in the workspace, never asked for in chat: entities (Legal entities, on the Company tab)");
+    expect(line({ message: "hi", context: { fein: "**-***4567", naics_code: "541430", multiple_entities: true, entities: [{ legal_name: "Acme LLC" }] } }))
+      .toBe("Entered in the workspace, never asked for in chat: none");
+    expect(line({ message: "hi", context: { fein: "**-***4567", naics_code: "541430", multiple_entities: false } })).toBe("Entered in the workspace, never asked for in chat: none");
+  });
+
+  // K-1.2: Lenore proposes a NAICS code from the description; she never asks a prospect for a code number.
+  it("include the NAICS code, which Lenore proposes but never asks for, while the description of operations is asked", () => {
+    expect(unsettledForTurn({}).map((f) => f.key)).not.toContain("naics_code");
+    expect(unsettledForTurn({}).map((f) => f.key)).toContain("operations_description");
+    expect(line({ message: "hi", context: { fein: "**-***4567" } })).toBe("Entered in the workspace, never asked for in chat: naics_code (NAICS code, on the Company tab)");
+    expect(line({ message: "hi", context: { fein: "**-***4567", naics_code: "541430" } })).toBe("Entered in the workspace, never asked for in chat: none");
+  });
+
+  // K-3.1: Lenore takes what is volunteered of a table, but never asks for it row by row.
+  it("include the tables, each with its tab, until one holds a row", () => {
+    const known = { fein: "**-***4567", naics_code: "541430" };
+    expect(unsettledForTurn({}).map((f) => f.key)).not.toContain("owners_officers");
+    const named = (context: object) => [...line({ message: "hi", context }, {}).matchAll(/(\w+) \(/g)].map((m) => m[1]);
+    expect(named(known)).toEqual(Object.keys(TABLES));
+    expect(line({ message: "hi", context: known }, {})).toContain("owners_officers (Owners and officers, on the Workers' comp tab)");
+    expect(named({ ...known, owners_officers: [{ name: "Dana Reyes" }] })).toEqual(Object.keys(TABLES).filter((table) => table !== "owners_officers"));
+    expect(named({ ...known, ...TABLES })).toEqual([]);
+  });
+
+  // K-3.4: the handicap question is never raised in conversation, and the age question is answered from the census.
+  it("never include or ask the ACORD 130 questions about handicaps and ages: they are on the Workers' comp tab, unspoken", () => {
+    const asked = unsettledForTurn({}).map((f) => f.key);
+    expect(asked).toContain("wcq_11");
+    for (const quiet of ["wcq_10", "wcq_13", "wcq_10_explain", "wcq_13_explain"]) expect(asked, quiet).not.toContain(quiet);
+    expect(line({ message: "hi" }, {})).not.toMatch(/wcq_10|wcq_13/);
+    expect(unsettledForTurn({ context: { wcq_13: true } }).map((f) => f.key)).not.toContain("wcq_13_explain");
+  });
+
+  it("are not asked about even when an advisor asked: the request shows on the answer in the workspace", () => {
+    expect(unsettledForTurn({ requested: ["fein", "company_name"] }).slice(0, 1).map((f) => f.key)).toEqual(["company_name"]);
+  });
+
+  // Review finding: Lenore still has to say the advisor asked, and where to look.
+  it("are named as the advisor's ask, even when they already hold an answer, so Lenore can say so", () => {
+    const asked = line({ message: "hi", context: { fein: "**-***4567", naics_code: "541430" }, requested: ["fein", "loss_history", "company_name"] });
+    expect(asked).toBe(`Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab) ${ADVISOR_ASKED}, loss_history (Loss history, on the Workers' comp tab) ${ADVISOR_ASKED}`);
+    expect(line({ message: "hi", context: { naics_code: "541430" }, requested: ["fein"] })).toBe(`Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab) ${ADVISOR_ASKED}`);
   });
 });
 

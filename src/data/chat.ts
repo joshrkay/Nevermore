@@ -1,8 +1,10 @@
 import { chatContext as requestContext, type ChatContext } from "../../supabase/functions/_shared/chatContext.ts";
 import type { ChamberData } from "./chamberTypes";
+import { maskFein } from "./answerFormat";
+import { ROW_LISTS, type RowListField } from "./rowColumns";
 import { censusSummary } from "./followUp";
 import type { ProvenanceMap } from "./provenance";
-import { redactSensitive } from "./sensitive";
+import { redactForModel } from "./sensitive";
 
 /** Who a transcript message is from: the prospect, Lenore, or the intake itself (a note such as a voice call starting). */
 export type ChatSender = "lenore" | "user" | "system";
@@ -58,7 +60,7 @@ export function createChatMessage(
   return {
     id: crypto.randomUUID(),
     sender,
-    text: clipText(redactSensitive(text)),
+    text: clipText(redactForModel(text)),
     timestamp: (opts.now ?? new Date()).toISOString(),
     ...(opts.kind ? { kind: opts.kind } : {}),
     ...(opts.spoken ? { spoken: true as const } : {}),
@@ -116,7 +118,7 @@ export function parseTranscript(raw: unknown): ChatMessage[] {
     return [{
       id: typeof id === "string" && id.trim() && id.length <= MAX_MESSAGE_ID_CHARS ? id : crypto.randomUUID(),
       sender: sender as ChatSender,
-      text: clipText(redactSensitive(text)),
+      text: clipText(redactForModel(text)),
       timestamp: typeof timestamp === "string" && timestamp.length <= MAX_TIMESTAMP_CHARS ? timestamp : "",
       ...(kind === "greeting" && sender === "lenore" ? { kind } : {}),
       ...(spoken === true ? { spoken: true as const } : {}),
@@ -133,11 +135,23 @@ export const CHAT_FALLBACK_REPLY = "Thanks, got it.";
 
 /**
  * The answers as Lenore's chat sends them to chamber-extract. The roster isn't extracted from chat and holds
- * personal details, so it is left out.
+ * personal details, so it is left out, and a FEIN is masked to its last four digits.
  */
 export function chatAnswers(data: ChamberData): Omit<ChamberData, "census"> {
   const { census: _census, ...context } = data;
-  return context;
+  // The model is never sent a whole FEIN (K-1.1): the last four digits say one is held.
+  return {
+    ...context,
+    fein: data.fein ? maskFein(data.fein) : null,
+    // A table travels as its key column only (who or what each row is about): the model needs to know what is
+    // listed, the rows are merged in the browser, and the answers must fit the request's cap with room to spare.
+    ...Object.fromEntries(
+      (Object.keys(ROW_LISTS) as RowListField[]).map((field) => {
+        const { key } = ROW_LISTS[field];
+        return [field, (data[field] as Record<string, unknown>[]).map((row) => (row[key] === undefined ? {} : { [key]: row[key] }))];
+      }),
+    ),
+  } as Omit<ChamberData, "census">;
 }
 
 /**

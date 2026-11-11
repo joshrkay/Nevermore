@@ -84,3 +84,48 @@ describe("FieldReviewPanel: a field with no answer", () => {
     expect(within(unanswered).queryByRole("button", { name: "View in transcript" })).not.toBeInTheDocument();
   });
 });
+
+// K-1.1: an advisor types the FEIN into a PEO's form, so they see all nine digits, written as a FEIN is.
+describe("FieldReviewPanel: company identity", () => {
+  const show = () =>
+    render(
+      <FieldReviewPanel
+        sessionId="s1"
+        data={{ ...EMPTY_CHAMBER_DATA, fein: "841234567", entity_type: "s_corporation", entities: [{ legal_name: "Meridian Creative LLC", fein: "841234567" }] }}
+        storedAnswers={{}}
+        provenance={{}}
+        reviews={{}}
+        messageIds={new Set()}
+        onShowMessage={() => {}}
+        onChanged={() => {}}
+      />,
+    );
+
+  it("shows the FEIN in full and the entity type by name", () => {
+    show();
+    expect(within(screen.getByTestId("field-fein")).getByText("84-1234567")).toBeInTheDocument();
+    expect(within(screen.getByTestId("field-entity_type")).getByText("S corporation")).toBeInTheDocument();
+  });
+
+  // Review finding: an advisor can't verify a table they can't read.
+  it("shows a table's rows, not only how many there are", () => {
+    render(
+      <FieldReviewPanel
+        sessionId="s1"
+        data={{ ...EMPTY_CHAMBER_DATA, loss_history: [{ policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, claims: 0 }] }}
+        storedAnswers={{}} provenance={{}} reviews={{}} messageIds={new Set()} onShowMessage={() => {}} onChanged={() => {}}
+      />,
+    );
+    const table = within(screen.getByTestId("field-loss_history")).getByRole("table", { name: "Loss history" });
+    expect(within(table).getAllByRole("row")[1]).toHaveTextContent("2025Pinnacle Mutual$18,400—0");
+    expect(within(screen.getByTestId("field-owners_officers")).queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("lists each legal entity, and offers no typed correction of a table", () => {
+    show();
+    const row = screen.getByTestId("field-entities");
+    expect(within(row).getByText("Meridian Creative LLC (FEIN 84-1234567)")).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Correct" })).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("field-fein")).getByRole("button", { name: "Correct" })).toBeInTheDocument();
+  });
+});

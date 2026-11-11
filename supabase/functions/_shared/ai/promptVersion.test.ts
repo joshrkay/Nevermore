@@ -31,8 +31,15 @@ const KNOWN = {
     // 8: the Nevermore rebrand. Lenore is Nevermore's intake assistant, warm, quick and plain-spoken (no longer the gothic,
     // literary advisor), and the app, not the Chamber, says when the intake is ready. The extraction rules are unchanged.
     8: "97b83efde81d83cf10958b734560d4e583396a21dd782fc37a98f2c0f37a4ea7",
+    // 9: intake schema v3 (Epic K): the common questions join the fields, the FEIN and the legal entities are never
+    // taken in chat, and Lenore says where the answers entered in the workspace go.
+    9: "5046e1c69e0ca3c978e9644d1bb0c0c27a4d0d5abeb611c9b591711d4e4bfb6e",
   } as Record<number, string>,
-  "document-extract": { 1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526" } as Record<number, string>,
+  "document-extract": {
+    1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526",
+    // 2: intake schema v3 (Epic K): the common questions a document can state, and never a FEIN.
+    2: "2274d42b472b9c20bef9a8b29e031c9fe57b33513b5897ed03c4dfa5b12c158a",
+  } as Record<number, string>,
 };
 
 // chamber-extract's user turn (prompt.ts, shared with the extraction eval) is part of its contract too
@@ -66,6 +73,8 @@ const USER_TURN_KNOWN: Record<number, string> = {
   7: "720e99e10e619db28c25b43a612ac07584636a08e8ef91a65bc5763fb264bb5b",
   // 8: unchanged from 7 (the rebrand changed only the system prompt and the tool).
   8: "720e99e10e619db28c25b43a612ac07584636a08e8ef91a65bc5763fb264bb5b",
+  // 9: the "Entered in the workspace" line (K-1.1), and v3's fields in "Not yet settled".
+  9: "c435f04f957a6d7d5f62d8ff23607e7a3141c27704a16c038eb0a7e3e368e675",
 };
 
 describe("prompt versions", () => {

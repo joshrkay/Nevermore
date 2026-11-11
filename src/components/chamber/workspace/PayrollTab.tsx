@@ -1,6 +1,8 @@
 import type { ChamberData } from "@/data/chamberTypes";
 import type { FieldAction, FieldKey, ProvenanceMap } from "@/data/provenance";
+import { statesWithoutRate } from "@/data/sutaRates";
 import ProvenanceField from "./ProvenanceField";
+import RowsField from "./RowsField";
 
 interface PayrollTabProps {
   data: ChamberData;
@@ -55,6 +57,16 @@ const PayrollTab = ({ data, provenance = {}, onAction }: PayrollTabProps) => {
           ))}
         </div>
       </ProvenanceField>
+
+      {/* The unemployment tax rate in each state of operation (K-4.2). A state's rate notice can fill one in. */}
+      <RowsField
+        field="suta_rates"
+        rows={data.suta_rates}
+        provenance={provenance.suta_rates}
+        onAction={onAction}
+        hint="Your unemployment tax rate in each state where you have employees, with the year it applies to."
+        offer={statesWithoutRate(data).filter((state) => !data.suta_rates.some((r) => r.state === state)).map((state) => ({ state }))}
+      />
 
       {/* TLM Method */}
       <div>

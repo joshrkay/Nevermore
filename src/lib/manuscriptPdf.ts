@@ -164,24 +164,27 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
    * Draws a table whose rows never split across pages and whose header repeats on each new page.
    * Cell text wraps inside its column, so nothing is clipped or overlaps its neighbour.
    */
-  const table = (columns: Column[], rows: string[][], opts: { header?: boolean; flagged?: Set<number> } = {}) => {
+  const table = (columns: Column[], rows: string[][], opts: { header?: boolean; flagged?: Set<number>; wrapHeadings?: boolean } = {}) => {
     const showHeader = opts.header !== false;
     const size = 8.5;
     const lh = lineHeight(size);
 
     const drawHeader = () => {
       font("bold", size);
-      const h = lh + CELL_PAD_Y * 2;
+      // With `wrapHeadings` a heading wraps inside its column, as a cell does, so a long one never runs into its
+      // neighbour (the tables of rows, whose columns are sized by content). Otherwise it prints on one line.
+      const headings = columns.map((col) => (opts.wrapHeadings ? wrap(col.header, col.width - CELL_PAD_X * 2) : [pdfSafe(col.header)]));
+      const h = Math.max(...headings.map((lines) => lines.length)) * lh + CELL_PAD_Y * 2;
       ensure(h);
       pdf.setFillColor(...HEAD_FILL);
       pdf.rect(MARGIN, y, CONTENT_W, h, "F");
       setInk(MUTED);
       let x = MARGIN;
-      for (const col of columns) {
+      columns.forEach((col, i) => {
         const tx = col.align === "right" ? x + col.width - CELL_PAD_X : x + CELL_PAD_X;
-        pdf.text(pdfSafe(col.header), tx, y + CELL_PAD_Y + lh * 0.75, { align: col.align === "right" ? "right" : "left" });
+        headings[i].forEach((line, n) => pdf.text(line, tx, y + CELL_PAD_Y + lh * (n + 0.75), { align: col.align === "right" ? "right" : "left" }));
         x += col.width;
-      }
+      });
       y += h;
     };
 
@@ -270,6 +273,30 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     ["Sensitive Fields", reveal ? "Shown in full" : "Masked (dates of birth show year only)"],
   ]);
 
+  // A section's answers that are tables of rows (owners and officers and the like), each under a subheading,
+  // its columns sharing the page's width.
+  const tablesOf = (section: Manuscript["tables"][number]["section"]) => {
+    for (const t of m.tables.filter((each) => each.section === section)) {
+      subheading(t.title);
+      const dob = t.dobColumn;
+      const rows = dob === undefined || reveal ? t.rows : t.rows.map((row) => row.map((v, i) => (i === dob && v !== NOT_PROVIDED ? maskDob(v) : v)));
+      // A column of figures or short words is as wide as its longest heading or cell needs; the columns of
+      // longer text (duties, a question, an explanation) share what is left, by how much they hold.
+      const longest = t.columns.map((header, i) => Math.max(header.length, ...rows.map((row) => row[i].length)));
+      const SHORT = 16;
+      const wanted = longest.map((n) => Math.min(n, SHORT) * 1.75 + CELL_PAD_X * 2);
+      // A table with many columns can want more than the page has: every column then gives way in proportion,
+      // and its heading or cells wrap.
+      const fit = Math.min(1, CONTENT_W / wanted.reduce((sum, w) => sum + w, 0));
+      const floor = wanted.map((w) => w * fit);
+      const spare = Math.max(0, CONTENT_W - floor.reduce((sum, w) => sum + w, 0));
+      const long = longest.map((n) => (n > SHORT ? Math.min(n, 60) : 0));
+      const share = long.some((n) => n > 0) ? long : floor;
+      const total = share.reduce((sum, w) => sum + w, 0);
+      table(t.columns.map((header, i) => ({ header, width: floor[i] + (spare * share[i]) / total })), rows, { wrapHeadings: true });
+    }
+  };
+
   // ---------- 1 Company ----------
   sectionHeading("1 — Company Profile");
   keyValues(m.companyRows);
@@ -292,8 +319,9 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
       { header: "Salary", width: 21, align: "right" },
       { header: "Type", width: 11 },
       { header: "Coverage Tier", width: 25 },
-      { header: "Class", width: 10, mono: true },
-      { header: "Note", width: CONTENT_W - 162 },
+      // Wide enough for a four-digit class code in the monospaced face.
+      { header: "Class", width: 14, mono: true },
+      { header: "Note", width: CONTENT_W - 166 },
     ];
     const notes: string[] = [];
     const flagged = new Set<number>();
@@ -314,6 +342,8 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     }
   }
 
+  tablesOf("workforce");
+
   // ---------- 4 Dependents ----------
   sectionHeading("4 — Dependent Summary");
   table(
@@ -328,6 +358,8 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
     ],
   );
   paragraph("Dependent figures are self-reported. Actual election rates may vary at open enrollment.", 8.5, "italic", MUTED);
+
+  tablesOf("dependents");
 
   // ---------- 5 Locations ----------
   sectionHeading("5 — Locations");
@@ -349,14 +381,17 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   // ---------- 6 Payroll ----------
   sectionHeading("6 — Payroll & Time");
   keyValues(m.payrollRows);
+  tablesOf("payroll");
 
   // ---------- 7 Benefits ----------
   sectionHeading("7 — Current Benefits");
   keyValues(m.benefitsRows);
+  tablesOf("benefits");
 
   // ---------- 8 Workers' comp ----------
   sectionHeading("8 — Workers' Compensation");
   keyValues(m.workersCompRows);
+  tablesOf("workers_comp");
 
   // ---------- 9 Operations ----------
   sectionHeading("9 — Operations & HR");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasSensitive, isSensitiveHeader, REDACTED, redactSensitive } from "./sensitive.ts";
+import { hasSensitive, isSensitiveHeader, REDACTED, redactSensitive, redactForModel } from "./sensitive.ts";
 
 describe("redactSensitive", () => {
   it("removes formatted and unformatted Social Security numbers", () => {
@@ -91,7 +91,8 @@ describe("redactSensitive", () => {
       "ZIP 94107-1234",
       "Payroll of $1,250,000 a year",
       "We have 2 accounts",
-      // An EIN is the company's, not a person's: underwriting can use it.
+      // An EIN is the company's, not a person's, so a stored answer may hold one (a policy number can share its
+      // shape). What goes to the model is stricter: see redactForModel below.
       "12-3456789",
       "EIN 12-3456789",
       "(555) 123-4567",
@@ -133,5 +134,29 @@ describe("isSensitiveHeader", () => {
     for (const h of ["first name", "dob", "work state", "salary", "class code", "accrual"]) {
       expect(isSensitiveHeader(h)).toBe(false);
     }
+  });
+});
+
+// ADR 0006: the FEIN is typed into its own box in the workspace, so one written in a chat message or a document is
+// removed before the text reaches the model or the transcript. Stored answers keep redactSensitive's rules.
+describe("redactForModel", () => {
+  it("removes a FEIN written the way a FEIN is written, two digits, a hyphen and seven", () => {
+    expect(redactForModel("Our EIN is 84-1234567, thanks")).toBe("Our EIN is [redacted], thanks");
+    expect(redactForModel("FEIN: 84-1234567")).toBe("FEIN: [redacted]");
+    expect(redactForModel("84–1234567")).toBe("[redacted]");
+  });
+
+  it("leaves numbers that only look a little like a FEIN", () => {
+    for (const text of ["500 Main St, Austin, TX 78701-1234", "Order 2024-1234567", "call 512-555-0142", "policy 84-123456", "plan years 24-25", "ratio 12-34567890"]) {
+      expect(redactForModel(text), text).toBe(text);
+    }
+  });
+
+  it("removes everything redactSensitive removes", () => {
+    expect(redactForModel("SSN 123-45-6789 and EIN 84-1234567")).toBe("SSN [redacted] and EIN [redacted]");
+  });
+
+  it("is not applied to a stored answer: a policy number shaped like a FEIN is kept", () => {
+    expect(redactSensitive("Pinnacle, policy 07-1234567")).toBe("Pinnacle, policy 07-1234567");
   });
 });

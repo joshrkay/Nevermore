@@ -244,6 +244,16 @@ describe("parseCorrection", () => {
     expect(parseCorrection("states", "CA, TX")).toEqual({ value: ["CA", "TX"] });
   });
 
+  it("parses the company identity answers as the prospect's own edits are (K-1.1)", () => {
+    expect(parseCorrection("fein", "84-1234567")).toEqual({ value: "841234567" });
+    expect(parseCorrection("fein", "123-45-6789")).toBeNull();
+    expect(parseCorrection("entity_type", "S corp")).toEqual({ value: "s_corporation" });
+    expect(parseCorrection("year_founded", "2014")).toEqual({ value: 2014 });
+    // A table of rows is corrected by the prospect, in the workspace.
+    expect(parseCorrection("entities", "Meridian Creative LLC")).toBeNull();
+    expect(parseCorrection("entities", "")).toBeNull();
+  });
+
   it("refuses values that don't fit the field", () => {
     expect(parseCorrection("employee_count", "about 14")).toBeNull();
     expect(parseCorrection("has_401k", "maybe")).toBeNull();

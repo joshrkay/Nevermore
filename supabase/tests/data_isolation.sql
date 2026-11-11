@@ -99,6 +99,17 @@
 \i supabase/migrations/20261111110000_quote_request_messages.sql
 \i supabase/migrations/20261111120000_quote_request_threads.sql
 \i supabase/migrations/20261111130000_held_mail.sql
+\i supabase/migrations/20261112090000_intake_schema_v3_version.sql
+\i supabase/migrations/20261112091000_intake_schema_v3_company_identity.sql
+\i supabase/migrations/20261112092000_intake_schema_v3_industry_code.sql
+\i supabase/migrations/20261112093000_intake_schema_v3_current_peo.sql
+\i supabase/migrations/20261112094000_intake_schema_v3_census_columns.sql
+\i supabase/migrations/20261112095000_intake_schema_v3_census_worksite.sql
+\i supabase/migrations/20261112096000_intake_schema_v3_owners_officers.sql
+\i supabase/migrations/20261112097000_intake_schema_v3_loss_history.sql
+\i supabase/migrations/20261112098000_intake_schema_v3_medical_plans.sql
+\i supabase/migrations/20261112099000_intake_schema_v3_suta_rates.sql
+\i supabase/migrations/20261112100000_intake_schema_v3_acord_130_questions.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -705,7 +716,7 @@ INSERT INTO callable VALUES
   ('session_verified_fields(p_session_id uuid)', 'own',   NULL, 'the field names an advisor verified on the caller''s own intake (any intake, for advisors); empty for anyone else''s'),
   ('intake_conflicting_required(p jsonb)',     'anyone',  NULL, 'pure: required fields in conflict in the provenance it is given'),
   ('is_prospect_visible_status(s text)',       'anyone',  NULL, 'pure: whether a status name is shared with prospects'),
-  ('is_reviewable_field(f text)',              'anyone',  NULL, 'pure: whether a field name can be reviewed'),
+  ('is_reviewable_field(f text)',              'helper',  NULL, 'pure: whether a field name can be reviewed; reads chamber_data_field_kind, so closed to anon with it'),
   ('ops_clean_code(p_code text)',              'anyone',  NULL, 'pure: cleans a failure code'),
   ('ops_redact(p_text text, p_max integer)',   'anyone',  NULL, 'pure: redacts free text'),
   ('ops_event_retention()',                    'anyone',  NULL, 'a constant: how long monitoring events are kept'),
@@ -723,6 +734,9 @@ INSERT INTO callable VALUES
   ('chamber_data_census_row_error(census_row jsonb, base text, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_error(d jsonb, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_field_kind(field text)',      'helper',  NULL, 'intake validation trigger; pure'),
+  ('chamber_data_scalar_reason(kind text, val jsonb)', 'helper', NULL, 'intake validation trigger; pure'),
+  ('chamber_data_row_field_kind(list text, key text)', 'helper', NULL, 'intake validation trigger; pure'),
+  ('chamber_data_row_list_max(list text)',     'helper',  NULL, 'intake validation trigger; pure'),
   ('chamber_transcript_error(t jsonb, OUT path text, OUT reason text)', 'helper', NULL, 'transcript validation trigger; pure'),
   ('chamber_data_is_text(v jsonb, max_length integer)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_is_whole_number(v jsonb, max_value numeric)', 'helper', NULL, 'intake validation trigger; pure'),
