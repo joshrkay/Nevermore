@@ -80,30 +80,33 @@ describe("eligibilityChecks", () => {
     expect(headcount.label).toMatch(/not yet confirmed/);
   });
 
-  it("fails headcount below the chosen PEO's sourced minimum, naming the PEO", () => {
-    const peo = { name: "Example PEO", listed: true, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-10-01" };
-    const [headcount] = eligibilityChecks({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, peo);
-    expect(headcount.status).toBe("fail");
-    expect(headcount.label).toBe("Headcount meets Example PEO minimum (3 of 10 employees)");
-  });
-});
-
-describe("eligibilityChecks: class codes", () => {
-  const census = (class_code: string) => [{ id: "1", first_name: "A", last_name: "B", work_state: "CA", class_code, compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
-  const peo = { name: "Example PEO", listed: true, minHeadcount: null, statesServed: null, excludedClassCodes: ["5551"], lastVerified: "2026-10-01" };
-  const industry = (data: typeof EMPTY_CHAMBER_DATA, p?: typeof peo) => eligibilityChecks(data, p).find((c) => /^Industry/.test(c.label))!;
-
-  it("passes when no census class code is one the chosen PEO excludes", () => {
-    expect(industry({ ...EMPTY_CHAMBER_DATA, census: census("8810") }, peo)).toEqual({ label: "Industry — no class code Example PEO excludes", status: "pass" });
-  });
-
-  it("fails naming the excluded class code", () => {
-    expect(industry({ ...EMPTY_CHAMBER_DATA, census: census("5551") }, peo)).toEqual({ label: "Industry — Example PEO lists class code 5551 as excluded", status: "fail" });
+  it("runs the chosen PEO's checks, one per rule, each with the PEO's fact against the employer's and when it was checked", () => {
+    const [peo] = parsePeoCatalog([{ id: 1, name: "Example PEO", profile: { version: 1, min_headcount: 10, excluded_class_codes: ["5551"],
+      sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-10-01" }, excluded_class_codes: { kind: "document", name: "Guide", checked_on: "2026-04-01" } } } }]);
+    const census = [{ id: "1", first_name: "A", last_name: "B", work_state: "CA", class_code: "5551", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
+    const checks = eligibilityChecks({ ...EMPTY_CHAMBER_DATA, employee_count: 3, hq_state: "CA", census }, peo, "2026-11-11");
+    expect(checks).toEqual([
+      { label: "Minimum headcount: Example PEO takes groups of 10 or more employees; this employer has 3.", status: "fail", checkedOn: "2026-10-01", stale: false },
+      { label: "States served: Example PEO's states served aren't checked yet.", status: "unknown", checkedOn: null, stale: false },
+      { label: "Excluded industries: Example PEO's excluded industries aren't checked yet.", status: "unknown", checkedOn: null, stale: false },
+      { label: "Excluded class codes: Example PEO excludes class code 5551, which is on this employer's census.", status: "fail", checkedOn: "2026-04-01", stale: true },
+      { label: "Minimum participation: Example PEO's minimum participation isn't checked yet.", status: "unknown", checkedOn: null, stale: false },
+      { label: "US headquarters", status: "pass" },
+      { label: "Employee census captured (1 employees)", status: "pass" },
+      { label: "Workers' comp history and open claims", status: "unknown" },
+      { label: "Renewal increase within range", status: "unknown" },
+    ]);
   });
 
-  it("stays unknown with no PEO, or a PEO whose exclusions aren't sourced", () => {
-    expect(industry({ ...EMPTY_CHAMBER_DATA, census: census("5551") }).status).toBe("unknown");
-    expect(industry({ ...EMPTY_CHAMBER_DATA, census: census("5551") }, { ...peo, excludedClassCodes: null as unknown as string[] }).status).toBe("unknown");
+  it("can't tell any rule of a PEO named in free text, with no profile", () => {
+    const checks = eligibilityChecks({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { name: "Acme PEO", listed: false, lastVerified: null }, "2026-11-11");
+    expect(checks.slice(0, 5).map((c) => [c.label, c.status])).toEqual([
+      ["Minimum headcount: Acme PEO's minimum headcount isn't checked yet.", "unknown"],
+      ["States served: Acme PEO's states served aren't checked yet.", "unknown"],
+      ["Excluded industries: Acme PEO's excluded industries aren't checked yet.", "unknown"],
+      ["Excluded class codes: Acme PEO's excluded class codes aren't checked yet.", "unknown"],
+      ["Minimum participation: Acme PEO's minimum participation isn't checked yet.", "unknown"],
+    ]);
   });
 });
 
@@ -183,10 +186,13 @@ describe("buildManuscript", () => {
     ]);
     const submission = { signer_name: "Jo", signer_title: "", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1", peo: "justworks" };
     const m = buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission, catalog });
-    expect(m.checks[0]).toEqual({ label: "Headcount meets Justworks minimum (3 of 10 employees)", status: "fail" });
+    expect(m.checks[0]).toEqual({ label: "Minimum headcount: Justworks takes groups of 10 or more employees; this employer has 3.", status: "fail", checkedOn: "2026-11-02", stale: false });
     // Without the catalog, or for a PEO it doesn't hold, nothing is known about the PEO.
     expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission }).checks[0].status).toBe("unknown");
     expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission: { ...submission, peo: "Acme PEO" }, catalog }).checks[0].status).toBe("unknown");
+    // A PEO named in free text has no profile: each of its rules can't be told yet.
+    expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission: { ...submission, peo: "Acme PEO" }, catalog }).checks[0].label)
+      .toBe("Minimum headcount: Acme PEO's minimum headcount isn't checked yet.");
   });
 
   it("names the PEO chosen at submission", () => {

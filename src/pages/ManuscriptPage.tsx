@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
-import { CheckCircle, AlertTriangle, Download, HelpCircle, ArrowLeft, Loader2 } from "lucide-react";
+import { CheckCircle, AlertTriangle, Download, ArrowLeft, Loader2, Minus } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,8 +11,11 @@ import { parseChamberData } from "@/data/chamberValidation";
 import { CONSENT_DRAFT_LABEL } from "@/data/certification";
 import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, rowSourceLine, type ChamberSubmission, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
 import { parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
-import { listedPeos } from "@/data/peoCatalog";
-import { localToday } from "@/data/peoProfiles";
+import { formatCheckedOn, localToday } from "@/data/peoProfiles";
+import { FIT_WORDS, listedPeos, NOT_MET_NOTE } from "@/data/peoCatalog";
+
+/** A packet check's outcome in the words the eligibility checks use everywhere. */
+const CHECK_WORDS = { pass: FIT_WORDS.meets, fail: FIT_WORDS.does_not_meet, unknown: FIT_WORDS.unknown } as const;
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { readVerifiedFields } from "@/lib/verifiedFields";
@@ -630,14 +633,26 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             <p className="text-xs font-medium text-muted-foreground pt-4">Eligibility checks</p>
             {d.checks.map((c) => (
               <div key={c.label} className="flex items-start gap-2.5">
-                {c.status === "pass" && <CheckCircle className="w-4 h-4 text-success flex-shrink-0 mt-0.5" />}
-                {c.status === "fail" && <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />}
-                {c.status === "unknown" && <HelpCircle className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />}
-                <span className={`text-sm ${c.status === "unknown" ? "text-muted-foreground" : "text-foreground"}`}>
-                  {c.label}{c.status === "unknown" && " — not yet verified"}{c.status === "fail" && " — not met"}
-                </span>
+                {c.status === "pass" && <CheckCircle className="w-4 h-4 text-success flex-shrink-0 mt-0.5" aria-hidden="true" />}
+                {c.status === "fail" && <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" aria-hidden="true" />}
+                {c.status === "unknown" && <Minus className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" aria-hidden="true" />}
+                {c.checkedOn !== undefined ? (
+                  // A check against the PEO's rules: its outcome in words and when the rule was checked.
+                  <span className={`text-sm ${c.status === "unknown" ? "text-muted-foreground" : "text-foreground"}`}>
+                    {c.label}{" "}
+                    <span className={c.status === "fail" ? "text-warning" : undefined}>{CHECK_WORDS[c.status]}</span>
+                    {c.checkedOn && (
+                      <span className={c.stale ? "text-warning" : "text-muted-foreground"}>{` · checked ${formatCheckedOn(c.checkedOn)}${c.stale ? " · may be out of date" : ""}`}</span>
+                    )}
+                  </span>
+                ) : (
+                  <span className={`text-sm ${c.status === "unknown" ? "text-muted-foreground" : "text-foreground"}`}>
+                    {c.label}{c.status === "unknown" && " — not yet verified"}{c.status === "fail" && " — not met"}
+                  </span>
+                )}
               </div>
             ))}
+            {d.checks.some((c) => c.status === "fail" && c.checkedOn !== undefined) && <p className="text-xs text-warning">{NOT_MET_NOTE}</p>}
             {d.checksNote && (
               <p className="flex items-start gap-2.5 text-sm text-warning">
                 <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" aria-hidden="true" />

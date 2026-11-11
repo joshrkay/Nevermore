@@ -258,12 +258,50 @@ describe("AdvisorPeosPage", () => {
       expect(saved.rules.excludedIndustries).toEqual(["Trucking, long haul", "Roofing"]);
     });
 
+    it("maps each excluded industry, in the PEO's own words, to the class codes it covers, and calls the enrolment rule minimum participation", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+      expect(screen.getByLabelText("Minimum participation")).toHaveAccessibleDescription("The percent of employees eligible for the health plan who must enrol. Leave it empty if not checked yet.");
+      expect(screen.getByRole("group", { name: "Where the minimum participation was checked" })).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Excluded industries"), { target: { value: "Roofing: 5551, 5645\nCannabis dispensaries" } });
+      const industries = within(screen.getByRole("group", { name: "Where the excluded industries were checked" }));
+      fireEvent.click(industries.getByLabelText("A document"));
+      fireEvent.change(industries.getByLabelText("Document title"), { target: { value: "Broker guide 2026" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
+      const [, saved] = api.savePeoDraft.mock.calls[0] as [number, EditableProfile];
+      expect(saved.rules.excludedIndustries).toEqual(["Roofing", "Cannabis dispensaries"]);
+      expect(saved.rules.excludedIndustryCodes).toEqual({ Roofing: ["5551", "5645"] });
+    });
+
+    it("dates the excluded industries today when only the class codes mapped to them change", async () => {
+      api.savePeoDraft.mockResolvedValue(undefined);
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, rules: { ...TRINET_V1.rules, excludedIndustries: ["Roofing"] }, sources: { ...TRINET_V1.sources, excluded_industries: guide } }));
+      renderPage("/advisor/peos?peo=5");
+      fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
+      fireEvent.change(screen.getByLabelText("Excluded industries"), { target: { value: "Roofing: 5551" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+      await waitFor(() => expect(api.savePeoDraft).toHaveBeenCalled());
+      expect((api.savePeoDraft.mock.calls[0] as [number, EditableProfile])[1].sources.excluded_industries).toEqual({ ...guide, checkedOn: "2026-11-11" });
+    });
+
+    it("shows a mapped industry with its codes, ready to edit", async () => {
+      api.loadPeoDirectory.mockResolvedValue(withDraft({ ...TRINET_V1, rules: { ...TRINET_V1.rules, excludedIndustries: ["Roofing", "Mining"], excludedIndustryCodes: { Roofing: ["5551"] } }, sources: { ...TRINET_V1.sources, excluded_industries: guide } }));
+      renderPage("/advisor/peos?peo=5");
+      const wont = await screen.findByRole("region", { name: "What it won't take on" });
+      expect(within(wont).getByText("Excluded industries").closest("li")).toHaveTextContent("Roofing (class code 5551), Mining (no class codes mapped)");
+      expect(within(wont).getByText("Minimum participation")).toBeInTheDocument();
+      fireEvent.click(within(wont).getByRole("button", { name: "Edit What it won't take on" }));
+      expect(screen.getByLabelText("Excluded industries")).toHaveValue("Roofing: 5551\nMining");
+    });
+
     it("reads a minimum left empty as not checked yet, even with a source, and says the source has nothing to be for", async () => {
       renderPage("/advisor/peos?peo=5");
       fireEvent.click(await screen.findByRole("button", { name: "Edit What it won't take on" }));
       fireEvent.change(screen.getByLabelText("Minimum headcount"), { target: { value: "" } });
       fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
-      expect(within(screen.getByRole("group", { name: "Where the minimum headcount was checked" })).getByText("min headcount isn't set, so it has no source")).toBeInTheDocument();
+      expect(within(screen.getByRole("group", { name: "Where the minimum headcount was checked" })).getByText("Minimum headcount isn't set, so it has no source")).toBeInTheDocument();
       expect(screen.getByLabelText("Minimum headcount")).not.toHaveAttribute("aria-invalid", "true");
       expect(api.savePeoDraft).not.toHaveBeenCalled();
     });
@@ -518,7 +556,7 @@ describe("AdvisorPeosPage", () => {
       renderPage("/advisor/peos?peo=5");
       fireEvent.click(await screen.findByRole("button", { name: "Review and publish" }));
       const review = screen.getByRole("region", { name: "Publish version 3?" });
-      expect(within(review).getByRole("alert")).toHaveTextContent("Name where the minimum enrolment came from, and when it was checked, before publishing");
+      expect(within(review).getByRole("alert")).toHaveTextContent("Name where the minimum participation came from, and when it was checked, before publishing");
       expect(within(review).getByRole("button", { name: "Publish version 3" })).toBeDisabled();
     });
 

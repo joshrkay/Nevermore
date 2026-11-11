@@ -4,7 +4,7 @@ import { classificationLabel, COVERAGE_TIER_LABELS, isAssumed, isW2, type Census
 import { categoryInfo } from "./documentCategories";
 import { documentStatusInfo } from "./documentStatus";
 import { headcount } from "./headcount";
-import { findPeo, peoFit, type PeoRecord } from "./peoCatalog";
+import { findPeo, peoFit, type FitStatus, type PeoRecord } from "./peoCatalog";
 import { localToday, staleProfileWarning } from "./peoProfiles";
 import { describeSource, FIELD_LABELS, showsSource, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
 import { isRequiredField } from "./readiness";
@@ -157,41 +157,34 @@ export type CheckStatus = "pass" | "fail" | "unknown";
 export interface EligibilityCheck {
   label: string;
   status: CheckStatus;
+  /** For a check against the PEO's rules: when the rule was checked with the PEO (null when it isn't sourced). */
+  checkedOn?: string | null;
+  /** Whether that was more than 180 days ago: the check still stands, with a warning. */
+  stale?: boolean;
 }
 
 export { headcount } from "./headcount";
 
-function headcountCheck(data: ChamberData, peo?: PeoRecord): EligibilityCheck {
+const STATUS: Record<FitStatus, CheckStatus> = { meets: "pass", does_not_meet: "fail", unknown: "unknown" };
+
+/**
+ * The packet's eligibility checks. With a PEO, its five checks (peoFit: one per rule of its profile in use, dated,
+ * "can't tell yet" for a rule not sourced or a PEO with no profile) come first; `today` (YYYY-MM-DD) says whether a
+ * rule's check is stale. Then the checks of what was collected, which report only what was actually collected.
+ */
+export function eligibilityChecks(data: ChamberData, peo?: PeoRecord, today: string = localToday()): EligibilityCheck[] {
   const count = headcount(data);
-  if (!peo || peo.minHeadcount === null) {
-    return { label: `Headcount meets PEO minimum (${count || "?"} employees) — minimum not yet confirmed`, status: "unknown" };
-  }
-  const [fit] = peoFit(data, peo);
-  return {
-    label: `Headcount meets ${peo.name} minimum (${count || "?"} of ${peo.minHeadcount} employees)`,
-    status: fit.status === "meets" ? "pass" : fit.status === "does_not_meet" ? "fail" : "unknown",
-  };
-}
-
-/** The census's class codes against the chosen PEO's sourced exclusions (peoFit); unknown without either. */
-function industryCheck(data: ChamberData, peo?: PeoRecord): EligibilityCheck {
-  const fit = peo ? peoFit(data, peo)[2] : undefined;
-  if (!peo || !fit || fit.status === "unknown") return { label: "Industry — no exclusions", status: "unknown" };
-  return fit.status === "meets"
-    ? { label: `Industry — no class code ${peo.name} excludes`, status: "pass" }
-    : { label: `Industry — ${fit.label}`, status: "fail" };
-}
-
-/** Only reports pass/fail for what was actually collected; everything else is "unknown". */
-export function eligibilityChecks(data: ChamberData, peo?: PeoRecord): EligibilityCheck[] {
+  const peoChecks: EligibilityCheck[] = peo
+    ? peoFit(data, peo, today).map((c) => ({ label: `${c.label}: ${c.sentence}`, status: STATUS[c.status], checkedOn: c.checkedOn, stale: c.stale }))
+    : [{ label: `Headcount meets PEO minimum (${count || "?"} employees) — minimum not yet confirmed`, status: "unknown" }];
   return [
-    headcountCheck(data, peo),
+    ...peoChecks,
     { label: "US headquarters", status: data.hq_state ? "pass" : "unknown" },
     {
       label: `Employee census captured${data.census.length ? ` (${data.census.length} employees)` : ""}`,
       status: data.census.length > 0 ? "pass" : "unknown",
     },
-    industryCheck(data, peo),
+    ...(peo ? [] : [{ label: "Industry — no exclusions", status: "unknown" as const }]),
     { label: "Workers' comp history and open claims", status: "unknown" },
     { label: "Renewal increase within range", status: "unknown" },
   ];
@@ -487,9 +480,12 @@ export function buildManuscript(
   if (estimatedPay > 0) unstatedItems.push(`Annual pay — estimated at full-time hours for ${counted(estimatedPay, census, "people on the census")}; confirm their hours`);
   if (unknownTier > 0) unstatedItems.push(`Coverage tier — not provided for ${counted(unknownTier, w2.length, "employees")}`);
 
-  const checkedPeo = opts.peo ?? (opts.submission?.peo ? findPeo(opts.catalog ?? [], opts.submission.peo) : undefined);
-  const checks = eligibilityChecks(data, checkedPeo);
+  // The chosen PEO as the catalog holds it; a name it doesn't hold (typed in, or no catalog) has no profile, so every
+  // check against it can't tell yet.
+  const chosen = opts.submission?.peo ?? null;
+  const checkedPeo = opts.peo ?? (chosen ? findPeo(opts.catalog ?? [], chosen) ?? { name: chosen, listed: false, lastVerified: null } : undefined);
   const asOf = opts.today ?? (date ? localToday(date) : null);
+  const checks = eligibilityChecks(data, checkedPeo, asOf ?? localToday());
   const checksNote = checkedPeo && asOf ? staleProfileWarning(checkedPeo, asOf) : null;
   // The intake's open items, the one list Review and the advisor queue use too (src/data/openItems.ts): the answers
   // certification requires (always present on a certified packet), the census, then fields by status, less any an

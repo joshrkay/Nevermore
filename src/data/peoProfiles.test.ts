@@ -42,14 +42,14 @@ const TRINET_ROW = {
 describe("parsePeoCatalog", () => {
   it("reads a PEO with no published profile as one with no facts: nothing is guessed", () => {
     expect(parsePeoCatalog([{ id: 1, name: "ADP TotalSource", profile: null }])).toEqual([
-      { id: 1, name: "ADP TotalSource", listed: true, minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null, profile: null },
+      { id: 1, name: "ADP TotalSource", listed: true, lastVerified: null, profile: null },
     ]);
   });
 
   it("reads the profile in use: its rules for the fit checks, the rest as the profile says", () => {
     const [trinet] = parsePeoCatalog([TRINET_ROW]);
     // Checked as long ago as its oldest sourced part.
-    expect(trinet).toMatchObject({ id: 5, name: "TriNet", listed: true, minHeadcount: 5, statesServed: ["CA", "NY"], excludedClassCodes: ["7219"], lastVerified: "2026-09-01" });
+    expect(trinet).toMatchObject({ id: 5, name: "TriNet", listed: true, lastVerified: "2026-09-01" });
     expect(trinet.profile).toEqual({
       version: 2,
       neededToQuote: ["company_name", "states", "census"],
@@ -83,7 +83,7 @@ describe("parsePeoCatalog", () => {
   it("reads a PEO an admin stopped listing as not listed, with its profile still there", () => {
     const [trinet] = parsePeoCatalog([{ ...TRINET_ROW, listed: false }]);
     expect(trinet.listed).toBe(false);
-    expect(trinet.minHeadcount).toBe(5);
+    expect(trinet.profile?.rules.minHeadcount).toBe(5);
   });
 
   it("keeps the database's order, which is alphabetical", () => {

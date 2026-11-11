@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { AlertTriangle, Users, UserPlus, DollarSign, MapPin, Shield, Zap } from "lucide-react";
 import type { ChamberData } from "@/data/chamberTypes";
-import { PEO_NAME_MAX, findPeo, listedPeos, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
+import { PEO_NAME_MAX, findPeo, groupPeosByFit, listedPeos, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
+import EligibilityChecks from "@/components/peo/EligibilityChecks";
 import { formatCheckedOn, localToday, staleProfileWarning } from "@/data/peoProfiles";
 import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 
@@ -17,10 +18,11 @@ export interface PEOMatchTabProps {
   catalogStatus: PeoCatalogStatus;
 }
 
-const FIT_TEXT: Record<FitStatus, string> = {
-  meets: "✓ Meets",
-  does_not_meet: "✗ Doesn't meet",
-  unknown: "Not yet confirmed",
+/** Each group of PEOs, by how their checks come out. The groups come in a fixed order; nothing is ranked. */
+const GROUP_TITLES: Record<FitStatus, string> = {
+  meets: "Meets every check",
+  unknown: "Some checks can't be told yet",
+  does_not_meet: "A check isn't met",
 };
 
 const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog: everyPeo, catalogStatus }: PEOMatchTabProps) => {
@@ -97,10 +99,11 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog: everyPeo
             We couldn't load the list of PEOs. You can still name yours below.
           </p>
         )}
-        {catalog.map((peo) => {
-          const checks = peoFit(data, peo);
-          const misfits = checks.filter((c) => c.status === "does_not_meet");
-          return (
+        {catalog.length > 0 && <p className="text-xs text-muted-foreground">Alphabetical in each group. Nothing here is a ranking.</p>}
+        {groupPeosByFit(data, catalog, today).map((group) => (
+          <section key={group.outcome} aria-labelledby={`fit-group-${group.outcome}`} className="space-y-4">
+            <h3 id={`fit-group-${group.outcome}`} className="text-sm font-medium text-muted-foreground">{GROUP_TITLES[group.outcome]} · {group.peos.length}</h3>
+            {group.peos.map((peo) => (
           <div key={peo.name} className={`bg-card border rounded-xl p-6 transition-colors ${
             peo.name === selectedPeo ? "border-primary" : "border-border hover:border-primary/30"
           }`}>
@@ -111,27 +114,14 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog: everyPeo
               ) : (
                 <button
                   onClick={() => onSelect(peo.name)}
-                  className="text-xs font-medium px-3 py-1.5 rounded-full border border-border hover:border-primary/40 transition-colors"
+                  className="text-xs font-medium px-3 py-1.5 min-h-11 rounded-full border border-border hover:border-primary/40 transition-colors"
                 >
                   Choose {peo.name}
                 </button>
               )}
             </div>
-            {/* A misfit is a warning, never a reason to hide or block a PEO: facts go stale and PEOs make exceptions. */}
-            {misfits.length > 0 && (
-              <div role="alert" className="text-sm rounded-lg bg-warning/10 text-warning px-3 py-2 mb-3 space-y-1">
-                {misfits.map((m) => <p key={m.label}>{m.label}</p>)}
-                <p className="text-xs">You can still choose {peo.name}; your advisor will see this too.</p>
-              </div>
-            )}
-            <ul className="text-sm text-muted-foreground space-y-1">
-              {checks.map((check) => (
-                <li key={check.label} className="flex justify-between gap-4">
-                  <span>{check.label}</span>
-                  <span className="font-mono text-foreground">{FIT_TEXT[check.status]}</span>
-                </li>
-              ))}
-            </ul>
+            {/* A check not met is a warning, never a reason to hide or block a PEO: facts go stale and PEOs make exceptions. */}
+            <EligibilityChecks peo={peo.name} checks={peoFit(data, peo, today)} note={`A check that isn't met is a warning. You can still choose ${peo.name}.`} />
             {stale(peo) ? (
               <p className="text-xs text-warning mt-3 flex items-start gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
@@ -143,8 +133,9 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog: everyPeo
               </p>
             )}
           </div>
-          );
-        })}
+            ))}
+          </section>
+        ))}
 
         <div className={`bg-card border rounded-xl p-6 ${selectedPeo && !selectedIsListed ? "border-primary" : "border-border"}`}>
           <div className="flex items-start justify-between gap-3 mb-3">

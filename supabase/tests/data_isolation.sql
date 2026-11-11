@@ -96,6 +96,7 @@
 \i supabase/migrations/20261110090000_quote_requests.sql
 \i supabase/migrations/20261111090000_peo_requirement_profiles.sql
 \i supabase/migrations/20261111100000_peo_profile_editor.sql
+\i supabase/migrations/20261112090000_peo_industry_class_codes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

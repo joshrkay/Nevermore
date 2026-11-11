@@ -48,6 +48,8 @@ export const PROFILE_CAPS = {
   headcount: 100000,
   /** Contacts a profile version names. */
   contacts: 20,
+  /** Class codes one excluded industry maps to. */
+  industryCodes: 100,
 } as const;
 
 /** A PEO's census layout: its columns in order, the file it takes, and its own template file when it has one. */
@@ -75,9 +77,12 @@ export interface ExtraQuestion {
 export interface EligibilityRules {
   minHeadcount: number | null;
   statesServed: string[] | null;
+  /** In the PEO's own words, for people to read. The check goes by the class codes each is mapped to. */
   excludedIndustries: string[] | null;
+  /** The class codes an admin mapped each excluded industry to, by its wording; one with none mapped can't be checked. */
+  excludedIndustryCodes?: Record<string, string[]>;
   excludedClassCodes: string[] | null;
-  /** The share of eligible employees who must enrol, as a percentage. */
+  /** Minimum participation: the share of employees eligible for the health plan who must enrol, as a percentage. */
   minEnrolmentPercent: number | null;
 }
 
@@ -113,6 +118,9 @@ function parseProfile(peo: string, p: Row): RequirementProfile {
     minHeadcount: num(p.min_headcount),
     statesServed: list(p.states_served),
     excludedIndustries: list(p.excluded_industries),
+    ...(isRow(p.excluded_industry_codes) && Object.keys(p.excluded_industry_codes).length > 0
+      ? { excludedIndustryCodes: Object.fromEntries(Object.entries(p.excluded_industry_codes).map(([k, v]) => [k, list(v) ?? []])) }
+      : {}),
     excludedClassCodes: list(p.excluded_class_codes),
     minEnrolmentPercent: num(p.min_enrolment_percent),
   };
@@ -170,9 +178,6 @@ export function parsePeoCatalog(raw: unknown): PeoRecord[] {
       id: num(entry.id) ?? undefined,
       name: entry.name,
       listed: entry.listed !== false,
-      minHeadcount: profile?.rules.minHeadcount ?? null,
-      statesServed: profile?.rules.statesServed ?? null,
-      excludedClassCodes: profile?.rules.excludedClassCodes ?? null,
       lastVerified: profile ? oldestCheck(profile) : null,
       profile,
     }];

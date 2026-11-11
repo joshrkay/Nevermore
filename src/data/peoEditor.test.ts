@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeSource, EMPTY_PROFILE, parseProfileVersion, profileChanges, profilePayload, profileProblems, publishProblems, showRule, type EditableProfile } from "./peoEditor";
+import { describeSource, EMPTY_PROFILE, industriesText, parseProfileVersion, profileChanges, profilePayload, profileProblems, publishProblems, readIndustries, showRule, type EditableProfile } from "./peoEditor";
 import type { ProfileSource } from "./peoProfiles";
 
 const TODAY = "2026-11-11";
@@ -131,7 +131,7 @@ describe("profileProblems: the database's rules, next to each field", () => {
       { path: "sources.min_headcount.checkedOn", message: "A source can't be checked on a date that hasn't come" },
     ]);
     // A rule or a census layout that isn't set isn't sourced, so it has no source.
-    expect(problems({ sources: { min_headcount: guide } })).toEqual([{ path: "sources.min_headcount", message: "min headcount isn't set, so it has no source" }]);
+    expect(problems({ sources: { min_headcount: guide } })).toEqual([{ path: "sources.min_headcount", message: "Minimum headcount isn't set, so it has no source" }]);
     expect(problems({ sources: { census_layout: guide } })[0].path).toBe("sources.census_layout");
   });
 });
@@ -241,7 +241,7 @@ describe("the parts of a profile, from one table", () => {
     const next: EditableProfile = { ...FULL, sources: { ...FULL.sources, min_enrolment_percent: guide, answers: guide, states_served: dana } };
     expect(profileChanges(FULL, next)).toEqual([
       "Where the states served were checked: Document: Broker guide 2026 · checked 20 Oct 2026 → Broker desk: Dana Reyes, Broker desk manager · checked 2 Nov 2026",
-      "Where the minimum enrolment was checked: Broker desk: Dana Reyes, Broker desk manager · checked 2 Nov 2026 → Document: Broker guide 2026 · checked 20 Oct 2026",
+      "Where the minimum participation was checked: Broker desk: Dana Reyes, Broker desk manager · checked 2 Nov 2026 → Document: Broker guide 2026 · checked 20 Oct 2026",
       "Where the answers were checked: Broker desk: Dana Reyes, Broker desk manager · checked 2 Nov 2026 → Document: Broker guide 2026 · checked 20 Oct 2026",
     ]);
   });
@@ -254,6 +254,54 @@ describe("the parts of a profile, from one table", () => {
   it("asks for the source of a rule checked with nothing excluded: it says something", () => {
     expect(publishProblems({ ...EMPTY_PROFILE, rules: { ...EMPTY_PROFILE.rules, excludedIndustries: [] }, sources: { documents: guide } })).toEqual([
       { path: "sources.excluded_industries", message: "Name where the excluded industries came from, and when it was checked, before publishing" },
+    ]);
+  });
+});
+
+describe("excluded industries and the class codes each covers", () => {
+  const mapped: EditableProfile = {
+    ...EMPTY_PROFILE,
+    rules: { ...EMPTY_PROFILE.rules, excludedIndustries: ["Roofing", "Cannabis dispensaries"], excludedIndustryCodes: { Roofing: ["5551", "5645"] } },
+    sources: { excluded_industries: guide },
+  };
+
+  it("reads and writes the PEO's wording, one per line, with the codes after a colon", () => {
+    expect(industriesText(["Roofing", "Cannabis dispensaries"], { Roofing: ["5551", "5645"] })).toBe("Roofing: 5551, 5645\nCannabis dispensaries");
+    expect(readIndustries("Roofing: 5551, 5645\nCannabis dispensaries\n Trucking: long haul \n")).toEqual({
+      industries: ["Roofing", "Cannabis dispensaries", "Trucking: long haul"],
+      codes: { Roofing: ["5551", "5645"] },
+    });
+  });
+
+  it("sends the mapping as the database takes it, and reads it back", () => {
+    expect(profilePayload(mapped)).toMatchObject({ excluded_industries: ["Roofing", "Cannabis dispensaries"], excluded_industry_codes: { Roofing: ["5551", "5645"] } });
+    expect(profilePayload(EMPTY_PROFILE)).toMatchObject({ excluded_industry_codes: {} });
+    const row = { id: 9, version: 2, status: "draft", created_at: "2026-11-01T00:00:00Z", published_at: null, ...profilePayload(mapped) };
+    expect(parseProfileVersion("TriNet", row, []).profile.rules.excludedIndustryCodes).toEqual({ Roofing: ["5551", "5645"] });
+  });
+
+  it("refuses a mapping the database refuses, at the excluded industries", () => {
+    const rules = (codes: Record<string, string[]>) => ({ rules: { ...EMPTY_PROFILE.rules, excludedIndustries: ["Roofing"], excludedIndustryCodes: codes } });
+    const message = "Each excluded industry maps to 1 to 100 different class codes, each four digits";
+    expect(problems(rules({ Roofing: ["55"] }))).toEqual([{ path: "rules.excludedIndustries", message }]);
+    expect(problems(rules({ Roofing: [] }))).toEqual([{ path: "rules.excludedIndustries", message }]);
+    expect(problems(rules({ Roofing: ["5551", "5551"] }))).toEqual([{ path: "rules.excludedIndustries", message }]);
+    expect(problems(rules({ Roofing: Array.from({ length: 101 }, (_, i) => String(1000 + i)) }))).toEqual([{ path: "rules.excludedIndustries", message }]);
+    expect(problems(rules({ Roofing: Array.from({ length: 100 }, (_, i) => String(1000 + i)) }))).toEqual([]);
+    expect(problems(rules({ Mining: ["1164"] }))).toEqual([{ path: "rules.excludedIndustries", message: "Class codes are mapped only to an industry the PEO excludes, as it is worded" }]);
+  });
+
+  it("shows each industry with the codes it covers, and names a change of codes", () => {
+    expect(showRule(mapped, "excludedIndustries")).toBe("Roofing (class codes 5551, 5645), Cannabis dispensaries (no class codes mapped)");
+    const next = { ...mapped, rules: { ...mapped.rules, excludedIndustryCodes: { Roofing: ["5551"], "Cannabis dispensaries": ["8017"] } } };
+    expect(profileChanges(mapped, next)).toEqual([
+      "Excluded industries: Roofing (class codes 5551, 5645), Cannabis dispensaries (no class codes mapped) → Roofing (class code 5551), Cannabis dispensaries (class code 8017)",
+    ]);
+  });
+
+  it("calls the minimum enrolment rule minimum participation", () => {
+    expect(publishProblems({ ...EMPTY_PROFILE, rules: { ...EMPTY_PROFILE.rules, minEnrolmentPercent: 75 } })).toEqual([
+      { path: "sources.min_enrolment_percent", message: "Name where the minimum participation came from, and when it was checked, before publishing" },
     ]);
   });
 });

@@ -362,6 +362,8 @@ export type Database = {
           documents: Json
           excluded_class_codes: string[] | null
           excluded_industries: string[] | null
+          // { <industry, as excluded_industries words it>: [<class code>] } (20261112090000).
+          excluded_industry_codes: Json
           // [{ key, text, kind, choices? }]
           extra_questions: Json
           id: number
@@ -372,6 +374,8 @@ export type Database = {
           peo_id: number
           published_at: string | null
           published_by: string | null
+          // A draft's state, new on every save; a save or a publish names the one it was based on.
+          revision: string
           // { <part>: { kind, name, role?, link?, checked_on } }, one per sourced part (PROFILE_PARTS in src/data/peoProfiles.ts).
           sources: Json
           states_served: string[] | null

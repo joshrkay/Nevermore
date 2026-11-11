@@ -6,6 +6,7 @@ import { PIPELINE_LABELS, type PipelineStatus } from "@/data/advisor";
 import { cleanPeoName, findPeo, listedPeos, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
 import type { ChamberData } from "@/data/chamberTypes";
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
+import EligibilityChecks from "@/components/peo/EligibilityChecks";
 import { canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isQuoteRequestStatus, olderVersionNote, QUOTE_REQUEST_LABELS, stageToOffer } from "@/data/quoteRequests";
 import { noteUnderwriterQuestion, recordQuoteSend, setStatus, updateQuoteRequest, type QuoteAnswer, type QuoteRequestEventRow, type QuoteRequestRow } from "@/lib/advisorApi";
 
@@ -192,9 +193,8 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
         {requests.map((r) => {
           const quote = r.status === "quoted" ? describeQuote(r) : "";
           const older = olderVersionNote(r, currentVersion);
-          // The same warnings the prospect saw on PEO Match, for a PEO whose facts are listed.
+          // The same checks the prospect saw on PEO Match, for a PEO the catalog holds.
           const listed = findPeo(catalog, r.peo_name);
-          const misfits = listed ? peoFit(data, listed).filter((c) => c.status === "does_not_meet") : [];
           // A stale profile is still read, with when it was last checked (src/data/peoProfiles.ts).
           const stale = listed ? staleProfileWarning(listed, localToday()) : null;
           return (
@@ -213,11 +213,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
               {older && (
                 <p className="text-xs px-2 py-0.5 rounded-full bg-warning/15 text-warning inline-block">{older}</p>
               )}
-              {misfits.length > 0 && (
-                <div role="alert" className="text-xs rounded-md bg-warning/10 text-warning px-2 py-1">
-                  {misfits.map((m) => <p key={m.label}>{m.label}</p>)}
-                </div>
-              )}
+              {listed && <EligibilityChecks peo={listed.name} checks={peoFit(data, listed, localToday())} />}
               {stale && (
                 <p className="text-xs text-warning flex items-start gap-1">
                   <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" aria-hidden="true" />
@@ -283,6 +279,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
             <option key={p.name} value={p.name}>{p.name}</option>
           ))}
         </select>
+        {chosen && <EligibilityChecks peo={chosen.name} checks={peoFit(data, chosen, localToday())} />}
         {chosenStale && (
           <p className="text-xs text-warning flex items-start gap-1">
             <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" aria-hidden="true" />

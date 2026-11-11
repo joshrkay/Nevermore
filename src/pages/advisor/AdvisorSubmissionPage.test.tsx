@@ -675,7 +675,7 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Generate packet/ }));
     await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
     const [manuscript] = buildManuscriptPdf.mock.calls[0] as unknown as [Manuscript];
-    expect(manuscript.checks[0]).toEqual({ label: "Headcount meets Justworks minimum (12 of 20 employees)", status: "fail" });
+    expect(manuscript.checks[0]).toEqual({ label: "Minimum headcount: Justworks takes groups of 20 or more employees; this employer has 12.", status: "fail", checkedOn: expect.any(String), stale: expect.any(Boolean) });
   });
 
   it("notes in the packet that the chosen PEO's profile is out of date as of the day it is generated", async () => {
@@ -915,7 +915,8 @@ describe("AdvisorSubmissionPage", () => {
     }));
     renderPage();
     const panel = await screen.findByRole("region", { name: "Quote requests" });
-    expect(await within(within(panel).getByTestId("quote-request-7")).findByRole("alert")).toHaveTextContent("TriNet lists a 20-employee minimum; you have 12");
+    expect(await within(within(panel).getByTestId("quote-request-7")).findByText("TriNet takes groups of 20 or more employees; this employer has 12.", { exact: false })).toBeInTheDocument();
+    expect(within(panel).getByTestId("quote-request-7")).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
     expect(within(within(panel).getByLabelText("PEO")).getAllByRole("option").map((o) => o.textContent).slice(1)).toEqual(["Insperity", "TriNet"]);
     // A PEO that isn't listed isn't offered anywhere, the census layouts included.
     const census = screen.getByRole("region", { name: "Employee census" });

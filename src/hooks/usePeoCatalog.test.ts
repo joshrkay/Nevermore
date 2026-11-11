@@ -33,7 +33,7 @@ describe("usePeoCatalog", () => {
     expect(result.current.status).toBe("loading");
     await waitFor(() => expect(result.current.status).toBe("ready"));
     expect(rpcCalls).toEqual([["peo_catalog"]]);
-    expect(result.current.peos.map((p) => [p.name, p.minHeadcount, p.lastVerified])).toEqual([
+    expect(result.current.peos.map((p) => [p.name, p.profile?.rules.minHeadcount ?? null, p.lastVerified])).toEqual([
       ["ADP TotalSource", null, null],
       ["TriNet", 10, "2026-11-02"],
     ]);

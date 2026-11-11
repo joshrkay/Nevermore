@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, Loader2, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
-import { ANSWER_FIELDS, EXTRA_QUESTION_LABELS, isStaleDraftError, PROFILE_PART_TABLE, profileProblems, RULE_PARTS, whereChecked, type DraftBasis, type EditableProfile, type ProfileProblem } from "@/data/peoEditor";
+import { ANSWER_FIELDS, EXTRA_QUESTION_LABELS, industriesText, readIndustries, isStaleDraftError, PROFILE_PART_TABLE, profileProblems, RULE_PARTS, whereChecked, type DraftBasis, type EditableProfile, type ProfileProblem } from "@/data/peoEditor";
 import { EXTRA_QUESTION_KINDS, PROFILE_PARTS, utcToday, type ProfilePart } from "@/data/peoProfiles";
 import { FIELD_LABELS } from "@/data/provenance";
 import { savePeoDraft } from "@/lib/advisorApi";
@@ -150,21 +150,25 @@ function useSectionSources(base: EditableProfile, today: string, parts: readonly
 type RuleKey = keyof EditableProfile["rules"];
 type Rule = (typeof RULE_PARTS)[number];
 
-/** A rule's value as its input holds it: a number, words joined by commas, or one line each. */
-const ruleText = (r: Rule, value: unknown) =>
-  value === null ? "" : r.input === "number" ? String(value) : (value as string[]).join(r.input === "lines" ? "\n" : ", ");
+/** A rule's value as its input holds it: a number, words joined by commas, or industries one per line with their codes. */
+const ruleText = (r: Rule, rules: EditableProfile["rules"]) => {
+  const value = rules[r.key];
+  if (value === null || value === undefined) return "";
+  if (r.input === "number") return String(value);
+  return r.input === "industries" ? industriesText(value as string[], rules.excludedIndustryCodes) : (value as string[]).join(", ");
+};
 
 /** What a rule's input says: empty is "not checked yet", or, with a source, none excluded. */
 const readRule = (r: Rule, text: string, sourced: boolean): unknown => {
   if (text.trim() === "") return r.input === "number" || !sourced ? null : [];
   if (r.input === "number") return Number(text);
-  return r.input === "lines" ? lines(text) : words(text).map((w) => (r.upperCase ? w.toUpperCase() : w));
+  return r.input === "industries" ? readIndustries(text).industries : words(text).map((w) => (r.upperCase ? w.toUpperCase() : w));
 };
 
 export const RulesEditor = ({ peoId, base, basis, today, onSaved, onCancel, onReload }: EditorProps) => {
   // Each rule is its own edit, so a reload keeps the rules typed and takes the others from the newer draft.
   const [typed, setTyped] = useState<Partial<Record<RuleKey, string>>>({});
-  const values = Object.fromEntries(RULE_PARTS.map((r) => [r.key, typed[r.key] ?? ruleText(r, base.rules[r.key])])) as Record<RuleKey, string>;
+  const values = Object.fromEntries(RULE_PARTS.map((r) => [r.key, typed[r.key] ?? ruleText(r, base.rules)])) as Record<RuleKey, string>;
   const [sourceEdits, setSourceEdits] = useState<Partial<Record<ProfilePart, SourceDraft>>>({});
   const drafts = Object.fromEntries(RULE_PARTS.map((r) => [r.part, sourceEdits[r.part] ?? sourceDraft(base.sources[r.part], today)])) as Record<ProfilePart, SourceDraft>;
   const [problems, setProblems] = useState<ProfileProblem[]>([]);
@@ -172,6 +176,10 @@ export const RulesEditor = ({ peoId, base, basis, today, onSaved, onCancel, onRe
   const content = (): EditableProfile => {
     const rules = { ...base.rules };
     for (const r of RULE_PARTS) (rules as Record<RuleKey, unknown>)[r.key] = readRule(r, values[r.key], drafts[r.part].kind !== "none");
+    // The class codes each excluded industry covers come from the same box.
+    const { codes } = readIndustries(values.excludedIndustries);
+    if (Object.keys(codes).length > 0) rules.excludedIndustryCodes = codes;
+    else delete rules.excludedIndustryCodes;
     return { ...base, rules };
   };
   const shown = datedSources(base, content(), drafts, today) as Record<ProfilePart, SourceDraft>;
@@ -185,7 +193,7 @@ export const RulesEditor = ({ peoId, base, basis, today, onSaved, onCancel, onRe
         return (
           <div key={r.key} className="space-y-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
             <Field id={id} label={r.label} hint={r.hint} problem={problemAt(problems, `rules.${r.key}`)}>
-              {(p) => r.input === "lines"
+              {(p) => r.input === "industries"
                 ? <textarea {...p} rows={3} value={values[r.key]} onChange={onChange} className={inputClass} />
                 : <input {...p} inputMode={r.input === "number" ? "decimal" : undefined} value={values[r.key]} onChange={onChange} className={inputClass} />}
             </Field>

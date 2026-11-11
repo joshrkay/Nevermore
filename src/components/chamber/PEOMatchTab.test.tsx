@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import { parsePeoCatalog } from "@/data/peoProfiles";
 import PEOMatchTab from "./PEOMatchTab";
@@ -15,6 +15,8 @@ const renderTab = (selectedPeo: string | null = null) => {
 };
 
 describe("PEOMatchTab", () => {
+  afterEach(() => vi.useRealTimers());
+
   it("shows a headcount of 0 as 0, and only a missing one as a dash", () => {
     const summary = (employee_count: number | null, census = DEMO_CHAMBER_DATA.census) => {
       const { unmount } = render(<PEOMatchTab data={{ ...DEMO_CHAMBER_DATA, employee_count, census }} selectedPeo={null} onSelect={vi.fn()} onProceed={vi.fn()} catalog={CATALOG} catalogStatus="ready" />);
@@ -42,9 +44,16 @@ describe("PEOMatchTab", () => {
     expect(screen.queryByText(/Best Match|Strong Match|Good Match|best-in-class|white-glove/i)).not.toBeInTheDocument();
   });
 
-  it("says what is not yet confirmed instead of guessing at fit", () => {
+  it("says for each rule that it can't tell yet, instead of guessing at fit", () => {
     renderTab();
-    expect(screen.getAllByText(/Not yet confirmed/).length).toBeGreaterThan(0);
+    const checks = within(screen.getByRole("list", { name: "Eligibility checks for TriNet" })).getAllByRole("listitem");
+    expect(checks.map((c) => c.textContent)).toEqual([
+      "Can't tell yet · Minimum headcount: TriNet's minimum headcount isn't checked yet.",
+      "Can't tell yet · States served: TriNet's states served aren't checked yet.",
+      "Can't tell yet · Excluded industries: TriNet's excluded industries aren't checked yet.",
+      "Can't tell yet · Excluded class codes: TriNet's excluded class codes aren't checked yet.",
+      "Can't tell yet · Minimum participation: TriNet's minimum participation isn't checked yet.",
+    ]);
   });
 
   it("selects the PEO the prospect chooses", () => {
@@ -75,16 +84,39 @@ describe("PEOMatchTab", () => {
     expect(onProceed).toHaveBeenCalled();
   });
 
-  it("warns about a PEO whose sourced facts don't fit, naming the fact, and still offers it in its place", () => {
-    const catalog = [
-      { name: "Alpha PEO", listed: true, minHeadcount: 50, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01" },
-      { name: "Beta PEO", listed: true, minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
-    ];
+  const sourced = (name: string, rules: Record<string, unknown>, checked = "2026-11-02") => ({
+    id: name.length, name,
+    profile: { version: 1, ...rules, sources: Object.fromEntries(Object.keys(rules).map((r) => [r, { kind: "document", name: "Broker guide", checked_on: checked }])) },
+  });
+
+  it("shows each check with its icon, its outcome in words, the PEO's fact against the employer's, and when the rule was checked", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
+    const catalog = parsePeoCatalog([sourced("Alpha PEO", { min_headcount: 50, states_served: ["CA", "TX"] }), sourced("Beta PEO", { min_headcount: 5 }, "2026-04-01")]);
+    render(<PEOMatchTab data={{ ...DEMO_CHAMBER_DATA, employee_count: 8, states: ["CA"] }} selectedPeo={null} onSelect={vi.fn()} onProceed={vi.fn()} catalog={catalog} catalogStatus="ready" />);
+    const alpha = within(screen.getByRole("list", { name: "Eligibility checks for Alpha PEO" })).getAllByRole("listitem");
+    expect(alpha[0]).toHaveTextContent("Doesn't meet · Minimum headcount: Alpha PEO takes groups of 50 or more employees; this employer has 8.checked 2 Nov 2026");
+    expect(alpha[0].querySelector("svg.lucide-triangle-alert")).not.toBeNull();
+    expect(alpha[1]).toHaveTextContent("Meets · States served: Alpha PEO serves CA, TX; this employer operates in CA.checked 2 Nov 2026");
+    expect(alpha[1].querySelector("svg.lucide-check")).not.toBeNull();
+    expect(alpha[2]).toHaveTextContent("Can't tell yet · Excluded industries");
+    expect(alpha[2].querySelector("svg.lucide-minus")).not.toBeNull();
+    expect(alpha[2]).not.toHaveTextContent(/checked \d/);
+    // A rule checked more than 180 days ago still counts, and says it may be out of date.
+    const beta = within(screen.getByRole("list", { name: "Eligibility checks for Beta PEO" })).getAllByRole("listitem");
+    expect(beta[0]).toHaveTextContent("Meets · Minimum headcount: Beta PEO takes groups of 5 or more employees; this employer has 8.checked 1 Apr 2026 · may be out of date");
+  });
+
+  it("warns about a check that isn't met and still offers the PEO, grouped by outcome and alphabetical in each group", () => {
+    const catalog = parsePeoCatalog([sourced("Alpha PEO", { min_headcount: 50 }), { id: 9, name: "Beta PEO", profile: null }, sourced("Gamma PEO", { min_headcount: 60 })]);
     const onSelect = vi.fn();
     render(<PEOMatchTab data={{ ...DEMO_CHAMBER_DATA, employee_count: 8 }} selectedPeo={null} onSelect={onSelect} onProceed={vi.fn()} catalog={catalog} catalogStatus="ready" />);
-    const warning = screen.getByRole("alert");
-    expect(warning).toHaveTextContent("Alpha PEO lists a 50-employee minimum; you have 8");
-    expect(screen.getAllByRole("button", { name: /^Choose / }).map((b) => b.textContent)).toEqual(["Choose Alpha PEO", "Choose Beta PEO"]);
+    expect(screen.getByText("Alphabetical in each group. Nothing here is a ranking.")).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
+      "Some checks can't be told yet · 1", "Beta PEO", "A check isn't met · 2", "Alpha PEO", "Gamma PEO", "Another PEO",
+    ]);
+    expect(within(screen.getByRole("list", { name: "Eligibility checks for Alpha PEO" }).parentElement!).getByText("A check that isn't met is a warning. You can still choose Alpha PEO.")).toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "Eligibility checks for Beta PEO" }).parentElement!).queryByText(/isn't met is a warning/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Choose Alpha PEO" }));
     expect(onSelect).toHaveBeenCalledWith("Alpha PEO");
   });

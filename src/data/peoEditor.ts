@@ -82,8 +82,11 @@ export type SectionKey = "rules" | "answers" | "census" | "documents" | "questio
 
 type RuleKey = keyof EditableProfile["rules"];
 
-/** How a rule is typed in the editor: a number, words such as state codes, or lines in the PEO's own words. */
-export type RuleInput = "number" | "words" | "lines";
+/**
+ * How a rule is typed in the editor: a number, words such as state codes, or industries in the PEO's own words, one
+ * per line, each with the class codes it covers after a colon.
+ */
+export type RuleInput = "number" | "words" | "industries";
 
 /** One part of a profile: what people call it, where the editor has it, what it holds, and, for a rule, how it is typed. */
 export interface ProfilePartEntry {
@@ -97,10 +100,32 @@ export interface ProfilePartEntry {
   /** What it holds; null when it isn't set ("can't tell yet"). */
   read: (p: EditableProfile) => unknown;
   /** For an eligibility rule: its key in the rules, how it is typed and shown, and the hint beside it. */
-  rule?: { key: RuleKey; input: RuleInput; upperCase?: boolean; hint: string; show: (v: never) => string };
+  rule?: { key: RuleKey; input: RuleInput; upperCase?: boolean; hint: string; show: (v: never, rules: EditableProfile["rules"]) => string };
 }
 
 const joined = (v: string[]) => v.join(", ");
+
+/** "class code 5551", "class codes 5551, 5645", or "no class codes mapped". */
+export const codesPhrase = (codes: readonly string[]) =>
+  codes.length === 0 ? "no class codes mapped" : `class code${codes.length === 1 ? "" : "s"} ${codes.join(", ")}`;
+
+/** Excluded industries as the editor's box holds them: one per line, the class codes it covers after a colon. */
+export function industriesText(industries: readonly string[], codes: Record<string, string[]> = {}): string {
+  return industries.map((i) => (codes[i]?.length ? `${i}: ${codes[i].join(", ")}` : i)).join("\n");
+}
+
+/** What the box says: each line an industry in the PEO's words, and the class codes after a colon, when they are digits. */
+export function readIndustries(text: string): { industries: string[]; codes: Record<string, string[]> } {
+  const industries: string[] = [];
+  const codes: Record<string, string[]> = {};
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const m = /^(.*\S)\s*:\s*(\d[\d,\s]*)$/.exec(line);
+    const industry = m ? m[1] : line;
+    industries.push(industry);
+    if (m) codes[industry] = m[2].split(/[\s,]+/).filter(Boolean);
+  }
+  return { industries, codes };
+}
 
 /** Every part of a profile, in the database's order (PROFILE_PARTS). Each list below derives from this one table. */
 export const PROFILE_PART_TABLE: Record<ProfilePart, ProfilePartEntry> = {
@@ -118,16 +143,22 @@ export const PROFILE_PART_TABLE: Record<ProfilePart, ProfilePartEntry> = {
     rule: { key: "statesServed", input: "words", upperCase: true, hint: "State codes, such as CA, NY. Leave it empty if not checked yet.", show: joined },
   },
   excluded_industries: {
-    label: "excluded industries", verb: "were", section: "rules", fields: ["rules.excludedIndustries"], read: (p) => p.rules.excludedIndustries,
-    rule: { key: "excludedIndustries", input: "lines", hint: "In the PEO's own words, one per line. Leave it empty and give a source if it excludes none.", show: (v: string[]) => joined(v) || "None" },
+    label: "excluded industries", verb: "were", section: "rules", fields: ["rules.excludedIndustries"],
+    // The wording and the class codes mapped to it are one rule, with one source.
+    read: (p) => (p.rules.excludedIndustries === null ? null : [p.rules.excludedIndustries, p.rules.excludedIndustryCodes ?? {}]),
+    rule: {
+      key: "excludedIndustries", input: "industries",
+      hint: "In the PEO's own words, one per line. After a colon, the class codes it covers, such as Roofing: 5551, 5645; an industry with none can't be checked. Leave it empty and give a source if it excludes none.",
+      show: (v: string[], rules) => v.map((i) => `${i} (${codesPhrase(rules.excludedIndustryCodes?.[i] ?? [])})`).join(", ") || "None",
+    },
   },
   excluded_class_codes: {
     label: "excluded class codes", verb: "were", section: "rules", fields: ["rules.excludedClassCodes"], read: (p) => p.rules.excludedClassCodes,
     rule: { key: "excludedClassCodes", input: "words", hint: "Workers' comp class codes, four digits each. Leave it empty and give a source if it excludes none.", show: (v: string[]) => joined(v) || "None" },
   },
   min_enrolment_percent: {
-    label: "minimum enrolment", verb: "was", section: "rules", fields: ["rules.minEnrolmentPercent"], read: (p) => p.rules.minEnrolmentPercent,
-    rule: { key: "minEnrolmentPercent", input: "number", hint: "Percent of eligible employees. Leave it empty if not checked yet.", show: (v: number) => `${v}%` },
+    label: "minimum participation", verb: "was", section: "rules", fields: ["rules.minEnrolmentPercent"], read: (p) => p.rules.minEnrolmentPercent,
+    rule: { key: "minEnrolmentPercent", input: "number", hint: "The percent of employees eligible for the health plan who must enrol. Leave it empty if not checked yet.", show: (v: number) => `${v}%` },
   },
 };
 
@@ -216,6 +247,12 @@ export function profileProblems(p: EditableProfile, today: string): ProfileProbl
   if (r.excludedIndustries !== null && (r.excludedIndustries.length > caps.listItems || r.excludedIndustries.some((i) => !between(i, 1, caps.header) || i !== i.trim()))) {
     add("rules.excludedIndustries", `Up to ${caps.listItems} excluded industries, each named in 1 to ${caps.header} characters`);
   }
+  const mapped = Object.entries(r.excludedIndustryCodes ?? {});
+  if (mapped.some(([industry]) => !(r.excludedIndustries ?? []).includes(industry))) {
+    add("rules.excludedIndustries", "Class codes are mapped only to an industry the PEO excludes, as it is worded");
+  } else if (mapped.some(([, codes]) => codes.length < 1 || codes.length > caps.industryCodes || codes.some((c) => !CLASS_CODE.test(c)) || new Set(codes).size !== codes.length)) {
+    add("rules.excludedIndustries", `Each excluded industry maps to 1 to ${caps.industryCodes} different class codes, each four digits`);
+  }
   if (r.excludedClassCodes !== null && (r.excludedClassCodes.length > caps.listItems || r.excludedClassCodes.some((c) => !CLASS_CODE.test(c)))) {
     add("rules.excludedClassCodes", `Up to ${caps.listItems} excluded class codes, each four digits`);
   }
@@ -256,7 +293,7 @@ export function profileProblems(p: EditableProfile, today: string): ProfileProbl
     if (!s) continue;
     const at = `sources.${part}`;
     if (!partIsSet(p, part)) {
-      add(at, `${part.replace(/_/g, " ")} isn't set, so it has no source`);
+      add(at, `${capitalised(PART_LABELS[part])} isn't set, so it has no source`);
       continue;
     }
     if (s.name === null || !between(s.name, 1, caps.sourceName) || s.name !== s.name.trim()) {
@@ -310,6 +347,7 @@ export function profilePayload(p: EditableProfile): Record<string, unknown> {
     documents: p.documents,
     // Each rule's column is named after its part.
     ...Object.fromEntries(RULE_PARTS.map((r) => [r.part, p.rules[r.key]])),
+    excluded_industry_codes: p.rules.excludedIndustryCodes ?? {},
     extra_questions: p.extraQuestions,
     sources: Object.fromEntries(Object.entries(p.sources).map(([part, s]) => [part, sourcePayload(s!)])),
     contacts: p.contacts,
@@ -381,7 +419,7 @@ export const isStaleDraftError = (err: unknown) => (err as { code?: unknown } | 
 export function showRule(p: EditableProfile, key: keyof EditableProfile["rules"]): string {
   const rule = RULE_PARTS.find((r) => r.key === key)!;
   const value = p.rules[key];
-  return value === null ? "Not checked yet" : rule.show(value as never);
+  return value === null ? "Not checked yet" : rule.show(value as never, p.rules);
 }
 
 const listChange = (label: string, before: string[], after: string[]): string[] => {

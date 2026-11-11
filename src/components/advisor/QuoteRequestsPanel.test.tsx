@@ -4,6 +4,7 @@ import type { QuoteRequestEventRow, QuoteRequestRow } from "@/lib/advisorApi";
 import type { PipelineStatus } from "@/data/advisor";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { PeoRecord } from "@/data/peoCatalog";
+import { parsePeoCatalog } from "@/data/peoProfiles";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const api = {
@@ -31,8 +32,12 @@ const request = (over: Partial<QuoteRequestRow> = {}): QuoteRequestRow => ({
   ...over,
 });
 
+/** A PEO whose profile in use holds a sourced minimum headcount, checked on `checked`. */
+const withMinimum = (name: string, min: number, checked: string, listed = true): PeoRecord =>
+  parsePeoCatalog([{ id: name.length, name, listed, profile: { version: 1, min_headcount: min, sources: { min_headcount: { kind: "document", name: "Broker guide", checked_on: checked } } } }])[0];
+
 // The PEOs as the database lists them (usePeoCatalog), none with a published profile.
-const CATALOG: PeoRecord[] = ["Insperity", "Justworks", "TriNet"].map((name) => ({ name, listed: true, minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null }));
+const CATALOG: PeoRecord[] = ["Insperity", "Justworks", "TriNet"].map((name) => ({ name, listed: true, lastVerified: null }));
 
 const panel = (
   over: {
@@ -106,7 +111,7 @@ describe("QuoteRequestsPanel", () => {
   });
 
   it("offers the PEOs the database lists, alphabetically as given, and only those", () => {
-    panel({ status: "ready_for_market", requests: [], catalog: [{ name: "Acme PEO", listed: true, minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null }] });
+    panel({ status: "ready_for_market", requests: [], catalog: [{ name: "Acme PEO", listed: true, lastVerified: null }] });
     const options = within(screen.getByLabelText("PEO")).getAllByRole("option").map((o) => o.textContent);
     expect(options.slice(1)).toEqual(["Acme PEO"]);
   });
@@ -116,12 +121,12 @@ describe("QuoteRequestsPanel", () => {
       status: "sent_to_carrier",
       data: { ...EMPTY_CHAMBER_DATA, employee_count: 8 },
       catalog: [
-        { name: "Insperity", listed: true, minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
-        { name: "TriNet", listed: false, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01" },
+        { name: "Insperity", listed: true, lastVerified: null },
+        withMinimum("TriNet", 10, "2026-11-01", false),
       ],
     });
     expect(within(screen.getByLabelText("PEO")).getAllByRole("option").map((o) => o.textContent).slice(1)).toEqual(["Insperity"]);
-    expect(within(screen.getByTestId("quote-request-7")).getByRole("alert")).toHaveTextContent("TriNet lists a 10-employee minimum; you have 8");
+    expect(within(screen.getByRole("list", { name: "Eligibility checks for TriNet" })).getAllByRole("listitem")[0]).toHaveTextContent("Doesn't meet · Minimum headcount: TriNet takes groups of 10 or more employees; this employer has 8.");
   });
 
   it("offers sending only from Ready for market on, and says so before then", () => {
@@ -240,17 +245,29 @@ describe("QuoteRequestsPanel", () => {
     expect(within(row).getByRole("button", { name: "Note a question" })).toBeInTheDocument();
   });
 
-  it("warns, on its row, about a PEO whose sourced facts don't fit the submission", () => {
+  it("shows, on its row, each eligibility check against the PEO's profile, dated, and that one not met never stops a send", () => {
     panel({
       data: { ...EMPTY_CHAMBER_DATA, employee_count: 8 },
-      catalog: [{ name: "TriNet", listed: true, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01" }],
+      catalog: [withMinimum("TriNet", 10, "2026-11-01")],
       requests: [request(), request({ id: 8, peo_name: "Regional HR Co" })],
     });
-    const alert = within(screen.getByTestId("quote-request-7")).getByRole("alert");
-    expect(alert).toHaveTextContent("TriNet lists a 10-employee minimum; you have 8");
-    // Only what doesn't fit: the checks that pass or can't be told aren't warnings.
-    expect(alert).not.toHaveTextContent(/States of operation|Class codes/);
-    expect(within(screen.getByTestId("quote-request-8")).queryByRole("alert")).not.toBeInTheDocument();
+    const row = screen.getByTestId("quote-request-7");
+    const checks = within(within(row).getByRole("list", { name: "Eligibility checks for TriNet" })).getAllByRole("listitem");
+    expect(checks.map((c) => c.textContent?.split(":")[0])).toEqual([
+      "Doesn't meet · Minimum headcount", "Can't tell yet · States served", "Can't tell yet · Excluded industries", "Can't tell yet · Excluded class codes", "Can't tell yet · Minimum participation",
+    ]);
+    expect(checks[0]).toHaveTextContent("TriNet takes groups of 10 or more employees; this employer has 8.checked 1 Nov 2026");
+    expect(row).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
+    // A PEO that isn't listed has no profile to check against.
+    expect(within(screen.getByTestId("quote-request-8")).queryByRole("list", { name: /Eligibility checks/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the chosen PEO's checks before the send is recorded", () => {
+    panel({ status: "ready_for_market", requests: [], data: { ...EMPTY_CHAMBER_DATA, employee_count: 8 }, catalog: [withMinimum("TriNet", 10, "2026-11-01")] });
+    expect(screen.queryByRole("list", { name: "Eligibility checks for TriNet" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "TriNet" } });
+    expect(within(screen.getByRole("list", { name: "Eligibility checks for TriNet" })).getAllByRole("listitem")[0]).toHaveTextContent("Doesn't meet · Minimum headcount");
+    expect(screen.getByRole("button", { name: /Record send/ })).toBeEnabled();
   });
 
   it("warns, on its row, that a PEO's profile is out of date, with when it was last checked", () => {
@@ -258,8 +275,8 @@ describe("QuoteRequestsPanel", () => {
     vi.setSystemTime(new Date(2026, 10, 11, 12));
     panel({
       catalog: [
-        { name: "TriNet", listed: true, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-03-02" },
-        { name: "Justworks", listed: true, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01" },
+        withMinimum("TriNet", 10, "2026-03-02"),
+        withMinimum("Justworks", 10, "2026-11-01"),
       ],
       requests: [request(), request({ id: 8, peo_name: "Justworks" })],
     });
@@ -277,8 +294,8 @@ describe("QuoteRequestsPanel", () => {
         status: "ready_for_market",
         requests: [],
         catalog: [
-          { name: "Justworks", listed: true, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01" },
-          { name: "TriNet", listed: true, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-03-02" },
+          withMinimum("Justworks", 10, "2026-11-01"),
+          withMinimum("TriNet", 10, "2026-03-02"),
         ],
       });
       const warning = "TriNet's profile was last checked 2 Mar 2026 and may be out of date.";

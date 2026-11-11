@@ -1,4 +1,6 @@
 import jsPDF from "jspdf";
+import { NOT_MET_NOTE } from "@/data/peoCatalog";
+import { formatCheckedOn } from "@/data/peoProfiles";
 import { CONSENT_DRAFT_LABEL } from "@/data/certification";
 import { foldLatin, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
 
@@ -387,9 +389,13 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   y += 2;
   subheading("Eligibility checks");
   m.checks.forEach((c) => {
-    const word = c.status === "pass" ? "Passes" : c.status === "fail" ? "Not met" : "Not yet verified";
-    paragraph(`•  ${c.label} — ${word}`, 9, "normal", c.status === "pass" ? OK : c.status === "fail" ? WARN : MUTED, 1);
+    // A check against the PEO's rules says "can't tell yet" and when its rule was checked.
+    const pending = c.checkedOn !== undefined ? "Can't tell yet" : "Not yet verified";
+    const word = c.status === "pass" ? "Passes" : c.status === "fail" ? "Not met" : pending;
+    const dated = c.checkedOn ? ` · checked ${formatCheckedOn(c.checkedOn)}${c.stale ? " · may be out of date" : ""}` : "";
+    paragraph(`•  ${c.label} — ${word}${dated}`, 9, "normal", c.status === "pass" ? OK : c.status === "fail" ? WARN : MUTED, 1);
   });
+  if (m.checks.some((c) => c.status === "fail" && c.checkedOn !== undefined)) paragraph(NOT_MET_NOTE, 9, "normal", WARN, 1);
   if (m.checksNote) paragraph(m.checksNote, 9, "normal", WARN, 1);
   if (m.open.length > 0) {
     y += 2;

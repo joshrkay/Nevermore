@@ -274,7 +274,9 @@ describe("ManuscriptPage", () => {
     row = certified({ submission: { ...certified().submission, chamber_data: { ...signed, employee_count: 4 } } });
     renderAt("/manuscript?session=s1");
     const readiness = (await screen.findByRole("heading", { name: "11 — Underwriting Readiness" })).closest("section")!;
-    await waitFor(() => expect(readiness).toHaveTextContent("Headcount meets Justworks minimum (4 of 10 employees) — not met"));
+    await waitFor(() => expect(readiness).toHaveTextContent("Minimum headcount: Justworks takes groups of 10 or more employees; this employer has 4. Doesn't meet · checked 2 Nov 2026"));
+    expect(readiness).toHaveTextContent("Minimum participation: Justworks's minimum participation isn't checked yet. Can't tell yet");
+    expect(readiness).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
   });
 
   it("notes beside the eligibility checks that the chosen PEO's profile is out of date, and still checks against it", async () => {
@@ -285,7 +287,7 @@ describe("ManuscriptPage", () => {
     renderAt("/manuscript?session=s1");
     const readiness = (await screen.findByRole("heading", { name: "11 — Underwriting Readiness" })).closest("section")!;
     await waitFor(() => expect(readiness).toHaveTextContent("Justworks's profile was last checked 1 Apr 2026 and may be out of date."));
-    expect(readiness).toHaveTextContent("Headcount meets Justworks minimum (4 of 10 employees) — not met");
+    expect(readiness).toHaveTextContent("Minimum headcount: Justworks takes groups of 10 or more employees; this employer has 4. Doesn't meet · checked 1 Apr 2026 · may be out of date");
   });
 
   it("says when a certification predates the document record", async () => {
