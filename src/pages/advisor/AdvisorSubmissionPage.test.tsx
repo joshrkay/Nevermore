@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { Manuscript } from "@/data/manuscript";
+import type { Supplement } from "@/data/peoSupplement";
 import type { SubmissionDetail } from "@/lib/advisorApi";
 import { toast } from "sonner";
 
@@ -30,6 +31,8 @@ const downloadBlob = vi.fn();
 vi.mock("@/lib/downloadFile", () => ({ downloadBlob: (...a: unknown[]) => downloadBlob(...a) }));
 const buildManuscriptPdf = vi.fn((m: Manuscript, _opts?: unknown) => ({ blob: new Blob(["%PDF"]), filename: `${m.fileId}.pdf`, pageCount: 1 }));
 vi.mock("@/lib/manuscriptPdf", () => ({ buildManuscriptPdf: (m: Manuscript, o: unknown) => buildManuscriptPdf(m, o) }));
+const buildSupplementPdf = vi.fn((s: Supplement) => ({ blob: new Blob(["%PDF"]), filename: `${s.fileId}-${s.peo}.pdf`, pageCount: 1 }));
+vi.mock("@/lib/supplementPdf", () => ({ buildSupplementPdf: (s: Supplement) => buildSupplementPdf(s) }));
 
 // The PEOs the database lists (public.peo_catalog()), as src/lib/peoCatalog.ts reads them.
 let peoCatalogRows: unknown = [];
@@ -100,6 +103,7 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   quoteRequestEvents: [],
   currentVersion: 1,
   certificationLacksSnapshot: false,
+  extraAnswers: {},
   wonQuoteRequestId: null,
   ...over,
 });
@@ -239,7 +243,7 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue(detail({
       reviews: { pay_frequency: review("pay_frequency", "follow_up"), census: review("census", "follow_up"), company_name: review("company_name", "verified") } as SubmissionDetail["reviews"],
       informationRequests: [
-        { id: 1, session_id: "s1", message: "Is the HQ still in New York?", fields: ["hq_state"], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-10-03T09:00:00Z" },
+        { id: 1, session_id: "s1", message: "Is the HQ still in New York?", fields: ["hq_state"], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-10-03T09:00:00Z" },
       ],
     }));
     renderPage();
@@ -257,7 +261,7 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.change(within(panel).getByLabelText("What do you need from them?"), { target: { value: "Which payroll vendor, and how often do you pay?" } });
     api.requestInformation.mockResolvedValue(undefined);
     fireEvent.click(send);
-    await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", "Which payroll vendor, and how often do you pay?", ["pay_frequency", "payroll_vendor"]));
+    await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", "Which payroll vendor, and how often do you pay?", ["pay_frequency", "payroll_vendor"], []));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
   });
 
@@ -813,7 +817,7 @@ describe("AdvisorSubmissionPage", () => {
   it("shows what the prospect signed beside their current answers when they changed them afterwards", async () => {
     const current = { ...signedData, employee_count: 14, pay_frequency: "Weekly" };
     api.loadSubmission.mockResolvedValue(
-      detail({ certified: false, intakeStatus: "in_progress", data: current, signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [] } }),
+      detail({ certified: false, intakeStatus: "in_progress", data: current, signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: {} } }),
     );
     renderPage();
     const section = (await screen.findByRole("heading", { name: "Changed since signing" })).closest("section")!;
@@ -822,6 +826,16 @@ describe("AdvisorSubmissionPage", () => {
     expect(rows.find((r) => r?.includes("Bi-weekly"))).toContain("Weekly");
     expect(rows.find((r) => r?.includes("12"))).toContain("14");
     expect(screen.getByText(/what changed is listed below/)).toBeInTheDocument();
+  });
+
+  it("says when it was an answer to a PEO's own questions that changed, without showing it there", async () => {
+    const drives = (value: boolean) => ({ "5": { vehicles: { question: "Do employees drive for work?", kind: "yes_no" as const, value, status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "2026-10-02T00:00:00Z" } } });
+    api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", data: signedData, extraAnswers: drives(false),
+      signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: drives(true) } }));
+    renderPage();
+    const section = (await screen.findByRole("heading", { name: "Changed since signing" })).closest("section")!;
+    expect(section).toHaveTextContent("An answer to a PEO's own questions changed since signing. Each PEO's supplement keeps the certified answers.");
+    expect(section).not.toHaveTextContent("No answer differs from the signed copy.");
   });
 
   it("has no signed-copy section while the certification holds", async () => {
@@ -958,7 +972,7 @@ describe("AdvisorSubmissionPage", () => {
     // Once sent, the question is spent: the next request starts empty.
     api.requestInformation.mockResolvedValue(undefined);
     api.loadSubmission.mockResolvedValue({ ...(await api.loadSubmission.mock.results[0].value), informationRequests: [
-      { id: 1, session_id: "s1", message: "Can they send last year's loss runs?", fields: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-12T16:00:00Z" },
+      { id: 1, session_id: "s1", message: "Can they send last year's loss runs?", fields: [], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-12T16:00:00Z" },
     ] });
     fireEvent.click(screen.getByRole("button", { name: "Send request" }));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
@@ -1003,6 +1017,39 @@ describe("AdvisorSubmissionPage", () => {
       expect(needs).toHaveTextContent("No profile yet for Insperity and Oasis, so there's nothing to check against.");
       expect(needs).not.toHaveTextContent("ADP TotalSource");
       expect(needs).not.toHaveTextContent(/ready|best|rank(ed|ing) \d/i);
+    });
+
+    it("counts a PEO's own extra questions the certified version doesn't answer against it, by their wording", async () => {
+      const drives = { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" };
+      peoCatalogRows = catalog().map((p) => (p.name === "Justworks" ? { ...p, profile: { ...p.profile!, extra_questions: [drives, { key: "fleet", text: "How many vans?", kind: "number" }] } } : p));
+      api.loadSubmission.mockResolvedValue(detail({ extraAnswers: { "3": { vehicles: { question: drives.text, kind: "yes_no", value: true, status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-01T00:00:00Z" } } } }));
+      renderPage();
+      const needs = await panel();
+      const missing = await within(needs).findByRole("list", { name: "Something missing" });
+      const justworks = within(missing).getByRole("heading", { name: "Justworks" }).closest("article")!;
+      expect(justworks).toHaveTextContent("1 of its own questions missing");
+      fireEvent.click(within(justworks).getByRole("button", { name: "Show what's missing" }));
+      expect(within(within(justworks).getByRole("region", { name: "Needed to quote" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["How many vans?: not answered"]);
+    });
+
+    it("offers each PEO's own questions as its supplement, from the certified version, saying what it leaves unanswered", async () => {
+      const drives = { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" };
+      peoCatalogRows = catalog().map((p) => (p.name === "TriNet" ? { ...p, profile: { ...p.profile!, extra_questions: [drives, { key: "fleet", text: "How many vans?", kind: "number" }] } } : p));
+      api.loadSubmission.mockResolvedValue(detail({
+        extraAnswers: { "5": { vehicles: { question: drives.text, kind: "yes_no", value: true, status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-01T00:00:00Z" } } },
+      }));
+      renderPage();
+      const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      expect(trinet).toHaveTextContent("From certified version 1, for TriNet only. 1 of 2 answered.");
+      expect(trinet).toHaveTextContent("Listed as not answered: How many vans?");
+      fireEvent.click(within(trinet).getByRole("button", { name: "Download Additional questions from TriNet" }));
+      expect(buildSupplementPdf).toHaveBeenCalledWith(expect.objectContaining({ peo: "TriNet", fileId: "EAA-2026-S1", version: 1, rows: [
+        { question: "Do employees drive for work?", answer: "Yes" }, { question: "How many vans?", answer: null },
+      ] }));
+      expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-TriNet.pdf");
+      // A PEO that asks no questions of its own has no supplement.
+      const justworks = within(await panel()).getByRole("heading", { name: "Justworks" }).closest("article")!;
+      expect(within(justworks).queryByRole("button", { name: /Additional questions/ })).not.toBeInTheDocument();
     });
 
     it("opens what a PEO still needs in place: what it needs to quote, and apart what it needs only before signing", async () => {
@@ -1100,7 +1147,24 @@ describe("AdvisorSubmissionPage", () => {
       expect(api.requestInformation).not.toHaveBeenCalled();
       fireEvent.change(message, { target: { value: `${message.value}\nThanks!` } });
       fireEvent.click(screen.getByRole("button", { name: "Send request" }));
-      await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", expect.stringMatching(/Thanks!$/), ["hris_system", "payroll_vendor"]));
+      await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", expect.stringMatching(/Thanks!$/), ["hris_system", "payroll_vendor"], []));
+    });
+
+    it("names the PEO's unanswered extra questions in the draft, which the advisor can take out, and sends them with it", async () => {
+      peoCatalogRows = catalog().map((p) => (p.name === "TriNet" ? { ...p, profile: { ...p.profile!, extra_questions: [
+        { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }, { key: "fleet", text: "How many vans?", kind: "number" },
+      ] } } : p));
+      api.requestInformation.mockResolvedValue(undefined);
+      renderPage();
+      const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
+      const asked = () => within(screen.getByRole("list", { name: "Extra questions the request is about" })).getAllByRole("listitem").map((li) => li.textContent);
+      expect(asked()).toEqual(["Do employees drive for work?", "How many vans?"]);
+      expect((screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement).value).not.toMatch(/TriNet/);
+      fireEvent.click(screen.getByRole("button", { name: "Remove How many vans?" }));
+      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", expect.any(String), ["hris_system", "payroll_vendor"],
+        [{ peo_id: 5, key: "vehicles", question: "Do employees drive for work?" }]));
     });
 
     it("starts the next request afresh once a drafted one is sent: no copy of the draft, and the follow-up fields again", async () => {
@@ -1114,7 +1178,7 @@ describe("AdvisorSubmissionPage", () => {
       // The send reloads the submission, which now lists the request just sent.
       api.loadSubmission.mockResolvedValue(detail({
         reviews,
-        informationRequests: [{ id: 1, session_id: "s1", message: "We need a few more things", fields: ["hris_system", "payroll_vendor"], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-11T12:00:00Z" }],
+        informationRequests: [{ id: 1, session_id: "s1", message: "We need a few more things", fields: ["hris_system", "payroll_vendor"], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-11T12:00:00Z" }],
       }));
       fireEvent.click(screen.getByRole("button", { name: "Send request" }));
       await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
@@ -1139,7 +1203,7 @@ describe("AdvisorSubmissionPage", () => {
       const now = { ...signedData, hris_system: "Rippling" };
       api.loadSubmission.mockResolvedValue(detail({
         certified: false, intakeStatus: "in_progress", data: now, currentVersion: 3,
-        signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [] },
+        signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: {} },
       }));
       renderPage();
       const needs = await panel();

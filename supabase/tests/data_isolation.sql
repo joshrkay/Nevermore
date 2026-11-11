@@ -97,6 +97,8 @@
 \i supabase/migrations/20261111090000_peo_requirement_profiles.sql
 \i supabase/migrations/20261111100000_peo_profile_editor.sql
 \i supabase/migrations/20261112090000_peo_industry_class_codes.sql
+\i supabase/migrations/20261113090000_extra_answers.sql
+\i supabase/migrations/20261113100000_information_request_extra_questions.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -707,6 +709,8 @@ INSERT INTO callable VALUES
   ('current_intake_consent_id(p_user_id uuid)', 'helper', NULL, 'the consent triggers call it as the caller; row security limits it to the caller''s own agreement (all, for advisors)'),
   ('chamber_data_census_row_error(census_row jsonb, base text, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_error(d jsonb, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),
+  ('extra_answers_error(p jsonb, OUT path text, OUT reason text)', 'helper', NULL, 'extra answers validation trigger; pure'),
+  ('extra_answer_value_is_valid(v jsonb, kind text)', 'helper', NULL, 'pure: whether a value answers a question of that kind'),
   ('chamber_data_field_kind(field text)',      'helper',  NULL, 'intake validation trigger; pure'),
   ('chamber_transcript_error(t jsonb, OUT path text, OUT reason text)', 'helper', NULL, 'transcript validation trigger; pure'),
   ('chamber_data_is_text(v jsonb, max_length integer)', 'helper', NULL, 'intake validation trigger; pure'),
@@ -743,7 +747,7 @@ INSERT INTO callable VALUES
   ('record_manuscript_version(p_session_id uuid, p_version integer, p_storage_path text, p_pdf_sha256 text, p_review_event_id bigint, p_corrections_applied integer, p_sensitive_revealed boolean, p_certified_data_hash text, p_certified_at timestamp with time zone)', 'advisor',
                                                                      'SELECT public.record_manuscript_version(%1$L, 2, %1$L || ''/probe.pdf'', repeat(''d'', 64), 0, 0, false, NULL, NULL)', 'storing a Manuscript version'),
   ('retention_review_due(p_limit integer)',    'advisor', 'SELECT count(*) FROM public.retention_review_due(10)', 'submitted records due for review'),
-  ('advisor_request_information(p_session_id uuid, p_message text, p_fields text[])', 'advisor',
+  ('advisor_request_information(p_session_id uuid, p_message text, p_fields text[], p_extra_questions jsonb)', 'advisor',
                                                                      'SELECT public.advisor_request_information(%1$L, ''probe'', ''{}'')', 'asking the prospect for information'),
   ('advisor_intake_funnel(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
                                                                      'SELECT count(*) FROM public.advisor_intake_funnel(now() - interval ''1 day'', now())', 'the pilot funnel'),

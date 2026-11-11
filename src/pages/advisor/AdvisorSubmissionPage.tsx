@@ -25,6 +25,7 @@ import { describeSource } from "@/data/referralPartners";
 import { listedPeos } from "@/data/peoCatalog";
 import { lastCertifiedVersion } from "@/data/peoCompleteness";
 import type { FieldKey } from "@/data/provenance";
+import type { ExtraQuestionRef } from "@/data/extraAnswers";
 import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
 
 type Load =
@@ -126,9 +127,9 @@ const Detail = ({
   // What a PEO still needs comes the same way, with the answers the request names. Once a request is sent the
   // draft is spent: the next one starts afresh, from the fields marked Needs follow-up. `n` only ever grows, so each
   // draft, and each send, starts the panel anew.
-  const [askDraft, setAskDraft] = useState<{ message?: string; fields?: FieldKey[]; n: number }>({ n: 0 });
-  const askProspect = (message: string, fields?: FieldKey[]) => {
-    setAskDraft((current) => ({ message, fields, n: current.n + 1 }));
+  const [askDraft, setAskDraft] = useState<{ message?: string; fields?: FieldKey[]; questions?: ExtraQuestionRef[]; n: number }>({ n: 0 });
+  const askProspect = (message: string, fields?: FieldKey[], questions?: ExtraQuestionRef[]) => {
+    setAskDraft((current) => ({ message, fields, questions, n: current.n + 1 }));
     window.requestAnimationFrame?.(() => document.getElementById("information-request-message")?.focus());
   };
   const requestSent = () => {
@@ -182,7 +183,9 @@ const Detail = ({
             chosenPeo={sub?.peo ?? null}
             quoteRequests={detail.quoteRequests}
             askBlocked={informationRequestBlockedReason(detail.pipelineStatus, !!sub?.signer_name, detail.intakeStatus)}
-            onDraft={(draft) => askProspect(draft.message, draft.fields)}
+            onDraft={(draft) => askProspect(draft.message, draft.fields, draft.questions)}
+            fileId={detail.fileId ?? "No File ID"}
+            companyName={certifiedVersion?.intake.data.company_name ?? "Company not provided"}
           />
           <FieldReviewPanel
             sessionId={detail.id}
@@ -215,6 +218,7 @@ const Detail = ({
             key={`${detail.informationRequests.length}-${askDraft.n}`}
             initialMessage={askDraft.message}
             initialFields={askDraft.fields}
+            initialQuestions={askDraft.questions}
             sessionId={detail.id}
             prospectUserId={detail.userId}
             status={detail.pipelineStatus}
@@ -233,7 +237,7 @@ const Detail = ({
             events={detail.quoteRequestEvents}
             data={detail.data}
             catalog={peoCatalog.peos}
-            onAskProspect={askProspect}
+            onAskProspect={(message) => askProspect(message)}
             onChanged={reload}
           />
           <StatusPanel
@@ -267,12 +271,17 @@ const RELATIONSHIP_LABELS: Record<string, string> = {
 /** What the prospect certified beside what the intake holds now, for an intake edited after signing. */
 const ChangedSinceSigning = ({ detail, signed }: { detail: SubmissionDetail; signed: NonNullable<SubmissionDetail["signed"]> }) => {
   const changes = changesSinceSigning(signed.data, detail.data);
+  // A PEO's own answers go only to that PEO, so they aren't listed here: only that one changed.
+  const extraChanged = JSON.stringify(signed.extraAnswers) !== JSON.stringify(detail.extraAnswers);
   return (
     <section aria-labelledby="changed-heading" className="border border-warning/40 bg-warning/5 rounded-xl p-5">
       <h2 id="changed-heading" className="font-display text-lg font-bold">Changed since signing</h2>
       <p className="text-xs text-muted-foreground mb-3">Signed {formatDateTime(signed.signedAt)}</p>
+      {extraChanged && (
+        <p className="text-sm text-muted-foreground mb-2">An answer to a PEO's own questions changed since signing. Each PEO's supplement keeps the certified answers.</p>
+      )}
       {changes.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No answer differs from the signed copy.</p>
+        !extraChanged && <p className="text-sm text-muted-foreground">No answer differs from the signed copy.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

@@ -13,6 +13,7 @@ import { intakeSourceColumns, recalledSource } from "@/data/intakeSource";
 import { INTAKE_SCHEMA_VERSION, validateChamberData } from "@/data/intakeSchema";
 import { FIELD_LABELS, parseProvenance, type IntakeState, type ProvenanceMap } from "@/data/provenance";
 import { cleanPeoName } from "@/data/peoCatalog";
+import { NO_EXTRA_ANSWERS, parseExtraAnswers, type ExtraAnswers } from "@/data/extraAnswers";
 import { describeRequiredKeys } from "@/data/readiness";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { readVerifiedFields } from "@/lib/verifiedFields";
@@ -49,7 +50,7 @@ export const VERIFY_EMAIL_MESSAGE = "Certifying needs a verified email. Verify y
 type ServerRow = Pick<
   Database["public"]["Tables"]["chamber_sessions"]["Row"],
   | "id" | "data_version" | "status" | "chamber_data" | "field_provenance" | "transcript" | "submission" | "expires_at"
-  | "chosen_peo" | "created_at" | "file_id" | "user_id"
+  | "chosen_peo" | "extra_answers" | "created_at" | "file_id" | "user_id"
 >;
 
 /** Answers kept in this browser that never reached the server, offered back when the intake is opened. */
@@ -130,6 +131,13 @@ interface UseChamberSessionReturn {
   chosenPeo: string | null;
   /** Records the prospect's choice of PEO and saves it with the intake, so a reload keeps it. */
   choosePeo: (name: string | null) => void;
+  /** The answers to PEOs' own extra questions (src/data/extraAnswers.ts), saved with the intake. */
+  extraAnswers: ExtraAnswers;
+  /**
+   * Changes the extra answers and saves them in the same versioned write as the answers. Like any answer, a change
+   * withdraws the certification.
+   */
+  updateExtraAnswers: (updater: (prev: ExtraAnswers) => ExtraAnswers) => void;
   saveStatus: SaveStatus;
   /** Saves now, or creates the intake again if creating it failed. */
   retrySave: () => void;
@@ -189,7 +197,7 @@ function unexplainedFailure(error: unknown, sessionId: string): SubmitFailure {
   };
 }
 const ROW_COLUMNS =
-  "id, user_id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo, created_at, file_id";
+  "id, user_id, data_version, status, chamber_data, field_provenance, transcript, submission, expires_at, chosen_peo, extra_answers, created_at, file_id";
 // What a certification reads back: the submission as the database stamped it (its File ID, version and
 // documents), and the intake's File ID.
 const CERTIFIED_COLUMNS = "id, data_version, status, submission, file_id";
@@ -245,11 +253,12 @@ function sameJson(a: unknown, b: unknown): boolean {
 const asStored = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
 
 // Whether a saved row is the result of an autosave that sent `stored`.
-const matchesSave = (stored: { chamber_data: unknown; field_provenance: unknown; transcript: unknown; chosen_peo?: unknown }) => (row: ServerRow) =>
+const matchesSave = (stored: { chamber_data: unknown; field_provenance: unknown; transcript: unknown; chosen_peo?: unknown; extra_answers?: unknown }) => (row: ServerRow) =>
   sameJson(row.chamber_data, stored.chamber_data) &&
   sameJson(row.field_provenance, stored.field_provenance) &&
   sameJson(row.transcript, stored.transcript) &&
-  (row.chosen_peo ?? null) === (stored.chosen_peo ?? null);
+  (row.chosen_peo ?? null) === (stored.chosen_peo ?? null) &&
+  sameJson(row.extra_answers ?? {}, stored.extra_answers ?? {});
 
 // Whether a saved row is the result of certifying `submission` over `signedData` (as stored). The File ID is
 // not compared: the database assigns it, replacing whatever was sent.
@@ -271,10 +280,13 @@ const fileIdOf = (row: Pick<ServerRow, "file_id" | "submission">): string | null
 // A write that failed with an error may still have landed. Remember what it sent, so the row it
 // left behind (one version on) is recognised later instead of being taken for another tab's save.
 // Several can be pending: after repeated errors any one of them may be the one that landed.
-/** The certification as the server will hold it once `data` is saved over `row`: saving different answers over a certified row withdraws it. */
-function certificationAfterSaving(row: ServerRow, data: ChamberData): CertificationState {
+/**
+ * The certification as the server will hold it once `data` and `extra` are saved over `row`: saving different answers
+ * (extra answers included) over a certified row withdraws it.
+ */
+function certificationAfterSaving(row: ServerRow, data: ChamberData, extra: ExtraAnswers): CertificationState {
   const fromServer = certificationFromRow(row.status, row.submission);
-  return fromServer.status === "certified" && !sameJson(asStored(data), row.chamber_data)
+  return fromServer.status === "certified" && (!sameJson(asStored(data), row.chamber_data) || !sameJson(asStored(extra), row.extra_answers ?? {}))
     ? { status: "stale", submission: fromServer.submission }
     : fromServer;
 }
@@ -317,6 +329,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const [messages, setMessages] = useState<ChatMessage[]>(() => [openingMessage()]);
   const [certification, setCertification] = useState<CertificationState>(NO_CERTIFICATION);
   const [chosenPeo, setChosenPeoRaw] = useState<string | null>(null);
+  const [extraAnswers, setExtraAnswersRaw] = useState<ExtraAnswers>(NO_EXTRA_ANSWERS);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [invalidField, setInvalidField] = useState<string | null>(null);
   const [expired, setExpired] = useState<{ at: string | null } | null>(null);
@@ -366,6 +379,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
   const provenanceRef = useRef(provenance);
   const messagesRef = useRef(messages);
   const chosenPeoRef = useRef(chosenPeo);
+  const extraAnswersRef = useRef(extraAnswers);
   const sessionIdRef = useRef(sessionId);
   const requestedIdRef = useRef(requestedSessionId ?? null);
   // Set by startNew (and by a retry after the intake couldn't be created): create, never resume.
@@ -546,10 +560,13 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     const loadedPeo = cleanPeoName(row.chosen_peo);
     chosenPeoRef.current = loadedPeo;
     setChosenPeoRaw(loadedPeo);
+    const loadedExtra = parseExtraAnswers(row.extra_answers);
+    extraAnswersRef.current = loadedExtra;
+    setExtraAnswersRaw(loadedExtra);
     let loadedCertification = certificationFromRow(row.status, row.submission);
     // Rows certified under looser rules can hold answers the sanitiser now changes. Saving them back would
     // make the database withdraw the certification, so show it as withdrawn rather than as certified.
-    if (loadedCertification.status === "certified" && !sameJson(loadedData, row.chamber_data)) {
+    if (loadedCertification.status === "certified" && (!sameJson(loadedData, row.chamber_data) || !sameJson(loadedExtra, row.extra_answers ?? {}))) {
       loadedCertification = { status: "stale", submission: loadedCertification.submission };
     }
     certificationRef.current = loadedCertification;
@@ -677,6 +694,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
       field_provenance: provenanceRef.current,
       transcript: messagesRef.current,
       chosen_peo: chosenPeoRef.current,
+      extra_answers: extraAnswersRef.current,
     };
     let result;
     try {
@@ -687,6 +705,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           field_provenance: sent.field_provenance as unknown as Json,
           transcript: sent.transcript as unknown as Json,
           chosen_peo: sent.chosen_peo,
+          extra_answers: sent.extra_answers as unknown as Json,
         })
         .eq("id", sid)
         .eq("data_version", version)
@@ -735,7 +754,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         clearBlock();
         // The earlier write may have been a certification whose response was lost; show what the server holds
         // once the newer answers land on top of it.
-        const kept = certificationAfterSaving(outcome.row, dataRef.current);
+        const kept = certificationAfterSaving(outcome.row, dataRef.current, extraAnswersRef.current);
         certificationRef.current = kept;
         setCertification(kept);
         dirtyRef.current = true;
@@ -803,6 +822,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         field_provenance: provenanceRef.current,
         transcript: messagesRef.current,
         chosen_peo: chosenPeoRef.current,
+        extra_answers: extraAnswersRef.current,
       });
       const token = accessTokenRef.current;
       const version = versionRef.current;
@@ -854,6 +874,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     setCertification(NO_CERTIFICATION);
     chosenPeoRef.current = null;
     setChosenPeoRaw(null);
+    extraAnswersRef.current = NO_EXTRA_ANSWERS;
+    setExtraAnswersRaw(NO_EXTRA_ANSWERS);
     setConversationEpoch((n) => n + 1);
   }, []);
 
@@ -937,7 +959,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
 
     const create = async () => {
       // What the new row holds: the prospect's first change is already in it.
-      const sent = { data: dataRef.current, provenance: provenanceRef.current, messages: messagesRef.current, peo: chosenPeoRef.current };
+      const sent = { data: dataRef.current, provenance: provenanceRef.current, messages: messagesRef.current, peo: chosenPeoRef.current, extra: extraAnswersRef.current };
       const { data: newSession, error } = await supabase
         .from("chamber_sessions")
         .insert({
@@ -946,6 +968,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
           field_provenance: sent.provenance as unknown as Json,
           transcript: sent.messages as unknown as Json,
           chosen_peo: sent.peo,
+          extra_answers: sent.extra as unknown as Json,
           // The link the visitor arrived by, if it carried a referral code or campaign tags. Set only here: the
           // database keeps it fixed from now on.
           ...intakeSourceColumns(recalledSource()),
@@ -981,7 +1004,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
         setFileId(typeof newSession.file_id === "string" ? newSession.file_id : null);
         // Anything captured while the row was being created still needs saving; what it was created with doesn't.
         const changedSince = dataRef.current !== sent.data || provenanceRef.current !== sent.provenance
-          || messagesRef.current !== sent.messages || chosenPeoRef.current !== sent.peo;
+          || messagesRef.current !== sent.messages || chosenPeoRef.current !== sent.peo || extraAnswersRef.current !== sent.extra;
         if (dirtyRef.current && changedSince) {
           scheduleSave();
         } else {
@@ -1178,7 +1201,7 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     settleOutcome();
     // The other tab may have withdrawn the certification, and saving different answers over a certified row
     // withdraws it too, so show what the server will hold once this save lands.
-    const kept = certificationAfterSaving(row, dataRef.current);
+    const kept = certificationAfterSaving(row, dataRef.current, extraAnswersRef.current);
     certificationRef.current = kept;
     setCertification(kept);
     clearBlock();
@@ -1275,6 +1298,22 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     // Not an answer: the certification stands. The Reckoning asks for a new one when the PEO differs.
     chosenPeoRef.current = next;
     setChosenPeoRaw(next);
+    scheduleSave();
+  }, [scheduleSave]);
+
+  const updateExtraAnswers = useCallback((updater: (prev: ExtraAnswers) => ExtraAnswers) => {
+    const prev = extraAnswersRef.current;
+    const next = updater(prev);
+    if (JSON.stringify(next) === JSON.stringify(prev)) return;
+    extraAnswersRef.current = next;
+    setExtraAnswersRaw(next);
+    // An answer like any other: the certification no longer covers it (certify_extra_answers withdraws it too).
+    const current = certificationRef.current;
+    if (current.status === "certified") {
+      const stale: CertificationState = { status: "stale", submission: current.submission };
+      certificationRef.current = stale;
+      setCertification(stale);
+    }
     scheduleSave();
   }, [scheduleSave]);
 
@@ -1457,6 +1496,8 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     certification,
     chosenPeo,
     choosePeo,
+    extraAnswers,
+    updateExtraAnswers,
     saveStatus,
     retrySave,
     saveAll: flush,

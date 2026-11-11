@@ -10,18 +10,25 @@ import { isScanReleased } from "./documentStatus";
 import { openItems } from "./openItems";
 import { listedPeos, type PeoRecord } from "./peoCatalog";
 import type { RequirementProfile } from "./peoProfiles";
-import { FIELD_LABELS, isEmpty, type FieldKey, type ProvenanceMap } from "./provenance";
+import { FIELD_LABELS, FIELD_OPEN_REASONS, isEmpty, type FieldKey, type ProvenanceMap } from "./provenance";
+import { answerFor, type ExtraAnswers, type ExtraQuestionRef } from "./extraAnswers";
 
-/** The last certified version of an intake: its answers and their field status, and the fields an advisor verified. */
+/**
+ * The last certified version of an intake: its answers and their field status, the fields an advisor verified, and
+ * the answers to PEOs' own extra questions as certified.
+ */
 export interface CertifiedIntake {
   data: ChamberData;
   provenance: ProvenanceMap;
   verified: ReadonlySet<string>;
+  extraAnswers: ExtraAnswers;
 }
 
 /** Something a PEO's profile needs that the certified version doesn't hold, and why. */
 export type NeededItem =
   | { kind: "answer"; field: FieldKey; label: string; reason: string }
+  // One of the PEO's own extra questions, by its key, labelled with its wording.
+  | { kind: "question"; key: string; label: string; reason: string }
   | { kind: "document"; category: DocumentCategory; label: string; description: string; reason: string };
 
 export interface PeoCompleteness {
@@ -45,6 +52,20 @@ function missingAnswers(intake: CertifiedIntake, fields: readonly FieldKey[]): N
     // "Doesn't apply" is the prospect's answer: nothing more is owed on it.
     if (intake.provenance[field]?.status === "not_applicable") return [];
     return isEmpty(intake.data[field]) ? [{ kind: "answer", field, label: FIELD_LABELS[field], reason: "Not provided" }] : [];
+  });
+}
+
+/**
+ * The PEO's own extra questions the certified version doesn't answer as worded (answerFor): with no answer, an answer
+ * to other wording, or one still an open item, as a field would be. "Doesn't apply" answers it. An advisor's
+ * verification is of fields only, so it never settles one.
+ */
+function missingQuestions(intake: CertifiedIntake, profile: RequirementProfile, peoId: number | undefined): NeededItem[] {
+  return profile.extraQuestions.flatMap((q): NeededItem[] => {
+    const a = peoId === undefined ? null : answerFor(intake.extraAnswers, peoId, q);
+    if (!a) return [{ kind: "question", key: q.key, label: q.text, reason: "Not answered" }];
+    if (a.status === "confirmed" || a.status === "not_applicable") return [];
+    return [{ kind: "question", key: q.key, label: q.text, reason: FIELD_OPEN_REASONS[a.status] }];
   });
 }
 
@@ -87,11 +108,12 @@ function missingDocuments(documents: readonly ReviewedDocument[], profile: Requi
 
 /**
  * Whether the certified version is complete for one PEO, from its profile in use: what it needs to quote and isn't
- * on file, and, apart, what it needs only before signing. `documents` are the intake's, set against the certified
- * list (reconcileDocuments).
+ * on file (its own extra questions included: an unanswered one counts against it), and, apart, what it needs only
+ * before signing. `documents` are the intake's, set against the certified list (reconcileDocuments). `peoId` is the
+ * PEO's, which its extra answers are kept under.
  */
-export function peoCompleteness(intake: CertifiedIntake, documents: readonly ReviewedDocument[], profile: RequirementProfile): PeoCompleteness {
-  const toQuote = [...missingAnswers(intake, profile.neededToQuote), ...missingDocuments(documents, profile)];
+export function peoCompleteness(intake: CertifiedIntake, documents: readonly ReviewedDocument[], profile: RequirementProfile, peoId?: number): PeoCompleteness {
+  const toQuote = [...missingAnswers(intake, profile.neededToQuote), ...missingQuestions(intake, profile, peoId), ...missingDocuments(documents, profile)];
   return { complete: toQuote.length === 0, toQuote, beforeSigning: missingAnswers(intake, profile.neededBeforeSigning) };
 }
 
@@ -112,7 +134,7 @@ export function groupByCompleteness(intake: CertifiedIntake, documents: readonly
 } {
   const alphabetical = listedPeos(catalog).sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
   const entries = alphabetical.flatMap((peo): PeoCompletenessEntry[] =>
-    peo.profile ? [{ peo: peo as PeoCompletenessEntry["peo"], completeness: peoCompleteness(intake, documents, peo.profile) }] : []);
+    peo.profile ? [{ peo: peo as PeoCompletenessEntry["peo"], completeness: peoCompleteness(intake, documents, peo.profile, peo.id) }] : []);
   return {
     complete: entries.filter((e) => e.completeness.complete),
     missing: entries.filter((e) => !e.completeness.complete),
@@ -122,11 +144,13 @@ export function groupByCompleteness(intake: CertifiedIntake, documents: readonly
 
 const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
-/** How many answers and documents, such as "3 answers and 1 document"; empty for none. */
+/** How many answers, questions and documents, such as "3 answers, 1 of its own questions and 1 document"; empty for none. */
 function counted(items: readonly NeededItem[]): string {
   const answers = items.filter((i) => i.kind === "answer").length;
-  const documents = items.length - answers;
-  return [answers ? count(answers, "answer") : "", documents ? count(documents, "document") : ""].filter(Boolean).join(" and ");
+  const questions = items.filter((i) => i.kind === "question").length;
+  const documents = items.filter((i) => i.kind === "document").length;
+  const parts = [answers ? count(answers, "answer") : "", questions ? `${questions} of its own questions` : "", documents ? count(documents, "document") : ""].filter(Boolean);
+  return parts.length <= 1 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
 /** A PEO's standing in one line: what is missing to quote (or that nothing is), then what it needs only before signing. */
@@ -139,22 +163,29 @@ export function missingLine(c: PeoCompleteness): string {
 export interface InformationRequestDraft {
   /** The answers the request names. */
   fields: FieldKey[];
+  /** The PEO's own extra questions it names. */
+  questions: ExtraQuestionRef[];
   message: string;
 }
 
 /**
  * What a PEO still needs, as a draft information request, for the advisor to edit and send: the answers it names (those
  * missing to quote, then those needed only before signing) and a message listing the documents to upload,
- * within what a request can hold. It names no PEO: the prospect never sees where the submission goes. Nothing is
- * sent. (L-2.3 adds the PEO's own questions here.)
+ * within what a request can hold, and the PEO's own extra questions it still needs (`peoId` is the PEO's), which the
+ * prospect then sees under the PEO's name in the intake. The message names no PEO. Nothing is sent.
  */
-export function informationRequestDraft(c: PeoCompleteness): InformationRequestDraft {
+export function informationRequestDraft(c: PeoCompleteness, peoId?: number): InformationRequestDraft {
   const items = [...c.toQuote, ...c.beforeSigning];
   // A profile lists each answer once, to quote or before signing, and a request can name every answer the intake asks.
   const fields = items.flatMap((i) => (i.kind === "answer" ? [i.field] : []));
+  const questions = peoId === undefined ? [] : items.flatMap((i) => (i.kind === "question" ? [{ peo_id: peoId, key: i.key, question: i.label }] : []));
   const documents = items.filter((i): i is Extract<NeededItem, { kind: "document" }> => i.kind === "document");
   const intro = "We need a few more things from you to get a quote.";
-  const answersLine = fields.length ? `\n\nPlease ${documents.length ? "also " : ""}answer or confirm the answers this request is about.` : "";
+  const also = documents.length ? "also " : "";
+  const onMatch = "the extra questions it names on the PEO Match tab";
+  const answersLine = fields.length
+    ? `\n\nPlease ${also}answer or confirm the answers this request is about${questions.length ? `, and ${onMatch}` : ""}.`
+    : questions.length ? `\n\nPlease ${also}answer ${onMatch.replace("it names", "this request names")}.` : "";
   let list = "";
   if (documents.length) {
     const head = "\n\nPlease upload these on the Upload tab of your intake:";
@@ -170,7 +201,7 @@ export function informationRequestDraft(c: PeoCompleteness): InformationRequestD
       if (text !== null) { list = text; break; }
     }
   }
-  return { fields, message: intro + list + answersLine };
+  return { fields, questions, message: intro + list + answersLine };
 }
 
 /** The last certified version of a submission: its answers, the documents set against what it covered, and its number. */
@@ -201,7 +232,9 @@ export function lastCertifiedVersion(
     data: ChamberData;
     provenance: ProvenanceMap;
     documents: readonly ReviewedDocument[];
-    signed: { data: ChamberData; provenance: ProvenanceMap; documents: readonly ReviewedDocument[] } | null;
+    /** The extra answers shown: the certified copy while the certification stands. */
+    extraAnswers: ExtraAnswers;
+    signed: { data: ChamberData; provenance: ProvenanceMap; documents: readonly ReviewedDocument[]; extraAnswers: ExtraAnswers } | null;
     currentVersion: number | null;
     /** The certification on record kept no field status or no document list (SubmissionDetail). */
     certificationLacksSnapshot: boolean;
@@ -209,9 +242,9 @@ export function lastCertifiedVersion(
   verified: ReadonlySet<string>,
 ): CertifiedVersion | null {
   const cantTell = d.certificationLacksSnapshot;
-  if (d.certified) return { intake: { data: d.data, provenance: d.provenance, verified }, documents: d.documents, version: d.currentVersion, changedSince: false, cantTell };
+  if (d.certified) return { intake: { data: d.data, provenance: d.provenance, verified, extraAnswers: d.extraAnswers }, documents: d.documents, version: d.currentVersion, changedSince: false, cantTell };
   if (!d.signed) return null;
   const signed = d.signed;
   const onCertified = new Set([...verified].filter((f) => JSON.stringify(signed.data[f as FieldKey]) === JSON.stringify(d.data[f as FieldKey])));
-  return { intake: { data: signed.data, provenance: signed.provenance, verified: onCertified }, documents: signed.documents, version: d.currentVersion, changedSince: true, cantTell };
+  return { intake: { data: signed.data, provenance: signed.provenance, verified: onCertified, extraAnswers: signed.extraAnswers }, documents: signed.documents, version: d.currentVersion, changedSince: true, cantTell };
 }

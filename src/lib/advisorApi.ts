@@ -10,6 +10,7 @@ import type { OutboxStatus } from "@/data/outbox";
 import type { IntakeSource } from "@/data/intakeSource";
 import { contactsOf, EMPTY_PROFILE, parseProfileVersion, profilePayload, type DraftBasis, type EditableProfile, type PeoContact, type ProfileVersion } from "@/data/peoEditor";
 import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
+import { parseExtraAnswers, type ExtraAnswers, type ExtraQuestionRef } from "@/data/extraAnswers";
 import {
   isPipelineStatus,
   manuscriptStoragePath,
@@ -223,6 +224,11 @@ export interface SubmissionDetail {
    */
   storedAnswers: Record<string, Json | undefined>;
   provenance: ProvenanceMap;
+  /**
+   * The answers to PEOs' own extra questions, as `data`: the certified copy while certified, otherwise as they stand.
+   * They go only to their PEO.
+   */
+  extraAnswers: ExtraAnswers;
   /** True when `data` is the certified snapshot. */
   certified: boolean;
   /**
@@ -236,6 +242,8 @@ export interface SubmissionDetail {
     provenance: ProvenanceMap;
     /** The documents set against the list that certification covered (reconcileDocuments). */
     documents: ReviewedDocument[];
+    /** The extra answers as certified (none for a certification from before they were kept). */
+    extraAnswers: ExtraAnswers;
   } | null;
   submission: ChamberSubmission | null;
   /** The conversation as certified when the intake is certified (otherwise as it stands). */
@@ -280,13 +288,14 @@ interface RecordedCertification {
   chamber_data: Json | null;
   field_provenance?: Json | null;
   documents?: Json | null;
+  extra_answers?: Json | null;
 }
 
 export async function loadSubmission(id: string): Promise<SubmissionDetail | null> {
   const [session, workflow, history, notes, reviews, events, versions] = await Promise.all([
     supabase
       .from("chamber_sessions")
-      .select("id, user_id, chamber_data, field_provenance, transcript, status, submission, created_at, updated_at, file_id, referral_code, utm_source, utm_medium, utm_campaign")
+      .select("id, user_id, chamber_data, field_provenance, extra_answers, transcript, status, submission, created_at, updated_at, file_id, referral_code, utm_source, utm_medium, utm_campaign")
       .eq("id", id)
       .maybeSingle(),
     supabase
@@ -323,7 +332,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     // chamber_certifications isn't in the generated types (src/integrations/supabase/types.ts).
     (supabase as unknown as SupabaseClient)
       .from("chamber_certifications")
-      .select("file_id, version, signed_at, recorded_at, chamber_data, field_provenance, documents")
+      .select("file_id, version, signed_at, recorded_at, chamber_data, field_provenance, documents, extra_answers")
       .eq("session_id", id)
       .order("recorded_at", { ascending: false })
       .limit(1)
@@ -378,6 +387,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     storedAnswers,
     // Pair provenance with whichever copy of the data is shown, as the prospect's Manuscript does.
     provenance: parseProvenance(useSnapshot ? submission!.field_provenance : row.field_provenance),
+    extraAnswers: parseExtraAnswers(certified ? (submission as { extra_answers?: unknown }).extra_answers : row.extra_answers),
     certified,
     signed:
       !certified && recorded && recorded.chamber_data !== null && recorded.chamber_data !== undefined
@@ -386,6 +396,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
             signedAt: recorded.recorded_at ?? recorded.signed_at,
             provenance: parseProvenance(recorded.field_provenance),
             documents: reconcileDocuments(docs.data ?? [], recorded.documents ?? undefined),
+            extraAnswers: parseExtraAnswers(recorded.extra_answers),
           }
         : null,
     submission,
@@ -441,11 +452,13 @@ export async function setNeedsAction(sessionId: string, needsAction: boolean, no
  * Asks the prospect for more information: records the request, moves the pipeline to information requested (or
  * keeps it there), and emails the prospect, in one transaction. `fields` are the answers it is about.
  */
-export async function requestInformation(sessionId: string, message: string, fields: readonly FieldKey[]): Promise<void> {
+export async function requestInformation(sessionId: string, message: string, fields: readonly FieldKey[], questions: readonly ExtraQuestionRef[] = []): Promise<void> {
   const { error } = await supabase.rpc("advisor_request_information", {
     p_session_id: sessionId,
     p_message: message.trim(),
     p_fields: [...fields],
+    // A PEO's own extra questions it names (20261113100000): by PEO, key and wording.
+    p_extra_questions: questions.map((q) => ({ peo_id: q.peo_id, key: q.key, question: q.question })) as unknown as Json,
   });
   if (error) fail(error, "Couldn't send the request.");
 }

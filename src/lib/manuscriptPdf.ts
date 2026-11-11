@@ -45,6 +45,9 @@ const HEAD_FILL: RGB = [255, 240, 229];
 const FLAG_FILL: RGB = [255, 243, 212]; // a census row with a note: pale amber, apart from the peach header fill
 const WATERMARK: RGB = [247, 228, 212]; // a faint warm tint on white
 
+/** The packet's print palette and page, for the other files made beside it (a PEO's supplement). */
+export const PACKET_STYLE = { INK, MUTED, RULE, ACCENT, WARN, PAGE_W, PAGE_H, MARGIN } as const;
+
 /** The packet's name in the running header of every page. */
 const RUNNING_TITLE = "Underwriting packet";
 

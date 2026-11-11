@@ -234,6 +234,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: DELETED_WITH_INTAKE,
   },
   {
+    id: "extra_answers",
+    label: "Answers to a PEO's own questions",
+    sensitivity: "restricted",
+    examples: "The prospect's answers to the questions one PEO asks beyond the intake's own, each with the question as it was asked. They go only to that PEO, in its own file, never in the packet or another PEO's files.",
+    stored: { tables: ["chamber_sessions", "chamber_certifications"], buckets: [], elsewhere: ["The AI provider, for each message Lenore reads while she asks them (D11)"] },
+    retention: WITH_INTAKE,
+    deletion: DELETED_WITH_INTAKE,
+  },
+  {
     id: "documents",
     label: "Uploaded documents",
     sensitivity: "restricted",

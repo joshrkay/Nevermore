@@ -24,6 +24,7 @@ const intake = (over: Partial<CertifiedIntake> = {}): CertifiedIntake => ({
   data: { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co", pay_frequency: "Bi-weekly", states: ["CA"], payroll_vendor: "Gusto" },
   provenance: { company_name: confirmed, pay_frequency: confirmed, states: confirmed, payroll_vendor: confirmed },
   verified: new Set(),
+  extraAnswers: {},
   ...over,
 });
 
@@ -75,6 +76,37 @@ describe("peoCompleteness: whether the last certified version holds everything a
       verified: new Set(["payroll_vendor"]),
     }), [], p);
     expect(c.toQuote).toEqual([{ kind: "answer", field: "hris_system", label: "HRIS system", reason: "Prospect to provide" }]);
+  });
+
+  it("counts each of the PEO's own extra questions not answered in the certified version as missing to quote, after its answers", () => {
+    const questions = [
+      { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" as const },
+      { key: "fleet", text: "How many company vehicles?", kind: "number" as const },
+      { key: "union", text: "Which union, if any?", kind: "choice" as const, choices: ["None", "Teamsters"] },
+      { key: "notes", text: "Anything else?", kind: "text" as const },
+      { key: "shifts", text: "Do you run night shifts?", kind: "yes_no" as const },
+    ];
+    const p = profile({ neededToQuote: ["hris_system"], extraQuestions: questions });
+    const given = (key: string, over: object) => ({ [key]: { question: questions.find((q) => q.key === key)!.text, kind: questions.find((q) => q.key === key)!.kind, ...confirmed, ...over } });
+    const certified = intake({ extraAnswers: { "7": {
+      ...given("vehicles", { value: true }),
+      ...given("fleet", { value: 4, status: "inferred" }),
+      // Answered to wording the profile has since changed: a new question, unanswered.
+      union: { question: "Are any employees in a union?", kind: "choice", value: "None", ...confirmed },
+      ...given("notes", { status: "not_applicable" }),
+      ...given("shifts", { status: "unknown" }),
+    }, "8": given("union", { value: "None" }) } });
+    const c = peoCompleteness(certified, [], p, 7);
+    expect(c.complete).toBe(false);
+    expect(c.toQuote).toEqual([
+      { kind: "answer", field: "hris_system", label: "HRIS system", reason: "Not provided" },
+      { kind: "question", key: "fleet", label: "How many company vehicles?", reason: "Please confirm" },
+      { kind: "question", key: "union", label: "Which union, if any?", reason: "Not answered" },
+      { kind: "question", key: "shifts", label: "Do you run night shifts?", reason: "Prospect to provide" },
+    ]);
+    // Every question answered as worded: complete.
+    const all = intake({ extraAnswers: { "7": { ...given("vehicles", { value: true }), ...given("fleet", { value: 4 }), ...given("union", { value: "None" }), ...given("notes", { status: "not_applicable" }), ...given("shifts", { value: false }) } } });
+    expect(peoCompleteness(all, [], profile({ extraQuestions: questions }), 7).complete).toBe(true);
   });
 
   it("lists the answers needed only before signing apart, and never counts them", () => {
@@ -149,6 +181,9 @@ describe("missingLine: what is missing for a PEO, in one line", () => {
   const line = (toQuote: PeoCompleteness["toQuote"], beforeSigning: PeoCompleteness["beforeSigning"] = []) => missingLine({ complete: toQuote.length === 0, toQuote, beforeSigning });
 
   it("counts the answers and documents missing to quote, and then those needed only before signing", () => {
+    const question = { kind: "question" as const, key: "vehicles", label: "Do employees drive for work?", reason: "Not answered" };
+    expect(line([answer, question, question, document])).toBe("1 answer, 2 of its own questions and 1 document missing");
+    expect(line([question])).toBe("1 of its own questions missing");
     expect(line([answer, answer, answer, document])).toBe("3 answers and 1 document missing");
     expect(line([answer])).toBe("1 answer missing");
     expect(line([document, document])).toBe("2 documents missing");
@@ -180,6 +215,20 @@ describe("informationRequestDraft: what a PEO still needs, as a draft request to
     ].join("\n"));
   });
 
+  it("names the PEO's own questions it still needs, by PEO, key and wording, and asks for them without naming the PEO", () => {
+    const question = { kind: "question" as const, key: "vehicles", label: "Do employees drive for work?", reason: "Not answered" };
+    const draft = informationRequestDraft({ complete: false, toQuote: [answer("hris_system", "HRIS system"), question], beforeSigning: [] }, 7);
+    expect(draft.fields).toEqual(["hris_system"]);
+    expect(draft.questions).toEqual([{ peo_id: 7, key: "vehicles", question: "Do employees drive for work?" }]);
+    expect(draft.message).toBe([
+      "We need a few more things from you to get a quote.",
+      "",
+      "Please answer or confirm the answers this request is about, and the extra questions it names on the PEO Match tab.",
+    ].join("\n"));
+    expect(informationRequestDraft({ complete: false, toQuote: [question], beforeSigning: [] }, 7).message)
+      .toBe("We need a few more things from you to get a quote.\n\nPlease answer the extra questions this request names on the PEO Match tab.");
+  });
+
   it("leaves out what it doesn't need: no document list with none missing, no answers line with none", () => {
     expect(informationRequestDraft({ complete: false, toQuote: [answer("hris_system", "HRIS system")], beforeSigning: [] }).message)
       .toBe("We need a few more things from you to get a quote.\n\nPlease answer or confirm the answers this request is about.");
@@ -200,19 +249,21 @@ describe("informationRequestDraft: what a PEO still needs, as a draft request to
 
 describe("lastCertifiedVersion: what each PEO's list is built from", () => {
   const current = { ...intake().data, company_name: "Changed Co" };
-  const base = { certified: true, data: intake().data, provenance: intake().provenance, documents: [doc()], signed: null, currentVersion: 2, certificationLacksSnapshot: false };
+  const nowAnswered = { "7": { vehicles: { question: "Do employees drive for work?", kind: "yes_no" as const, value: false, ...confirmed } } };
+  const certifiedAnswers = { "7": { vehicles: { question: "Do employees drive for work?", kind: "yes_no" as const, value: true, ...confirmed } } };
+  const base = { certified: true, data: intake().data, provenance: intake().provenance, documents: [doc()], extraAnswers: certifiedAnswers, signed: null, currentVersion: 2, certificationLacksSnapshot: false };
   const verified = new Set(["payroll_vendor"]);
-  const signed = { data: intake().data, signedAt: "2026-10-01T00:00:00Z", provenance: intake().provenance, documents: [doc({ certification: "certified" })] };
+  const signed = { data: intake().data, signedAt: "2026-10-01T00:00:00Z", provenance: intake().provenance, documents: [doc({ certification: "certified" })], extraAnswers: certifiedAnswers };
 
   it("is the certified answers, their status and documents while the certification stands", () => {
     expect(lastCertifiedVersion(base, verified)).toEqual({
-      intake: { data: intake().data, provenance: intake().provenance, verified }, documents: [doc()], version: 2, changedSince: false, cantTell: false,
+      intake: { data: intake().data, provenance: intake().provenance, verified, extraAnswers: certifiedAnswers }, documents: [doc()], version: 2, changedSince: false, cantTell: false,
     });
   });
 
   it("is what was certified when the prospect has changed answers since, never their answers now", () => {
-    expect(lastCertifiedVersion({ ...base, certified: false, data: current, provenance: {}, documents: [doc({ certification: undefined })], signed }, verified)).toEqual({
-      intake: { data: intake().data, provenance: intake().provenance, verified }, documents: signed.documents, version: 2, changedSince: true, cantTell: false,
+    expect(lastCertifiedVersion({ ...base, certified: false, data: current, provenance: {}, documents: [doc({ certification: undefined })], extraAnswers: nowAnswered, signed }, verified)).toEqual({
+      intake: { data: intake().data, provenance: intake().provenance, verified, extraAnswers: certifiedAnswers }, documents: signed.documents, version: 2, changedSince: true, cantTell: false,
     });
   });
 

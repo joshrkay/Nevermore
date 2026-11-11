@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ProvenanceMap } from "@/data/provenance";
@@ -7,10 +7,13 @@ import LiveWorkspace from "./LiveWorkspace";
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: null }) }));
 // The database lists the PEOs PEO Match offers (public.peo_catalog()); nothing else here reaches it.
+const catalog = vi.hoisted(() => ({
+  profiles: {} as Record<string, unknown>,
+}));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     rpc: (fn: string) => Promise.resolve(fn === "peo_catalog"
-      ? { data: ["ADP TotalSource", "Insperity", "Justworks", "Rippling", "TriNet"].map((name, i) => ({ id: i + 1, name, profile: null })), error: null }
+      ? { data: ["ADP TotalSource", "Insperity", "Justworks", "Rippling", "TriNet"].map((name, i) => ({ id: i + 1, name, profile: catalog.profiles[name] ?? null })), error: null }
       : { data: null, error: { message: `no ${fn} here` } }),
   },
 }));
@@ -177,6 +180,47 @@ describe("LiveWorkspace", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("TriNet");
+  });
+
+  it("asks the chosen PEO's own questions on PEO Match, once it is chosen, and hands each answer back to be saved", async () => {
+    catalog.profiles = { TriNet: { version: 2, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] } };
+    const onExtraAnswers = vi.fn();
+    const { rerender } = render(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} chosenPeo="Insperity" onChoosePeo={() => {}} extraAnswers={{}} onExtraAnswers={onExtraAnswers} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
+    await screen.findByRole("button", { name: "Choose TriNet" });
+    expect(screen.queryByRole("region", { name: "Questions from TriNet" })).not.toBeInTheDocument();
+    rerender(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} chosenPeo="TriNet" onChoosePeo={() => {}} extraAnswers={{}} onExtraAnswers={onExtraAnswers} />
+      </MemoryRouter>,
+    );
+    const section = screen.getByRole("region", { name: "Questions from TriNet" });
+    fireEvent.click(within(section).getByRole("radio", { name: "Yes" }));
+    const update = onExtraAnswers.mock.calls[0][0] as (prev: object) => object;
+    expect(update({})).toMatchObject({ "5": { vehicles: { question: "Do employees drive for work?", value: true } } });
+    catalog.profiles = {};
+  });
+
+  it("shows another PEO's questions only when the advisor's request names them, marking each it names", async () => {
+    catalog.profiles = {
+      TriNet: { version: 2, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] },
+      Justworks: { version: 1, extra_questions: [{ key: "union", text: "Is anyone in a union?", kind: "yes_no" }, { key: "remote", text: "Does anyone work abroad?", kind: "yes_no" }] },
+    };
+    const props = { data: DEMO_CHAMBER_DATA, isDemo: false, sessionId: "s1", onSubmit: async () => true, chosenPeo: "TriNet", onChoosePeo: () => {}, extraAnswers: {}, onExtraAnswers: () => {} };
+    const { rerender } = render(<MemoryRouter><LiveWorkspace {...props} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
+    await screen.findByRole("region", { name: "Questions from TriNet" });
+    expect(screen.queryByRole("region", { name: "Questions from Justworks" })).not.toBeInTheDocument();
+    rerender(<MemoryRouter><LiveWorkspace {...props} requestedQuestions={[{ peo_id: 3, key: "union", question: "Is anyone in a union?" }]} /></MemoryRouter>);
+    const justworks = screen.getByRole("region", { name: "Questions from Justworks" });
+    expect(within(within(justworks).getByRole("group", { name: "Is anyone in a union?" })).getByText("Your advisor asked about this")).toBeInTheDocument();
+    expect(within(within(justworks).getByRole("group", { name: "Does anyone work abroad?" })).queryByText("Your advisor asked about this")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Questions from TriNet" })).queryByText("Your advisor asked about this")).not.toBeInTheDocument();
+    catalog.profiles = {};
   });
 
   it("goes from Certify & sign back to Review to add a missing answer", () => {

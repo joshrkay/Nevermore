@@ -31,6 +31,9 @@ const KNOWN = {
     // 8: the Nevermore rebrand. Lenore is Nevermore's intake assistant, warm, quick and plain-spoken (no longer the gothic,
     // literary advisor), and the app, not the Chamber, says when the intake is ready. The extraction rules are unchanged.
     8: "97b83efde81d83cf10958b734560d4e583396a21dd782fc37a98f2c0f37a4ea7",
+    // 9: a PEO's own extra questions (L-2.3): listed as data in the user turn, asked once the intake's fields are
+    // settled, said once to be that PEO's and never required, and answered through the tool's extra_answers.
+    9: "70a316887240d40cc412993c7e3e1854ad98b4590f4cc579d0057a27a0bf3951",
   } as Record<number, string>,
   "document-extract": { 1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526" } as Record<number, string>,
 };
@@ -49,6 +52,8 @@ const USER_TURNS = [
   buildUserPrompt({ message: "<message>", census: { rows: 2, workStates: true } }),
   // From version 7: the fields an advisor asked about come first, marked.
   buildUserPrompt({ message: "<message>", context: { pay_frequency: "<value>" }, statuses: { pay_frequency: "confirmed" }, requested: ["pay_frequency", "census"] }),
+  // From version 9: a PEO's extra questions, as a line of data.
+  buildUserPrompt({ message: "<message>", extraQuestions: [{ id: "1.key", peo: "<peo>", text: "<question>", kind: "choice", choices: ["<choice>"], answered: false }] }),
 ];
 const USER_TURN_KNOWN: Record<number, string> = {
   // 1 and B-1.1's 2: the captured answers and the message, rendered by the earlier buildUserPrompt(message, context).
@@ -66,6 +71,8 @@ const USER_TURN_KNOWN: Record<number, string> = {
   7: "720e99e10e619db28c25b43a612ac07584636a08e8ef91a65bc5763fb264bb5b",
   // 8: unchanged from 7 (the rebrand changed only the system prompt and the tool).
   8: "720e99e10e619db28c25b43a612ac07584636a08e8ef91a65bc5763fb264bb5b",
+  // 9: a PEO's extra questions as their own line of data. Rendered with a fifth turn that has one.
+  9: "eaa27c5bd4f3bc76bd2f2204d14b210181a7c273632d58a9a9ea44b9567fcc7c",
 };
 
 describe("prompt versions", () => {

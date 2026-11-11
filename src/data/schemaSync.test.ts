@@ -34,6 +34,7 @@ import { QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
 import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS, profileProblems } from "@/data/peoEditor";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
+import { EXTRA_ANSWER_LIMITS } from "@/data/extraAnswers";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
@@ -308,6 +309,22 @@ describe("server and client intake rules agree", () => {
   it("checks a question's key, a class code, a link and a contact's email with the database's own patterns", () => {
     const sql = readFileSync("supabase/migrations/20261111090000_peo_requirement_profiles.sql", "utf8");
     for (const pattern of Object.values(PROFILE_PATTERNS)) expect(sql).toContain(`'${pattern}'`);
+  });
+
+  // Extra answers (20261113090000): the browser keeps what the database accepts, within the same limits.
+  it("holds the same limits on extra answers", () => {
+    const [caps] = blocks("extra_answer_caps");
+    expect(Object.fromEntries([...caps.matchAll(/max_(\w+)\s+constant\s+integer\s*:=\s*(\d+)/g)].map((m) => [m[1], Number(m[2])]))).toEqual({
+      peos: EXTRA_ANSWER_LIMITS.peos,
+      answers: EXTRA_ANSWER_LIMITS.answersPerPeo,
+      question: EXTRA_ANSWER_LIMITS.question,
+    });
+    const [values] = blocks("extra_answer_limits");
+    expect(Number(/abs\(.*?\)\s*<=\s*(\d+)/.exec(values)?.[1])).toBe(EXTRA_ANSWER_LIMITS.number);
+    expect(Number(/'text' THEN .*<=\s*(\d+)/.exec(values)?.[1])).toBe(EXTRA_ANSWER_LIMITS.text);
+    expect(Number(/'choice' THEN .*<=\s*(\d+)/.exec(values)?.[1])).toBe(EXTRA_ANSWER_LIMITS.choice);
+    // An answer's key is a profile question's key.
+    expect(readFileSync("supabase/migrations/20261113090000_extra_answers.sql", "utf8")).toContain(`'${PROFILE_PATTERNS.questionKey}'`);
   });
 
   it("keeps a listed PEO's name to the longest PEO name", () => {

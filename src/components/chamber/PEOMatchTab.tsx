@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AlertTriangle, Users, UserPlus, DollarSign, MapPin, Shield, Zap } from "lucide-react";
 import type { ChamberData } from "@/data/chamberTypes";
 import { PEO_NAME_MAX, findPeo, groupPeosByFit, listedPeos, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
@@ -16,6 +16,8 @@ export interface PEOMatchTabProps {
   catalog: readonly PeoRecord[];
   /** Whether the PEOs are still loading or couldn't be read; a prospect can name one either way. */
   catalogStatus: PeoCatalogStatus;
+  /** Shown under the PEOs, before moving on: the chosen PEO's own questions. */
+  children?: ReactNode;
 }
 
 /** Each group of PEOs, by how their checks come out. The groups come in a fixed order; nothing is ranked. */
@@ -25,7 +27,7 @@ const GROUP_TITLES: Record<FitStatus, string> = {
   does_not_meet: "A check isn't met",
 };
 
-const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog: everyPeo, catalogStatus }: PEOMatchTabProps) => {
+const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog: everyPeo, catalogStatus, children }: PEOMatchTabProps) => {
   // Only the PEOs an admin lists are offered; one chosen before it stopped being listed reads as the prospect's own.
   const catalog = listedPeos(everyPeo);
   const [otherName, setOtherName] = useState("");
@@ -164,6 +166,8 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog: everyPeo
           </div>
         </div>
       </div>
+
+      {children}
 
       <button
         onClick={onProceed}

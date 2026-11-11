@@ -19,6 +19,7 @@ import { FIELD_STATUSES as CONTEXT_STATUSES, type CensusSummary } from "../_shar
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactSensitive } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
+import { readExtraQuestions, shapeExtraAnswers } from "./extraQuestions.ts";
 import { buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn } from "./prompt.ts";
 import { guardReply } from "./reply.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, FIELD_QUESTION, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
@@ -41,6 +42,9 @@ export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES, NEXT_FIELDS }
 export { CLAIMS_COMPLETE, guardReply, STOPPING_REPLY, WRAP_UP_REPLY } from "./reply.ts";
 
 const SCHEMA_KEYS = new Set(Object.keys(INTAKE_SCHEMA.properties as object));
+// The PEOs' extra questions, as the user turn carries them (extraQuestionsLine), apart from the context cap: 30 of one
+// PEO's questions with their choices fit well within it.
+export const MAX_EXTRA_QUESTIONS_CHARS = 30_000;
 
 /** The recent conversation as sent, or why it isn't acceptable. Only the prospect's and Lenore's lines. */
 function readRecent(raw: unknown): { ok: true; messages: { sender: "user" | "lenore"; text: string }[] } | { ok: false; message: string } {
@@ -179,7 +183,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
         : aiError("bad_request", { message: "The request body must be JSON." }));
     }
     const body = read.value;
-    const { message, context, statuses: rawStatuses, recent: rawRecent, census: rawCensus, requested: rawRequested, session_id: sessionId } = isObject(body) ? body : ({} as Record<string, unknown>);
+    const { message, context, statuses: rawStatuses, recent: rawRecent, census: rawCensus, requested: rawRequested, extra_questions: rawExtra, session_id: sessionId } = isObject(body) ? body : ({} as Record<string, unknown>);
     if (typeof message !== "string" || !message.trim()) {
       return await fail(aiError("bad_request", { message: "message is required" }));
     }
@@ -197,11 +201,16 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (!census.ok) return await fail(aiError("bad_request", { message: census.message }));
     const requested = readRequested(rawRequested);
     if (!requested.ok) return await fail(aiError("bad_request", { message: requested.message }));
+    const extra = readExtraQuestions(rawExtra);
+    if (!extra.ok) return await fail(aiError("bad_request", { message: extra.message }));
     // The same serialisation is measured here and sent to the model (prompt.ts, shared with the eval).
-    const turn = { context, statuses: statuses.statuses, recent: recent.messages, census: census.census, requested: requested.requested };
-    const { contextJson, statusesJson, recentJson } = serializeTurn(turn);
+    const turn = { context, statuses: statuses.statuses, recent: recent.messages, census: census.census, requested: requested.requested, extraQuestions: extra.questions };
+    const { contextJson, statusesJson, recentJson, extraLine } = serializeTurn(turn);
     if (contextJson.length + statusesJson.length + recentJson.length > MAX_CONTEXT_CHARS) {
       return await fail(aiError("bad_request", { status: 413, message: "context too large" }));
+    }
+    if (extraLine.length > MAX_EXTRA_QUESTIONS_CHARS) {
+      return await fail(aiError("bad_request", { status: 413, message: "extra questions too large" }));
     }
     // Optional for now, so a tab still running the previous front end keeps working; when given, it
     // must be the caller's intake.
@@ -282,7 +291,12 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (doubted.length > 0) {
       deps.logError(`EXTRACTION_UNKNOWN_DOUBTED request=${requestId} session=${event.sessionId ?? "-"} fields=${doubted.join(",")}`);
     }
-    return await finish({ ...shaped }, 200, null);
+    // A PEO's extra questions answered in the same message, as each question takes them. Ids only in the log.
+    const extraAnswers = shapeExtraAnswers(result.args.extra_answers, extra.questions, message);
+    if (extraAnswers.refused.length > 0) {
+      deps.logError(`EXTRA_ANSWERS_REFUSED request=${requestId} session=${event.sessionId ?? "-"} ids=${extraAnswers.refused.join(",")}`);
+    }
+    return await finish({ ...shaped, extra_answers: extraAnswers.answers }, 200, null);
   } catch (e) {
     deps.logError(unexpectedErrorLine(requestId, e));
     return await fail(aiError("internal"));

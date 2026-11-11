@@ -15,6 +15,8 @@ import {
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import { formatDay } from "@/data/quoteRequests";
 import type { QuoteRequestRow } from "@/lib/advisorApi";
+import { buildSupplement } from "@/data/peoSupplement";
+import SupplementDownload from "@/components/SupplementDownload";
 
 interface PeoNeedsPanelProps {
   /** The last certified version (lastCertifiedVersion); null before the first certification. */
@@ -29,6 +31,9 @@ interface PeoNeedsPanelProps {
   askBlocked: string | null;
   /** Opens Ask the prospect with this draft in it, for the advisor to edit and send. Sends nothing. */
   onDraft: (draft: InformationRequestDraft) => void;
+  /** The submission's File ID and company, which each PEO's supplement is named and headed with. */
+  fileId: string;
+  companyName: string;
 }
 
 const chip = "inline-flex items-center text-xs px-2 py-0.5 rounded-full whitespace-nowrap";
@@ -39,7 +44,8 @@ const namesList = (names: readonly string[]) =>
 
 /** One thing a PEO still needs, as the boxes list it: "HRIS system: not provided". */
 const itemText = (i: NeededItem) =>
-  i.kind === "answer" ? `${i.label}: ${i.reason.toLowerCase()}` : `${i.label}: ${i.description} (${i.reason.toLowerCase()})`;
+  i.kind === "document" ? `${i.label}: ${i.description} (${i.reason.toLowerCase()})` : `${i.label}: ${i.reason.toLowerCase()}`;
+const itemKey = (i: NeededItem) => (i.kind === "answer" ? i.field : i.kind === "question" ? `question-${i.key}` : `${i.category}-${i.description}`);
 
 const MissingBox = ({ title, items, quiet }: { title: string; items: readonly NeededItem[]; quiet?: boolean }) => {
   const id = useId();
@@ -48,13 +54,13 @@ const MissingBox = ({ title, items, quiet }: { title: string; items: readonly Ne
     <section aria-labelledby={id} className={quiet ? "rounded-lg border border-dashed border-border p-3" : "rounded-lg bg-muted p-3"}>
       <h5 id={id} className={`text-xs font-medium ${quiet ? "text-muted-foreground" : ""}`}>{title}</h5>
       <ul className={`mt-1 space-y-1 text-sm ${quiet ? "text-muted-foreground" : ""}`}>
-        {items.map((i) => <li key={i.kind === "answer" ? i.field : `${i.category}-${i.description}`}>{itemText(i)}</li>)}
+        {items.map((i) => <li key={itemKey(i)}>{itemText(i)}</li>)}
       </ul>
     </section>
   );
 };
 
-const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today }: {
+const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, fileId, companyName }: {
   entry: PeoCompletenessEntry;
   certified: CertifiedVersion;
   chosen: boolean;
@@ -62,6 +68,8 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today }:
   askBlocked: string | null;
   onDraft: (draft: InformationRequestDraft) => void;
   today: string;
+  fileId: string;
+  companyName: string;
 }) => {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -104,13 +112,20 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today }:
         </>
       )}
       <EligibilityChecks peo={peo.name} checks={peoFit(certified.intake.data, peo, today)} />
+      {/* Its own questions go to it alone, as their own file built from the certified version. */}
+      {peo.id !== undefined && peo.profile.extraQuestions.length > 0 && (
+        <SupplementDownload supplement={buildSupplement({
+          peo: { id: peo.id, name: peo.name }, questions: peo.profile.extraQuestions, certified: certified.intake.extraAnswers,
+          fileId, version: certified.version, companyName,
+        })} />
+      )}
       {!c.complete && askBlocked !== null && (
         <p className="text-sm text-muted-foreground">{`The prospect can't be asked for it now: ${askBlocked.charAt(0).toLowerCase()}${askBlocked.slice(1)}`}</p>
       )}
       {!c.complete && askBlocked === null && (
         <button
           type="button"
-          onClick={() => onDraft(informationRequestDraft(c))}
+          onClick={() => onDraft(informationRequestDraft(c, peo.id))}
           className="min-h-11 w-full sm:w-auto px-4 inline-flex items-center justify-center gap-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
         >
           Draft information request
@@ -126,7 +141,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today }:
  * apart, what it needs only before signing, with its eligibility checks as warnings beside it, and drafts an
  * information request from what is missing. Nothing here ranks a PEO or sends anything.
  */
-const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, askBlocked, onDraft }: PeoNeedsPanelProps) => {
+const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, askBlocked, onDraft, fileId, companyName }: PeoNeedsPanelProps) => {
   const today = localToday();
   const body = () => {
     if (!certified) return <p className="text-sm text-muted-foreground">Available once the prospect has certified their intake: each PEO's list is built from what they certified.</p>;
@@ -163,7 +178,7 @@ const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chos
           <ul aria-label={title} className="space-y-3">
             {entries.map((e) => (
               <li key={e.peo.name}>
-                <PeoCard entry={e} certified={certified} chosen={isChosen(e.peo)} sent={sentTo(e.peo)} askBlocked={askBlocked} onDraft={onDraft} today={today} />
+                <PeoCard entry={e} certified={certified} chosen={isChosen(e.peo)} sent={sentTo(e.peo)} askBlocked={askBlocked} onDraft={onDraft} today={today} fileId={fileId} companyName={companyName} />
               </li>
             ))}
           </ul>

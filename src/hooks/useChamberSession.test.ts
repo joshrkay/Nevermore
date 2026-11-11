@@ -2007,6 +2007,93 @@ describe("useChamberSession", () => {
     });
   });
 
+  describe("the extra answers", () => {
+    const autosave = async () => { await act(async () => { vi.advanceTimersByTime(2000); }); };
+    const open = async () => {
+      const hook = renderHook(() => useChamberSession());
+      await startIntake(hook.result);
+      vi.useFakeTimers();
+      return hook;
+    };
+    const drives = { question: "Do employees drive for work?", kind: "yes_no" as const, status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "2026-11-13T10:00:00.000Z" };
+    const answered = (value: boolean) => ({ "3": { vehicles: { ...drives, value } } });
+
+    it("start with none, and are saved with the intake in the same versioned write as the answers", async () => {
+      const { result } = await open();
+      expect(result.current.extraAnswers).toEqual({});
+      expect(insertedRows[0]).toMatchObject({ extra_answers: {} });
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      expect(result.current.extraAnswers).toEqual(answered(true));
+      await autosave();
+      expect(updates).toHaveLength(1);
+      expect(updates[0].filters).toEqual({ id: "s1", data_version: 1 });
+      expect(updates[0].payload).toMatchObject({ extra_answers: answered(true) });
+      expect(updates[0].payload).toHaveProperty("chamber_data");
+      updates[0].resolve({ error: null });
+      await drain();
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("are restored when the intake is opened again, keeping only what the database would", async () => {
+      resumeRow = serverRow({ id: "s9", extra_answers: { ...answered(false), TriNet: { vehicles: drives } } });
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+      expect(result.current.extraAnswers).toEqual(answered(false));
+    });
+
+    it("go out with the keepalive request when the page unloads", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+      const { result } = await open();
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+      expect(JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string)).toMatchObject({ extra_answers: answered(true) });
+      fetchSpy.mockRestore();
+    });
+
+    it("withdraw a certification when one changes, as any answer does, and not when it is given again unchanged", async () => {
+      resumeRow = { id: "s9", data_version: 3, chamber_data: parseChamberData({ company_name: "Acme" }), transcript: [], status: "submitted", submission, extra_answers: answered(true) };
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.certification.status).toBe("certified"));
+      act(() => result.current.updateExtraAnswers((prev) => ({ ...prev })));
+      expect(result.current.certification.status).toBe("certified");
+      act(() => result.current.updateExtraAnswers(() => answered(false)));
+      expect(result.current.certification.status).toBe("stale");
+    });
+
+    it("report a conflict when only the extra answers differ from what was sent, and recognise their own write", async () => {
+      const { result } = await open();
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      await autosave();
+      const sent = JSON.parse(JSON.stringify(updates[0].payload));
+      resumeRow = serverRow({ data_version: 2, ...sent, extra_answers: answered(false) });
+      updates[0].resolve({ error: null, data: [] });
+      await drain();
+      expect(result.current.saveStatus).toBe("conflict");
+      act(() => result.current.loadLatest());
+      expect(result.current.extraAnswers).toEqual(answered(false));
+    });
+
+    it("are recognised as this tab's own write when only the response was lost", async () => {
+      const { result } = await open();
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      await autosave();
+      const sent = JSON.parse(JSON.stringify(updates[0].payload));
+      resumeRow = serverRow({ data_version: 2, ...sent });
+      updates[0].resolve({ error: null, data: [] });
+      await drain();
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("are cleared when the prospect starts over", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await startIntake(result);
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      await act(async () => { await result.current.startOver(); });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.extraAnswers).toEqual({});
+    });
+  });
+
   describe("an intake that expired", () => {
     const expiredRow = (over: Record<string, unknown> = {}) =>
       serverRow({ id: "s5", status: "expired", expires_at: "2026-10-01T00:00:00Z", chamber_data: { company_name: "Old Co" }, ...over });

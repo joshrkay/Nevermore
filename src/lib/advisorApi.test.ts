@@ -402,7 +402,7 @@ describe("loadSubmission", () => {
     }];
     const d = (await loadSubmission("s1"))!;
     expect(d.certified).toBe(false);
-    expect(d.signed).toEqual({ data: expect.objectContaining({ company_name: "Signed Co", employee_count: 12 }), signedAt: "2026-10-02T00:00:05Z", provenance: {}, documents: expect.any(Array) });
+    expect(d.signed).toEqual({ data: expect.objectContaining({ company_name: "Signed Co", employee_count: 12 }), signedAt: "2026-10-02T00:00:05Z", provenance: {}, documents: expect.any(Array), extraAnswers: {} });
     expect(d.fileId).toBe("EAA-1");
   });
 
@@ -417,6 +417,21 @@ describe("loadSubmission", () => {
     expect(d.signed?.provenance).toEqual({ employee_count: inferred });
     expect(d.signed?.documents.map((x) => [x.id, x.certification])).toEqual([["d3", "added"], ["d2", "removed"], ["d1", "certified"]]);
     expect(d.currentVersion).toBe(2);
+  });
+
+  it("reads the extra answers of the last certified version: the submission's while it stands, else the certification record's", async () => {
+    const drives = (value: boolean) => ({ "7": { vehicles: { question: "Do employees drive for work?", kind: "yes_no", value, status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-02T00:00:00Z" } } });
+    tables.chamber_sessions = [row({ extra_answers: drives(false), submission: { ...row().submission, extra_answers: drives(true) } })];
+    expect((await loadSubmission("s1"))!.extraAnswers).toEqual(drives(true));
+    tables.chamber_sessions = [row({ status: "in_progress", extra_answers: drives(false) })];
+    tables.chamber_certifications = [{ file_id: "EAA-1", version: 2, signed_at: "2026-10-02T00:00:00Z", recorded_at: "2026-10-02T00:00:05Z", chamber_data: certifiedData,
+      field_provenance: {}, documents: [], extra_answers: drives(true) }];
+    const withdrawn = (await loadSubmission("s1"))!;
+    expect(withdrawn.extraAnswers).toEqual(drives(false));
+    expect(withdrawn.signed?.extraAnswers).toEqual(drives(true));
+    // A certification from before extra answers were kept certified none.
+    tables.chamber_certifications = [{ ...tables.chamber_certifications[0] as object, extra_answers: null }];
+    expect((await loadSubmission("s1"))!.signed?.extraAnswers).toEqual({});
   });
 
   it("says when the certification on record kept no field status or no document list, so nothing can be told from it", async () => {

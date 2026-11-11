@@ -11,6 +11,7 @@ import {
   type ReviewMap,
 } from "@/data/advisor";
 import { FIELD_LABELS, type FieldKey } from "@/data/provenance";
+import { parseExtraQuestionRefs, type ExtraQuestionRef } from "@/data/extraAnswers";
 import { requestInformation, type InformationRequestRow } from "@/lib/advisorApi";
 import { actorName, formatDateTime } from "./format";
 
@@ -30,6 +31,8 @@ interface InformationRequestPanelProps {
    * (PeoNeedsPanel). The advisor can still add or remove any.
    */
   initialFields?: readonly FieldKey[];
+  /** A PEO's own extra questions to start with (PeoNeedsPanel's draft). The advisor can take any out. */
+  initialQuestions?: readonly ExtraQuestionRef[];
   onChanged: () => void;
 }
 
@@ -51,8 +54,10 @@ const InformationRequestPanel = ({
   requests,
   initialMessage,
   initialFields,
+  initialQuestions,
   onChanged,
 }: InformationRequestPanelProps) => {
+  const [questions, setQuestions] = useState<ExtraQuestionRef[]>(() => [...(initialQuestions ?? [])]);
   const followUps = useMemo(() => followUpFieldsOf(reviews), [reviews]);
   const [message, setMessage] = useState(initialMessage ?? "");
   // The selection follows the follow-up marks as the advisor changes them on this page, keeping what the advisor
@@ -83,7 +88,7 @@ const InformationRequestPanel = ({
   const send = async () => {
     setSaving(true);
     try {
-      await requestInformation(sessionId, message, fields);
+      await requestInformation(sessionId, message, fields, questions);
       setMessage("");
       toast.success("Request sent. The prospect will get an email and see it in their intake.");
       onChanged();
@@ -167,6 +172,27 @@ const InformationRequestPanel = ({
             )}
           </fieldset>
 
+          {questions.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">And a PEO's own questions, which the prospect sees under that PEO's name</p>
+              <ul className="flex flex-wrap gap-1.5" aria-label="Extra questions the request is about">
+                {questions.map((q) => (
+                  <li key={`${q.peo_id}-${q.key}`} className="inline-flex items-center gap-1 text-xs rounded-full bg-muted px-2 py-0.5">
+                    {q.question}
+                    <button
+                      type="button"
+                      onClick={() => setQuestions((current) => current.filter((x) => x !== q))}
+                      aria-label={`Remove ${q.question}`}
+                      className="rounded-full p-0.5 hover:bg-background"
+                    >
+                      <X className="w-3 h-3" aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <button
             onClick={send}
             disabled={saving || message.trim() === ""}
@@ -188,6 +214,9 @@ const InformationRequestPanel = ({
               <li key={r.id} className="text-sm space-y-1">
                 <p className="whitespace-pre-wrap">{r.message}</p>
                 {r.fields.length > 0 && <p className="text-xs text-muted-foreground">About: {r.fields.map(labelOf).join(", ")}</p>}
+                {parseExtraQuestionRefs(r.extra_questions).length > 0 && (
+                  <p className="text-xs text-muted-foreground">Its own questions: {parseExtraQuestionRefs(r.extra_questions).map((q) => q.question).join("; ")}</p>
+                )}
                 <p className="text-xs text-muted-foreground">
                   {actorName(r.requested_by, r.requested_by_email, prospectUserId)} · {formatDateTime(r.requested_at)}
                 </p>

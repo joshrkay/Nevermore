@@ -120,6 +120,7 @@ export type Database = {
           chamber_data: Json
           // The PEO chosen on PEO Match, kept across reloads. The certified PEO is submission.peo.
           chosen_peo: string | null
+          extra_answers: Json
           created_at: string
           // Set by the database: 1 on insert, +1 on every update. Writes name the version they saw.
           data_version: number
@@ -152,6 +153,7 @@ export type Database = {
         Insert: {
           chamber_data?: Json
           chosen_peo?: string | null
+          extra_answers?: Json
           created_at?: string
           data_version?: never
           expires_at?: never
@@ -174,6 +176,7 @@ export type Database = {
         Update: {
           chamber_data?: Json
           chosen_peo?: string | null
+          extra_answers?: Json
           created_at?: string
           data_version?: never
           expires_at?: never
@@ -280,9 +283,10 @@ export type Database = {
         ]
       }
       // An advisor's request for more information (20261105090000). Written only by advisor_request_information,
-      // read by advisors; never changed.
+      // read by advisors; never changed. extra_questions: 20261113100000.
       information_requests: {
         Row: {
+          extra_questions: Json
           fields: string[]
           id: number
           message: string
@@ -682,7 +686,7 @@ export type Database = {
         }[]
       }
       advisor_request_information: {
-        Args: { p_fields?: string[]; p_message: string; p_session_id: string }
+        Args: { p_extra_questions?: Json; p_fields?: string[]; p_message: string; p_session_id: string }
         Returns: Json
       }
       advisor_note_underwriter_question: {

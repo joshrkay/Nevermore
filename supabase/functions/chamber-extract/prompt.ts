@@ -7,6 +7,7 @@
 import type { RecentMessage } from "../_shared/chatContext.ts";
 import { readyToCertify, unsettledFields, type CensusSummary, type FieldInfo } from "../_shared/followUp.ts";
 import { INTAKE_FIELDS } from "../_shared/intakeSchema.ts";
+import { extraQuestionsLine, type ExtraQuestionAsked } from "./extraQuestions.ts";
 
 /** How many unsettled fields the prompt names, most important first. */
 export const NEXT_FIELDS = 8;
@@ -29,6 +30,11 @@ export interface UserTurn {
    * made, by key. Lenore asks about them first, even when they hold an answer: the advisor wants it checked.
    */
   requested?: readonly string[];
+  /**
+   * The PEOs' own extra questions the intake asks (L-2.3), as data: Lenore asks them once nothing in "Not yet settled"
+   * is left. Checked and capped by the handler (readExtraQuestions).
+   */
+  extraQuestions?: readonly ExtraQuestionAsked[];
 }
 
 /** Marks a field the advisor asked about in "Not yet settled". */
@@ -37,11 +43,12 @@ export const ADVISOR_ASKED = "[your advisor asked]";
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** The turn's context as the prompt carries it, each part serialised once. The handler caps their total length. */
-export function serializeTurn(turn: Omit<UserTurn, "message">): { contextJson: string; statusesJson: string; recentJson: string } {
+export function serializeTurn(turn: Omit<UserTurn, "message">): { contextJson: string; statusesJson: string; recentJson: string; extraLine: string } {
   return {
     contextJson: turn.context ? JSON.stringify(turn.context) : "",
     statusesJson: JSON.stringify(turn.statuses ?? {}),
     recentJson: JSON.stringify(turn.recent ?? []),
+    extraLine: extraQuestionsLine(turn.extraQuestions ?? []) ?? "",
   };
 }
 
@@ -67,7 +74,7 @@ export function requestedForTurn(turn: Pick<UserTurn, "requested">): FieldInfo[]
 }
 
 export function buildUserPrompt(turn: UserTurn): string {
-  const { contextJson, statusesJson, recentJson } = serializeTurn(turn);
+  const { contextJson, statusesJson, recentJson, extraLine } = serializeTurn(turn);
   const answers = isObject(turn.context) ? turn.context : {};
   const census = turn.census ?? NO_CENSUS;
   const next = unsettledForTurn(turn).slice(0, NEXT_FIELDS);
@@ -80,6 +87,7 @@ export function buildUserPrompt(turn: UserTurn): string {
     `Not yet settled, most important first: ${next.length > 0 ? next.map((f) => `${f.key} (${f.label})${asked.has(f.key) ? ` ${ADVISOR_ASKED}` : ""}`).join(", ") : "none"}`,
     `Ready to certify: ${ready ? "yes" : "no"}`,
     `Employee census: ${census.rows > 0 ? `uploaded, ${census.rows} rows` : "not uploaded"}`,
+    ...(extraLine ? [extraLine] : []),
     `Recent conversation, oldest first: ${recentJson}`,
     `New user message: ${JSON.stringify(turn.message)}`,
   ].join("\n\n");

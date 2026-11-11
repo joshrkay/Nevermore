@@ -33,6 +33,8 @@ import { browserStorageWorks } from "@/data/intakeBackup";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
 import { applyExtraction, applyFieldAction, transcriptExtraction, type FieldAction } from "@/data/provenance";
 import { voiceContextUpdate } from "@/data/voiceAgent";
+import { applyExtraExtraction, askedPeos, extraQuestionsForLenore } from "@/data/extraAnswers";
+import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import { orbForVoice } from "@/data/voiceSession";
 
 const STAGE_ID = "lenore-stage";
@@ -107,6 +109,8 @@ const ChamberPage = () => {
     certification,
     chosenPeo,
     choosePeo,
+    extraAnswers,
+    updateExtraAnswers,
     saveStatus,
     retrySave,
     saveAll,
@@ -161,6 +165,19 @@ const ChamberPage = () => {
     setLastSpokenText(spokenLine(text));
   }, [addMessage]);
 
+  // The PEOs' own extra questions the intake asks (L-2.3): the chosen PEO's, and any the advisor's open request names.
+  // Lenore asks them, typed and spoken, once the intake's fields are settled, through the same extraction as any answer.
+  const peoCatalog = usePeoCatalog();
+  const asked = useMemo(
+    () => askedPeos(peoCatalog.peos, chosenPeo, informationRequest?.extraQuestions ?? []),
+    [peoCatalog.peos, chosenPeo, informationRequest],
+  );
+  const lenoreExtra = useMemo(() => extraQuestionsForLenore(asked, extraAnswers), [asked, extraAnswers]);
+  const askedRef = useRef(asked);
+  askedRef.current = asked;
+  const lenoreExtraRef = useRef(lenoreExtra);
+  lenoreExtraRef.current = lenoreExtra;
+
   const { send: handleSendMessage, extractSpoken, retry, dismissFailure, failure, pending } = useLenoreChat({
     epoch: conversationEpoch,
     intakeId: sessionId,
@@ -177,14 +194,18 @@ const ChamberPage = () => {
     addLenoreMessage,
     onOrbStateChange: setChatOrbState,
     informationRequest,
+    extraQuestions: () => lenoreExtraRef.current,
     // Typed and spoken alike, every value cites the message it came from; a spoken one is never stored as confirmed
-    // (transcriptExtraction, D33).
-    onExtracted: (extracted, response, message) =>
-      updateIntake((prev) => applyExtraction(prev, extracted, transcriptExtraction(message, response))),
+    // (transcriptExtraction, D33). A PEO's extra questions are answered the same way (applyExtraExtraction).
+    onExtracted: (extracted, response, message) => {
+      updateIntake((prev) => applyExtraction(prev, extracted, transcriptExtraction(message, response)));
+      const heard = (response as { extra_answers?: unknown[] } | null)?.extra_answers;
+      if (Array.isArray(heard) && heard.length > 0) updateExtraAnswers((prev) => applyExtraExtraction(prev, askedRef.current, response, message));
+    },
   });
 
-  // What Lenore's voice is told is still open, by label only (D24).
-  const voiceContext = useMemo(() => voiceContextUpdate(chamberData, provenance), [chamberData, provenance]);
+  // What Lenore's voice is told is still open, by label only (D24), and the PEOs' extra questions still to ask.
+  const voiceContext = useMemo(() => voiceContextUpdate(chamberData, provenance, lenoreExtra), [chamberData, provenance, lenoreExtra]);
   // A voice call only holds the conversation: what the prospect says goes through chamber-extract like a typed
   // message (US-2.3b, ADR 0001), and Lenore's own answer is the one she speaks.
   const { voice, startVoice, endVoice, dismissFailure: dismissVoiceFailure, isConnected, hasAgentId } = useLenoreVoice({
@@ -450,6 +471,9 @@ const ChamberPage = () => {
             updateIntake={updateIntake}
             chosenPeo={chosenPeo}
             onChoosePeo={choosePeo}
+            extraAnswers={extraAnswers}
+            onExtraAnswers={updateExtraAnswers}
+            requestedQuestions={informationRequest?.extraQuestions}
             openReview={reviewRequest}
             ensureIntake={ensureIntake}
           />

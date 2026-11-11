@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { rowProvenance } from "@/data/manuscript";
@@ -670,6 +670,38 @@ describe("ManuscriptPage", () => {
     });
     expect(csv).toContain("Signed,Person");
     expect(csv).not.toContain("Added");
+  });
+
+  it("offers each PEO's own questions as their own file beside the packet: the chosen PEO's, and one a request asked; never in the packet", async () => {
+    const by = { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-05-01T00:00:00Z" };
+    peoCatalogRows = [
+      { id: 3, name: "Justworks", profile: { version: 1, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }, { key: "fleet", text: "How many vans?", kind: "number" }] } },
+      { id: 4, name: "Oasis", profile: { version: 1, extra_questions: [{ key: "pets", text: "Do you allow pets at work?", kind: "yes_no" }] } },
+      { id: 5, name: "TriNet", profile: { version: 1, extra_questions: [{ key: "hazmat", text: "Any hazardous materials?", kind: "yes_no" }] } },
+    ];
+    row = certified({ submission: { ...certified().submission, extra_answers: {
+      "3": { vehicles: { question: "Do employees drive for work?", kind: "yes_no", value: true, ...by } },
+      "4": { pets: { question: "Do you allow pets at work?", kind: "yes_no", value: false, ...by } },
+    } } });
+    renderAt("/manuscript/EAA-2026-0042");
+    const files = await screen.findByRole("region", { name: "Your PEOs' own questions" });
+    expect(within(files).getByText("Additional questions from Justworks")).toBeInTheDocument();
+    expect(within(files).getByText("Additional questions from Oasis")).toBeInTheDocument();
+    expect(within(files).queryByText("Additional questions from TriNet")).not.toBeInTheDocument();
+    expect(files).toHaveTextContent("From certified version 2, for Justworks only. 1 of 2 answered.Listed as not answered: How many vans?");
+    fireEvent.click(within(files).getByRole("button", { name: "Download Additional questions from Justworks" }));
+    expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-additional-questions-justworks-v2.pdf");
+    // The packet itself shows none of them.
+    const packet = screen.getByText("Underwriting packet").closest("div.bg-card")!;
+    expect(packet).not.toHaveTextContent(/Do employees drive|pets at work/);
+  });
+
+  it("offers no PEO's questions while the certification is withdrawn", async () => {
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] } }];
+    row = certified({ status: "in_progress" });
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Your PEOs' own questions" })).not.toBeInTheDocument();
   });
 
   it("offers no census download when the certified packet has no census", async () => {

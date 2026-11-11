@@ -29,6 +29,11 @@ const InformationRequestNotice = ({ request, onOpenReview }: InformationRequestN
         About: {request.fields.map((f) => FIELD_LABELS[f]).join(", ")}
       </p>
     )}
+    {request.extraQuestions.length > 0 && (
+      <p className="mt-1 text-xs text-muted-foreground">
+        {`And ${request.extraQuestions.length === 1 ? "1 extra question" : `${request.extraQuestions.length} extra questions`}, on the PEO Match tab.`}
+      </p>
+    )}
     <p className="mt-2 text-xs text-muted-foreground">
       Update your answers, then certify again on the Certify & sign tab; that sends them to your advisor. If nothing
       needs to change, reply to the email we sent you.{" "}

@@ -58,6 +58,8 @@ describe("the classes the business asked for", () => {
     ["documents", "restricted"],
     ["transcripts", "restricted"],
     ["manuscripts", "restricted"],
+    // A PEO's own questions can ask anything, about employees too, in the prospect's own words.
+    ["extra_answers", "restricted"],
   ])("classifies %s as %s", (id, level) => {
     expect(byId.get(id)?.sensitivity).toBe(level);
   });
