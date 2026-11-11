@@ -385,6 +385,13 @@ const AdvisorDashboardPage = () => {
                           {row.earliest_quote_expires_on && (
                             <p className="text-xs text-muted-foreground">{`Expires ${formatDay(row.earliest_quote_expires_on)}`}</p>
                           )}
+                          {row.new_peo_mail_requests > 0 && (
+                            <p>
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground whitespace-nowrap font-semibold">
+                                {row.new_peo_mail_requests === 1 ? "New PEO mail" : `New PEO mail (${row.new_peo_mail_requests})`}
+                              </span>
+                            </p>
+                          )}
                           {row.sent_older_version && (
                             <p>
                               <span className="text-xs px-2 py-0.5 rounded-full bg-warning/15 text-warning whitespace-nowrap">A PEO has an older version</span>

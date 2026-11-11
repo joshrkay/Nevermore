@@ -44,6 +44,7 @@ const row = (over: Partial<SubmissionSummary> = {}): SubmissionSummary => ({
   oldest_waiting_on: null,
   earliest_quote_expires_on: null,
   sent_older_version: false,
+  new_peo_mail_requests: 0,
   start_month: null,
   total_count: 1,
   ...over,
@@ -526,6 +527,19 @@ describe("AdvisorDashboardPage", () => {
   });
 
   describe("quote requests", () => {
+    it("marks a submission with PEO mail nobody has opened, and counts the quote requests when there are several", async () => {
+      listSubmissions.mockResolvedValue([
+        row({ company_name: "One", new_peo_mail_requests: 1, quote_requests_sent: 1 }),
+        row({ session_id: "s2", company_name: "Two", new_peo_mail_requests: 3, quote_requests_sent: 3 }),
+        row({ session_id: "s3", company_name: "None" }),
+      ]);
+      renderAt();
+      const one = (await screen.findByText("One")).closest("tr")!;
+      expect(within(one).getByText("New PEO mail")).toBeInTheDocument();
+      expect(within(screen.getByText("Two").closest("tr")!).getByText("New PEO mail (3)")).toBeInTheDocument();
+      expect(within(screen.getByText("None").closest("tr")!).queryByText(/New PEO mail/)).not.toBeInTheDocument();
+    });
+
     it("shows quotes back out of sent, the longest wait, the earliest expiry, the target start and an older version", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-11-16T15:00:00"));

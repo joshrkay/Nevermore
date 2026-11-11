@@ -8,7 +8,7 @@ Later on 2026-11-11 the founder reported counsel's answer: yes, the product may 
 
 ## Status
 
-Receiving (M-3.2) is built, and ships switched off: the `receive-mail` function answers 503 until `PEO_MAIL_RECEIVING` is `on` (`docs/RUNBOOK.md`, "PEO mail not arriving"). A message to an address that is revoked, was never issued, or names two quote requests is stored as held rather than dropped. An attachment that can't be scanned yet stays pending and unreadable. The thread view (M-3.4) and the holding list (M-3.3) are not built, so nothing shows the stored mail yet.
+Receiving (M-3.2) is built, and ships switched off: the `receive-mail` function answers 503 until `PEO_MAIL_RECEIVING` is `on` (`docs/RUNBOOK.md`, "PEO mail not arriving"). A message to an address that is revoked, was never issued, or names two quote requests is stored as held rather than dropped. An attachment that can't be scanned yet stays pending and unreadable. The thread view (M-3.4) is built: the PEO threads panel on the submission page, with the team-wide "new PEO mail" mark and the combined timeline. The holding list (M-3.3) is not, so held mail is stored but nothing shows it yet.
 
 ## The rule
 
