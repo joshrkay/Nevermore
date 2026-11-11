@@ -15,6 +15,8 @@ describe("how an answer reads (K-1.1)", () => {
     expect(formatAnswer("entity_type", "s_corporation")).toBe("S corporation");
     expect(formatAnswer("entity_type", "llc")).toBe("LLC");
     expect(formatAnswer("year_founded", 2014)).toBe("2014");
+    // K-1.2: a NAICS code reads with its industry's title.
+    expect(formatAnswer("naics_code", "541430")).toBe("541430 · Graphic Design Services");
     expect(formatAnswer("entities", [{ legal_name: "Meridian Creative LLC", fein: "841234567" }, { legal_name: "Meridian Studios Inc" }, { fein: "841234568" }]))
       .toBe("Meridian Creative LLC (FEIN 84-1234567); Meridian Studios Inc; FEIN 84-1234568");
   });

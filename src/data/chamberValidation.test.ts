@@ -324,6 +324,25 @@ describe("company identity (K-1.1)", () => {
   });
 });
 
+describe("industry as a code and a description (K-1.2)", () => {
+  it("keeps a NAICS code that is one of the 2022 industries, and drops one that isn't", () => {
+    expect(sanitizeChamberPatch({ naics_code: "541430" })).toEqual({ naics_code: "541430" });
+    expect(sanitizeChamberPatch({ naics_code: " 541430 " })).toEqual({ naics_code: "541430" });
+    expect(sanitizeChamberPatch({ naics_code: 541430 })).toEqual({ naics_code: "541430" });
+    expect(sanitizeChamberPatch({ naics_code: null })).toEqual({ naics_code: null });
+    // Six digits, but no 2022 industry has them.
+    expect(sanitizeChamberPatch({ naics_code: "999999" })).toEqual({});
+    expect(sanitizeChamberPatch({ naics_code: "54143" })).toEqual({});
+    expect(sanitizeChamberPatch({ naics_code: "Graphic design" })).toEqual({});
+  });
+
+  it("keeps a description of operations of up to 1,000 characters", () => {
+    expect(sanitizeChamberPatch({ operations_description: "  Brand and packaging design.  " })).toEqual({ operations_description: "Brand and packaging design." });
+    expect(sanitizeChamberPatch({ operations_description: "x".repeat(1000) }).operations_description).toHaveLength(1000);
+    expect(sanitizeChamberPatch({ operations_description: "x".repeat(1001) })).toEqual({});
+  });
+});
+
 // A TypeScript copy of the server's rules (public.chamber_data_error), used to prove that whatever
 // the sanitiser emits is accepted. The SQL tests prove the same against the real function.
 function serverRefusal(d: unknown): string | null {
@@ -336,7 +355,8 @@ function serverRefusal(d: unknown): string | null {
   for (const k of ["company_name", "industry", "start_month", "current_carrier", "renewal_date", "rate_history", "benefits_waiting_period", "retirement_type", "payroll_vendor", "pay_frequency", "accrual_method", "handbook_last_updated", "hris_system", "key_challenges", "business_goals", "wc_carrier", "wc_renewal_date"]) kinds[k] = "text";
   for (const k of ["employee_count", "fein_count", "funding_days", "nonexempt_count", "exempt_count", "hr_staff_count"]) kinds[k] = "count";
   for (const k of ["multiple_entities", "virgin_medical", "has_401k", "employer_contributes", "has_nonexempt", "has_handbook", "has_1099", "ca_contractors", "uses_physical_clocks", "uses_mobile_app", "uses_computer_timekeeping", "shift_differentials"]) kinds[k] = "bool";
-  for (const k of ["street_address", "website"]) kinds[k] = "text";
+  for (const k of ["street_address", "website", "operations_description"]) kinds[k] = "text";
+  kinds.naics_code = "naics";
   for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"], ["wc_experience_mod", "experience_mod"], ["wc_annual_premium", "dollars"]]) kinds[k] = kind;
   // New in v3: the scalar kinds public.chamber_data_scalar_reason checks, and the lists of rows.
   for (const [k, kind] of [["fein", "fein"], ["entity_type", "entity_type"], ["year_founded", "year"], ["entities", "rows"]]) kinds[k] = kind;
@@ -344,6 +364,7 @@ function serverRefusal(d: unknown): string | null {
     switch (kind) {
       case "text": return isText(v, TEXT_MAX);
       case "fein": return typeof v === "string" && /^[0-9]{9}$/.test(v);
+      case "naics": return typeof v === "string" && /^[0-9]{6}$/.test(v);
       case "entity_type": return typeof v === "string" && ["sole_proprietorship", "partnership", "llc", "c_corporation", "s_corporation", "nonprofit", "other"].includes(v);
       case "year": return isCount(v, YEAR_MAX) && (v as number) >= YEAR_MIN;
       default: return false;
@@ -355,7 +376,7 @@ function serverRefusal(d: unknown): string | null {
   for (const [k, v] of Object.entries(d)) {
     switch (kinds[k]) {
       case "text": if (v !== null && !isText(v, TEXT_MAX)) return k; break;
-      case "fein": case "entity_type": case "year": if (v !== null && !scalarOk(kinds[k], v)) return k; break;
+      case "fein": case "entity_type": case "year": case "naics": if (v !== null && !scalarOk(kinds[k], v)) return k; break;
       case "rows": {
         const list = rowLists[k];
         if (!Array.isArray(v) || v.length > list.max) return k;
@@ -543,7 +564,7 @@ describe("sanitiser output the server must accept", () => {
       { hq_state: "ZZ" }, { states: ["CA", "ca"] }, { employee_count: 1_000_001 }, { employee_count: "5" },
       { census: [{ first_name: "A", work_state: "ZZ" }] }, { census: [{ first_name: "A", classification: "W2" }] },
       { census: [{ first_name: "A", annual_salary: 1_000_001 }] }, { census: [{ first_name: " " }] }, { extra: 1 }, [],
-      { fein: "12-3456789" }, { entity_type: "LLC" }, { year_founded: 1599 }, { entities: [{ dba: "x" }] }, { entities: [{ fein: "1" }] }, { entities: null },
+      { fein: "12-3456789" }, { entity_type: "LLC" }, { year_founded: 1599 }, { entities: [{ dba: "x" }] }, { entities: [{ fein: "1" }] }, { entities: null }, { naics_code: "54143" }, { naics_code: 541430 },
     ]) {
       expect(serverRefusal(refused), JSON.stringify(refused)).not.toBeNull();
       expect(validateChamberData(refused), JSON.stringify(refused)).not.toEqual([]);

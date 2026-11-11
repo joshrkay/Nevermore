@@ -521,6 +521,8 @@ export function buildManuscript(
       ["Street Address", answer("street_address"), "street_address"],
       ["Website", answer("website"), "website"],
       ["Industry", orNotProvided(data.industry), "industry"],
+      ["NAICS Code", answer("naics_code"), "naics_code"],
+      ["Description of Operations", answer("operations_description"), "operations_description"],
       ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? "Multiple entities" : "Single entity", "multiple_entities"],
       ["FEINs", orNotProvided(data.fein_count), "fein_count"],
       ["Legal Entities", answer("entities"), "entities"],

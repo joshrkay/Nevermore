@@ -625,6 +625,8 @@ export const DOCUMENT_FIELDS = [
   "has_handbook", "has_1099", "ca_contractors",
   // v3 (K-1.1): who the employer is. Never the FEIN, which the prospect types into the workspace.
   "entity_type", "year_founded", "street_address", "website",
+  // K-1.2: the industry as a code and a description.
+  "naics_code", "operations_description",
 ] as const;
 
 const BOOLEAN_FIELDS = new Set([

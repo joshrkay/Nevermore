@@ -99,3 +99,77 @@ describe("company identity in the Company tab (K-1.1)", () => {
     expect(screen.queryByRole("button", { name: "Add FEIN" })).not.toBeInTheDocument();
   });
 });
+
+describe("industry as a code and a description in the Company tab (K-1.2)", () => {
+  function Industry({ data = {} }: { data?: Partial<ChamberData> }) {
+    const [state, setState] = useState<IntakeState>({ data: { ...EMPTY_CHAMBER_DATA, ...data }, provenance: {} });
+    return (
+      <>
+        <CompanyTab data={state.data} isDemo={false} provenance={state.provenance} onAction={(a) => setState((s) => applyFieldAction(s, a))} />
+        <output data-testid="industry">{JSON.stringify({ naics_code: state.data.naics_code, industry: state.data.industry, status: state.provenance.naics_code?.status })}</output>
+      </>
+    );
+  }
+  const industry = () => JSON.parse(screen.getByTestId("industry").textContent ?? "{}");
+
+  it("lets the prospect choose a NAICS code from a search by words, and shows it with its title", () => {
+    render(<Industry data={{ industry: "Creative Agency" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add NAICS Code" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search industries" }), { target: { value: "graphic design" } });
+    fireEvent.click(screen.getByRole("button", { name: "541430 Graphic Design Services" }));
+    expect(industry()).toMatchObject({ naics_code: "541430", status: "confirmed" });
+    expect(screen.getByText("541430 · Graphic Design Services")).toBeInTheDocument();
+    // The free-text industry stays, beside it.
+    expect(screen.getByText("Creative Agency")).toBeInTheDocument();
+    expect(industry().industry).toBe("Creative Agency");
+  });
+
+  it("finds a code by its first digits, and says so when nothing matches", () => {
+    render(<Industry />);
+    fireEvent.click(screen.getByRole("button", { name: "Add NAICS Code" }));
+    const search = screen.getByRole("searchbox", { name: "Search industries" });
+    fireEvent.change(search, { target: { value: "2381" } });
+    expect(screen.getByRole("button", { name: "238160 Roofing Contractors" })).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "zzzz" } });
+    expect(screen.getByText("No industry matches that. Try another word.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(industry().naics_code).toBeNull();
+  });
+
+  it("keeps a whole code typed and entered, and nothing for words entered without choosing an industry", () => {
+    render(<Industry />);
+    fireEvent.click(screen.getByRole("button", { name: "Add NAICS Code" }));
+    const search = screen.getByRole("searchbox", { name: "Search industries" });
+    fireEvent.change(search, { target: { value: "graphic design" } });
+    fireEvent.submit(search.closest("form")!);
+    expect(industry().naics_code).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent("Choose an industry from the list.");
+    fireEvent.change(search, { target: { value: "541430" } });
+    fireEvent.submit(search.closest("form")!);
+    expect(industry().naics_code).toBe("541430");
+  });
+
+  it("asks the prospect to confirm a code Lenore proposed", () => {
+    function Proposed() {
+      const [state, setState] = useState<IntakeState>({
+        data: { ...EMPTY_CHAMBER_DATA, naics_code: "541430" },
+        provenance: { naics_code: { status: "inferred", source: { kind: "transcript", message_id: "m1", quote: "we design packaging" }, updated_at: "2026-11-11T00:00:00Z" } },
+      });
+      return (
+        <>
+          <CompanyTab data={state.data} isDemo={false} provenance={state.provenance} onAction={(a) => setState((s) => applyFieldAction(s, a))} />
+          <output data-testid="status">{state.provenance.naics_code?.status}</output>
+        </>
+      );
+    }
+    render(<Proposed />);
+    expect(screen.getByText("Lenore captured this — please confirm")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm NAICS Code" }));
+    expect(screen.getByTestId("status")).toHaveTextContent("confirmed");
+  });
+
+  it("takes a description of operations", () => {
+    render(<Industry />);
+    expect(screen.getByRole("button", { name: "Add Description of Operations" })).toBeInTheDocument();
+  });
+});

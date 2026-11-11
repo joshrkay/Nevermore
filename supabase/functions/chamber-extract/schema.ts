@@ -56,6 +56,8 @@ export const FIELD_GUIDE: Record<string, string> = {
   year_founded: "The year the business was founded, as four digits such as 2014 (work it out when they say how long they have been in business)",
   street_address: "The street address of the business's main location, with city, state and ZIP code as they gave them",
   website: "The business's website address",
+  naics_code: "The six-digit 2022 NAICS industry code that best fits what the business does. Propose one whenever the prospect describes their operations, with field_status \"inferred\"; never invent digits you aren't sure name a real industry",
+  operations_description: "What the business does, in the prospect's own plain words: its products or services and how the work is done (at most 1,000 characters)",
 };
 
 /**
@@ -108,6 +110,8 @@ export const FIELD_QUESTION: Record<string, string> = {
   year_founded: "What year was the business founded?",
   street_address: "What is the street address of your main location?",
   website: "Does the business have a website?",
+  naics_code: "Do you know your NAICS industry code?",
+  operations_description: "In a sentence or two, what does the business do day to day?",
 };
 
 // The census (the employee roster) comes only from an uploaded file (D21), and the FEIN is typed into the workspace.

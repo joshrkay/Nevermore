@@ -21,6 +21,7 @@ Field meanings:
 - payroll_vendor, pay_frequency (weekly, bi-weekly, semi-monthly, monthly), nonexempt_count, exempt_count
 - has_handbook, has_1099 (uses 1099 contractors), ca_contractors (contractors in California)
 - entity_type (sole proprietorship, partnership, LLC, C corporation, S corporation or nonprofit), year_founded (four digits), street_address (the business's main address, with city, state and ZIP), website
+- naics_code (the six-digit NAICS industry code, only when the document prints one), operations_description (what the business does, as the document describes it)
 Never report a federal employer identification number (FEIN or EIN) or any other tax ID.
 Use "yes"/"no" for yes-or-no fields. Leave out anything not stated.`;
 

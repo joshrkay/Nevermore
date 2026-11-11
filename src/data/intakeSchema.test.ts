@@ -51,6 +51,8 @@ describe("intake schema v3", () => {
   const NEW_IN_V3: string[] = [
     // K-1.1 company identity
     "fein", "entity_type", "year_founded", "street_address", "website", "entities",
+    // K-1.2 industry as a code and a description
+    "naics_code", "operations_description",
   ];
 
   it("only adds the common questions to v2, changing nothing v2 had", () => {
@@ -202,6 +204,16 @@ describe("validateChamberData", () => {
     expect(paths({ year_founded: 1599 })).toEqual(["year_founded"]);
     expect(paths({ year_founded: 2101 })).toEqual(["year_founded"]);
     expect(paths({ year_founded: "1998" })).toEqual(["year_founded"]);
+  });
+
+  it("holds the industry as a six-digit code and a description of operations of up to 1,000 characters (K-1.2)", () => {
+    expect(validateChamberData({ naics_code: "541430", operations_description: "Brand and packaging design for consumer goods." })).toEqual([]);
+    expect(validateChamberData({ naics_code: null, operations_description: null })).toEqual([]);
+    expect(validateChamberData({ naics_code: "54143" })).toEqual([{ path: "naics_code", reason: "must be a six-digit NAICS code, such as 541430" }]);
+    expect(paths({ naics_code: 541430 })).toEqual(["naics_code"]);
+    expect(paths({ naics_code: "5414300" })).toEqual(["naics_code"]);
+    expect(validateChamberData({ operations_description: "x".repeat(1000) })).toEqual([]);
+    expect(validateChamberData({ operations_description: "x".repeat(1001) })).toEqual([{ path: "operations_description", reason: "must be at most 1000 characters" }]);
   });
 
   it("lists each legal entity with its name and FEIN when the employer is more than one (K-1.1)", () => {

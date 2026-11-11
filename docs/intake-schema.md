@@ -16,6 +16,7 @@ The intake lives in `chamber_sessions`. The first section covers the answers the
 | experience mod | `null` or a JSON number from 0 to 10 (`EXPERIENCE_MOD_MAX`), such as 0.92 | Numeric text is read ("0.92"); kept to two decimal places; out of range is dropped |
 | dollars | `null` or a whole JSON number from 0 to 100,000,000 (`DOLLARS_MAX`) | `$`, commas and spaces are removed ("$18,400"); cents are rounded; over the cap is dropped, not capped |
 | FEIN | `null` or exactly nine digits, no hyphen (a federal employer identification number) | Read from the nine digits or from `12-3456789`; anything else is dropped, including the `123-45-6789` shape of a Social Security number. Never treated as free text, so it is not redacted |
+| NAICS code | `null` or exactly six digits | Trimmed; a number is read as its digits; kept only when it is one of the 1,012 industries of the 2022 edition (`supabase/functions/_shared/naics2022.ts`), which chat extraction checks too |
 | choice | `null` or one of the field's listed values (an entity type: `sole_proprietorship`, `partnership`, `llc`, `c_corporation`, `s_corporation`, `nonprofit`, `other`) | Common spellings are mapped ("S-Corp", "LLC"); anything else is dropped |
 | year | `null` or a whole JSON number from 1600 to 2100 (`YEAR_MIN`, `YEAR_MAX`) | Four digits of text are read; anything else is dropped |
 | list of rows | Array of row objects, at most the list's own cap (see "Lists of rows"). Every key of a row is optional, none may be `null`, and an unknown key is refused | A key with an invalid value is dropped from its row; a row left empty is dropped; then truncated to the cap |
@@ -74,46 +75,48 @@ Writers: **C** chat extraction (`chamber-extract`, which asks for every field bu
 | Company | `year_founded` | Year founded | year | Recommended | 17 | C D E |
 | Company | `street_address` | Street address | text | Recommended | 18 | C D E |
 | Company | `website` | Website | text | Recommended | 19 | C D E |
-| Company | `start_month` | Target start | text | Recommended | 20 | C D E |
-| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 21 | C E |
-| Company | `fein_count` | FEIN count | count | Recommended | 22 | C |
-| Company | `entities` | Legal entities | list of rows | Recommended | 48 | E |
+| Company | `operations_description` | Description of operations | text | Recommended | 20 | C D E |
+| Company | `naics_code` | NAICS code | NAICS code | Recommended | 21 | C D E |
+| Company | `start_month` | Target start | text | Recommended | 22 | C D E |
+| Company | `multiple_entities` | Multiple entities | boolean | Recommended | 23 | C E |
+| Company | `fein_count` | FEIN count | count | Recommended | 24 | C |
+| Company | `entities` | Legal entities | list of rows | Recommended | 50 | E |
 | Locations | `states` | States of operation | state list | Required | 2 | C D E |
 | Locations | `hq_state` | HQ state | state | Recommended | 7 | C D E |
 | Census | `census` | Employee census | census (read-only in the workspace) | Recommended | 4 | D |
-| Census | `has_1099` | 1099 contractors | boolean | Recommended | 39 | C D |
-| Census | `ca_contractors` | California contractors | boolean | Recommended | 40 | C D |
+| Census | `has_1099` | 1099 contractors | boolean | Recommended | 41 | C D |
+| Census | `ca_contractors` | California contractors | boolean | Recommended | 42 | C D |
 | Benefits | `current_carrier` | Current carrier | text | Recommended | 8 | C D E |
 | Benefits | `renewal_date` | Renewal date | text | Recommended | 9 | C D E |
-| Benefits | `virgin_medical` | First-time medical coverage | boolean | Recommended | 23 | C D |
-| Benefits | `rate_history` | Rate history | text | Recommended | 24 | C D E |
-| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 25 | C D E |
-| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 26 | C D E |
-| Benefits | `has_401k` | Retirement plan | boolean | Recommended | 27 | C D E |
-| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 28 | C D |
-| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 29 | C D |
+| Benefits | `virgin_medical` | First-time medical coverage | boolean | Recommended | 25 | C D |
+| Benefits | `rate_history` | Rate history | text | Recommended | 26 | C D E |
+| Benefits | `benefits_waiting_period` | Waiting period | text | Recommended | 27 | C D E |
+| Benefits | `ancillary_benefits` | Ancillary benefits | text list | Recommended | 28 | C D E |
+| Benefits | `has_401k` | Retirement plan | boolean | Recommended | 29 | C D E |
+| Benefits | `retirement_type` | Retirement plan type | text | Recommended | 30 | C D |
+| Benefits | `employer_contributes` | Employer retirement contribution | boolean | Recommended | 31 | C D |
 | Payroll | `pay_frequency` | Pay frequency | text (free text, not an enum) | Required | 3 | C D E |
 | Payroll | `payroll_vendor` | Payroll vendor | text | Recommended | 10 | C D E |
-| Payroll | `funding_days` | Funding lead time | count | Recommended | 30 | C E |
-| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 31 | C |
-| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 32 | C D |
-| Payroll | `exempt_count` | Exempt count | count | Recommended | 33 | C D |
-| Payroll | `pto_types` | PTO types | text list | Recommended | 34 | C E |
-| Payroll | `accrual_method` | Accrual method | text | Recommended | 35 | C E |
+| Payroll | `funding_days` | Funding lead time | count | Recommended | 32 | C E |
+| Payroll | `has_nonexempt` | Nonexempt employees | boolean | Recommended | 33 | C |
+| Payroll | `nonexempt_count` | Nonexempt count | count | Recommended | 34 | C D |
+| Payroll | `exempt_count` | Exempt count | count | Recommended | 35 | C D |
+| Payroll | `pto_types` | PTO types | text list | Recommended | 36 | C E |
+| Payroll | `accrual_method` | Accrual method | text | Recommended | 37 | C E |
 | Workers' comp | `wc_carrier` | Workers' comp carrier | text | Recommended | 11 | C |
 | Workers' comp | `wc_renewal_date` | Workers' comp renewal date | text | Recommended | 12 | C |
 | Workers' comp | `wc_experience_mod` | Experience mod | experience mod | Recommended | 13 | C |
 | Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | C |
-| Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 36 | C D |
-| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 37 | C |
-| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 38 | C |
-| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 41 | C |
-| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 42 | C |
-| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 43 | C |
-| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 44 | C |
-| Operations & HR | `hris_system` | HRIS system | text | Recommended | 45 | C |
-| Operations & HR | `key_challenges` | Key challenges | text | Recommended | 46 | C |
-| Operations & HR | `business_goals` | Business goals | text | Recommended | 47 | C |
+| Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 38 | C D |
+| Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 39 | C |
+| Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 40 | C |
+| Operations & HR | `uses_physical_clocks` | Physical time clocks | boolean | Recommended | 43 | C |
+| Operations & HR | `uses_mobile_app` | Mobile timekeeping | boolean | Recommended | 44 | C |
+| Operations & HR | `uses_computer_timekeeping` | Computer timekeeping | boolean | Recommended | 45 | C |
+| Operations & HR | `shift_differentials` | Shift differentials | boolean | Recommended | 46 | C |
+| Operations & HR | `hris_system` | HRIS system | text | Recommended | 47 | C |
+| Operations & HR | `key_challenges` | Key challenges | text | Recommended | 48 | C |
+| Operations & HR | `business_goals` | Business goals | text | Recommended | 49 | C |
 
 Dates (`start_month`, `renewal_date`, `handbook_last_updated`, `wc_renewal_date`, `dob`) are free text. `field_provenance` and `documents.extraction` are not validated beyond the existing is-object checks. `transcript` is checked message by message (see "The transcript" below).
 

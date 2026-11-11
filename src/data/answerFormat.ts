@@ -3,6 +3,7 @@
 // Review, the advisor's field review and The Manuscript all show an answer through formatAnswer.
 import type { EntityType, LegalEntity } from "./chamberTypes";
 import { formatFieldValue, type FieldKey } from "./provenance";
+import { naicsTitle } from "../../supabase/functions/_shared/naics2022.ts";
 
 /** A FEIN as it is written: 84-1234567. */
 export const formatFein = (fein: string): string => `${fein.slice(0, 2)}-${fein.slice(2)}`;
@@ -41,6 +42,8 @@ export function formatAnswer(field: FieldKey, value: unknown): string {
       return typeof value === "string" ? formatFein(value) : formatFieldValue(value);
     case "entity_type":
       return ENTITY_TYPE_LABELS[value as EntityType] ?? formatFieldValue(value);
+    case "naics_code":
+      return typeof value === "string" && naicsTitle(value) ? `${value} · ${naicsTitle(value)}` : formatFieldValue(value);
     case "entities":
       return (value as LegalEntity[]).map(entityLine).filter(Boolean).join("; ");
     default:

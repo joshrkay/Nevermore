@@ -29,7 +29,7 @@ describe("buildUserPrompt", () => {
       expect.stringMatching(/^Not yet settled, most important first: /),
       "Ready to certify: no",
       "Employee census: not uploaded",
-      "Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab)",
+      "Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab), naics_code (NAICS code, on the Company tab)",
       'Recent conversation, oldest first: [{"sender":"lenore","text":"How many people work for you?"}]',
       'New user message: "We have 40 \\"full time\\" people"',
     ]);
@@ -87,17 +87,26 @@ describe("answers entered in the workspace", () => {
   });
 
   it("are named with where each goes while unanswered, and no longer once answered or closed", () => {
-    expect(line({ message: "hi" })).toBe("Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab)");
-    expect(line({ message: "hi", context: { fein: "**-***4567" } })).toBe("Entered in the workspace, never asked for in chat: none");
-    expect(line({ message: "hi", statuses: { fein: "not_applicable" } })).toBe("Entered in the workspace, never asked for in chat: none");
+    const known = { naics_code: "541430" };
+    expect(line({ message: "hi", context: known })).toBe("Entered in the workspace, never asked for in chat: fein (FEIN, on the Company tab)");
+    expect(line({ message: "hi", context: { ...known, fein: "**-***4567" } })).toBe("Entered in the workspace, never asked for in chat: none");
+    expect(line({ message: "hi", context: known, statuses: { fein: "not_applicable" } })).toBe("Entered in the workspace, never asked for in chat: none");
   });
 
   it("include each legal entity only once the employer is more than one", () => {
-    expect(line({ message: "hi", context: { fein: "**-***4567", multiple_entities: true } }))
+    expect(line({ message: "hi", context: { fein: "**-***4567", naics_code: "541430", multiple_entities: true } }))
       .toBe("Entered in the workspace, never asked for in chat: entities (Legal entities, on the Company tab)");
-    expect(line({ message: "hi", context: { fein: "**-***4567", multiple_entities: true, entities: [{ legal_name: "Acme LLC" }] } }))
+    expect(line({ message: "hi", context: { fein: "**-***4567", naics_code: "541430", multiple_entities: true, entities: [{ legal_name: "Acme LLC" }] } }))
       .toBe("Entered in the workspace, never asked for in chat: none");
-    expect(line({ message: "hi", context: { fein: "**-***4567", multiple_entities: false } })).toBe("Entered in the workspace, never asked for in chat: none");
+    expect(line({ message: "hi", context: { fein: "**-***4567", naics_code: "541430", multiple_entities: false } })).toBe("Entered in the workspace, never asked for in chat: none");
+  });
+
+  // K-1.2: Lenore proposes a NAICS code from the description; she never asks a prospect for a code number.
+  it("include the NAICS code, which Lenore proposes but never asks for, while the description of operations is asked", () => {
+    expect(unsettledForTurn({}).map((f) => f.key)).not.toContain("naics_code");
+    expect(unsettledForTurn({}).map((f) => f.key)).toContain("operations_description");
+    expect(line({ message: "hi", context: { fein: "**-***4567" } })).toBe("Entered in the workspace, never asked for in chat: naics_code (NAICS code, on the Company tab)");
+    expect(line({ message: "hi", context: { fein: "**-***4567", naics_code: "541430" } })).toBe("Entered in the workspace, never asked for in chat: none");
   });
 
   it("are not asked about even when an advisor asked: the request shows on the answer in the workspace", () => {

@@ -68,9 +68,10 @@ export const FIELD_LABELS = Object.fromEntries(
 
 /**
  * How an answer is edited. "fein" is nine digits typed into its own box; "choice" is one of a field's listed
- * values (FIELD_CHOICES); "rows" is a table of rows, edited in its own tab rather than in one input.
+ * values (FIELD_CHOICES); "naics" is an industry code picked from a search; "rows" is a table of rows, edited in
+ * its own tab rather than in one input.
  */
-export type FieldKind = "text" | "number" | "decimal" | "boolean" | "list" | "fein" | "choice" | "rows";
+export type FieldKind = "text" | "number" | "decimal" | "boolean" | "list" | "fein" | "choice" | "naics" | "rows";
 
 /** Input kind per field, for editing. The census has its own tab and isn't edited here. */
 export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
@@ -121,6 +122,8 @@ export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
   street_address: "text",
   website: "text",
   entities: "rows",
+  naics_code: "naics",
+  operations_description: "text",
 };
 
 const FIELD_KEYS = Object.keys(FIELD_LABELS) as FieldKey[];

@@ -18,6 +18,7 @@ import {
   visibleAlsoHeard,
 } from "@/data/provenance";
 import { isRequiredField } from "@/data/readiness";
+import { searchNaics } from "../../../../supabase/functions/_shared/naics2022.ts";
 import { useVerifiedFields } from "./VerifiedFieldsContext";
 import { useRequestedFields } from "./RequestedFieldsContext";
 
@@ -93,8 +94,11 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
   const [draft, setDraft] = useState("");
   const [invalid, setInvalid] = useState(false);
 
+  const industries = kind === "naics" && editing ? searchNaics(draft) : [];
+
   const startEdit = () => {
-    setDraft(toInput(kind!, raw));
+    // An industry search starts empty: the code held is not what the prospect would type to find another.
+    setDraft(kind === "naics" ? "" : toInput(kind!, raw));
     setInvalid(false);
     setEditing(true);
   };
@@ -143,7 +147,39 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
             save();
           }}
         >
-          {kind === "boolean" ? (
+          {kind === "naics" ? (
+            // An industry code is chosen from a search of the 2022 NAICS industries, never typed in free (K-1.2).
+            <div className="w-full space-y-1">
+              <input
+                type="search"
+                aria-label="Search industries"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="Search by industry or code"
+                className="w-full text-xs bg-background border border-border rounded px-2 py-1"
+              />
+              {draft.trim() !== "" && (industries.length > 0 ? (
+                <ul aria-label="Matching industries" className="max-h-40 overflow-y-auto border border-border rounded divide-y divide-border/50">
+                  {industries.map(([code, title]) => (
+                    <li key={code}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onAction!({ type: "edit", field, value: code });
+                          setEditing(false);
+                        }}
+                        className="w-full text-left text-xs px-2 py-1 hover:bg-muted"
+                      >
+                        <span className="font-mono">{code}</span> {title}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-[10px] text-muted-foreground">No industry matches that. Try another word.</p>
+              ))}
+            </div>
+          ) : kind === "boolean" ? (
             <select
               aria-label={label}
               value={draft}
@@ -178,13 +214,19 @@ const ProvenanceField = ({ label, field, display, raw, provenance, onAction, edi
               className="text-xs bg-background border border-border rounded px-2 py-1 min-w-0 flex-1"
             />
           )}
-          <button type="submit" className="text-[10px] font-medium px-2 py-1 rounded bg-primary text-primary-foreground">
-            Save
-          </button>
+          {kind !== "naics" && (
+            <button type="submit" className="text-[10px] font-medium px-2 py-1 rounded bg-primary text-primary-foreground">
+              Save
+            </button>
+          )}
           <button type="button" onClick={() => setEditing(false)} className="text-[10px] px-2 py-1 rounded text-muted-foreground hover:text-foreground">
             Cancel
           </button>
-          {invalid && <p role="alert" className="w-full text-[10px] text-destructive">That doesn't look right. Please check the value.</p>}
+          {invalid && (
+            <p role="alert" className="w-full text-[10px] text-destructive">
+              {kind === "naics" ? "Choose an industry from the list." : "That doesn't look right. Please check the value."}
+            </p>
+          )}
         </form>
       ) : display ? (
         <div className="flex flex-wrap items-center gap-2">

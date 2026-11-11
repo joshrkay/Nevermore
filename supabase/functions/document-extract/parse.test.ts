@@ -494,6 +494,13 @@ describe("AI-read fields", () => {
     ]);
   });
 
+  it("reads a NAICS code and a description of operations a document states (K-1.2)", () => {
+    expect(shapeAiCandidates([{ field: "naics_code", value: "541430", section: 1 }, { field: "operations_description", value: "Brand and packaging design", section: 2 }], sections)).toEqual([
+      { field: "naics_code", value: "541430", location: "Page 1" },
+      { field: "operations_description", value: "Brand and packaging design", location: "Page 2" },
+    ]);
+  });
+
   it("never sends or keeps a sensitive number", () => {
     expect(buildPromptText([{ label: "Page 1", text: "Group 12345, owner SSN 123-45-6789" }])).toBe("[[Section 1]]\nGroup 12345, owner SSN [redacted]\n\n");
     expect(shapeAiCandidates([{ field: "rate_history", value: "acct 0012345 up 9%", section: 1 }], sections)).toEqual([

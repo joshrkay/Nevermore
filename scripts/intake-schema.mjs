@@ -27,6 +27,7 @@ const kindOf = (rule) => {
   if (types.includes("integer")) return rule.maximum === LIMITS.dollars ? "dollars" : rule.maximum === LIMITS.yearMax ? "year" : "count";
   if (types.includes("boolean")) return "boolean";
   if (rule.pattern === "^[0-9]{9}$") return "FEIN";
+  if (rule.pattern === "^[0-9]{6}$") return "NAICS code";
   return "text";
 };
 

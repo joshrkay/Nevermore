@@ -21,6 +21,8 @@ const CompanyTab = ({ data, isDemo, provenance = {}, onAction }: CompanyTabProps
     { label: "Street Address", field: "street_address", value: data.street_address },
     { label: "Website", field: "website", value: data.website },
     { label: "Industry", field: "industry", value: data.industry },
+    { label: "NAICS Code", field: "naics_code", value: data.naics_code && formatAnswer("naics_code", data.naics_code) },
+    { label: "Description of Operations", field: "operations_description", value: data.operations_description },
     { label: "HQ State", field: "hq_state", value: data.hq_state },
     { label: "All States", field: "states", value: data.states.length > 0 ? data.states.join(", ") : null },
     { label: "Employee Count", field: "employee_count", value: data.employee_count?.toString() },

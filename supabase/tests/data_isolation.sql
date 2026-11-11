@@ -96,6 +96,7 @@
 \i supabase/migrations/20261110090000_quote_requests.sql
 \i supabase/migrations/20261111090000_intake_schema_v3_version.sql
 \i supabase/migrations/20261111091000_intake_schema_v3_company_identity.sql
+\i supabase/migrations/20261111092000_intake_schema_v3_industry_code.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

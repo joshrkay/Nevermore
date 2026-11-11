@@ -76,6 +76,12 @@ export interface ChamberData {
   /** Each legal entity, when the employer is more than one. */
   entities: LegalEntity[];
 
+  // Industry as a code and a description (K-1.2); the free-text `industry` stays beside them.
+  /** A six-digit 2022 NAICS code. */
+  naics_code: string | null;
+  /** What the business does, in plain words. */
+  operations_description: string | null;
+
   // Employees: the canonical census (see supabase/functions/_shared/census.ts)
   census: CensusEmployee[];
 }
@@ -128,6 +134,8 @@ export const EMPTY_CHAMBER_DATA: ChamberData = {
   street_address: null,
   website: null,
   entities: [],
+  naics_code: null,
+  operations_description: null,
   census: [],
 };
 
@@ -180,6 +188,8 @@ export const DEMO_CHAMBER_DATA: ChamberData = {
   street_address: "500 Harbor Street, Suite 300, San Francisco, CA 94107",
   website: "meridiancreative.example",
   entities: [],
+  naics_code: "541430",
+  operations_description: "Brand, packaging and campaign design for consumer goods companies, from one studio.",
   census: [
     { id: "6f1c2a40-0001-4c1e-9a7b-3d5e00000001", first_name: "Sarah", last_name: "Chen", dob: "1988-03-15", work_state: "CA", zip_code: "94107", job_title: "Senior Designer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "FAM", class_code: "8810", dependents: [{ first_name: "Michael", last_name: "Chen", dob: "1985-06-12", relationship: "spouse" }, { first_name: "Emma", last_name: "Chen", dob: "2018-03-22", relationship: "child" }] },
     { id: "6f1c2a40-0002-4c1e-9a7b-3d5e00000002", first_name: "Marcus", last_name: "Rivera", dob: "1985-07-22", work_state: "CA", zip_code: "94110", job_title: "Art Director", annual_salary: 125000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810", dependents: [{ first_name: "Ana", last_name: "Rivera", dob: "1987-09-04", relationship: "spouse" }] },

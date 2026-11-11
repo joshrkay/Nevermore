@@ -341,6 +341,7 @@ describe("the extraction contract", () => {
   const sample = (key: string): unknown => {
     if (key === "hq_state") return "NY";
     if (key === "states") return ["NY", "NJ"];
+    if (key === "naics_code") return "541430";
     const types = Array.isArray(PROPERTIES[key].type) ? (PROPERTIES[key].type as string[]) : [PROPERTIES[key].type as string];
     if (types.includes("array")) return ["Dental"];
     if (PROPERTIES[key].enum) return PROPERTIES[key].enum![0];
@@ -373,13 +374,36 @@ describe("the extraction contract", () => {
     expect(shaped.extracted).toEqual({ company_name: "Acme" });
   });
 
+  // K-1.2: Lenore proposes a NAICS code from the description of operations; the prospect confirms it.
+  it("takes a NAICS code the model proposes as inferred, however sure the model says it is", () => {
+    const shaped = shape(
+      { operations_description: "We design packaging for consumer brands", naics_code: "541430", field_status: { operations_description: "confirmed", naics_code: "confirmed" }, evidence: { naics_code: "design packaging" } },
+      "We design packaging for consumer brands.",
+    );
+    expect(shaped.extracted).toEqual({ operations_description: "We design packaging for consumer brands", naics_code: "541430" });
+    expect(shaped.field_status).toEqual({ operations_description: "confirmed", naics_code: "inferred" });
+  });
+
+  it("takes a NAICS code as confirmed only when the prospect's own message gives the code", () => {
+    const shaped = shape({ naics_code: "541430", field_status: { naics_code: "confirmed" }, evidence: { naics_code: "541430" } }, "Our NAICS code is 541430.");
+    expect(shaped.field_status).toEqual({ naics_code: "confirmed" });
+  });
+
+  it("refuses a NAICS code that isn't a 2022 industry, so a made-up code never reaches the intake", () => {
+    const shaped = shape({ naics_code: "999999", company_name: "Acme", field_status: { naics_code: "inferred" } }, "We're Acme, a design shop.");
+    expect(shaped.extracted).toEqual({ company_name: "Acme" });
+    expect(shaped.rejected).toEqual([{ path: "naics_code", reason: "is not a 2022 NAICS code" }]);
+    expect(shaped.field_status).not.toHaveProperty("naics_code");
+  });
+
   it("offers the model an entity type as one of the listed values", () => {
     expect((EXTRACT_TOOL.parameters.properties as Record<string, unknown>).entity_type).toEqual({
       type: "string", enum: ["sole_proprietorship", "partnership", "llc", "c_corporation", "s_corporation", "nonprofit", "other"],
     });
   });
 
-  it.each(FROM_CHAT)("takes an answer for %s, with its status and evidence", (key) => {
+  // A NAICS code is the one answer that never arrives confirmed unless the message holds it: its own cases are above.
+  it.each(FROM_CHAT.filter((k) => k !== "naics_code"))("takes an answer for %s, with its status and evidence", (key) => {
     const value = sample(key);
     const shaped = shape({ [key]: value, field_status: { [key]: "confirmed" }, evidence: { [key]: "as they said" } }, "That's as they said.");
     expect(shaped.extracted).toEqual({ [key]: value });

@@ -3,6 +3,7 @@ import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
 import type { ChamberData, EntityType } from "./chamberTypes";
 import { normalizeCensus, stripUnstorable } from "./census";
 import { redactSensitive } from "./sensitive";
+import { isNaicsCode } from "../../supabase/functions/_shared/naics2022.ts";
 
 // Extracted data comes from an LLM (chamber-extract, for typed and spoken messages alike, or
 // document-extract) or from a stored jsonb column, so every field is checked before it reaches state.
@@ -114,6 +115,12 @@ const entityType = z
   .transform((s) => ENTITY_TYPE_SPELLINGS[s.toLowerCase().replace(/[^a-z0-9]/g, "")])
   .refine((v): v is EntityType => v !== undefined);
 
+// A NAICS code: six digits that name one of the 2022 industries. A number is read as its digits.
+const naicsCode = z.preprocess(
+  (v) => (typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : v),
+  z.string().refine(isNaicsCode),
+);
+
 const year = z.preprocess(
   (v) => (typeof v === "string" && /^\s*\d{4}\s*$/.test(v) ? Number(v) : v),
   z.number().int().min(YEAR_MIN).max(YEAR_MAX),
@@ -196,6 +203,8 @@ const FIELD_SCHEMAS: FieldSchemas = {
   street_address: nullableText,
   website: nullableText,
   entities: rowsOf<ChamberData["entities"][number]>({ legal_name: text, fein }, MAX_ENTITIES),
+  naics_code: naicsCode.nullable(),
+  operations_description: nullableText,
 
   // Rows are checked one by one (supabase/functions/_shared/census.ts): an invalid row is dropped and the
   // census stops at the most the intake holds.

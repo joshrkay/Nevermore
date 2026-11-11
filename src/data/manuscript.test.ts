@@ -260,6 +260,18 @@ describe("buildManuscript covers the whole intake", () => {
       .toBe("Meridian Creative LLC (FEIN 84-1234567); Meridian Studios Inc (FEIN 84-1234568)");
   });
 
+  // K-1.2: the free-text industry stays, with the code and the description of operations beside it.
+  it("shows the industry as the prospect put it, as a NAICS code with its title, and as a description of operations", () => {
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, naics_code: "541430", operations_description: "Brand and packaging design for consumer goods." }, opts);
+    const labels = m.companyRows.map(([label]) => label);
+    expect(labels.slice(labels.indexOf("Industry"), labels.indexOf("Industry") + 3)).toEqual(["Industry", "NAICS Code", "Description of Operations"]);
+    expect(Object.fromEntries(m.companyRows.map(([label, value]) => [label, value]))).toMatchObject({
+      Industry: "Creative Agency",
+      "NAICS Code": "541430 · Graphic Design Services",
+      "Description of Operations": "Brand and packaging design for consumer goods.",
+    });
+  });
+
   it("shows the workers' comp block and the census class codes", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
     expect(Object.fromEntries(m.workersCompRows.map(([label, value]) => [label, value]))).toEqual({

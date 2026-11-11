@@ -32,6 +32,7 @@ CREATE TABLE auth.users (id uuid PRIMARY KEY, raw_user_meta_data jsonb);
 \i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
 -- v3: each group of the common questions, in order.
 \i supabase/migrations/20261111091000_intake_schema_v3_company_identity.sql
+\i supabase/migrations/20261111092000_intake_schema_v3_industry_code.sql
 
 -- ---------- helpers ----------
 -- The path chamber_data_error names for d, or NULL when d is acceptable.
@@ -100,4 +101,21 @@ BEGIN
   IF NOT public.is_reviewable_field('fein') OR public.is_reviewable_field('nickname') THEN RAISE EXCEPTION 'FAIL: a signed-in caller gets a different answer about what can be reviewed'; END IF;
   RESET ROLE;
   RAISE NOTICE 'intake_schema_v3: company identity cases passed';
+END $$;
+
+-- ---------- K-1.2 industry as a code and a description ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.must_accept('{"naics_code":"541430","operations_description":"Brand and packaging design for consumer goods."}', 'an industry code and description');
+  PERFORM pg_temp.must_accept('{"naics_code":null,"operations_description":null}', 'an unanswered industry code and description');
+  PERFORM pg_temp.must_accept(jsonb_build_object('operations_description', repeat('x', 1000)), 'a description of 1,000 characters');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('operations_description', repeat('x', 1001)), 'operations_description', 'a description of 1,001 characters');
+  PERFORM pg_temp.must_refuse('{"naics_code":"54143"}', 'naics_code', 'a five-digit NAICS code');
+  PERFORM pg_temp.must_refuse('{"naics_code":"5414300"}', 'naics_code', 'a seven-digit NAICS code');
+  PERFORM pg_temp.must_refuse('{"naics_code":541430}', 'naics_code', 'a NAICS code sent as a number');
+  PERFORM pg_temp.must_refuse('{"naics_code":"54143x"}', 'naics_code', 'a NAICS code with a letter');
+  -- The earlier v3 answers are checked as they were.
+  PERFORM pg_temp.must_accept('{"fein":"841234567","entities":[{"legal_name":"Meridian Creative LLC"}]}', 'company identity after K-1.2');
+  PERFORM pg_temp.must_refuse('{"fein":"84-1234567"}', 'fein', 'a hyphenated FEIN after K-1.2');
+  RAISE NOTICE 'intake_schema_v3: industry code cases passed';
 END $$;

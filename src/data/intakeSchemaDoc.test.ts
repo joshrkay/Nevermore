@@ -26,7 +26,7 @@ const kindOf = (schema: JsonSchema): string => {
   if (types.includes("number")) return "experience mod";
   if (types.includes("integer")) return schema.maximum === LIMITS.dollars ? "dollars" : schema.minimum === 1600 ? "year" : "count";
   if (types.includes("boolean")) return "boolean";
-  if (typeof schema.pattern === "string") return "FEIN";
+  if (typeof schema.pattern === "string") return schema.pattern.includes("{9}") ? "FEIN" : "NAICS code";
   return "text";
 };
 

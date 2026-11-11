@@ -276,7 +276,8 @@ describe("server and client intake rules agree", () => {
       if (/^\{"type":"string","enum":\[/.test(json)) return "choice";
       return json;
     };
-    const expected = Object.fromEntries(Object.entries(FIELD_KINDS).filter(([key]) => fromChat(key)));
+    // An industry code is picked from a search in the app; the model sends it as text.
+    const expected = Object.fromEntries(Object.entries(FIELD_KINDS).filter(([key]) => fromChat(key)).map(([key, kind]) => [key, kind === "naics" ? "text" : kind]));
     expect(Object.fromEntries(Object.entries(CHAT_FIELD_TYPES).map(([key, schema]) => [key, kindOf(schema)]))).toEqual(expected);
   });
 
@@ -342,6 +343,7 @@ describe("server and client intake rules agree", () => {
       if (types.includes("integer")) return schema.maximum === LIMITS.dollars ? "dollars" : schema.maximum === LIMITS.yearMax ? "year" : "count";
       if (types.includes("boolean")) return "boolean";
       if (schema.pattern === "^[0-9]{9}$") return "fein";
+      if (schema.pattern === "^[0-9]{6}$") return "naics";
       return "text";
     };
 

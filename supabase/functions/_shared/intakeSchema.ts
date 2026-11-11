@@ -97,7 +97,7 @@ const RANKED_RECOMMENDED = [
   "census", "employee_count", "industry", "hq_state", "current_carrier", "renewal_date", "payroll_vendor",
   "wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium",
   // New in v3: the single-value common questions follow the fields ranked before them (Epic K).
-  "fein", "entity_type", "year_founded", "street_address", "website",
+  "fein", "entity_type", "year_founded", "street_address", "website", "operations_description", "naics_code",
 ] as const;
 
 /** A JSON Schema, as far as this module reads one. */
@@ -117,6 +117,9 @@ const dollars: JsonSchema = { type: ["integer", "null"], minimum: 0, maximum: LI
 const FEIN_PATTERN = "^[0-9]{9}$";
 const FEIN_TITLE = "nine digits, such as 123456789";
 const fein: JsonSchema = { title: FEIN_TITLE, type: ["string", "null"], pattern: FEIN_PATTERN };
+// A six-digit NAICS code. The schema holds its shape; the sanitiser and chat extraction also hold it to the 2022
+// industries (naics2022.ts).
+const naicsCode: JsonSchema = { title: "a six-digit NAICS code, such as 541430", type: ["string", "null"], pattern: "^[0-9]{6}$" };
 const choice = (values: readonly string[]): JsonSchema => ({ type: ["string", "null"], enum: [...values, null] });
 const year: JsonSchema = { type: ["integer", "null"], minimum: LIMITS.yearMin, maximum: LIMITS.yearMax };
 const rows = (def: string, maxItems: number): JsonSchema => ({ type: "array", maxItems, items: { $ref: `#/$defs/${def}` } });
@@ -177,6 +180,9 @@ const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: stri
   ["street_address", text(), "company", "Street address"],
   ["website", text(), "company", "Website"],
   ["entities", rows("entity", LIMITS.entities), "company", "Legal entities"],
+  // K-1.2: the industry as a code and a description, beside the free-text `industry`.
+  ["naics_code", naicsCode, "company", "NAICS code"],
+  ["operations_description", text(), "company", "Description of operations"],
 
   ["census", { type: "array", maxItems: LIMITS.census, items: { $ref: "#/$defs/censusRow" } }, "census", "Employee census"],
 ];

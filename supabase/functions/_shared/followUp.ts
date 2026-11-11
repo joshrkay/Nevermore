@@ -25,6 +25,9 @@ export const CHAT_CANNOT_TAKE: ReadonlySet<string> = new Set(["census", "fein", 
 export const WORKSPACE_ANSWERS: Readonly<Record<string, string>> = {
   fein: "the Company tab",
   entities: "the Company tab",
+  // Lenore proposes a NAICS code from the description of operations, and the prospect can search for one on the
+  // Company tab; she never asks a prospect to recite a code (K-1.2).
+  naics_code: "the Company tab",
 };
 
 /** What the conversation never asks about: the census (a file) and the answers entered in the workspace. */
