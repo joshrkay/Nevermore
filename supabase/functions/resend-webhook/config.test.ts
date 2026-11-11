@@ -16,7 +16,8 @@ describe("how the webhook function is deployed", () => {
   it("leaves it on for every other function", () => {
     const toml = read("supabase/config.toml");
     const sections = [...toml.matchAll(/\[functions\.([a-z-]+)\]/g)].map((m) => m[1]);
-    expect(sections).toEqual(["resend-webhook"]);
+    // The two the email provider calls with a signature instead of a login.
+    expect(sections).toEqual(["resend-webhook", "receive-mail"]);
   });
 
   it("is checked on a signed-out call by the setup, which relies on its own 401", () => {

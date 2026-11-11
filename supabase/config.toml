@@ -4,3 +4,8 @@ project_id = "bspdkpwziixcastxxpqv"
 # signature (RESEND_WEBHOOK_SECRET) instead of a JWT. See docs/NOTIFICATIONS.md.
 [functions.resend-webhook]
 verify_jwt = false
+
+# Called by the email provider for mail sent to a quote request's reply address, which holds no Supabase login:
+# the function checks the webhook's own signature (RESEND_INBOUND_WEBHOOK_SECRET) instead of a JWT.
+[functions.receive-mail]
+verify_jwt = false
