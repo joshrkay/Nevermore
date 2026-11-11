@@ -1,6 +1,7 @@
-// The canonical intake schema, version 2: chamber_data as JSON Schema (draft 2020-12), and a strict
-// validator for it. Version 2 is version 1 plus the workers' comp block (decision D18); nothing in v1
-// changed, so every v1 answer set is a v2 one.
+// The canonical intake schema, version 3: chamber_data as JSON Schema (draft 2020-12), and a strict
+// validator for it. Version 2 was version 1 plus the workers' comp block (decision D18). Version 3 adds the
+// common questions (Epic K): what PEOs and their carriers already ask on their own forms. Each version only
+// adds optional answers, so every v1 or v2 answer set is a v3 one.
 //
 // Each top-level property also carries an `x-intake` annotation (label, section, required, rank: see
 // IntakeFieldMeta). It is part of the published contract, and the validator ignores it. Strict means a value is accepted as it is or refused with a reason. Nothing is
@@ -19,13 +20,13 @@
 // older client can save a newer census), the legacy `employees` roster is not part of the schema, and a
 // census row must carry the fields every writer gives it.
 //
-// docs/intake-schema.v2.json is this schema, printed (npm run schema:intake). docs/intake-schema.v1.json is
-// version 1 as it was published. src/data/intakeSchema.test.ts keeps the first equal to this schema and
-// checks that v2 only adds to v1.
+// docs/intake-schema.v3.json is this schema, printed (npm run schema:intake). docs/intake-schema.v1.json and
+// v2.json are those versions as they were published, and are never rewritten. src/data/intakeSchema.test.ts
+// keeps v3.json equal to this schema and checks that v3 only adds to v2.
 //
 // No imports: it runs under Deno (the edge functions) and Vite (the app) alike.
 
-export const INTAKE_SCHEMA_VERSION = 2;
+export const INTAKE_SCHEMA_VERSION = 3;
 
 // The 50 states, DC and the five inhabited territories (the migrations' sync block us_state_codes).
 export const STATE_CODES = [
@@ -162,14 +163,15 @@ const RANKED_KEYS: string[] = [
   ...FIELDS.map(([key]) => key).filter((key) => !(REQUIRED_FIELDS as readonly string[]).includes(key) && !(RANKED_RECOMMENDED as readonly string[]).includes(key)),
 ];
 
-export const INTAKE_SCHEMA_V2: JsonSchema = {
+export const INTAKE_SCHEMA_V3: JsonSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
-  $id: "urn:edgar-allan-advisory:intake:chamber-data:v2",
-  title: "Intake answers (chamber_data), version 2",
+  $id: "urn:edgar-allan-advisory:intake:chamber-data:v3",
+  title: "Intake answers (chamber_data), version 3",
   description:
     "What a prospect's intake holds. Every key is optional; an unanswered question is null (or an empty list). " +
     "Each property's x-intake gives its label, its section, whether an intake needs it to be ready to certify " +
-    "(required), and the order Lenore asks in (rank, 1 first). Version 2 adds the workers' comp block to version 1. " +
+    "(required), and the order Lenore asks in (rank, 1 first). Version 2 added the workers' comp block to version 1; " +
+    "version 3 adds the common questions PEOs ask on their own forms. " +
     "Generated from supabase/functions/_shared/intakeSchema.ts.",
   type: "object",
   additionalProperties: false,
@@ -231,7 +233,7 @@ export interface IntakeIssue {
 }
 
 /** The schema the intake follows now. */
-export const INTAKE_SCHEMA = INTAKE_SCHEMA_V2;
+export const INTAKE_SCHEMA = INTAKE_SCHEMA_V3;
 
 /** Every top-level field with its x-intake metadata, in rank order (the order Lenore asks in). */
 export const INTAKE_FIELDS: readonly ({ key: string } & IntakeFieldMeta)[] = Object.entries(INTAKE_SCHEMA.properties as Record<string, JsonSchema>)
@@ -261,7 +263,7 @@ export function assertSupportedSchema(schema: JsonSchema, at = "#"): void {
   for (const [path, child] of children) assertSupportedSchema(child as JsonSchema, path);
 }
 
-assertSupportedSchema(INTAKE_SCHEMA_V2);
+assertSupportedSchema(INTAKE_SCHEMA_V3);
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 

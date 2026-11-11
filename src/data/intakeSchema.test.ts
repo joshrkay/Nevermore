@@ -27,32 +27,52 @@ const row = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-describe("intake schema v2", () => {
+describe("intake schema v3", () => {
   const props = INTAKE_SCHEMA.properties as Record<string, JsonSchema>;
 
-  it("is published as docs/intake-schema.v2.json (regenerate with npm run schema:intake)", () => {
-    expect(readFileSync("docs/intake-schema.v2.json", "utf8")).toBe(`${JSON.stringify(INTAKE_SCHEMA, null, 2)}\n`);
+  it("is published as docs/intake-schema.v3.json (regenerate with npm run schema:intake)", () => {
+    expect(readFileSync("docs/intake-schema.v3.json", "utf8")).toBe(`${JSON.stringify(INTAKE_SCHEMA, null, 2)}\n`);
   });
 
-  it("is version 2 and a draft 2020-12 JSON Schema", () => {
-    expect(INTAKE_SCHEMA_VERSION).toBe(2);
+  it("is version 3 and a draft 2020-12 JSON Schema", () => {
+    expect(INTAKE_SCHEMA_VERSION).toBe(3);
     expect(INTAKE_SCHEMA.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
-    expect(INTAKE_SCHEMA.$id).toBe("urn:edgar-allan-advisory:intake:chamber-data:v2");
+    expect(INTAKE_SCHEMA.$id).toBe("urn:edgar-allan-advisory:intake:chamber-data:v3");
   });
 
   it("names exactly the answers an intake holds", () => {
     expect(Object.keys(props).sort()).toEqual(Object.keys(EMPTY_CHAMBER_DATA).sort());
   });
 
-  // A v1 answer set must stay valid, so v2 may only add optional answers to the v1 published in docs/.
-  it("only adds the workers' comp block to v1, changing nothing v1 had", () => {
-    const v1 = JSON.parse(readFileSync("docs/intake-schema.v1.json", "utf8")) as JsonSchema;
-    const v1Props = v1.properties as Record<string, JsonSchema>;
+  // A v2 answer set must stay valid (K-5.1: a v2 intake opens and certifies unchanged), so v3 may only add
+  // optional answers, and optional keys inside a census row, to the v2 published in docs/.
+  const v2 = JSON.parse(readFileSync("docs/intake-schema.v2.json", "utf8")) as JsonSchema;
+  const v2Props = v2.properties as Record<string, JsonSchema>;
+  const NEW_IN_V3: string[] = [];
+
+  it("only adds the common questions to v2, changing nothing v2 had", () => {
+    // The rank is the one thing v3 may change about a v2 field: new answers are asked among the old ones.
     const withoutMeta = ({ "x-intake": _meta, ...rule }: JsonSchema) => rule;
-    expect(Object.keys(props).filter((key) => !(key in v1Props)).sort()).toEqual(["wc_annual_premium", "wc_carrier", "wc_experience_mod", "wc_renewal_date"]);
-    for (const [key, rule] of Object.entries(v1Props)) expect(withoutMeta(props[key]), key).toEqual(rule);
-    expect(INTAKE_SCHEMA.$defs).toEqual(v1.$defs);
+    expect(Object.keys(props).filter((key) => !(key in v2Props)).sort()).toEqual([...NEW_IN_V3].sort());
+    for (const [key, rule] of Object.entries(v2Props)) expect(withoutMeta(props[key]), key).toEqual(withoutMeta(rule));
     expect(INTAKE_SCHEMA.additionalProperties).toBe(false);
+  });
+
+  it("keeps every rule v2 had inside a census row and a dependent, and requires nothing new of them", () => {
+    const defs = INTAKE_SCHEMA.$defs as Record<string, JsonSchema>;
+    for (const [name, was] of Object.entries(v2.$defs as Record<string, JsonSchema>)) {
+      const { properties: wasProps, ...wasRest } = was;
+      const { properties: nowProps, ...nowRest } = defs[name];
+      expect(nowRest, name).toEqual(wasRest);
+      for (const [key, rule] of Object.entries((wasProps ?? {}) as Record<string, JsonSchema>)) {
+        expect((nowProps as Record<string, JsonSchema>)[key], `${name}.${key}`).toEqual(rule);
+      }
+    }
+  });
+
+  it("accepts every answer set v2 accepted", () => {
+    const v2Answers = Object.fromEntries(Object.keys(v2Props).map((key) => [key, (DEMO_CHAMBER_DATA as unknown as Record<string, unknown>)[key]]));
+    expect(validateChamberData(v2Answers)).toEqual([]);
   });
 
   it("gives every field a label, a section, a required flag and a rank", () => {

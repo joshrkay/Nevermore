@@ -1,7 +1,7 @@
-// Writes docs/intake-schema.v2.json from supabase/functions/_shared/intakeSchema.ts, the one source of the
+// Writes docs/intake-schema.v3.json (the current version) from supabase/functions/_shared/intakeSchema.ts, the one source of the
 // intake schema. Run after changing the schema:  npm run schema:intake
 // (src/data/intakeSchema.test.ts fails while the two differ). Node 22.18 or later loads the .ts directly.
-// docs/intake-schema.v1.json is version 1 as published, and is never rewritten.
+// docs/intake-schema.v1.json and v2.json are those versions as published, and are never rewritten.
 import { writeFileSync } from "node:fs";
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../supabase/functions/_shared/intakeSchema.ts";
 

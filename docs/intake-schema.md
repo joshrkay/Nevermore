@@ -4,7 +4,7 @@ The intake lives in `chamber_sessions`. The first section covers the answers the
 
 ## Intake data (`chamber_data`)
 
-`chamber_sessions.chamber_data` is a jsonb object with the 42 keys of `ChamberData` (`src/data/chamberTypes.ts`), the fields of intake schema v2, and the database also accepts `employees`, the roster's name before the census (migration `20261029092000` added `census`). The browser sanitises it (`src/data/chamberValidation.ts`) and the database refuses anything outside the same rules (`public.chamber_data_error`, migration `20261027090000_intake_validation_and_versioning.sql`). The client is the stricter side: it drops or truncates, so valid client output is never refused.
+`chamber_sessions.chamber_data` is a jsonb object with the 42 keys of `ChamberData` (`src/data/chamberTypes.ts`), the fields of intake schema v3, and the database also accepts `employees`, the roster's name before the census (migration `20261029092000` added `census`). The browser sanitises it (`src/data/chamberValidation.ts`) and the database refuses anything outside the same rules (`public.chamber_data_error`, migration `20261027090000_intake_validation_and_versioning.sql`). The client is the stricter side: it drops or truncates, so valid client output is never refused.
 
 ### Rules by kind
 
@@ -161,11 +161,11 @@ Paths are zero-based: `hq_state`, `states[2]`, `census[3].dob`, `census[0].depen
 
 The migration must be deployed before the front end, which selects `data_version`.
 
-`chamber_sessions.schema_version` (smallint, migration `20261103091000`) records which version of the intake schema the row's answers follow. The current version is 2, the default, and the database refuses any other value. Version 2 (migrations `20261103120000` and `20261103120100`) is version 1 plus the workers' comp block, with nothing in v1 changed, so every row moved to 2 without its answers being rewritten. The move was not a save: no `data_version`, `updated_at` or `last_activity_at` changed. A later version changes the check in its own migration, says how rows move, and changes `INTAKE_SCHEMA_VERSION` with it.
+`chamber_sessions.schema_version` (smallint, migration `20261103091000`) records which version of the intake schema the row's answers follow. The current version is 3, the default, and the database refuses any other value. Version 2 (migrations `20261103120000` and `20261103120100`) is version 1 plus the workers' comp block. Version 3 (migration `20261111090000`, then one migration for each group of new answers) is version 2 plus the common questions: what PEOs and their carriers already ask on their own forms (Epic K). Neither changed an answer the version before it had, so every row moved on without its answers being rewritten. Each move was not a save: no `data_version`, `updated_at` or `last_activity_at` changed. A later version changes the check in its own migration, says how rows move, and changes `INTAKE_SCHEMA_VERSION` with it.
 
-### JSON Schema v2 and strict checks on the way in
+### JSON Schema v3 and strict checks on the way in
 
-The canonical schema is `supabase/functions/_shared/intakeSchema.ts`: `chamber_data` as a JSON Schema (draft 2020-12), published as [`docs/intake-schema.v2.json`](intake-schema.v2.json). Regenerate the file with `npm run schema:intake`; `src/data/intakeSchema.test.ts` fails while the two differ. [`docs/intake-schema.v1.json`](intake-schema.v1.json) is version 1 as it was published; the same test checks that v2 only adds to it.
+The canonical schema is `supabase/functions/_shared/intakeSchema.ts`: `chamber_data` as a JSON Schema (draft 2020-12), published as [`docs/intake-schema.v3.json`](intake-schema.v3.json). Regenerate the file with `npm run schema:intake`; `src/data/intakeSchema.test.ts` fails while the two differ. [`docs/intake-schema.v1.json`](intake-schema.v1.json) and [`docs/intake-schema.v2.json`](intake-schema.v2.json) are those versions as they were published; the same test checks that v3 only adds to v2, so a v2 intake opens and certifies unchanged.
 
 Each top-level property carries an `x-intake` annotation: `{ "label", "section", "required", "rank" }`. Validators ignore it; it is how the schema publishes each field's required status and the order Lenore asks in.
 
