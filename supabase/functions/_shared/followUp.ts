@@ -3,6 +3,7 @@
 // disagree about what is left. Derived from the answers and their field statuses; nothing is stored.
 // Relative imports only, so it runs under Deno and Vitest alike.
 
+import { acordAnswerKey, acordField } from "./acord130.ts";
 import { INTAKE_FIELDS, type IntakeFieldMeta } from "./intakeSchema.ts";
 
 /** The field statuses of GLOSSARY.md, as the browser keeps them in field_provenance. */
@@ -35,8 +36,24 @@ export const WORKSPACE_ANSWERS: Readonly<Record<string, string>> = {
   suta_rates: "the Payroll tab",
 };
 
-/** What the conversation never asks about: the census (a file) and the answers entered in the workspace. */
-export const CHAT_NEVER_ASKS: ReadonlySet<string> = new Set(["census", ...Object.keys(WORKSPACE_ANSWERS)]);
+/**
+ * ACORD 130 questions Lenore never raises, in chat or aloud, and never names as still to enter (K-3.4): whether
+ * any employee has a physical handicap, which the prospect answers on the Workers' comp tab if a PEO's form needs
+ * it, and whether any is under 16 or over 60, which is answered from the census's ages.
+ */
+export const NEVER_RAISED: readonly string[] = ["wcq_10", "wcq_10_explain", "wcq_13", "wcq_13_explain"];
+
+/** What the conversation never asks about: the census (a file), the answers entered in the workspace, and those. */
+export const CHAT_NEVER_ASKS: ReadonlySet<string> = new Set(["census", ...Object.keys(WORKSPACE_ANSWERS), ...NEVER_RAISED]);
+
+/**
+ * Whether a field is one to ask for or show at all, given the answers: the explanation of an ACORD 130 question
+ * is, only once its question is answered yes.
+ */
+export function fieldApplies(field: string, answers: object): boolean {
+  const acord = acordField(field);
+  return acord?.part !== "explain" || (answers as Record<string, unknown>)[acordAnswerKey(acord.question.number)] === true;
+}
 
 const isEmpty = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
 
@@ -62,7 +79,7 @@ export function unsettledFields(
   opts: { exclude?: ReadonlySet<string>; census?: CensusSummary } = {},
 ): FieldInfo[] {
   return INTAKE_FIELDS.filter((f) => {
-    if (opts.exclude?.has(f.key)) return false;
+    if (opts.exclude?.has(f.key) || !fieldApplies(f.key, answers)) return false;
     const status = statuses[f.key];
     // The census answers the states question when B-2.2's rule says it does (it names work states and is settled,
     // or nothing else names states), unless that answer is itself in conflict or incomplete.

@@ -1,6 +1,8 @@
 import { isRowListField, mergeRows } from "./rowColumns";
 import { z } from "zod";
-import type { ChamberData } from "./chamberTypes";
+import { ACORD_CLOSING_RULES, ACORD_DERIVED } from "./acordRules";
+import type { AcordAnswers, ChamberData } from "./chamberTypes";
+import { ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "../../supabase/functions/_shared/acord130.ts";
 import { sanitizeChamberPatch } from "./chamberValidation";
 import { INTAKE_FIELDS, INTAKE_SCHEMA } from "./intakeSchema";
 import { isRequiredField } from "./readiness";
@@ -132,6 +134,10 @@ export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
   loss_history: "rows",
   medical_plans: "rows",
   suta_rates: "rows",
+  // The ACORD 130 questions (K-3.4): a yes or no each, with a text explanation.
+  ...(Object.fromEntries(
+    ACORD_130_QUESTIONS.flatMap((q) => [[acordAnswerKey(q.number), "boolean"], [acordExplainKey(q.number), "text"]]),
+  ) as Record<keyof AcordAnswers, FieldKind>),
 };
 
 const FIELD_KEYS = Object.keys(FIELD_LABELS) as FieldKey[];
@@ -467,7 +473,46 @@ function applyClosingRules(before: IntakeState, after: IntakeState, now: Date): 
       }
     }
   }
-  return provenance === after.provenance ? after : { data: after.data, provenance };
+  // The ACORD 130 questions (K-3.4, src/data/acordRules.ts). A question is closed once, when its rule becomes
+  // true, and only while unanswered and untouched, so one the prospect reopens stays open.
+  for (const rule of ACORD_CLOSING_RULES) {
+    const closing = rule.when(after.data);
+    const wasClosing = rule.when(before.data);
+    for (const field of rule.closes) {
+      if (closing && !wasClosing && isEmpty(after.data[field]) && provenance[field] === undefined) {
+        provenance = { ...provenance, [field]: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: now.toISOString() } };
+      } else if (!closing && wasClosing && provenance[field]?.status === "not_applicable") {
+        const { [field]: _closed, ...rest } = provenance;
+        provenance = rest;
+      }
+    }
+  }
+
+  // Questions the intake can answer from what it holds are answered for the prospect to confirm. An answer worked
+  // out this way follows what it came from until the prospect confirms or changes it; never after.
+  let data = after.data;
+  for (const rule of ACORD_DERIVED) {
+    const answer = rule.answer(data, now);
+    if (!answer) continue;
+    const entry = provenance[rule.field];
+    const held = data[rule.field];
+    const was = rule.answer(before.data, now);
+    const untouched = isEmpty(held) && entry === undefined;
+    const stillDerived = entry?.status === "inferred" && was !== undefined && held === was.value;
+    if (!(untouched || stillDerived) || (held === answer.value && !untouched)) continue;
+    const source = withoutQuote(provenance[rule.from]?.source ?? { kind: "prospect_edit" as const });
+    data = { ...data, [rule.field]: answer.value };
+    provenance = { ...provenance, [rule.field]: { status: "inferred", source, updated_at: now.toISOString() } };
+    if (rule.explain && (isEmpty(data[rule.explain]) || data[rule.explain] === was?.explain)) {
+      data = { ...data, [rule.explain]: answer.explain ?? null };
+      if (answer.explain) provenance = { ...provenance, [rule.explain]: { status: "inferred", source, updated_at: now.toISOString() } };
+      else {
+        const { [rule.explain]: _gone, ...rest } = provenance;
+        provenance = rest;
+      }
+    }
+  }
+  return provenance === after.provenance && data === after.data ? after : { data, provenance };
 }
 
 // ---------- Prospect actions ----------

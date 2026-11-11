@@ -104,6 +104,7 @@
 \i supabase/migrations/20261111097000_intake_schema_v3_loss_history.sql
 \i supabase/migrations/20261111098000_intake_schema_v3_medical_plans.sql
 \i supabase/migrations/20261111099000_intake_schema_v3_suta_rates.sql
+\i supabase/migrations/20261111100000_intake_schema_v3_acord_130_questions.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

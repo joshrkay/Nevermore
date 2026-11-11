@@ -802,6 +802,606 @@
         "rank": 57
       }
     },
+    "wcq_01": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 1: Aircraft or watercraft",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 58
+      }
+    },
+    "wcq_01_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 1, explanation: Aircraft or watercraft",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 59
+      }
+    },
+    "wcq_02": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 2: Hazardous material",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 60
+      }
+    },
+    "wcq_02_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 2, explanation: Hazardous material",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 61
+      }
+    },
+    "wcq_03": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 3: Work underground or above 15 feet",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 62
+      }
+    },
+    "wcq_03_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 3, explanation: Work underground or above 15 feet",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 63
+      }
+    },
+    "wcq_04": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 4: Work on or over water",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 64
+      }
+    },
+    "wcq_04_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 4, explanation: Work on or over water",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 65
+      }
+    },
+    "wcq_05": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 5: Any other type of business",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 66
+      }
+    },
+    "wcq_05_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 5, explanation: Any other type of business",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 67
+      }
+    },
+    "wcq_06": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 6: Subcontractors used",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 68
+      }
+    },
+    "wcq_06_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 6, explanation: Subcontractors used",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 69
+      }
+    },
+    "wcq_07": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 7: Work sublet without certificates of insurance",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 70
+      }
+    },
+    "wcq_07_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 7, explanation: Work sublet without certificates of insurance",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 71
+      }
+    },
+    "wcq_08": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 8: Written safety program",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 72
+      }
+    },
+    "wcq_08_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 8, explanation: Written safety program",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 73
+      }
+    },
+    "wcq_09": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 9: Group transportation",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 74
+      }
+    },
+    "wcq_09_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 9, explanation: Group transportation",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 75
+      }
+    },
+    "wcq_10": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 10: Employees under 16 or over 60",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 76
+      }
+    },
+    "wcq_10_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 10, explanation: Employees under 16 or over 60",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 77
+      }
+    },
+    "wcq_11": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 11: Seasonal employees",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 78
+      }
+    },
+    "wcq_11_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 11, explanation: Seasonal employees",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 79
+      }
+    },
+    "wcq_12": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 12: Volunteer or donated labor",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 80
+      }
+    },
+    "wcq_12_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 12, explanation: Volunteer or donated labor",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 81
+      }
+    },
+    "wcq_13": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 13: Employees with physical handicaps",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 82
+      }
+    },
+    "wcq_13_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 13, explanation: Employees with physical handicaps",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 83
+      }
+    },
+    "wcq_14": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 14: Travel out of state",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 84
+      }
+    },
+    "wcq_14_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 14, explanation: Travel out of state",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 85
+      }
+    },
+    "wcq_15": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 15: Athletic teams sponsored",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 86
+      }
+    },
+    "wcq_15_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 15, explanation: Athletic teams sponsored",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 87
+      }
+    },
+    "wcq_16": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 16: Physicals after offers of employment",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 88
+      }
+    },
+    "wcq_16_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 16, explanation: Physicals after offers of employment",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 89
+      }
+    },
+    "wcq_17": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 17: Other insurance with this insurer",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 90
+      }
+    },
+    "wcq_17_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 17, explanation: Other insurance with this insurer",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 91
+      }
+    },
+    "wcq_18": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 18: Coverage declined, cancelled or non-renewed in the last three years",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 92
+      }
+    },
+    "wcq_18_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 18, explanation: Coverage declined, cancelled or non-renewed in the last three years",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 93
+      }
+    },
+    "wcq_19": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 19: Employee health plans provided",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 94
+      }
+    },
+    "wcq_19_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 19, explanation: Employee health plans provided",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 95
+      }
+    },
+    "wcq_20": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 20: Employees work for other businesses or subsidiaries",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 96
+      }
+    },
+    "wcq_20_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 20, explanation: Employees work for other businesses or subsidiaries",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 97
+      }
+    },
+    "wcq_21": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 21: Employees leased to or from other employers",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 98
+      }
+    },
+    "wcq_21_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 21, explanation: Employees leased to or from other employers",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 99
+      }
+    },
+    "wcq_22": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 22: Employees predominantly working at home",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 100
+      }
+    },
+    "wcq_22_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 22, explanation: Employees predominantly working at home",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 101
+      }
+    },
+    "wcq_23": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 23: Tax liens or bankruptcy in the last five years",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 102
+      }
+    },
+    "wcq_23_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 23, explanation: Tax liens or bankruptcy in the last five years",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 103
+      }
+    },
+    "wcq_24": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "x-intake": {
+        "label": "ACORD 130 No. 24: Unpaid workers' comp premium due",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 104
+      }
+    },
+    "wcq_24_explain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000,
+      "x-intake": {
+        "label": "ACORD 130 No. 24, explanation: Unpaid workers' comp premium due",
+        "section": "workers_comp",
+        "required": false,
+        "rank": 105
+      }
+    },
     "census": {
       "type": "array",
       "maxItems": 5000,

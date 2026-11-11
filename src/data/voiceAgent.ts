@@ -7,8 +7,8 @@ import { INTAKE_FIELDS } from "../../supabase/functions/_shared/intakeSchema.ts"
 import { describeWorkspaceAnswer, NEXT_FIELDS, unsettledForTurn } from "../../supabase/functions/chamber-extract/prompt.ts";
 import type { ChamberData } from "./chamberTypes";
 import { chatAnswers } from "./chat";
-import { censusSummary, isSettled, statusesOf, workspaceAnswersOpen } from "./followUp";
-import { WORKSPACE_ANSWERS } from "../../supabase/functions/_shared/followUp.ts";
+import { censusSummary, fieldApplies, isSettled, statusesOf, workspaceAnswersOpen } from "./followUp";
+import { CHAT_NEVER_ASKS } from "../../supabase/functions/_shared/followUp.ts";
 import type { ProvenanceMap } from "./provenance";
 
 /** The version of Lenore's voice prompt this Chamber's updates are written for. */
@@ -34,7 +34,8 @@ export function voiceContextUpdate(data: ChamberData, provenance: ProvenanceMap)
   const answers = chatAnswers(data);
   const workspace = workspaceAnswersOpen(answers, statusesOf(provenance));
   const statuses = statusesOf(provenance);
-  const answered = (key: string) => !(key in WORKSPACE_ANSWERS) || isSettled((answers as Record<string, unknown>)[key], statuses[key]);
+  const answered = (key: string) =>
+    (!CHAT_NEVER_ASKS.has(key) && fieldApplies(key, answers)) || isSettled((answers as Record<string, unknown>)[key], statuses[key]);
   const settled = INTAKE_FIELDS.filter((f) => f.key !== "census" && !open.has(f.key) && answered(f.key)).map((f) => f.label);
   return [
     "Intake update. Field names only: an update never holds the prospect's answers.",

@@ -40,6 +40,7 @@ CREATE TABLE auth.users (id uuid PRIMARY KEY, raw_user_meta_data jsonb);
 \i supabase/migrations/20261111097000_intake_schema_v3_loss_history.sql
 \i supabase/migrations/20261111098000_intake_schema_v3_medical_plans.sql
 \i supabase/migrations/20261111099000_intake_schema_v3_suta_rates.sql
+\i supabase/migrations/20261111100000_intake_schema_v3_acord_130_questions.sql
 
 -- ---------- helpers ----------
 -- The path chamber_data_error names for d, or NULL when d is acceptable.
@@ -244,4 +245,27 @@ BEGIN
   PERFORM pg_temp.must_refuse(jsonb_build_object('suta_rates', (SELECT jsonb_agg(jsonb_build_object('state', 'CA')) FROM generate_series(1, 61))), 'suta_rates', '61 rates');
   PERFORM pg_temp.must_accept('{"medical_plans":[{"name":"Gold PPO","rate_ee":612.4}]}', 'medical plans after K-4.2');
   RAISE NOTICE 'intake_schema_v3: unemployment rate cases passed';
+END $$;
+
+-- ---------- K-3.4 the ACORD 130 general information questions ----------
+DO $$
+DECLARE
+  n int;
+BEGIN
+  PERFORM pg_temp.must_accept('{"wcq_01":false,"wcq_06":true,"wcq_06_explain":"About 20% of the work","wcq_13":null,"wcq_24":true,"wcq_24_explain":null}', 'ACORD 130 answers');
+  PERFORM pg_temp.must_refuse('{"wcq_06":"yes"}', 'wcq_06', 'a question answered in text');
+  PERFORM pg_temp.must_refuse('{"wcq_06_explain":20}', 'wcq_06_explain', 'an explanation that is not text');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('wcq_24_explain', repeat('x', 1001)), 'wcq_24_explain', 'an explanation of 1,001 characters');
+  PERFORM pg_temp.must_refuse('{"wcq_25":true}', 'wcq_25', 'a twenty-fifth question');
+  PERFORM pg_temp.must_refuse('{"wcq_00":true}', 'wcq_00', 'a question numbered zero');
+  -- Every one of the 24 is known, with its explanation, and can be reviewed by an advisor.
+  FOR n IN 1..24 LOOP
+    IF public.chamber_data_field_kind(format('wcq_%s', lpad(n::text, 2, '0'))) IS DISTINCT FROM 'boolean'
+       OR public.chamber_data_field_kind(format('wcq_%s_explain', lpad(n::text, 2, '0'))) IS DISTINCT FROM 'text' THEN
+      RAISE EXCEPTION 'FAIL: ACORD 130 question % is not a yes or no with a text explanation', n;
+    END IF;
+  END LOOP;
+  IF NOT public.is_reviewable_field('wcq_13') THEN RAISE EXCEPTION 'FAIL: an ACORD 130 answer cannot be reviewed'; END IF;
+  PERFORM pg_temp.must_accept('{"suta_rates":[{"state":"CA","rate":3.4}]}', 'unemployment rates after K-3.4');
+  RAISE NOTICE 'intake_schema_v3: ACORD 130 cases passed';
 END $$;

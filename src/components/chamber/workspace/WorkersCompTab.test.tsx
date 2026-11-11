@@ -114,4 +114,28 @@ describe("the Workers' comp tab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(held()[4]).toEqual({ policy_year: 2020, no_coverage: true });
   });
+
+  // K-3.4
+  it("lists the 24 ACORD 130 questions in the form's words, naming the edition", () => {
+    render(<Harness show={() => null} />);
+    expect(screen.getByRole("heading", { name: "ACORD 130 (2017/05): General Information" })).toBeInTheDocument();
+    expect(screen.getByText("ANY WORK PERFORMED UNDERGROUND OR ABOVE 15 FEET?")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^Add No\. \d+:/ })).toHaveLength(24);
+  });
+
+  it("takes a yes with its explanation, and asks for no explanation of a no", () => {
+    render(<Harness show={(d) => [d.wcq_06, d.wcq_06_explain]} />);
+    expect(screen.queryByRole("button", { name: /explanation/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add No. 6: Subcontractors used" }));
+    fireEvent.change(screen.getByLabelText("No. 6: Subcontractors used"), { target: { value: "yes" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add No. 6: Subcontractors used (explanation)" }));
+    fireEvent.change(screen.getByLabelText("No. 6: Subcontractors used (explanation)"), { target: { value: "About 20% of the work" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(held()).toEqual([true, "About 20% of the work"]);
+    fireEvent.click(screen.getByRole("button", { name: "Edit No. 6: Subcontractors used" }));
+    fireEvent.change(screen.getByLabelText("No. 6: Subcontractors used"), { target: { value: "no" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.queryByRole("button", { name: /No\. 6: Subcontractors used \(explanation\)/ })).not.toBeInTheDocument();
+  });
 });

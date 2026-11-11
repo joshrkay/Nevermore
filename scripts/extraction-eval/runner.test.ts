@@ -120,7 +120,8 @@ describe("runFixture", () => {
       buildUserPrompt({
         message: "Payroll is getting harder to manage with 55 employees.",
         context: chatAnswers(afterFirst),
-        statuses: { employee_count: "confirmed" },
+        // No. 17 of the ACORD 130 questions is closed once the intake has an answer (K-3.4).
+        statuses: { employee_count: "confirmed", wcq_17: "not_applicable" },
         // The conversation so far, from Lenore's opening line to her answer to the first message.
         recent: [
           { sender: "lenore", text: OPENING_MESSAGE },

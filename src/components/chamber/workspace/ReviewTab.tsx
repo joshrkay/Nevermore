@@ -1,3 +1,4 @@
+import { fieldApplies } from "@/data/followUp";
 import { statesWithoutRate, SUTA_RATE_HINT } from "@/data/sutaRates";
 import { isRowListField } from "@/data/rowColumns";
 import RowsField from "./RowsField";
@@ -61,13 +62,14 @@ const displayOf = (field: FieldKey, value: unknown): string | null => {
 // Every answer the packet draws on, by section, each editable in place.
 function rowsBySection(data: ChamberData): Record<ReviewSection, Row[]> {
   return Object.fromEntries(
-    REVIEW_SECTIONS.map(({ key }) => [key, REVIEW_FIELDS[key].map((field) => ({ label: FIELD_LABELS[field], field, display: displayOf(field, data[field]) }))]),
+    // A field that doesn't apply yet (the explanation of a question not answered yes) has no row.
+    REVIEW_SECTIONS.map(({ key }) => [key, REVIEW_FIELDS[key].filter((field) => fieldApplies(field, data)).map((field) => ({ label: FIELD_LABELS[field], field, display: displayOf(field, data[field]) }))]),
   ) as Record<ReviewSection, Row[]>;
 }
 
 /** How many of a section's answers are settled (an answer, or "Doesn't apply" or "Not known yet"), of how many. */
 function sectionProgress(section: ReviewSection, data: ChamberData, provenance: ProvenanceMap, verified: ReadonlySet<string>): { settled: number; total: number } {
-  const fields = REVIEW_FIELDS[section];
+  const fields = REVIEW_FIELDS[section].filter((field) => fieldApplies(field, data));
   // An answer an advisor verified is settled too, as in the rows and the open items: not one in required
   // conflict (certification still needs it chosen) and not one with no answer (verifying never supplies one).
   const settled = fields.filter((f) =>

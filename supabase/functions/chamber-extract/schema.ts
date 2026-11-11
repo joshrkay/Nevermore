@@ -3,6 +3,7 @@
 // (_shared/intakeSchema.ts), so chat can answer every top-level field but the census, and nothing the schema
 // doesn't know. Relative imports only, so it runs under Deno and Vitest alike.
 
+import { ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "../_shared/acord130.ts";
 import { CHAT_CANNOT_TAKE } from "../_shared/followUp.ts";
 import { INTAKE_FIELDS, INTAKE_SCHEMA, LIMITS, type JsonSchema } from "../_shared/intakeSchema.ts";
 
@@ -128,6 +129,16 @@ export const FIELD_QUESTION: Record<string, string> = {
   suta_rates: "Do you know your state unemployment tax rate?",
 };
 
+// The ACORD 130 questions (K-3.4): each a yes or no in the form's own sense, and the explanation a yes needs.
+for (const q of ACORD_130_QUESTIONS) {
+  const answer = acordAnswerKey(q.number);
+  FIELD_GUIDE[answer] = `true or false, as the prospect answers this question from the workers' comp application: "${q.ask}"`;
+  FIELD_GUIDE[acordExplainKey(q.number)] = `Their explanation, in their own words, once they have answered yes to "${q.ask}"${q.askMore ? ` (${q.askMore})` : ""}; report ${answer} with it`;
+  FIELD_QUESTION[answer] = q.ask;
+  FIELD_QUESTION[acordExplainKey(q.number)] = q.askMore ?? "Can you tell me a little more about that?";
+}
+
+
 // The census (the employee roster) comes only from an uploaded file (D21), and the FEIN is typed into the workspace.
 const NOT_FROM_CHAT = CHAT_CANNOT_TAKE;
 
@@ -163,7 +174,8 @@ export const FIELD_STATUSES = ["confirmed", "inferred", "incomplete", "unknown"]
 export const MAX_EVIDENCE_CHARS = 200;
 // An answer can carry a value, a status and a quote for every field, plus the reply: well past the
 // Anthropic adapter's default cap, which would cut it off. Not part of the contract hash.
-export const CHAT_MAX_TOKENS = 8192;
+// (Raised from 8192 with intake schema v3's fields: handler.test.ts works out what a full answer needs.)
+export const CHAT_MAX_TOKENS = 16384;
 
 const LABELS = new Map(INTAKE_FIELDS.map((f) => [f.key, f.label]));
 

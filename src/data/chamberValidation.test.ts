@@ -442,6 +442,11 @@ function serverRefusal(d: unknown): string | null {
   for (const k of ["multiple_entities", "virgin_medical", "has_401k", "employer_contributes", "has_nonexempt", "has_handbook", "has_1099", "ca_contractors", "uses_physical_clocks", "uses_mobile_app", "uses_computer_timekeeping", "shift_differentials"]) kinds[k] = "bool";
   for (const k of ["street_address", "website", "operations_description", "current_peo", "peo_renewal_date"]) kinds[k] = "text";
   kinds.in_peo = "bool";
+  // K-3.4: each ACORD 130 question is a yes or no with an explanation.
+  for (let n = 1; n <= 24; n++) {
+    kinds[`wcq_${String(n).padStart(2, "0")}`] = "bool";
+    kinds[`wcq_${String(n).padStart(2, "0")}_explain`] = "text";
+  }
   kinds.naics_code = "naics";
   for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"], ["wc_experience_mod", "experience_mod"], ["wc_annual_premium", "dollars"]]) kinds[k] = kind;
   // New in v3: the scalar kinds public.chamber_data_scalar_reason checks, and the lists of rows.

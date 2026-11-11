@@ -55,6 +55,25 @@ A census row needs a non-blank `first_name`; every other key may be absent. Unkn
 | `dependents[].last_name`, `.dob` | Text, at most 200 and 40 characters | `""` |
 | `dependents[].relationship` | `spouse`, `domestic_partner`, `child` or `other` | `other` |
 
+#### The ACORD 130 questions
+
+New in v3 (K-3.4). `wcq_01` to `wcq_24` are the 24 yes/no questions of ACORD 130 (2017/05), General Information, each a boolean, and `wcq_01_explain` to `wcq_24_explain` the text explanation the form asks for with a "yes". The form's wording is in `supabase/functions/_shared/acord130.ts`, taken from the form itself; a new edition is a new list and a new schema version. The Workers' comp tab and The Manuscript print every question in that wording.
+
+Lenore asks a question, then its explanation only after a yes (`fieldApplies` in `_shared/followUp.ts`). She is not asked to ask what the intake can work out (`src/data/acordRules.ts`, applied whenever an answer changes):
+
+| Question | Rule |
+| --- | --- |
+| No. 1 to 4 (aircraft or watercraft, hazardous material, work underground or at height, work on or over water) | Marked "Doesn't apply" for an office-only employer: every class code on the census is 8810, 8742, 8871, 8820 or 8803, or, with no class codes, the NAICS code is in sectors 51, 52, 54 or 55. The class code list is from general knowledge and awaits the advisory lead's check |
+| No. 10 (employees under 16 or over 60) | Answered from the census's dates of birth and ages, to confirm. Never asked |
+| No. 13 (employees with physical handicaps) | Never raised by Lenore, in chat or aloud. Answered on the Workers' comp tab |
+| No. 14, 22 (travel out of state; working at home, and how many) | Answered from the census's `travels` and `remote` columns, to confirm |
+| No. 17 (other insurance with this insurer) | Marked "Doesn't apply" once the intake has an answer: there is no insurer yet |
+| No. 18 (coverage declined, cancelled or non-renewed) | Marked "Doesn't apply" when the headquarters state is Missouri, as the form says |
+| No. 19 (employee health plans provided) | Answered from `virgin_medical` and `medical_plans`, to confirm |
+| No. 21 (employees leased to or from other employers) | Answered from `in_peo`, to confirm |
+
+A question is closed once, when its rule becomes true, and only while unanswered and untouched, so one the prospect reopens stays open. An answer worked out from the intake follows its source until the prospect confirms or changes it.
+
 #### Lists of rows
 
 New in v3. The database checks each key of a row as the kind named here (`public.chamber_data_row_field_kind`) and holds each list to its cap (`public.chamber_data_row_list_max`); `src/data/schemaSync.test.ts` compares both with the schema's `$defs`. The workspace shows and edits each list as a table (`src/data/rowColumns.ts`, `RowsField`).
@@ -126,6 +145,54 @@ Writers: **C** chat extraction (`chamber-extract`, which asks for every field bu
 | Workers' comp | `wc_annual_premium` | Workers' comp annual premium | dollars | Recommended | 14 | C |
 | Workers' comp | `owners_officers` | Owners and officers | list of rows | Recommended | 54 | C E |
 | Workers' comp | `loss_history` | Loss history | list of rows | Recommended | 55 | C E |
+| Workers' comp | `wcq_01` | ACORD 130 No. 1: Aircraft or watercraft | boolean | Recommended | 58 | C E |
+| Workers' comp | `wcq_01_explain` | ACORD 130 No. 1, explanation: Aircraft or watercraft | text | Recommended | 59 | C E |
+| Workers' comp | `wcq_02` | ACORD 130 No. 2: Hazardous material | boolean | Recommended | 60 | C E |
+| Workers' comp | `wcq_02_explain` | ACORD 130 No. 2, explanation: Hazardous material | text | Recommended | 61 | C E |
+| Workers' comp | `wcq_03` | ACORD 130 No. 3: Work underground or above 15 feet | boolean | Recommended | 62 | C E |
+| Workers' comp | `wcq_03_explain` | ACORD 130 No. 3, explanation: Work underground or above 15 feet | text | Recommended | 63 | C E |
+| Workers' comp | `wcq_04` | ACORD 130 No. 4: Work on or over water | boolean | Recommended | 64 | C E |
+| Workers' comp | `wcq_04_explain` | ACORD 130 No. 4, explanation: Work on or over water | text | Recommended | 65 | C E |
+| Workers' comp | `wcq_05` | ACORD 130 No. 5: Any other type of business | boolean | Recommended | 66 | C E |
+| Workers' comp | `wcq_05_explain` | ACORD 130 No. 5, explanation: Any other type of business | text | Recommended | 67 | C E |
+| Workers' comp | `wcq_06` | ACORD 130 No. 6: Subcontractors used | boolean | Recommended | 68 | C E |
+| Workers' comp | `wcq_06_explain` | ACORD 130 No. 6, explanation: Subcontractors used | text | Recommended | 69 | C E |
+| Workers' comp | `wcq_07` | ACORD 130 No. 7: Work sublet without certificates of insurance | boolean | Recommended | 70 | C E |
+| Workers' comp | `wcq_07_explain` | ACORD 130 No. 7, explanation: Work sublet without certificates of insurance | text | Recommended | 71 | C E |
+| Workers' comp | `wcq_08` | ACORD 130 No. 8: Written safety program | boolean | Recommended | 72 | C E |
+| Workers' comp | `wcq_08_explain` | ACORD 130 No. 8, explanation: Written safety program | text | Recommended | 73 | C E |
+| Workers' comp | `wcq_09` | ACORD 130 No. 9: Group transportation | boolean | Recommended | 74 | C E |
+| Workers' comp | `wcq_09_explain` | ACORD 130 No. 9, explanation: Group transportation | text | Recommended | 75 | C E |
+| Workers' comp | `wcq_10` | ACORD 130 No. 10: Employees under 16 or over 60 | boolean | Recommended | 76 | C E |
+| Workers' comp | `wcq_10_explain` | ACORD 130 No. 10, explanation: Employees under 16 or over 60 | text | Recommended | 77 | C E |
+| Workers' comp | `wcq_11` | ACORD 130 No. 11: Seasonal employees | boolean | Recommended | 78 | C E |
+| Workers' comp | `wcq_11_explain` | ACORD 130 No. 11, explanation: Seasonal employees | text | Recommended | 79 | C E |
+| Workers' comp | `wcq_12` | ACORD 130 No. 12: Volunteer or donated labor | boolean | Recommended | 80 | C E |
+| Workers' comp | `wcq_12_explain` | ACORD 130 No. 12, explanation: Volunteer or donated labor | text | Recommended | 81 | C E |
+| Workers' comp | `wcq_13` | ACORD 130 No. 13: Employees with physical handicaps | boolean | Recommended | 82 | C E |
+| Workers' comp | `wcq_13_explain` | ACORD 130 No. 13, explanation: Employees with physical handicaps | text | Recommended | 83 | C E |
+| Workers' comp | `wcq_14` | ACORD 130 No. 14: Travel out of state | boolean | Recommended | 84 | C E |
+| Workers' comp | `wcq_14_explain` | ACORD 130 No. 14, explanation: Travel out of state | text | Recommended | 85 | C E |
+| Workers' comp | `wcq_15` | ACORD 130 No. 15: Athletic teams sponsored | boolean | Recommended | 86 | C E |
+| Workers' comp | `wcq_15_explain` | ACORD 130 No. 15, explanation: Athletic teams sponsored | text | Recommended | 87 | C E |
+| Workers' comp | `wcq_16` | ACORD 130 No. 16: Physicals after offers of employment | boolean | Recommended | 88 | C E |
+| Workers' comp | `wcq_16_explain` | ACORD 130 No. 16, explanation: Physicals after offers of employment | text | Recommended | 89 | C E |
+| Workers' comp | `wcq_17` | ACORD 130 No. 17: Other insurance with this insurer | boolean | Recommended | 90 | C E |
+| Workers' comp | `wcq_17_explain` | ACORD 130 No. 17, explanation: Other insurance with this insurer | text | Recommended | 91 | C E |
+| Workers' comp | `wcq_18` | ACORD 130 No. 18: Coverage declined, cancelled or non-renewed in the last three years | boolean | Recommended | 92 | C E |
+| Workers' comp | `wcq_18_explain` | ACORD 130 No. 18, explanation: Coverage declined, cancelled or non-renewed in the last three years | text | Recommended | 93 | C E |
+| Workers' comp | `wcq_19` | ACORD 130 No. 19: Employee health plans provided | boolean | Recommended | 94 | C E |
+| Workers' comp | `wcq_19_explain` | ACORD 130 No. 19, explanation: Employee health plans provided | text | Recommended | 95 | C E |
+| Workers' comp | `wcq_20` | ACORD 130 No. 20: Employees work for other businesses or subsidiaries | boolean | Recommended | 96 | C E |
+| Workers' comp | `wcq_20_explain` | ACORD 130 No. 20, explanation: Employees work for other businesses or subsidiaries | text | Recommended | 97 | C E |
+| Workers' comp | `wcq_21` | ACORD 130 No. 21: Employees leased to or from other employers | boolean | Recommended | 98 | C E |
+| Workers' comp | `wcq_21_explain` | ACORD 130 No. 21, explanation: Employees leased to or from other employers | text | Recommended | 99 | C E |
+| Workers' comp | `wcq_22` | ACORD 130 No. 22: Employees predominantly working at home | boolean | Recommended | 100 | C E |
+| Workers' comp | `wcq_22_explain` | ACORD 130 No. 22, explanation: Employees predominantly working at home | text | Recommended | 101 | C E |
+| Workers' comp | `wcq_23` | ACORD 130 No. 23: Tax liens or bankruptcy in the last five years | boolean | Recommended | 102 | C E |
+| Workers' comp | `wcq_23_explain` | ACORD 130 No. 23, explanation: Tax liens or bankruptcy in the last five years | text | Recommended | 103 | C E |
+| Workers' comp | `wcq_24` | ACORD 130 No. 24: Unpaid workers' comp premium due | boolean | Recommended | 104 | C E |
+| Workers' comp | `wcq_24_explain` | ACORD 130 No. 24, explanation: Unpaid workers' comp premium due | text | Recommended | 105 | C E |
 | Operations & HR | `has_handbook` | Employee handbook | boolean | Recommended | 41 | C D |
 | Operations & HR | `handbook_last_updated` | Handbook last updated | text | Recommended | 42 | C |
 | Operations & HR | `hr_staff_count` | In-house HR staff | count | Recommended | 43 | C |

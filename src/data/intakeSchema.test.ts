@@ -63,6 +63,8 @@ describe("intake schema v3", () => {
     "medical_plans",
     // K-4.2 state unemployment rates
     "suta_rates",
+    // K-3.4 the ACORD 130 general information questions: a yes or no and an explanation for each of the 24
+    ...Array.from({ length: 24 }, (_, i) => `wcq_${String(i + 1).padStart(2, "0")}`).flatMap((key) => [key, `${key}_explain`]),
   ];
 
   it("only adds the common questions to v2, changing nothing v2 had", () => {
@@ -115,9 +117,11 @@ describe("intake schema v3", () => {
   });
 
   it("puts the workers' comp block in its own section", () => {
-    expect(INTAKE_FIELDS.filter((f) => f.section === "workers_comp").map((f) => f.key).sort()).toEqual([
+    expect(INTAKE_FIELDS.filter((f) => f.section === "workers_comp" && !f.key.startsWith("wcq_")).map((f) => f.key).sort()).toEqual([
       "loss_history", "owners_officers", "wc_annual_premium", "wc_carrier", "wc_experience_mod", "wc_renewal_date",
     ]);
+    // And the 24 ACORD 130 questions with their explanations (K-3.4).
+    expect(INTAKE_FIELDS.filter((f) => f.section === "workers_comp" && f.key.startsWith("wcq_"))).toHaveLength(48);
   });
 
   it("refuses to run a schema that uses a keyword the validator doesn't implement", () => {
@@ -319,6 +323,15 @@ describe("validateChamberData", () => {
     ]);
     expect(paths({ suta_rates: [{ rate: "3.4%" }] })).toEqual(["suta_rates[0].rate"]);
     expect(validateChamberData({ suta_rates: Array.from({ length: 61 }, () => ({ state: "CA" })) })).toEqual([{ path: "suta_rates", reason: "must have at most 60 entries" }]);
+  });
+
+  it("holds each ACORD 130 question as a yes or no with an explanation (K-3.4)", () => {
+    expect(validateChamberData({ wcq_06: true, wcq_06_explain: "About 20% of the work", wcq_01: false, wcq_13: null, wcq_24_explain: null })).toEqual([]);
+    expect(paths({ wcq_06: "yes", wcq_06_explain: 20, wcq_25: true })).toEqual(["wcq_06", "wcq_06_explain", "wcq_25"]);
+    expect(validateChamberData({ wcq_24_explain: "x".repeat(1001) })).toEqual([{ path: "wcq_24_explain", reason: "must be at most 1000 characters" }]);
+    const labels = Object.fromEntries(INTAKE_FIELDS.map((f) => [f.key, f.label]));
+    expect(labels.wcq_03).toBe("ACORD 130 No. 3: Work underground or above 15 feet");
+    expect(labels.wcq_03_explain).toBe("ACORD 130 No. 3, explanation: Work underground or above 15 feet");
   });
 
   it("refuses the legacy roster key, which no writer sends any more", () => {

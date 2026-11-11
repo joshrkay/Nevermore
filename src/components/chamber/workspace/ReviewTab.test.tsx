@@ -147,6 +147,9 @@ describe("ReviewTab needs your review", () => {
   });
 });
 
+// The workers' comp answers Review lists: an ACORD 130 question's explanation has a row only after a yes (K-3.4).
+const WC_ANSWERS = REVIEW_FIELDS.workers_comp.filter((field) => !field.endsWith("_explain")).length;
+
 describe("ReviewTab sections", () => {
   const complete = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY", "NJ"], pay_frequency: "bi-weekly" };
   const section = (name: string) => screen.getByRole("region", { name });
@@ -247,17 +250,17 @@ describe("ReviewTab sections", () => {
     // Not offered for an answer certification needs, nor for one already given.
     expect(screen.queryByRole("button", { name: "Pay frequency doesn't apply" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Company legal name doesn't apply" })).not.toBeInTheDocument();
-    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent(`0 of ${REVIEW_FIELDS.workers_comp.length} settled`);
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent(`0 of ${WC_ANSWERS} settled`);
 
     fireEvent.click(screen.getByRole("button", { name: "Workers' comp carrier doesn't apply" }));
     const row = document.getElementById("review-field-wc_carrier")!;
     expect(within(row).getByText("Doesn't apply")).toBeInTheDocument();
-    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent(`1 of ${REVIEW_FIELDS.workers_comp.length} settled`);
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent(`1 of ${WC_ANSWERS} settled`);
 
     fireEvent.click(screen.getByRole("button", { name: "Undo: Workers' comp carrier doesn't apply" }));
     expect(screen.queryByRole("button", { name: "Undo: Workers' comp carrier doesn't apply" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Workers' comp carrier doesn't apply" })).toBeInTheDocument();
-    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent(`0 of ${REVIEW_FIELDS.workers_comp.length} settled`);
+    expect(screen.getByTestId("progress-workers_comp")).toHaveTextContent(`0 of ${WC_ANSWERS} settled`);
   });
 
   it("marks the required answers wherever they sit, and only those", () => {

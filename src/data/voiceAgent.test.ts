@@ -137,7 +137,7 @@ const UPDATE_KNOWN: Record<number, string> = {
   // 2: unchanged from 1 (the rebrand changed only the prompt).
   2: "2ed1005fe6f2eee96f13e477db8fe187d51d8231337c217d92253ae3f0ac5b17",
   // 3: the "Entered in the workspace" line, and v3's fields among the labels.
-  3: "2de976e3dc13bb27cd90d7ee87d7c082eb5400318d3df995ff78997182e1a276",
+  3: "c92e1288f6a9008a1a5517980be158a0102496ff5eb370614527ce96d33e457c",
 };
 
 describe("Lenore's voice prompt", () => {

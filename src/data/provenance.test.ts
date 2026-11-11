@@ -898,3 +898,96 @@ describe("rows heard in conversation or read from a document", () => {
     expect(owners(applyExtraction(typed, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: doc }))).toEqual([{ name: "Dana Reyes", ownership_percent: 60 }]);
   });
 });
+
+// K-3.4: the ACORD 130 questions. The rules below run whenever an answer changes; none of them asks the prospect
+// anything, and each leaves alone a question the prospect has answered or reopened.
+describe("the ACORD 130 questions: what closes them and what answers them", () => {
+  const heard = { kind: "transcript" as const, message_id: "m7" };
+  const empty: IntakeState = { data: EMPTY_CHAMBER_DATA, provenance: {} };
+  const emp = (over: Record<string, unknown> = {}) => ({ id: Math.random().toString(36).slice(2), first_name: "A", last_name: "B", work_state: "CA", compensation_type: "salary", employment_type: "full_time", classification: "w2", ...over });
+  const withCensus = (state: IntakeState, rows: Record<string, unknown>[]) => applyExtraction(state, { census: rows }, { source: { kind: "document", document_id: "d1" }, statuses: { census: "confirmed" } });
+  const status = (s: IntakeState, field: string) => (s.provenance as Record<string, { status?: string } | undefined>)[field]?.status;
+  const value = (s: IntakeState, field: string) => (s.data as unknown as Record<string, unknown>)[field];
+  const hazards = ["wcq_01", "wcq_02", "wcq_03", "wcq_04"];
+
+  it("marks 'other insurance with this insurer' as not applying once the intake has begun: there is no insurer yet", () => {
+    const begun = applyExtraction(empty, { company_name: "Acme" }, { source: heard });
+    expect(status(begun, "wcq_17")).toBe("not_applicable");
+    // The prospect can reopen it, and it then stays open.
+    const reopened = applyFieldAction(begun, { type: "reopen", field: "wcq_17" });
+    expect(status(applyExtraction(reopened, { industry: "Print" }, { source: heard }), "wcq_17")).toBeUndefined();
+  });
+
+  it("closes the four hazard questions for an employer whose every class code is an office code", () => {
+    const office = withCensus(empty, [emp({ class_code: "8810" }), emp({ class_code: "8742" })]);
+    expect(hazards.map((f) => status(office, f))).toEqual(Array(4).fill("not_applicable"));
+    expect(status(office, "wcq_05")).toBeUndefined();
+  });
+
+  it("leaves them open when anyone has another class code, or a class code is missing", () => {
+    expect(hazards.map((f) => status(withCensus(empty, [emp({ class_code: "8810" }), emp({ class_code: "5551" })]), f))).toEqual(Array(4).fill(undefined));
+    expect(hazards.map((f) => status(withCensus(empty, [emp({ class_code: "8810" }), emp()]), f))).toEqual(Array(4).fill(undefined));
+  });
+
+  it("goes by the industry when the census has no class codes: information, finance, professional services and management", () => {
+    for (const naics_code of ["541430", "513210", "522110", "551112"]) {
+      expect(hazards.map((f) => status(applyFieldAction(empty, { type: "edit", field: "naics_code", value: naics_code }), f)), naics_code).toEqual(Array(4).fill("not_applicable"));
+    }
+    expect(hazards.map((f) => status(applyFieldAction(empty, { type: "edit", field: "naics_code", value: "238160" }), f))).toEqual(Array(4).fill(undefined));
+    // Class codes outrank the industry: a design firm whose census has a roofer is not office-only.
+    const mixed = withCensus(applyFieldAction(empty, { type: "edit", field: "naics_code", value: "541430" }), [emp({ class_code: "5551" })]);
+    expect(hazards.map((f) => status(mixed, f))).toEqual(Array(4).fill(undefined));
+  });
+
+  it("lets the prospect reopen a hazard question and answer it, and never closes one already answered", () => {
+    const office = withCensus(empty, [emp({ class_code: "8810" })]);
+    const reopened = applyFieldAction(office, { type: "reopen", field: "wcq_03" });
+    const later = applyExtraction(reopened, { company_name: "Acme" }, { source: heard });
+    expect(status(later, "wcq_03")).toBeUndefined();
+    const answered = applyFieldAction(empty, { type: "edit", field: "wcq_01", value: true });
+    expect(status(withCensus(answered, [emp({ class_code: "8810" })]), "wcq_01")).toBe("confirmed");
+  });
+
+  it("does not ask a Missouri applicant about declined or cancelled coverage, as the form says", () => {
+    expect(status(applyFieldAction(empty, { type: "edit", field: "hq_state", value: "MO" }), "wcq_18")).toBe("not_applicable");
+    expect(status(applyFieldAction(empty, { type: "edit", field: "hq_state", value: "KS" }), "wcq_18")).toBeUndefined();
+  });
+
+  it("answers 'employees under 16 or over 60' from the census's ages, for the prospect to confirm", () => {
+    const old = withCensus(empty, [emp({ class_code: "5551", dob: "1950-01-01" }), emp({ class_code: "5551", dob: "1990-01-01" })]);
+    expect([value(old, "wcq_10"), status(old, "wcq_10")]).toEqual([true, "inferred"]);
+    const none = withCensus(empty, [emp({ class_code: "5551", dob: "1990-01-01" }), emp({ class_code: "5551", age: 40 })]);
+    expect([value(none, "wcq_10"), status(none, "wcq_10")]).toEqual([false, "inferred"]);
+    // The form says under 16 or over 60: someone who is 16 or 60 is neither.
+    expect(value(withCensus(empty, [emp({ class_code: "5551", age: 16 }), emp({ class_code: "5551", age: 60 })]), "wcq_10")).toBe(false);
+    expect(value(withCensus(empty, [emp({ class_code: "5551", age: 61 })]), "wcq_10")).toBe(true);
+    expect(value(withCensus(empty, [emp({ class_code: "5551", age: 15 })]), "wcq_10")).toBe(true);
+    // With someone's age unknown and nobody known to be under 16 or over 60, the census can't say.
+    expect(value(withCensus(empty, [emp({ class_code: "5551", dob: "1990-01-01" }), emp({ class_code: "5551" })]), "wcq_10")).toBeNull();
+  });
+
+  it("answers travel and working at home from the census, with how many work at home", () => {
+    const s = withCensus(empty, [emp({ class_code: "5551", remote: true, travels: false }), emp({ class_code: "5551", remote: true, travels: true }), emp({ class_code: "5551", remote: false, travels: false })]);
+    expect([value(s, "wcq_14"), value(s, "wcq_22"), value(s, "wcq_22_explain")]).toEqual([true, true, "2 employees"]);
+    const no = withCensus(empty, [emp({ class_code: "5551", remote: false, travels: false })]);
+    expect([value(no, "wcq_14"), value(no, "wcq_22"), value(no, "wcq_22_explain")]).toEqual([false, false, null]);
+    expect(value(withCensus(empty, [emp({ class_code: "5551" })]), "wcq_22")).toBeNull();
+  });
+
+  it("answers 'health plans provided' and 'employees leased' from the answers already given", () => {
+    expect(value(applyExtraction(empty, { virgin_medical: false }, { source: heard }), "wcq_19")).toBe(true);
+    expect(value(applyExtraction(empty, { virgin_medical: true }, { source: heard }), "wcq_19")).toBe(false);
+    expect(value(applyFieldAction(empty, { type: "edit", field: "medical_plans", value: [{ name: "Gold PPO" }] }), "wcq_19")).toBe(true);
+    expect(value(applyExtraction(empty, { in_peo: true }, { source: heard }), "wcq_21")).toBe(true);
+    expect(value(applyExtraction(empty, { in_peo: false }, { source: heard }), "wcq_21")).toBe(false);
+  });
+
+  it("follows what it was worked out from until the prospect confirms or changes it, and never after", () => {
+    const yes = applyExtraction(empty, { in_peo: true }, { source: heard });
+    expect(value(applyExtraction(yes, { in_peo: false }, { source: { ...heard, message_id: "m8" }, corrections: ["in_peo"] }), "wcq_21")).toBe(false);
+    const confirmed = applyFieldAction(yes, { type: "confirm", field: "wcq_21" });
+    expect(value(applyExtraction(confirmed, { in_peo: false }, { source: { ...heard, message_id: "m8" }, corrections: ["in_peo"] }), "wcq_21")).toBe(true);
+    const own = applyFieldAction(empty, { type: "edit", field: "wcq_19", value: false });
+    expect(value(applyExtraction(own, { virgin_medical: false }, { source: heard }), "wcq_19")).toBe(false);
+  });
+});

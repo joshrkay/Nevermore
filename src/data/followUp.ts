@@ -6,7 +6,7 @@ import type { ProvenanceMap } from "./provenance";
 import { type CensusSummary } from "../../supabase/functions/_shared/followUp.ts";
 import { certificationBlockingItems, NO_VERIFIED_FIELDS, requiredItems } from "./requiredItems";
 
-export { CERTIFICATION_REQUIRED, isSettled, readyToCertify, unsettledFields, workspaceAnswersOpen } from "../../supabase/functions/_shared/followUp.ts";
+export { CERTIFICATION_REQUIRED, fieldApplies, isSettled, readyToCertify, unsettledFields, workspaceAnswersOpen } from "../../supabase/functions/_shared/followUp.ts";
 
 /** Each captured field's status, as the follow-up rules read it. */
 export const statusesOf = (provenance: ProvenanceMap): Record<string, string> =>

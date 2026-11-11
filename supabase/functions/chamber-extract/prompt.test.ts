@@ -123,6 +123,15 @@ describe("answers entered in the workspace", () => {
     expect(named({ ...known, ...TABLES })).toEqual([]);
   });
 
+  // K-3.4: the handicap question is never raised in conversation, and the age question is answered from the census.
+  it("never include or ask the ACORD 130 questions about handicaps and ages: they are on the Workers' comp tab, unspoken", () => {
+    const asked = unsettledForTurn({}).map((f) => f.key);
+    expect(asked).toContain("wcq_11");
+    for (const quiet of ["wcq_10", "wcq_13", "wcq_10_explain", "wcq_13_explain"]) expect(asked, quiet).not.toContain(quiet);
+    expect(line({ message: "hi" }, {})).not.toMatch(/wcq_10|wcq_13/);
+    expect(unsettledForTurn({ context: { wcq_13: true } }).map((f) => f.key)).not.toContain("wcq_13_explain");
+  });
+
   it("are not asked about even when an advisor asked: the request shows on the answer in the workspace", () => {
     expect(unsettledForTurn({ requested: ["fein", "company_name"] }).slice(0, 1).map((f) => f.key)).toEqual(["company_name"]);
   });

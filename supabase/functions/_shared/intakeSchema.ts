@@ -24,7 +24,9 @@
 // v2.json are those versions as they were published, and are never rewritten. src/data/intakeSchema.test.ts
 // keeps v3.json equal to this schema and checks that v3 only adds to v2.
 //
-// No imports: it runs under Deno (the edge functions) and Vite (the app) alike.
+// Relative imports only: it runs under Deno (the edge functions) and Vite (the app) alike.
+
+import { ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "./acord130.ts";
 
 export const INTAKE_SCHEMA_VERSION = 3;
 
@@ -206,6 +208,12 @@ const FIELDS: [key: string, rule: JsonSchema, section: FieldSection, label: stri
   ["medical_plans", rows("medicalPlan", LIMITS.medicalPlans), "benefits", "Current medical plans"],
   // K-4.2: the employer's unemployment tax rate in each state of operation.
   ["suta_rates", rows("sutaRate", LIMITS.sutaRates), "payroll", "State unemployment tax rates"],
+  // K-3.4: the yes/no questions of ACORD 130's general information section, each with the explanation a "yes"
+  // needs (acord130.ts holds the form's wording). A question is followed by its explanation.
+  ...ACORD_130_QUESTIONS.flatMap((q): [string, JsonSchema, FieldSection, string][] => [
+    [acordAnswerKey(q.number), flag, "workers_comp", `ACORD 130 No. ${q.number}: ${q.label}`],
+    [acordExplainKey(q.number), text(), "workers_comp", `ACORD 130 No. ${q.number}, explanation: ${q.label}`],
+  ]),
 
   ["census", { type: "array", maxItems: LIMITS.census, items: { $ref: "#/$defs/censusRow" } }, "census", "Employee census"],
 ];

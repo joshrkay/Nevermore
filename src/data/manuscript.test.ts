@@ -235,7 +235,11 @@ describe("buildManuscript covers the whole intake", () => {
     const m = buildManuscript(DEMO_CHAMBER_DATA, opts);
     const rows = rowsOf(m);
     // The census is a table of its own, in the Workforce section.
-    const renderedElsewhere: Record<string, string> = { census: "the census table and the state breakdown" };
+    const renderedElsewhere: Record<string, string> = {
+      census: "the census table and the state breakdown",
+      // K-3.4: 24 questions and their explanations read as one table, in the form's own words.
+      ...Object.fromEntries(Object.keys(EMPTY_CHAMBER_DATA).filter((f) => f.startsWith("wcq_")).map((f) => [f, "the ACORD 130 table in the workers' comp section"])),
+    };
     const keyed = new Map<string, string>(Object.entries(rows).flatMap(([section, list]) => list.flatMap(([, , field]) => (field ? [[field, section] as [string, string]] : []))));
     for (const field of Object.keys(EMPTY_CHAMBER_DATA)) {
       if (field in renderedElsewhere) continue;
@@ -376,6 +380,10 @@ describe("buildManuscript covers the whole intake", () => {
       ["2023", "—", "—", "—", "—", "—", "—", "—", "Yes"],
     ]);
     expect(m.workersCompRows.find(([, , field]) => field === "loss_history")).toEqual(["Loss History", "3 listed", "loss_history"]);
+    // With coverage every year, the "No coverage" column is left out, leaving room for the figures.
+    const covered = buildManuscript({ ...DEMO_CHAMBER_DATA, loss_history: [{ policy_year: 2025, premium: 18400 }] }, opts).tables.find((t) => t.field === "loss_history")!;
+    expect(covered.columns).toEqual(["Policy year", "Carrier", "Premium", "Experience mod", "Claims", "Paid", "Reserved", "Valued as of"]);
+    expect(covered.rows).toEqual([["2025", "—", "$18,400", "—", "—", "—", "—", "—"]]);
   });
 
   // K-4.1: what the employer pays now, for a side-by-side; renewal rates beside current ones when it has them.
@@ -407,6 +415,19 @@ describe("buildManuscript covers the whole intake", () => {
     expect(table.columns).toEqual(["State", "Rate", "Effective year"]);
     expect(table.rows).toEqual([["CA", "3.4%", "2026"], ["TX", "2.7%", "—"]]);
     expect(m.payrollRows.find(([, , field]) => field === "suta_rates")).toEqual(["State Unemployment Tax Rates", "2 listed", "suta_rates"]);
+  });
+
+  // K-3.4: every question of the form, in the form's words, so a PEO's supplemental form is already answered.
+  it("prints the ACORD 130 questions with each answer and explanation, naming the form's edition", () => {
+    const na = { status: "not_applicable" as const, source: { kind: "prospect_edit" as const }, updated_at: AT };
+    const m = buildManuscript({ ...DEMO_CHAMBER_DATA, wcq_06: true, wcq_06_explain: "About 20% of the work", wcq_08: false }, { ...opts, provenance: { wcq_17: na } });
+    const table = m.tables.find((t) => t.title === "ACORD 130 (2017/05): General Information")!;
+    expect([table.section, table.columns]).toEqual(["workers_comp", ["No.", "Question", "Answer", "Explanation"]]);
+    expect(table.rows).toHaveLength(24);
+    expect(table.rows[5]).toEqual(["6", "ARE SUB-CONTRACTORS USED? (If \"YES\", give % of work subcontracted)", "Yes", "About 20% of the work"]);
+    expect(table.rows[7]).toEqual(["8", "IS A WRITTEN SAFETY PROGRAM IN OPERATION?", "No", "—"]);
+    expect(table.rows[16].slice(2)).toEqual(["Not applicable", "—"]);
+    expect(table.rows[14].slice(2)).toEqual(["Not provided", "—"]);
   });
 
   it("shows the workers' comp block and the census class codes", () => {

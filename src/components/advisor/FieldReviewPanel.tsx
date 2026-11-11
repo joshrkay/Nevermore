@@ -1,3 +1,4 @@
+import { fieldApplies } from "@/data/followUp";
 import RowsField from "@/components/chamber/workspace/RowsField";
 import { isRowListField } from "@/data/rowColumns";
 import { formatAnswer } from "@/data/answerFormat";
@@ -127,7 +128,8 @@ const FieldReviewPanel = ({ census, ...props }: FieldReviewPanelProps) => {
         </nav>
       </div>
       {REVIEW_SECTIONS.map(({ key, title }) => {
-        const fields = SECTION_FIELDS[key];
+        // The explanation of an ACORD 130 question has a row only once the question is answered yes (K-3.4).
+        const fields = SECTION_FIELDS[key].filter((field) => fieldApplies(field, props.data));
         const counts = countAuditBadges(badges, fields);
         return (
           <section

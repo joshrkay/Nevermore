@@ -278,11 +278,20 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   const tablesOf = (section: Manuscript["tables"][number]["section"]) => {
     for (const t of m.tables.filter((each) => each.section === section)) {
       subheading(t.title);
-      // Each column's share of the width follows its longest heading or cell, within limits, so a column of
-      // figures stays narrow and one of words gets room to wrap between them.
-      const weights = t.columns.map((header, i) => Math.min(22, Math.max(10, header.length, ...t.rows.map((row) => row[i].length))));
-      const total = weights.reduce((sum, w) => sum + w, 0);
-      table(t.columns.map((header, i) => ({ header, width: (CONTENT_W * weights[i]) / total })), t.rows, { wrapHeadings: true });
+      // A column of figures or short words is as wide as its longest heading or cell needs; the columns of
+      // longer text (duties, a question, an explanation) share what is left, by how much they hold.
+      const longest = t.columns.map((header, i) => Math.max(header.length, ...t.rows.map((row) => row[i].length)));
+      const SHORT = 16;
+      const wanted = longest.map((n) => Math.min(n, SHORT) * 1.75 + CELL_PAD_X * 2);
+      // A table with many columns can want more than the page has: every column then gives way in proportion,
+      // and its heading or cells wrap.
+      const fit = Math.min(1, CONTENT_W / wanted.reduce((sum, w) => sum + w, 0));
+      const floor = wanted.map((w) => w * fit);
+      const spare = Math.max(0, CONTENT_W - floor.reduce((sum, w) => sum + w, 0));
+      const long = longest.map((n) => (n > SHORT ? Math.min(n, 60) : 0));
+      const share = long.some((n) => n > 0) ? long : floor;
+      const total = share.reduce((sum, w) => sum + w, 0);
+      table(t.columns.map((header, i) => ({ header, width: floor[i] + (spare * share[i]) / total })), t.rows, { wrapHeadings: true });
     }
   };
 

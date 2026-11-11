@@ -1,5 +1,6 @@
 import type { CensusEmployee } from "./census";
 import type { ENTITY_TYPES } from "../../supabase/functions/_shared/intakeSchema.ts";
+import { ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "../../supabase/functions/_shared/acord130.ts";
 
 export type { CensusDependent, CensusEmployee } from "./census";
 
@@ -70,7 +71,21 @@ export interface SutaRate {
   year?: number;
 }
 
-export interface ChamberData {
+type AcordNumber =
+  | "01" | "02" | "03" | "04" | "05" | "06" | "07" | "08" | "09" | "10" | "11" | "12"
+  | "13" | "14" | "15" | "16" | "17" | "18" | "19" | "20" | "21" | "22" | "23" | "24";
+
+/**
+ * The 24 yes/no questions of ACORD 130's general information section (K-3.4): `wcq_NN` is the answer and
+ * `wcq_NN_explain` the explanation a "yes" needs. supabase/functions/_shared/acord130.ts holds the questions.
+ */
+export type AcordAnswers = { [K in `wcq_${AcordNumber}`]: boolean | null } & { [K in `wcq_${AcordNumber}_explain`]: string | null };
+
+const EMPTY_ACORD_ANSWERS = Object.fromEntries(
+  ACORD_130_QUESTIONS.flatMap((q) => [[acordAnswerKey(q.number), null], [acordExplainKey(q.number), null]]),
+) as AcordAnswers;
+
+export interface ChamberData extends AcordAnswers {
   // Company
   company_name: string | null;
   industry: string | null;
@@ -218,6 +233,7 @@ export const EMPTY_CHAMBER_DATA: ChamberData = {
   loss_history: [],
   medical_plans: [],
   suta_rates: [],
+  ...EMPTY_ACORD_ANSWERS,
   census: [],
 };
 
@@ -288,6 +304,11 @@ export const DEMO_CHAMBER_DATA: ChamberData = {
     { name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: 612.4, rate_ee_sp: 1286.04, rate_ee_ch: 1102.32, rate_fam: 1837.2, renewal_rate_ee: 685.89, renewal_rate_ee_sp: 1440.36, renewal_rate_ee_ch: 1234.6, renewal_rate_fam: 2057.66, employer_contribution: "75% of employee-only", enrolled: 4 },
   ],
   suta_rates: [{ state: "CA", rate: 3.4, year: 2026 }, { state: "TX", rate: 2.7, year: 2026 }],
+  ...EMPTY_ACORD_ANSWERS,
+  wcq_08: true,
+  wcq_08_explain: "A written ergonomics and office safety policy, reviewed each year",
+  wcq_11: false,
+  wcq_19: true,
   census: [
     { id: "6f1c2a40-0001-4c1e-9a7b-3d5e00000001", first_name: "Sarah", last_name: "Chen", dob: "1988-03-15", work_state: "CA", zip_code: "94107", job_title: "Senior Designer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "FAM", class_code: "8810", dependents: [{ first_name: "Michael", last_name: "Chen", dob: "1985-06-12", relationship: "spouse" }, { first_name: "Emma", last_name: "Chen", dob: "2018-03-22", relationship: "child" }] },
     { id: "6f1c2a40-0002-4c1e-9a7b-3d5e00000002", first_name: "Marcus", last_name: "Rivera", dob: "1985-07-22", work_state: "CA", zip_code: "94110", job_title: "Art Director", annual_salary: 125000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810", dependents: [{ first_name: "Ana", last_name: "Rivera", dob: "1987-09-04", relationship: "spouse" }] },

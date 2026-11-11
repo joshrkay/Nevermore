@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
-import type { ChamberData, EntityType } from "./chamberTypes";
+import type { AcordAnswers, ChamberData, EntityType } from "./chamberTypes";
+import { ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "../../supabase/functions/_shared/acord130.ts";
 import { normalizeCensus, stripUnstorable } from "./census";
 import { redactSensitive } from "./sensitive";
 import { isNaicsCode } from "../../supabase/functions/_shared/naics2022.ts";
@@ -257,6 +258,10 @@ const FIELD_SCHEMAS: FieldSchemas = {
     const seen = new Set<string>();
     return rates.filter((r) => r.state === undefined || (!seen.has(r.state) && seen.add(r.state))).slice(0, MAX_SUTA_RATES);
   }),
+  // The ACORD 130 questions (K-3.4): a yes or no each, with a text explanation.
+  ...(Object.fromEntries(
+    ACORD_130_QUESTIONS.flatMap((q) => [[acordAnswerKey(q.number), yesNo.nullable()], [acordExplainKey(q.number), nullableText]]),
+  ) as { [K in keyof AcordAnswers]: z.ZodType<AcordAnswers[K], z.ZodTypeDef, unknown> }),
   naics_code: naicsCode.nullable(),
   operations_description: nullableText,
   in_peo: z.boolean().nullable(),

@@ -1,4 +1,5 @@
 import type { ChamberData } from "./chamberTypes";
+import { ACORD_130_EDITION, ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "../../supabase/functions/_shared/acord130.ts";
 import { isDraftConsent } from "./certification";
 import { CLASS_CODE_PAYROLL_COLUMNS, classCodePayroll, classCodePayrollCells } from "./classCodePayroll";
 import { classificationLabel, COVERAGE_TIER_LABELS, isAssumed, isW2, type CensusEmployee } from "./census";
@@ -325,10 +326,12 @@ const TABLES: {
   columns?: readonly (string | readonly [key: string, heading: string])[];
   /** Printed only when some row holds one of these keys. */
   onlyWith?: readonly string[];
+  /** Columns left out while no row holds them, so a table with many columns keeps room for the rest. */
+  optional?: readonly string[];
 }[] = [
   { field: "owners_officers", title: "Owners and Officers", section: "workers_comp" },
   // Newest policy year first, as a loss run reads.
-  { field: "loss_history", title: "Loss History by Year", section: "workers_comp", order: (a, b) => Number(b.policy_year ?? 0) - Number(a.policy_year ?? 0) },
+  { field: "loss_history", title: "Loss History by Year", section: "workers_comp", order: (a, b) => Number(b.policy_year ?? 0) - Number(a.policy_year ?? 0), optional: ["no_coverage"] },
   { field: "suta_rates", title: "State Unemployment Tax Rates", section: "payroll", columns: ["state", ["rate", "Rate"], "year"], order: (a, b) => String(a.state ?? "").localeCompare(String(b.state ?? "")) },
   // Twelve columns don't fit a page, so the renewal rates are a table of their own, printed when any is held.
   { field: "medical_plans", title: "Current Medical Plans", section: "benefits", columns: ["name", "carrier", "rate_ee", "rate_ee_sp", "rate_ee_ch", "rate_fam", "employer_contribution", "enrolled"] },
@@ -480,11 +483,11 @@ export function buildManuscript(
       return alsoFrom ? [label, shown, field, alsoFrom] : [label, shown, field];
     });
 
-  const tables: ManuscriptTable[] = TABLES.flatMap(({ field, title, section, order, columns: printed, onlyWith }) => {
+  const tables: ManuscriptTable[] = TABLES.flatMap(({ field, title, section, order, columns: printed, onlyWith, optional = [] }) => {
     const held = data[field] as Record<string, unknown>[];
     const rows = order ? [...held].sort(order) : held;
     if (rows.length === 0 || (onlyWith && !rows.some((row) => onlyWith.some((key) => row[key] !== undefined)))) return [];
-    const all = ROW_LISTS[field].columns;
+    const all = ROW_LISTS[field].columns.filter((c) => !optional.includes(c.key) || rows.some((row) => row[c.key] !== undefined));
     const columns = printed
       ? printed.map((each) => {
           const [key, heading] = typeof each === "string" ? [each, undefined] : each;
@@ -506,6 +509,22 @@ export function buildManuscript(
       rows: data.census.map((e, i) => [`${e.first_name} ${e.last_name}`.trim(), ...details[i]]),
     });
   }
+
+  // The ACORD 130 questions (K-3.4): all 24, in the form's own words, with each answer and its explanation.
+  const acordAnswer = (field: FieldKey): string => {
+    if (provenance[field]?.status === "not_applicable") return NOT_APPLICABLE;
+    const value = data[field];
+    return value === null ? NOT_PROVIDED : value ? "Yes" : "No";
+  };
+  tables.push({
+    section: "workers_comp", field: "wcq_01", title: `${ACORD_130_EDITION}: General Information`,
+    columns: ["No.", "Question", "Answer", "Explanation"],
+    rows: ACORD_130_QUESTIONS.map((q) => {
+      const answer = acordAnswerKey(q.number) as FieldKey;
+      const explanation = data[acordExplainKey(q.number) as FieldKey] as string | null;
+      return [String(q.number), q.text, acordAnswer(answer), data[answer] === true && explanation ? explanation : "—"];
+    }),
+  });
 
   // Payroll by class code and state is worked out from the census (K-3.2): a table with no field of its own.
   const payroll = classCodePayroll(data.census);

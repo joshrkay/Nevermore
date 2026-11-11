@@ -1,5 +1,6 @@
 // Where each answer sits in the Review step (US-2.2a, D28).
 import type { FieldKey } from "./provenance";
+import { ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "../../supabase/functions/_shared/acord130.ts";
 import type { ReviewSection } from "./readiness";
 
 /**
@@ -12,7 +13,10 @@ export const REVIEW_FIELDS: Record<ReviewSection, FieldKey[]> = {
   locations: ["hq_state", "states"],
   payroll: ["payroll_vendor", "pay_frequency", "funding_days", "pto_types", "accrual_method", "suta_rates"],
   benefits: ["virgin_medical", "current_carrier", "renewal_date", "rate_history", "benefits_waiting_period", "medical_plans", "ancillary_benefits", "has_401k", "retirement_type", "employer_contributes"],
-  workers_comp: ["wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium", "owners_officers", "loss_history"],
+  workers_comp: ["wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium", "owners_officers", "loss_history",
+    // The ACORD 130 questions, each followed by its explanation (K-3.4). An explanation is shown only after a yes.
+    ...(ACORD_130_QUESTIONS.flatMap((q) => [acordAnswerKey(q.number), acordExplainKey(q.number)]) as FieldKey[]),
+  ],
   operations: ["has_handbook", "handbook_last_updated", "hr_staff_count", "uses_physical_clocks", "uses_mobile_app", "uses_computer_timekeeping", "shift_differentials", "hris_system", "key_challenges", "business_goals"],
 };
 

@@ -2,6 +2,7 @@ import type { ChamberData } from "@/data/chamberTypes";
 import { formatAnswer } from "@/data/answerFormat";
 import { CLASS_CODE_PAYROLL_COLUMNS, classCodePayroll, classCodePayrollCells } from "@/data/classCodePayroll";
 import { isEmpty, type FieldAction, type FieldKey, type ProvenanceMap } from "@/data/provenance";
+import { ACORD_130_EDITION, ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "../../../../supabase/functions/_shared/acord130.ts";
 import ProvenanceField from "./ProvenanceField";
 import RowsField from "./RowsField";
 
@@ -59,6 +60,48 @@ const WorkersCompTab = ({ data, isDemo, provenance = {}, onAction }: WorkersComp
         onAction={act}
         hint="Up to five policy years: carrier, premium, experience mod, claims, paid and reserved. A loss run you upload can fill a year in."
       />
+
+      {/* The standard questions every workers' comp application asks, in the form's own words (K-3.4). */}
+      <section className="space-y-3">
+        <h4 className="text-[10px] uppercase tracking-wider text-muted-foreground">{ACORD_130_EDITION}: General Information</h4>
+        <p className="text-xs text-muted-foreground">
+          The yes-or-no questions every workers' comp application asks. Answer them once here and each PEO's form is already filled.
+        </p>
+        <ol className="space-y-3">
+          {ACORD_130_QUESTIONS.map((q) => {
+            const answer = acordAnswerKey(q.number) as FieldKey;
+            const explain = acordExplainKey(q.number) as FieldKey;
+            const label = `No. ${q.number}: ${q.label}`;
+            return (
+              <li key={q.number} className="border-t border-border/50 pt-2">
+                <p className="text-[11px] text-muted-foreground mb-1">{q.text}</p>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <ProvenanceField
+                    label={label}
+                    field={answer}
+                    display={data[answer] === null ? null : data[answer] ? "Yes" : "No"}
+                    raw={data[answer]}
+                    provenance={provenance[answer]}
+                    onAction={act}
+                    allowNotApplicable
+                  />
+                  {/* The form asks for an explanation of a yes, and of nothing else. */}
+                  {data[answer] === true && (
+                    <ProvenanceField
+                      label={`${label} (explanation)`}
+                      field={explain}
+                      display={(data[explain] as string | null) || null}
+                      raw={data[explain]}
+                      provenance={provenance[explain]}
+                      onAction={act}
+                    />
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
 
       {/* Worked out from the census, never typed (K-3.2). */}
       <section className="space-y-2">

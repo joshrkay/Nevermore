@@ -493,6 +493,10 @@ describe("ManuscriptPage", () => {
     const table = await screen.findByRole("table", { name: "Owners and Officers" });
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Name", "Title", "Ownership %", "Duties", "Covered by workers' comp"]);
     expect(within(table).getAllByRole("row")[1]).toHaveTextContent("Dana ReyesChief Executive Officer60%");
+    // K-3.4: all 24 ACORD 130 questions, in the form's words.
+    const acord = screen.getByRole("table", { name: "ACORD 130 (2017/05): General Information" });
+    expect(within(acord).getAllByRole("row")).toHaveLength(25);
+    expect(within(acord).getAllByRole("row")[8]).toHaveTextContent("8IS A WRITTEN SAFETY PROGRAM IN OPERATION?YesA written ergonomics and office safety policy, reviewed each year");
     // K-5.3: the census facts v3 added sit under the census table.
     expect(within(screen.getByRole("table", { name: "Census Details" })).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Name", "ZIP", "Gender", "Hire date", "COBRA", "Home state", "Worksite", "Remote", "Travels"]);
     // K-4.1: the medical plans sit under the benefits answers.
