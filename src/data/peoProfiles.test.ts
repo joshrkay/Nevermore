@@ -70,6 +70,16 @@ describe("parsePeoCatalog", () => {
     });
   });
 
+  it("reads a person at the PEO whose name the catalog leaves out (anyone but an advisor) as their role and date only", () => {
+    const [trinet] = parsePeoCatalog([{ ...TRINET_ROW, profile: { ...TRINET_ROW.profile, sources: {
+      min_headcount: { kind: "person", role: "Broker desk manager", checked_on: "2026-11-02" },
+      // A document is always named by its title: one with none isn't a source.
+      states_served: { kind: "document", checked_on: "2026-01-01" },
+    } } }]);
+    expect(trinet.profile?.sources).toEqual({ min_headcount: { kind: "person", name: null, role: "Broker desk manager", checkedOn: "2026-11-02" } });
+    expect(trinet.lastVerified).toBe("2026-11-02");
+  });
+
   it("reads a PEO an admin stopped listing as not listed, with its profile still there", () => {
     const [trinet] = parsePeoCatalog([{ ...TRINET_ROW, listed: false }]);
     expect(trinet.listed).toBe(false);

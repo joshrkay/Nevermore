@@ -16,10 +16,14 @@
 -- * admin_add_peo(), admin_save_peo_profile(), admin_publish_peo_profile(), admin_set_peo_listed(): the only
 --   writers, for admins. A PEO is never deleted (a trigger refuses it): one no longer offered is marked not listed,
 --   and keeps its profile history.
--- * peo_catalog(): every PEO, alphabetically, whether it is listed, and the profile in use (contacts left out).
+-- * peo_catalog(): every PEO, alphabetically, whether it is listed, and the profile in use, for anyone signed in.
+--   Never the contacts, and never which admin wrote or published a version. For anyone but an advisor it also
+--   leaves out the contacts' source and the name of any person at the PEO a source names (their role and the date
+--   stay).
 --
--- Signed-in prospects (guests included) and advisors read the PEOs and the published versions; admins also read
--- drafts. Only advisors read contacts. Signed-out callers read nothing: public pages never name a PEO.
+-- Advisors read the PEOs, the published versions and their contacts directly; admins also read drafts. Signed-in
+-- prospects (guests included) read no table here: peo_catalog() is their only way in, so a person at the PEO and
+-- an admin's id never reach them. Signed-out callers read nothing: public pages never name a PEO.
 --
 -- Nothing here belongs to an intake, so deleting an intake leaves it alone.
 --
@@ -306,7 +310,8 @@ BEGIN
     EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN
       RETURN format('%s isn''t a date', item ->> 'checked_on');
     END;
-    IF checked > current_date THEN
+    -- One day of grace: an admin ahead of the database's clock enters their own today.
+    IF checked > current_date + 1 THEN
       RETURN 'A source can''t be checked on a date that hasn''t come';
     END IF;
   END LOOP;
@@ -473,7 +478,8 @@ END;
 $$;
 
 -- Saves a PEO's draft profile from the whole profile as the editor holds it, contacts included: the draft is
--- replaced, or, when the PEO has none, a new one is made as its next version. A published version is never touched.
+-- replaced, or, when the PEO has none, a new one is made as its next version, recording the admin who started it.
+-- A published version is never touched.
 CREATE OR REPLACE FUNCTION public.admin_save_peo_profile(p_peo_id bigint, p_profile jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -525,7 +531,8 @@ BEGIN
       min_enrolment_percent = public.peo_profile_number(p_profile -> 'min_enrolment_percent', 'The minimum enrolment', false),
       extra_questions = COALESCE(NULLIF(p_profile -> 'extra_questions', 'null'::jsonb), '[]'::jsonb),
       sources = COALESCE(NULLIF(p_profile -> 'sources', 'null'::jsonb), '{}'::jsonb),
-      created_by = auth.uid()
+      -- The admin who started the draft stays its creator; a seeded draft takes the first admin to save it.
+      created_by = COALESCE(created_by, auth.uid())
   WHERE id = draft.id
   RETURNING * INTO draft;
 
@@ -615,25 +622,30 @@ CREATE TRIGGER peos_never_deleted
   FOR EACH ROW EXECUTE FUNCTION public.keep_peo();
 
 -- ---------- Reading ----------
--- Every PEO, listed or not, alphabetically, with whether it is listed and its profile in use (less the contacts'
--- source, which names a person at the PEO): the newest published version, or null when none is. Runs as
--- the caller, so row security decides what it returns. Contacts are never in it.
+-- Every PEO, listed or not, alphabetically, with whether it is listed and its profile in use: the newest published
+-- version, or null when none is. Never a draft, the contacts, or which admin wrote or published a version. Runs as
+-- its owner, because prospects read no table here: for anyone but an advisor (or admin) it leaves out the contacts'
+-- source and the name of any person at the PEO a source names, keeping their role and the date checked.
 CREATE OR REPLACE FUNCTION public.peo_catalog()
 RETURNS jsonb
 LANGUAGE sql
 STABLE
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+  WITH reader AS (SELECT public.is_advisor() AS advisor)
   SELECT COALESCE(jsonb_agg(jsonb_build_object('id', p.id, 'name', p.name, 'listed', p.listed, 'profile', (
     SELECT to_jsonb(v) - 'peo_id' - 'status' - 'created_at' - 'created_by' - 'published_by'
-      || jsonb_build_object('sources', v.sources - 'contacts')
+      || jsonb_build_object('sources', CASE WHEN r.advisor THEN v.sources ELSE (
+        SELECT COALESCE(jsonb_object_agg(s.key, CASE WHEN s.value ->> 'kind' = 'person' THEN s.value - 'name' ELSE s.value END), '{}'::jsonb)
+        FROM jsonb_each(v.sources - 'contacts') s
+      ) END)
     FROM public.peo_profile_versions v
     WHERE v.peo_id = p.id AND v.status = 'published'
     ORDER BY v.version DESC
     LIMIT 1
   )) ORDER BY lower(p.name), p.name), '[]'::jsonb)
-  FROM public.peos p;
+  FROM public.peos p CROSS JOIN reader r;
 $$;
 
 -- ---------- Who reads what ----------
@@ -643,10 +655,12 @@ ALTER TABLE public.peo_contacts ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.peos, public.peo_profile_versions, public.peo_contacts FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.peos, public.peo_profile_versions, public.peo_contacts TO authenticated;
 
-CREATE POLICY peos_signed_in_read ON public.peos
-  FOR SELECT TO authenticated USING (true);
-CREATE POLICY peo_profile_versions_read ON public.peo_profile_versions
-  FOR SELECT TO authenticated USING (status = 'published' OR (SELECT public.has_role('admin')));
+-- Advisors only: a PEO row names the admin who added it, and a version names the people at the PEO it was checked
+-- with and the admins who wrote and published it. Everyone else reads peo_catalog().
+CREATE POLICY peos_advisor_read ON public.peos
+  FOR SELECT TO authenticated USING ((SELECT public.is_advisor()));
+CREATE POLICY peo_profile_versions_advisor_read ON public.peo_profile_versions
+  FOR SELECT TO authenticated USING ((SELECT public.has_role('admin')) OR (status = 'published' AND (SELECT public.is_advisor())));
 -- Advisors read the contacts of published versions; admins read every version's.
 CREATE POLICY peo_contacts_advisor_read ON public.peo_contacts
   FOR SELECT TO authenticated USING (

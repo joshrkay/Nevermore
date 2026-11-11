@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import { actorName, formatDateTime } from "./format";
 import { toast } from "sonner";
 import { PIPELINE_LABELS, type PipelineStatus } from "@/data/advisor";
-import { cleanPeoName, findPeo, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
+import { cleanPeoName, findPeo, listedPeos, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
 import type { ChamberData } from "@/data/chamberTypes";
 import { canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isQuoteRequestStatus, olderVersionNote, QUOTE_REQUEST_LABELS, stageToOffer } from "@/data/quoteRequests";
 import { noteUnderwriterQuestion, recordQuoteSend, setStatus, updateQuoteRequest, type QuoteAnswer, type QuoteRequestEventRow, type QuoteRequestRow } from "@/lib/advisorApi";
@@ -272,7 +272,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
         <label htmlFor="quote-peo" className="block text-xs text-muted-foreground">PEO</label>
         <select id="quote-peo" value={catalogPeo} onChange={(e) => setCatalogPeo(e.target.value)} className={inputClass}>
           <option value="">Another PEO (type it below)</option>
-          {catalog.filter((p) => p.listed).map((p) => (
+          {listedPeos(catalog).map((p) => (
             <option key={p.name} value={p.name}>{p.name}</option>
           ))}
         </select>

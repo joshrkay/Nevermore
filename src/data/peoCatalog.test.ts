@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
-import { cleanPeoName, findPeo, PEO_NAME_MAX, peoFit, type PeoRecord } from "./peoCatalog";
+import { cleanPeoName, findPeo, listedPeos, PEO_NAME_MAX, peoFit, type PeoRecord } from "./peoCatalog";
 import { parsePeoCatalog } from "./peoProfiles";
 
 const peo = (overrides: Partial<PeoRecord> = {}): PeoRecord => ({
@@ -62,12 +62,24 @@ describe("peoFit states", () => {
 });
 
 describe("findPeo", () => {
-  const catalog = [peo({ name: "Justworks" }), peo({ name: "TriNet" })];
+  const catalog = [peo({ name: "Justworks" }), peo({ name: "TriNet", listed: false })];
 
-  it("finds a listed PEO by name regardless of case, and returns nothing for an unlisted one", () => {
+  it("finds a PEO the catalog holds by name regardless of case, and nothing for a name it doesn't hold", () => {
     expect(findPeo(catalog, " justworks ")?.name).toBe("Justworks");
     expect(findPeo(catalog, "Acme PEO")).toBeUndefined();
     expect(findPeo([], "Justworks")).toBeUndefined();
+  });
+
+  it("still finds a PEO taken off the list, so what was sent to it reads against its profile", () => {
+    expect(findPeo(catalog, "trinet")?.name).toBe("TriNet");
+  });
+});
+
+describe("listedPeos", () => {
+  it("keeps only the PEOs an admin lists, in the catalog's order", () => {
+    const catalog = [peo({ name: "ADP TotalSource" }), peo({ name: "Insperity", listed: false }), peo({ name: "TriNet" })];
+    expect(listedPeos(catalog).map((p) => p.name)).toEqual(["ADP TotalSource", "TriNet"]);
+    expect(listedPeos([])).toEqual([]);
   });
 });
 

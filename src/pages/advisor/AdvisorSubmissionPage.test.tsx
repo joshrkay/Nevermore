@@ -33,9 +33,11 @@ vi.mock("@/lib/manuscriptPdf", () => ({ buildManuscriptPdf: (m: Manuscript, o: u
 
 // The PEOs the database lists (public.peo_catalog()), as src/lib/peoCatalog.ts reads them.
 let peoCatalogRows: unknown = [];
+// Set to make the next reads hang or fail; each read takes the next one, then the rows above are read.
+const peoCatalogReads: (() => Promise<unknown>)[] = [];
 vi.mock("@/lib/peoCatalog", async () => {
   const { parsePeoCatalog } = await import("@/data/peoProfiles");
-  return { readPeoCatalog: async () => parsePeoCatalog(peoCatalogRows) };
+  return { readPeoCatalog: async () => parsePeoCatalog(await (peoCatalogReads.shift()?.() ?? peoCatalogRows)) };
 });
 
 const { default: AdvisorSubmissionPage } = await import("./AdvisorSubmissionPage");
@@ -113,6 +115,7 @@ const renderPage = () =>
 describe("AdvisorSubmissionPage", () => {
   beforeEach(() => {
     peoCatalogRows = [];
+    peoCatalogReads.length = 0;
     for (const fn of Object.values(api)) fn.mockReset();
     vi.mocked(toast.error).mockReset();
     downloadBlob.mockReset();
@@ -670,6 +673,35 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
     const [manuscript] = buildManuscriptPdf.mock.calls[0] as unknown as [Manuscript];
     expect(manuscript.checks[0]).toEqual({ label: "Headcount meets Justworks minimum (12 of 20 employees)", status: "fail" });
+  });
+
+  it("won't generate a packet while the PEOs are loading: its eligibility checks would all read can't tell", async () => {
+    peoCatalogReads.push(() => new Promise(() => {}));
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    const generate = screen.getByRole("button", { name: /Generate packet/ });
+    expect(generate).toBeDisabled();
+    expect(screen.getByText("Loading the PEOs' profiles. You can generate the packet once they're in.")).toBeInTheDocument();
+    fireEvent.click(generate);
+    expect(api.saveManuscriptVersion).not.toHaveBeenCalled();
+  });
+
+  it("says when the PEOs couldn't be read, won't generate until they are, and reads them again on request", async () => {
+    peoCatalogReads.push(() => Promise.reject(new Error("network down")));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    api.saveManuscriptVersion.mockResolvedValue({});
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    const panel = screen.getByRole("region", { name: "Advisor packet" });
+    expect(await within(panel).findByRole("alert")).toHaveTextContent(
+      "We couldn't load the PEOs' profiles, so the packet's eligibility checks can't be run. Try again before generating.",
+    );
+    expect(within(panel).getByRole("button", { name: /Generate packet/ })).toBeDisabled();
+    fireEvent.click(within(panel).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(within(panel).getByRole("button", { name: /Generate packet/ })).toBeEnabled());
+    expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: /Generate packet/ }));
+    await waitFor(() => expect(api.saveManuscriptVersion).toHaveBeenCalled());
   });
 
   it("reloads, and keeps no file, when the prospect certified again while the packet was being generated", async () => {

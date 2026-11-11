@@ -3,8 +3,8 @@
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh peo_profiles
 -- PEOs and their requirement profiles (joshrkay/Nevermore#91, L-1.1, 20261111090000_peo_requirement_profiles.sql):
 -- each PEO's ask is dated, versioned data. Admins write a draft and publish it; a published version is never
--- changed; a profile that breaks the shape can't be stored. Signed-in prospects and advisors read the published
--- versions; only advisors read a PEO's contacts.
+-- changed; a profile that breaks the shape can't be stored. Advisors read the published versions and contacts;
+-- prospects read only peo_catalog(), which names no person at the PEO and no admin.
 \set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
@@ -246,10 +246,20 @@ BEGIN
     RAISE EXCEPTION 'FAIL: publishing left %', to_jsonb(v);
   END IF;
   profile := pg_temp.run(prospect, format('SELECT p -> ''profile'' FROM jsonb_array_elements(public.peo_catalog()) p WHERE p ->> ''name'' = %L', 'TriNet'));
+  -- A prospect reads a person at the PEO as their role and the date only, never their name; never the contacts or
+  -- their source, and never which admin wrote or published it.
   IF profile ->> 'version' <> '1' OR profile ->> 'min_headcount' <> '5' OR profile -> 'states_served' <> '["CA", "NY"]'
-     OR profile -> 'sources' -> 'min_headcount' <> pg_temp.person() OR profile -> 'sources' -> 'excluded_industries' <> pg_temp.guide('2026-09-01')
-     OR profile ? 'contacts' OR profile -> 'sources' ? 'contacts' THEN
+     OR profile -> 'sources' -> 'min_headcount' <> jsonb_build_object('kind', 'person', 'role', 'Broker desk manager', 'checked_on', '2026-11-02')
+     OR profile -> 'sources' -> 'excluded_industries' <> pg_temp.guide('2026-09-01')
+     OR profile ? 'contacts' OR profile -> 'sources' ? 'contacts'
+     OR profile ? 'created_by' OR profile ? 'published_by' OR profile::text LIKE '%Dana Reyes%' OR profile::text LIKE '%' || admin || '%' THEN
     RAISE EXCEPTION 'FAIL: a prospect reads the profile in use as %', profile;
+  END IF;
+  -- An advisor reads the person's name too, and the contacts' source; still no admin ids.
+  profile := pg_temp.run(advisor, format('SELECT p -> ''profile'' FROM jsonb_array_elements(public.peo_catalog()) p WHERE p ->> ''name'' = %L', 'TriNet'));
+  IF profile -> 'sources' -> 'min_headcount' <> pg_temp.person() OR profile -> 'sources' -> 'contacts' <> pg_temp.person()
+     OR profile ? 'created_by' OR profile ? 'published_by' THEN
+    RAISE EXCEPTION 'FAIL: an advisor reads the profile in use as %', profile;
   END IF;
 
   -- Only admins write: an advisor or a prospect is refused, and nobody writes the tables directly.
@@ -303,8 +313,12 @@ BEGIN
   END IF;
   -- With no draft left, there is nothing to publish.
   PERFORM pg_temp.must_raise(admin, format('SELECT public.admin_publish_peo_profile(%s)', trinet), 'PT404', 'publishing with no draft');
-  -- A draft can still be changed and dropped: it was never used.
+  -- A draft can still be changed and dropped: it was never used. Whoever saves it, it keeps the admin who started it.
   PERFORM pg_temp.save(admin, trinet, '{}');
+  PERFORM pg_temp.save(pg_temp.new_user('admin'), trinet, '{}');
+  IF (SELECT created_by FROM public.peo_profile_versions WHERE peo_id = trinet AND status = 'draft') IS DISTINCT FROM admin THEN
+    RAISE EXCEPTION 'FAIL: another admin''s save took over the draft''s creator';
+  END IF;
   DELETE FROM public.peo_profile_versions WHERE peo_id = trinet AND status = 'draft';
   RAISE NOTICE 'peo_profiles: frozen version cases passed';
 END $$;
@@ -367,7 +381,8 @@ BEGIN
     ('a source with no date', '{"min_headcount": 5, "sources": {"min_headcount": {"kind": "document", "name": "Guide"}}}'),
     ('a date that isn''t one', '{"min_headcount": 5, "sources": {"min_headcount": {"kind": "document", "name": "Guide", "checked_on": "last week"}}}'),
     ('a day that doesn''t exist', '{"min_headcount": 5, "sources": {"min_headcount": {"kind": "document", "name": "Guide", "checked_on": "2026-02-30"}}}'),
-    ('a check dated in the future', jsonb_build_object('min_headcount', 5, 'sources', jsonb_build_object('min_headcount', pg_temp.guide((current_date + 1)::text)))),
+    -- An admin ahead of the database's clock may enter their own today (tomorrow, here), never the day after.
+    ('a check dated in the future', jsonb_build_object('min_headcount', 5, 'sources', jsonb_build_object('min_headcount', pg_temp.guide((current_date + 2)::text)))),
     ('a source for a rule that isn''t there', jsonb_build_object('sources', jsonb_build_object('min_headcount', pg_temp.guide()))),
     ('a source for no census layout', jsonb_build_object('sources', jsonb_build_object('census_layout', pg_temp.guide()))),
     ('sources that aren''t an object', '{"sources": []}'),
@@ -396,7 +411,7 @@ BEGIN
   PERFORM pg_temp.save(admin, justworks, jsonb_build_object(
     'census_layout', jsonb_build_object('format', 'csv', 'template_file', 'peo-templates/justworks.xlsx', 'columns', cols - 200),
     'extra_questions', qs - 30,
-    'sources', jsonb_build_object('census_layout', pg_temp.guide(current_date::text), 'extra_questions', pg_temp.guide(), 'documents', pg_temp.guide())));
+    'sources', jsonb_build_object('census_layout', pg_temp.guide((current_date + 1)::text), 'extra_questions', pg_temp.guide(), 'documents', pg_temp.guide())));
   PERFORM pg_temp.publish(admin, justworks);
   IF (SELECT sources -> 'census_layout' ->> 'link' FROM public.peo_profile_versions WHERE peo_id = justworks AND status = 'published') IS DISTINCT FROM 'https://trinet.example/guide.pdf' THEN
     RAISE EXCEPTION 'FAIL: a document''s link wasn''t kept';
@@ -425,20 +440,47 @@ BEGIN
   IF pg_temp.run(admin, 'SELECT to_jsonb(array_agg(DISTINCT name ORDER BY name)) FROM public.peo_contacts') <> '["Dana Reyes", "Sam Lee"]'::jsonb THEN
     RAISE EXCEPTION 'FAIL: an admin doesn''t read every contact';
   END IF;
-  -- Prospects, guests included, read the PEOs and the published versions, never a contact or a draft.
+  -- Advisors read the published versions themselves, sources and all (the PEOs page shows them); admins read drafts too.
+  IF pg_temp.run(advisor, 'SELECT to_jsonb(count(*)) FROM public.peo_profile_versions')::int <> 3
+     OR pg_temp.run(advisor, 'SELECT to_jsonb(count(*)) FROM public.peo_profile_versions WHERE status = ''draft''')::int <> 0
+     OR pg_temp.run(advisor, 'SELECT to_jsonb(count(*)) FROM public.peo_profile_versions WHERE sources ? ''contacts'' AND created_by IS NOT NULL')::int = 0
+     OR pg_temp.run(advisor, 'SELECT to_jsonb(count(*)) FROM public.peos')::int <> 5
+     OR pg_temp.run(admin, 'SELECT to_jsonb(count(*)) FROM public.peo_profile_versions WHERE status = ''draft''')::int < 1 THEN
+    RAISE EXCEPTION 'FAIL: an advisor or admin doesn''t read the versions they need';
+  END IF;
+  -- Prospects, guests included, read no PEO table at all: not a contact, not a version (whose sources name people at
+  -- the PEO and whose rows name admins), not a PEO row (which names the admin who added it). peo_catalog() is their
+  -- only way in.
   PERFORM pg_temp.as_user(guest, true);
   SET LOCAL ROLE authenticated;
-  IF (SELECT count(*) FROM public.peo_contacts) <> 0 OR (SELECT count(*) FROM public.peos) <> 5
-     OR (SELECT count(*) FROM public.peo_profile_versions WHERE status = 'draft') <> 0
-     OR (SELECT count(*) FROM public.peo_profile_versions) <> 3 THEN
+  IF (SELECT count(*) FROM public.peo_contacts) <> 0 OR (SELECT count(*) FROM public.peos) <> 0
+     OR (SELECT count(*) FROM public.peo_profile_versions) <> 0 THEN
     RESET ROLE;
-    RAISE EXCEPTION 'FAIL: a guest reads the wrong PEO rows';
+    RAISE EXCEPTION 'FAIL: a guest reads PEO rows directly';
   END IF;
   RESET ROLE;
   IF pg_temp.run(prospect, 'SELECT to_jsonb(count(*)) FROM public.peo_contacts')::int <> 0
-     OR pg_temp.run(prospect, 'SELECT to_jsonb(count(*)) FROM public.peo_profile_versions WHERE status = ''draft''')::int <> 0 THEN
-    RAISE EXCEPTION 'FAIL: a prospect reads a contact or a draft';
+     OR pg_temp.run(prospect, 'SELECT to_jsonb(count(*)) FROM public.peo_profile_versions')::int <> 0
+     OR pg_temp.run(prospect, 'SELECT to_jsonb(count(*)) FROM public.peos')::int <> 0 THEN
+    RAISE EXCEPTION 'FAIL: a prospect reads PEO rows directly';
   END IF;
+  -- Through the catalog a guest still reads the PEOs and what is published, with no person's name and no admin id.
+  PERFORM pg_temp.as_user(guest, true);
+  SET LOCAL ROLE authenticated;
+  IF jsonb_array_length(public.peo_catalog()) <> 5 OR public.peo_catalog()::text LIKE '%Dana Reyes%'
+     OR public.peo_catalog()::text LIKE '%' || admin || '%' THEN
+    RESET ROLE;
+    RAISE EXCEPTION 'FAIL: a guest''s catalog is %', public.peo_catalog();
+  END IF;
+  RESET ROLE;
+  -- An advisor's own account behind a guest token is a guest's.
+  PERFORM pg_temp.as_user(advisor, true);
+  SET LOCAL ROLE authenticated;
+  IF (SELECT count(*) FROM public.peo_profile_versions) <> 0 OR public.peo_catalog()::text LIKE '%Dana Reyes%' THEN
+    RESET ROLE;
+    RAISE EXCEPTION 'FAIL: an advisor signed in as a guest reads a named person';
+  END IF;
+  RESET ROLE;
   -- An admin's own token as a guest is a guest's.
   PERFORM pg_temp.as_user(admin, true);
   SET LOCAL ROLE authenticated;
@@ -498,6 +540,36 @@ BEGIN
   -- Never deleted, by anyone: not even a PEO with no profile, not even by the table's owner.
   PERFORM pg_temp.must_raise(NULL, 'DELETE FROM public.peos WHERE name = ''Acme PEO''', '55000', 'deleting a PEO');
   RAISE NOTICE 'peo_profiles: listing cases passed';
+END $$;
+
+-- ---------- Removing a person at a PEO who asks ----------
+-- The runbook in docs/DATA_HANDLING.md ("Removing a PEO contact"), as the table's owner: it takes them out as a
+-- contact and as a source of every published version, and the triggers that freeze a version are back on after.
+BEGIN;
+alter table public.peo_contacts disable trigger peo_contacts_frozen_once_published;
+delete from public.peo_contacts where email = 'dana@trinet.example';
+alter table public.peo_contacts enable trigger peo_contacts_frozen_once_published;
+alter table public.peo_profile_versions disable trigger peo_profile_versions_frozen_once_published;
+update public.peo_profile_versions v
+set sources = (
+  select jsonb_object_agg(s.key, case when s.value ->> 'kind' = 'person' and s.value ->> 'name' = 'Dana Reyes'
+    then jsonb_set(s.value, '{name}', '"Removed on request"') else s.value end)
+  from jsonb_each(v.sources) s)
+where exists (select 1 from jsonb_each(v.sources) s where s.value ->> 'kind' = 'person' and s.value ->> 'name' = 'Dana Reyes');
+alter table public.peo_profile_versions enable trigger peo_profile_versions_frozen_once_published;
+COMMIT;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.peo_contacts WHERE name = 'Dana Reyes')
+     OR EXISTS (SELECT 1 FROM public.peo_profile_versions WHERE sources::text LIKE '%Dana Reyes%') THEN
+    RAISE EXCEPTION 'FAIL: the runbook left Dana Reyes named';
+  END IF;
+  IF (SELECT sources -> 'min_headcount' FROM public.peo_profile_versions WHERE peo_id = pg_temp.peo('TriNet') AND version = 2)
+     <> jsonb_build_object('kind', 'person', 'name', 'Removed on request', 'role', 'Broker desk manager', 'checked_on', '2026-11-09') THEN
+    RAISE EXCEPTION 'FAIL: the runbook lost the source''s role or date';
+  END IF;
+  PERFORM pg_temp.must_raise(NULL, format('UPDATE public.peo_profile_versions SET min_headcount = 1 WHERE peo_id = %s AND version = 2', pg_temp.peo('TriNet')), '55000', 'editing a version after the runbook');
+  RAISE NOTICE 'peo_profiles: contact removal cases passed';
 END $$;
 
 \echo 'peo_profiles: all cases passed'

@@ -1,7 +1,8 @@
 // Requirement profiles (GLOSSARY.md, docs/adr/0003): what each PEO asks for, as dated, versioned data in the
 // database (supabase/migrations/20261111090000_peo_requirement_profiles.sql). Admins write a draft and publish
 // it; a published version never changes, and the newest published one is the profile in use. The browser reads
-// the PEOs and their profiles in use through public.peo_catalog(), which never includes a PEO contact.
+// the PEOs and their profiles in use through public.peo_catalog(), which never includes a PEO contact, and gives
+// anyone but an advisor a person at the PEO by their role only.
 import type { PeoCensusLayout } from "./censusExport";
 import type { DocumentCategory } from "./documentCategories";
 import type { PeoRecord } from "./peoCatalog";
@@ -25,11 +26,12 @@ export type ProfilePart = (typeof PROFILE_PARTS)[number];
 
 /**
  * Where one part of a profile was checked, and when: a document, by its title with a link when there is one, or a
- * named person at the PEO, with their role.
+ * named person at the PEO, with their role. Only advisors and admins read the person's name: for anyone else
+ * public.peo_catalog() leaves it out, and it reads as null.
  */
 export type ProfileSource =
   | { kind: "document"; name: string; link?: string; checkedOn: string }
-  | { kind: "person"; name: string; role: string; checkedOn: string };
+  | { kind: "person"; name: string | null; role: string; checkedOn: string };
 
 export const PROFILE_CAPS = {
   censusColumns: 200,
@@ -85,8 +87,8 @@ export interface RequirementProfile {
   rules: EligibilityRules;
   extraQuestions: ExtraQuestion[];
   /**
-   * Where each part was checked, and when. A part with no source isn't sourced. The contacts' source is never in
-   * what the browser reads.
+   * Where each part was checked, and when. A part with no source isn't sourced. Only an advisor's catalog holds the
+   * contacts' source and the names of people at the PEO.
    */
   sources: Partial<Record<ProfilePart, ProfileSource>>;
   publishedAt: string | null;
@@ -113,9 +115,9 @@ function parseProfile(peo: string, p: Row): RequirementProfile {
       if (!(PROFILE_PARTS as readonly string[]).includes(part) || !isRow(raw)) continue;
       const name = text(raw.name);
       const checkedOn = text(raw.checked_on);
-      if (!name || !checkedOn) continue;
-      if (raw.kind === "person" && text(raw.role)) sources[part as ProfilePart] = { kind: "person", name, role: text(raw.role)!, checkedOn };
-      else if (raw.kind === "document") {
+      if (!checkedOn) continue;
+      if (raw.kind === "person" && text(raw.role)) sources[part as ProfilePart] = { kind: "person", name: name || null, role: text(raw.role)!, checkedOn };
+      else if (raw.kind === "document" && name) {
         const link = text(raw.link);
         sources[part as ProfilePart] = link ? { kind: "document", name, link, checkedOn } : { kind: "document", name, checkedOn };
       }

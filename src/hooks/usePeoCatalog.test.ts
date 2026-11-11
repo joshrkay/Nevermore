@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 
 let rpcResult: { data: unknown; error: { message: string } | null } = { data: [], error: null };
 const rpcCalls: unknown[][] = [];
@@ -46,10 +46,22 @@ describe("usePeoCatalog", () => {
     expect(result.current.peos).toEqual([]);
   });
 
+  it("reads the PEOs again when asked to retry after they couldn't be read", async () => {
+    rpcResult = { data: null, error: { message: "network down" } };
+    const { result } = renderHook(() => usePeoCatalog());
+    await waitFor(() => expect(result.current.status).toBe("failed"));
+    rpcResult = { data: [{ id: 1, name: "TriNet", profile: null }], error: null };
+    act(() => result.current.retry());
+    expect(result.current.status).toBe("loading");
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.peos.map((p) => p.name)).toEqual(["TriNet"]);
+    expect(rpcCalls).toEqual([["peo_catalog"], ["peo_catalog"]]);
+  });
+
   it("reads nothing until it is asked to, such as before the reader is signed in", async () => {
     rpcResult = { data: [{ id: 1, name: "TriNet", profile: null }], error: null };
     const { result, rerender } = renderHook(({ enabled }) => usePeoCatalog(enabled), { initialProps: { enabled: false } });
-    expect(result.current).toEqual({ peos: [], status: "loading" });
+    expect(result.current).toMatchObject({ peos: [], status: "loading" });
     expect(rpcCalls).toEqual([]);
     rerender({ enabled: true });
     await waitFor(() => expect(result.current.status).toBe("ready"));

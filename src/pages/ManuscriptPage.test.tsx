@@ -16,14 +16,21 @@ let finalVersions: unknown[] = [];
 let verifiedFields: string[] = [];
 // What public.peo_catalog() returns: the PEOs and their profiles in use.
 let peoCatalogRows: unknown[] = [];
+// Set to make the next catalog reads hang ("pending") or fail ("error"); each read takes the next one.
+const peoCatalogReads: ("pending" | "error")[] = [];
 const createSignedUrl = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
-    rpc: async (fn: string) => ({
-      data: fn === "prospect_final_manuscript" ? finalVersions : fn === "session_verified_fields" ? verifiedFields
-        : fn === "peo_catalog" ? peoCatalogRows : sharedStatus,
-      error: null,
-    }),
+    rpc: async (fn: string) => {
+      const read = fn === "peo_catalog" ? peoCatalogReads.shift() : undefined;
+      if (read === "pending") await new Promise(() => {});
+      if (read === "error") return { data: null, error: { message: "network down" } };
+      return {
+        data: fn === "prospect_final_manuscript" ? finalVersions : fn === "session_verified_fields" ? verifiedFields
+          : fn === "peo_catalog" ? peoCatalogRows : sharedStatus,
+        error: null,
+      };
+    },
     storage: { from: () => ({ createSignedUrl: (...a: unknown[]) => createSignedUrl(...a) }) },
     from: () => ({
       select: () => ({
@@ -87,6 +94,7 @@ describe("ManuscriptPage", () => {
   beforeEach(() => {
     lastQuery = null;
     peoCatalogRows = [];
+    peoCatalogReads.length = 0;
     row = null;
   });
 
@@ -119,7 +127,8 @@ describe("ManuscriptPage", () => {
     expect(screen.getByTestId("consent-draft-watermark")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByText(/The information I've provided is accurate\./)).toBeInTheDocument();
 
-    // The PDF is built from the same packet, with the same mark.
+    // The PDF is built from the same packet, with the same mark (once the PEOs are read).
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]).toBeEnabled());
     fireEvent.click(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]);
     await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
     expect(vi.mocked(buildManuscriptPdf).mock.calls[0][0].signer).toMatchObject({ consentVersion: "2026-10-draft-1", consentDraft: true });
@@ -552,6 +561,41 @@ describe("ManuscriptPage", () => {
       const packet = vi.mocked(buildManuscriptPdf).mock.calls[0][0];
       expect(packet).toMatchObject({ fileId: "EAA-2026-0042", version: 2, dataVersion: 17, companyName: "Signed & Co." });
       expect(screen.getByText("Version").parentElement).toHaveTextContent("v2 · data version 17");
+    });
+
+    it("won't download while the PEOs are loading: the eligibility checks would all read can't tell", async () => {
+      peoCatalogReads.push("pending");
+      renderAt("/manuscript/EAA-2026-0042");
+      const downloads = await screen.findAllByRole("button", { name: /Download the packet \(PDF\)/ });
+      // Both of them: the top bar's and the one at the foot of the packet.
+      expect(downloads.length).toBe(2);
+      for (const download of downloads) expect(download).toBeDisabled();
+      expect(screen.getByText("Loading the PEOs' profiles. You can download your packet once they're in.")).toBeInTheDocument();
+      for (const download of downloads) fireEvent.click(download);
+      expect(downloadBlob).not.toHaveBeenCalled();
+    });
+
+    it("won't download the packet as certified while the PEOs are loading, but offers the advisor's final packet", async () => {
+      peoCatalogReads.push("pending");
+      finalVersions = [{ version: 2, storage_path: "s1/v2-x.pdf", generated_at: "2026-05-03T00:00:00Z", corrections_applied: 0 }];
+      renderAt("/manuscript/EAA-2026-0042");
+      expect(await screen.findByRole("button", { name: /As certified \(PDF\)/ })).toBeDisabled();
+      for (const final of screen.getAllByRole("button", { name: /Download the final packet \(PDF\)/ })) expect(final).toBeEnabled();
+      finalVersions = [];
+    });
+
+    it("says when the PEOs couldn't be read, won't download until they are, and reads them again on request", async () => {
+      peoCatalogReads.push("error");
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      renderAt("/manuscript/EAA-2026-0042");
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "We couldn't load the PEOs' profiles, so your packet's eligibility checks can't be run. Try again before downloading.",
+      );
+      expect(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]).toBeEnabled());
+      fireEvent.click(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]);
+      await waitFor(() => expect(downloadBlob).toHaveBeenCalledTimes(1));
     });
 
     it("tells the user when the PDF can't be generated", async () => {

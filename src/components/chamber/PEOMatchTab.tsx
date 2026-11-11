@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Users, UserPlus, DollarSign, MapPin, Shield, Zap } from "lucide-react";
 import type { ChamberData } from "@/data/chamberTypes";
-import { PEO_NAME_MAX, findPeo, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
+import { PEO_NAME_MAX, findPeo, listedPeos, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
 import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 
 export interface PEOMatchTabProps {
@@ -24,7 +24,7 @@ const FIT_TEXT: Record<FitStatus, string> = {
 
 const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog: everyPeo, catalogStatus }: PEOMatchTabProps) => {
   // Only the PEOs an admin lists are offered; one chosen before it stopped being listed reads as the prospect's own.
-  const catalog = everyPeo.filter((p) => p.listed);
+  const catalog = listedPeos(everyPeo);
   const [otherName, setOtherName] = useState("");
 
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);

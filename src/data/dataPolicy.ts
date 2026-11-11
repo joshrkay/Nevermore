@@ -62,7 +62,7 @@ export const SENSITIVITY: Record<Sensitivity, SensitivityLevel> = {
   },
   public: {
     label: "Public",
-    meaning: "What the site publishes: marketing copy, the sample packet (invented data) and the sourced PEO catalog.",
+    meaning: "What the site publishes: marketing copy and the sample packet (invented data).",
     handling: ["Anyone may see it. Keep it accurate and free of anything above this level."],
   },
 };

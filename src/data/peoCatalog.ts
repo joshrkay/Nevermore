@@ -78,8 +78,16 @@ export function cleanPeoName(name: unknown): string | null {
   return cleaned === "" ? null : cleaned;
 }
 
-/** The listed PEO with this name, compared ignoring case; undefined for a PEO the catalog doesn't hold. */
+/**
+ * The PEO in the catalog with this name, compared ignoring case, listed or not: one an admin took off the list is
+ * still found, so what was sent to it reads against its profile. Undefined for a name the catalog doesn't hold.
+ */
 export function findPeo(catalog: readonly PeoRecord[], name: string): PeoRecord | undefined {
   const wanted = name.trim().toLowerCase();
   return catalog.find((p) => p.name.toLowerCase() === wanted);
+}
+
+/** The PEOs an admin lists, in the catalog's (alphabetical) order: the only ones offered anywhere. */
+export function listedPeos(catalog: readonly PeoRecord[]): PeoRecord[] {
+  return catalog.filter((p) => p.listed);
 }

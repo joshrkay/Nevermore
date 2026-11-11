@@ -427,11 +427,12 @@ INSERT INTO matrix VALUES
   -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
   -- advisor_add_referral_partner() and advisor_update_referral_partner().
   ('public.referral_partners',                          '{"advisor":"all","admin":"all"}'),
-  -- PEOs and their requirement profiles (20261111090000): every signed-in caller, guests included, reads the PEOs
-  -- and the published version (one here); drafts are the admin's. Only advisors read a PEO's contacts. Signed-out
-  -- callers read nothing: public pages never name a PEO.
-  ('public.peos',                                       '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all"}'),
-  ('public.peo_profile_versions',                       '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor":1,"admin":"all","advisor_as_guest":1}'),
+  -- PEOs and their requirement profiles (20261111090000): advisors read the PEOs, the published version (one here)
+  -- and its contacts; drafts are the admin's. Prospects, guests included, read none of these tables (a version names
+  -- people at the PEO and admins): peo_catalog() is their only way in, checked in part 4. Signed-out callers read
+  -- nothing: public pages never name a PEO.
+  ('public.peos',                                       '{"advisor":"all","admin":"all"}'),
+  ('public.peo_profile_versions',                       '{"advisor":1,"admin":"all"}'),
   ('public.peo_contacts',                               '{"advisor":"all","admin":"all"}'),
   ('public.intake_lifecycle_events',                    '{"advisor":"all","admin":"all"}'),
   ('public.intake_deletions',                           '{"advisor":"all","admin":"all"}'),
@@ -752,7 +753,7 @@ INSERT INTO callable VALUES
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
   ('retry_intake_deletion(p_deletion_id uuid)', 'admin',  'SELECT public.retry_intake_deletion(%2$L)', 'retrying a failed deletion'),
   ('admin_ops_summary(p_hours integer)',       'admin',   'SELECT count(*) FROM public.admin_ops_summary(24)', 'monitoring counts'),
-  ('peo_catalog()',                            'signed_in', NULL, 'the PEOs and each one''s published profile, as the caller''s row security allows; never a contact'),
+  ('peo_catalog()',                            'signed_in', NULL, 'the PEOs and each one''s published profile; never a contact or an admin''s id, and for anyone but an advisor no person''s name'),
   ('admin_add_peo(p_name text)',               'admin',   'SELECT public.admin_add_peo(''Probe PEO'')', 'adding a PEO'),
   ('admin_save_peo_profile(p_peo_id bigint, p_profile jsonb)', 'admin', 'SELECT public.admin_save_peo_profile(0, ''{}'')', 'saving a PEO''s draft profile'),
   ('admin_publish_peo_profile(p_peo_id bigint)', 'admin', 'SELECT public.admin_publish_peo_profile(0)', 'publishing a PEO''s profile'),
@@ -902,6 +903,33 @@ BEGIN
      OR pg_temp.visible('public.intake_consents') <> 0 OR pg_temp.visible('storage.objects') <> 0 THEN
     RAISE EXCEPTION 'FAIL: a guest token on an advisor''s account reads advisor data';
   END IF;
+
+  -- The PEO catalog (20261111090000), the only way a prospect reads a PEO: as each caller, it never holds a PEO
+  -- contact or an admin's id, and only advisors read the name of the person at the PEO a source names (TriNet's
+  -- minimum headcount was checked with Dana Reyes) or the contacts' source. Signed out, it is refused.
+  FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor_as_guest', 'advisor', 'admin'] LOOP
+    PERFORM pg_temp.become(who);
+    IF who = 'signed_out' THEN
+      PERFORM pg_temp.refused('SELECT public.peo_catalog()', 'a signed-out caller reading the PEO catalog');
+      CONTINUE;
+    END IF;
+    DECLARE
+      catalog constant text := public.peo_catalog()::text;
+      trinet constant jsonb := (SELECT p -> 'profile' FROM jsonb_array_elements(public.peo_catalog()) p WHERE p ->> 'name' = 'TriNet');
+    BEGIN
+      RESET ROLE;
+      IF catalog LIKE '%dana@trinet.example%' OR catalog LIKE '%' || pg_temp.id('admin') || '%' OR catalog LIKE '%' || pg_temp.id('advisor') || '%' THEN
+        RAISE EXCEPTION 'FAIL: % reads a PEO contact or an admin''s id in the catalog: %', who, catalog;
+      END IF;
+      IF trinet ->> 'min_headcount' <> '5' OR trinet -> 'sources' -> 'min_headcount' ->> 'role' <> 'Broker desk'
+         OR trinet -> 'sources' -> 'min_headcount' ->> 'checked_on' <> '2026-11-02' THEN
+        RAISE EXCEPTION 'FAIL: % doesn''t read TriNet''s profile in use: %', who, trinet;
+      END IF;
+      IF (catalog LIKE '%Dana Reyes%' OR trinet -> 'sources' ? 'contacts') <> (who IN ('advisor', 'admin')) THEN
+        RAISE EXCEPTION 'FAIL: % % the name of a person at the PEO: %', who, CASE WHEN who IN ('advisor', 'admin') THEN 'doesn''t read' ELSE 'reads' END, catalog;
+      END IF;
+    END;
+  END LOOP;
 
   -- Nobody but the service role makes a bucket public or adds one.
   FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'prospect_a', 'advisor', 'admin'] LOOP

@@ -11,6 +11,7 @@ import { parseChamberData } from "@/data/chamberValidation";
 import { CONSENT_DRAFT_LABEL } from "@/data/certification";
 import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, rowSourceLine, type ChamberSubmission, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
 import { parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
+import { listedPeos } from "@/data/peoCatalog";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { readVerifiedFields } from "@/lib/verifiedFields";
@@ -221,6 +222,9 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
   const isSample = state.kind === "sample";
   const withdrawn = state.kind === "ready" && state.withdrawn;
+  // A prospect's own packet runs its eligibility checks against the PEOs' profiles: until they are read, every check
+  // would read can't tell, so the PDF waits for them. The sample reads no PEO.
+  const catalogPending = state.kind === "ready" && peoCatalog.status !== "ready";
   const backUrl = state.kind === "ready" ? `/start?session=${state.sessionId}` : "/start";
 
   const handleDownloadPDF = async () => {
@@ -361,7 +365,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             <span className="text-xs text-muted-foreground hidden sm:inline">Dates of birth masked</span>
             {!withdrawn && (finalVersion ? (
               <>
-                <button onClick={handleDownloadPDF} disabled={downloading}
+                <button onClick={handleDownloadPDF} disabled={downloading || catalogPending}
                   className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60">
                   {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                   As certified (PDF)
@@ -374,7 +378,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
                 </button>
               </>
             ) : (
-              <button onClick={handleDownloadPDF} disabled={downloading}
+              <button onClick={handleDownloadPDF} disabled={downloading || catalogPending}
                 className="inline-flex items-center gap-2 text-sm whitespace-nowrap bg-primary text-primary-foreground px-3 sm:px-4 py-1.5 rounded-md hover:bg-primary/90 transition-colors disabled:opacity-60">
                 {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 <span className="sm:hidden">Download PDF</span>
@@ -403,6 +407,17 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             </Link>
           </div>
         )}
+        {state.kind === "ready" && !withdrawn && peoCatalog.status === "loading" && (
+          <p aria-live="polite" className="text-sm text-muted-foreground">
+            Loading the PEOs' profiles. You can download your packet once they're in.
+          </p>
+        )}
+        {state.kind === "ready" && !withdrawn && peoCatalog.status === "failed" && (
+          <div role="alert" className="bg-warning/10 border border-warning/40 rounded-xl p-4 text-sm text-foreground space-y-2">
+            <p>We couldn't load the PEOs' profiles, so your packet's eligibility checks can't be run. Try again before downloading.</p>
+            <button onClick={peoCatalog.retry} className="min-h-11 text-primary underline hover:text-primary/90">Try again</button>
+          </div>
+        )}
         {state.kind === "ready" && <ProspectStatusNote sessionId={state.sessionId} />}
         {finalVersion && (
           <div className="bg-success/10 border border-success/40 rounded-xl p-4 text-sm text-foreground" data-testid="final-manuscript">
@@ -425,7 +440,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             <p className="text-sm text-muted-foreground">
               Send it with your packet so the PEO's underwriters don't have to re-type it. It's the census you certified.
             </p>
-            <CensusDownload census={state.data.census} fileId={state.fileId} peos={peoCatalog.peos.filter((p) => p.listed).map((p) => p.name)} />
+            <CensusDownload census={state.data.census} fileId={state.fileId} peos={listedPeos(peoCatalog.peos).map((p) => p.name)} />
           </section>
         )}
 
@@ -713,7 +728,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               {openingFinal ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download the final packet (PDF)
             </button>
           ) : (
-            <button onClick={handleDownloadPDF} disabled={downloading}
+            <button onClick={handleDownloadPDF} disabled={downloading || catalogPending}
               className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-60">
               {downloading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download the packet (PDF)
             </button>

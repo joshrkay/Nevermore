@@ -21,6 +21,7 @@ import { censusPay, isW2 } from "@/data/census";
 import { coverageTier, NOT_PROVIDED } from "@/data/manuscript";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
 import { describeSource } from "@/data/referralPartners";
+import { listedPeos } from "@/data/peoCatalog";
 import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
 
 type Load =
@@ -170,7 +171,7 @@ const Detail = ({
             messageIds={messageIds}
             onShowMessage={onShowMessage}
             onChanged={reload}
-            census={<CensusTable detail={detail} peos={peoCatalog.peos.filter((p) => p.listed).map((p) => p.name)} />}
+            census={<CensusTable detail={detail} peos={listedPeos(peoCatalog.peos).map((p) => p.name)} />}
           />
           <TranscriptEvidence
             messages={detail.transcript}
@@ -223,7 +224,7 @@ const Detail = ({
             quoteRequests={detail.quoteRequests}
             onChanged={reload}
           />
-          <ManuscriptPanel detail={detail} catalog={peoCatalog.peos} onChanged={reload} />
+          <ManuscriptPanel detail={detail} catalog={peoCatalog.peos} catalogStatus={peoCatalog.status} onRetryCatalog={peoCatalog.retry} onChanged={reload} />
           <DocumentsPanel documents={detail.documents} events={detail.documentEvents} prospectUserId={detail.userId} />
           <NotesPanel sessionId={detail.id} notes={detail.notes} onAdded={reload} />
           <AuditTrail events={detail.reviewEvents} prospectUserId={detail.userId} />
