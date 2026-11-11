@@ -179,7 +179,7 @@ describe("greetings", () => {
   });
 });
 
-// ADR 0003: a FEIN typed into the conversation is kept out of the transcript and away from the model.
+// ADR 0006: a FEIN typed into the conversation is kept out of the transcript and away from the model.
 describe("a FEIN typed into the conversation", () => {
   it("is removed from the message as it joins the transcript, and from a stored transcript as it is read", () => {
     expect(createChatMessage("user", "Our EIN is 84-1234567").text).toBe("Our EIN is [redacted]");

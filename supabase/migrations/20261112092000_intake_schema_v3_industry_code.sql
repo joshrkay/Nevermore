@@ -6,7 +6,7 @@
 --                           and chat extraction hold a code to the 2022 edition (naics2022.ts)
 --   operations_description  text: what the business does, in plain words
 --
--- chamber_data_field_kind and chamber_data_scalar_reason are the 20261111091000 definitions with these keys
+-- chamber_data_field_kind and chamber_data_scalar_reason are the 20261112091000 definitions with these keys
 -- and the one kind added, and nothing else changed.
 
 -- Why one value breaks the rule of its kind; NULL when it is acceptable. The value is never null here:
@@ -96,7 +96,7 @@ AS $$
   END;
 $$;
 
--- CREATE OR REPLACE keeps the grants 20261111091000 gave these functions; they are repeated here so this
+-- CREATE OR REPLACE keeps the grants 20261112091000 gave these functions; they are repeated here so this
 -- file reads on its own.
 REVOKE ALL ON FUNCTION public.chamber_data_field_kind(text) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.chamber_data_scalar_reason(text, jsonb) FROM PUBLIC, anon;

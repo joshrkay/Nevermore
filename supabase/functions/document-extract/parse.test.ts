@@ -650,7 +650,7 @@ describe("AI-read fields", () => {
     expect(shapeAiCandidates([{ field: "loss_history", section: 1, rows: [{}, "2023", { note: " " }] }, { field: "loss_history", section: 1, value: "five years clean" }], sections)).toEqual([]);
   });
 
-  // ADR 0003
+  // ADR 0006
   it("never sends a FEIN printed on a document to the model", () => {
     expect(buildPromptText([{ label: "Page 1", text: "Acme LLC, FEIN 84-1234567" }])).toBe("[[Section 1]]\nAcme LLC, FEIN [redacted]\n\n");
   });

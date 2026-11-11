@@ -6,7 +6,7 @@
 --   remote    true or false: works from home or another remote place, some or all of the time
 --   travels   true or false: travels for work
 --
--- chamber_data_census_row_error is the 20261111094000 definition with these keys added, and nothing else
+-- chamber_data_census_row_error is the 20261112094000 definition with these keys added, and nothing else
 -- changed.
 
 -- One census row: the shared person rules (name, last name, date of birth) and the facts a census row

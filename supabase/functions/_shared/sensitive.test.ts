@@ -137,7 +137,7 @@ describe("isSensitiveHeader", () => {
   });
 });
 
-// ADR 0003: the FEIN is typed into its own box in the workspace, so one written in a chat message or a document is
+// ADR 0006: the FEIN is typed into its own box in the workspace, so one written in a chat message or a document is
 // removed before the text reaches the model or the transcript. Stored answers keep redactSensitive's rules.
 describe("redactForModel", () => {
   it("removes a FEIN written the way a FEIN is written, two digits, a hyphen and seven", () => {

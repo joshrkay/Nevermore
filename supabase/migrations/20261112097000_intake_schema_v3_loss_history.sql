@@ -1,11 +1,11 @@
--- Intake schema v3, part 10: state unemployment tax rates (Epic K, story K-4.2).
+-- Intake schema v3, part 8: workers' comp loss history by year (Epic K, story K-3.3).
 --
 -- One top-level chamber_data key joins the intake:
---   suta_rates  'rows': the employer's unemployment tax rate in each state of operation, each as
---               { state, rate (a percentage), year (the year it applies to) }. The browser keeps one row per
---               state; the database holds the list to 60 rows.
+--   loss_history  'rows': up to five policy years, each as { policy_year, carrier, premium, experience_mod,
+--                 claims, paid, reserved, valuation_date, no_coverage }. `claims: 0` is "no claims" and
+--                 `no_coverage: true` is "no prior coverage" that year: both are answers.
 --
--- chamber_data_field_kind, chamber_data_row_field_kind and chamber_data_row_list_max are the 20261111098000
+-- chamber_data_field_kind, chamber_data_row_field_kind and chamber_data_row_list_max are the 20261112096000
 -- definitions with this list added, and nothing else changed.
 
 -- The kind of each key inside a list of rows; NULL for a key the list does not have.
@@ -31,15 +31,6 @@ AS $$
     WHEN list = 'loss_history' AND key IN ('experience_mod') THEN 'experience_mod'
     WHEN list = 'loss_history' AND key IN ('claims') THEN 'count'
     WHEN list = 'loss_history' AND key IN ('no_coverage') THEN 'boolean'
-    -- v3, K-4.1
-    WHEN list = 'medical_plans' AND key IN ('name', 'carrier', 'employer_contribution') THEN 'name'
-    WHEN list = 'medical_plans' AND key IN ('rate_ee', 'rate_ee_sp', 'rate_ee_ch', 'rate_fam', 'renewal_rate_ee',
-      'renewal_rate_ee_sp', 'renewal_rate_ee_ch', 'renewal_rate_fam') THEN 'money'
-    WHEN list = 'medical_plans' AND key IN ('enrolled') THEN 'count'
-    -- v3, K-4.2
-    WHEN list = 'suta_rates' AND key IN ('state') THEN 'state'
-    WHEN list = 'suta_rates' AND key IN ('rate') THEN 'percent'
-    WHEN list = 'suta_rates' AND key IN ('year') THEN 'year'
     -- sync:end row_field_kinds
   END;
 $$;
@@ -56,8 +47,6 @@ AS $$
     WHEN list = 'entities' THEN 50
     WHEN list = 'owners_officers' THEN 20
     WHEN list = 'loss_history' THEN 5
-    WHEN list = 'medical_plans' THEN 20
-    WHEN list = 'suta_rates' THEN 60
     -- sync:end row_caps
   END;
 $$;
@@ -90,7 +79,7 @@ AS $$
     WHEN field = 'fein' THEN 'fein'
     WHEN field = 'entity_type' THEN 'entity_type'
     WHEN field = 'year_founded' THEN 'year'
-    WHEN field IN ('entities', 'owners_officers', 'loss_history', 'medical_plans', 'suta_rates') THEN 'rows'
+    WHEN field IN ('entities', 'owners_officers', 'loss_history') THEN 'rows'
     -- v3, K-1.2
     WHEN field = 'operations_description' THEN 'text'
     WHEN field = 'naics_code' THEN 'naics'

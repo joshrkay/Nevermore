@@ -32,7 +32,7 @@ import { OUTBOX_KIND_LABELS } from "@/data/outbox";
 import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
-import { QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
+import { QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { CHAT_CANNOT_TAKE } from "../../supabase/functions/_shared/followUp";
@@ -236,13 +236,24 @@ describe("server and client intake rules agree", () => {
     expect(quoted(blocks("prospect_outbox_kinds").join("\n")).sort()).toEqual([...PROSPECT_KINDS].sort());
   });
 
-  // What an advisor can review is whatever the database knows as an answer (20261111091000): the SQL test
+  // What an advisor can review is whatever the database knows as an answer (20261112091000): the SQL test
   // supabase/tests/intake_schema_v3.sql holds it, and no list is kept to compare here.
 
   // Quote requests (20261110090000): the statuses the panel shows and the stages it offers a send at.
   it("holds the same quote request statuses, and records sends at the same stages", () => {
     expect(quoted(blocks("quote_request_statuses").join("\n"))).toEqual([...QUOTE_REQUEST_STATUSES]);
     expect(quoted(blocks("quote_sendable_stages").join("\n"))).toEqual([...SENDABLE_STAGES]);
+  });
+
+  // Quote request notes (20261111090000): the kinds the note form offers, and how long a note can be.
+  it("holds the same kinds of quote request note, in the table and in the function that checks one", () => {
+    expect(quoted(blocks("quote_request_note_kinds").join("\n"))).toEqual([...QUOTE_NOTE_KINDS]);
+    expect(quoted(blocks("quote_request_note_kinds_checked").join("\n"))).toEqual([...QUOTE_NOTE_KINDS]);
+  });
+
+  it("caps a quote request note at the same length", () => {
+    const [sql] = blocks("quote_request_note_length");
+    expect(Number(/>\s*(\d+)/.exec(sql)?.[1])).toBe(QUOTE_NOTE_MAX);
   });
 
   it("caps the PEO a packet went to at the longest PEO name", () => {

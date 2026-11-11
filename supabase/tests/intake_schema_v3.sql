@@ -31,16 +31,16 @@ CREATE TABLE auth.users (id uuid PRIMARY KEY, raw_user_meta_data jsonb);
 \i supabase/migrations/20261029092000_census_in_intake_validation.sql
 \i supabase/migrations/20261103120000_intake_schema_v2_workers_comp.sql
 -- v3: each group of the common questions, in order.
-\i supabase/migrations/20261111091000_intake_schema_v3_company_identity.sql
-\i supabase/migrations/20261111092000_intake_schema_v3_industry_code.sql
-\i supabase/migrations/20261111093000_intake_schema_v3_current_peo.sql
-\i supabase/migrations/20261111094000_intake_schema_v3_census_columns.sql
-\i supabase/migrations/20261111095000_intake_schema_v3_census_worksite.sql
-\i supabase/migrations/20261111096000_intake_schema_v3_owners_officers.sql
-\i supabase/migrations/20261111097000_intake_schema_v3_loss_history.sql
-\i supabase/migrations/20261111098000_intake_schema_v3_medical_plans.sql
-\i supabase/migrations/20261111099000_intake_schema_v3_suta_rates.sql
-\i supabase/migrations/20261111100000_intake_schema_v3_acord_130_questions.sql
+\i supabase/migrations/20261112091000_intake_schema_v3_company_identity.sql
+\i supabase/migrations/20261112092000_intake_schema_v3_industry_code.sql
+\i supabase/migrations/20261112093000_intake_schema_v3_current_peo.sql
+\i supabase/migrations/20261112094000_intake_schema_v3_census_columns.sql
+\i supabase/migrations/20261112095000_intake_schema_v3_census_worksite.sql
+\i supabase/migrations/20261112096000_intake_schema_v3_owners_officers.sql
+\i supabase/migrations/20261112097000_intake_schema_v3_loss_history.sql
+\i supabase/migrations/20261112098000_intake_schema_v3_medical_plans.sql
+\i supabase/migrations/20261112099000_intake_schema_v3_suta_rates.sql
+\i supabase/migrations/20261112100000_intake_schema_v3_acord_130_questions.sql
 
 -- ---------- helpers ----------
 -- The path chamber_data_error names for d, or NULL when d is acceptable.

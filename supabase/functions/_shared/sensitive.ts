@@ -30,7 +30,7 @@ const GROUPED_AMEX = /\b\d{4}[- ]\d{6}[- ]\d{5}\b/g;
 // JCB), 4 (Visa), 5 (Mastercard) and 6 (Discover). No year starts this way.
 const CARD_START = /^(?:2[2-7]|[3-6])/;
 // A federal employer identification number as it is written: two digits, a hyphen (or the en or em dash a word
-// processor substitutes) and seven. The FEIN is typed into its own box in the workspace (ADR 0003), so one
+// processor substitutes) and seven. The FEIN is typed into its own box in the workspace (ADR 0006), so one
 // written in a chat message or a document's text is removed (redactForModel). A digit on either side means it
 // is part of something longer (an order number, a ZIP+4).
 const FORMATTED_FEIN = /(?<!\d)\d{2}[-\u2013\u2014]\d{7}(?!\d)/g;
@@ -85,7 +85,7 @@ export function redactSensitive(text: string): string {
 
 /**
  * What a chat message or a document's text is put through before it joins the transcript or reaches the model:
- * everything redactSensitive removes, and a FEIN written as one (ADR 0003). A stored answer is held to
+ * everything redactSensitive removes, and a FEIN written as one (ADR 0006). A stored answer is held to
  * redactSensitive alone, since a policy or account number can share a FEIN's shape.
  */
 export function redactForModel(text: string): string {

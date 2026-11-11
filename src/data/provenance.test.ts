@@ -845,7 +845,7 @@ describe("rows heard in conversation or read from a document", () => {
     expect(owners(applyExtraction(closed, { owners_officers: [{ name: "Dana Reyes" }] }, { source: heard }))).toEqual([]);
   });
 
-  // ADR 0004: the prospect correcting a row in conversation changes it, unless they typed that row themselves.
+  // ADR 0007: the prospect correcting a row in conversation changes it, unless they typed that row themselves.
   it("changes a row's value when the prospect corrects it in conversation", () => {
     const one = applyExtraction(empty, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 60, title: "President" }] }, { source: heard, statuses: { owners_officers: "confirmed" } });
     const fixed = applyExtraction(one, { owners_officers: [{ name: "Dana Reyes", ownership_percent: 55 }] }, { source: { ...heard, message_id: "m5" }, corrections: ["owners_officers"] });

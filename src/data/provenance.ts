@@ -347,7 +347,7 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
     // (A table closed as "Doesn't apply" holds no rows, and one the prospect typed outranks every source.)
     const typed = prev?.source.kind === "prospect_edit";
     if (isRowListField(field) && !isEmpty(prevValue)) {
-      // The prospect correcting a row in conversation ("actually Dana owns 55%") changes it too (ADR 0004), unless
+      // The prospect correcting a row in conversation ("actually Dana owns 55%") changes it too (ADR 0007), unless
       // they typed the table themselves.
       const corrected = opts.corrections?.includes(field) === true && !typed;
       const better = corrected || (prev !== undefined && RANK[source.kind] > fieldRank(prev));

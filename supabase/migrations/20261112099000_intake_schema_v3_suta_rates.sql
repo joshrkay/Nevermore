@@ -1,11 +1,11 @@
--- Intake schema v3, part 9: current medical plans (Epic K, story K-4.1).
+-- Intake schema v3, part 10: state unemployment tax rates (Epic K, story K-4.2).
 --
 -- One top-level chamber_data key joins the intake:
---   medical_plans  'rows': up to 20 plans, each as { name, carrier, the monthly rate for each coverage tier
---                  (rate_ee, rate_ee_sp, rate_ee_ch, rate_fam), the same four renewal rates when the employer
---                  has them, employer_contribution, enrolled }
+--   suta_rates  'rows': the employer's unemployment tax rate in each state of operation, each as
+--               { state, rate (a percentage), year (the year it applies to) }. The browser keeps one row per
+--               state; the database holds the list to 60 rows.
 --
--- chamber_data_field_kind, chamber_data_row_field_kind and chamber_data_row_list_max are the 20261111097000
+-- chamber_data_field_kind, chamber_data_row_field_kind and chamber_data_row_list_max are the 20261112098000
 -- definitions with this list added, and nothing else changed.
 
 -- The kind of each key inside a list of rows; NULL for a key the list does not have.
@@ -36,6 +36,10 @@ AS $$
     WHEN list = 'medical_plans' AND key IN ('rate_ee', 'rate_ee_sp', 'rate_ee_ch', 'rate_fam', 'renewal_rate_ee',
       'renewal_rate_ee_sp', 'renewal_rate_ee_ch', 'renewal_rate_fam') THEN 'money'
     WHEN list = 'medical_plans' AND key IN ('enrolled') THEN 'count'
+    -- v3, K-4.2
+    WHEN list = 'suta_rates' AND key IN ('state') THEN 'state'
+    WHEN list = 'suta_rates' AND key IN ('rate') THEN 'percent'
+    WHEN list = 'suta_rates' AND key IN ('year') THEN 'year'
     -- sync:end row_field_kinds
   END;
 $$;
@@ -53,6 +57,7 @@ AS $$
     WHEN list = 'owners_officers' THEN 20
     WHEN list = 'loss_history' THEN 5
     WHEN list = 'medical_plans' THEN 20
+    WHEN list = 'suta_rates' THEN 60
     -- sync:end row_caps
   END;
 $$;
@@ -85,7 +90,7 @@ AS $$
     WHEN field = 'fein' THEN 'fein'
     WHEN field = 'entity_type' THEN 'entity_type'
     WHEN field = 'year_founded' THEN 'year'
-    WHEN field IN ('entities', 'owners_officers', 'loss_history', 'medical_plans') THEN 'rows'
+    WHEN field IN ('entities', 'owners_officers', 'loss_history', 'medical_plans', 'suta_rates') THEN 'rows'
     -- v3, K-1.2
     WHEN field = 'operations_description' THEN 'text'
     WHEN field = 'naics_code' THEN 'naics'
