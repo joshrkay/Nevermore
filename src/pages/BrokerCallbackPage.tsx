@@ -25,7 +25,8 @@ const BrokerCallbackPage = () => {
     started.current = true;
     finishBrokerSignIn(code)
       .then((result) => {
-        if (result.ok) window.location.assign(next);
+        // A mailbox that couldn't be connected is explained where it can be tried again, not lost on a reload.
+        if (result.ok) window.location.assign(result.mailbox === "failed" ? "/advisor/mailbox?connect=failed" : next);
         else setFailed(true);
       })
       .catch(() => setFailed(true));
@@ -51,7 +52,7 @@ const BrokerCallbackPage = () => {
           </div>
         ) : (
           <div role="status" className="flex items-center justify-center gap-2 text-muted-foreground">
-            <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" /> Signing you in…
+            <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" /> Signing you in and connecting your mailbox…
           </div>
         )}
         <LegalLinks className="text-center mt-6" />

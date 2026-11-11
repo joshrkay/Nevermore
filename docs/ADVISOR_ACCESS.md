@@ -59,7 +59,12 @@ lets the product do and that it never reads a mailbox. The prospect's sign-in pa
 - The same verified email as an existing advisor links to that account (Supabase's default for a provider-verified email):
   same role and history. A new account without the role sees "Waiting for access" until an administrator grants it. How a role
   can be granted without an administrator, by organisation, is story M-4.2.
-- Nothing the provider returns is kept yet; that is story M-4.3.
+- The refresh token the provider returns is handed once to the `mailbox` function (story M-4.3), which tests it, refuses it
+  unless it grants sending and nothing more, encrypts it and stores the ciphertext in `broker_mailboxes`. No API role reads
+  that table, admins included: a broker learns only whether a mailbox is connected, through `my_mailbox()`. It is connected,
+  checked and disconnected at `/advisor/mailbox`, and deleted on disconnect, when the provider revokes it, when the account
+  is deleted and when the broker loses the advisor role. `mailbox_store`, `mailbox_secret` and `mailbox_delete` are for the
+  service role only.
 
 ## What advisors can and can't do
 

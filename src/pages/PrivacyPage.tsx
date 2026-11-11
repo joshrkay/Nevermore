@@ -33,7 +33,7 @@ const PrivacyPage = () => (
       </p>
       <div className="space-y-6">
         {LEVELS.map((level) => {
-          const classes = DATA_CLASSES.filter((c) => c.sensitivity === level);
+          const classes = DATA_CLASSES.filter((c) => c.sensitivity === level && !c.awaitingCounsel);
           if (classes.length === 0) return null;
           return (
             <div key={level} className="bg-card border border-border rounded-xl p-5">

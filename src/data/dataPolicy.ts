@@ -171,6 +171,11 @@ export interface DataClass {
   stored: { tables: string[]; buckets: string[]; elsewhere: string[] };
   retention: string;
   deletion: string;
+  /**
+   * Left off the public Privacy page until counsel has approved the wording for it (docs/LEGAL_REVIEW.md): a class
+   * listed here is stored and handled as the rest are, but what people are told about it isn't ours to publish alone.
+   */
+  awaitingCounsel?: string;
 }
 
 const WITH_INTAKE = "Kept with its intake: a draft or a submitted record (see the windows above).";
@@ -300,6 +305,16 @@ export const DATA_CLASSES: DataClass[] = [
     stored: { tables: ["quote_request_messages", "quote_request_message_attachments"], buckets: ["peo-mail"], elsewhere: ["Resend"] },
     retention: `${WITH_INTAKE} Held mail nobody assigns is deleted ${RETENTION.heldMailDays} days after it was held (story M-3.3), files first. Resend keeps what it received too, under its own terms, until it is deleted there.`,
     deletion: `${DELETED_WITH_INTAKE} An attachment is stored only once it has been scanned for malware; one the scanner flags is never stored, only its signature.`,
+  },
+  {
+    id: "mailbox_token",
+    label: "Advisor mailbox connection",
+    sensitivity: "restricted",
+    examples: "The permission an advisor or broker gave to send email from their own address: the token that lets Nevermore send, kept encrypted, and the address and provider it is for. It can only send; it never reads a mailbox.",
+    stored: { tables: ["broker_mailboxes"], buckets: [], elsewhere: ["Google or Microsoft (the permission itself, which the advisor can withdraw there)"] },
+    retention: "Until the advisor disconnects it, the provider revokes it, the advisor leaves (the account is deleted or loses the advisor role), or it is found to carry more than the send permission.",
+    deletion: "Deleted at once when any of those happens: the stored token is removed, and Google is asked to revoke it. Not part of an intake: no prospect's data is in it.",
+    awaitingCounsel: "The Privacy Policy line on how a broker's mailbox permission is used (Google requires it) is counsel's to word (story M-4.3).",
   },
   {
     id: "notifications",

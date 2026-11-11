@@ -111,6 +111,7 @@
 \i supabase/migrations/20261112098000_intake_schema_v3_medical_plans.sql
 \i supabase/migrations/20261112099000_intake_schema_v3_suta_rates.sql
 \i supabase/migrations/20261112100000_intake_schema_v3_acord_130_questions.sql
+\i supabase/migrations/20261113090000_broker_mailboxes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -402,6 +403,9 @@ BEGIN
   -- An advisor opened its thread (20261111120000), so the mark has a row to protect.
   INSERT INTO public.quote_request_thread_reads (quote_request_id, last_opened_at)
   SELECT q.id, now() FROM public.quote_requests q WHERE q.session_id = pa_cert;
+  -- An advisor's connected mailbox (20261113090000): the encrypted token, which no API role reads. The mailbox function writes it.
+  INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
+  SELECT adv, 'google', 'advisor@example.test', 'https://www.googleapis.com/auth/gmail.send', 'ciphertext', 'iv';
   -- A file in the bucket that no stored attachment names stays the service role's alone.
   INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', pa_cert || '/0/unrecorded.pdf');
   PERFORM set_config('request.jwt.claims', '', false);
@@ -461,6 +465,9 @@ INSERT INTO matrix VALUES
   ('public.quote_request_messages',                     '{"advisor":1,"admin":2}'),
   ('public.quote_request_message_attachments',          '{"advisor":2,"admin":2}'),
   ('public.quote_request_thread_reads',                 '{"advisor":1,"admin":1}'),
+  -- A broker's connected mailbox (20261113090000): the encrypted token. Nobody reads it through the API, admins included;
+  -- the broker learns only whether it is connected, through my_mailbox().
+  ('public.broker_mailboxes',                           '{}'),
   -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
   ('public.intake_milestones',                          '{}'),
   -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
@@ -705,6 +712,7 @@ GRANT SELECT ON callable TO anon, authenticated, service_role;
 INSERT INTO callable VALUES
   ('has_role(_role app_role)',                 'anyone',  NULL, 'row security policies call it as the caller; answers about the caller only'),
   ('is_advisor()',                             'anyone',  NULL, 'row security policies and RequireAdvisor call it; answers about the caller only'),
+  ('my_mailbox()',                             'own',     NULL, 'whether the caller''s own mailbox is connected, and to whom; never the token; "not connected" for anyone else'),
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
@@ -842,6 +850,9 @@ BEGIN
     format('SELECT public.plan_held_mail_discard(0, %L)', nobody),
     format('SELECT public.finish_held_mail_discard(0, %L)', nobody),
     'SELECT count(*) FROM public.held_mail_due(1)',
+    format('SELECT public.mailbox_store(%L, ''google'', ''advisor@example.test'', ''https://www.googleapis.com/auth/gmail.send'', ''ciphertext'', ''iv'')', pg_temp.id('advisor')),
+    format('SELECT public.mailbox_secret(%L)', nobody),
+    format('SELECT public.mailbox_delete(%L)', nobody),
     'SELECT public.queue_retention_deletions(1)',
     'SELECT count(*) FROM public.claim_intake_deletions(1, 600)',
     'SELECT count(*) FROM public.claim_document_scans(1, 60)',

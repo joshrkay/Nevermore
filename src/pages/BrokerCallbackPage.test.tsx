@@ -19,11 +19,17 @@ describe("BrokerCallbackPage", () => {
   });
 
   it("redeems the code once and loads the console afresh", async () => {
-    finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "granted" });
+    finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "connected" });
     renderAt("?code=abc");
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/advisor"));
     expect(finishBrokerSignIn).toHaveBeenCalledTimes(1);
     expect(finishBrokerSignIn).toHaveBeenCalledWith("abc");
+  });
+
+  it("takes a broker whose mailbox couldn't be connected to where they can try again", async () => {
+    finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "failed" });
+    renderAt("?code=abc&next=%2Fadvisor%2Fheld");
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/advisor/mailbox?connect=failed"));
   });
 
   it("goes on to the page the broker came from, but only inside the console", async () => {
@@ -33,7 +39,7 @@ describe("BrokerCallbackPage", () => {
   });
 
   it("ignores a next that leaves the console", async () => {
-    finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "granted" });
+    finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "connected" });
     renderAt("?code=abc&next=https%3A%2F%2Fevil.example");
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/advisor"));
   });

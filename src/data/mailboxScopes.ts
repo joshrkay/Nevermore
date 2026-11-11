@@ -3,17 +3,15 @@
 // mailbox. mailboxScopes.test.ts fails if a scope outside the lists below is ever added, so asking for more has to be
 // a deliberate edit of that test and of the ADR.
 
+import { GOOGLE_SEND_SCOPE, MICROSOFT_SEND_SCOPE } from "../../supabase/functions/_shared/mailboxScopes.ts";
+
+export { GOOGLE_SEND_SCOPE, MICROSOFT_SEND_SCOPE };
+
 export type BrokerProvider = "google" | "microsoft";
 
 export const BROKER_PROVIDERS: readonly BrokerProvider[] = ["google", "microsoft"];
 
 export const BROKER_PROVIDER_LABELS: Record<BrokerProvider, string> = { google: "Google", microsoft: "Microsoft" };
-
-/** Google's send-only permission. A sensitive scope, not a restricted one (ADR 0005). */
-export const GOOGLE_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
-
-/** Microsoft's send-only permission, on Microsoft Graph. */
-export const MICROSOFT_SEND_SCOPE = "Mail.Send";
 
 /** Who the person is, which is what makes it a sign-in. Never a mailbox permission. */
 const IDENTITY_SCOPES = ["openid", "email", "profile"] as const;
