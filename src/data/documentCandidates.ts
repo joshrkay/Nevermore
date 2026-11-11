@@ -157,7 +157,11 @@ export interface CensusComparison {
 
 // A fact that is a list (a person's dependents) is stated only when it lists someone, and is compared by what it holds.
 const hasValue = (v: unknown) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0);
-const sameFact = (a: unknown, b: unknown) => (Array.isArray(a) || Array.isArray(b) ? JSON.stringify(a ?? []) === JSON.stringify(b ?? []) : a === b);
+// The intake's copy comes back from the database with its keys in another order, so a list is compared by what
+// each entry holds, key by key.
+const ordered = (v: unknown): unknown =>
+  Array.isArray(v) ? v.map(ordered) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, each]) => [k, ordered(each)])) : v;
+const sameFact = (a: unknown, b: unknown) => (Array.isArray(a) || Array.isArray(b) ? JSON.stringify(ordered(a ?? [])) === JSON.stringify(ordered(b ?? [])) : a === b);
 
 /** Whether the document stated `fact` for this row: a column it had, a value in it, and not a default. */
 const statesFact = (row: CensusEmployee, fact: CensusFact, facts: readonly CensusFact[]) =>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PROMPT_VERSION } from "../../supabase/functions/chamber-extract/schema.ts";
-import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
+import { ACORD_DERIVED } from "./acordRules";
+import { EMPTY_CHAMBER_DATA, type ChamberData } from "./chamberTypes";
 import {
   applyChosenValue,
   applyExtraction,
@@ -929,13 +930,18 @@ describe("the ACORD 130 questions: what closes them and what answers them", () =
     expect(hazards.map((f) => status(withCensus(empty, [emp({ class_code: "8810" }), emp()]), f))).toEqual(Array(4).fill(undefined));
   });
 
-  it("goes by the industry when the census has no class codes: information, finance, professional services and management", () => {
-    for (const naics_code of ["541430", "513210", "522110", "551112"]) {
+  it("goes by the industry when the census has no class codes: finance, management, and the desk-bound parts of information and professional services", () => {
+    for (const naics_code of ["541110", "541211", "541511", "541611", "541810", "513210", "518210", "522110", "551112"]) {
       expect(hazards.map((f) => status(applyFieldAction(empty, { type: "edit", field: "naics_code", value: naics_code }), f)), naics_code).toEqual(Array(4).fill("not_applicable"));
     }
     expect(hazards.map((f) => status(applyFieldAction(empty, { type: "edit", field: "naics_code", value: "238160" }), f))).toEqual(Array(4).fill(undefined));
     // Class codes outrank the industry: a design firm whose census has a roofer is not office-only.
-    const mixed = withCensus(applyFieldAction(empty, { type: "edit", field: "naics_code", value: "541430" }), [emp({ class_code: "5551" })]);
+    // A sector is not enough: surveyors, vets, environmental consultants, film crews and telecom installers
+    // share a sector with office work and do none of it.
+    for (const naics_code of ["541370", "541940", "541620", "512110", "517111"]) {
+      expect(hazards.map((f) => status(applyFieldAction(empty, { type: "edit", field: "naics_code", value: naics_code }), f)), naics_code).toEqual(Array(4).fill(undefined));
+    }
+    const mixed = withCensus(applyFieldAction(empty, { type: "edit", field: "naics_code", value: "541511" }), [emp({ class_code: "5551" })]);
     expect(hazards.map((f) => status(mixed, f))).toEqual(Array(4).fill(undefined));
   });
 
@@ -962,16 +968,44 @@ describe("the ACORD 130 questions: what closes them and what answers them", () =
     expect(value(withCensus(empty, [emp({ class_code: "5551", age: 16 }), emp({ class_code: "5551", age: 60 })]), "wcq_10")).toBe(false);
     expect(value(withCensus(empty, [emp({ class_code: "5551", age: 61 })]), "wcq_10")).toBe(true);
     expect(value(withCensus(empty, [emp({ class_code: "5551", age: 15 })]), "wcq_10")).toBe(true);
+    // The question is about employees: a 1099 contractor's age doesn't answer it.
+    expect(value(withCensus(empty, [emp({ class_code: "5551", age: 40 }), emp({ class_code: "5551", age: 67, classification: "1099" })]), "wcq_10")).toBe(false);
+    expect(value(withCensus(empty, [emp({ class_code: "5551", age: 67, classification: "1099" })]), "wcq_10")).toBeNull();
+    // A date of birth that can't be read is an unknown age, not one inside the range.
+    const q10 = ACORD_DERIVED.find((r) => r.field === "wcq_10")!;
+    const unread = { ...EMPTY_CHAMBER_DATA, census: [emp({ dob: "not a date" })] } as unknown as ChamberData;
+    expect(q10.answer(unread, new Date("2026-11-11T00:00:00Z"))).toBeUndefined();
     // With someone's age unknown and nobody known to be under 16 or over 60, the census can't say.
     expect(value(withCensus(empty, [emp({ class_code: "5551", dob: "1990-01-01" }), emp({ class_code: "5551" })]), "wcq_10")).toBeNull();
   });
 
   it("answers travel and working at home from the census, with how many work at home", () => {
     const s = withCensus(empty, [emp({ class_code: "5551", remote: true, travels: false }), emp({ class_code: "5551", remote: true, travels: true }), emp({ class_code: "5551", remote: false, travels: false })]);
-    expect([value(s, "wcq_14"), value(s, "wcq_22"), value(s, "wcq_22_explain")]).toEqual([true, true, "2 employees"]);
+    // The census says who travels for work, not whether they leave the state: a yes there leaves the question
+    // to be asked. Nobody travelling does answer it.
+    expect([value(s, "wcq_14"), status(s, "wcq_14"), value(s, "wcq_22"), value(s, "wcq_22_explain")]).toEqual([null, undefined, true, "2 employees"]);
     const no = withCensus(empty, [emp({ class_code: "5551", remote: false, travels: false })]);
     expect([value(no, "wcq_14"), value(no, "wcq_22"), value(no, "wcq_22_explain")]).toEqual([false, false, null]);
     expect(value(withCensus(empty, [emp({ class_code: "5551" })]), "wcq_22")).toBeNull();
+  });
+
+  it("keeps the count of people working at home in step with the census while the answer stays yes", () => {
+    const two = withCensus(empty, [emp({ class_code: "5551", remote: true }), emp({ class_code: "5551", remote: true }), emp({ class_code: "5551", remote: false })]);
+    const three = withCensus(two, [emp({ class_code: "5551", remote: true }), emp({ class_code: "5551", remote: true }), emp({ class_code: "5551", remote: true })]);
+    expect([value(three, "wcq_22"), value(three, "wcq_22_explain")]).toEqual([true, "3 employees"]);
+    // An explanation the prospect wrote is theirs.
+    const own = applyFieldAction(two, { type: "edit", field: "wcq_22_explain", value: "Two engineers, full time" });
+    expect(value(withCensus(own, [emp({ class_code: "5551", remote: true })]), "wcq_22_explain")).toBe("Two engineers, full time");
+  });
+
+  it("takes back an answer it worked out when what it came from no longer says anything", () => {
+    const answered = withCensus(empty, [emp({ class_code: "5551", remote: true, travels: false })]);
+    expect([value(answered, "wcq_14"), value(answered, "wcq_22"), value(answered, "wcq_22_explain")]).toEqual([false, true, "1 employee"]);
+    const silent = withCensus(answered, [emp({ class_code: "5551" })]);
+    expect([value(silent, "wcq_14"), status(silent, "wcq_14"), value(silent, "wcq_22"), status(silent, "wcq_22"), value(silent, "wcq_22_explain"), status(silent, "wcq_22_explain")]).toEqual([null, undefined, null, undefined, null, undefined]);
+    // One the prospect confirmed is theirs, and stays.
+    const confirmed = applyFieldAction(answered, { type: "confirm", field: "wcq_14" });
+    expect(value(withCensus(confirmed, [emp({ class_code: "5551" })]), "wcq_14")).toBe(false);
   });
 
   it("answers 'health plans provided' and 'employees leased' from the answers already given", () => {

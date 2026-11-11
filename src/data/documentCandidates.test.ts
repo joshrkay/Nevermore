@@ -423,6 +423,15 @@ describe("dependents from a census file", () => {
     expect(mergeCensus([person({ dependents: [raj] })], [person({ id: "x", dependents: [] })], ["dependents"])[0].dependents).toEqual([raj]);
   });
 
+  it("sees no change when the intake's copy holds the same dependents with their keys in another order", () => {
+    // Postgres hands jsonb back with its own key order.
+    const stored = { dob: raj.dob, last_name: raj.last_name, first_name: raj.first_name, relationship: raj.relationship };
+    const same = compareCensus([person({ dependents: [stored] })], [person({ id: "x", dependents: [raj] })], ["dependents"]);
+    expect(same.matched[0].changes).toEqual([]);
+    const other = compareCensus([person({ dependents: [stored] })], [person({ id: "x", dependents: [mia] })], ["dependents"]);
+    expect(other.matched[0].changes.map((c) => c.fact)).toEqual(["dependents"]);
+  });
+
   it("says how many dependents a change is about", () => {
     expect(formatCensusFact("dependents", [raj, mia])).toBe("2 dependents");
     expect(formatCensusFact("dependents", [raj])).toBe("1 dependent");

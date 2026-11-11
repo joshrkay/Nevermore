@@ -12,8 +12,15 @@ import type { FieldKey } from "./provenance";
  */
 export const OFFICE_CLASS_CODES: ReadonlySet<string> = new Set(["8810", "8742", "8871", "8820", "8803"]);
 
-/** NAICS sectors that are office work when the census has no class codes: information, finance, professional services, management. */
-const OFFICE_NAICS_SECTORS: ReadonlySet<string> = new Set(["51", "52", "54", "55"]);
+/**
+ * NAICS codes that are office work when the census has no class codes, by the digits they start with: finance and
+ * insurance (52), management of companies (55), and the parts of information and professional services that are
+ * done at a desk: software publishing (5132, and 5112 before 2022), data processing and hosting (518), legal
+ * (5411), accounting (5412), computer systems design (5415), management consulting (54161) and advertising (5418).
+ * A whole sector is too wide: surveyors, vets, environmental consultants, film crews and telecom installers share
+ * those sectors and work in the field. Like the class codes, a list for the advisory lead to check.
+ */
+const OFFICE_NAICS_PREFIXES: readonly string[] = ["52", "55", "5132", "5112", "518", "5411", "5412", "5415", "54161", "5418"];
 
 /**
  * Whether the employer does office work only: every class code on the census is an office code, or, when the
@@ -22,7 +29,8 @@ const OFFICE_NAICS_SECTORS: ReadonlySet<string> = new Set(["51", "52", "54", "55
  */
 export function isOfficeOnly(data: Pick<ChamberData, "census" | "naics_code">): boolean {
   if (data.census.some((e) => e.class_code !== undefined)) return data.census.every((e) => e.class_code !== undefined && OFFICE_CLASS_CODES.has(e.class_code));
-  return data.naics_code !== null && OFFICE_NAICS_SECTORS.has(data.naics_code.slice(0, 2));
+  const naics = data.naics_code;
+  return naics !== null && OFFICE_NAICS_PREFIXES.some((prefix) => naics.startsWith(prefix));
 }
 
 const hasAnyAnswer = (data: ChamberData): boolean =>
@@ -60,21 +68,23 @@ export const ACORD_DERIVED: readonly {
   answer: (data: ChamberData, now: Date) => { value: boolean; explain?: string } | undefined;
 }[] = [
   {
-    // No. 10: any employees under 16 or over 60, from the census's dates of birth and ages.
+    // No. 10: any employees under 16 or over 60, from the census's dates of birth and ages. Employees only: a
+    // 1099 contractor's age doesn't answer it. A date of birth that can't be read is an unknown age.
     field: "wcq_10", from: "census",
     answer: (data, now) => {
-      const ages = data.census.map((e) => (e.dob ? ageOn(e.dob, now) : e.age));
+      const ages = data.census
+        .filter((e) => e.classification !== "1099")
+        .map((e) => (e.dob ? ageOn(e.dob, now) : e.age))
+        .map((age) => (typeof age === "number" && Number.isFinite(age) ? age : undefined));
       if (ages.some((age) => age !== undefined && (age < 16 || age > 60))) return { value: true };
       return ages.length > 0 && ages.every((age) => age !== undefined) ? { value: false } : undefined;
     },
   },
   {
-    // No. 14: do employees travel out of state, from the census's travels column.
+    // No. 14: do employees travel out of state. The census's travels column says who travels for work, not
+    // whether they leave the state, so it answers only a no: nobody travels at all. A yes is left to be asked.
     field: "wcq_14", from: "census",
-    answer: (data) => {
-      const travels = censusSays(data, "travels");
-      return travels === undefined ? undefined : { value: travels };
-    },
+    answer: (data) => (censusSays(data, "travels") === false ? { value: false } : undefined),
   },
   {
     // No. 19: are employee health plans provided, from the medical coverage answers.

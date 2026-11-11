@@ -63,14 +63,17 @@ Lenore asks a question, then its explanation only after a yes (`fieldApplies` in
 
 | Question | Rule |
 | --- | --- |
-| No. 1 to 4 (aircraft or watercraft, hazardous material, work underground or at height, work on or over water) | Marked "Doesn't apply" for an office-only employer: every class code on the census is 8810, 8742, 8871, 8820 or 8803, or, with no class codes, the NAICS code is in sectors 51, 52, 54 or 55. The class code list is from general knowledge and awaits the advisory lead's check |
-| No. 10 (employees under 16 or over 60) | Answered from the census's dates of birth and ages, to confirm. Never asked |
+| No. 1 to 4 (aircraft or watercraft, hazardous material, work underground or at height, work on or over water) | Marked "Doesn't apply" for an office-only employer: every class code on the census is 8810, 8742, 8871, 8820 or 8803, or, with no class codes, the NAICS code starts with 52 (finance and insurance), 55 (management of companies), 5132 or 5112 (software publishing), 518 (data processing and hosting), 5411 (legal), 5412 (accounting), 5415 (computer systems design), 54161 (management consulting) or 5418 (advertising). A whole sector is too wide: surveyors, vets and film crews share sectors 51 and 54. The class code list is from general knowledge and awaits the advisory lead's check |
+| No. 10 (employees under 16 or over 60) | Answered from the dates of birth and ages of the census's W-2 employees (a 1099 contractor's age doesn't count), to confirm. Never asked |
 | No. 13 (employees with physical handicaps) | Never raised by Lenore, in chat or aloud. Answered on the Workers' comp tab |
-| No. 14, 22 (travel out of state; working at home, and how many) | Answered from the census's `travels` and `remote` columns, to confirm |
+| No. 14 (travel out of state) | Answered "no", to confirm, when the census's `travels` column says nobody travels for work. The column doesn't say whether travel leaves the state, so a yes there leaves the question to be asked |
+| No. 22 (working at home, and how many) | Answered from the census's `remote` column, to confirm; the count follows the census |
 | No. 17 (other insurance with this insurer) | Marked "Doesn't apply" once the intake has an answer: there is no insurer yet |
 | No. 18 (coverage declined, cancelled or non-renewed) | Marked "Doesn't apply" when the headquarters state is Missouri, as the form says |
 | No. 19 (employee health plans provided) | Answered from `virgin_medical` and `medical_plans`, to confirm |
 | No. 21 (employees leased to or from other employers) | Answered from `in_peo`, to confirm |
+
+An answer worked out this way follows what it came from until the prospect confirms or changes it: it changes when the census or the earlier answer does, and is taken back when that no longer says anything.
 
 A question is closed once, when its rule becomes true, and only while unanswered and untouched, so one the prospect reopens stays open. An answer worked out from the intake follows its source until the prospect confirms or changes it.
 
@@ -325,7 +328,7 @@ The roster is an array of rows (`CensusEmployee`, defined in `supabase/functions
 | `class_code` | Four-digit workers' comp code. |
 | `gender`, `hire_date`, `cobra`, `home_state` | New in v3 (K-2.1): what a health underwriter rates the group on. `F`, `M` or `X`; `YYYY-MM-DD`; whether the person is covered under COBRA rather than as an active employee; and the state they live in. Each is optional: a census without one is accepted, and each column anyone lacks is one open item ("Missing from the census"), never one per person and never a blocker. |
 | `worksite`, `remote`, `travels` | New in v3 (K-2.2): the office, store or site the person works at, and whether they work remotely or travel for work, so a workers' comp underwriter can assign class codes. Each is optional and none is an open item. |
-| `dependents` | Read from a census file that lists them (K-2.3): a row whose `relationship` cell says spouse, domestic partner, child or anything else that is not the employee is a dependent of the nearest employee row above it. A dependent row above every employee is not read, and the prospect is told. A file that lists no dependent leaves the ones already held alone. Never asked for in chat. |
+| `dependents` | Read from a census file that lists them (K-2.3): a row whose `relationship` cell says spouse, domestic partner, child or anything else that is not the employee is a dependent of the nearest employee row above it. A relationship that isn't recognised is read as an employee, never as a dependent, and the prospect is told which labels those were. A dependent row with no readable employee row above it, with no first name, or past 20 for one employee is not read, and the prospect is told how many. A file that lists no dependent leaves the ones already held alone. Never asked for in chat. |
 | `assumed` | Which of `classification`, `employment_type` and `annual_salary` hold a default rather than an answer. Absent when none do. |
 
 #### The census template

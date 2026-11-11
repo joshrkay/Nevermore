@@ -2,6 +2,7 @@
 // with the frontend suite (vitest includes supabase/functions/**/*.test.ts).
 
 import { isW2, MAX_CENSUS_ROWS, normalizeCensus, parseMoney, US_STATE_CODES, type CensusEmployee,
+  MAX_DEPENDENTS,
   rowRelationship,
 } from "../_shared/census.ts";
 import { isSensitiveHeader, redactForModel, redactSensitive } from "../_shared/sensitive.ts";
@@ -164,7 +165,7 @@ const SYNONYMS: Record<ColumnKey, string[]> = {
   remote: ["remote", "remote worker", "works remotely", "work from home", "wfh", "telecommute", "telework", "remote status", "remote y n"],
   travels: ["travels", "travel", "travels for work", "business travel", "travel required", "work travel"],
   // K-2.3: who the row is, in a file that lists dependents under their employee.
-  relationship: ["relationship", "relation", "relationship to employee", "relationship to subscriber", "dependent type", "member type", "rel", "relationship code"],
+  relationship: ["relationship", "relation", "relationship to employee", "relationship to subscriber", "dependent type", "rel", "relationship code"],
 };
 
 // Words a header may carry that don't change what the column holds ("Employee DOB", "Current Salary").
@@ -280,8 +281,12 @@ export interface CensusResult {
   skipped: number;
   /** Headers of columns that were never read because they hold an SSN or bank details. */
   ignoredColumns: string[];
-  /** Dependent rows that came before any employee row, so belong to nobody and weren't read (K-2.3). */
+  /** Dependent rows with no employee row above them that could be read, so they belong to nobody and weren't read (K-2.3). */
   orphanDependents: number;
+  /** Dependent rows that weren't read: no first name, or past the most one employee can list. */
+  droppedDependents: number;
+  /** Rows whose relationship wasn't recognised, read as employees, and the labels they carried. */
+  unknownRelationships: { rows: number; labels: string[] };
   /** The sheet has rows past the ones read (MAX_SHEET_ROWS): the census is only part of the company's. */
   cutOff?: boolean;
 }
@@ -302,32 +307,48 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
     const raw: Record<string, unknown>[] = [];
     let skipped = 0;
     let orphanDependents = 0;
+    let droppedDependents = 0;
     let listsDependents = false;
+    const unknown = { rows: 0, labels: [] as string[] };
+    // The employee whose dependents the next rows are: the last employee row, unless that row couldn't be read.
+    let owner: Record<string, unknown> | null = null;
     let firstData = -1;
     let lastData = h;
     for (let r = h + 1; r < rows.length; r++) {
       const row = rows[r] ?? [];
       if (!row.some(hasText)) continue;
       const name = cell(row, nameCol);
+      // A dependent's row (K-2.3) belongs to the employee on the row above it, and is nobody's employee. A label
+      // that isn't recognised is read as an employee, and the prospect is told which labels those were.
+      const said = c.relationship === undefined ? undefined : cell(row, c.relationship);
+      const read = rowRelationship(said);
+      const who = read === "unknown" ? "employee" : read;
       // Totals and notes under the table aren't people.
       if (!looksLikeName(name) || /^(total|totals|grand total|count|average|subtotal)\b/i.test(String(name).trim())) {
-        if (hasText(name) || row.some(hasText)) skipped++;
+        if (who !== "employee") droppedDependents++;
+        else {
+          skipped++;
+          // The dependents under an employee row that couldn't be read are that person's, not the one before's.
+          owner = null;
+        }
         continue;
       }
-      // A dependent's row (K-2.3) belongs to the employee on the nearest row above it, and is nobody's employee.
-      const who = c.relationship === undefined ? "employee" : rowRelationship(cell(row, c.relationship));
       if (who !== "employee") {
-        const employee = raw[raw.length - 1];
-        if (!employee) {
-          orphanDependents++;
-          continue;
+        if (!owner) orphanDependents++;
+        else if ((owner.dependents as unknown[]).length >= MAX_DEPENDENTS) droppedDependents++;
+        else {
+          listsDependents = true;
+          (owner.dependents as Record<string, unknown>[]).push({
+            first_name: cell(row, c.first_name), last_name: cell(row, c.last_name), full_name: cell(row, c.full_name), dob: cell(row, c.dob), relationship: who,
+          });
+          lastData = r;
         }
-        listsDependents = true;
-        (employee.dependents as Record<string, unknown>[]).push({
-          first_name: cell(row, c.first_name), last_name: cell(row, c.last_name), full_name: cell(row, c.full_name), dob: cell(row, c.dob), relationship: who,
-        });
-        lastData = r;
         continue;
+      }
+      if (read === "unknown") {
+        unknown.rows++;
+        const label = String(said).trim();
+        if (!unknown.labels.includes(label) && unknown.labels.length < 5) unknown.labels.push(label);
       }
       const hourly = cell(row, c.hourly_rate);
       // A "pay rate" of 85,000 is a salary, not an hourly rate.
@@ -359,6 +380,7 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
         travels: cell(row, c.travels),
         dependents: [],
       });
+      owner = raw[raw.length - 1];
       if (firstData === -1) firstData = r;
       lastData = r;
     }
@@ -395,6 +417,8 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
       facts: stated.filter(([, yes]) => yes).map(([fact]) => fact),
       skipped,
       orphanDependents,
+      droppedDependents,
+      unknownRelationships: unknown,
       ignoredColumns: sensitive.map((i) => String(header[i] ?? "").trim()).filter(Boolean),
     };
   }
@@ -429,7 +453,7 @@ export function censusCandidates({ census, location, facts, cutOff }: CensusResu
 }
 
 /** What the prospect should know about how a census was read. */
-export function censusNotes({ skipped, ignoredColumns, cutOff, orphanDependents }: CensusResult): string[] {
+export function censusNotes({ skipped, ignoredColumns, cutOff, orphanDependents, droppedDependents, unknownRelationships }: CensusResult): string[] {
   const notes: string[] = [];
   if (cutOff) {
     notes.push(
@@ -443,11 +467,22 @@ export function censusNotes({ skipped, ignoredColumns, cutOff, orphanDependents 
         "nothing from it is kept with your intake. The file itself still contains it; consider uploading a copy without it.",
     );
   }
+  const rows = (n: number) => `${n} dependent row${n === 1 ? "" : "s"}`;
+  if (unknownRelationships.rows > 0) {
+    const n = unknownRelationships.rows;
+    notes.push(
+      `${n} row${n === 1 ? "" : "s"} had a relationship that wasn't recognised (${unknownRelationships.labels.map((l) => `"${l}"`).join(", ")}) and ${n === 1 ? "was" : "were"} read as ${n === 1 ? "an employee" : "employees"}. ` +
+        "For a dependent use spouse, domestic_partner, child or other; leave it blank for an employee.",
+    );
+  }
   if (orphanDependents > 0) {
     notes.push(
-      `${orphanDependents} dependent row${orphanDependents === 1 ? "" : "s"} came before any employee and ${orphanDependents === 1 ? "wasn't" : "weren't"} read. ` +
+      `${rows(orphanDependents)} had no employee row above ${orphanDependents === 1 ? "it" : "them"} that could be read, and ${orphanDependents === 1 ? "wasn't" : "weren't"} read. ` +
         "List each dependent directly under their employee.",
     );
+  }
+  if (droppedDependents > 0) {
+    notes.push(`${rows(droppedDependents)} ${droppedDependents === 1 ? "wasn't" : "weren't"} read: a dependent needs a first name, and an employee can list at most ${MAX_DEPENDENTS}.`);
   }
   if (skipped > 0) {
     notes.push(

@@ -491,25 +491,39 @@ function applyClosingRules(before: IntakeState, after: IntakeState, now: Date): 
   // Questions the intake can answer from what it holds are answered for the prospect to confirm. An answer worked
   // out this way follows what it came from until the prospect confirms or changes it; never after.
   let data = after.data;
+  const forget = (field: FieldKey) => {
+    data = { ...data, [field]: null };
+    const { [field]: _gone, ...rest } = provenance;
+    provenance = rest;
+  };
   for (const rule of ACORD_DERIVED) {
     const answer = rule.answer(data, now);
-    if (!answer) continue;
+    const was = rule.answer(before.data, now);
     const entry = provenance[rule.field];
     const held = data[rule.field];
-    const was = rule.answer(before.data, now);
     const untouched = isEmpty(held) && entry === undefined;
     const stillDerived = entry?.status === "inferred" && was !== undefined && held === was.value;
-    if (!(untouched || stillDerived) || (held === answer.value && !untouched)) continue;
-    const source = withoutQuote(provenance[rule.from]?.source ?? { kind: "prospect_edit" as const });
-    data = { ...data, [rule.field]: answer.value };
-    provenance = { ...provenance, [rule.field]: { status: "inferred", source, updated_at: now.toISOString() } };
-    if (rule.explain && (isEmpty(data[rule.explain]) || data[rule.explain] === was?.explain)) {
-      data = { ...data, [rule.explain]: answer.explain ?? null };
-      if (answer.explain) provenance = { ...provenance, [rule.explain]: { status: "inferred", source, updated_at: now.toISOString() } };
-      else {
-        const { [rule.explain]: _gone, ...rest } = provenance;
-        provenance = rest;
+    if (!(untouched || stillDerived)) continue;
+    // The explanation follows too, while it is empty or still the one worked out.
+    const explain = rule.explain && (isEmpty(data[rule.explain]) || data[rule.explain] === was?.explain) ? rule.explain : undefined;
+    if (!answer) {
+      // What it came from no longer says anything: an answer nobody confirmed goes with it.
+      if (stillDerived) {
+        forget(rule.field);
+        if (explain && !isEmpty(data[explain])) forget(explain);
       }
+      continue;
+    }
+    const source = withoutQuote(provenance[rule.from]?.source ?? { kind: "prospect_edit" as const });
+    if (untouched || held !== answer.value) {
+      data = { ...data, [rule.field]: answer.value };
+      provenance = { ...provenance, [rule.field]: { status: "inferred", source, updated_at: now.toISOString() } };
+    }
+    if (explain && (data[explain] ?? null) !== (answer.explain ?? null)) {
+      if (answer.explain) {
+        data = { ...data, [explain]: answer.explain };
+        provenance = { ...provenance, [explain]: { status: "inferred", source, updated_at: now.toISOString() } };
+      } else forget(explain);
     }
   }
   return provenance === after.provenance && data === after.data ? after : { data, provenance };

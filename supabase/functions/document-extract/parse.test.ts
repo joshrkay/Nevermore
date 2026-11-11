@@ -388,7 +388,39 @@ describe("the census template", () => {
       for (const label of ["Spouse", "Husband", "Wife", "SP"]) expect(rel(label), label).toBe("spouse");
       for (const label of ["Domestic Partner", "DP", "Partner"]) expect(rel(label), label).toBe("domestic_partner");
       for (const label of ["Child", "Son", "Daughter", "Dependent Child", "CH", "Stepchild"]) expect(rel(label), label).toBe("child");
-      for (const label of ["Dependent", "Other", "Parent"]) expect(rel(label), label).toBe("other");
+      for (const label of ["Dependent", "Other", "Parent", "Grandchild", "Sibling", "DEP"]) expect(rel(label), label).toBe("other");
+    });
+
+    it("reads a row whose relationship it doesn't recognise as an employee, and says which labels those were", () => {
+      const found = findCensus([["Name", "Relationship", "State", "Salary"], ["Ann Lee", "Emp", "CA", "1"], ["Bo Ray", "Owner", "NJ", "2"], ["Cy Ito", "Emp", "NJ", "3"], ["Pat Ito", "Spouse", "", ""]], "S", 1, NOW)!;
+      // A roster must never collapse into one person's dependents because a file words "employee" its own way.
+      expect(found.census.map((e) => e.first_name)).toEqual(["Ann", "Bo", "Cy"]);
+      expect(found.census[2].dependents).toHaveLength(1);
+      expect(found.unknownRelationships).toEqual({ rows: 3, labels: ["Emp", "Owner"] });
+      expect(censusNotes(found)).toContain('3 rows had a relationship that wasn\'t recognised ("Emp", "Owner") and were read as employees. For a dependent use spouse, domestic_partner, child or other; leave it blank for an employee.');
+      expect(findCensus(sheet, "Sheet1", 1, NOW)!.unknownRelationships).toEqual({ rows: 0, labels: [] });
+    });
+
+    it("does not take a 'member type' column for the relationship", () => {
+      const found = findCensus([["Name", "Member Type", "State", "Salary"], ["Ann Lee", "Active", "CA", "1"], ["Bo Ray", "COBRA", "NJ", "2"]], "S", 1, NOW)!;
+      expect(found.census.map((e) => e.first_name)).toEqual(["Ann", "Bo"]);
+      expect(found.unknownRelationships.rows).toBe(0);
+    });
+
+    it("gives nobody the dependents listed under an employee row it couldn't read", () => {
+      const found = findCensus([["First Name", "Last Name", "Relationship", "State", "Salary"], ["Ann", "Lee", "Employee", "CA", "1"], ["", "", "Employee", "NJ", "2"], ["Pat", "Ray", "Spouse", "", ""], ["Cy", "Ito", "Employee", "NJ", "3"], ["Kim", "Ito", "Child", "", ""]], "S", 1, NOW)!;
+      expect(found.census.map((e) => e.first_name)).toEqual(["Ann", "Cy"]);
+      // Pat belongs to the unreadable row, not to Ann.
+      expect(found.census[0]).not.toHaveProperty("dependents");
+      expect(found.census[1].dependents).toHaveLength(1);
+      expect(found.orphanDependents).toBe(1);
+    });
+
+    it("keeps a dependent it couldn't read from costing the employee their other dependents, and counts it", () => {
+      const found = findCensus([["First Name", "Last Name", "Relationship", "State", "Salary"], ["Ann", "Lee", "Employee", "CA", "1"], ["", "Lee", "Child", "", ""], ["Mia", "Lee", "Child", "", ""]], "S", 1, NOW)!;
+      expect(found.census[0].dependents?.map((d) => d.first_name)).toEqual(["Mia"]);
+      expect(found.droppedDependents).toBe(1);
+      expect(censusNotes(found)).toContain("1 dependent row wasn't read: a dependent needs a first name, and an employee can list at most 20.");
     });
 
     it("takes a row as an employee when its relationship is blank or says employee, self, subscriber or primary", () => {
@@ -403,12 +435,15 @@ describe("the census template", () => {
       expect(found.census.map((e) => e.first_name)).toEqual(["Ann", "Bo"]);
       expect(found.census[0]).not.toHaveProperty("dependents");
       expect(found.orphanDependents).toBe(1);
-      expect(censusNotes(found)).toContain("1 dependent row came before any employee and wasn't read. List each dependent directly under their employee.");
+      expect(censusNotes(found)).toContain("1 dependent row had no employee row above it that could be read, and wasn't read. List each dependent directly under their employee.");
     });
 
     it("keeps the first 20 dependents of one employee", () => {
       const many = [["Name", "Relationship", "State", "Salary"], ["Ann Lee", "Employee", "CA", "1"], ...Array.from({ length: 25 }, (_, i) => [`Kid${i} Lee`, "Child", "", ""])];
-      expect(findCensus(many, "S", 1, NOW)!.census[0].dependents).toHaveLength(20);
+      const found = findCensus(many, "S", 1, NOW)!;
+      expect(found.census[0].dependents).toHaveLength(20);
+      expect(found.droppedDependents).toBe(5);
+      expect(censusNotes(found)).toContain("5 dependent rows weren't read: a dependent needs a first name, and an employee can list at most 20.");
     });
 
     it("leaves a census with coverage tiers only exactly as it was read before", () => {
@@ -417,6 +452,7 @@ describe("the census template", () => {
       expect(tiersOnly.census[0]).not.toHaveProperty("dependents");
       expect(tiersOnly.facts).not.toContain("dependents");
       expect(tiersOnly.orphanDependents).toBe(0);
+      expect(tiersOnly.droppedDependents).toBe(0);
     });
   });
 

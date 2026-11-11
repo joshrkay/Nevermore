@@ -332,16 +332,21 @@ const RELATIONSHIP_LABELS: Record<string, CensusDependent["relationship"]> = {
   spouse: "spouse", husband: "spouse", wife: "spouse", sp: "spouse",
   "domestic partner": "domestic_partner", dp: "domestic_partner", partner: "domestic_partner",
   child: "child", son: "child", daughter: "child", ch: "child", "dependent child": "child", stepchild: "child", "step child": "child",
+  // Someone covered through the employee who is none of those.
+  dependent: "other", dep: "other", other: "other", parent: "other", mother: "other", father: "other", grandchild: "other",
+  grandparent: "other", sibling: "other", brother: "other", sister: "other", niece: "other", nephew: "other", ward: "other",
+  "ex spouse": "other", "former spouse": "other",
 };
 
 /**
- * Who a census row is, from its relationship cell: "employee" (also for a blank cell), or the kind of dependent.
- * Any other label ("Dependent", "Parent") is a dependent of the kind "other".
+ * Who a census row is, from its relationship cell: "employee" (also for a blank cell), the kind of dependent, or
+ * "unknown" for a label that is neither. An unknown label is never taken for a dependent: a file that words
+ * "employee" its own way would otherwise read as one person with everyone else under them.
  */
-export function rowRelationship(v: unknown): "employee" | CensusDependent["relationship"] {
+export function rowRelationship(v: unknown): "employee" | "unknown" | CensusDependent["relationship"] {
   const said = key(v);
   if (said === "" || EMPLOYEE_LABELS.has(said)) return "employee";
-  return RELATIONSHIP_LABELS[said] ?? "other";
+  return RELATIONSHIP_LABELS[said] ?? "unknown";
 }
 
 function normalizeDependents(v: unknown, now: Date): CensusDependent[] {
