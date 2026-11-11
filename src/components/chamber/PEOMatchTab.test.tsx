@@ -1,19 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
+import { parsePeoCatalog } from "@/data/peoProfiles";
 import PEOMatchTab from "./PEOMatchTab";
+
+// The five PEOs as the database seeds them (20261111090000): each with no published profile yet.
+const CATALOG = parsePeoCatalog(["ADP TotalSource", "Insperity", "Justworks", "Rippling", "TriNet"].map((name, i) => ({ id: i + 1, name, profile: null })));
 
 const renderTab = (selectedPeo: string | null = null) => {
   const onSelect = vi.fn();
   const onProceed = vi.fn();
-  render(<PEOMatchTab data={DEMO_CHAMBER_DATA} selectedPeo={selectedPeo} onSelect={onSelect} onProceed={onProceed} />);
+  render(<PEOMatchTab data={DEMO_CHAMBER_DATA} selectedPeo={selectedPeo} onSelect={onSelect} onProceed={onProceed} catalog={CATALOG} catalogStatus="ready" />);
   return { onSelect, onProceed };
 };
 
 describe("PEOMatchTab", () => {
   it("shows a headcount of 0 as 0, and only a missing one as a dash", () => {
     const summary = (employee_count: number | null, census = DEMO_CHAMBER_DATA.census) => {
-      const { unmount } = render(<PEOMatchTab data={{ ...DEMO_CHAMBER_DATA, employee_count, census }} selectedPeo={null} onSelect={vi.fn()} onProceed={vi.fn()} />);
+      const { unmount } = render(<PEOMatchTab data={{ ...DEMO_CHAMBER_DATA, employee_count, census }} selectedPeo={null} onSelect={vi.fn()} onProceed={vi.fn()} catalog={CATALOG} catalogStatus="ready" />);
       const value = screen.getByText("Total EEs").parentElement!.textContent;
       unmount();
       return value;
@@ -73,16 +77,40 @@ describe("PEOMatchTab", () => {
 
   it("warns about a PEO whose sourced facts don't fit, naming the fact, and still offers it in its place", () => {
     const catalog = [
-      { name: "Alpha PEO", minHeadcount: 50, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01",
-        sources: { minHeadcount: "https://alpha.example/minimums" } },
-      { name: "Beta PEO", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
+      { name: "Alpha PEO", listed: true, minHeadcount: 50, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01" },
+      { name: "Beta PEO", listed: true, minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
     ];
     const onSelect = vi.fn();
-    render(<PEOMatchTab data={{ ...DEMO_CHAMBER_DATA, employee_count: 8 }} selectedPeo={null} onSelect={onSelect} onProceed={vi.fn()} catalog={catalog} />);
+    render(<PEOMatchTab data={{ ...DEMO_CHAMBER_DATA, employee_count: 8 }} selectedPeo={null} onSelect={onSelect} onProceed={vi.fn()} catalog={catalog} catalogStatus="ready" />);
     const warning = screen.getByRole("alert");
     expect(warning).toHaveTextContent("Alpha PEO lists a 50-employee minimum; you have 8");
     expect(screen.getAllByRole("button", { name: /^Choose / }).map((b) => b.textContent)).toEqual(["Choose Alpha PEO", "Choose Beta PEO"]);
     fireEvent.click(screen.getByRole("button", { name: "Choose Alpha PEO" }));
     expect(onSelect).toHaveBeenCalledWith("Alpha PEO");
+  });
+
+  it("says when the PEOs are still loading or couldn't be read, and still lets the prospect name one", () => {
+    const onSelect = vi.fn();
+    const { rerender } = render(<PEOMatchTab data={DEMO_CHAMBER_DATA} selectedPeo={null} onSelect={onSelect} onProceed={vi.fn()} catalog={[]} catalogStatus="loading" />);
+    expect(screen.getByText("Loading the PEOs…")).toBeInTheDocument();
+    rerender(<PEOMatchTab data={DEMO_CHAMBER_DATA} selectedPeo={null} onSelect={onSelect} onProceed={vi.fn()} catalog={[]} catalogStatus="failed" />);
+    expect(screen.getByRole("alert")).toHaveTextContent("We couldn't load the list of PEOs. You can still name yours below.");
+    expect(screen.queryAllByRole("button", { name: /^Choose / })).toEqual([]);
+    fireEvent.change(screen.getByLabelText("Another PEO"), { target: { value: "TriNet" } });
+    fireEvent.click(screen.getByRole("button", { name: "Use this PEO" }));
+    expect(onSelect).toHaveBeenCalledWith("TriNet");
+  });
+
+  it("marks a listed PEO the prospect chose as selected, not as another PEO", () => {
+    render(<PEOMatchTab data={DEMO_CHAMBER_DATA} selectedPeo="TriNet" onSelect={vi.fn()} onProceed={vi.fn()} catalog={CATALOG} catalogStatus="ready" />);
+    expect(screen.getByRole("heading", { name: "TriNet" }).closest("div")!.parentElement).toHaveTextContent("✓ Selected");
+    expect(screen.queryByText("Prepared for TriNet.")).not.toBeInTheDocument();
+  });
+
+  it("doesn't offer a PEO an admin stopped listing, and shows a prospect who chose it before that choice as their own", () => {
+    const catalog = parsePeoCatalog([{ id: 1, name: "Insperity", profile: null }, { id: 5, name: "TriNet", listed: false, profile: null }]);
+    render(<PEOMatchTab data={DEMO_CHAMBER_DATA} selectedPeo="TriNet" onSelect={vi.fn()} onProceed={vi.fn()} catalog={catalog} catalogStatus="ready" />);
+    expect(screen.getAllByRole("button", { name: /^Choose / }).map((b) => b.textContent)).toEqual(["Choose Insperity"]);
+    expect(screen.getByText("Prepared for TriNet.")).toBeInTheDocument();
   });
 });

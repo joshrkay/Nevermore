@@ -31,6 +31,9 @@ import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
 import { QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
+import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
+import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
+import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
@@ -249,6 +252,35 @@ describe("server and client intake rules agree", () => {
     const [sql] = blocks("chosen_peo_length");
     const limits = /BETWEEN\s+(\d+)\s+AND\s+(\d+)/.exec(sql);
     expect(limits?.slice(1).map(Number)).toEqual([1, PEO_NAME_MAX]);
+  });
+
+  // Requirement profiles (20261111090000): the database refuses a profile the browser would describe differently.
+  it("holds the same requirement profile lists and caps", () => {
+    expect(quoted(blocks("peo_profile_statuses").join("\n"))).toEqual([...PROFILE_STATUSES]);
+    expect(quoted(blocks("peo_census_formats").join("\n"))).toEqual([...CENSUS_FILE_FORMATS]);
+    expect(quoted(blocks("peo_question_kinds").join("\n"))).toEqual([...EXTRA_QUESTION_KINDS]);
+    expect(quoted(blocks("peo_source_kinds").join("\n"))).toEqual([...PROFILE_SOURCE_KINDS]);
+    // Each of these parts carries its own source and date.
+    expect(quoted(blocks("peo_profile_parts").join("\n"))).toEqual([...PROFILE_PARTS]);
+    // A census column is filled from one of the census template's columns, the ones our census export knows.
+    expect(quoted(blocks("peo_census_columns").join("\n"))).toEqual([...CENSUS_TEMPLATE_COLUMNS]);
+    // A document a PEO asks for is one of the kinds the intake takes.
+    expect(quoted(blocks("peo_document_categories").join("\n"))).toEqual(DOCUMENT_CATEGORIES.map((c) => c.key));
+    const [caps] = blocks("peo_profile_caps");
+    expect(Object.fromEntries([...caps.matchAll(/max_(\w+)\s+constant\s+integer\s*:=\s*(\d+)/g)].map((m) => [m[1], Number(m[2])]))).toEqual({
+      census_columns: PROFILE_CAPS.censusColumns,
+      documents: PROFILE_CAPS.documents,
+      extra_questions: PROFILE_CAPS.extraQuestions,
+      choices: PROFILE_CAPS.choices,
+      list_items: PROFILE_CAPS.listItems,
+      header: PROFILE_CAPS.header,
+      text: PROFILE_CAPS.text,
+    });
+  });
+
+  it("keeps a listed PEO's name to the longest PEO name", () => {
+    const [sql] = blocks("peo_name_limits");
+    expect(/(\d+)\s+AND\s+(\d+)/.exec(sql)?.slice(1).map(Number)).toEqual([1, PEO_NAME_MAX]);
   });
 
   // document-extract can't import from src/, so it keeps its own copies of the roster cap and the state list.

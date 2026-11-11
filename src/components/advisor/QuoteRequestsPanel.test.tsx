@@ -31,6 +31,9 @@ const request = (over: Partial<QuoteRequestRow> = {}): QuoteRequestRow => ({
   ...over,
 });
 
+// The PEOs as the database lists them (usePeoCatalog), none with a published profile.
+const CATALOG: PeoRecord[] = ["Insperity", "Justworks", "TriNet"].map((name) => ({ name, listed: true, minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null }));
+
 const panel = (
   over: {
     status?: PipelineStatus; requests?: QuoteRequestRow[]; events?: QuoteRequestEventRow[]; currentVersion?: number | null;
@@ -47,7 +50,7 @@ const panel = (
       requests={over.requests ?? [request()]}
       events={over.events ?? []}
       data={over.data ?? EMPTY_CHAMBER_DATA}
-      catalog={over.catalog}
+      catalog={over.catalog ?? CATALOG}
       onAskProspect={over.onAskProspect ?? vi.fn()}
       onChanged={onChanged}
     />,
@@ -100,6 +103,25 @@ describe("QuoteRequestsPanel", () => {
     fireEvent.change(screen.getByLabelText("Another PEO"), { target: { value: "  Regional HR Co  " } });
     fireEvent.click(screen.getByRole("button", { name: "Record send" }));
     await waitFor(() => expect(api.recordQuoteSend).toHaveBeenLastCalledWith("s1", "Regional HR Co", "2026-11-09"));
+  });
+
+  it("offers the PEOs the database lists, alphabetically as given, and only those", () => {
+    panel({ status: "ready_for_market", requests: [], catalog: [{ name: "Acme PEO", listed: true, minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null }] });
+    const options = within(screen.getByLabelText("PEO")).getAllByRole("option").map((o) => o.textContent);
+    expect(options.slice(1)).toEqual(["Acme PEO"]);
+  });
+
+  it("doesn't offer a PEO that isn't listed, yet still checks a quote request already sent to it", () => {
+    panel({
+      status: "sent_to_carrier",
+      data: { ...EMPTY_CHAMBER_DATA, employee_count: 8 },
+      catalog: [
+        { name: "Insperity", listed: true, minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
+        { name: "TriNet", listed: false, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01" },
+      ],
+    });
+    expect(within(screen.getByLabelText("PEO")).getAllByRole("option").map((o) => o.textContent).slice(1)).toEqual(["Insperity"]);
+    expect(within(screen.getByTestId("quote-request-7")).getByRole("alert")).toHaveTextContent("TriNet lists a 10-employee minimum; you have 8");
   });
 
   it("offers sending only from Ready for market on, and says so before then", () => {
@@ -221,8 +243,7 @@ describe("QuoteRequestsPanel", () => {
   it("warns, on its row, about a PEO whose sourced facts don't fit the submission", () => {
     panel({
       data: { ...EMPTY_CHAMBER_DATA, employee_count: 8 },
-      catalog: [{ name: "TriNet", minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01",
-        sources: { minHeadcount: "https://trinet.example/minimums" } }],
+      catalog: [{ name: "TriNet", listed: true, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01" }],
       requests: [request(), request({ id: 8, peo_name: "Regional HR Co" })],
     });
     const alert = within(screen.getByTestId("quote-request-7")).getByRole("alert");

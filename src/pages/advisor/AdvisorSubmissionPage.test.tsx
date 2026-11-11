@@ -31,6 +31,13 @@ vi.mock("@/lib/downloadFile", () => ({ downloadBlob: (...a: unknown[]) => downlo
 const buildManuscriptPdf = vi.fn((m: Manuscript, _opts?: unknown) => ({ blob: new Blob(["%PDF"]), filename: `${m.fileId}.pdf`, pageCount: 1 }));
 vi.mock("@/lib/manuscriptPdf", () => ({ buildManuscriptPdf: (m: Manuscript, o: unknown) => buildManuscriptPdf(m, o) }));
 
+// The PEOs the database lists (public.peo_catalog()), as src/lib/peoCatalog.ts reads them.
+let peoCatalogRows: unknown = [];
+vi.mock("@/lib/peoCatalog", async () => {
+  const { parsePeoCatalog } = await import("@/data/peoProfiles");
+  return { readPeoCatalog: async () => parsePeoCatalog(peoCatalogRows) };
+});
+
 const { default: AdvisorSubmissionPage } = await import("./AdvisorSubmissionPage");
 
 const signedData = { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co", employee_count: 12, pay_frequency: "Bi-weekly" };
@@ -105,6 +112,7 @@ const renderPage = () =>
 
 describe("AdvisorSubmissionPage", () => {
   beforeEach(() => {
+    peoCatalogRows = [];
     for (const fn of Object.values(api)) fn.mockReset();
     vi.mocked(toast.error).mockReset();
     downloadBlob.mockReset();
@@ -649,6 +657,21 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "Nevermore_Packet_EAA-2026-S1_Signed_Co_20261001_advisor-v2.pdf"));
   });
 
+  it("generates the packet with its eligibility checks against the chosen PEO's profile in the database", async () => {
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 20, states_served: null, excluded_class_codes: null,
+      sources: { min_headcount: { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-02" } } } }];
+    api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "sent_to_carrier", submission: { ...detail().submission!, peo: "Justworks" } }));
+    api.saveManuscriptVersion.mockResolvedValue({});
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    // Once the PEOs have been read.
+    await screen.findByRole("option", { name: "Justworks" });
+    fireEvent.click(screen.getByRole("button", { name: /Generate packet/ }));
+    await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
+    const [manuscript] = buildManuscriptPdf.mock.calls[0] as unknown as [Manuscript];
+    expect(manuscript.checks[0]).toEqual({ label: "Headcount meets Justworks minimum (12 of 20 employees)", status: "fail" });
+  });
+
   it("reloads, and keeps no file, when the prospect certified again while the packet was being generated", async () => {
     renderPage();
     await screen.findByRole("heading", { name: "Signed Co" });
@@ -824,6 +847,27 @@ describe("AdvisorSubmissionPage", () => {
     const panel = await screen.findByRole("region", { name: "Quote requests" });
     expect(within(within(panel).getByTestId("quote-request-7")).getByText("TriNet")).toBeInTheDocument();
     expect(within(panel).getByText("Sent v1, current v2")).toBeInTheDocument();
+  });
+
+  it("checks each PEO against the profile in use the database holds for it, and offers the PEOs it lists", async () => {
+    peoCatalogRows = [
+      { id: 2, name: "Insperity", profile: null },
+      { id: 4, name: "Rippling", listed: false, profile: null },
+      { id: 5, name: "TriNet", profile: { version: 3, min_headcount: 20, states_served: null, excluded_class_codes: null, sources: { min_headcount: { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-02" } } } },
+    ];
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "sent_to_carrier",
+      data: { ...signedData, census: [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary", employment_type: "full_time", classification: "w2" }] },
+      quoteRequests: [{ id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 1, sent_on: "2026-11-10",
+        quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
+    }));
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote requests" });
+    expect(await within(within(panel).getByTestId("quote-request-7")).findByRole("alert")).toHaveTextContent("TriNet lists a 20-employee minimum; you have 12");
+    expect(within(within(panel).getByLabelText("PEO")).getAllByRole("option").map((o) => o.textContent).slice(1)).toEqual(["Insperity", "TriNet"]);
+    // A PEO that isn't listed isn't offered anywhere, the census layouts included.
+    const census = screen.getByRole("region", { name: "Employee census" });
+    expect(within(within(census).getByLabelText("Layout")).getAllByRole("option").map((o) => o.textContent).slice(1)).toEqual(["Insperity", "TriNet"]);
   });
 
   it("offers the certified census as a file in a PEO's layout, only while the intake is certified", async () => {

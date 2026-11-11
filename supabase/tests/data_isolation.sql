@@ -94,6 +94,7 @@
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 \i supabase/migrations/20261110090000_quote_requests.sql
+\i supabase/migrations/20261111090000_peo_requirement_profiles.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -350,6 +351,14 @@ BEGIN
   -- The admin asks for prospect B's draft to be deleted (it stays until purge-intakes runs).
   PERFORM pg_temp.become('admin');
   PERFORM public.request_intake_deletion(pb_open, 'The owner asked by email; verified from the account address');
+  -- The admin publishes TriNet's requirement profile, naming a contact (20261111090000); the other four PEOs keep
+  -- their empty drafts.
+  PERFORM public.admin_save_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'), jsonb_build_object(
+    'min_headcount', 5, 'sources', jsonb_build_object(
+      'min_headcount', jsonb_build_object('kind', 'person', 'name', 'Dana Reyes', 'role', 'Broker desk', 'checked_on', '2026-11-02'),
+      'contacts', jsonb_build_object('kind', 'person', 'name', 'Dana Reyes', 'role', 'Broker desk', 'checked_on', '2026-11-02')),
+    'contacts', jsonb_build_array(jsonb_build_object('name', 'Dana Reyes', 'email', 'dana@trinet.example'))));
+  PERFORM public.admin_publish_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'));
 
   -- Email delivery, and the AI rate-limit counters.
   PERFORM pg_temp.become('service');
@@ -418,6 +427,12 @@ INSERT INTO matrix VALUES
   -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
   -- advisor_add_referral_partner() and advisor_update_referral_partner().
   ('public.referral_partners',                          '{"advisor":"all","admin":"all"}'),
+  -- PEOs and their requirement profiles (20261111090000): every signed-in caller, guests included, reads the PEOs
+  -- and the published version (one here); drafts are the admin's. Only advisors read a PEO's contacts. Signed-out
+  -- callers read nothing: public pages never name a PEO.
+  ('public.peos',                                       '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all"}'),
+  ('public.peo_profile_versions',                       '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor":1,"admin":"all","advisor_as_guest":1}'),
+  ('public.peo_contacts',                               '{"advisor":"all","admin":"all"}'),
   ('public.intake_lifecycle_events',                    '{"advisor":"all","admin":"all"}'),
   ('public.intake_deletions',                           '{"advisor":"all","admin":"all"}'),
   -- Monitoring is the admin's: advisors don't need failure codes, routes or account ids.
@@ -652,6 +667,7 @@ END $$;
 --   helper        called as the signed-in user by a trigger or an invoker function; holds no data itself
 --   advisor       refuses anyone who isn't an advisor or admin
 --   admin         refuses anyone who isn't an admin, advisors included
+--   signed_in     any signed-in caller, guests included; reads only what row security lets the caller read
 CREATE TEMP TABLE callable (fn text PRIMARY KEY, audience text NOT NULL, call text, why text NOT NULL);
 GRANT SELECT ON callable TO anon, authenticated, service_role;
 INSERT INTO callable VALUES
@@ -735,7 +751,12 @@ INSERT INTO callable VALUES
   ('revoke_chamber_session(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.revoke_chamber_session(%2$L, ''probe'')', 'closing a draft for good'),
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
   ('retry_intake_deletion(p_deletion_id uuid)', 'admin',  'SELECT public.retry_intake_deletion(%2$L)', 'retrying a failed deletion'),
-  ('admin_ops_summary(p_hours integer)',       'admin',   'SELECT count(*) FROM public.admin_ops_summary(24)', 'monitoring counts');
+  ('admin_ops_summary(p_hours integer)',       'admin',   'SELECT count(*) FROM public.admin_ops_summary(24)', 'monitoring counts'),
+  ('peo_catalog()',                            'signed_in', NULL, 'the PEOs and each one''s published profile, as the caller''s row security allows; never a contact'),
+  ('admin_add_peo(p_name text)',               'admin',   'SELECT public.admin_add_peo(''Probe PEO'')', 'adding a PEO'),
+  ('admin_save_peo_profile(p_peo_id bigint, p_profile jsonb)', 'admin', 'SELECT public.admin_save_peo_profile(0, ''{}'')', 'saving a PEO''s draft profile'),
+  ('admin_publish_peo_profile(p_peo_id bigint)', 'admin', 'SELECT public.admin_publish_peo_profile(0)', 'publishing a PEO''s profile'),
+  ('admin_set_peo_listed(p_peo_id bigint, p_listed boolean)', 'admin', 'SELECT public.admin_set_peo_listed(0, true)', 'listing a PEO, or not');
 
 DO $$
 DECLARE

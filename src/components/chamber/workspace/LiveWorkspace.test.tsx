@@ -6,7 +6,14 @@ import type { ProvenanceMap } from "@/data/provenance";
 import LiveWorkspace from "./LiveWorkspace";
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: null }) }));
-vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
+// The database lists the PEOs PEO Match offers (public.peo_catalog()); nothing else here reaches it.
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: {
+    rpc: (fn: string) => Promise.resolve(fn === "peo_catalog"
+      ? { data: ["ADP TotalSource", "Insperity", "Justworks", "Rippling", "TriNet"].map((name, i) => ({ id: i + 1, name, profile: null })), error: null }
+      : { data: null, error: { message: `no ${fn} here` } }),
+  },
+}));
 
 const TABS = [
   ["① Upload", "Drop your documents here."],
@@ -117,14 +124,15 @@ describe("LiveWorkspace", () => {
     expect(screen.getByRole("heading", { name: "Certify & sign" })).toBeInTheDocument();
   });
 
-  it("carries the chosen PEO into Certify & sign", () => {
+  it("carries the chosen PEO into Certify & sign", async () => {
     render(
       <MemoryRouter>
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
-    fireEvent.click(screen.getByRole("button", { name: "Choose Rippling" }));
+    // The PEOs come from the database.
+    fireEvent.click(await screen.findByRole("button", { name: "Choose Rippling" }));
     expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("Rippling");
     fireEvent.click(screen.getByRole("button", { name: "Proceed with Rippling →" }));
     expect(screen.getByText(/prepared for Rippling/)).toBeInTheDocument();
@@ -146,7 +154,7 @@ describe("LiveWorkspace", () => {
     expect(screen.getByText(/send to Acme PEO myself/)).toBeInTheDocument();
   });
 
-  it("shows the PEO kept with the intake, and hands a new choice back to be saved", () => {
+  it("shows the PEO kept with the intake, and hands a new choice back to be saved", async () => {
     const onChoosePeo = vi.fn();
     const { rerender } = render(
       <MemoryRouter>
@@ -159,7 +167,7 @@ describe("LiveWorkspace", () => {
     expect(screen.getByText(/send to Insperity myself/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "⑧ PEO Match" }));
-    fireEvent.click(screen.getByRole("button", { name: "Choose TriNet" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Choose TriNet" }));
     expect(onChoosePeo).toHaveBeenCalledWith("TriNet");
     // What is shown is what the intake holds, not a copy kept here.
     expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("Insperity");

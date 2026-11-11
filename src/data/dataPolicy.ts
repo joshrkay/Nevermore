@@ -352,6 +352,15 @@ export const DATA_CLASSES: DataClass[] = [
     retention: "Kept while we work with the partner, so the codes on past intakes still name them.",
     deletion: "By an admin, on the partner's request or when we stop working with them (docs/DATA_HANDLING.md).",
   },
+  {
+    id: "peo_requirement_profiles",
+    label: "PEOs and their requirement profiles",
+    sensitivity: "confidential",
+    examples: "The PEOs we prepare packets for and what each asks for, version by version: the answers and documents it needs, its census columns, its eligibility rules, its own questions, and where and when that was checked; and the names, roles, work emails and phones of the people at each PEO we deal with.",
+    stored: { tables: ["peos", "peo_profile_versions", "peo_contacts"], buckets: [], elsewhere: [] },
+    retention: "For good: a published profile version never changes, so a packet can always be read against what the PEO asked for at the time. A PEO contact stays with the version that names them.",
+    deletion: "Nothing about an intake is in them, so deleting an intake leaves them. A PEO contact who asks to be removed is removed by hand (docs/DATA_HANDLING.md).",
+  },
 ];
 
 /** The classes a table or bucket belongs to. */

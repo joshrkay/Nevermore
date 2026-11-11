@@ -18,7 +18,7 @@ const PUBLIC_COPY_FILES = [
   "src/pages/TermsPage.tsx",
   "src/components/LegalPageLayout.tsx",
   "src/data/legal.ts",
-  // PEO Match shows PEO names from the sourced catalog (src/data/peoCatalog.ts), never in its own copy.
+  // PEO Match shows PEO names from the database (public.peo_catalog(), src/lib/peoCatalog.ts), never in its own copy.
   "src/components/chamber/PEOMatchTab.tsx",
   // Page titles and descriptions, and the summary in llms.txt (search results and AI assistants quote them).
   "src/data/seo.ts",

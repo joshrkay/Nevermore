@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "./chamberTypes";
-import { catalogProblems, cleanPeoName, findPeo, PEO_CATALOG, PEO_NAME_MAX, peoFit, type PeoRecord } from "./peoCatalog";
+import { cleanPeoName, findPeo, PEO_NAME_MAX, peoFit, type PeoRecord } from "./peoCatalog";
+import { parsePeoCatalog } from "./peoProfiles";
 
 const peo = (overrides: Partial<PeoRecord> = {}): PeoRecord => ({
   name: "Example PEO",
+  listed: true,
   minHeadcount: null,
   statesServed: null,
   excludedClassCodes: null,
@@ -59,23 +61,35 @@ describe("peoFit states", () => {
   });
 });
 
-describe("PEO_CATALOG", () => {
-  it("lists each PEO once, alphabetically, so no PEO is ranked above another", () => {
-    const names = PEO_CATALOG.map((p) => p.name);
-    expect(new Set(names).size).toBe(names.length);
-    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+describe("findPeo", () => {
+  const catalog = [peo({ name: "Justworks" }), peo({ name: "TriNet" })];
+
+  it("finds a listed PEO by name regardless of case, and returns nothing for an unlisted one", () => {
+    expect(findPeo(catalog, " justworks ")?.name).toBe("Justworks");
+    expect(findPeo(catalog, "Acme PEO")).toBeUndefined();
+    expect(findPeo([], "Justworks")).toBeUndefined();
+  });
+});
+
+describe("peoFit on the catalog the database returns", () => {
+  it("checks against the rules of the profile in use", () => {
+    const [trinet] = parsePeoCatalog([{ id: 5, name: "TriNet", profile: {
+      version: 1, min_headcount: 10, states_served: ["CA"], excluded_class_codes: null,
+      needed_to_quote: [], needed_before_signing: [], census_layout: null, documents: [], excluded_industries: null,
+      min_enrolment_percent: null, extra_questions: [], published_at: null,
+      sources: { min_headcount: { kind: "document", name: "Broker guide", checked_on: "2026-11-02" }, states_served: { kind: "document", name: "Broker guide", checked_on: "2026-11-02" } },
+    } }]);
+    const checks = peoFit({ ...EMPTY_CHAMBER_DATA, employee_count: 8, states: ["CA", "TX"] }, trinet);
+    expect(checks.map((c) => [c.label, c.status])).toEqual([
+      ["TriNet lists a 10-employee minimum; you have 8", "does_not_meet"],
+      ["TriNet doesn't list: TX", "does_not_meet"],
+      ["Class codes vs TriNet exclusions", "unknown"],
+    ]);
   });
 
-  it("carries a verification date for every sourced fact", () => {
-    for (const p of PEO_CATALOG) {
-      const hasFacts = p.minHeadcount !== null || p.statesServed !== null;
-      if (hasFacts) expect(p.lastVerified, p.name).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    }
-  });
-
-  it("finds a PEO by name regardless of case, and returns nothing for an unlisted one", () => {
-    expect(findPeo("justworks")?.name).toBe("Justworks");
-    expect(findPeo("Acme PEO")).toBeUndefined();
+  it("can't tell anything for a PEO with no published profile", () => {
+    const [adp] = parsePeoCatalog([{ id: 1, name: "ADP TotalSource", profile: null }]);
+    expect(peoFit({ ...EMPTY_CHAMBER_DATA, employee_count: 8, states: ["CA"] }, adp).map((c) => c.status)).toEqual(["unknown", "unknown", "unknown"]);
   });
 });
 
@@ -119,33 +133,5 @@ describe("peoFit class codes", () => {
     const check = classCheck(withCodes("8810", "5551", "5551"), peo({ name: "TriNet", excludedClassCodes: ["5551", "7380"] }));
     expect(check.status).toBe("does_not_meet");
     expect(check.label).toBe("TriNet lists class code 5551 as excluded");
-  });
-});
-
-describe("catalogProblems: every fact is sourced", () => {
-  it("accepts a PEO with no facts yet", () => {
-    expect(catalogProblems([peo()])).toEqual([]);
-  });
-
-  it("asks a fact for its source in the PEO's own materials, as an https link", () => {
-    expect(catalogProblems([peo({ name: "TriNet", minHeadcount: 5, lastVerified: "2026-11-10" })])).toEqual([
-      "TriNet: minHeadcount has no source",
-    ]);
-    expect(catalogProblems([peo({ name: "TriNet", statesServed: ["CA"], lastVerified: "2026-11-10", sources: { statesServed: "trinet.example/states" } })])).toEqual([
-      "TriNet: statesServed's source isn't an https link",
-    ]);
-    expect(catalogProblems([peo({ name: "TriNet", statesServed: ["CA"], lastVerified: "2026-11-10", sources: { statesServed: "http://trinet.example/states" } })])).toEqual([
-      "TriNet: statesServed's source isn't an https link",
-    ]);
-  });
-
-  it("asks a PEO with any fact for the date the facts were checked", () => {
-    expect(catalogProblems([peo({ name: "TriNet", excludedClassCodes: ["5551"], sources: { excludedClassCodes: "https://trinet.example/appetite" } })])).toEqual([
-      "TriNet: facts with no lastVerified date",
-    ]);
-  });
-
-  it("holds for the catalog the app ships", () => {
-    expect(catalogProblems(PEO_CATALOG)).toEqual([]);
   });
 });

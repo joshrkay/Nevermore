@@ -1,16 +1,19 @@
 import { useState } from "react";
 import { Users, UserPlus, DollarSign, MapPin, Shield, Zap } from "lucide-react";
 import type { ChamberData } from "@/data/chamberTypes";
-import { PEO_CATALOG, PEO_NAME_MAX, findPeo, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
+import { PEO_NAME_MAX, findPeo, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
+import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 
-interface PEOMatchTabProps {
+export interface PEOMatchTabProps {
   data: ChamberData;
   /** The PEO the packet is prepared for; null until the prospect picks or names one. */
   selectedPeo: string | null;
   onSelect: (name: string) => void;
   onProceed: () => void;
-  /** The PEOs offered, alphabetically; the app's catalog unless a test supplies one. */
-  catalog?: readonly PeoRecord[];
+  /** The PEOs, alphabetically, as the database lists them (usePeoCatalog); only those listed are offered. */
+  catalog: readonly PeoRecord[];
+  /** Whether the PEOs are still loading or couldn't be read; a prospect can name one either way. */
+  catalogStatus: PeoCatalogStatus;
 }
 
 const FIT_TEXT: Record<FitStatus, string> = {
@@ -19,7 +22,9 @@ const FIT_TEXT: Record<FitStatus, string> = {
   unknown: "Not yet confirmed",
 };
 
-const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog = PEO_CATALOG }: PEOMatchTabProps) => {
+const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog: everyPeo, catalogStatus }: PEOMatchTabProps) => {
+  // Only the PEOs an admin lists are offered; one chosen before it stopped being listed reads as the prospect's own.
+  const catalog = everyPeo.filter((p) => p.listed);
   const [otherName, setOtherName] = useState("");
 
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
@@ -35,7 +40,7 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog = PEO_CAT
     { icon: <MapPin className="w-5 h-5" />, label: "States", value: data.states.length > 0 ? data.states.join(", ") : "—" },
   ];
 
-  const selectedIsListed = selectedPeo !== null && findPeo(selectedPeo) !== undefined;
+  const selectedIsListed = selectedPeo !== null && findPeo(catalog, selectedPeo) !== undefined;
   const trimmedOther = otherName.trim();
 
   return (
@@ -82,6 +87,12 @@ const PEOMatchTab = ({ data, selectedPeo, onSelect, onProceed, catalog = PEO_CAT
 
       {/* PEO Cards */}
       <div className="space-y-4">
+        {catalogStatus === "loading" && <p className="text-sm text-muted-foreground">Loading the PEOs…</p>}
+        {catalogStatus === "failed" && (
+          <p role="alert" className="text-sm rounded-lg bg-warning/10 text-warning px-3 py-2">
+            We couldn't load the list of PEOs. You can still name yours below.
+          </p>
+        )}
         {catalog.map((peo) => {
           const checks = peoFit(data, peo);
           const misfits = checks.filter((c) => c.status === "does_not_meet");

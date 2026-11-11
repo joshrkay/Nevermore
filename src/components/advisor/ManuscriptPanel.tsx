@@ -3,6 +3,7 @@ import { Download, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { applyAdvisorReview, isCurrentVersion, isStaleRefusal, verifiedFieldsOf } from "@/data/advisor";
 import { buildManuscript, manuscriptFilename } from "@/data/manuscript";
+import type { PeoRecord } from "@/data/peoCatalog";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
 import { manuscriptUrl, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
@@ -23,7 +24,7 @@ const versionFilename = (companyName: string | null, v: Pick<ManuscriptVersion, 
  * version names the certification and review state it was built from; `onChanged` reloads the
  * submission after a version is stored, or when the database refuses one because either has moved on.
  */
-const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onChanged: () => void }) => {
+const ManuscriptPanel = ({ detail, catalog, onChanged }: { detail: SubmissionDetail; catalog: readonly PeoRecord[]; onChanged: () => void }) => {
   const [revealSensitive, setRevealSensitive] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [opening, setOpening] = useState<string | null>(null);
@@ -42,6 +43,7 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
       const manuscript = buildManuscript(packet.data, {
         fileId: detail.fileId ?? "EAA-UNCERTIFIED",
         submission: detail.submission,
+        catalog,
         provenance: packet.provenance,
         verified: verifiedFieldsOf(detail.reviews),
         advisor: { version, corrections: packet.corrections, followUps: packet.followUps },

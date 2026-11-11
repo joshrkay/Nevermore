@@ -12,7 +12,7 @@ import NeedsActionPanel from "@/components/advisor/NeedsActionPanel";
 import NotesPanel from "@/components/advisor/NotesPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
-import { PEO_CATALOG } from "@/data/peoCatalog";
+import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
@@ -114,6 +114,9 @@ const Detail = ({
   onShowMessage: (id: string) => void;
   emailProblem: EmailProblem | null;
 }) => {
+  // The PEOs and their profiles in use, from the database: the quote requests' fit checks, the packet's checks and
+  // the census layouts read them.
+  const peoCatalog = usePeoCatalog();
   // An underwriter's question the advisor chose to ask the prospect: it opens Ask the prospect with the text in it,
   // as a fresh draft each time, for the advisor to edit and send as their own request.
   const [askDraft, setAskDraft] = useState<{ message: string; n: number } | null>(null);
@@ -167,7 +170,7 @@ const Detail = ({
             messageIds={messageIds}
             onShowMessage={onShowMessage}
             onChanged={reload}
-            census={<CensusTable detail={detail} />}
+            census={<CensusTable detail={detail} peos={peoCatalog.peos.filter((p) => p.listed).map((p) => p.name)} />}
           />
           <TranscriptEvidence
             messages={detail.transcript}
@@ -205,6 +208,7 @@ const Detail = ({
             requests={detail.quoteRequests}
             events={detail.quoteRequestEvents}
             data={detail.data}
+            catalog={peoCatalog.peos}
             onAskProspect={askProspect}
             onChanged={reload}
           />
@@ -219,7 +223,7 @@ const Detail = ({
             quoteRequests={detail.quoteRequests}
             onChanged={reload}
           />
-          <ManuscriptPanel detail={detail} onChanged={reload} />
+          <ManuscriptPanel detail={detail} catalog={peoCatalog.peos} onChanged={reload} />
           <DocumentsPanel documents={detail.documents} events={detail.documentEvents} prospectUserId={detail.userId} />
           <NotesPanel sessionId={detail.id} notes={detail.notes} onAdded={reload} />
           <AuditTrail events={detail.reviewEvents} prospectUserId={detail.userId} />
@@ -272,13 +276,13 @@ const ChangedSinceSigning = ({ detail, signed }: { detail: SubmissionDetail; sig
 };
 
 /** The census as the Manuscript prints it, under the census's row in the Workforce section. */
-const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
+const CensusTable = ({ detail, peos }: { detail: SubmissionDetail; peos: string[] }) => (
   <section aria-labelledby="census-heading" className="border border-border rounded-lg p-4">
     <h4 id="census-heading" className="text-sm font-medium mb-3">Employee census</h4>
     {/* The certified census as a file for a PEO (#86): only from the certified copy, never a draft. */}
     {detail.certified && detail.fileId && detail.data.census.length > 0 && (
       <div className="mb-3">
-        <CensusDownload census={detail.data.census} fileId={detail.fileId} peos={PEO_CATALOG.map((p) => p.name)} />
+        <CensusDownload census={detail.data.census} fileId={detail.fileId} peos={peos} />
       </div>
     )}
     {detail.data.census.length === 0 ? (

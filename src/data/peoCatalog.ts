@@ -1,27 +1,29 @@
 import type { ChamberData } from "./chamberTypes";
 import { headcount } from "./headcount";
+import type { RequirementProfile } from "./peoProfiles";
 
 /**
- * A PEO the prospect can prepare a packet for. Every field except `name` is a sourced fact or null:
- * null means "not yet verified", and nothing downstream may substitute a guess for it.
+ * A PEO the prospect can prepare a packet for, as the database holds it (src/lib/peoCatalog.ts reads them; see
+ * src/data/peoProfiles.ts). Every field except `name` is a sourced fact or null: null means "not yet verified",
+ * and nothing downstream may substitute a guess for it. The facts come from the PEO's requirement profile in use.
  */
 export interface PeoRecord {
+  /** The PEO's id in the database. */
+  id?: number;
   name: string;
+  /** False once an admin stops listing the PEO: nothing offers it, but what was sent to it still reads. */
+  listed: boolean;
   /** Smallest group the PEO accepts, once sourced from the PEO. */
   minHeadcount: number | null;
   /** Two-letter state codes the PEO serves, once sourced from the PEO. */
   statesServed: string[] | null;
   /** Workers' comp class codes the PEO won't write, once sourced from the PEO. */
   excludedClassCodes: string[] | null;
-  /** ISO date the facts above were last checked against the PEO's own materials. */
+  /** ISO date of the oldest check behind the profile in use (each part is checked on its own date). */
   lastVerified: string | null;
-  /** Where each sourced fact was read: an https link to the PEO's own materials. catalogProblems() asks one of every fact. */
-  sources?: Partial<Record<PeoFact, string>>;
+  /** The requirement profile in use (its newest published version); null when none is published yet. */
+  profile?: RequirementProfile | null;
 }
-
-/** The facts a PEO record can hold. */
-export const PEO_FACTS = ["minHeadcount", "statesServed", "excludedClassCodes"] as const;
-export type PeoFact = (typeof PEO_FACTS)[number];
 
 export type FitStatus = "meets" | "does_not_meet" | "unknown";
 
@@ -62,16 +64,6 @@ export function peoFit(data: ChamberData, peo: PeoRecord): PeoFitCheck[] {
   return [headcountCheck, statesCheck, classCheck];
 }
 
-// Alphabetical on purpose: this is a list of choices, not a ranking. Facts stay null until
-// someone checks them against the PEO's own materials and records the date in `lastVerified`.
-export const PEO_CATALOG: PeoRecord[] = [
-  { name: "ADP TotalSource", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
-  { name: "Insperity", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
-  { name: "Justworks", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
-  { name: "Rippling", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
-  { name: "TriNet", minHeadcount: null, statesServed: null, excludedClassCodes: null, lastVerified: null },
-];
-
 /**
  * The longest PEO name kept, the limit of the "name another PEO" field. The database refuses longer
  * names (chamber_sessions.chosen_peo); src/data/schemaSync.test.ts keeps the two the same.
@@ -86,22 +78,8 @@ export function cleanPeoName(name: unknown): string | null {
   return cleaned === "" ? null : cleaned;
 }
 
-export function findPeo(name: string): PeoRecord | undefined {
+/** The listed PEO with this name, compared ignoring case; undefined for a PEO the catalog doesn't hold. */
+export function findPeo(catalog: readonly PeoRecord[], name: string): PeoRecord | undefined {
   const wanted = name.trim().toLowerCase();
-  return PEO_CATALOG.find((p) => p.name.toLowerCase() === wanted);
-}
-
-/** What a catalog is missing for its facts to count as sourced. */
-export function catalogProblems(catalog: readonly PeoRecord[]): string[] {
-  const problems: string[] = [];
-  for (const peo of catalog) {
-    const sourced = PEO_FACTS.filter((fact) => peo[fact] !== null);
-    for (const fact of sourced) {
-      const source = peo.sources?.[fact];
-      if (!source) problems.push(`${peo.name}: ${fact} has no source`);
-      else if (!source.startsWith("https://")) problems.push(`${peo.name}: ${fact}'s source isn't an https link`);
-    }
-    if (sourced.length > 0 && !peo.lastVerified) problems.push(`${peo.name}: facts with no lastVerified date`);
-  }
-  return problems;
+  return catalog.find((p) => p.name.toLowerCase() === wanted);
 }

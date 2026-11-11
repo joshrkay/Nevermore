@@ -422,8 +422,10 @@ export function buildManuscript(
     verified?: ReadonlySet<string>;
     /** For an advisor-generated packet; `followUps` are added to the open items. */
     advisor?: ManuscriptAdvisorReview & { followUps: string[] };
-    /** The PEO the checks are run against (the chosen one, when it is in the catalog). */
+    /** The PEO the checks are run against; otherwise the one chosen at submission, found in `catalog`. */
     peo?: PeoRecord;
+    /** The PEOs the database lists (usePeoCatalog), to find the chosen one in. */
+    catalog?: readonly PeoRecord[];
   },
 ): Manuscript {
   const certifiedAt = opts.submission ? (opts.submission.certified_at ?? opts.submission.signed_at) : null;
@@ -477,7 +479,7 @@ export function buildManuscript(
   if (estimatedPay > 0) unstatedItems.push(`Annual pay — estimated at full-time hours for ${counted(estimatedPay, census, "people on the census")}; confirm their hours`);
   if (unknownTier > 0) unstatedItems.push(`Coverage tier — not provided for ${counted(unknownTier, w2.length, "employees")}`);
 
-  const checks = eligibilityChecks(data, opts.peo ?? (opts.submission?.peo ? findPeo(opts.submission.peo) ?? undefined : undefined));
+  const checks = eligibilityChecks(data, opts.peo ?? (opts.submission?.peo ? findPeo(opts.catalog ?? [], opts.submission.peo) : undefined));
   // The intake's open items, the one list Review and the advisor queue use too (src/data/openItems.ts): the answers
   // certification requires (always present on a certified packet), the census, then fields by status, less any an
   // advisor verified.

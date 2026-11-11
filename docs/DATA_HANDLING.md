@@ -50,6 +50,7 @@ doesn't.
 | Operational monitoring and abuse limits | Internal | Failure counts and codes, alerts raised, a record of each AI call (ids, codes and field names, never values), AI rate-limit counters (a one-way hash of the network address, never the address), the per-year counter that numbers File IDs | `ops_events`, `ops_alerts`, `ai_extraction_events`, `ai_request_log`, `ai_ip_log`, `ai_global_usage`, `submission_reference_counters`; Supabase and Vercel logs | Events, AI call records and daily AI totals 90 days; rate-limit records 1 day; alerts for incident review | The retention jobs; AI call records for an intake also with the intake |
 | Intake progress (the pilot funnel) | Internal | Which steps each intake reached (started, first answer, a document, a census, ready to certify, a verified email, certified, The Manuscript downloaded), when, and when it started; and the referral code and campaign tags of the link it was started from, as short codes (its intake source); never an answer, a name, an address or a document | `intake_milestones`; the source codes also in `chamber_sessions` | 365 days from the intake's start, a whole start date at once; the codes on the intake itself, with the intake | `run_retention()`; deleting an intake removes its link to these rows, which stay unattached (source codes included) so the funnel still counts it |
 | Referral partners | Confidential | The people and firms who refer employers: name, kind of partner, the code in their link, and which advisor added or last changed them | `referral_partners` | While we work with the partner, so past intakes' codes still name them | An admin, on the partner's request or when we stop working with them (below) |
+| PEOs and their requirement profiles | Confidential | The PEOs we prepare packets for and what each asks for, version by version (answers, documents, census columns, eligibility rules, its own questions, where and when it was checked), and the PEO contacts each version names: name, role, work email and phone. Never anything about an intake | `peos`, `peo_profile_versions`, `peo_contacts` | For good: a published version never changes (docs/adr/0003) | Deleting an intake leaves them. A PEO contact, on their request (below) |
 
 The prospect's browser also keeps a copy of answers whose save hasn't been confirmed, for at most 7 days, in
 that browser only (`src/data/intakeBackup.ts`). It also keeps the referral code and campaign tags of the last
@@ -180,6 +181,22 @@ delete from public.referral_partners where code = '<code>';
 
 Intakes and milestones keep the code, which then shows as unlisted; nothing else names the partner. Tell the
 partner their link no longer counts for them.
+
+### Removing a PEO contact
+
+A published requirement profile version never changes, and neither do the PEO contacts it names: a trigger refuses it
+(docs/adr/0003). When a person at a PEO asks to be removed, an admin first publishes a new version of that PEO's
+profile without them, then removes them from the older versions, from the SQL editor, in one transaction:
+
+```sql
+begin;
+alter table public.peo_contacts disable trigger peo_contacts_frozen_once_published;
+delete from public.peo_contacts where email = '<their email>';
+alter table public.peo_contacts enable trigger peo_contacts_frozen_once_published;
+commit;
+```
+
+Record who asked and when in the team's deletion log. Nothing else about the version changes.
 
 ### Reviewing submitted records
 

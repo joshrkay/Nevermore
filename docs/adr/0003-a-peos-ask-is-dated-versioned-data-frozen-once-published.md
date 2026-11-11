@@ -1,0 +1,28 @@
+# A PEO's ask is dated, versioned data, frozen once it is published
+
+What each PEO asks for (the answers it needs to quote and before signing, its census columns, the documents, its eligibility rules, its own questions and the people to deal with there) is a **requirement profile** held in the database, not in code (joshrkay/Nevermore#91, L-1.1). Adding a PEO, or changing what one asks, is an admin's call to a database function, not a release.
+
+Each PEO has numbered profile versions (`public.peo_profile_versions`). A version is a **draft** until an admin publishes it, and the newest **published** version is the one in use. Publishing freezes a version: a trigger refuses any change to it, dates included, its unpublishing or its deletion, whoever writes, the table's owner included, and the same for the PEO contacts it names. A change after that, or a re-check of something unchanged, is a new version, which starts as the PEO's one draft. "Used" means published: a draft has been seen by nobody but admins, so it changes freely; once published, prospects and advisors may have read it, and a packet or a fit check may have been made against it.
+
+**Sources are per part.** Each eligibility rule (minimum headcount, states served, excluded industries, excluded class codes, minimum enrolment) and each other part (the answers needed, the census layout, the documents, the extra questions, the contacts) carries its own source and its own date checked. A source is either a document, by its title with a link when there is one, or a named person at the PEO, with their name and role. A rule that isn't sourced is null ("can't tell yet") and has no source; a part with nothing in it can be sourced, meaning the PEO asks for none. A version can't be published while any part it holds has no source, or with nothing sourced at all. How current a profile is goes by its oldest check, so the version itself carries no single date. A trigger refuses a profile that breaks the shape (an answer the intake doesn't ask, a census column we don't hold, a document kind we don't take, more than 30 extra questions, a source without its date), so no writer can store one; `src/data/schemaSync.test.ts` keeps its lists and caps equal to the browser's (`src/data/peoProfiles.ts`).
+
+**PEOs are delisted, never deleted.** An admin marks a PEO listed or not listed. One that isn't listed is offered nowhere (PEO Match, the advisor's send form, the census layouts) and won't show in readiness, but it stays in the catalog the browser reads, with its profile history, so old packets, quote requests and their fit checks still read against it. A PEO name a prospect or advisor types that isn't listed stays free text: no PEO row, no profile, our own census layout, and "can't tell yet" on every check. Only admins add PEOs.
+
+The five PEOs the app listed in code (`src/data/peoCatalog.ts`) were moved into the database with empty drafts: nothing about them is sourced yet, so nothing is published for them, and every fit check against them says it can't tell yet.
+
+## Considered Options
+
+- **Keep the list in code** (`PEO_CATALOG`, each fact with an https link). Rejected: every new PEO, and every fact checked with one, needed an engineer and a release, and nothing recorded what a PEO asked for before a change. A link also can't name a person at the PEO, who is often the only source.
+- **One editable profile per PEO, with an audit log of changes.** Rejected: a packet or a check made against the profile could not be tied to what it said then without replaying the log, and an edit could silently change what an earlier answer was checked against.
+- **Version on every save, with no drafts.** Rejected: an admin filling in a profile over several sittings would publish half-finished versions to prospects, and the version numbers would count saves rather than what a PEO asked.
+- **One source and date per version.** Rejected: a PEO's minimum headcount and its census columns are usually checked at different times against different sources, and one date would claim the whole profile was checked when only part of it was.
+- **Freeze in the functions only.** Rejected: the rule would hold only for the writers we remember to write. A trigger holds it for every writer.
+- **Delete a PEO we stop working with.** Rejected: quote requests and packets name it, and their checks would lose what it asked for.
+
+## Consequences
+
+- Later stories read a version by its id, knowing it will not change: the readiness per PEO (L-2.2), its extra questions (L-2.3), its census layout (L-3.1) and the documents a bundle lists (L-3.4). Staleness (L-1.2) is computed from the oldest sourced part; "checked again" makes a new version.
+- A mistake in a published version is corrected by publishing a new one; the wrong one stays on record. Removing a PEO contact who asks to be removed means disabling the freeze trigger by hand, as the table's owner, as `docs/DATA_HANDLING.md` describes.
+- PEO contacts are in their own table (`public.peo_contacts`) so that row security can show them to advisors only. `public.peo_catalog()`, which the browser reads, never includes them or their source.
+- Signed-in readers, guests included, read the PEOs and the published versions; signed-out readers read nothing, so public pages never name a PEO. Only admins write, through `admin_add_peo()`, `admin_save_peo_profile()`, `admin_publish_peo_profile()` and `admin_set_peo_listed()`.
+- Nothing in these tables belongs to an intake, so deleting an intake leaves them as they are.

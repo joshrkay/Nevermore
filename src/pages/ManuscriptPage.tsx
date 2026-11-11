@@ -18,7 +18,7 @@ import { SITE_DOMAIN } from "@/data/site";
 import { downloadBlob } from "@/lib/downloadFile";
 import { recordManuscriptDownload } from "@/lib/milestones";
 import CensusDownload from "@/components/CensusDownload";
-import { PEO_CATALOG } from "@/data/peoCatalog";
+import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import { finalManuscriptUrl } from "@/lib/advisorApi";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
 import LegalLinks from "@/components/LegalLinks";
@@ -197,6 +197,8 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
   // The database offers the latest advisor version only when it was built from this certification.
   const ready = state.kind === "ready";
+  // The PEOs and their profiles in use, for a prospect's own packet (signed out, nobody reads a PEO).
+  const peoCatalog = usePeoCatalog(ready);
   useEffect(() => {
     setFinalVersion(null);
     if (!ready || !sessionId) return;
@@ -211,11 +213,11 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
   const d = useMemo(() => {
     if (state.kind === "ready") {
-      return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, provenance: state.provenance, verified: state.verified });
+      return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, catalog: peoCatalog.peos, provenance: state.provenance, verified: state.verified });
     }
     if (state.kind === "sample") return buildManuscript(DEMO_CHAMBER_DATA, { fileId: SAMPLE_FILE_ID, date: SAMPLE_DATE, provenance: SAMPLE_PROVENANCE });
     return null;
-  }, [state]);
+  }, [state, peoCatalog.peos]);
 
   const isSample = state.kind === "sample";
   const withdrawn = state.kind === "ready" && state.withdrawn;
@@ -423,7 +425,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             <p className="text-sm text-muted-foreground">
               Send it with your packet so the PEO's underwriters don't have to re-type it. It's the census you certified.
             </p>
-            <CensusDownload census={state.data.census} fileId={state.fileId} peos={PEO_CATALOG.map((p) => p.name)} />
+            <CensusDownload census={state.data.census} fileId={state.fileId} peos={peoCatalog.peos.filter((p) => p.listed).map((p) => p.name)} />
           </section>
         )}
 

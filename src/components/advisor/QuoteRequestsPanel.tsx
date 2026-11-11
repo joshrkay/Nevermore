@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import { actorName, formatDateTime } from "./format";
 import { toast } from "sonner";
 import { PIPELINE_LABELS, type PipelineStatus } from "@/data/advisor";
-import { cleanPeoName, PEO_CATALOG, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
+import { cleanPeoName, findPeo, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
 import type { ChamberData } from "@/data/chamberTypes";
 import { canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isQuoteRequestStatus, olderVersionNote, QUOTE_REQUEST_LABELS, stageToOffer } from "@/data/quoteRequests";
 import { noteUnderwriterQuestion, recordQuoteSend, setStatus, updateQuoteRequest, type QuoteAnswer, type QuoteRequestEventRow, type QuoteRequestRow } from "@/lib/advisorApi";
@@ -18,8 +18,8 @@ interface QuoteRequestsPanelProps {
   events: readonly QuoteRequestEventRow[];
   /** The answers the advisor sees, to compare with each listed PEO's sourced facts. */
   data: ChamberData;
-  /** The PEOs with sourced facts; the app's catalog unless a test supplies one. */
-  catalog?: readonly PeoRecord[];
+  /** The PEOs the database holds, alphabetically, with their profiles in use (usePeoCatalog); only listed ones are offered. */
+  catalog: readonly PeoRecord[];
   /** Opens Ask the prospect with an underwriter's question in it, for the advisor to edit and send as their own. */
   onAskProspect: (question: string) => void;
   onChanged: () => void;
@@ -139,7 +139,7 @@ const QuestionForm = ({ request, onSaved, onCancel }: { request: QuoteRequestRow
  * The PEOs this submission went to and what each answered. Advisors send the packet outside the product and record
  * it here; the prospect never sees any of it.
  */
-const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, events, currentVersion, data, catalog = PEO_CATALOG, onAskProspect, onChanged }: QuoteRequestsPanelProps) => {
+const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, events, currentVersion, data, catalog, onAskProspect, onChanged }: QuoteRequestsPanelProps) => {
   const [catalogPeo, setCatalogPeo] = useState("");
   const [otherPeo, setOtherPeo] = useState("");
   const [sentOn, setSentOn] = useState(today);
@@ -194,7 +194,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
           const quote = r.status === "quoted" ? describeQuote(r) : "";
           const older = olderVersionNote(r, currentVersion);
           // The same warnings the prospect saw on PEO Match, for a PEO whose facts are listed.
-          const listed = catalog.find((p) => p.name.toLowerCase() === r.peo_name.toLowerCase());
+          const listed = findPeo(catalog, r.peo_name);
           const misfits = listed ? peoFit(data, listed).filter((c) => c.status === "does_not_meet") : [];
           return (
             <li key={r.id} data-testid={`quote-request-${r.id}`} className="border-l-2 border-border pl-3 space-y-1">
@@ -272,7 +272,7 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
         <label htmlFor="quote-peo" className="block text-xs text-muted-foreground">PEO</label>
         <select id="quote-peo" value={catalogPeo} onChange={(e) => setCatalogPeo(e.target.value)} className={inputClass}>
           <option value="">Another PEO (type it below)</option>
-          {PEO_CATALOG.map((p) => (
+          {catalog.filter((p) => p.listed).map((p) => (
             <option key={p.name} value={p.name}>{p.name}</option>
           ))}
         </select>

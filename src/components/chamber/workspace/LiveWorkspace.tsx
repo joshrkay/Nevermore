@@ -4,6 +4,7 @@ import type { CertificationRequest, CertificationState } from "@/data/manuscript
 import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance";
 import { resolutionFields, resolveCandidate, type CandidateResolution } from "@/data/documentCandidates";
 import { useSessionDocuments, type SessionDocument } from "@/hooks/useSessionDocuments";
+import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import UploadTab from "../UploadTab";
@@ -16,7 +17,7 @@ import ReviewTab from "./ReviewTab";
 import { VerifiedFieldsContext } from "./VerifiedFieldsContext";
 import { RequestedFieldsContext } from "./RequestedFieldsContext";
 import { NO_REQUESTED_FIELDS } from "@/data/informationRequest";
-import PEOMatchTab from "../PEOMatchTab";
+import PEOMatchTab, { type PEOMatchTabProps } from "../PEOMatchTab";
 import ReckoningTab from "../ReckoningTab";
 
 const WORKSPACE_TABS = [
@@ -56,6 +57,12 @@ interface LiveWorkspaceProps {
   /** Creates the intake when the prospect starts with an upload (useChamberSession's ensureIntake). */
   ensureIntake?: () => Promise<string | null>;
 }
+
+/** PEO Match over the PEOs the database lists, read when the tab opens. */
+const PeoMatchFromDatabase = (props: Omit<PEOMatchTabProps, "catalog" | "catalogStatus">) => {
+  const { peos, status } = usePeoCatalog();
+  return <PEOMatchTab {...props} catalog={peos} catalogStatus={status} />;
+};
 
 const LiveWorkspace = ({
   data,
@@ -143,7 +150,7 @@ const LiveWorkspace = ({
               focusRequest={openReview}
             />
           )}
-          {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
+          {activeTab === "match" && <PeoMatchFromDatabase data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
           {activeTab === "reckoning" && (
             <ReckoningTab
               data={data}

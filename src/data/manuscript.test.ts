@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "./chamberTypes";
+import { parsePeoCatalog } from "./peoProfiles";
 import type { CensusEmployee } from "./chamberTypes";
 import type { ProvenanceMap } from "./provenance";
 import { REVIEW_FIELDS } from "./reviewFields";
@@ -80,7 +81,7 @@ describe("eligibilityChecks", () => {
   });
 
   it("fails headcount below the chosen PEO's sourced minimum, naming the PEO", () => {
-    const peo = { name: "Example PEO", minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-10-01" };
+    const peo = { name: "Example PEO", listed: true, minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-10-01" };
     const [headcount] = eligibilityChecks({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, peo);
     expect(headcount.status).toBe("fail");
     expect(headcount.label).toBe("Headcount meets Example PEO minimum (3 of 10 employees)");
@@ -89,7 +90,7 @@ describe("eligibilityChecks", () => {
 
 describe("eligibilityChecks: class codes", () => {
   const census = (class_code: string) => [{ id: "1", first_name: "A", last_name: "B", work_state: "CA", class_code, compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
-  const peo = { name: "Example PEO", minHeadcount: null, statesServed: null, excludedClassCodes: ["5551"], lastVerified: "2026-10-01" };
+  const peo = { name: "Example PEO", listed: true, minHeadcount: null, statesServed: null, excludedClassCodes: ["5551"], lastVerified: "2026-10-01" };
   const industry = (data: typeof EMPTY_CHAMBER_DATA, p?: typeof peo) => eligibilityChecks(data, p).find((c) => /^Industry/.test(c.label))!;
 
   it("passes when no census class code is one the chosen PEO excludes", () => {
@@ -159,6 +160,18 @@ describe("buildManuscript", () => {
     expect(m.signer?.name).toBe("Jo Doe");
     expect(m.submittedTo).toBeNull(); // older submissions have no PEO recorded
     expect(JSON.stringify(m)).not.toMatch(/Meridian/);
+  });
+
+  it("runs the checks against the chosen PEO's profile in the catalog it is given, whatever the capitalisation", () => {
+    const catalog = parsePeoCatalog([
+      { id: 3, name: "Justworks", profile: { version: 1, min_headcount: 10, states_served: null, excluded_class_codes: null, sources: { min_headcount: { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-02" } } } },
+    ]);
+    const submission = { signer_name: "Jo", signer_title: "", signed_at: "2026-05-01T12:00:00Z", file_id: "EAA-1", peo: "justworks" };
+    const m = buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission, catalog });
+    expect(m.checks[0]).toEqual({ label: "Headcount meets Justworks minimum (3 of 10 employees)", status: "fail" });
+    // Without the catalog, or for a PEO it doesn't hold, nothing is known about the PEO.
+    expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission }).checks[0].status).toBe("unknown");
+    expect(buildManuscript({ ...EMPTY_CHAMBER_DATA, employee_count: 3 }, { fileId: "EAA-1", submission: { ...submission, peo: "Acme PEO" }, catalog }).checks[0].status).toBe("unknown");
   });
 
   it("names the PEO chosen at submission", () => {

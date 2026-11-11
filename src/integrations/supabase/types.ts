@@ -335,6 +335,68 @@ export type Database = {
       }
       // Who refers employers, by the code in their link (20261106100000). Advisors read it; it is written only
       // through advisor_add_referral_partner and advisor_update_referral_partner.
+      // PEOs and their requirement profiles (20261111090000). Signed-in callers read the PEOs and the published
+      // versions (admins read drafts too); only admins write, through admin_add_peo(), admin_save_peo_profile() and
+      // admin_publish_peo_profile(), admin_set_peo_listed(). A published version never changes; a PEO is never deleted.
+      peos: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: number
+          // False once an admin stops listing the PEO; a PEO is never deleted.
+          listed: boolean
+          name: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      peo_profile_versions: {
+        Row: {
+          // Each { format, template_file, columns: [{ header, from }] } (src/data/peoProfiles.ts), or null.
+          census_layout: Json | null
+          created_at: string
+          created_by: string | null
+          // [{ category, description }]
+          documents: Json
+          excluded_class_codes: string[] | null
+          excluded_industries: string[] | null
+          // [{ key, text, kind, choices? }]
+          extra_questions: Json
+          id: number
+          min_enrolment_percent: number | null
+          min_headcount: number | null
+          needed_before_signing: string[]
+          needed_to_quote: string[]
+          peo_id: number
+          published_at: string | null
+          published_by: string | null
+          // { <part>: { kind, name, role?, link?, checked_on } }, one per sourced part (PROFILE_PARTS in src/data/peoProfiles.ts).
+          sources: Json
+          states_served: string[] | null
+          // One of PROFILE_STATUSES.
+          status: string
+          version: number
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // The people at a PEO a profile version names: advisors read them, prospects never do.
+      peo_contacts: {
+        Row: {
+          email: string | null
+          id: number
+          name: string
+          phone: string | null
+          position: number
+          profile_version_id: number
+          role: string | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       referral_partners: {
         Row: {
           code: string
@@ -473,6 +535,27 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      // Every PEO, alphabetically, with its newest published profile or null (20261111090000). Never a contact.
+      peo_catalog: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      admin_add_peo: {
+        Args: { p_name: string }
+        Returns: Json
+      }
+      admin_save_peo_profile: {
+        Args: { p_peo_id: number; p_profile: Json }
+        Returns: Json
+      }
+      admin_publish_peo_profile: {
+        Args: { p_peo_id: number }
+        Returns: Json
+      }
+      admin_set_peo_listed: {
+        Args: { p_listed: boolean; p_peo_id: number }
+        Returns: Json
+      }
       advisor_email_problems: {
         Args: Record<PropertyKey, never>
         Returns: {

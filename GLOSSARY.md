@@ -39,7 +39,7 @@ The person who gives the answers and certifies them for an employer: the employe
 _Avoid_: user, customer, client, guest (a guest is only a prospect who hasn't verified an email yet)
 
 **PEO**:
-A professional employer organization: a company that co-employs the employer's staff and runs their payroll, benefits and workers' comp. The packet is prepared for PEOs, and each quote request is to one.
+A professional employer organization: a company that co-employs the employer's staff and runs their payroll, benefits and workers' comp. The packet is prepared for PEOs, and each quote request is to one. The PEOs we list are kept by admins, each with its **Requirement profile**; a PEO is never removed, only marked not listed, after which nothing offers it but what was sent to it still reads. A PEO a prospect or advisor names that isn't listed stays a name in free text, with no profile.
 _Avoid_: carrier (an insurance carrier is a different business), vendor, provider
 
 **Advisor**:
@@ -69,7 +69,7 @@ The list of the employer's employees, one row per person, with the facts underwr
 _Avoid_: roster, employee list, employees
 
 **PEO census layout**:
-A PEO's own column layout for a census, so the certified census can be sent in the shape its underwriters read. Columns the intake doesn't collect are left blank and named. A PEO whose layout isn't held gets the census template's own layout.
+A PEO's own column layout for a census, so the certified census can be sent in the shape its underwriters read. Columns the intake doesn't collect are left blank and named. A PEO whose layout isn't held gets the census template's own layout. It is part of the PEO's **Requirement profile**.
 _Avoid_: census template (that is our own layout), census format
 
 **Employee**:
@@ -96,8 +96,16 @@ Something the prospect still owes on a field: a required field with no answer, o
 _Avoid_: gap, missing item, to-do, issue
 
 **Eligibility check**:
-A test of the intake's answers against what a PEO accepts, such as its minimum headcount, the states it serves, or the workers' comp class codes it excludes (how a PEO's industry exclusions are compared, since the intake's industry is free text). It passes, fails, or can't be told yet: it can't be told until the PEO's own materials have been checked for that fact. A failed check is a warning, never a reason to hide or rule out a PEO. It is not an open item.
+A test of the intake's answers against what a PEO accepts, such as its minimum headcount, the states it serves, or the workers' comp class codes it excludes (how a PEO's industry exclusions are compared, since the intake's industry is free text). The rules come from the PEO's **Requirement profile** in use. It passes, fails, or can't be told yet: it can't be told until the PEO's own materials have been checked for that fact. A failed check is a warning, never a reason to hide or rule out a PEO. It is not an open item.
 _Avoid_: requirement, open item
+
+**Requirement profile**:
+What one PEO asks for, as dated, versioned data: the answers it needs to quote and those it needs only before signing, its **PEO census layout**, the documents it wants, its eligibility rules (each "can't tell yet" until sourced), up to 30 questions of its own, and the **PEO contacts** to deal with. Each eligibility rule and each of those other parts carries its own source, either a document (its title, with a link when there is one) or a named person at the PEO (name and role), and the date it was checked; how current a profile is goes by its oldest check. A version is a draft until an admin publishes it; publishing freezes it, dates included, and the newest published version is the one in use. A change or a re-check is a new version.
+_Avoid_: PEO requirements, PEO rules, appetite, catalog entry
+
+**PEO contact**:
+A person at a PEO that a **Requirement profile** version names: their name, role, work email and phone. Read by advisors only, never by prospects.
+_Avoid_: rep, PEO rep, underwriter (an underwriter is one kind of PEO contact)
 
 **Advisor follow-up**:
 A field an advisor has marked as needing more from the prospect. It belongs to the advisor's review, not to the prospect's open items. It reaches the prospect only through an information request, which starts out naming the fields marked this way.
@@ -297,4 +305,6 @@ _Avoid_: status, extraction status
 - Each **Certification** of new answers produces one **Advisor Alert** and one **Confirmation**; certifying the same answers again produces neither
 - Every **Submission** appears in the **Advisor Console**
 - A **Submission** has zero or more **Quote requests**, at most one per PEO; each **Quote request** records the version of the **Submission** last sent and holds at most one current **Quote**
+- A **PEO** has zero or more **Requirement profile** versions, at most one a draft; the newest published one is in use, and each version names zero or more **PEO contacts**
+- An **Eligibility check** compares an **Intake**'s answers with the rules of a **PEO**'s **Requirement profile** in use
 - A **Submission** that is won names the **Quote request** whose **Quote** the employer took; its other open **Quote requests** close, as all of them do when it is lost or archived

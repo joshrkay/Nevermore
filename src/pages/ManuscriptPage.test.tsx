@@ -14,11 +14,14 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 let sharedStatus: string | null = null;
 let finalVersions: unknown[] = [];
 let verifiedFields: string[] = [];
+// What public.peo_catalog() returns: the PEOs and their profiles in use.
+let peoCatalogRows: unknown[] = [];
 const createSignedUrl = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     rpc: async (fn: string) => ({
-      data: fn === "prospect_final_manuscript" ? finalVersions : fn === "session_verified_fields" ? verifiedFields : sharedStatus,
+      data: fn === "prospect_final_manuscript" ? finalVersions : fn === "session_verified_fields" ? verifiedFields
+        : fn === "peo_catalog" ? peoCatalogRows : sharedStatus,
       error: null,
     }),
     storage: { from: () => ({ createSignedUrl: (...a: unknown[]) => createSignedUrl(...a) }) },
@@ -83,6 +86,7 @@ const certified = (over: Record<string, unknown> = {}) => ({
 describe("ManuscriptPage", () => {
   beforeEach(() => {
     lastQuery = null;
+    peoCatalogRows = [];
     row = null;
   });
 
@@ -251,6 +255,14 @@ describe("ManuscriptPage", () => {
     expect(readiness).toHaveTextContent("Company legal name — confirmed by the prospect");
     expect(readiness).toHaveTextContent("Eligibility checks");
     expect(readiness).toHaveTextContent("States of operation — not provided");
+  });
+
+  it("checks eligibility against the chosen PEO's profile in use, as the database holds it", async () => {
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 10, states_served: null, excluded_class_codes: null, sources: { min_headcount: { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-02" } } } }];
+    row = certified({ submission: { ...certified().submission, chamber_data: { ...signed, employee_count: 4 } } });
+    renderAt("/manuscript?session=s1");
+    const readiness = (await screen.findByRole("heading", { name: "11 — Underwriting Readiness" })).closest("section")!;
+    await waitFor(() => expect(readiness).toHaveTextContent("Headcount meets Justworks minimum (4 of 10 employees) — not met"));
   });
 
   it("says when a certification predates the document record", async () => {
@@ -561,8 +573,11 @@ describe("ManuscriptPage", () => {
       chamber_data: { ...base.chamber_data, census: [{ id: "2", first_name: "Added", last_name: "Later" }] },
       submission: { ...base.submission, chamber_data: { ...signed, census: signedCensus } },
     });
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: null }, { id: 5, name: "TriNet", listed: false, profile: null }];
     renderAt("/manuscript/EAA-2026-0042");
     fireEvent.click(await screen.findByRole("button", { name: "Download the census" }));
+    // The layouts offered are the listed PEOs' only.
+    await waitFor(() => expect(screen.getAllByRole("option").map((o) => o.textContent).slice(1)).toEqual(["Justworks"]));
     const [blob, name] = downloadBlob.mock.calls.at(-1)!;
     expect(name).toBe("EAA-2026-0042-census.csv");
     const csv = await new Promise<string>((resolve) => {
