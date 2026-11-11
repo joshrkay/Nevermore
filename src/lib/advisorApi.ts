@@ -8,6 +8,7 @@ import type { ChamberSubmission } from "@/data/manuscript";
 import { parseProvenance, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import type { OutboxStatus } from "@/data/outbox";
 import type { IntakeSource } from "@/data/intakeSource";
+import type { QuoteNoteKind } from "@/data/quoteRequests";
 import {
   isPipelineStatus,
   manuscriptStoragePath,
@@ -36,6 +37,8 @@ export type DocumentEvent = Tables["document_events"]["Row"];
 export type InformationRequestRow = Tables["information_requests"]["Row"];
 export type QuoteRequestRow = Tables["quote_requests"]["Row"];
 export type QuoteRequestEventRow = Tables["quote_request_events"]["Row"];
+export type QuoteRequestNoteRow = Tables["quote_request_notes"]["Row"];
+export type QuoteRequestAddressRow = Tables["quote_request_addresses"]["Row"];
 
 export class AdvisorApiError extends Error {
   constructor(message: string, readonly code?: string, readonly unauthenticated = false) {
@@ -248,8 +251,12 @@ export interface SubmissionDetail {
   informationRequests: InformationRequestRow[];
   /** The PEOs this submission went to and what each answered, oldest first. */
   quoteRequests: QuoteRequestRow[];
-  /** Every change to those quote requests, and the underwriters' questions, newest first. */
+  /** Every change to those quote requests and every correction to their notes, newest first. */
   quoteRequestEvents: QuoteRequestEventRow[];
+  /** What happened on those quote requests outside the product, the latest day first. */
+  quoteRequestNotes: QuoteRequestNoteRow[];
+  /** Each quote request's live reply address: the part before the @. */
+  quoteRequestAddresses: QuoteRequestAddressRow[];
   /** The submission's latest certified version (1, 2, ...); null before the first certification. */
   currentVersion: number | null;
   /** The quote request whose quote the employer took, once won. */
@@ -290,7 +297,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   // Row security hides sessions the caller may not see; a missing pipeline row means the same.
   if (!row || !workflow.data) return null;
 
-  const [docs, profile, docEvents, requests, lastCertification, partner, quotes, quoteEvents] = await Promise.all([
+  const [docs, profile, docEvents, requests, lastCertification, partner, quotes, quoteEvents, quoteNotes, quoteAddresses] = await Promise.all([
     supabase
       .from("documents")
       .select("id, file_name, file_size, category, status, storage_path, created_at, file_sha256, scan_verdict")
@@ -317,6 +324,14 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
       : Promise.resolve({ data: null, error: null }),
     supabase.from("quote_requests").select("*").eq("session_id", id).order("id", { ascending: true }),
     supabase.from("quote_request_events").select("*").eq("session_id", id).order("id", { ascending: false }),
+    supabase
+      .from("quote_request_notes")
+      .select("*")
+      .eq("session_id", id)
+      .order("noted_on", { ascending: false })
+      .order("id", { ascending: false }),
+    // The live address of each quote request; revoked ones stay in the table and aren't shown.
+    supabase.from("quote_request_addresses").select("*").eq("session_id", id).is("revoked_at", null),
   ]);
   if (docs.error) fail(docs.error, "Couldn't load uploaded documents.");
   if (lastCertification.error) fail(lastCertification.error, "Couldn't load the certification on record.");
@@ -326,6 +341,8 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   if (partner.error) fail(partner.error, "Couldn't load the referral partner.");
   if (quotes.error) fail(quotes.error, "Couldn't load the quote requests.");
   if (quoteEvents.error) fail(quoteEvents.error, "Couldn't load the quote requests' history.");
+  if (quoteNotes.error) fail(quoteNotes.error, "Couldn't load the quote requests' notes.");
+  if (quoteAddresses.error) fail(quoteAddresses.error, "Couldn't load the quote requests' reply addresses.");
 
   const submission = (row.submission as unknown as ChamberSubmission | null) ?? null;
   const certified = row.status === "submitted" && !!submission?.signer_name;
@@ -383,6 +400,8 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     informationRequests: requests.data ?? [],
     quoteRequests: quotes.data ?? [],
     quoteRequestEvents: quoteEvents.data ?? [],
+    quoteRequestNotes: quoteNotes.data ?? [],
+    quoteRequestAddresses: quoteAddresses.data ?? [],
     currentVersion: recorded?.version ?? null,
     wonQuoteRequestId: workflow.data.won_quote_request_id ?? null,
   };
@@ -460,10 +479,45 @@ export async function updateQuoteRequest(id: number, answer: QuoteAnswer): Promi
   if (error) fail(error, "Couldn't record the answer.");
 }
 
-/** Notes a question the PEO's underwriter asked, on its quote request's history. The status doesn't change. */
-export async function noteUnderwriterQuestion(id: number, question: string): Promise<void> {
-  const { error } = await supabase.rpc("advisor_note_underwriter_question", { p_quote_request_id: id, p_question: question.trim() });
-  if (error) fail(error, "Couldn't note the question.");
+/**
+ * Revokes a quote request's reply address and issues a new one. Mail sent to the old address no longer reaches
+ * the quote request, so the PEO has to be given the new one.
+ */
+export async function reissueQuoteRequestAddress(quoteRequestId: number): Promise<void> {
+  const { error } = await supabase.rpc("advisor_reissue_quote_request_address", { p_quote_request_id: quoteRequestId });
+  if (error) fail(error, "Couldn't issue a new address.");
+}
+
+/** A quote request note as the form holds it: its kind, the day it happened (YYYY-MM-DD) and its text. */
+export interface QuoteNoteInput {
+  kind: QuoteNoteKind;
+  notedOn: string;
+  body: string;
+}
+
+/**
+ * Adds a note to a quote request for something that happened outside the product. It changes nothing else: not
+ * the status, and not the send, even when the note is of an email sent elsewhere.
+ */
+export async function addQuoteRequestNote(quoteRequestId: number, note: QuoteNoteInput): Promise<void> {
+  const { error } = await supabase.rpc("advisor_add_quote_request_note", {
+    p_quote_request_id: quoteRequestId,
+    p_kind: note.kind,
+    p_noted_on: note.notedOn,
+    p_body: note.body.trim(),
+  });
+  if (error) fail(error, "Couldn't save the note.");
+}
+
+/** Corrects a note's kind, date or text. Each value changed is logged with the one it replaced. */
+export async function correctQuoteRequestNote(noteId: number, note: QuoteNoteInput): Promise<void> {
+  const { error } = await supabase.rpc("advisor_correct_quote_request_note", {
+    p_note_id: noteId,
+    p_kind: note.kind,
+    p_noted_on: note.notedOn,
+    p_body: note.body.trim(),
+  });
+  if (error) fail(error, "Couldn't correct the note.");
 }
 
 export async function addNote(sessionId: string, body: string): Promise<void> {

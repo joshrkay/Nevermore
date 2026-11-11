@@ -23,7 +23,9 @@ const api = {
   documentUrl: vi.fn(),
   recordQuoteSend: vi.fn(),
   updateQuoteRequest: vi.fn(),
-  noteUnderwriterQuestion: vi.fn(),
+  addQuoteRequestNote: vi.fn(),
+  correctQuoteRequestNote: vi.fn(),
+  reissueQuoteRequestAddress: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
 const downloadBlob = vi.fn();
@@ -89,6 +91,8 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   informationRequests: [],
   quoteRequests: [],
   quoteRequestEvents: [],
+  quoteRequestNotes: [],
+  quoteRequestAddresses: [],
   currentVersion: 1,
   wonQuoteRequestId: null,
   ...over,
@@ -845,8 +849,8 @@ describe("AdvisorSubmissionPage", () => {
       pipelineStatus: "sent_to_carrier",
       quoteRequests: [{ id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 1, sent_on: "2026-11-10",
         quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
-      quoteRequestEvents: [{ id: 3, quote_request_id: 7, session_id: "s1", field: "underwriter_question", old_value: null,
-        new_value: "Can they send last year's loss runs?", changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-11-12T15:00:00Z" }],
+      quoteRequestNotes: [{ id: 21, quote_request_id: 7, session_id: "s1", kind: "underwriter_question", noted_on: "2026-11-12",
+        body: "Can they send last year's loss runs?", created_by: "a1", created_by_email: "adv@example.com", created_at: "2026-11-12T15:00:00Z" }],
     }));
     renderPage();
     const quotes = await screen.findByRole("region", { name: "Quote requests" });
