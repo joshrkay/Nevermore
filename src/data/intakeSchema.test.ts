@@ -238,6 +238,18 @@ describe("validateChamberData", () => {
     expect(paths({ entities: null })).toEqual(["entities"]);
   });
 
+  it("takes gender, hire date, COBRA status and home state on a census row, each optional (K-2.1)", () => {
+    expect(validateChamberData({ census: [row({ gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NV" })] })).toEqual([]);
+    expect(validateChamberData({ census: [row()] })).toEqual([]);
+    expect(validateChamberData({ census: [row({ gender: "female", hire_date: 20190401, cobra: "no", home_state: "nv" })] })).toEqual([
+      { path: "census[0].gender", reason: "must be one of F, M, X" },
+      { path: "census[0].hire_date", reason: "must be a string" },
+      { path: "census[0].cobra", reason: "must be a boolean" },
+      { path: "census[0].home_state", reason: "must be a US state or territory code such as CA" },
+    ]);
+    expect(paths({ census: [row({ hire_date: "x".repeat(41) })] })).toEqual(["census[0].hire_date"]);
+  });
+
   it("refuses the legacy roster key, which no writer sends any more", () => {
     expect(paths({ employees: [] })).toEqual(["employees"]);
   });

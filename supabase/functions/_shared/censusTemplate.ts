@@ -10,6 +10,7 @@ import {
   COVERAGE_TIER_LABELS,
   COVERAGE_TIERS,
   EMPLOYMENT_TYPES,
+  GENDERS,
   type CensusEmployee,
 } from "./census.ts";
 
@@ -18,7 +19,10 @@ export const CENSUS_TEMPLATE_COLUMNS = [
   "first_name",
   "last_name",
   "dob",
+  "gender",
+  "hire_date",
   "work_state",
+  "home_state",
   "zip_code",
   "job_title",
   "annual_salary",
@@ -26,6 +30,7 @@ export const CENSUS_TEMPLATE_COLUMNS = [
   "employment_type",
   "classification",
   "coverage_tier",
+  "cobra",
   "class_code",
 ] as const satisfies readonly (keyof CensusEmployee)[];
 export type CensusTemplateColumn = (typeof CENSUS_TEMPLATE_COLUMNS)[number];
@@ -39,7 +44,10 @@ export const CENSUS_TEMPLATE_GUIDE: Record<CensusTemplateColumn, string> = {
   first_name: "Legal first name",
   last_name: "Legal last name",
   dob: "Date of birth, as YYYY-MM-DD or MM/DD/YYYY",
+  gender: either(GENDERS),
+  hire_date: "The date they were hired, as YYYY-MM-DD or MM/DD/YYYY",
   work_state: "Two-letter code of the state they work in, such as CA",
+  home_state: "Two-letter code of the state they live in, when it isn't the state they work in",
   zip_code: "ZIP code where they work",
   job_title: "Job title",
   annual_salary: "Yearly pay in dollars, such as 85000. For hourly staff, what they earn in a usual year",
@@ -47,6 +55,7 @@ export const CENSUS_TEMPLATE_GUIDE: Record<CensusTemplateColumn, string> = {
   employment_type: either(EMPLOYMENT_TYPES),
   classification: either(CLASSIFICATIONS),
   coverage_tier: either(COVERAGE_TIERS.map((t) => `${t} (${COVERAGE_TIER_LABELS[t]})`)),
+  cobra: "yes or no: whether they are covered under COBRA rather than as an active employee",
   class_code: "Four-digit workers' comp class code, such as 8810, if you know it",
 };
 

@@ -8,7 +8,7 @@ import { isSettled } from "@/data/followUp";
 import { openItems } from "@/data/openItems";
 import { REVIEW_FIELDS, REVIEW_SECTIONS } from "@/data/reviewFields";
 import { SECTION_STATUS_LABELS, sectionStatus, type SectionStatus } from "@/data/sectionStatus";
-import { isRequiredField, missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
+import { CENSUS_COLUMN_HINT, isRequiredField, missingCensusColumns, missingRecommendedItems, type ReadinessItem, type ReviewSection } from "@/data/readiness";
 import { certificationBlockingItems, NO_VERIFIED_FIELDS, requiredItems, type RequiredItem } from "@/data/requiredItems";
 import { categoryInfo, missingRecommended, submittedCategories } from "@/data/documentCategories";
 import { documentStatusInfo } from "@/data/documentStatus";
@@ -160,6 +160,8 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
   const missing = missingRecommended(uploaded);
   const submitted = submittedCategories(uploaded);
   const recommended = missingRecommendedItems(data).filter((item) => open.some((o) => o.key === item.key));
+  // Columns PEOs ask of every employee that this census lacks (K-2.1): one line each, never a blocker.
+  const censusColumns = missingCensusColumns(data);
   const rows = rowsBySection(data);
   const statuses = Object.fromEntries(REVIEW_SECTIONS.map(({ key }) => [key, sectionStatus(key, data, provenance, verified, open)])) as Record<ReviewSection, SectionStatus>;
   const totalDependents = data.census.reduce((sum, e) => sum + (e.dependents?.length ?? 0), 0);
@@ -223,13 +225,21 @@ const ReviewTab = ({ data, provenance = {}, verified = NO_VERIFIED_FIELDS, onAct
           Every required answer is here. You can certify once you've checked the rest.
         </div>
       )}
-      {recommended.length > 0 && (
+      {(recommended.length > 0 || censusColumns.length > 0) && (
         <div className="bg-card border border-border rounded-xl p-4 text-sm space-y-1">
           <p className="text-sm font-semibold text-muted-foreground">Recommended</p>
           {recommended.map((item) => (
             <p key={item.key}>
               <span className="font-medium">{item.label}</span>{" "}
               <span className="text-muted-foreground text-xs">{item.hint}</span>
+            </p>
+          ))}
+          {censusColumns.map((column) => (
+            <p key={column.key}>
+              <span className="font-medium">{column.label} on the census</span>{" "}
+              <span className="text-muted-foreground text-xs">
+                Missing for {column.missing} of {column.of} {column.of === 1 ? "person" : "people"}. {CENSUS_COLUMN_HINT}
+              </span>
             </p>
           ))}
         </div>

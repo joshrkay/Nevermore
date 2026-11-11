@@ -34,6 +34,7 @@ CREATE TABLE auth.users (id uuid PRIMARY KEY, raw_user_meta_data jsonb);
 \i supabase/migrations/20261111091000_intake_schema_v3_company_identity.sql
 \i supabase/migrations/20261111092000_intake_schema_v3_industry_code.sql
 \i supabase/migrations/20261111093000_intake_schema_v3_current_peo.sql
+\i supabase/migrations/20261111094000_intake_schema_v3_census_columns.sql
 
 -- ---------- helpers ----------
 -- The path chamber_data_error names for d, or NULL when d is acceptable.
@@ -131,4 +132,24 @@ BEGIN
   PERFORM pg_temp.must_refuse(jsonb_build_object('peo_renewal_date', repeat('x', 1001)), 'peo_renewal_date', 'a renewal of 1,001 characters');
   PERFORM pg_temp.must_accept('{"naics_code":"541430","fein":"841234567"}', 'earlier v3 answers after K-1.3');
   RAISE NOTICE 'intake_schema_v3: current PEO cases passed';
+END $$;
+
+-- ---------- K-2.1 census columns PEOs ask for ----------
+DO $$
+BEGIN
+  PERFORM pg_temp.must_accept('{"census":[{"first_name":"Ann","gender":"F","hire_date":"2019-04-01","cobra":false,"home_state":"NV"}]}', 'a census row with the new columns');
+  PERFORM pg_temp.must_accept('{"census":[{"first_name":"Ann"}]}', 'a census row without them');
+  PERFORM pg_temp.must_accept('{"census":[{"first_name":"Ann","gender":"X","cobra":true}]}', 'gender X and COBRA');
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann"},{"first_name":"Bo","gender":"female"}]}', 'census[1].gender', 'a gender written out');
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","gender":1}]}', 'census[0].gender', 'a gender that is not text');
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","cobra":"no"}]}', 'census[0].cobra', 'COBRA sent as text');
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","home_state":"Nevada"}]}', 'census[0].home_state', 'a home state by name');
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","home_state":""}]}', 'census[0].home_state', 'a blank home state');
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","hire_date":20190401}]}', 'census[0].hire_date', 'a hire date sent as a number');
+  PERFORM pg_temp.must_refuse(jsonb_build_object('census', jsonb_build_array(jsonb_build_object('first_name', 'Ann', 'hire_date', repeat('x', 41)))), 'census[0].hire_date', 'a hire date of 41 characters');
+  -- What a census row held before is checked as it was, and a key the database doesn't know is still tolerated.
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":"Ann","work_state":"California"}]}', 'census[0].work_state', 'a work state by name');
+  PERFORM pg_temp.must_refuse('{"census":[{"first_name":" "}]}', 'census[0].first_name', 'a blank first name');
+  PERFORM pg_temp.must_accept('{"census":[{"first_name":"Ann","nickname":"A"}]}', 'an unknown key on a census row');
+  RAISE NOTICE 'intake_schema_v3: census column cases passed';
 END $$;

@@ -241,6 +241,11 @@ export const INTAKE_SCHEMA_V3: JsonSchema = {
         classification: { type: "string", enum: ["w2", "1099"] },
         coverage_tier: { type: "string", enum: ["EE", "EE+SP", "EE+CH", "FAM", "WAIVE"] },
         class_code: { type: "string", pattern: "^[0-9]{4}$" },
+        // New in v3 (K-2.1): what a health underwriter rates the group on. Each is optional.
+        gender: { type: "string", enum: ["F", "M", "X"] },
+        hire_date: { type: "string", maxLength: LIMITS.dob },
+        cobra: { type: "boolean" },
+        home_state: { title: "a US state or territory code such as CA", type: "string", enum: [...STATE_CODES] },
         dependents: { type: "array", maxItems: LIMITS.dependents, items: { $ref: "#/$defs/dependent" } },
         // Which of the row's values are defaults rather than answers (CENSUS_ASSUMABLE in census.ts).
         // Added to v1 without a new version: it is optional, and the database already tolerated it.

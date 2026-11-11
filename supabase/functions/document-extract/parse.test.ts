@@ -296,9 +296,9 @@ describe("the census template", () => {
   it("reads a filled-in template, as typed and as a spreadsheet saves it, with every fact stated and no notes", () => {
     const csv = [
       censusTemplateCsv().trim(),
-      "Ann,Lee,1990-01-01,CA,94105,Engineer,105000,salary,full_time,w2,EE+SP,8810",
+      "Ann,Lee,1990-01-01,F,2019-04-01,CA,NV,94105,Engineer,105000,salary,full_time,w2,EE+SP,no,8810",
       // Saved from a spreadsheet: a US date, the ZIP's leading zero gone.
-      "Bo,Ray,3/15/1988,NJ,7030,Cashier,31200,hourly,part_time,1099,WAIVE,8017",
+      "Bo,Ray,3/15/1988,M,6/3/2021,NJ,NJ,7030,Cashier,31200,hourly,part_time,1099,WAIVE,yes,8017",
     ].join("\r\n");
     const reading = readGrids([{ label: "CSV", rows: csvRows(csv) }], NOW);
 
@@ -309,13 +309,36 @@ describe("the census template", () => {
     expect(census.location).toBe("CSV, rows 2–3");
     expect(census.facts).toEqual([
       "dob", "work_state", "zip_code", "job_title", "annual_salary", "compensation_type", "employment_type",
-      "classification", "coverage_tier", "class_code",
+      "classification", "coverage_tier", "class_code", "gender", "hire_date", "cobra", "home_state",
     ]);
     // No fact is a default (no `assumed`): the template states each one.
     expect(census.value).toEqual([
-      { id: expect.any(String), first_name: "Ann", last_name: "Lee", dob: "1990-01-01", work_state: "CA", zip_code: "94105", job_title: "Engineer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810" },
-      { id: expect.any(String), first_name: "Bo", last_name: "Ray", dob: "1988-03-15", work_state: "NJ", zip_code: "07030", job_title: "Cashier", annual_salary: 31200, compensation_type: "hourly", employment_type: "part_time", classification: "1099", coverage_tier: "WAIVE", class_code: "8017" },
+      { id: expect.any(String), first_name: "Ann", last_name: "Lee", dob: "1990-01-01", work_state: "CA", zip_code: "94105", job_title: "Engineer", annual_salary: 105000, compensation_type: "salary", employment_type: "full_time", classification: "w2", coverage_tier: "EE+SP", class_code: "8810", gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NV" },
+      { id: expect.any(String), first_name: "Bo", last_name: "Ray", dob: "1988-03-15", work_state: "NJ", zip_code: "07030", job_title: "Cashier", annual_salary: 31200, compensation_type: "hourly", employment_type: "part_time", classification: "1099", coverage_tier: "WAIVE", class_code: "8017", gender: "M", hire_date: "2021-06-03", cobra: true, home_state: "NJ" },
     ]);
+  });
+
+  // K-2.1: the spellings payroll exports and carrier census forms use for the columns PEOs ask for.
+  it("reads gender, hire date, COBRA status and home state under their common headers", () => {
+    const { columns } = mapCensusColumns(["Employee Name", "Sex", "Date of Hire", "COBRA Participant", "Home State", "Work State", "DOB"]);
+    expect(columns).toMatchObject({ full_name: 0, gender: 1, hire_date: 2, cobra: 3, home_state: 4, work_state: 5, dob: 6 });
+    for (const header of ["Gender", "Sex", "M/F", "Gender (M/F)"]) expect(mapCensusColumns(["Name", header]).columns.gender, header).toBe(1);
+    for (const header of ["Hire Date", "Date of Hire", "DOH", "Original Hire Date", "Hired", "Start Date", "Hired Date", "Most Recent Hire Dt"]) expect(mapCensusColumns(["Name", header]).columns.hire_date, header).toBe(1);
+    for (const header of ["COBRA", "Cobra Status", "On COBRA", "COBRA (Y/N)"]) expect(mapCensusColumns(["Name", header]).columns.cobra, header).toBe(1);
+    // A date of birth is still a date of birth.
+    expect(mapCensusColumns(["Name", "Birth Date", "Hire Date"]).columns).toMatchObject({ dob: 1, hire_date: 2 });
+  });
+
+  it("still takes the work state from a home state column when the sheet has no work state, and keeps the home state too", () => {
+    const found = findCensus([["Name", "Home State", "Salary"], ["Ann Lee", "NV", "50000"]], "Sheet1", 1, NOW)!;
+    expect(found.census[0]).toMatchObject({ work_state: "NV", home_state: "NV" });
+    expect(found.facts).toContain("home_state");
+  });
+
+  it("accepts a census that has none of them", () => {
+    const found = findCensus([["Name", "State", "Salary"], ["Ann Lee", "CA", "50000"]], "Sheet1", 1, NOW)!;
+    expect(found.census[0]).not.toHaveProperty("gender");
+    expect(found.facts).toEqual(["work_state", "annual_salary"]);
   });
 
   it("finds no census in the template before it is filled in", () => {

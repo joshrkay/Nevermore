@@ -9,13 +9,16 @@
 // - Any other field whose status is conflicting, incomplete, unknown or inferred, in that order (fieldOpenItems),
 //   except one an advisor verified, which is settled (verificationClosesOpenItem): not a required answer in conflict,
 //   which certification still needs chosen.
+// - A column the census lacks that PEOs ask of every employee (gender, hire date, COBRA status, home state, K-2.1):
+//   "Missing from the census", once per column however many people lack it. Like the census, it never blocks, and
+//   the advisor queue doesn't count it.
 // A field marked "Doesn't apply" is closed. A recommended field with no answer is not an open item.
 import type { ChamberData } from "./chamberTypes";
 import { fieldOpenItems, OPEN_FIELD_STATUSES, type FieldKey, type FieldOpenReason, type ProvenanceMap } from "./provenance";
-import { missingRecommendedItems, missingRequired } from "./readiness";
+import { missingCensusColumns, missingRecommendedItems, missingRequired } from "./readiness";
 import { NO_VERIFIED_FIELDS } from "./requiredItems";
 
-export type OpenItemReason = FieldOpenReason | "Not provided" | "Document needed";
+export type OpenItemReason = FieldOpenReason | "Not provided" | "Document needed" | "Missing from the census";
 
 export interface OpenItem {
   /** The field, or `census`; the key the advisor queue and the database name it by. */
@@ -23,6 +26,8 @@ export interface OpenItem {
   field?: FieldKey;
   label: string;
   reason: OpenItemReason;
+  /** For a census column: how many people lack it, of how many. */
+  people?: { missing: number; of: number };
 }
 
 /**
@@ -49,6 +54,10 @@ export function openItems(data: ChamberData, provenance: ProvenanceMap, verified
     items.push({ key: item.key, label: item.label, reason: "Document needed" });
     listed.add(item.key);
   }
+  for (const column of missingCensusColumns(data)) {
+    items.push({ key: column.key, label: column.label, reason: "Missing from the census", people: { missing: column.missing, of: column.of } });
+    listed.add(column.key);
+  }
   for (const { field, label, reason } of fieldOpenItems(provenance, verified)) {
     if (listed.has(field)) continue;
     items.push({ key: field, field, label, reason });
@@ -58,4 +67,5 @@ export function openItems(data: ChamberData, provenance: ProvenanceMap, verified
 }
 
 /** The open items as The Manuscript lists them: "Company legal name — not provided". */
-export const describeOpenItem = (item: OpenItem): string => `${item.label} — ${item.reason.toLowerCase()}`;
+export const describeOpenItem = (item: OpenItem): string =>
+  `${item.label} — ${item.reason.toLowerCase()}${item.people ? ` for ${item.people.missing} of ${item.people.of} ${item.people.of === 1 ? "person" : "people"}` : ""}`;

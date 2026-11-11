@@ -29,6 +29,15 @@ export interface ReadinessItem {
 
 const blank = (value: string | null | undefined) => !value || value.trim() === "";
 
+/** The census columns listed as an item of their own when people lack them, with what each is called. */
+export const CENSUS_COLUMN_ITEMS = [
+  ["gender", "Gender"],
+  ["hire_date", "Hire date"],
+  ["cobra", "COBRA status"],
+  ["home_state", "Home state"],
+] as const satisfies readonly (readonly [keyof ChamberData["census"][number], string])[];
+export type CensusColumnItem = (typeof CENSUS_COLUMN_ITEMS)[number][0];
+
 export const REQUIRED_ITEMS: readonly ReadinessItem[] = [
   {
     key: "company_name",
@@ -66,6 +75,21 @@ export const RECOMMENDED_ITEMS: readonly ReadinessItem[] = [
     missing: (d) => d.census.length === 0,
   },
 ];
+
+/**
+ * The columns PEOs' health underwriters ask of every employee that people on this census lack (K-2.1), each once
+ * with how many people lack it. A census without a column is still accepted, and none of these ever blocks
+ * certification. Empty when there is no census: the census itself is then the item.
+ */
+export function missingCensusColumns(data: ChamberData): { key: string; column: CensusColumnItem; label: string; missing: number; of: number }[] {
+  return CENSUS_COLUMN_ITEMS.flatMap(([column, label]) => {
+    const missing = data.census.filter((e) => e[column] === undefined).length;
+    return missing > 0 ? [{ key: `census.${column}`, column, label, missing, of: data.census.length }] : [];
+  });
+}
+
+/** What to tell the prospect to do about a column their census lacks. */
+export const CENSUS_COLUMN_HINT = "Add it to your census file and upload the file again. You can certify without it.";
 
 /** The required answers this intake doesn't have yet, in the order they are shown. */
 export const missingRequired = (data: ChamberData): ReadinessItem[] => REQUIRED_ITEMS.filter((item) => item.missing(data));

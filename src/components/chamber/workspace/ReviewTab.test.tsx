@@ -377,3 +377,26 @@ describe("ReviewTab section status and nav (C-1)", () => {
     expect(screen.getByTestId("status-workers_comp")).toHaveTextContent("Not applicable");
   });
 });
+
+// K-2.1: a census without the columns PEOs ask for is accepted; Review says which are missing, once each.
+describe("ReviewTab: columns the census lacks", () => {
+  const complete = { ...EMPTY_CHAMBER_DATA, company_name: "Acme", states: ["NY"], pay_frequency: "bi-weekly" };
+  const person = { id: "e1", first_name: "Ada", last_name: "L", work_state: "NY", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const };
+
+  it("lists each missing column under Recommended with how many people lack it, and still lets the prospect certify", () => {
+    render(<ReviewTab data={{ ...complete, census: [{ ...person, gender: "F" }, { ...person, id: "e2", first_name: "Bo" }] }} provenance={{}} onProceed={() => {}} />);
+    const recommended = screen.getByText("Recommended", { selector: "p" }).parentElement!;
+    expect([...recommended.querySelectorAll("p")].slice(1).map((p) => p.textContent)).toEqual([
+      "Gender on the census Missing for 1 of 2 people. Add it to your census file and upload the file again. You can certify without it.",
+      "Hire date on the census Missing for 2 of 2 people. Add it to your census file and upload the file again. You can certify without it.",
+      "COBRA status on the census Missing for 2 of 2 people. Add it to your census file and upload the file again. You can certify without it.",
+      "Home state on the census Missing for 2 of 2 people. Add it to your census file and upload the file again. You can certify without it.",
+    ]);
+    expect(screen.getByRole("status")).toHaveTextContent("Every required answer is here");
+  });
+
+  it("lists none once every person has them", () => {
+    render(<ReviewTab data={{ ...complete, census: [{ ...person, gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NY" }] }} provenance={{}} onProceed={() => {}} />);
+    expect(screen.queryByText(/on the census/)).not.toBeInTheDocument();
+  });
+});

@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { CENSUS_ASSUMABLE, CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES, MAX_ANNUAL_SALARY, MAX_CENSUS_ROWS, MAX_DEPENDENTS as CENSUS_MAX_DEPENDENTS } from "@/data/census";
+import { CENSUS_ASSUMABLE, CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES, GENDERS, MAX_ANNUAL_SALARY, MAX_CENSUS_ROWS, MAX_DEPENDENTS as CENSUS_MAX_DEPENDENTS } from "@/data/census";
 import {
   COUNT_MAX,
   DOB_MAX,
@@ -151,6 +151,7 @@ describe("server and client intake rules agree", () => {
     expect(server("census_employment_types")).toEqual([...EMPLOYMENT_TYPES]);
     expect(server("census_classifications")).toEqual([...CLASSIFICATIONS]);
     expect(server("census_coverage_tiers")).toEqual([...COVERAGE_TIERS]);
+    expect(server("census_genders")).toEqual([...GENDERS]);
   });
 
   it("holds the same census limits as the shared census module", () => {
@@ -326,6 +327,9 @@ describe("server and client intake rules agree", () => {
       expect(row.employment_type.enum).toEqual(server("census_employment_types"));
       expect(row.classification.enum).toEqual(server("census_classifications"));
       expect(row.coverage_tier.enum).toEqual(server("census_coverage_tiers"));
+      expect(row.gender.enum).toEqual(server("census_genders"));
+      expect(row.home_state.enum).toEqual([...SCHEMA_STATE_CODES]);
+      expect(row.hire_date.maxLength).toBe(LIMITS.dob);
     });
 
     it("lists the same defaulted facts a census row can carry", () => {

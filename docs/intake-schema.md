@@ -44,6 +44,10 @@ A census row needs a non-blank `first_name`; every other key may be absent. Unkn
 | `classification` | `w2` or `1099` | Common spellings are mapped; a missing label is `w2`; an unrecognised one drops the row |
 | `coverage_tier` | `EE`, `EE+SP`, `EE+CH`, `FAM` or `WAIVE` | Omitted |
 | `class_code` | Four digits | Omitted |
+| `gender` | `F`, `M` or `X` (new in v3) | Common spellings are read ("Female", "male", "non-binary"); anything else is omitted |
+| `hire_date` | Text, at most 40 characters. The client keeps only a real `YYYY-MM-DD` date (new in v3) | Omitted |
+| `cobra` | `true` or `false` (new in v3) | "yes", "no", "COBRA" and "active" are read; anything else is omitted |
+| `home_state` | A listed code (new in v3) | A code or a state's name is read; anything else is omitted |
 | `dependents` | Array of dependents, at most 20 (`MAX_DEPENDENTS`) | Invalid ones dropped, then truncated to 20 |
 | `dependents[].first_name` | Text, 1 to 1,000 characters, not blank | The dependent is dropped |
 | `dependents[].last_name`, `.dob` | Text, at most 200 and 40 characters | `""` |
@@ -240,12 +244,13 @@ The roster is an array of rows (`CensusEmployee`, defined in `supabase/functions
 | `classification` | `w2` or `1099`. A blank label is stored as W-2 and recorded in `assumed`; a label that is neither (a K-1 owner) drops the row rather than guess. |
 | `coverage_tier` | `EE`, `EE+SP`, `EE+CH`, `FAM` or `WAIVE`. When absent, the Manuscript derives a tier from the `dependents` named, and otherwise shows it as not provided. |
 | `class_code` | Four-digit workers' comp code. |
+| `gender`, `hire_date`, `cobra`, `home_state` | New in v3 (K-2.1): what a health underwriter rates the group on. `F`, `M` or `X`; `YYYY-MM-DD`; whether the person is covered under COBRA rather than as an active employee; and the state they live in. Each is optional: a census without one is accepted, and each column anyone lacks is one open item ("Missing from the census"), never one per person and never a blocker. |
 | `dependents` | Named in conversation, never read from a document. |
 | `assumed` | Which of `classification`, `employment_type` and `annual_salary` hold a default rather than an answer. Absent when none do. |
 
 #### The census template
 
-The Upload tab offers `employee-census-template.csv` (US-2.3d, D21): one header row whose columns are the row keys above, from `first_name` to `class_code`, without `age`, `dependents` or `assumed`, and with no SSN or bank column. The list is `CENSUS_TEMPLATE_COLUMNS` in `supabase/functions/_shared/censusTemplate.ts`, and the browser builds the file from it, so a filled-in template reads with every column matched (`document-extract/parse.test.ts`) and every fact stated, none of them a default. Lenore points prospects to it whenever the roster comes up. To add a column, add it to that list and its guide line (`CENSUS_TEMPLATE_GUIDE`, which the Upload tab shows), and make sure `document-extract` maps the header (`SYNONYMS` in `parse.ts`).
+The Upload tab offers `employee-census-template.csv` (US-2.3d, D21): one header row whose columns are the row keys above, from `first_name` to `class_code` and the v3 columns, without `age`, `dependents` or `assumed`, and with no SSN or bank column. The list is `CENSUS_TEMPLATE_COLUMNS` in `supabase/functions/_shared/censusTemplate.ts`, and the browser builds the file from it, so a filled-in template reads with every column matched (`document-extract/parse.test.ts`) and every fact stated, none of them a default. Lenore points prospects to it whenever the roster comes up. To add a column, add it to that list and its guide line (`CENSUS_TEMPLATE_GUIDE`, which the Upload tab shows), and make sure `document-extract` maps the header (`SYNONYMS` in `parse.ts`).
 
 #### Defaults are recorded, not passed off as answers
 

@@ -8,7 +8,7 @@ import { normaliseHeader } from "../document-extract/parse";
 describe("census template", () => {
   it("has exactly the census columns, in order, as its only row", () => {
     expect(censusTemplateCsv()).toBe(
-      "first_name,last_name,dob,work_state,zip_code,job_title,annual_salary,compensation_type,employment_type,classification,coverage_tier,class_code\r\n",
+      "first_name,last_name,dob,gender,hire_date,work_state,home_state,zip_code,job_title,annual_salary,compensation_type,employment_type,classification,coverage_tier,cobra,class_code\r\n",
     );
   });
 
@@ -31,5 +31,9 @@ describe("census template", () => {
       for (const value of values) expect(CENSUS_TEMPLATE_GUIDE[column], column).toContain(value);
     }
     expect(CENSUS_TEMPLATE_GUIDE.compensation_type).toBe("salary or hourly");
+    // K-2.1: what a health underwriter rates the group on.
+    expect(CENSUS_TEMPLATE_GUIDE.gender).toBe("F, M or X");
+    expect(CENSUS_TEMPLATE_GUIDE.cobra).toMatch(/^yes or no/);
+    expect(CENSUS_TEMPLATE_GUIDE.hire_date).toMatch(/YYYY-MM-DD or MM\/DD\/YYYY/);
   });
 });

@@ -11,11 +11,14 @@ export const COVERAGE_TIERS = ["EE", "EE+SP", "EE+CH", "FAM", "WAIVE"] as const;
 export const COMPENSATION_TYPES = ["salary", "hourly"] as const;
 export const EMPLOYMENT_TYPES = ["full_time", "part_time"] as const;
 export const CLASSIFICATIONS = ["w2", "1099"] as const;
+// New in intake schema v3 (K-2.1): what a health underwriter rates a group on.
+export const GENDERS = ["F", "M", "X"] as const;
 
 export type CoverageTier = (typeof COVERAGE_TIERS)[number];
 export type CompensationType = (typeof COMPENSATION_TYPES)[number];
 export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
 export type WorkerClassification = (typeof CLASSIFICATIONS)[number];
+export type Gender = (typeof GENDERS)[number];
 
 /**
  * Facts of a row that can be filled in by a default rather than read: a blank classification is
@@ -55,6 +58,12 @@ export interface CensusEmployee {
   classification: WorkerClassification;
   coverage_tier?: CoverageTier;
   class_code?: string; // Workers' comp 4-digit code if present
+  // New in intake schema v3 (K-2.1). Each is optional: a census without them is still a census.
+  gender?: Gender;
+  hire_date?: string; // YYYY-MM-DD
+  /** Whether they are covered under COBRA continuation rather than as an active employee. */
+  cobra?: boolean;
+  home_state?: string; // 2-letter uppercase, where they live; absent until known
   /** Dependents the prospect named in conversation. Not read from documents. */
   dependents?: CensusDependent[];
   /** The facts whose values are defaults, not answers (see CENSUS_ASSUMABLE). Absent when none are. */
@@ -191,6 +200,29 @@ export function normalizeZip(v: unknown): string | undefined {
   const m = s.match(/^(\d{5})(?:[- ]?(\d{4}))?$/);
   if (!m) return undefined;
   return m[2] ? `${m[1]}-${m[2]}` : m[1];
+}
+
+// ---------- Gender, hire date and COBRA (K-2.1) ----------
+
+const GENDER_SPELLINGS: Record<string, Gender> = {
+  f: "F", female: "F", woman: "F",
+  m: "M", male: "M", man: "M",
+  x: "X", "non binary": "X", nonbinary: "X", other: "X",
+};
+
+/** F, M or X from how a roster writes it. Undefined for anything else. */
+export const normalizeGender = (v: unknown): Gender | undefined => GENDER_SPELLINGS[key(v)];
+
+/** A hire date as YYYY-MM-DD, read as a date of birth is: no date before 1900 or after `now`. */
+export const normalizeHireDate = (v: unknown, now: Date = new Date()): string | undefined => normalizeDob(v, now);
+
+/** Whether someone is on COBRA: yes or no however a roster writes it. Undefined when it doesn't say. */
+export function normalizeCobra(v: unknown): boolean | undefined {
+  if (typeof v === "boolean") return v;
+  const said = key(v);
+  if (/^(n|no|false|active|not on cobra|none)$/.test(said)) return false;
+  if (/^(y|yes|true)$/.test(said) || /\bcobra\b/.test(said)) return true;
+  return undefined;
 }
 
 // ---------- Pay and work ----------
@@ -360,6 +392,14 @@ export function normalizeCensusRow(raw: unknown, now: Date = new Date()): Omit<C
   if (tier) row.coverage_tier = tier;
   const classCode = normalizeClassCode(raw.class_code);
   if (classCode) row.class_code = classCode;
+  const gender = normalizeGender(raw.gender);
+  if (gender) row.gender = gender;
+  const hireDate = normalizeHireDate(raw.hire_date, now);
+  if (hireDate) row.hire_date = hireDate;
+  const cobra = normalizeCobra(raw.cobra);
+  if (cobra !== undefined) row.cobra = cobra;
+  const homeState = normalizeState(raw.home_state);
+  if (homeState) row.home_state = homeState;
   const dependents = normalizeDependents(raw.dependents, now);
   if (dependents.length > 0) row.dependents = dependents;
   if (assumed.size > 0) row.assumed = CENSUS_ASSUMABLE.filter((a) => assumed.has(a));

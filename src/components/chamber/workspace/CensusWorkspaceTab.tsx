@@ -57,7 +57,11 @@ const CensusWorkspaceTab = ({ data, isDemo, provenance = {}, onAction }: CensusW
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">Title</th>
                   <th className="text-right px-3 py-2 text-muted-foreground font-medium">Pay</th>
                   <th className="text-center px-3 py-2 text-muted-foreground font-medium">Type</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">Gender</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">Hired</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">Home</th>
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">Tier</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium">COBRA</th>
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">WC code</th>
                 </tr>
               </thead>
@@ -103,7 +107,11 @@ const CensusWorkspaceTab = ({ data, isDemo, provenance = {}, onAction }: CensusW
                           <span className="ml-1 text-[9px] text-warning">⚠ AB5</span>
                         )}
                       </td>
+                      <td className="px-3 py-2 font-mono">{emp.gender ?? "—"}</td>
+                      <td className="px-3 py-2 font-mono whitespace-nowrap">{emp.hire_date ?? "—"}</td>
+                      <td className="px-3 py-2 font-mono">{emp.home_state ?? "—"}</td>
                       <td className="px-3 py-2 font-mono">{emp.coverage_tier ?? "—"}</td>
+                      <td className="px-3 py-2">{emp.cobra === undefined ? "—" : emp.cobra ? "Yes" : "No"}</td>
                       <td className="px-3 py-2 font-mono">{emp.class_code ?? "—"}</td>
                     </motion.tr>
                   );

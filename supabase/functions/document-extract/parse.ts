@@ -131,7 +131,8 @@ function trimPartialUtf8(b: Uint8Array): Uint8Array {
 export type ColumnKey =
   | "first_name" | "last_name" | "full_name" | "dob" | "age" | "work_state" | "home_state" | "zip_code"
   | "job_title" | "annual_salary" | "hourly_rate" | "hours_per_week" | "compensation_type"
-  | "employment_type" | "classification" | "coverage_tier" | "class_code";
+  | "employment_type" | "classification" | "coverage_tier" | "class_code"
+  | "gender" | "hire_date" | "cobra";
 
 // Header spellings, after normaliseHeader ("Work State:" -> "work state").
 const SYNONYMS: Record<ColumnKey, string[]> = {
@@ -152,6 +153,10 @@ const SYNONYMS: Record<ColumnKey, string[]> = {
   classification: ["classification", "worker type", "employee type", "emp type", "type", "tax type", "w2 1099", "w 2 1099", "1099 w2", "worker classification", "tax status", "worker category", "employment classification"],
   coverage_tier: ["coverage tier", "tier", "coverage", "coverage level", "medical tier", "medical coverage", "election", "medical election", "plan tier", "benefit tier", "enrollment tier", "health coverage", "coverage type", "med tier", "medical"],
   class_code: ["class code", "wc class code", "wc code", "workers comp code", "workers comp class", "comp code", "ncci code", "wc class", "workers compensation code", "workers comp class code", "gov class", "class"],
+  // New in intake schema v3 (K-2.1).
+  gender: ["gender", "sex", "m f", "f m", "male female", "gender identity"],
+  hire_date: ["hire date", "date of hire", "doh", "hired", "hired on", "original hire date", "start date", "date hired", "employment date", "service date"],
+  cobra: ["cobra", "cobra status", "on cobra", "cobra participant", "cobra enrolled", "cobra y n"],
 };
 
 // Words a header may carry that don't change what the column holds ("Employee DOB", "Current Salary").
@@ -160,6 +165,9 @@ const FILLER = new Set(["employee", "employees", "ee", "emp", "worker", "current
 // A header that names a column by its key words rather than an exact phrase.
 const KEYWORDS: [ColumnKey, (t: Set<string>) => boolean][] = [
   ["dob", (t) => t.has("dob") || [...t].some((w) => w.startsWith("birth"))],
+  ["hire_date", (t) => t.has("hire") || t.has("doh")],
+  ["gender", (t) => t.has("gender") || t.has("sex")],
+  ["cobra", (t) => t.has("cobra")],
   ["zip_code", (t) => t.has("zip") || t.has("postal")],
   ["home_state", (t) => t.has("state") && (t.has("home") || t.has("residence") || t.has("resident"))],
   ["work_state", (t) => t.has("state") && !t.has("status")],
@@ -245,7 +253,7 @@ export function mapCensusColumns(header: unknown[]): ColumnMap {
 // Facts beyond the name that make a sheet a census rather than any list with names on it.
 const CENSUS_FACTS: ColumnKey[] = [
   "dob", "age", "work_state", "home_state", "zip_code", "job_title", "annual_salary", "hourly_rate",
-  "classification", "coverage_tier", "class_code", "employment_type",
+  "classification", "coverage_tier", "class_code", "employment_type", "gender", "hire_date", "cobra",
 ];
 
 const cell = (row: unknown[], i: number | undefined) => (i === undefined ? undefined : row[i]);
@@ -312,6 +320,10 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
         classification: cell(row, c.classification),
         coverage_tier: cell(row, c.coverage_tier),
         class_code: cell(row, c.class_code),
+        gender: cell(row, c.gender),
+        hire_date: cell(row, c.hire_date),
+        cobra: cell(row, c.cobra),
+        home_state: cell(row, c.home_state),
       });
       if (firstData === -1) firstData = r;
       lastData = r;
@@ -332,6 +344,10 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
       ["classification", has("classification")],
       ["coverage_tier", has("coverage_tier")],
       ["class_code", has("class_code")],
+      ["gender", has("gender")],
+      ["hire_date", has("hire_date")],
+      ["cobra", has("cobra")],
+      ["home_state", has("home_state")],
     ];
     return {
       census,

@@ -9,6 +9,7 @@ export {
   COVERAGE_TIER_LABELS,
   COVERAGE_TIERS,
   EMPLOYMENT_TYPES,
+  GENDERS,
   MAX_ANNUAL_SALARY,
   MAX_CENSUS_ROWS,
   MAX_DEPENDENTS,
@@ -36,6 +37,7 @@ export type {
   CompensationType,
   CoverageTier,
   EmploymentType,
+  Gender,
   WorkerClassification,
 } from "../../supabase/functions/_shared/census.ts";
 
@@ -55,6 +57,8 @@ export const censusPay = (e: CensusEmployee): string =>
 export const CENSUS_FACTS = [
   "dob", "age", "work_state", "zip_code", "job_title", "annual_salary", "compensation_type",
   "employment_type", "classification", "coverage_tier", "class_code",
+  // New in intake schema v3 (K-2.1).
+  "gender", "hire_date", "cobra", "home_state",
 ] as const;
 export type CensusFact = (typeof CENSUS_FACTS)[number];
 
@@ -70,6 +74,10 @@ export const CENSUS_FACT_LABELS: Record<CensusFact, string> = {
   classification: "W-2 or 1099",
   coverage_tier: "coverage tier",
   class_code: "class code",
+  gender: "gender",
+  hire_date: "hire date",
+  cobra: "COBRA status",
+  home_state: "home state",
 };
 
 /** One census fact for display: "$95,000", "Part time", "W-2", "Employee + Spouse", or "—". */
@@ -86,6 +94,8 @@ export function formatCensusFact(fact: CensusFact, v: unknown): string {
       return v === "1099" ? "1099" : "W-2";
     case "coverage_tier":
       return COVERAGE_TIER_LABELS[v as keyof typeof COVERAGE_TIER_LABELS] ?? String(v);
+    case "cobra":
+      return v === true ? "On COBRA" : "Not on COBRA";
     default:
       return String(v);
   }

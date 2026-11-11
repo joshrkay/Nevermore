@@ -98,6 +98,7 @@
 \i supabase/migrations/20261111091000_intake_schema_v3_company_identity.sql
 \i supabase/migrations/20261111092000_intake_schema_v3_industry_code.sql
 \i supabase/migrations/20261111093000_intake_schema_v3_current_peo.sql
+\i supabase/migrations/20261111094000_intake_schema_v3_census_columns.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
