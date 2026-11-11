@@ -23,8 +23,8 @@ import { downloadBlob } from "@/lib/downloadFile";
 import { recordManuscriptDownload } from "@/lib/milestones";
 import CensusDownload from "@/components/CensusDownload";
 import SupplementDownload from "@/components/SupplementDownload";
-import { parseExtraAnswers } from "@/data/extraAnswers";
-import { buildSupplement, supplementPeos } from "@/data/peoSupplement";
+import { parseCertifiedExtraAnswers } from "@/data/extraAnswers";
+import { supplementFor, supplementPeos } from "@/data/peoSupplement";
 import FitIcon from "@/components/peo/FitIcon";
 import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import { finalManuscriptUrl } from "@/lib/advisorApi";
@@ -454,21 +454,17 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         {/* Each PEO's own questions, as their own file for that PEO alone (L-2.3): the PEO chosen, and any other whose
             questions this certification answers. Never in the packet below, and not while withdrawn. */}
         {state.kind === "ready" && !withdrawn && (() => {
-          const certifiedExtra = parseExtraAnswers((state.submission as { extra_answers?: unknown }).extra_answers);
-          const peos = supplementPeos(peoCatalog.peos, state.submission.peo ?? null, certifiedExtra);
-          if (peos.length === 0) return null;
+          const certifiedExtra = parseCertifiedExtraAnswers((state.submission as { extra_answers?: unknown }).extra_answers);
+          const from = { certified: certifiedExtra, fileId: state.fileId, version: state.submission.version ?? null, companyName: state.data.company_name ?? "Company not provided" };
+          const supplements = supplementPeos(peoCatalog.peos, state.submission.peo ?? null, certifiedExtra).flatMap((p) => supplementFor(p, from) ?? []);
+          if (supplements.length === 0) return null;
           return (
             <section aria-labelledby="supplements-heading" className="bg-card border border-border rounded-xl p-5 space-y-4">
               <h2 id="supplements-heading" className="font-display text-lg font-bold">Your PEOs' own questions</h2>
               <p className="text-sm text-muted-foreground">
                 Each PEO's extra questions and your answers are their own file, for that PEO only. They aren't in the packet. Send each one with the packet to its PEO.
               </p>
-              {peos.map((p) => (
-                <SupplementDownload key={p.id} supplement={buildSupplement({
-                  peo: { id: p.id, name: p.name }, questions: p.profile.extraQuestions, certified: certifiedExtra,
-                  fileId: state.fileId, version: state.submission.version ?? null, companyName: state.data.company_name ?? "Company not provided",
-                })} />
-              ))}
+              {supplements.map((s) => <SupplementDownload key={s.peo} supplement={s} />)}
             </section>
           );
         })()}

@@ -225,3 +225,55 @@ BEGIN
   END IF;
   RAISE NOTICE 'information_request_extra_questions: all cases passed';
 END $$;
+
+-- The message a request is refused with, or 'ok'.
+CREATE FUNCTION pg_temp.refusal(who uuid, sid uuid, questions jsonb) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE m text;
+BEGIN
+  PERFORM pg_temp.as_user(who);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    PERFORM public.advisor_request_information(sid, 'A few more things, please.', '{}', questions);
+    RESET ROLE;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS m = MESSAGE_TEXT;
+  END;
+  RESET ROLE;
+  RETURN m;
+END $$;
+
+-- ---------- at most 60 questions, each once, the PEO compared as a number ----------
+DO $$
+DECLARE
+  advisor uuid := pg_temp.new_user('advisor');
+  uid uuid := pg_temp.new_user();
+  sid uuid := pg_temp.new_intake(uid);
+  trinet bigint := pg_temp.peo('TriNet');
+  drives jsonb;
+  outcome text;
+BEGIN
+  IF pg_temp.certify(uid, sid) <> 'ok' THEN RAISE EXCEPTION 'FAIL: setup could not certify'; END IF;
+  drives := jsonb_build_object('peo_id', trinet, 'key', 'vehicles', 'question', 'Do employees drive for work?');
+
+  -- 60 is within the cap (refused only for naming one question 60 times); 61 is past it.
+  outcome := pg_temp.refusal(advisor, sid, (SELECT jsonb_agg(drives) FROM generate_series(1, 60)));
+  IF outcome <> 'A request names each question once' THEN RAISE EXCEPTION 'FAIL: 60 questions gave %', outcome; END IF;
+  outcome := pg_temp.refusal(advisor, sid, (SELECT jsonb_agg(drives) FROM generate_series(1, 61)));
+  IF outcome <> 'A request can name at most 60 of the PEOs'' own questions' THEN RAISE EXCEPTION 'FAIL: 61 questions gave %', outcome; END IF;
+
+  -- The same PEO written as 5 and as 5.0 is the same question twice.
+  outcome := pg_temp.refusal(advisor, sid, jsonb_build_array(drives, drives || jsonb_build_object('peo_id', (trinet::text || '.0')::numeric)));
+  IF outcome <> 'A request names each question once' THEN RAISE EXCEPTION 'FAIL: one PEO as % and %.0 gave %', trinet, trinet, outcome; END IF;
+
+  -- The table holds no more than 60 either, whoever writes it.
+  BEGIN
+    INSERT INTO public.information_requests (session_id, message, fields, extra_questions)
+    VALUES (sid, 'Too many', '{}', (SELECT jsonb_agg(drives) FROM generate_series(1, 61)));
+    RAISE EXCEPTION 'FAIL: the table took 61 questions';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  INSERT INTO public.information_requests (session_id, message, fields, extra_questions)
+  VALUES (sid, 'As many as can be', '{}', (SELECT jsonb_agg(drives) FROM generate_series(1, 60)));
+  RAISE NOTICE 'information_request_extra_questions: at most 60, each once';
+END $$;

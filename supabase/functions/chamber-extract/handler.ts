@@ -19,7 +19,7 @@ import { FIELD_STATUSES as CONTEXT_STATUSES, type CensusSummary } from "../_shar
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactSensitive } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
-import { readExtraQuestions, shapeExtraAnswers } from "./extraQuestions.ts";
+import { fitExtraQuestions, readExtraQuestions, shapeExtraAnswers } from "./extraQuestions.ts";
 import { buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn } from "./prompt.ts";
 import { guardReply } from "./reply.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, FIELD_QUESTION, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
@@ -42,8 +42,8 @@ export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES, NEXT_FIELDS }
 export { CLAIMS_COMPLETE, guardReply, STOPPING_REPLY, WRAP_UP_REPLY } from "./reply.ts";
 
 const SCHEMA_KEYS = new Set(Object.keys(INTAKE_SCHEMA.properties as object));
-// The PEOs' extra questions, as the user turn carries them (extraQuestionsLine), apart from the context cap: 30 of one
-// PEO's questions with their choices fit well within it.
+// The PEOs' extra questions, as the user turn carries them (extraQuestionsLine), apart from the context cap. Those
+// past it are left out of this turn (and logged), never a refusal: the browser sends the unanswered ones first.
 export const MAX_EXTRA_QUESTIONS_CHARS = 30_000;
 
 /** The recent conversation as sent, or why it isn't acceptable. Only the prospect's and Lenore's lines. */
@@ -201,16 +201,17 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (!census.ok) return await fail(aiError("bad_request", { message: census.message }));
     const requested = readRequested(rawRequested);
     if (!requested.ok) return await fail(aiError("bad_request", { message: requested.message }));
-    const extra = readExtraQuestions(rawExtra);
-    if (!extra.ok) return await fail(aiError("bad_request", { message: extra.message }));
+    const sent = readExtraQuestions(rawExtra);
+    if (!sent.ok) return await fail(aiError("bad_request", { message: sent.message }));
+    // One question this function can't ask, or more than fit in a turn, never stops Lenore answering: those are left
+    // out and logged by id (after the intake is checked, so the line names it).
+    const fitted = fitExtraQuestions(sent.questions, MAX_EXTRA_QUESTIONS_CHARS);
+    const extra = { questions: fitted.kept, skipped: [...sent.skipped, ...fitted.left] };
     // The same serialisation is measured here and sent to the model (prompt.ts, shared with the eval).
     const turn = { context, statuses: statuses.statuses, recent: recent.messages, census: census.census, requested: requested.requested, extraQuestions: extra.questions };
-    const { contextJson, statusesJson, recentJson, extraLine } = serializeTurn(turn);
+    const { contextJson, statusesJson, recentJson } = serializeTurn(turn);
     if (contextJson.length + statusesJson.length + recentJson.length > MAX_CONTEXT_CHARS) {
       return await fail(aiError("bad_request", { status: 413, message: "context too large" }));
-    }
-    if (extraLine.length > MAX_EXTRA_QUESTIONS_CHARS) {
-      return await fail(aiError("bad_request", { status: 413, message: "extra questions too large" }));
     }
     // Optional for now, so a tab still running the previous front end keeps working; when given, it
     // must be the caller's intake.
@@ -235,6 +236,9 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
       if (error) throw new Error("intake lookup failed");
       if (!intake || intake.user_id !== userId) return await fail(aiError("not_found", { message: "Intake not found" }));
       event.sessionId = sessionId;
+    }
+    if (extra.skipped.length > 0) {
+      deps.logError(`EXTRA_QUESTIONS_SKIPPED request=${requestId} session=${event.sessionId ?? "-"} ids=${extra.skipped.join(",")}`);
     }
 
     // 4. Spend from the caller's, their address's and the global budget. The last two are

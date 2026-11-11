@@ -14,8 +14,9 @@
 -- question's kind (a yes or no, a number, text, or one of its choices).
 --
 -- They are certified with the rest: certifying copies them into the submission (submission.extra_answers) and into
--- the certification record (chamber_certifications.extra_answers), and changing one after certifying withdraws the
--- certification, as a changed answer does. They are the intake's own data: written by the same versioned save as the
+-- the certification record (chamber_certifications.extra_answers), each with their own SHA-256 set by the database
+-- (extra_answers_sha256), beside data_sha256, which still covers chamber_data alone; changing one after certifying
+-- withdraws the certification, as a changed answer does. They are the intake's own data: written by the same versioned save as the
 -- answers (the prospect, under the row's own security), read by the prospect and by advisors as the rest of the intake
 -- is, and deleted with it. They go only to that PEO: nothing that builds the packet, the emails or an export reads
 -- this column.
@@ -27,15 +28,20 @@ SET lock_timeout = '5s';
 
 ALTER TABLE public.chamber_sessions ADD COLUMN IF NOT EXISTS extra_answers jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE public.chamber_certifications ADD COLUMN IF NOT EXISTS extra_answers jsonb;
+ALTER TABLE public.chamber_certifications ADD COLUMN IF NOT EXISTS extra_answers_sha256 text;
 
 COMMENT ON COLUMN public.chamber_sessions.extra_answers IS
   'Answers to PEOs'' own extra questions, by PEO id then question key, each with the wording answered, its kind, value, field status and source.';
 COMMENT ON COLUMN public.chamber_certifications.extra_answers IS
   'The extra answers exactly as certified. Null on a certification recorded before 20261113090000.';
+COMMENT ON COLUMN public.chamber_certifications.extra_answers_sha256 IS
+  'SHA-256 (hex) of the extra answers as certified, set by the database beside data_sha256, which covers chamber_data only and is computed as before. Null before 20261113090000.';
 
 -- ---------- What an answer may hold ----------
 
--- Whether `v` is an answer of `kind`: a yes or no, a number, text, or a choice.
+-- Whether `v` is an answer of `kind`: a yes or no, a number, text, or a choice. Text is measured as a profile measures
+-- a question and its choices (peo_profile_version_error), trimmed and in characters, so every choice a profile holds
+-- can be an answer; the browser and chamber-extract measure the same way (supabase/functions/_shared/extraAnswerRules.ts).
 CREATE OR REPLACE FUNCTION public.extra_answer_value_is_valid(v jsonb, kind text)
 RETURNS boolean
 LANGUAGE sql
@@ -46,8 +52,8 @@ AS $$
     WHEN 'yes_no' THEN jsonb_typeof(v) = 'boolean'
     -- sync:begin extra_answer_limits
     WHEN 'number' THEN jsonb_typeof(v) = 'number' AND abs((v #>> '{}')::numeric) <= 1000000000000
-    WHEN 'text' THEN jsonb_typeof(v) = 'string' AND btrim(v #>> '{}') <> '' AND char_length(v #>> '{}') <= 1000
-    WHEN 'choice' THEN jsonb_typeof(v) = 'string' AND btrim(v #>> '{}') <> '' AND char_length(v #>> '{}') <= 100
+    WHEN 'text' THEN jsonb_typeof(v) = 'string' AND char_length(btrim(v #>> '{}')) BETWEEN 1 AND 1000
+    WHEN 'choice' THEN jsonb_typeof(v) = 'string' AND char_length(btrim(v #>> '{}')) BETWEEN 1 AND 100
     -- sync:end extra_answer_limits
     ELSE false
   END, false);
@@ -175,7 +181,9 @@ AS $$
 BEGIN
   IF NEW.status = 'submitted'
      AND (TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM 'submitted' OR NEW.submission IS DISTINCT FROM OLD.submission) THEN
-    NEW.submission := NEW.submission || jsonb_build_object('extra_answers', NEW.extra_answers);
+    -- With their own hash, as data_sha256 is the answers' (validate_certification): set here, never by the browser.
+    NEW.submission := NEW.submission || jsonb_build_object('extra_answers', NEW.extra_answers,
+      'extra_answers_sha256', encode(sha256(convert_to(NEW.extra_answers::text, 'UTF8')), 'hex'));
   ELSIF TG_OP = 'UPDATE' AND OLD.status = 'submitted' AND NEW.status = 'submitted' AND NEW.extra_answers IS DISTINCT FROM OLD.extra_answers THEN
     NEW.status := 'in_progress';
   END IF;
@@ -199,7 +207,8 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  NEW.extra_answers := (SELECT s.submission -> 'extra_answers' FROM public.chamber_sessions s WHERE s.id = NEW.session_id);
+  SELECT s.submission -> 'extra_answers', s.submission ->> 'extra_answers_sha256' INTO NEW.extra_answers, NEW.extra_answers_sha256
+  FROM public.chamber_sessions s WHERE s.id = NEW.session_id;
   RETURN NEW;
 END;
 $$;

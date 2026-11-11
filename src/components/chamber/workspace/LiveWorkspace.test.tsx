@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
@@ -31,6 +31,11 @@ const TABS = [
 ] as const;
 
 describe("LiveWorkspace", () => {
+  // Shared with every test, so put back whether a test passes or fails.
+  afterEach(() => {
+    catalog.profiles = {};
+  });
+
   it.each([
     ["demo data", DEMO_CHAMBER_DATA],
     ["empty data", EMPTY_CHAMBER_DATA],
@@ -202,10 +207,9 @@ describe("LiveWorkspace", () => {
     fireEvent.click(within(section).getByRole("radio", { name: "Yes" }));
     const update = onExtraAnswers.mock.calls[0][0] as (prev: object) => object;
     expect(update({})).toMatchObject({ "5": { vehicles: { question: "Do employees drive for work?", value: true } } });
-    catalog.profiles = {};
   });
 
-  it("shows another PEO's questions only when the advisor's request names them, marking each it names", async () => {
+  it("shows another PEO's questions only when the advisor's request names them, and only those it names, each marked", async () => {
     catalog.profiles = {
       TriNet: { version: 2, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] },
       Justworks: { version: 1, extra_questions: [{ key: "union", text: "Is anyone in a union?", kind: "yes_no" }, { key: "remote", text: "Does anyone work abroad?", kind: "yes_no" }] },
@@ -218,9 +222,10 @@ describe("LiveWorkspace", () => {
     rerender(<MemoryRouter><LiveWorkspace {...props} requestedQuestions={[{ peo_id: 3, key: "union", question: "Is anyone in a union?" }]} /></MemoryRouter>);
     const justworks = screen.getByRole("region", { name: "Questions from Justworks" });
     expect(within(within(justworks).getByRole("group", { name: "Is anyone in a union?" })).getByText("Your advisor asked about this")).toBeInTheDocument();
-    expect(within(within(justworks).getByRole("group", { name: "Does anyone work abroad?" })).queryByText("Your advisor asked about this")).not.toBeInTheDocument();
+    // Justworks isn't the prospect's choice: its question the request doesn't name isn't asked.
+    expect(within(justworks).queryByRole("group", { name: "Does anyone work abroad?" })).not.toBeInTheDocument();
+    expect(within(justworks).getByText("0 of 1 answered")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Questions from TriNet" })).queryByText("Your advisor asked about this")).not.toBeInTheDocument();
-    catalog.profiles = {};
   });
 
   it("goes from Certify & sign back to Review to add a missing answer", () => {

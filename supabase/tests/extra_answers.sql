@@ -240,6 +240,14 @@ BEGIN
     'vehicles', ok || '{"status":"conflicting","candidates":[{"value":true,"source":{"kind":"transcript","message_id":"m1"}},{"value":false,"source":{"kind":"transcript","message_id":"m2"}}]}',
     'notes', pg_temp.answer('Anything else?', 'text', NULL, 'not_applicable'))));
   IF outcome <> 'ok' THEN RAISE EXCEPTION 'FAIL: a conflict and a "doesn''t apply" gave %', outcome; END IF;
+  -- Measured as a profile measures a question and its choices: trimmed, in characters. A choice of 100 characters and
+  -- a space, a choice of 100 emoji, and a text answer of 1000 characters and a space are all answers.
+  outcome := pg_temp.save(uid, sid, jsonb_build_object('3', jsonb_build_object(
+    'c', pg_temp.answer('Which?', 'choice', to_jsonb(repeat('x', 100) || ' ')),
+    'e', pg_temp.answer(repeat(U&'\+01F69A', 500), 'choice', to_jsonb(repeat(U&'\+01F69A', 100))),
+    'q', pg_temp.answer(repeat('x', 500) || ' ', 'yes_no', 'true'),
+    't', pg_temp.answer('Why?', 'text', to_jsonb(' ' || repeat('x', 1000))))));
+  IF outcome <> 'ok' THEN RAISE EXCEPTION 'FAIL: trimmed, in characters, gave %', outcome; END IF;
   RAISE NOTICE 'extra_answers: malformed answers refused, at the answer they are about';
 END $$;
 
@@ -261,6 +269,14 @@ BEGIN
   IF row_.submission -> 'extra_answers' IS DISTINCT FROM first THEN RAISE EXCEPTION 'FAIL: the submission keeps %', row_.submission -> 'extra_answers'; END IF;
   SELECT * INTO cert FROM public.chamber_certifications WHERE session_id = sid;
   IF cert.extra_answers IS DISTINCT FROM first THEN RAISE EXCEPTION 'FAIL: the certification record keeps %', cert.extra_answers; END IF;
+  -- With their own hash beside the answers' (data_sha256, unchanged), set by the database: sha256 of their text.
+  IF cert.extra_answers_sha256 IS DISTINCT FROM encode(sha256(convert_to(first::text, 'UTF8')), 'hex')
+     OR row_.submission ->> 'extra_answers_sha256' IS DISTINCT FROM cert.extra_answers_sha256 THEN
+    RAISE EXCEPTION 'FAIL: the extra answers'' hash reads % / %', cert.extra_answers_sha256, row_.submission ->> 'extra_answers_sha256';
+  END IF;
+  IF cert.data_sha256 IS DISTINCT FROM encode(sha256(convert_to(row_.chamber_data::text, 'UTF8')), 'hex') THEN
+    RAISE EXCEPTION 'FAIL: data_sha256 no longer covers the answers alone';
+  END IF;
 
   -- Saving the same answers again changes nothing.
   IF pg_temp.save(uid, sid, first) <> 'ok' THEN RAISE EXCEPTION 'FAIL: saving the same answers was refused'; END IF;

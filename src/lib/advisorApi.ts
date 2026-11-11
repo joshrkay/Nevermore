@@ -10,7 +10,7 @@ import type { OutboxStatus } from "@/data/outbox";
 import type { IntakeSource } from "@/data/intakeSource";
 import { contactsOf, EMPTY_PROFILE, parseProfileVersion, profilePayload, type DraftBasis, type EditableProfile, type PeoContact, type ProfileVersion } from "@/data/peoEditor";
 import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
-import { parseExtraAnswers, type ExtraAnswers, type ExtraQuestionRef } from "@/data/extraAnswers";
+import { parseCertifiedExtraAnswers, parseExtraAnswers, type ExtraAnswers, type ExtraQuestionRef } from "@/data/extraAnswers";
 import {
   isPipelineStatus,
   manuscriptStoragePath,
@@ -226,9 +226,9 @@ export interface SubmissionDetail {
   provenance: ProvenanceMap;
   /**
    * The answers to PEOs' own extra questions, as `data`: the certified copy while certified, otherwise as they stand.
-   * They go only to their PEO.
+   * They go only to their PEO. Null when the certification shown was recorded before they were kept: can't tell.
    */
-  extraAnswers: ExtraAnswers;
+  extraAnswers: ExtraAnswers | null;
   /** True when `data` is the certified snapshot. */
   certified: boolean;
   /**
@@ -242,8 +242,8 @@ export interface SubmissionDetail {
     provenance: ProvenanceMap;
     /** The documents set against the list that certification covered (reconcileDocuments). */
     documents: ReviewedDocument[];
-    /** The extra answers as certified (none for a certification from before they were kept). */
-    extraAnswers: ExtraAnswers;
+    /** The extra answers as certified; null for a certification from before they were kept (can't tell). */
+    extraAnswers: ExtraAnswers | null;
   } | null;
   submission: ChamberSubmission | null;
   /** The conversation as certified when the intake is certified (otherwise as it stands). */
@@ -387,7 +387,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     storedAnswers,
     // Pair provenance with whichever copy of the data is shown, as the prospect's Manuscript does.
     provenance: parseProvenance(useSnapshot ? submission!.field_provenance : row.field_provenance),
-    extraAnswers: parseExtraAnswers(certified ? (submission as { extra_answers?: unknown }).extra_answers : row.extra_answers),
+    extraAnswers: certified ? parseCertifiedExtraAnswers((submission as { extra_answers?: unknown }).extra_answers) : parseExtraAnswers(row.extra_answers),
     certified,
     signed:
       !certified && recorded && recorded.chamber_data !== null && recorded.chamber_data !== undefined
@@ -396,7 +396,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
             signedAt: recorded.recorded_at ?? recorded.signed_at,
             provenance: parseProvenance(recorded.field_provenance),
             documents: reconcileDocuments(docs.data ?? [], recorded.documents ?? undefined),
-            extraAnswers: parseExtraAnswers(recorded.extra_answers),
+            extraAnswers: parseCertifiedExtraAnswers(recorded.extra_answers),
           }
         : null,
     submission,

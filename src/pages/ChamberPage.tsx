@@ -474,6 +474,7 @@ const ChamberPage = () => {
             extraAnswers={extraAnswers}
             onExtraAnswers={updateExtraAnswers}
             requestedQuestions={informationRequest?.extraQuestions}
+            peoCatalog={peoCatalog}
             openReview={reviewRequest}
             ensureIntake={ensureIntake}
           />

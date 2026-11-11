@@ -7,10 +7,10 @@
 // choice, a choice still offered). A reworded question is a new question, unanswered until answered; an answer is
 // never read against different wording. The stored wording is what a certification covered and what the PEO's
 // supplement prints.
-import { TEXT_MAX } from "./chamberValidation";
+import { EXTRA_LIMITS, answersAsAsked, isExtraValue as isValueOfKind, isTextWithin } from "../../supabase/functions/_shared/extraAnswerRules.ts";
 import { findPeo, type PeoRecord } from "./peoCatalog";
 import { PROFILE_PATTERNS } from "./peoEditor";
-import { EXTRA_QUESTION_KINDS, PROFILE_CAPS, type ExtraQuestion, type ExtraQuestionKind } from "./peoProfiles";
+import { EXTRA_QUESTION_KINDS, type ExtraQuestion, type ExtraQuestionKind } from "./peoProfiles";
 import { mergeHeard, parseProvenanceEntry, transcriptExtraction, type FieldProvenance, type FieldSource } from "./provenance";
 
 /** An answer to one extra question. `value` is absent while it is unknown or doesn't apply. */
@@ -27,39 +27,26 @@ export type ExtraValue = string | number | boolean;
 export type ExtraAnswers = Record<string, Record<string, ExtraAnswer>>;
 
 // The database's limits (extra_answers_error, extra_answer_value_is_valid); src/data/schemaSync.test.ts keeps them equal.
+// The per-answer ones, and how text is measured, are chamber-extract's too (supabase/functions/_shared/extraAnswerRules.ts).
 export const EXTRA_ANSWER_LIMITS = {
   peos: 50,
   answersPerPeo: 100,
-  question: PROFILE_CAPS.text,
-  text: TEXT_MAX,
-  choice: PROFILE_CAPS.header,
-  number: 1_000_000_000_000,
+  ...EXTRA_LIMITS,
 } as const;
 
 const PEO_ID = /^[1-9][0-9]{0,18}$/;
 const QUESTION_KEY = new RegExp(PROFILE_PATTERNS.questionKey);
 const isRow = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Whether `v` answers a question of `kind`, within the database's limits. */
-export function isExtraValue(kind: ExtraQuestionKind, v: unknown): v is ExtraValue {
-  switch (kind) {
-    case "yes_no":
-      return typeof v === "boolean";
-    case "number":
-      return typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= EXTRA_ANSWER_LIMITS.number;
-    case "text":
-      return typeof v === "string" && v.trim() !== "" && v.length <= EXTRA_ANSWER_LIMITS.text;
-    case "choice":
-      return typeof v === "string" && v.trim() !== "" && v.length <= EXTRA_ANSWER_LIMITS.choice;
-  }
-}
+/** Whether `v` answers a question of `kind`, within the database's limits, measured as the database measures. */
+export const isExtraValue = (kind: ExtraQuestionKind, v: unknown): v is ExtraValue => isValueOfKind(kind, v);
 
 const HOLDS_NO_VALUE = new Set(["unknown", "not_applicable"]);
 
 function parseAnswer(raw: unknown): ExtraAnswer | null {
   if (!isRow(raw)) return null;
   const { question, kind, value } = raw;
-  if (typeof question !== "string" || question.trim() === "" || question.length > EXTRA_ANSWER_LIMITS.question) return null;
+  if (!isTextWithin(question, EXTRA_ANSWER_LIMITS.question)) return null;
   if (!(EXTRA_QUESTION_KINDS as readonly unknown[]).includes(kind)) return null;
   const entry = parseProvenanceEntry(raw);
   if (!entry) return null;
@@ -86,7 +73,7 @@ export function parseExtraAnswers(raw: unknown): ExtraAnswers {
 }
 
 /** Whether a stored answer is an answer to `q`: its key's entry, with its wording and its way of answering. */
-export function answers(a: ExtraAnswer, q: ExtraQuestion): boolean {
+export function isAnswerTo(a: ExtraAnswer, q: ExtraQuestion): boolean {
   if (a.question !== q.text || a.kind !== q.kind) return false;
   if (q.kind !== "choice") return true;
   const offered = (v: unknown) => q.choices?.includes(v as string) ?? false;
@@ -96,8 +83,14 @@ export function answers(a: ExtraAnswer, q: ExtraQuestion): boolean {
 /** The answer to PEO `peoId`'s question `q`, or null when it has none (or only one to other wording). */
 export function answerFor(all: ExtraAnswers, peoId: number, q: ExtraQuestion): ExtraAnswer | null {
   const a = all[String(peoId)]?.[q.key];
-  return a && answers(a, q) ? a : null;
+  return a && isAnswerTo(a, q) ? a : null;
 }
+
+/**
+ * The extra answers a certification kept, or null when it kept none: one recorded before they were kept
+ * (20261113090000) says nothing about them, which is "can't tell", never "none answered".
+ */
+export const parseCertifiedExtraAnswers = (raw: unknown): ExtraAnswers | null => (raw === undefined || raw === null ? null : parseExtraAnswers(raw));
 
 /** No extra answers: a new intake's, and one saved before they were kept. */
 export const NO_EXTRA_ANSWERS: ExtraAnswers = {};
@@ -114,8 +107,7 @@ function withAnswer(all: ExtraAnswers, peoId: number, key: string, answer: Extra
 const confirmedBy = (now: Date) => ({ status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: now.toISOString() });
 
 /** Whether `v` answers `q` as asked: of its kind, and for a choice, one of its choices. */
-export const fitsQuestion = (q: ExtraQuestion, v: unknown): v is ExtraValue =>
-  isExtraValue(q.kind, v) && (q.kind !== "choice" || (q.choices ?? []).includes(v as string));
+export const fitsQuestion = (q: ExtraQuestion, v: unknown): v is ExtraValue => answersAsAsked(q.kind, q.choices, v);
 
 /**
  * The prospect's own answer to `q`, as they typed or chose it: confirmed, from them, with the question's wording. Null
@@ -173,18 +165,20 @@ export interface AskedPeo {
 }
 
 /**
- * The PEOs whose extra questions the intake asks (GLOSSARY.md, Extra question): the PEO the prospect chose, and any
- * other the advisor's open information request names (`requested`). Only listed PEOs with a profile in use that has
+ * The PEOs whose extra questions the intake asks (GLOSSARY.md, Extra question): every question of the PEO the prospect
+ * chose, and of any other PEO, only the questions the advisor's open information request names (`requested`). Only listed PEOs with a profile in use that has
  * questions; the chosen PEO first, then the others alphabetically (the catalog's order). Never ranked. Each says which
  * of its questions the request names, by key, when the request names them as they are worded now.
  */
 export function askedPeos(catalog: readonly PeoRecord[], chosen: string | null, requested: readonly ExtraQuestionRef[] = []): AskedPeo[] {
   const choice = chosen ? findPeo(catalog, chosen) : undefined;
   const ask = (p: PeoRecord): AskedPeo[] => {
-    if (!p.listed || p.id === undefined || !p.profile || p.profile.extraQuestions.length === 0) return [];
-    const questions = p.profile.extraQuestions;
-    const named = new Set(requested.filter((r) => r.peo_id === p.id && questions.some((q) => q.key === r.key && q.text === r.question)).map((r) => r.key));
-    return [{ peo: { id: p.id, name: p.name }, questions, requested: named }];
+    if (!p.listed || p.id === undefined || !p.profile) return [];
+    const all = p.profile.extraQuestions;
+    const named = new Set(requested.filter((r) => r.peo_id === p.id && all.some((q) => q.key === r.key && q.text === r.question)).map((r) => r.key));
+    // Of a PEO the prospect didn't choose, only the questions the request names: the rest aren't asked of them.
+    const questions = p === choice ? all : all.filter((q) => named.has(q.key));
+    return questions.length === 0 ? [] : [{ peo: { id: p.id, name: p.name }, questions, requested: named }];
   };
   const others = catalog.filter((p) => p !== choice && requested.some((r) => r.peo_id === p.id));
   return [...(choice ? ask(choice) : []), ...others.flatMap(ask)];
@@ -206,19 +200,22 @@ export const LENORE_MAX_EXTRA_QUESTIONS = 40;
 
 /**
  * The extra questions Lenore is to ask (askedPeos: the chosen PEO's first, then those a request names), by
- * "<PEO id>.<key>", at most LENORE_MAX_EXTRA_QUESTIONS.
+ * "<PEO id>.<key>", at most LENORE_MAX_EXTRA_QUESTIONS. The intake can ask more than that (a PEO's 30, and up to 60 a
+ * request names), so past the cap the ones not yet answered go before any answered one, in the same order: she asks
+ * only those, and as they are answered the next ones come in. None she is to ask is ever left out for good, and she
+ * never thinks them all answered while one is open.
  */
 export function extraQuestionsForLenore(asked: readonly AskedPeo[], all: ExtraAnswers): ExtraQuestionForLenore[] {
-  return asked
-    .flatMap(({ peo, questions }) => questions.map((q) => ({
-      id: `${peo.id}.${q.key}`,
-      peo: peo.name,
-      text: q.text,
-      kind: q.kind,
-      ...(q.kind === "choice" ? { choices: q.choices ?? [] } : {}),
-      answered: answerFor(all, peo.id, q) !== null,
-    })))
-    .slice(0, LENORE_MAX_EXTRA_QUESTIONS);
+  const every = asked.flatMap(({ peo, questions }) => questions.map((q) => ({
+    id: `${peo.id}.${q.key}`,
+    peo: peo.name,
+    text: q.text,
+    kind: q.kind,
+    ...(q.kind === "choice" ? { choices: q.choices ?? [] } : {}),
+    answered: answerFor(all, peo.id, q) !== null,
+  })));
+  const kept = new Set([...every.filter((q) => !q.answered), ...every.filter((q) => q.answered)].slice(0, LENORE_MAX_EXTRA_QUESTIONS));
+  return every.filter((q) => kept.has(q));
 }
 
 /**

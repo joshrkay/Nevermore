@@ -109,6 +109,13 @@ describe("peoCompleteness: whether the last certified version holds everything a
     expect(peoCompleteness(all, [], profile({ extraQuestions: questions }), 7).complete).toBe(true);
   });
 
+  it("can't tell about the PEO's own questions from a version certified before they were kept, and says so", () => {
+    const p = profile({ extraQuestions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] });
+    expect(peoCompleteness(intake({ extraAnswers: null }), [], p, 7).toQuote).toEqual([
+      { kind: "question", key: "vehicles", label: "Do employees drive for work?", reason: "Can't tell: certified before these questions were kept" },
+    ]);
+  });
+
   it("lists the answers needed only before signing apart, and never counts them", () => {
     const p = profile({ neededToQuote: ["company_name"], neededBeforeSigning: ["hris_system", "payroll_vendor"] });
     expect(peoCompleteness(intake(), [], p)).toEqual({

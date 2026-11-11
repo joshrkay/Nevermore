@@ -15,7 +15,7 @@ import {
 import { localToday, staleProfileWarning } from "@/data/peoProfiles";
 import { formatDay } from "@/data/quoteRequests";
 import type { QuoteRequestRow } from "@/lib/advisorApi";
-import { buildSupplement } from "@/data/peoSupplement";
+import { supplementFor } from "@/data/peoSupplement";
 import SupplementDownload from "@/components/SupplementDownload";
 
 interface PeoNeedsPanelProps {
@@ -76,6 +76,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
   const { peo, completeness: c } = entry;
   const stale = staleProfileWarning(peo, today);
   const anything = c.toQuote.length + c.beforeSigning.length > 0;
+  const supplement = supplementFor(peo, { certified: certified.intake.extraAnswers, fileId, version: certified.version, companyName });
   return (
     <article aria-labelledby={`${id}-name`} className="bg-card border border-border rounded-xl p-4 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -113,12 +114,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
       )}
       <EligibilityChecks peo={peo.name} checks={peoFit(certified.intake.data, peo, today)} />
       {/* Its own questions go to it alone, as their own file built from the certified version. */}
-      {peo.id !== undefined && peo.profile.extraQuestions.length > 0 && (
-        <SupplementDownload supplement={buildSupplement({
-          peo: { id: peo.id, name: peo.name }, questions: peo.profile.extraQuestions, certified: certified.intake.extraAnswers,
-          fileId, version: certified.version, companyName,
-        })} />
-      )}
+      {supplement && <SupplementDownload supplement={supplement} />}
       {!c.complete && askBlocked !== null && (
         <p className="text-sm text-muted-foreground">{`The prospect can't be asked for it now: ${askBlocked.charAt(0).toLowerCase()}${askBlocked.slice(1)}`}</p>
       )}

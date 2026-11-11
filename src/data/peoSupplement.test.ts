@@ -56,6 +56,16 @@ describe("buildSupplement: a PEO's own questions and the certified answers to th
   });
 });
 
+describe("buildSupplement: from a version certified before extra answers were kept", () => {
+  it("can't tell any answer, rather than listing every question as not answered", () => {
+    const s = buildSupplement({ peo: { id: 5, name: "TriNet" }, questions: QUESTIONS.slice(0, 1), certified: null, fileId: "EAA-2026-0007", version: 1, companyName: "Acme" });
+    expect(s.cantTell).toBe(true);
+    expect(s.notAnswered).toEqual([]);
+    expect(s.rows).toEqual([{ question: "Do employees drive for work?", answer: null }]);
+    expect(buildSupplement({ peo: { id: 5, name: "TriNet" }, questions: QUESTIONS, certified, fileId: "F", version: 1, companyName: "A" }).cantTell).toBe(false);
+  });
+});
+
 describe("supplementPeos: whose supplement is offered", () => {
   const peo = (id: number, name: string, questions = QUESTIONS, listed = true): PeoRecord => ({ id, name, listed, lastVerified: null, profile: {
     version: 1, neededToQuote: [], neededBeforeSigning: [], censusLayout: null, documents: [], extraQuestions: questions, sources: {}, publishedAt: null,

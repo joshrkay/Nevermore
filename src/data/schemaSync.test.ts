@@ -25,7 +25,7 @@ import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
 import { isFileId } from "@/data/manuscript";
 import { OPEN_ITEM_STATUSES } from "@/data/openItems";
-import { INFORMATION_REQUEST_MAX, NEEDS_ACTION_NOTE_MAX, PIPELINE_STATUSES, PIPELINE_TRANSITIONS } from "@/data/advisor";
+import { INFORMATION_REQUEST_MAX, INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS, NEEDS_ACTION_NOTE_MAX, PIPELINE_STATUSES, PIPELINE_TRANSITIONS } from "@/data/advisor";
 import { OUTBOX_KIND_LABELS } from "@/data/outbox";
 import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
@@ -203,6 +203,13 @@ describe("server and client intake rules agree", () => {
     expect(Number(/char_length\(message\) <= (\d+)/.exec(sql)?.[1])).toBe(INFORMATION_REQUEST_MAX);
   });
 
+  it("caps the PEO extra questions a request names as the database does, in its function and its table", () => {
+    const [sql] = blocks("request_max_extra_questions");
+    expect(Number(/jsonb_array_length\(questions\) > (\d+)/.exec(sql)?.[1])).toBe(INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS);
+    const table = readFileSync("supabase/migrations/20261113100000_information_request_extra_questions.sql", "utf8");
+    expect(Number(/jsonb_array_length\(extra_questions\) <= (\d+)/.exec(table)?.[1])).toBe(INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS);
+  });
+
   it("lists the funnel's steps in the order the database records and counts them", () => {
     expect(quoted(blocks("intake_milestones").join("\n"))).toEqual([...FUNNEL_STEPS]);
     const sql = readFileSync("supabase/migrations/20261105092000_intake_milestones.sql", "utf8");
@@ -321,8 +328,14 @@ describe("server and client intake rules agree", () => {
     });
     const [values] = blocks("extra_answer_limits");
     expect(Number(/abs\(.*?\)\s*<=\s*(\d+)/.exec(values)?.[1])).toBe(EXTRA_ANSWER_LIMITS.number);
-    expect(Number(/'text' THEN .*<=\s*(\d+)/.exec(values)?.[1])).toBe(EXTRA_ANSWER_LIMITS.text);
-    expect(Number(/'choice' THEN .*<=\s*(\d+)/.exec(values)?.[1])).toBe(EXTRA_ANSWER_LIMITS.choice);
+    // Text is measured as the profile measures a question and its choices: trimmed, in characters.
+    expect(values).toMatch(/'text' THEN .*char_length\(btrim\(v #>> '\{\}'\)\) BETWEEN 1 AND (\d+)/);
+    expect(Number(/'text' THEN .*BETWEEN 1 AND (\d+)/.exec(values)?.[1])).toBe(EXTRA_ANSWER_LIMITS.text);
+    expect(Number(/'choice' THEN .*char_length\(btrim\(v #>> '\{\}'\)\) BETWEEN 1 AND (\d+)/.exec(values)?.[1])).toBe(EXTRA_ANSWER_LIMITS.choice);
+    // The limits chamber-extract shares are a profile's: a question is a profile's text, a choice one of its choices.
+    expect(EXTRA_ANSWER_LIMITS.question).toBe(PROFILE_CAPS.text);
+    expect(EXTRA_ANSWER_LIMITS.choice).toBe(PROFILE_CAPS.header);
+    expect(EXTRA_ANSWER_LIMITS.text).toBe(TEXT_MAX);
     // An answer's key is a profile question's key.
     expect(readFileSync("supabase/migrations/20261113090000_extra_answers.sql", "utf8")).toContain(`'${PROFILE_PATTERNS.questionKey}'`);
   });

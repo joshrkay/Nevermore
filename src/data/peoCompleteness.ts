@@ -15,13 +15,13 @@ import { answerFor, type ExtraAnswers, type ExtraQuestionRef } from "./extraAnsw
 
 /**
  * The last certified version of an intake: its answers and their field status, the fields an advisor verified, and
- * the answers to PEOs' own extra questions as certified.
+ * the answers to PEOs' own extra questions as certified (null when it was certified before they were kept).
  */
 export interface CertifiedIntake {
   data: ChamberData;
   provenance: ProvenanceMap;
   verified: ReadonlySet<string>;
-  extraAnswers: ExtraAnswers;
+  extraAnswers: ExtraAnswers | null;
 }
 
 /** Something a PEO's profile needs that the certified version doesn't hold, and why. */
@@ -61,8 +61,11 @@ function missingAnswers(intake: CertifiedIntake, fields: readonly FieldKey[]): N
  * verification is of fields only, so it never settles one.
  */
 function missingQuestions(intake: CertifiedIntake, profile: RequirementProfile, peoId: number | undefined): NeededItem[] {
+  const certified = intake.extraAnswers;
   return profile.extraQuestions.flatMap((q): NeededItem[] => {
-    const a = peoId === undefined ? null : answerFor(intake.extraAnswers, peoId, q);
+    // A version certified before extra answers were kept can't say whether it answered them.
+    if (certified === null) return [{ kind: "question", key: q.key, label: q.text, reason: "Can't tell: certified before these questions were kept" }];
+    const a = peoId === undefined ? null : answerFor(certified, peoId, q);
     if (!a) return [{ kind: "question", key: q.key, label: q.text, reason: "Not answered" }];
     if (a.status === "confirmed" || a.status === "not_applicable") return [];
     return [{ kind: "question", key: q.key, label: q.text, reason: FIELD_OPEN_REASONS[a.status] }];
@@ -232,9 +235,9 @@ export function lastCertifiedVersion(
     data: ChamberData;
     provenance: ProvenanceMap;
     documents: readonly ReviewedDocument[];
-    /** The extra answers shown: the certified copy while the certification stands. */
-    extraAnswers: ExtraAnswers;
-    signed: { data: ChamberData; provenance: ProvenanceMap; documents: readonly ReviewedDocument[]; extraAnswers: ExtraAnswers } | null;
+    /** The extra answers shown: the certified copy while the certification stands (null: kept none, can't tell). */
+    extraAnswers: ExtraAnswers | null;
+    signed: { data: ChamberData; provenance: ProvenanceMap; documents: readonly ReviewedDocument[]; extraAnswers: ExtraAnswers | null } | null;
     currentVersion: number | null;
     /** The certification on record kept no field status or no document list (SubmissionDetail). */
     certificationLacksSnapshot: boolean;

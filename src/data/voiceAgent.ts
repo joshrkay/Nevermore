@@ -42,13 +42,13 @@ export function voiceContextUpdate(data: ChamberData, provenance: ProvenanceMap,
 const VOICE_EXTRA_QUESTIONS = 10;
 
 /**
- * The PEOs' extra questions not yet answered (L-2.3), grouped by PEO, each quoted as JSON: an admin wrote them, so they
- * are data to ask, never instructions. None when none is left. Questions, never answers.
+ * The PEOs' extra questions not yet answered (L-2.3), grouped by PEO, the PEO's name and each question quoted as JSON:
+ * an admin wrote them, so they are data to ask, never instructions. None when none is left. Questions, never answers.
  */
 function extraLine(questions: readonly ExtraQuestionForLenore[]): string[] {
   const open = questions.filter((q) => !q.answered).slice(0, VOICE_EXTRA_QUESTIONS);
   if (open.length === 0) return [];
   const peos = [...new Set(open.map((q) => q.peo))];
-  const groups = peos.map((peo) => `from ${peo}: ${open.filter((q) => q.peo === peo).map((q) => JSON.stringify(q.text)).join("; ")}`);
+  const groups = peos.map((peo) => `from ${JSON.stringify(peo)}: ${open.filter((q) => q.peo === peo).map((q) => JSON.stringify(q.text)).join("; ")}`);
   return [`Extra questions to ask once nothing else is left: ${groups.join("; ")}`];
 }

@@ -41,6 +41,8 @@ const pendingVerifiedReads: ((value: { data: unknown; error: MockError | null })
 let heldToken: string | null = null;
 let refreshedToken: string | null = null;
 let refreshes = 0;
+// Something that happens while certifying checks the signer's token: after the save, before the certification is sent.
+let duringTokenCheck: (() => void) | null = null;
 const token = (isAnonymous: boolean) => `header.${btoa(JSON.stringify({ sub: "u1", is_anonymous: isAnonymous })).replace(/=+$/, "")}.signature`;
 
 // Who is signed in. A test can switch it and rerender, as signing in with an emailed code does.
@@ -50,7 +52,10 @@ vi.mock("@/lib/dispatchOutbox", () => ({ dispatchOutbox: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     auth: {
-      getSession: async () => ({ data: { session: heldToken ? { access_token: heldToken } : null } }),
+      getSession: async () => {
+        duringTokenCheck?.();
+        return { data: { session: heldToken ? { access_token: heldToken } : null } };
+      },
       refreshSession: async () => {
         refreshes += 1;
         if (refreshedToken) heldToken = refreshedToken;
@@ -176,6 +181,7 @@ const submission = { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-01
 
 describe("useChamberSession", () => {
   beforeEach(() => {
+    duringTokenCheck = null;
     updates.length = 0;
     resumeRow = null;
     readError = null;
@@ -2082,6 +2088,38 @@ describe("useChamberSession", () => {
       updates[0].resolve({ error: null, data: [] });
       await drain();
       expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("that change after the save before certifying, as Lenore's reply lands, stop the certification as changed answers do", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await startIntake(result);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      const signedKey = JSON.stringify(result.current.chamberData);
+      duringTokenCheck = () => { duringTokenCheck = null; result.current.updateExtraAnswers(() => answered(true)); };
+      let submitted: SubmitResult | undefined;
+      const pending = result.current.submit(submission, signedKey).then((ok) => { submitted = ok; });
+      await drain();
+      await act(async () => { updates[0].resolve({ error: null }); });
+      await drain();
+      expect(updates.some((u) => u.payload.status === "submitted")).toBe(false);
+      for (const u of updates.slice(1)) u.resolve({ error: null });
+      await act(async () => { await pending; });
+      expect(submitted).toBe(false);
+    });
+
+    it("certify when the extra answers still match what was saved and signed", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await startIntake(result);
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      const signedKey = JSON.stringify(result.current.chamberData);
+      let submitted: SubmitResult | undefined;
+      const pending = result.current.submit(submission, signedKey).then((ok) => { submitted = ok; });
+      await drain();
+      await act(async () => { updates[0].resolve({ error: null }); });
+      await drain();
+      await act(async () => { updates[1].resolve({ error: null }); await pending; });
+      expect(submitted).toBe(true);
+      expect(updates[1].payload).toMatchObject({ status: "submitted" });
     });
 
     it("are cleared when the prospect starts over", async () => {

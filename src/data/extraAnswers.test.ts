@@ -25,6 +25,16 @@ describe("parseExtraAnswers: the extra answers as stored, keeping only what the 
     expect(parseExtraAnswers({ "3": { t: answer({ kind: "text", question: "Why?", value: "x".repeat(1001) }) } })).toEqual({});
     expect(parseExtraAnswers({ "3": { c: answer({ kind: "choice", question: "Which?", value: "x".repeat(101) }) } })).toEqual({});
   });
+
+  it("measures as the database does, trimmed and in characters, so an answer it holds is never dropped on load", () => {
+    const stored = { "3": {
+      emoji: answer({ question: "\u{1F69A}".repeat(300) }),
+      spaced: answer({ question: `${"x".repeat(500)} ` }),
+      c: answer({ kind: "choice", question: "Which?", value: "\u{1F69A}".repeat(100) }),
+      t: answer({ kind: "text", question: "Why?", value: ` ${"x".repeat(1000)}` }),
+    } };
+    expect(parseExtraAnswers(stored)).toEqual(stored);
+  });
 });
 
 describe("answerFor: an answer belongs to the question with its key and its wording", () => {
@@ -57,6 +67,32 @@ describe("what Lenore is asked, and what she hears", () => {
       { id: "3.vehicles", peo: "TriNet", text: "Do employees drive for work?", kind: "yes_no", answered: true },
       { id: "3.union", peo: "TriNet", text: "Which union, if any?", kind: "choice", choices: ["None", "Teamsters"], answered: false },
     ]);
+  });
+
+  it("past the most one chat call carries, sends every question not yet answered before any answered one, so none is skipped", async () => {
+    const { extraQuestionsForLenore, LENORE_MAX_EXTRA_QUESTIONS } = await import("./extraAnswers");
+    const { MAX_EXTRA_QUESTIONS } = await import("../../supabase/functions/chamber-extract/extraQuestions");
+    const { INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS } = await import("./advisor");
+    expect(LENORE_MAX_EXTRA_QUESTIONS).toBe(MAX_EXTRA_QUESTIONS);
+    const many = (n: number, prefix: string): ExtraQuestion[] => Array.from({ length: n }, (_, i) => ({ key: `${prefix}${i}`, text: `${prefix} ${i}?`, kind: "yes_no" }));
+    // The chosen PEO's 30, and the most a request can name of another's.
+    const big = [
+      { peo: { id: 3, name: "TriNet" }, questions: many(30, "t"), requested: new Set<string>() },
+      { peo: { id: 4, name: "Oasis" }, questions: many(INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS, "o"), requested: new Set<string>() },
+    ];
+    const yes = (q: ExtraQuestion) => answer({ question: q.text });
+    const first = extraQuestionsForLenore(big, {});
+    expect(first).toHaveLength(40);
+    expect(first.map((q) => q.id)).toEqual([...many(30, "t").map((q) => `3.${q.key}`), ...many(10, "o").map((q) => `4.${q.key}`)]);
+    // With TriNet's all answered, Oasis's 60 still open come first: 40 of them, none answered.
+    const trinetDone = { "3": Object.fromEntries(many(30, "t").map((q) => [q.key, yes(q)])) };
+    expect(extraQuestionsForLenore(big, trinetDone).every((q) => !q.answered && q.peo === "Oasis")).toBe(true);
+    // With 5 left open in all, those 5 are sent, in the PEOs' order, with 35 answered ones.
+    const fiveOpen = { ...trinetDone, "4": Object.fromEntries(many(55, "o").map((q) => [q.key, yes(q)])) };
+    const sent = extraQuestionsForLenore(big, fiveOpen);
+    expect(sent).toHaveLength(40);
+    expect(sent.filter((q) => !q.answered).map((q) => q.id)).toEqual(["4.o55", "4.o56", "4.o57", "4.o58", "4.o59"]);
+    expect(sent.map((q) => q.id).slice(0, 2)).toEqual(["3.t0", "3.t1"]);
   });
 
   it("takes what she heard as a field takes it: inferred unless stated, spoken never confirmed, a prospect's own answer never overwritten", async () => {
@@ -104,5 +140,17 @@ describe("askedPeos: whose extra questions the intake asks", () => {
     ]);
     expect(asked.map((a) => [a.peo.name, [...a.requested]])).toEqual([["TriNet", []], ["Justworks", ["union"]]]);
     expect(askedPeos(catalog, null)).toEqual([]);
+  });
+
+  it("asks of a PEO the prospect didn't choose only the questions the request names; of the chosen PEO, all of them", async () => {
+    const { askedPeos, extraQuestionsForLenore } = await import("./extraAnswers");
+    const asked = askedPeos(catalog, "justworks", [
+      { peo_id: 5, key: "vehicles", question: drives.text },
+      { peo_id: 3, key: "union", question: union.text },
+    ]);
+    expect(asked.map((a) => [a.peo.name, a.questions.map((q) => q.key)])).toEqual([["Justworks", ["union"]], ["TriNet", ["vehicles"]]]);
+    expect(extraQuestionsForLenore(asked, {}).map((q) => q.id)).toEqual(["3.union", "5.vehicles"]);
+    // A request naming none of another PEO's questions as they are worded now asks none of them.
+    expect(askedPeos(catalog, "justworks", [{ peo_id: 5, key: "vehicles", question: "Old wording?" }]).map((a) => a.peo.name)).toEqual(["Justworks"]);
   });
 });

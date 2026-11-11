@@ -1052,6 +1052,18 @@ describe("AdvisorSubmissionPage", () => {
       expect(within(justworks).queryByRole("button", { name: /Additional questions/ })).not.toBeInTheDocument();
     });
 
+    it("can't tell a PEO's own questions from a version certified before they were kept, in the list and the supplement", async () => {
+      const drives = { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" };
+      peoCatalogRows = catalog().map((p) => (p.name === "TriNet" ? { ...p, profile: { ...p.profile!, extra_questions: [drives] } } : p));
+      api.loadSubmission.mockResolvedValue(detail({ extraAnswers: null }));
+      renderPage();
+      const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Show what's missing" }));
+      expect(within(trinet).getByRole("region", { name: "Needed to quote" })).toHaveTextContent("Do employees drive for work?: can't tell: certified before these questions were kept");
+      expect(trinet).toHaveTextContent("Version 1 was certified before we kept the answers to TriNet's own questions, so we can't tell them from it.");
+      expect(within(trinet).queryByRole("button", { name: /Additional questions/ })).not.toBeInTheDocument();
+    });
+
     it("opens what a PEO still needs in place: what it needs to quote, and apart what it needs only before signing", async () => {
       renderPage();
       const needs = await panel();

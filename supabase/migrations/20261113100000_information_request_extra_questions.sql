@@ -100,7 +100,8 @@ BEGIN
       RAISE EXCEPTION 'Not a question that PEO''s profile asks, as worded: %', q ->> 'question' USING ERRCODE = '22023';
     END IF;
   END LOOP;
-  IF (SELECT count(*) FROM jsonb_array_elements(questions)) <> (SELECT count(DISTINCT (x ->> 'peo_id', x ->> 'key')) FROM jsonb_array_elements(questions) x) THEN
+  -- The PEO compared as a number, so 5 and 5.0 are the same PEO.
+  IF (SELECT count(*) FROM jsonb_array_elements(questions)) <> (SELECT count(DISTINCT ((x ->> 'peo_id')::numeric, x ->> 'key')) FROM jsonb_array_elements(questions) x) THEN
     RAISE EXCEPTION 'A request names each question once' USING ERRCODE = '22023';
   END IF;
 

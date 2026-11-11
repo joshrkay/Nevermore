@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
 import type { IntakeState, ProvenanceMap } from "@/data/provenance";
@@ -124,6 +124,12 @@ const lenore = (id: string, text: string): ChatMessage => ({ id, sender: "lenore
 const prospect = (id: string, text: string): ChatMessage => ({ id, sender: "user", text, timestamp: "" });
 
 describe("ChamberPage", () => {
+  // Shared with every test, so put back whether a test passes or fails.
+  afterEach(() => {
+    session.chosenPeo = null;
+    peoCatalog = [];
+  });
+
   beforeEach(() => {
     session.sessionId = null;
     session.resumeFailed = false;
@@ -328,8 +334,6 @@ describe("ChamberPage", () => {
       hooks.chat!.onExtracted({}, { extra_answers: [{ id: "5.vehicles", value: true, field_status: "confirmed" }] }, { ...spoken, spoken: true });
       const update = session.updateExtraAnswers.mock.calls[0][0] as (prev: object) => Record<string, Record<string, { value: unknown; status: string }>>;
       expect(update({})["5"].vehicles).toMatchObject({ question: "Do employees drive for work?", value: true, status: "inferred" });
-      session.chosenPeo = null;
-      peoCatalog = [];
     });
 
     it("merges a chat extraction with its provenance", () => {

@@ -1343,124 +1343,132 @@ export function useChamberSession(requestedSessionId?: string | null): UseChambe
     }
   }, []);
 
-  const submit = useCallback((submission: CertificationRequest, signedDataKey?: string) => enqueue(async (): Promise<boolean | SubmitFailure> => {
-    const sid = sessionIdRef.current;
-    if (!sid) return false;
-    if (stopsSaving(blockRef.current)) return blockedMessage();
-    lastSaveFailureRef.current = null;
-    if (!(await saveNow())) {
-      // A save the prospect has to act on says why; one that failed for a reason worth retrying gets an error code they
-      // can quote, as any other unexplained failure does (QA F2), not the bare generic message.
-      return blockedMessage() || unexplainedFailure(lastSaveFailureRef.current ?? "the save before certifying failed", sid);
-    }
-    // A token minted before the prospect verified their email (in another tab, say) is still a guest's, which the
-    // database refuses: refresh it first. Still a guest's after that, they have to verify (QA F2).
-    if ((await ensureSignerToken(supabase.auth)) === "guest") return { message: VERIFY_EMAIL_MESSAGE, verifyEmail: true };
-    // Answers edited while the autosave was finishing were not what the prospect signed.
-    if (signedDataKey !== undefined && JSON.stringify(dataRef.current) !== signedDataKey) return false;
-    const version = versionRef.current;
-    if (version === null) {
-      console.error("Failed to submit session: the saved version of this intake is unknown");
-      return false;
-    }
-    const signedData = dataRef.current;
-    // Sent without a File ID: the database assigns it (C-3.1). Once the certification lands, its stamped copy is
-    // what the prospect sees.
-    const sent: CertificationRequest = { ...submission, chamber_data: signedData, field_provenance: provenanceRef.current };
-    let certifiedSubmission: ChamberSubmission | null = null;
-    let assigned: string | null = null;
-    const storedData = asStored(signedData);
-    const isOwnSubmission = matchesSubmission(submission, storedData);
-    savingRef.current = true;
-    let outcome: Reconciled | null = null;
-    let updated: { data_version: number; status: string; submission?: unknown; file_id?: string | null }[] | null = null;
-    let error: (Error & { code?: string; details?: string | null }) | null = null;
-    try {
-      try {
-        ({ data: updated, error } = await supabase
-          .from("chamber_sessions")
-          .update({
-            status: "submitted",
-            // Written alongside the certified copy so the two always agree, even when the saved row
-            // predates fields that loading fills in (the database requires them to be identical).
-            chamber_data: signedData as unknown as Json,
-            submission: sent as unknown as Json,
-          })
-          .eq("id", sid)
-          .eq("data_version", version)
-          .select(CERTIFIED_COLUMNS) as unknown as { data: typeof updated; error: typeof error });
-      } catch (thrown) {
-        error = thrown as typeof error;
+  const submit = useCallback((submission: CertificationRequest, signedDataKey?: string) => {
+    // The extra answers as they stand when the prospect certifies: the certification covers them as stored, so they
+    // must still be these when it is sent.
+    const signedExtraKey = JSON.stringify(extraAnswersRef.current);
+    return enqueue(async (): Promise<boolean | SubmitFailure> => {
+      const sid = sessionIdRef.current;
+      if (!sid) return false;
+      if (stopsSaving(blockRef.current)) return blockedMessage();
+      lastSaveFailureRef.current = null;
+      if (!(await saveNow())) {
+        // A save the prospect has to act on says why; one that failed for a reason worth retrying gets an error code they
+        // can quote, as any other unexplained failure does (QA F2), not the bare generic message.
+        return blockedMessage() || unexplainedFailure(lastSaveFailureRef.current ?? "the save before certifying failed", sid);
       }
-      if (!error && (!updated || updated.length === 0)) {
-        // Matched no row: someone else saved first, or our own submission landed and its response was lost.
-        outcome = await reconcile(sid, version, isOwnSubmission);
-      }
-    } finally {
-      savingRef.current = false;
-    }
-    if (!error && updated && updated.length > 0) {
-      if (updated[0].status !== "submitted") {
-        console.error("Failed to submit session: the server did not record it as submitted", updated[0].status);
+      // A token minted before the prospect verified their email (in another tab, say) is still a guest's, which the
+      // database refuses: refresh it first. Still a guest's after that, they have to verify (QA F2).
+      if ((await ensureSignerToken(supabase.auth)) === "guest") return { message: VERIFY_EMAIL_MESSAGE, verifyEmail: true };
+      // Answers edited while the autosave was finishing were not what the prospect signed. Nor were extra answers that
+      // changed since (Lenore's reply landing, say): the database would certify the older ones it holds, and the next
+      // autosave would withdraw that while the page showed it certified.
+      if (signedDataKey !== undefined && JSON.stringify(dataRef.current) !== signedDataKey) return false;
+      if (JSON.stringify(extraAnswersRef.current) !== signedExtraKey) return false;
+      const version = versionRef.current;
+      if (version === null) {
+        console.error("Failed to submit session: the saved version of this intake is unknown");
         return false;
       }
-      adoptVersion(sid, updated[0].data_version);
-      // The database stamps the File ID, the version and the documents onto the submission: show its copy.
-      const stamped = certificationFromRow(updated[0].status, updated[0].submission);
-      if (stamped.status === "certified") certifiedSubmission = stamped.submission;
-      assigned = fileIdOf({ file_id: updated[0].file_id ?? null, submission: (updated[0].submission ?? null) as Json | null });
-      if (assigned && mountedRef.current) setFileId(assigned);
-    } else if (error?.code === INVALID_DATA_CODE) {
-      markInvalid(error);
-      return blockedMessage();
-    } else if (error?.code === CLOSED_INTAKE_CODE) {
-      if (error.details === "expired") markExpired();
-      else markMissing();
-      return blockedMessage();
-    } else if (error?.code === NOT_READY_CODE) {
-      // A definite refusal: nothing changed, and saving goes on as before.
-      const missing = describeRequiredKeys(error.details);
-      return { message: `Add ${missing.length > 0 ? missing.join(", ").toLowerCase() : "the required answers"} on the Review tab, then certify.` };
-    } else if (error?.code === CONFLICTING_CODE) {
-      // As definite as a missing answer: nothing changed.
-      const conflicting = describeRequiredKeys(error.details);
-      return { message: `Choose one answer for ${conflicting.length > 0 ? conflicting.join(", ").toLowerCase() : "each answer given twice"} on the Review tab, then certify.` };
-    } else if (isGuestCertificationRefusal(error)) {
-      // As definite: nothing changed. The database still calls this sign-in a guest's, even after the refresh above.
-      return { message: VERIFY_EMAIL_MESSAGE, verifyEmail: true };
-    } else if (error) {
-      // It may have landed anyway; a later write has to be able to tell.
-      rememberUnconfirmed(version, { submitted: submission, chamber_data: storedData }, isOwnSubmission);
-      outcomeUnknownRef.current = true;
-      return unexplainedFailure(error, sid);
-    } else if (outcome?.kind === "own" || outcome?.kind === "earlier") {
-      adoptVersion(sid, outcome.row.data_version);
-      // The certification on record, as the database stamped it: for a lost response, that is the one to show.
-      const recorded = certificationFromRow(outcome.row.status, outcome.row.submission);
-      if (outcome.kind === "earlier" && recorded.status !== "certified") return false; // not a certification: certifying again, from the new version, works
-      if (recorded.status === "certified") certifiedSubmission = recorded.submission;
-      assigned = fileIdOf(outcome.row);
-      if (assigned && mountedRef.current) setFileId(assigned);
-    } else if (outcome?.kind === "conflict") {
-      markConflict(outcome.row);
-      return blockedMessage();
-    } else if (outcome?.kind === "missing") {
-      markMissing();
-      return blockedMessage();
-    } else if (outcome?.kind === "expired") {
-      markExpired();
-      return blockedMessage();
-    } else {
-      outcomeUnknownRef.current = true;
-      return unexplainedFailure(outcome?.kind === "unreadable" ? outcome.error : "no row was updated", sid);
-    }
-    const certified: CertificationState = { status: "certified", submission: certifiedSubmission ?? { ...sent, file_id: assigned ?? "" } };
-    certificationRef.current = certified;
-    setCertification(certified);
-    // The notifications were queued with the submission; this just sends them promptly.
-    dispatchOutbox();
-    return true;
-  }), [adoptVersion, blockedMessage, enqueue, markConflict, markExpired, markInvalid, markMissing, reconcile, rememberUnconfirmed, saveNow]);
+      const signedData = dataRef.current;
+      // Sent without a File ID: the database assigns it (C-3.1). Once the certification lands, its stamped copy is
+      // what the prospect sees.
+      const sent: CertificationRequest = { ...submission, chamber_data: signedData, field_provenance: provenanceRef.current };
+      let certifiedSubmission: ChamberSubmission | null = null;
+      let assigned: string | null = null;
+      const storedData = asStored(signedData);
+      const isOwnSubmission = matchesSubmission(submission, storedData);
+      savingRef.current = true;
+      let outcome: Reconciled | null = null;
+      let updated: { data_version: number; status: string; submission?: unknown; file_id?: string | null }[] | null = null;
+      let error: (Error & { code?: string; details?: string | null }) | null = null;
+      try {
+        try {
+          ({ data: updated, error } = await supabase
+            .from("chamber_sessions")
+            .update({
+              status: "submitted",
+              // Written alongside the certified copy so the two always agree, even when the saved row
+              // predates fields that loading fills in (the database requires them to be identical).
+              chamber_data: signedData as unknown as Json,
+              submission: sent as unknown as Json,
+            })
+            .eq("id", sid)
+            .eq("data_version", version)
+            .select(CERTIFIED_COLUMNS) as unknown as { data: typeof updated; error: typeof error });
+        } catch (thrown) {
+          error = thrown as typeof error;
+        }
+        if (!error && (!updated || updated.length === 0)) {
+          // Matched no row: someone else saved first, or our own submission landed and its response was lost.
+          outcome = await reconcile(sid, version, isOwnSubmission);
+        }
+      } finally {
+        savingRef.current = false;
+      }
+      if (!error && updated && updated.length > 0) {
+        if (updated[0].status !== "submitted") {
+          console.error("Failed to submit session: the server did not record it as submitted", updated[0].status);
+          return false;
+        }
+        adoptVersion(sid, updated[0].data_version);
+        // The database stamps the File ID, the version and the documents onto the submission: show its copy.
+        const stamped = certificationFromRow(updated[0].status, updated[0].submission);
+        if (stamped.status === "certified") certifiedSubmission = stamped.submission;
+        assigned = fileIdOf({ file_id: updated[0].file_id ?? null, submission: (updated[0].submission ?? null) as Json | null });
+        if (assigned && mountedRef.current) setFileId(assigned);
+      } else if (error?.code === INVALID_DATA_CODE) {
+        markInvalid(error);
+        return blockedMessage();
+      } else if (error?.code === CLOSED_INTAKE_CODE) {
+        if (error.details === "expired") markExpired();
+        else markMissing();
+        return blockedMessage();
+      } else if (error?.code === NOT_READY_CODE) {
+        // A definite refusal: nothing changed, and saving goes on as before.
+        const missing = describeRequiredKeys(error.details);
+        return { message: `Add ${missing.length > 0 ? missing.join(", ").toLowerCase() : "the required answers"} on the Review tab, then certify.` };
+      } else if (error?.code === CONFLICTING_CODE) {
+        // As definite as a missing answer: nothing changed.
+        const conflicting = describeRequiredKeys(error.details);
+        return { message: `Choose one answer for ${conflicting.length > 0 ? conflicting.join(", ").toLowerCase() : "each answer given twice"} on the Review tab, then certify.` };
+      } else if (isGuestCertificationRefusal(error)) {
+        // As definite: nothing changed. The database still calls this sign-in a guest's, even after the refresh above.
+        return { message: VERIFY_EMAIL_MESSAGE, verifyEmail: true };
+      } else if (error) {
+        // It may have landed anyway; a later write has to be able to tell.
+        rememberUnconfirmed(version, { submitted: submission, chamber_data: storedData }, isOwnSubmission);
+        outcomeUnknownRef.current = true;
+        return unexplainedFailure(error, sid);
+      } else if (outcome?.kind === "own" || outcome?.kind === "earlier") {
+        adoptVersion(sid, outcome.row.data_version);
+        // The certification on record, as the database stamped it: for a lost response, that is the one to show.
+        const recorded = certificationFromRow(outcome.row.status, outcome.row.submission);
+        if (outcome.kind === "earlier" && recorded.status !== "certified") return false; // not a certification: certifying again, from the new version, works
+        if (recorded.status === "certified") certifiedSubmission = recorded.submission;
+        assigned = fileIdOf(outcome.row);
+        if (assigned && mountedRef.current) setFileId(assigned);
+      } else if (outcome?.kind === "conflict") {
+        markConflict(outcome.row);
+        return blockedMessage();
+      } else if (outcome?.kind === "missing") {
+        markMissing();
+        return blockedMessage();
+      } else if (outcome?.kind === "expired") {
+        markExpired();
+        return blockedMessage();
+      } else {
+        outcomeUnknownRef.current = true;
+        return unexplainedFailure(outcome?.kind === "unreadable" ? outcome.error : "no row was updated", sid);
+      }
+      const certified: CertificationState = { status: "certified", submission: certifiedSubmission ?? { ...sent, file_id: assigned ?? "" } };
+      certificationRef.current = certified;
+      setCertification(certified);
+      // The notifications were queued with the submission; this just sends them promptly.
+      dispatchOutbox();
+      return true;
+    });
+  }, [adoptVersion, blockedMessage, enqueue, markConflict, markExpired, markInvalid, markMissing, reconcile, rememberUnconfirmed, saveNow]);
 
   // The fields an advisor verified whose answer is still the one they saw.
   const verifiedFields = useMemo(

@@ -9,6 +9,17 @@ import { buildSupplementPdf } from "@/lib/supplementPdf";
  */
 const SupplementDownload = ({ supplement }: { supplement: Supplement }) => {
   const { rows, notAnswered } = supplement;
+  if (supplement.cantTell) {
+    // A file of blanks would read as "not answered"; the certification simply didn't keep these answers.
+    return (
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium">{supplement.title}</p>
+        <p className="text-xs text-muted-foreground">
+          {`${supplement.version !== null ? `Version ${supplement.version}` : "The certification on record"} was certified before we kept the answers to ${supplement.peo}'s own questions, so we can't tell them from it. Certifying again adds them.`}
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="space-y-1.5">
       <p className="text-sm font-medium">{supplement.title}</p>

@@ -696,6 +696,16 @@ describe("ManuscriptPage", () => {
     expect(packet).not.toHaveTextContent(/Do employees drive|pets at work/);
   });
 
+  it("says it can't tell the answers to the chosen PEO's questions from a certification made before they were kept, and offers no file", async () => {
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] } }];
+    row = certified({ submission: { ...certified().submission, peo: "Justworks" } });
+    renderAt("/manuscript/EAA-2026-0042");
+    const files = await screen.findByRole("region", { name: "Your PEOs' own questions" });
+    expect(files).toHaveTextContent("Version 2 was certified before we kept the answers to Justworks's own questions, so we can't tell them from it. Certifying again adds them.");
+    expect(within(files).queryByText(/not answered/)).not.toBeInTheDocument();
+    expect(within(files).queryByRole("button", { name: /Download/ })).not.toBeInTheDocument();
+  });
+
   it("offers no PEO's questions while the certification is withdrawn", async () => {
     peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] } }];
     row = certified({ status: "in_progress" });

@@ -4,7 +4,8 @@ import type { CertificationRequest, CertificationState } from "@/data/manuscript
 import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance";
 import { resolutionFields, resolveCandidate, type CandidateResolution } from "@/data/documentCandidates";
 import { useSessionDocuments, type SessionDocument } from "@/hooks/useSessionDocuments";
-import { usePeoCatalog } from "@/hooks/usePeoCatalog";
+import { usePeoCatalog, type PeoCatalogStatus } from "@/hooks/usePeoCatalog";
+import type { PeoRecord } from "@/data/peoCatalog";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import UploadTab from "../UploadTab";
@@ -64,6 +65,8 @@ interface LiveWorkspaceProps {
   onExtraAnswers?: (update: (prev: ExtraAnswers) => ExtraAnswers) => void;
   /** The PEOs' own questions the advisor's open request names: their PEO's section is shown too, each marked. */
   requestedQuestions?: readonly ExtraQuestionRef[];
+  /** The PEOs the database lists, when the page already reads them (usePeoCatalog); otherwise PEO Match reads them. */
+  peoCatalog?: { peos: PeoRecord[]; status: PeoCatalogStatus };
 }
 
 const NO_REQUESTED_QUESTIONS: readonly ExtraQuestionRef[] = [];
@@ -72,12 +75,15 @@ const NO_REQUESTED_QUESTIONS: readonly ExtraQuestionRef[] = [];
  * PEO Match over the PEOs the database lists, read when the tab opens, with the chosen PEO's own extra questions under
  * it (Questions from <PEO>).
  */
-const PeoMatchFromDatabase = ({ extraAnswers, onExtraAnswers, requestedQuestions, ...props }: Omit<PEOMatchTabProps, "catalog" | "catalogStatus" | "children"> & {
+const PeoMatchFromDatabase = ({ extraAnswers, onExtraAnswers, requestedQuestions, given, ...props }: Omit<PEOMatchTabProps, "catalog" | "catalogStatus" | "children"> & {
   extraAnswers: ExtraAnswers;
   onExtraAnswers?: LiveWorkspaceProps["onExtraAnswers"];
   requestedQuestions: readonly ExtraQuestionRef[];
+  given: LiveWorkspaceProps["peoCatalog"];
 }) => {
-  const { peos, status } = usePeoCatalog();
+  // Read here only when the page didn't pass the PEOs it already read.
+  const own = usePeoCatalog(given === undefined);
+  const { peos, status } = given ?? own;
   return (
     <PEOMatchTab {...props} catalog={peos} catalogStatus={status}>
       {askedPeos(peos, props.selectedPeo, requestedQuestions).map((asked) => (
@@ -106,6 +112,7 @@ const LiveWorkspace = ({
   extraAnswers = NO_EXTRA_ANSWERS,
   onExtraAnswers,
   requestedQuestions = NO_REQUESTED_QUESTIONS,
+  peoCatalog,
 }: LiveWorkspaceProps) => {
   const onAction = isDemo ? undefined : onFieldAction;
   const [activeTab, setActiveTab] = useState("upload");
@@ -185,6 +192,7 @@ const LiveWorkspace = ({
               extraAnswers={extraAnswers}
               onExtraAnswers={isDemo ? undefined : onExtraAnswers}
               requestedQuestions={requestedQuestions}
+              given={peoCatalog}
             />
           )}
           {activeTab === "reckoning" && (

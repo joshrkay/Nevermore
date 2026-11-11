@@ -153,12 +153,7 @@ describe("chamber-extract handler: the request is checked before anything is spe
     ["a requested field the intake doesn't have", { message: "hi", requested: ["favourite_colour"], session_id: INTAKE }, 400],
     ["a requested field twice", { message: "hi", requested: ["pay_frequency", "pay_frequency"], session_id: INTAKE }, 400],
     ["extra questions that aren't a list", { message: "hi", extra_questions: { id: "5.vehicles" }, session_id: INTAKE }, 400],
-    ["an extra question that isn't one", { message: "hi", extra_questions: [{ id: "5.vehicles", peo: "TriNet", text: "Drive?", kind: "date", answered: false }], session_id: INTAKE }, 400],
-    ["extra questions over 30,000 characters together", {
-      message: "hi",
-      extra_questions: Array.from({ length: 40 }, (_, i) => ({ id: `5.q${i}`, peo: "TriNet", text: "x".repeat(500), kind: "choice", choices: Array.from({ length: 20 }, (_, j) => `${j}`.padEnd(100, "c")), answered: false })),
-      session_id: INTAKE,
-    }, 413],
+    ["more extra questions than the browser ever sends", { message: "hi", extra_questions: Array.from({ length: 41 }, (_, i) => ({ id: `5.q${i}`, peo: "TriNet", text: "Drive?", kind: "yes_no", answered: false })), session_id: INTAKE }, 400],
     ["answers, statuses and messages over 20,000 characters together", {
       message: "hi",
       context: { key_challenges: "x".repeat(9000), business_goals: "y".repeat(9000) },
@@ -291,6 +286,34 @@ describe("chamber-extract handler: what is sent to the model", () => {
     expect(user).toContain(`Captured so far (answers): {"company_name":"Acme"}`);
     expect(user.endsWith(`New user message: ${JSON.stringify('We have 40 "full time" people')}`)).toBe(true);
     expect(JSON.stringify(sent)).not.toContain(INTAKE);
+  });
+
+  it("skips and logs, by id, an extra question it can't ask, and answers the prospect with the rest", async () => {
+    const t = setup();
+    const extra_questions = [
+      { id: "5.vehicles", peo: "TriNet", text: "Do employees drive for work?", kind: "yes_no", answered: false },
+      { id: "5.fleet", peo: "TriNet", text: "How many?", kind: "date", answered: false },
+    ];
+    const response = await read(await handleRequest(post({ message: "hi", extra_questions, session_id: INTAKE }), t.deps));
+    expect(response.status).toBe(200);
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[0].content as string;
+    expect(user).toContain('"id":"5.vehicles"');
+    expect(user).not.toContain('"id":"5.fleet"');
+    expect(t.logs.join("\n")).toContain("EXTRA_QUESTIONS_SKIPPED request=cccccccc-cccc-4ccc-8ccc-cccccccccccc session=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb ids=5.fleet");
+  });
+
+  it("leaves out of this turn, and logs, the extra questions past 30,000 characters together, rather than refusing the call", async () => {
+    const t = setup();
+    const extra_questions = Array.from({ length: 40 }, (_, i) => ({ id: `5.q${i}`, peo: "TriNet", text: "x".repeat(500), kind: "choice", choices: Array.from({ length: 20 }, (_, j) => `${j}`.padEnd(100, "c")), answered: false }));
+    const response = await read(await handleRequest(post({ message: "hi", extra_questions, session_id: INTAKE }), t.deps));
+    expect(response.status).toBe(200);
+    const user = JSON.parse(t.fetchFn.mock.calls[0][1]?.body as string).messages[0].content as string;
+    const line = user.split("\n").find((l) => l.startsWith("PEO extra questions"))!;
+    expect(line.length).toBeLessThanOrEqual(30_000);
+    expect(line).toContain('"id":"5.q0"');
+    expect(line).toContain('"id":"5.q10"');
+    expect(line).not.toContain('"id":"5.q11"');
+    expect(t.logs.join("\n")).toContain("EXTRA_QUESTIONS_SKIPPED request=cccccccc-cccc-4ccc-8ccc-cccccccccccc session=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb ids=5.q11,5.q12");
   });
 
   it("sends a PEO's extra questions as data in the user turn, and returns the answers to them as the questions take them", async () => {

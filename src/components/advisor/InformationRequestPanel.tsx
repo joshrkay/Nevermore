@@ -210,18 +210,21 @@ const InformationRequestPanel = ({
         <div className="pt-2 border-t border-border space-y-3">
           <h3 className="text-xs font-medium text-muted-foreground">Sent to the prospect</h3>
           <ul className="space-y-3">
-            {requests.map((r) => (
-              <li key={r.id} className="text-sm space-y-1">
-                <p className="whitespace-pre-wrap">{r.message}</p>
-                {r.fields.length > 0 && <p className="text-xs text-muted-foreground">About: {r.fields.map(labelOf).join(", ")}</p>}
-                {parseExtraQuestionRefs(r.extra_questions).length > 0 && (
-                  <p className="text-xs text-muted-foreground">Its own questions: {parseExtraQuestionRefs(r.extra_questions).map((q) => q.question).join("; ")}</p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  {actorName(r.requested_by, r.requested_by_email, prospectUserId)} · {formatDateTime(r.requested_at)}
-                </p>
-              </li>
-            ))}
+            {requests.map((r) => {
+              const named = parseExtraQuestionRefs(r.extra_questions);
+              return (
+                <li key={r.id} className="text-sm space-y-1">
+                  <p className="whitespace-pre-wrap">{r.message}</p>
+                  {r.fields.length > 0 && <p className="text-xs text-muted-foreground">About: {r.fields.map(labelOf).join(", ")}</p>}
+                  {named.length > 0 && (
+                    <p className="text-xs text-muted-foreground">Its own questions: {named.map((q) => q.question).join("; ")}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    {actorName(r.requested_by, r.requested_by_email, prospectUserId)} · {formatDateTime(r.requested_at)}
+                  </p>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

@@ -402,7 +402,7 @@ describe("loadSubmission", () => {
     }];
     const d = (await loadSubmission("s1"))!;
     expect(d.certified).toBe(false);
-    expect(d.signed).toEqual({ data: expect.objectContaining({ company_name: "Signed Co", employee_count: 12 }), signedAt: "2026-10-02T00:00:05Z", provenance: {}, documents: expect.any(Array), extraAnswers: {} });
+    expect(d.signed).toEqual({ data: expect.objectContaining({ company_name: "Signed Co", employee_count: 12 }), signedAt: "2026-10-02T00:00:05Z", provenance: {}, documents: expect.any(Array), extraAnswers: null });
     expect(d.fileId).toBe("EAA-1");
   });
 
@@ -429,9 +429,11 @@ describe("loadSubmission", () => {
     const withdrawn = (await loadSubmission("s1"))!;
     expect(withdrawn.extraAnswers).toEqual(drives(false));
     expect(withdrawn.signed?.extraAnswers).toEqual(drives(true));
-    // A certification from before extra answers were kept certified none.
+    // A certification from before extra answers were kept: what it held of them can't be told (null), never "none".
     tables.chamber_certifications = [{ ...tables.chamber_certifications[0] as object, extra_answers: null }];
-    expect((await loadSubmission("s1"))!.signed?.extraAnswers).toEqual({});
+    expect((await loadSubmission("s1"))!.signed?.extraAnswers).toBeNull();
+    tables.chamber_sessions = [row({ extra_answers: drives(false) })];
+    expect((await loadSubmission("s1"))!.extraAnswers).toBeNull();
   });
 
   it("says when the certification on record kept no field status or no document list, so nothing can be told from it", async () => {
