@@ -26,8 +26,10 @@ read at the source before they are relied on. **Fact** means read in the repo or
   2. **A dashboard** that opens on what needs the broker today, across the whole relationship.
   3. **Levels**: a firm, teams inside it, brokers inside those, each seeing their own book and what is under them.
   4. **A subdomain per firm**, where its brokers sign in and its employers arrive.
-- **One pipeline, not two.** An employer's stage in the book is the firm's own until an intake exists, and is read
-  from the intake's **pipeline stage** after. Nothing is kept twice.
+- **Five records: lead, account, contact, opportunity, quote** (section 4.3a). Email with a contact or a PEO goes
+  out from the broker's own mailbox and comes back onto the record it belongs to.
+- **One pipeline, not two.** An opportunity's stage is the firm's own until an intake exists, and is read from the
+  intake's **pipeline stage** after. Nothing is kept twice.
 - **Keep it light.** No email campaigns, no dialler, no commission-split engine, no two-way sync. The quoting is
   what no other CRM has; the book only has to be good enough that a small brokerage needs nothing else, and a firm
   with HubSpot can keep it.
@@ -134,6 +136,54 @@ A lead sees the same for their team, an owner for the firm, each with a table by
 - **What the book never holds:** the FEIN (`docs/adr/0006`: typed into the workspace only), a census, or anything
   about an employee. Those stay in the intake, where the employer owns them.
 
+### 4.3a The five records (founder's direction, 2026-11-12)
+
+This is a business-to-business sale, so the book is a scaled-down CRM with five records and nothing more. It
+replaces the single "book stage" above with a lead status and an opportunity stage.
+
+| Record | What it is | Statuses | In the repo today |
+|---|---|---|---|
+| **Lead** | A person and a business not yet worth an opportunity | New, working, qualified, not a fit (with a reason) | New |
+| **Account** | A business the firm deals with: an **Employer** as the firm knows it | Prospect, client (has a placement), former client; read from its opportunities, never set | New |
+| **Contact** | A person at an account | None | New. The contact invited to an intake becomes its **Prospect** |
+| **Opportunity** | One search for one account, for one start date. It holds at most one intake. Next year's renewal is a new opportunity on the same account | Qualifying, intake under way, in market, quoted, won, lost. From "intake under way" on it is read from the intake's **Pipeline stage** | New; the intake and its pipeline stage are built |
+| **Quote** | One PEO's handling of the opportunity: what was sent, its thread, and what came back | Sent, quoted, declined, closed | Built: this is the glossary's **Quote request**, with the **Quote** the PEO returns on it |
+
+A wording note: the founder's "quote" is the glossary's **quote request**. Screens can say "quote"; the glossary
+keeps the two apart because a PEO can decline without ever quoting.
+
+**Leads.** A lead comes from a CSV, a linked CRM, a referral partner's link, a firm link, or by hand. Qualifying
+it makes an account, a contact and an opportunity in one step, and its emails and notes go with them. A lead that
+isn't a fit is closed with a reason and kept.
+
+**Information flows down.** What the account holds (name, state, headcount, the contact) is written into the
+opportunity's intake as "Your broker entered this", and what the intake's certified version holds goes on every
+quote sent from it. Nothing is typed twice.
+
+**And back up.** Work can start from the quote end: an employer follows a firm link and starts an intake, or a
+broker starts one for a business not in the book. The product then looks for an account or a lead by the person's
+email, the business's web domain, or its name and state.
+
+- One clear match: the intake attaches to it, and a matching lead is qualified.
+- No match: a lead is made from what the intake holds, with the opportunity already on it.
+- More than one, or a weak one: the broker is asked. Nothing is merged by guesswork, as the **Holding list**
+  already works for mail.
+
+**Email goes back and forth through the CRM.**
+
+- A broker writes to a contact or a lead from its page. The message goes out through their own **connected
+  mailbox**, so it is from their address and in their Sent folder.
+- Each conversation has its own reply address, listed first in Reply-To with the broker's own second, exactly as a
+  quote request's **thread** does today. A reply lands on the conversation and in the broker's inbox. The product
+  still never reads a mailbox (`docs/adr/0005`).
+- **One message, shown wherever it belongs.** Mail with a PEO sits on its quote. Mail with a contact sits on the
+  contact. Both also show on the opportunity and the account, in one timeline with notes and status changes.
+  A message is stored once.
+- A reply from an address not seen before is marked as new, as threads do now, and offered as a new contact on
+  that account.
+- This is new work: threads today exist only on quote requests. It is the same machinery (reply addresses,
+  `receive-mail`, scanning, the holding list) pointed at two more kinds of conversation.
+
 ### 4.4 Bringing the book in
 
 In the order to build. Each is useful without the next.
@@ -231,9 +281,12 @@ Recommendation, as tables. Names are for discussion.
 | `firms` | Name, firm address, branding, the visibility setting, an optional parent firm, approval (Q-1.2) |
 | `firm_teams` | Firm, name, parent team, lead |
 | `firm_memberships` | Firm, person, team, role, from and until. Append-only: a change ends one row and adds another |
-| `book_employers` | Firm, owning broker, legal name, trade name, web domain, state, rough headcount, renewal date, the stage before an intake, and the intake once there is one |
-| `book_contacts` | Firm, employer, name, title, email, phone, and where it came from |
-| `book_entries` | Notes, calls and tasks on an employer: who, when, the text, a due date and when done |
+| `leads` | Firm, owning broker, the person, the business, email, phone, where it came from, status, and what it was qualified into |
+| `accounts` | Firm, owning broker, legal name, trade name, web domain, state, rough headcount |
+| `contacts` | Firm, account, name, title, email, phone, and where it came from |
+| `opportunities` | Firm, account, owning broker, target start, the stage before an intake, the intake once there is one, and why it was lost |
+| `conversations` | A thread with a contact or a lead: its reply address and what it belongs to. Quote requests keep the threads they have |
+| `book_entries` | Notes, calls and tasks on a lead, account or opportunity: who, when, the text, a due date and when done |
 | `book_imports` | One row per import: who, when, the source and the counts, so a batch can be undone |
 | `placements` | Employer, PEO, start, renewal date, broker of record, the quote request it came from |
 | `crm_links` | Firm, provider, the token (encrypted, server-side, as `broker_mailboxes` keeps its own), and the last sync |
@@ -294,8 +347,9 @@ arm, the answer may be to separate the two companies. Ask it directly.
 | Slice | What ships | What a broker can do at the end |
 |---|---|---|
 | **1. Firms and addresses** | Firms, memberships, teams, visibility, the firm address, invitations (P-1.1, P-1.2, P-1.4, enlarged) | Invited firms sign in at their own address and see only their own work |
-| **2. The book** | Employers, contacts, notes and tasks, by hand and by CSV, export, the dashboard | Keep their clients here, with no intake needed |
-| **3. Book to quote** | Start intake from an employer with the prefill, the firm link creating book entries, the computed book stage (P-2.1, P-2.2) | Go from a name in the book to a certified intake |
+| **2. The book** | Leads, accounts, contacts and opportunities with their statuses, notes and tasks, by hand and by CSV, export, the dashboard | Keep their leads and clients here, with no intake needed |
+| **3. Book to quote, and back** | Start intake from an opportunity with the prefill; an intake with no account finds or makes one; the opportunity stage read from the intake (P-2.1, P-2.2) | Go from a lead to a certified intake, or from an intake to an account |
+| **3a. Email in the book** | Write to a contact or lead from their page through the connected mailbox; replies return by a reply address; one timeline per account | Carry the whole conversation here |
 | **4. After the quote** | Placements, renewal dates on the dashboard, re-marketing from last year's answers, expected commission (Q-4.1) | Have a reason to come back all year |
 | **5. Bring it from elsewhere** | Google and Microsoft contacts; HubSpot as the first linked CRM | Keep their own CRM and still quote here |
 | **6. Open the door** | Firm sign-up, approval (P-1.3, Q-1.2), a firm's own domain, firms under firms if chosen | Any firm signs up |
