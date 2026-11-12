@@ -175,8 +175,27 @@ account, so the first step is the account:
   operation, headcount and the person who certifies are written to the account and its contacts where those are
   empty, and offered as a change where they differ. The FEIN and the census stay in the intake.
 
-**How it is laid out.** The menu down the left is Home, Leads, Accounts and Settings, with "New quote" above
-them. Everything else hangs off the account:
+**The quoting tool is inside the CRM, and it is the main thing in it** (founder's direction, 2026-11-12). It is
+one product: a broker who only wants to quote uses "New quote" and the Quotes list and never opens a lead; the
+accounts, contacts and opportunities fill in behind them.
+
+"New quote" opens one flow of four steps, over whatever screen the broker is on:
+
+1. **Account.** Pick an existing account or create one from the quote, with its contact.
+2. **Company information.** The intake itself, in the broker's view: company, census, workers' comp, benefits
+   and payroll, documents, certification. What the account holds is already written in; the broker adds what they
+   have and uploads documents, or invites the contact to fill it in with Lenore. Only the employer certifies.
+3. **Choose PEOs.** Each listed PEO with whether the employer fits it, what it still needs, whether the employer
+   has authorized it, and the firm's contact there.
+4. **Review and send.** One email per PEO from the broker's own mailbox, with that PEO's files attached in its
+   own layout.
+
+What comes back lands in the CRM without re-keying: a PEO's reply attaches to its quote, the broker records the
+quote from the email and the document, and the quotes for an opportunity are compared on the same lines. The
+Quotes list is every quote across accounts, including ones not yet sent.
+
+**How it is laid out.** The menu down the left is Home, Quotes, Leads, Accounts and Settings, with "New quote"
+above them. Everything else hangs off the account:
 
 - **Accounts** is a table: account, main contact, open opportunity and its stage, quotes, renewal, employees,
   owner, last activity. Saved views across the top (open opportunities, waiting on quotes, renewing in 120 days,
