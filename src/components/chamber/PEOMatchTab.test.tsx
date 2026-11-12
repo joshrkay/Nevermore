@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import { parsePeoCatalog } from "@/data/peoProfiles";
@@ -17,8 +17,6 @@ const renderTab = (selectedPeo: string | null = null) => {
 describe("PEOMatchTab", () => {
   // Whether a profile is out of date goes by the reader's today: pinned, so every test reads the same day.
   beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date(2026, 10, 11, 12));
   });
   afterEach(() => vi.useRealTimers());
 
@@ -150,6 +148,10 @@ describe("PEOMatchTab", () => {
   });
 
   it("still offers a PEO whose profile is out of date, with a warning that says when it was last checked", () => {
+    // Today is fixed, so "180 days ago" stays the boundary whatever day the suite runs.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
+    onTestFinished(() => { vi.useRealTimers(); });
     const profile = (checked: string) => ({ version: 1, min_headcount: 5, sources: { min_headcount: { kind: "document", name: "Broker guide", checked_on: checked } } });
     const catalog = parsePeoCatalog([
       { id: 1, name: "Justworks", profile: profile("2026-05-15") },

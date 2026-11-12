@@ -42,11 +42,70 @@ describe("workersCompApplication: what the certified answers hold, and blanks fo
       { label: "Number of FEINs", value: "1" },
       { label: "More than one legal entity", value: "No" },
       { label: "Type of entity", value: null },
-      { label: "Mailing address", value: null },
+      { label: "Street address", value: null },
       { label: "Headquarters state", value: "CA" },
       { label: "Contact name, phone and email", value: null },
-      { label: "Years in business", value: null },
+      { label: "Year founded", value: null },
       { label: "Website", value: null },
+    ]);
+  });
+
+  it("fills the applicant's identity from the company answers schema v3 added: the FEIN in full, as the packet prints it (ADR 0006)", () => {
+    const app = workersCompApplication(source(
+      { company_name: "Acme Bakery LLC", fein: "123456789", entity_type: "llc", street_address: "1 Sample Street, Oakland, CA 94612", year_founded: 2015, website: "acme.example" },
+      { street_address: { status: "inferred", ...by } },
+    ));
+    expect(section(app, "Applicant")).toEqual(expect.arrayContaining([
+      { label: "FEIN", value: "12-3456789" },
+      { label: "Type of entity", value: "LLC" },
+      { label: "Street address", value: "1 Sample Street, Oakland, CA 94612 (not confirmed by the prospect)" },
+      { label: "Year founded", value: "2015" },
+      { label: "Website", value: "acme.example" },
+    ]));
+    expect(app.blanks).not.toContain("Applicant: FEIN");
+  });
+
+  it("lists the owners and officers the certified answers hold, and whether each is covered, never guessing a missing cell", () => {
+    const owners = section(workersCompApplication(source({
+      owners_officers: [
+        { name: "Dana Sample", title: "President", ownership_percent: 60, duties: "Runs the bakery", covered: true },
+        { name: "Sam Sample", title: "Secretary", covered: false },
+        { name: "Lee Sample" },
+        { title: "Treasurer", covered: true },
+      ],
+    })), "Owners and officers");
+    expect(owners).toEqual([
+      { label: "Names, titles and share owned", value: "Dana Sample, President, owns 60%, duties: Runs the bakery; Sam Sample, Secretary, share owned not stated; Lee Sample, title not stated, share owned not stated; name not stated, Treasurer, share owned not stated" },
+      { label: "Included in or excluded from coverage", value: "Dana Sample: included; Sam Sample: excluded; Lee Sample: not stated; Name not stated: included" },
+    ]);
+    const unconfirmed = section(workersCompApplication(source({ owners_officers: [{ name: "Dana Sample", title: "President", ownership_percent: 100, covered: true }] }, { owners_officers: { status: "inferred", ...by } })), "Owners and officers");
+    expect(unconfirmed[0].value).toBe("Dana Sample, President, owns 100% (not confirmed by the prospect)");
+    const none = section(workersCompApplication(source({}, { owners_officers: { status: "not_applicable", ...by } })), "Owners and officers");
+    expect(none).toEqual([{ label: "Names, titles and share owned", value: "Doesn't apply" }, { label: "Included in or excluded from coverage", value: "Doesn't apply" }]);
+  });
+
+  it("lists the loss history the certified answers hold, newest year first, a year without coverage said so", () => {
+    const prior = section(workersCompApplication(source({
+      loss_history: [
+        { policy_year: 2024, no_coverage: true },
+        { policy_year: 2025, carrier: "Sample Mutual", premium: 18400, experience_mod: 0.92, claims: 2, paid: 5000, reserved: 1000, valuation_date: "2026-01-15" },
+        { policy_year: 2023, carrier: "Other Mutual", claims: 0 },
+        { premium: 9000, paid: 200 },
+        { policy_year: 2022, carrier: "Old Mutual", claims: 1 },
+      ],
+    })), "Prior carriers and loss history");
+    expect(prior.slice(5)).toEqual([
+      { label: "Carriers, premiums and modifications in the past five years", value: "2025: Sample Mutual, premium $18,400, mod 0.92; 2024: no coverage; 2023: Other Mutual, premium not stated, mod not stated; 2022: Old Mutual, premium not stated, mod not stated; Year not stated: carrier not stated, premium $9,000, mod not stated" },
+      { label: "Claims in the past five years", value: "2025: 2 claims, $5,000 paid, $1,000 reserved, valued as of 2026-01-15; 2024: no coverage; 2023: no claims; 2022: 1 claim; Year not stated: claims not stated, $200 paid" },
+    ]);
+  });
+
+  it("describes the business from the operations and industry code answers", () => {
+    const nature = section(workersCompApplication(source({ industry: "Bakery", operations_description: "Bakes and sells bread", naics_code: "311811" })), "Nature of business");
+    expect(nature).toEqual([
+      { label: "Industry, as the prospect described it", value: "Bakery" },
+      { label: "Description of operations", value: "Bakes and sells bread" },
+      { label: "Industry code (NAICS or SIC)", value: "311811 · Retail Bakeries" },
     ]);
   });
 
@@ -98,7 +157,7 @@ describe("workersCompApplication: what the certified answers hold, and blanks fo
     const listed = app.sections.flatMap((s) => s.entries.filter((e) => e.value === null).map((e) => `${s.title}: ${e.label}${e.note ? ` (${e.note})` : ""}`));
     expect(app.blanks).toEqual(listed);
     expect(app.intakeGaps).toBe(
-      "The intake doesn't ask most of what a workers' comp application needs yet, such as owners and officers, addresses and loss history, so much of this is blank. Fill the blanks in with the employer before sending.",
+      "The intake doesn't ask everything a workers' comp application needs, such as a DBA, a contact or the policy number, so some of this is blank. Fill the blanks in with the employer before sending.",
     );
   });
 

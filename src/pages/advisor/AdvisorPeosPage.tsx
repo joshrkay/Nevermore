@@ -12,7 +12,7 @@ import AddPeoForm from "@/components/advisor/peos/AddPeoForm";
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; peos: PeoDirectoryEntry[]; isAdmin: boolean };
 
 /**
- * The PEOs and their requirement profiles (L-1.2, docs/adr/0003). Every advisor reads each PEO's profile in use,
+ * The PEOs and their requirement profiles (L-1.2, docs/adr/0010). Every advisor reads each PEO's profile in use,
  * where and when each part was checked, and its history. Admins also add PEOs, edit a profile section by section into
  * a draft, review and publish it, record a re-check, and take a PEO off the list or put it back. The database refuses
  * every write from anyone else.

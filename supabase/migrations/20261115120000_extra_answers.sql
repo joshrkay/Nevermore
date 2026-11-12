@@ -1,6 +1,6 @@
 -- The answers to a PEO's own extra questions (joshrkay/Nevermore#91, L-2.3).
 --
--- A requirement profile can ask up to 30 questions of its own (20261111090000). The intake asks them for the PEO the
+-- A requirement profile can ask up to 30 questions of its own (20261115090000). The intake asks them for the PEO the
 -- prospect chose, and for another PEO when an advisor's information request names them. Their answers are kept with
 -- the intake, beside the answers to its fields, in chamber_sessions.extra_answers:
 --
@@ -33,9 +33,9 @@ ALTER TABLE public.chamber_certifications ADD COLUMN IF NOT EXISTS extra_answers
 COMMENT ON COLUMN public.chamber_sessions.extra_answers IS
   'Answers to PEOs'' own extra questions, by PEO id then question key, each with the wording answered, its kind, value, field status and source.';
 COMMENT ON COLUMN public.chamber_certifications.extra_answers IS
-  'The extra answers exactly as certified. Null on a certification recorded before 20261113090000.';
+  'The extra answers exactly as certified. Null on a certification recorded before 20261115120000.';
 COMMENT ON COLUMN public.chamber_certifications.extra_answers_sha256 IS
-  'SHA-256 (hex) of the extra answers as certified, set by the database beside data_sha256, which covers chamber_data only and is computed as before. Null before 20261113090000.';
+  'SHA-256 (hex) of the extra answers as certified, set by the database beside data_sha256, which covers chamber_data only and is computed as before. Null before 20261115120000.';
 
 -- ---------- What an answer may hold ----------
 

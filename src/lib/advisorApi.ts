@@ -595,6 +595,13 @@ export const assignHeldMessage = (messageId: number, quoteRequestId: number) =>
 /** An admin discards a held message and its files. Nobody is told. */
 export const discardHeldMessage = (messageId: number) => heldMail({ action: "discard", message_id: messageId }, "Couldn't discard the message.");
 
+/** Whether the signed-in advisor is also an admin (held mail, organisations, editing PEO profiles). The database checks it again on every write. */
+export async function fetchIsAdmin(): Promise<boolean> {
+  const { data, error } = await supabase.rpc("has_role", { _role: "admin" });
+  if (error) fail(error, "Couldn't check admin access.");
+  return data === true;
+}
+
 /** A quote request an admin can assign held mail to: its PEO and employer, and the address it once had. */
 export interface AssignableRequest {
   id: number;
@@ -791,6 +798,7 @@ export async function documentFile(doc: Pick<UploadedDocument, "storage_path">):
   if (error || !data) throw new AdvisorApiError("Couldn't open that file.");
   return data;
 }
+
 /** A signed link to an attachment on PEO mail, which only a scanned-clean one has a file for. */
 export const mailAttachmentUrl = (a: { storage_path: string | null; file_name: string }) => {
   if (!a.storage_path) throw new AdvisorApiError("That file isn't stored: it was blocked, not kept, or is still being checked.");
@@ -847,12 +855,7 @@ export async function saveManuscriptVersion(opts: {
 
 // ---------- PEOs and their requirement profiles (L-1.2, the PEOs page) ----------
 
-/** Whether the signed-in advisor is also an admin: only admins edit profiles. The database checks it again on every write. */
-export async function fetchIsAdmin(): Promise<boolean> {
-  const { data, error } = await supabase.rpc("has_role", { _role: "admin" });
-  if (error) fail(error, "Couldn't check admin access.");
-  return data === true;
-}
+/* fetchIsAdmin (above, with held mail) says whether the signed-in advisor is also an admin: only admins edit profiles. */
 
 /** A PEO on the PEOs page: whether it is listed, and every version an advisor may read (drafts for admins), newest first. */
 export interface PeoDirectoryEntry {

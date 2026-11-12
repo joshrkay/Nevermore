@@ -2,7 +2,7 @@
 --
 -- Some PEOs want the census in their own spreadsheet. An admin uploads it to the census layout section of a draft
 -- profile on /advisor/peos, and the layout names it (census_layout.template_file, checked in
--- 20261111090000: { id, sheet, header_row, first_row }); the census is then written under its headers. The template
+-- 20261115090000: { id, sheet, header_row, first_row }); the census is then written under its headers. The template
 -- is an upload like any other (docs/adr/0002): scanned before anyone can use it.
 --
 -- * public.peo_census_templates: one row per uploaded template, never edited or deleted, as the profile versions

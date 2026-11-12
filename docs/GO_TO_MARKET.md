@@ -67,7 +67,7 @@ saying something in public.
 | The malware scanner account is not opened | Production refuses uploads until it is, so there is no census, and the census is the core of the packet | D13 |
 | The sender domain is not verified | Without it, nobody gets sign-in codes, Confirmations or Advisor Alerts | D7 |
 | `PROSPECT_RESPONSE_TIME` and `SUPPORT_EMAIL` are unset | The Confirmation isn't sent. The response time is a promise to every prospect, so it is a GTM decision (section 7.3) | `docs/NOTIFICATIONS.md` |
-| The PEO catalog holds no facts | PEO Match says "Not yet confirmed" for every eligibility check, so advisors can't sort submissions by fit | The PEOs' requirement profiles (`peo_profile_versions`, docs/adr/0003): none is published yet |
+| The PEO catalog holds no facts | PEO Match says "Not yet confirmed" for every eligibility check, so advisors can't sort submissions by fit | The PEOs' requirement profiles (`peo_profile_versions`, docs/adr/0010): none is published yet |
 | No alert channel or on-call | A pilot failure would go unnoticed | H-4.1 to H-4.3 |
 
 ### 1.3 Rules our marketing has to keep

@@ -1,4 +1,4 @@
--- The class codes each of a PEO's excluded industries covers (joshrkay/Nevermore#91, L-2.1, docs/adr/0003): the
+-- The class codes each of a PEO's excluded industries covers (joshrkay/Nevermore#91, L-2.1, docs/adr/0010): the
 -- eligibility check compares them with the census's workers' comp class codes. A PEO words its industry exclusions
 -- in its own way ("Roofing", "Cannabis dispensaries"); that wording stays in excluded_industries for people to read,
 -- and the intake's industry, which is free text, is never matched against it. An industry with no codes mapped is
@@ -61,7 +61,7 @@ CREATE TRIGGER peo_profile_versions_industry_codes
   BEFORE INSERT OR UPDATE ON public.peo_profile_versions
   FOR EACH ROW EXECUTE FUNCTION public.check_peo_industry_codes();
 
--- As 20261111090000 wrote it, taking the mapping too.
+-- As 20261115090000 wrote it, taking the mapping too.
 CREATE OR REPLACE FUNCTION public.admin_save_peo_profile(p_peo_id bigint, p_profile jsonb, p_draft_revision uuid, p_in_use_version integer)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -154,7 +154,7 @@ BEGIN
 END;
 $$;
 
--- As 20261111100000 wrote it, carrying the mapping into the new version.
+-- As 20261115100000 wrote it, carrying the mapping into the new version.
 CREATE OR REPLACE FUNCTION public.admin_recheck_peo_profile(p_peo_id bigint, p_sources jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql

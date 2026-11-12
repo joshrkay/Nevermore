@@ -105,8 +105,8 @@ export function buildUserPrompt(turn: UserTurn): string {
     `Not yet settled, most important first: ${next.length > 0 ? next.map((f) => `${f.key} (${f.label})${asked.has(f.key) ? ` ${ADVISOR_ASKED}` : ""}`).join(", ") : "none"}`,
     `Ready to certify: ${ready ? "yes" : "no"}`,
     `Employee census: ${census.rows > 0 ? `uploaded, ${census.rows} rows` : "not uploaded"}`,
-    ...(extraLine ? [extraLine] : []),
     `Entered in the workspace, never asked for in chat: ${workspace.length > 0 ? workspace.map((f) => `${f.key} (${describeWorkspaceAnswer(f)})${f.requested ? ` ${ADVISOR_ASKED}` : ""}`).join(", ") : "none"}`,
+    ...(extraLine ? [extraLine] : []),
     `Recent conversation, oldest first: ${recentJson}`,
     `New user message: ${JSON.stringify(turn.message)}`,
   ].join("\n\n");

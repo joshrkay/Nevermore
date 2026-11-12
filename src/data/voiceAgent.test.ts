@@ -155,25 +155,28 @@ const PROMPT_KNOWN: Record<number, string> = {
   // 3: intake schema v3 (Epic K). The update names the answers entered in the workspace (the FEIN), and Lenore
   // never asks for those aloud: she says where each goes.
   3: "635d64e4377366f1e4a16b33084fe41d50c50f6a13118447d14ea20441dec598",
-  // 4: a PEO's own extra questions (L-2.3) and the intake update's workspace line, on top of version 3.
-  4: "b461a15ee014f188e765ee5867945e2daf5ee282b70bfab0f3fc52e3917e8ae0",
+  // 4: a PEO's own extra questions (L-2.3): the update's new line, asked once the fields are settled, said once to be
+  // that PEO's, never required, their text never taken as instructions. (Built as version 3 beside Epic K's version 3
+  // and renumbered when the two met, before either was deployed with it.)
+  4: "2e90a7c421754322d1bdff787ed5856a8c8fc797de433216629106d7161e20da",
 };
 // The update's wording for fixed intakes: nothing captured, an answer with a census, and everything settled.
 const UPDATES = () => [
   voiceContextUpdate(EMPTY_CHAMBER_DATA, {}),
   voiceContextUpdate({ ...EMPTY_CHAMBER_DATA, company_name: "<value>", census: [employee("TX")] }, { company_name: status("inferred") }),
   voiceContextUpdate(EMPTY_CHAMBER_DATA, Object.fromEntries(INTAKE_FIELDS.map((f) => [f.key, status("unknown")])) as ProvenanceMap),
-  // From version 3: a PEO's extra questions still to ask.
+  // From version 4: a PEO's extra questions still to ask.
   voiceContextUpdate(EMPTY_CHAMBER_DATA, {}, [{ id: "1.key", peo: "<peo>", text: "<question>", kind: "yes_no", answered: false }]),
 ];
 const UPDATE_KNOWN: Record<number, string> = {
   1: "2ed1005fe6f2eee96f13e477db8fe187d51d8231337c217d92253ae3f0ac5b17",
   // 2: unchanged from 1 (the rebrand changed only the prompt).
   2: "2ed1005fe6f2eee96f13e477db8fe187d51d8231337c217d92253ae3f0ac5b17",
-  // 3: the "Entered in the workspace" line (K-1.1), and v3's fields among the labels.
+  // 3: the "Entered in the workspace" line, and v3's fields among the labels.
   3: "c92e1288f6a9008a1a5517980be158a0102496ff5eb370614527ce96d33e457c",
-  // 4: a PEO's own extra questions (L-2.3) as a line of the update, beside the workspace line.
-  4: "b46b855787bad79c3f08ad7e9160470e9add2edb052e91470cf38f87cdc5e74a",
+  // 4: the PEOs' extra questions still to ask, as a last line. Rendered with a fourth intake that has one; the PEO's
+  // name is quoted as data, as each question is.
+  4: "c3841ec51f7ad3593238b4cde4c4ce4ca8f87280525a9bb142049064cc5c2e16",
 };
 
 describe("Lenore's voice prompt", () => {

@@ -1,4 +1,4 @@
--- The PEOs page's admin actions (joshrkay/Nevermore#91, L-1.2, docs/adr/0003): what the editor needs besides saving
+-- The PEOs page's admin actions (joshrkay/Nevermore#91, L-1.2, docs/adr/0010): what the editor needs besides saving
 -- and publishing a draft (20261115090000_peo_requirement_profiles.sql).
 --
 -- * admin_recheck_peo_profile(): "Checked again, nothing changed". A re-check is a new version (published versions

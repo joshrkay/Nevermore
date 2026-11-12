@@ -99,14 +99,14 @@ describe("what Lenore is asked, and what she hears", () => {
     const { applyExtraExtraction } = await import("./extraAnswers");
     const now = new Date("2026-11-13T11:00:00Z");
     const typed = { id: "m1", text: "Yes they drive. Teamsters." };
-    const out = applyExtraExtraction({}, asked, { prompt_version: 9, extra_answers: [
+    const out = applyExtraExtraction({}, asked, { prompt_version: 10, extra_answers: [
       { id: "3.vehicles", value: true, field_status: "confirmed", evidence: "Yes they drive" },
       { id: "3.union", value: "Teamsters" },
       { id: "9.other", value: true },
     ] }, typed, now);
     expect(out).toEqual({ "3": {
-      vehicles: { question: drives.text, kind: "yes_no", value: true, status: "confirmed", source: { ...heard("m1", "Yes they drive"), prompt_version: 9 }, updated_at: now.toISOString() },
-      union: { question: union.text, kind: "choice", value: "Teamsters", status: "inferred", source: { ...heard("m1", "Yes they drive. Teamsters."), prompt_version: 9 }, updated_at: now.toISOString() },
+      vehicles: { question: drives.text, kind: "yes_no", value: true, status: "confirmed", source: { ...heard("m1", "Yes they drive"), prompt_version: 10 }, updated_at: now.toISOString() },
+      union: { question: union.text, kind: "choice", value: "Teamsters", status: "inferred", source: { ...heard("m1", "Yes they drive. Teamsters."), prompt_version: 10 }, updated_at: now.toISOString() },
     } });
     // Spoken: at most inferred.
     expect(applyExtraExtraction({}, asked, { extra_answers: [{ id: "3.vehicles", value: true, field_status: "confirmed" }] }, { ...typed, spoken: true }, now)["3"].vehicles.status).toBe("inferred");

@@ -37,7 +37,12 @@ vi.mock("@/integrations/supabase/client", () => ({
     rpc: (...args: unknown[]) => rpc(...args),
     storage: { from: (bucket: string) => {
       buckets.push(bucket);
-      return { upload: (...a: unknown[]) => upload(...a), remove: (...a: unknown[]) => remove(...a), download: (...a: unknown[]) => download(...a), createSignedUrl: (...a: unknown[]) => createSignedUrl(bucket, ...a) };
+      return {
+        upload: (...a: unknown[]) => upload(...a),
+        remove: (...a: unknown[]) => remove(...a),
+        download: (...a: unknown[]) => download(...a),
+        createSignedUrl: (...a: unknown[]) => createSignedUrl(bucket, ...a),
+      };
     } },
   },
 }));

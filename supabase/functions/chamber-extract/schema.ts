@@ -196,12 +196,12 @@ const perField = (schema: unknown) => ({
 // unsettled, re-asks a question the message didn't answer, and adds prospect_stopping (QA F4, F11); 7 puts the
 // fields an advisor asked about first in "Not yet settled", marked, and has Lenore say the advisor asked; 8 is the
 // Nevermore rebrand: Lenore is Nevermore's intake assistant, warm, quick and plain-spoken rather than a gothic,
-// literary advisor, and the app's own names replace the Chamber's. The extraction rules are unchanged. 10 adds a PEO's
-// own extra questions (L-2.3): the user turn may list them as data, Lenore asks them once the intake's fields are
-// settled, saying once whose they are and never that they are required, and the tool reports answers in extra_answers.
-// 10 also brings in intake schema v3 (Epic K): the common questions join the fields, an entity type is one of a listed
-// set, the FEIN and the legal entities are never taken in chat, and the user turn names the answers entered in the
-// workspace so Lenore can say where each goes.
+// literary advisor, and the app's own names replace the Chamber's. The extraction rules are unchanged.
+// 9 is intake schema v3 (Epic K): the common questions join the fields, an entity type is one of a listed set, the
+// FEIN and the legal entities are never taken in chat, and the user turn names the answers entered in the workspace
+// so Lenore can say where each goes. 10 adds a PEO's own extra questions (L-2.3): the user turn may list them as data,
+// Lenore asks them once the intake's fields are settled, saying once whose they are and never that they are required,
+// and the tool reports answers in extra_answers.
 export const PROMPT_VERSION = 10;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");

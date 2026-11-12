@@ -43,6 +43,25 @@ describe("certifiedAnswersDocument: the certified answers as JSON against the pu
     expect(doc.answers_schema).toEqual({ id: "urn:edgar-allan-advisory:intake:chamber-data:v3", version: 3 });
   });
 
+  it("carries the answers schema v3 added as certified, the FEIN in full as the packet prints it (ADR 0006)", () => {
+    const data = parseChamberData({
+      ...DEMO_CHAMBER_DATA,
+      fein: "123456789",
+      naics_code: "541430",
+      owners_officers: [{ name: "Dana Sample", title: "President", ownership_percent: 60, duties: "Runs the studio", covered: true }],
+      loss_history: [{ policy_year: 2025, carrier: "Sample Mutual", claims: 0 }],
+      suta_rates: [{ state: "CA", rate: 3.4, year: 2026 }],
+    });
+    const doc = certifiedAnswersDocument(source({ data }, { fein: { status: "confirmed", ...by }, owners_officers: { status: "confirmed", ...by } }));
+    expect(validateAgainst(published, doc.answers)).toEqual([]);
+    expect(doc.answers.fein).toBe("123456789");
+    expect(doc.answers.naics_code).toBe("541430");
+    expect(doc.answers.owners_officers).toEqual([{ name: "Dana Sample", title: "President", ownership_percent: 60, duties: "Runs the studio", covered: true }]);
+    expect(doc.answers.loss_history).toEqual([{ policy_year: 2025, carrier: "Sample Mutual", claims: 0 }]);
+    expect(doc.answers.suta_rates).toEqual([{ state: "CA", rate: 3.4, year: 2026 }]);
+    expect(doc.answer_status).toMatchObject({ fein: "confirmed", owners_officers: "confirmed", loss_history: null });
+  });
+
   it("names the File ID, the certified version and the certification as the database stamped it", () => {
     const doc = certifiedAnswersDocument(source());
     expect(doc.kind).toBe("certified_intake_answers");

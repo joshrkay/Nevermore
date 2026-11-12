@@ -43,8 +43,8 @@ export function voiceContextUpdate(data: ChamberData, provenance: ProvenanceMap,
     `Ask about next, most important first: ${list(next)}`,
     `Already settled, never ask again: ${list(settled)}`,
     `Employee census: ${census.rows > 0 ? "uploaded" : "not uploaded"}`,
-    ...extraLine(extraQuestions),
     `Entered in the workspace, never ask aloud: ${list(workspace.map(describeWorkspaceAnswer))}`,
+    ...extraLine(extraQuestions),
   ].join("\n");
 }
 

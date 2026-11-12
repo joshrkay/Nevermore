@@ -5,12 +5,13 @@
 // form may be reproduced is the owner's to confirm with counsel.
 //
 // Every entry is an answer the certified version holds, as certified, or a blank that says so: nothing is inferred,
-// defaulted or estimated. Most of what the application asks the intake doesn't collect yet, so most of it is blank
-// today; the blanks are counted and listed at the start, and beside the download, so the advisor knows before
+// defaulted or estimated. What the application asks that the intake doesn't collect (a DBA, a contact, the policy
+// number, the general questions as the application words them) is blank; the blanks are counted and listed at the start, and beside the download, so the advisor knows before
 // sending. The rating table comes from the certified census alone, its pay summed only where the census states it.
 // The same for every PEO: no PEO's profile asks anything else of it yet. Rendered by src/lib/workersCompPdf.ts.
+import { formatAnswer } from "./answerFormat";
 import { isAssumed, type CensusEmployee } from "./census";
-import type { ChamberData } from "./chamberTypes";
+import type { ChamberData, LossYear, OwnerOfficer } from "./chamberTypes";
 import type { CertifiedIntake } from "./peoCompleteness";
 import { formatFieldValue, type FieldKey } from "./provenance";
 
@@ -108,6 +109,46 @@ function answer(intake: WorkersCompSource["intake"], field: FieldKey, label: str
   if (status === "incomplete" && !intake.verified.has(field)) return { label, value: `${value} (incomplete)` };
   return { label, value };
 }
+
+/** The owners and officers as the application lists them: each one's name, title, share owned and duties, a missing one said so. */
+const ownersLine = (rows: readonly OwnerOfficer[]) =>
+  rows.map((o) => [
+    o.name?.trim() || "name not stated",
+    o.title?.trim() || "title not stated",
+    typeof o.ownership_percent === "number" ? `owns ${o.ownership_percent}%` : "share owned not stated",
+    ...(o.duties?.trim() ? [`duties: ${o.duties.trim()}`] : []),
+  ].join(", ")).join("; ");
+
+/** Whether each owner or officer is covered, as the table says: never assumed. */
+const coverageLine = (rows: readonly OwnerOfficer[]) =>
+  rows.map((o) => `${o.name?.trim() || "Name not stated"}: ${o.covered === true ? "included" : o.covered === false ? "excluded" : "not stated"}`).join("; ");
+
+/** Loss history newest policy year first, a row without a year last. */
+const byYear = (rows: readonly LossYear[]) =>
+  [...rows].sort((a, b) => (b.policy_year ?? -Infinity) - (a.policy_year ?? -Infinity));
+const yearOf = (y: LossYear) => (typeof y.policy_year === "number" ? String(y.policy_year) : "Year not stated");
+
+/** Each year's carrier, premium and experience modification, as the loss history states them. */
+const carriersLine = (rows: readonly LossYear[]) =>
+  byYear(rows).map((y) => `${yearOf(y)}: ${y.no_coverage ? "no coverage" : [
+    y.carrier?.trim() || "carrier not stated",
+    typeof y.premium === "number" ? `premium ${money(y.premium)}` : "premium not stated",
+    typeof y.experience_mod === "number" ? `mod ${y.experience_mod}` : "mod not stated",
+  ].join(", ")}`).join("; ");
+
+/** Each year's claims, as the loss history states them: 0 claims is "no claims". */
+const claimsLine = (rows: readonly LossYear[]) =>
+  byYear(rows).map((y) => {
+    if (y.no_coverage) return `${yearOf(y)}: no coverage`;
+    if (y.claims === 0) return `${yearOf(y)}: no claims`;
+    const parts = [
+      typeof y.claims === "number" ? `${y.claims} ${y.claims === 1 ? "claim" : "claims"}` : "claims not stated",
+      ...(typeof y.paid === "number" ? [`${money(y.paid)} paid`] : []),
+      ...(typeof y.reserved === "number" ? [`${money(y.reserved)} reserved`] : []),
+      ...(y.valuation_date?.trim() ? [`valued as of ${y.valuation_date.trim()}`] : []),
+    ];
+    return `${yearOf(y)}: ${parts.join(", ")}`;
+  }).join("; ");
 
 /** Alphabetical, with null (a state or class code the census doesn't give) last. */
 const nullsLast = (a: string | null, b: string | null) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b));
@@ -246,15 +287,16 @@ export function workersCompApplication(from: WorkersCompSource): WorkersCompAppl
       entries: [
         legalName,
         blank("Doing business as (DBA)"),
-        blank("FEIN"),
+        // In full, as the packet prints it: ADR 0006 keeps a FEIN out of the conversation, not from the PEO.
+        answer(intake, "fein", "FEIN", (v) => formatAnswer("fein", v)),
         answer(intake, "fein_count", "Number of FEINs"),
         answer(intake, "multiple_entities", "More than one legal entity"),
-        blank("Type of entity"),
-        blank("Mailing address"),
+        answer(intake, "entity_type", "Type of entity", (v) => formatAnswer("entity_type", v)),
+        answer(intake, "street_address", "Street address"),
         answer(intake, "hq_state", "Headquarters state"),
         blank("Contact name, phone and email"),
-        blank("Years in business"),
-        blank("Website"),
+        answer(intake, "year_founded", "Year founded"),
+        answer(intake, "website", "Website"),
       ],
     },
     {
@@ -267,7 +309,10 @@ export function workersCompApplication(from: WorkersCompSource): WorkersCompAppl
     },
     {
       title: "Owners and officers",
-      entries: [blank("Names, titles and share owned"), blank("Included in or excluded from coverage")],
+      entries: [
+        answer(intake, "owners_officers", "Names, titles and share owned", (v) => ownersLine(v as OwnerOfficer[])),
+        answer(intake, "owners_officers", "Included in or excluded from coverage", (v) => coverageLine(v as OwnerOfficer[])),
+      ],
     },
     {
       title: "Rating by state",
@@ -288,16 +333,16 @@ export function workersCompApplication(from: WorkersCompSource): WorkersCompAppl
         answer(intake, "wc_annual_premium", "Annual premium", (v) => (typeof v === "number" ? money(v) : String(v))),
         answer(intake, "wc_experience_mod", "Experience modification"),
         blank("Policy number"),
-        blank("Carriers, premiums and modifications in the past five years"),
-        blank("Claims in the past five years"),
+        answer(intake, "loss_history", "Carriers, premiums and modifications in the past five years", (v) => carriersLine(v as LossYear[])),
+        answer(intake, "loss_history", "Claims in the past five years", (v) => claimsLine(v as LossYear[])),
       ],
     },
     {
       title: "Nature of business",
       entries: [
         answer(intake, "industry", "Industry, as the prospect described it"),
-        blank("Description of operations"),
-        blank("Industry code (NAICS or SIC)"),
+        answer(intake, "operations_description", "Description of operations"),
+        answer(intake, "naics_code", "Industry code (NAICS or SIC)", (v) => formatAnswer("naics_code", v)),
       ],
     },
     {
@@ -318,7 +363,7 @@ export function workersCompApplication(from: WorkersCompSource): WorkersCompAppl
     fromVersion: version !== null ? `From certified version ${version}` : "From the certification on record",
     changedNotice: from.changedSince ? `The prospect has changed answers since certifying. These files are from version ${version ?? "on record"}.` : null,
     ourOwn: "This is our own summary of the certified answers, laid out in the order of the standard workers' compensation application. It is not the ACORD form, and it is not filled in on it.",
-    intakeGaps: "The intake doesn't ask most of what a workers' comp application needs yet, such as owners and officers, addresses and loss history, so much of this is blank. Fill the blanks in with the employer before sending.",
+    intakeGaps: "The intake doesn't ask everything a workers' comp application needs, such as a DBA, a contact or the policy number, so some of this is blank. Fill the blanks in with the employer before sending.",
     sections,
     ratingTable: ratingTable(census),
     contractorsNote: contractors

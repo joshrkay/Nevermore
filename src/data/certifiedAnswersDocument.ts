@@ -1,8 +1,8 @@
 // The certified answers as a machine-readable file (L-3.3), for a PEO's or an advisor's own system: the File ID, the
 // certified version, the certification as the database stamped it, and the answers, which validate against the
-// published intake schema (docs/intake-schema.v2.json), each with its status as certified. The schema describes
-// chamber_data alone and refuses unknown keys, so everything else sits in the envelope around `answers`; the envelope
-// is described in docs/intake-schema.md, "Certified answers as JSON".
+// current published intake schema (docs/intake-schema.v3.json while INTAKE_SCHEMA_VERSION is 3), each with its status
+// as certified. The schema describes chamber_data alone and refuses unknown keys, so everything else sits in the
+// envelope around `answers`; the envelope is described in docs/intake-schema.md, "Certified answers as JSON".
 //
 // Only what the prospect certified: never a PEO's own questions and answers (they go only to that PEO, in its
 // supplement) and never anything an advisor wrote or did (notes, reviews, corrections, verifications). Built from the

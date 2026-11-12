@@ -1,4 +1,4 @@
--- PEOs and their requirement profiles (joshrkay/Nevermore#91, L-1.1, docs/adr/0003): each PEO's ask is dated,
+-- PEOs and their requirement profiles (joshrkay/Nevermore#91, L-1.1, docs/adr/0010): each PEO's ask is dated,
 -- versioned data, so adding a PEO or changing what one asks is not a code change.
 --
 -- * public.peos: the PEOs we hold a profile for, by name (compared ignoring case). The five the app listed in
@@ -194,7 +194,7 @@ BEGIN
       RETURN 'A census file is CSV or xlsx';
     END IF;
     -- The PEO's own template file, when the census fills one (L-3.1): the template uploaded (its id in
-    -- peo_census_templates, 20261114090000, which checks it is this PEO's), the sheet, the row its headers are on and
+    -- peo_census_templates, 20261115140000, which checks it is this PEO's), the sheet, the row its headers are on and
     -- the first row of data below them. Only an xlsx file can fill it.
     -- sync:begin peo_template_rules
     IF jsonb_typeof(layout -> 'template_file') IS DISTINCT FROM 'null' AND (

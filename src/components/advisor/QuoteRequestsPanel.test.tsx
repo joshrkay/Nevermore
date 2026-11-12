@@ -392,14 +392,14 @@ describe("QuoteRequestsPanel", () => {
     });
     const { unmount } = render(
       <QuoteRequestsPanel sessionId="s1" prospectUserId="p1" status="sent_to_carrier" currentVersion={1} requests={[request()]} events={[]} notes={[]}
-        addresses={[]} mail={[mail()]} threadReads={[]} catalog={CATALOG} data={EMPTY_CHAMBER_DATA} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
+        addresses={[]} mail={[mail()]} threadReads={[]} data={EMPTY_CHAMBER_DATA} catalog={[]} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
     );
     expect(within(screen.getByTestId("quote-request-7")).getByText("New PEO mail")).toBeInTheDocument();
     unmount();
     render(
       <QuoteRequestsPanel sessionId="s1" prospectUserId="p1" status="sent_to_carrier" currentVersion={1} requests={[request()]} events={[]} notes={[]}
         addresses={[]} mail={[mail()]} threadReads={[{ quote_request_id: 7, last_opened_at: "2026-11-10T15:00:05+00:00", last_opened_by: null, last_opened_by_email: null }]}
-        catalog={CATALOG} data={EMPTY_CHAMBER_DATA} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
+        data={EMPTY_CHAMBER_DATA} catalog={[]} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
     );
     expect(within(screen.getByTestId("quote-request-7")).queryByText("New PEO mail")).not.toBeInTheDocument();
   });

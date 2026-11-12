@@ -71,6 +71,25 @@
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 \i supabase/migrations/20261110090000_quote_requests.sql
+\i supabase/migrations/20261111090000_quote_request_notes.sql
+\i supabase/migrations/20261111100000_quote_request_addresses.sql
+\i supabase/migrations/20261111110000_quote_request_messages.sql
+\i supabase/migrations/20261111120000_quote_request_threads.sql
+\i supabase/migrations/20261111130000_held_mail.sql
+\i supabase/migrations/20261111140000_peo_mail_alert.sql
+\i supabase/migrations/20261112090000_intake_schema_v3_version.sql
+\i supabase/migrations/20261112091000_intake_schema_v3_company_identity.sql
+\i supabase/migrations/20261112092000_intake_schema_v3_industry_code.sql
+\i supabase/migrations/20261112093000_intake_schema_v3_current_peo.sql
+\i supabase/migrations/20261112094000_intake_schema_v3_census_columns.sql
+\i supabase/migrations/20261112095000_intake_schema_v3_census_worksite.sql
+\i supabase/migrations/20261112096000_intake_schema_v3_owners_officers.sql
+\i supabase/migrations/20261112097000_intake_schema_v3_loss_history.sql
+\i supabase/migrations/20261112098000_intake_schema_v3_medical_plans.sql
+\i supabase/migrations/20261112099000_intake_schema_v3_suta_rates.sql
+\i supabase/migrations/20261112100000_intake_schema_v3_acord_130_questions.sql
+\i supabase/migrations/20261113090000_broker_mailboxes.sql
+\i supabase/migrations/20261113100000_allowed_organisations.sql
 \i supabase/migrations/20261115090000_peo_requirement_profiles.sql
 SET client_min_messages = notice;
 

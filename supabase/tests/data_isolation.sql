@@ -406,7 +406,6 @@ BEGIN
   -- scan hasn't is withheld, which document_scanning.sql checks. One more upload waits in quarantine.
   UPDATE public.documents SET scan_verdict = 'clean', scanned_at = now();
   INSERT INTO storage.objects (bucket_id, name) VALUES ('quarantine', ga || '/' || ga_open || '/held.pdf');
-  INSERT INTO storage.objects (bucket_id, name) SELECT 'peo-templates', storage_path FROM public.peo_census_templates;
   -- PEO mail (20261111110000): a message on prospect A's quote request with a stored attachment, an attachment still
   -- pending (its file is in no bucket yet), and a held message that belongs to no intake. The receive-mail function
   -- writes these as the service role; here they are written directly, as the superuser.
@@ -436,6 +435,7 @@ BEGIN
   VALUES ('org_added', 'google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
   -- A file in the bucket that no stored attachment names stays the service role's alone.
   INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', pa_cert || '/0/unrecorded.pdf');
+  INSERT INTO storage.objects (bucket_id, name) SELECT 'peo-templates', storage_path FROM public.peo_census_templates;
   PERFORM set_config('request.jwt.claims', '', false);
   INSERT INTO fx VALUES
     ('ga_open', ga_open), ('ga_expired', ga_expired), ('ga_archived', ga_archived), ('ga_revoked', ga_revoked),

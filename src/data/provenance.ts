@@ -336,11 +336,19 @@ export function mergeHeard(
   prev: FieldProvenance | undefined,
   prevValue: unknown,
   value: unknown,
-  heard: { source: FieldSource; status: ExtractedStatus; corrected: boolean; updated_at: string; replaces?: boolean; table?: boolean },
+  heard: {
+    source: FieldSource;
+    status: ExtractedStatus;
+    corrected: boolean;
+    updated_at: string;
+    /** The heard value replaces whatever was held (the census roster). */
+    replaces?: boolean;
+    /** A table: one the prospect saved with nothing in it is still open to what is heard later. */
+    openWhenEmpty?: boolean;
+  },
 ): { value: unknown; entry: FieldProvenance } | null {
   const { source, status, updated_at } = heard;
-  // A table the prospect saved with nothing in it is still open to what is heard or read later; any other answer they gave stands.
-  if (prev?.source.kind === "prospect_edit" && !(heard.table && isEmpty(prevValue))) return null;
+  if (prev?.source.kind === "prospect_edit" && !(heard.openWhenEmpty && isEmpty(prevValue))) return null;
   // Only the prospect marks a field not applicable, and only they can take it back.
   if (prev?.status === "not_applicable") return null;
 
@@ -415,13 +423,12 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
     const status: ExtractedStatus = opts.statuses?.[field] ?? "inferred";
     const prev = provenance[field];
     const prevValue = data[field];
-    const rowList = isRowListField(field);
 
     // A table of rows is added to, never traded: what was heard fills in or extends what the table holds, the
     // prospect's own rows included, and only a better source changes a value already there.
     // (A table closed as "Doesn't apply" holds no rows, and one the prospect typed outranks every source.)
     const typed = prev?.source.kind === "prospect_edit";
-    if (rowList && !isEmpty(prevValue)) {
+    if (isRowListField(field) && !isEmpty(prevValue)) {
       // The prospect correcting a row in conversation ("actually Dana owns 55%") changes it too (ADR 0007), unless
       // they typed the table themselves.
       const corrected = opts.corrections?.includes(field) === true && !typed;
@@ -442,7 +449,8 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
       updated_at,
       // The roster is rebuilt as it grows; documents merge it in documentCandidates.ts.
       replaces: field === "census",
-      table: rowList,
+      // A table the prospect saved with nothing in it is still open to what is heard or read later.
+      openWhenEmpty: isRowListField(field),
     });
     if (!merged) continue;
     (data as Record<FieldKey, unknown>)[field] = merged.value;
