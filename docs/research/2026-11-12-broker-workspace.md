@@ -129,7 +129,7 @@ A lead sees the same for their team, an owner for the firm, each with a table by
 - **The list** shows each business with its main contact, their email and phone, its stage, its quotes and its
   owner, and searches by business, person or email. It filters by owner, stage, state and headcount, and exports
   as CSV at any time, with no limit and no request to us.
-- **Navigation** is a menu down the left: Today, Book, Quoting, Renewals, Firm.
+- **Navigation** is a menu down the left; section 4.3a has the layout that replaced the first sketch.
 - **Quotes attach to the business by the outbound email.** Each send carries its quote request's reply address
   (`docs/adr/0004`, `docs/adr/0005`), so a PEO's answer lands on that business's page under that PEO, with nobody
   filing it. This is the **thread** as built; the book only gives it a business to sit on.
@@ -160,14 +160,34 @@ isn't a fit is closed with a reason and kept.
 opportunity's intake as "Your broker entered this", and what the intake's certified version holds goes on every
 quote sent from it. Nothing is typed twice.
 
-**And back up.** Work can start from the quote end: an employer follows a firm link and starts an intake, or a
-broker starts one for a business not in the book. The product then looks for an account or a lead by the person's
-email, the business's web domain, or its name and state.
+**And back up: starting from a quote.** "New quote" is in the menu on every screen. A quote always sits on an
+account, so the first step is the account:
 
-- One clear match: the intake attaches to it, and a matching lead is qualified.
-- No match: a lead is made from what the intake holds, with the opportunity already on it.
-- More than one, or a weak one: the broker is asked. Nothing is merged by guesswork, as the **Holding list**
-  already works for mail.
+- The broker types the business's name and is shown the accounts that could be it (by name and state, web domain,
+  or the contact's email). They pick one, or keep "New account".
+- **A new account is made from the quote itself**: the account, its contact and the opportunity are created in
+  that one step, from the name, state, headcount and person the broker enters. It is never a lead: a lead is only
+  someone not yet being quoted.
+- An employer who starts an intake from a firm link is handled the same way, with the broker confirming the
+  account when more than one could be it. Nothing is merged by guesswork, as the **Holding list** already works
+  for mail.
+- **What the quote learns goes back to the account.** As the intake fills in, the legal name, address, states of
+  operation, headcount and the person who certifies are written to the account and its contacts where those are
+  empty, and offered as a change where they differ. The FEIN and the census stay in the intake.
+
+**How it is laid out.** The menu down the left is Home, Leads, Accounts and Settings, with "New quote" above
+them. Everything else hangs off the account:
+
+- **Accounts** is a table: account, main contact, open opportunity and its stage, quotes, renewal, employees,
+  owner, last activity. Saved views across the top (open opportunities, waiting on quotes, renewing in 120 days,
+  clients) are how a broker looks across accounts.
+- **An account's page** has its details down one side and, beside them, its contacts, opportunities, quotes,
+  renewals and recent activity as lists, each with its own tab.
+- **An opportunity** opens from its account and shows its stage, its quotes, its intake and its activity.
+  **A quote** opens from its opportunity and shows the emails with that PEO, what was sent and what came back. A
+  trail at the top of each leads back up: Accounts / the account / the opportunity / the PEO.
+- **Renewals** are a list on the account: what renews, with whom, when, and the opportunity working it.
+- **Settings** is one section with three parts: team members, email, and the fields for each table.
 
 **Email goes back and forth through the CRM.**
 
