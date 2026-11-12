@@ -584,6 +584,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      // Whether the signed-in broker's own mailbox is connected, never the token (20261113090000).
+      my_mailbox: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       advisor_email_problems: {
         Args: Record<PropertyKey, never>
         Returns: {

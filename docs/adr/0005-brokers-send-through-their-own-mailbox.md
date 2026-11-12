@@ -14,6 +14,14 @@ A PEO desk deals with people it knows. A message from a Nevermore address reads 
 - **The token is kept server-side and is disposable.** The product stores the refresh token that lets it send, encrypted, readable only by the sending function and never by the browser. It refreshes access tokens itself (Supabase does not store or refresh a provider's tokens). Disconnecting, the broker leaving, or Google or Microsoft revoking the permission deletes it, and a send then fails with a plain message and falls back to sending by hand.
 - **A send through the mailbox is recorded as one.** The product has the provider's message id but no delivery events: a bounce arrives as an email in the broker's own inbox. The thread shows a send as sent, never as delivered or bounced. Delivery and bounce marks (M-3.4) apply to mail the product sends itself, such as the notification to advisors.
 
+## Status
+
+Sign-in (M-4.1) and keeping and refreshing the permission (M-4.3) are built. The `mailbox` function connects, checks and
+disconnects a broker's mailbox, and `getMailboxAccess` (`supabase/functions/_shared/mailbox.ts`) is what the sending story
+(M-2.1) will call for an access token; it deletes a token the provider took back and says plainly why a send can't go
+through. Nothing sends through the mailbox yet, and no Google or Microsoft app is configured. The allowed-organisation rule
+(M-4.2) is not built.
+
 ## Considered Options
 
 - **The product sends from a Nevermore address in the broker's name** (ADR 0003's earlier rule). Kept only as what a broker with no connected mailbox falls back to by hand. Rejected as the main path: it isn't their address.

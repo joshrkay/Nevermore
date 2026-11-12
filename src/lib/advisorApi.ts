@@ -615,6 +615,27 @@ export async function loadHeldMail(): Promise<HeldMail> {
   };
 }
 
+/** Whether the signed-in broker's own mailbox is connected (public.my_mailbox): never the token. */
+export interface MyMailbox {
+  connected: boolean;
+  provider?: "google" | "microsoft";
+  address?: string;
+  connectedAt?: string;
+}
+
+export async function fetchMyMailbox(): Promise<MyMailbox> {
+  const { data, error } = await supabase.rpc("my_mailbox");
+  if (error) fail(error, "Couldn't check your mailbox.");
+  const row = (data ?? {}) as { connected?: boolean; provider?: "google" | "microsoft"; address?: string; connected_at?: string };
+  return row.connected ? { connected: true, provider: row.provider, address: row.address, connectedAt: row.connected_at } : { connected: false };
+}
+
+/** Disconnects the broker's mailbox: the stored token is deleted, and a send then says no mailbox is connected. */
+export async function disconnectMailbox(): Promise<void> {
+  const { error } = await supabase.functions.invoke("mailbox", { body: { action: "disconnect" } });
+  if (error) throw new AdvisorApiError("Couldn't disconnect your mailbox. Try again.");
+}
+
 /** A quote request note as the form holds it: its kind, the day it happened (YYYY-MM-DD) and its text. */
 export interface QuoteNoteInput {
   kind: QuoteNoteKind;

@@ -61,12 +61,52 @@ describe("signing in with a provider", () => {
     await expect(startBrokerSignIn("google")).rejects.toThrow("provider is not enabled");
   });
 
-  it("reports whether the broker let the product send, keeping nothing the provider returned", async () => {
-    exchangeCodeForSession.mockResolvedValueOnce({ data: { session: { provider_refresh_token: "r", provider_token: "t" } }, error: null });
-    expect(await finishBrokerSignIn("code-1")).toEqual({ ok: true, mailbox: "granted" });
-    exchangeCodeForSession.mockResolvedValueOnce({ data: { session: { provider_token: "t" } }, error: null });
-    expect(await finishBrokerSignIn("code-2")).toEqual({ ok: true, mailbox: "not_granted" });
+  const session = (over: Record<string, unknown> = {}) => ({
+    data: { session: { access_token: "sb-jwt", provider_token: "pt", provider_refresh_token: "1//refresh-from-google", user: { app_metadata: { provider: "google" } }, ...over } },
+    error: null,
+  });
+
+  it("hands the refresh token once to the mailbox function, as the broker, and says it is connected", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    exchangeCodeForSession.mockResolvedValueOnce(session());
+    expect(await finishBrokerSignIn("code-1")).toEqual({ ok: true, mailbox: "connected" });
     expect(exchangeCodeForSession).toHaveBeenCalledWith("code-1");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(url)).toMatch(/\/functions\/v1\/mailbox$/);
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer sb-jwt");
+    expect(JSON.parse(init.body as string)).toEqual({ action: "connect", provider: "google", refresh_token: "1//refresh-from-google" });
+    vi.unstubAllGlobals();
+  });
+
+  it("names Microsoft's provider as microsoft", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    exchangeCodeForSession.mockResolvedValueOnce(session({ user: { app_metadata: { provider: "azure" } } }));
+    await finishBrokerSignIn("code-2");
+    expect(JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).provider).toBe("microsoft");
+    vi.unstubAllGlobals();
+  });
+
+  it("sends nothing when the broker didn't allow sending", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    exchangeCodeForSession.mockResolvedValueOnce(session({ provider_refresh_token: null }));
+    expect(await finishBrokerSignIn("code-3")).toEqual({ ok: true, mailbox: "not_granted" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("still signs the broker in, and says the mailbox failed, when it can't be connected", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 400 })));
+    exchangeCodeForSession.mockResolvedValueOnce(session());
+    expect(await finishBrokerSignIn("code-4")).toEqual({ ok: true, mailbox: "failed" });
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
+    exchangeCodeForSession.mockResolvedValueOnce(session());
+    expect(await finishBrokerSignIn("code-5")).toEqual({ ok: true, mailbox: "failed" });
+    exchangeCodeForSession.mockResolvedValueOnce(session({ user: { app_metadata: { provider: "github" } } }));
+    expect(await finishBrokerSignIn("code-6")).toEqual({ ok: true, mailbox: "failed" });
+    vi.unstubAllGlobals();
   });
 
   it("fails without a session when the code can't be redeemed", async () => {

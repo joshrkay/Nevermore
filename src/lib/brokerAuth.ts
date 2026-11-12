@@ -50,15 +50,48 @@ export async function startBrokerSignIn(provider: BrokerProvider, next?: string 
 }
 
 export type BrokerSignInResult =
-  | { ok: true; /** Whether the broker let the product send as them: a refresh token came back. */ mailbox: "granted" | "not_granted" }
+  | {
+      ok: true;
+      /**
+       * What became of the mailbox: `connected` (the product keeps what lets it send), `not_granted` (the broker
+       * didn't allow sending, so there is nothing to keep) or `failed` (they allowed it but it couldn't be kept).
+       */
+      mailbox: "connected" | "not_granted" | "failed";
+    }
   | { ok: false };
 
+const providerOf = (appProvider: unknown): BrokerProvider | null =>
+  appProvider === "google" ? "google" : appProvider === "azure" ? "microsoft" : null;
+
 /**
- * Redeems the code the provider sent the browser back with, which signs the broker in. Nothing from the provider is
- * kept here: connecting the mailbox (storing what lets the product send) is story M-4.3.
+ * Hands the refresh token to the mailbox function, which tests it, encrypts it and keeps it (story M-4.3). The token
+ * goes once, over this request, and is never stored in the browser; the function never sends it back.
+ */
+async function connectMailbox(accessJwt: string, provider: BrokerProvider, refreshToken: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/mailbox`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessJwt}`, apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "connect", provider, refresh_token: refreshToken }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Redeems the code the provider sent the browser back with, which signs the broker in, and connects their mailbox if
+ * they allowed the product to send. A broker who didn't still has an account; one whose mailbox couldn't be connected
+ * is told so on their mailbox page.
  */
 export async function finishBrokerSignIn(code: string): Promise<BrokerSignInResult> {
   const { data, error } = await pkceClient().auth.exchangeCodeForSession(code);
   if (error || !data.session) return { ok: false };
-  return { ok: true, mailbox: data.session.provider_refresh_token ? "granted" : "not_granted" };
+  const { session } = data;
+  const refreshToken = session.provider_refresh_token;
+  if (!refreshToken) return { ok: true, mailbox: "not_granted" };
+  const provider = providerOf(session.user?.app_metadata?.provider);
+  if (!provider) return { ok: true, mailbox: "failed" };
+  return { ok: true, mailbox: (await connectMailbox(session.access_token, provider, refreshToken)) ? "connected" : "failed" };
 }

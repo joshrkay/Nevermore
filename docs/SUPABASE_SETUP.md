@@ -303,8 +303,19 @@ create. Until both are set, the buttons start a sign-in that Supabase refuses, a
    grants the role; an existing advisor with the same verified email lands in the console with their role and history. The
    product asks for only the permissions in `src/data/mailboxScopes.ts` (a test fails if a read permission is added).
 
-What this release does with the mailbox permission: it asks for it and notes whether it was granted, and keeps nothing.
-Storing what lets the product send is story M-4.3.
+5. **Keeping the permission (story M-4.3).** Set the `mailbox` function's secrets (`supabase/env.production.example`):
+   `MAILBOX_TOKEN_KEY` (`openssl rand -base64 32`; only that function holds it, and losing it makes every stored token
+   unreadable, so brokers connect again), and each provider's `*_OAUTH_CLIENT_ID` / `*_OAUTH_CLIENT_SECRET`, the same app
+   Supabase's provider uses (the function refreshes tokens itself, since Supabase does not store or refresh a provider's).
+   Without them, connecting answers "Sending through a mailbox isn't set up yet" and brokers send by hand.
+
+What the product keeps: after sign-in the browser hands the refresh token once to the `mailbox` function, which tests it,
+refuses it unless it grants sending and nothing more, encrypts it (AES-GCM, bound to the broker's id) and stores the
+ciphertext in `broker_mailboxes`, which no API role can read. A broker connects, checks and disconnects at
+`/advisor/mailbox`. Disconnecting, the provider revoking the permission (found when a refresh is refused), the account being
+deleted and the broker losing the advisor role all delete the token; Google is asked to revoke it on disconnect, and a
+Microsoft broker removes the app from their account page. Microsoft rotates the refresh token on use, and the new one
+replaces the old.
 
 ## Moving to a new domain or Vercel project
 
