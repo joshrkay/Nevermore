@@ -86,6 +86,7 @@ export function readDispatchConfig(env: Env): DispatchConfig {
 export function kindReadiness(config: DispatchConfig): [OutboxKind, Readiness<object>][] {
   return [
     ["advisor_notification", config.advisor],
+    ["peo_mail_arrived", config.advisor],
     ["prospect_confirmation", config.prospect],
     ["information_request", config.prospectLink],
     ["draft_expiry_reminder", config.prospectLink],

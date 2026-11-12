@@ -135,8 +135,9 @@ DECLARE
   -- sync:end peo_profile_caps
   census_columns constant text[] := ARRAY[
     -- sync:begin peo_census_columns
-    'first_name', 'last_name', 'dob', 'work_state', 'zip_code', 'job_title', 'annual_salary', 'compensation_type',
-    'employment_type', 'classification', 'coverage_tier', 'class_code'
+    'first_name', 'last_name', 'relationship', 'dob', 'gender', 'hire_date', 'work_state', 'home_state', 'zip_code',
+    'worksite', 'remote', 'travels', 'job_title', 'annual_salary', 'compensation_type', 'employment_type',
+    'classification', 'coverage_tier', 'cobra', 'class_code'
     -- sync:end peo_census_columns
   ];
   census_formats constant text[] := ARRAY[

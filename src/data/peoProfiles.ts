@@ -1,5 +1,5 @@
 // Requirement profiles (GLOSSARY.md, docs/adr/0003): what each PEO asks for, as dated, versioned data in the
-// database (supabase/migrations/20261111090000_peo_requirement_profiles.sql). Admins write a draft and publish
+// database (supabase/migrations/20261115090000_peo_requirement_profiles.sql). Admins write a draft and publish
 // it; a published version never changes, and the newest published one is the profile in use. The browser reads
 // the PEOs and their profiles in use through public.peo_catalog(), which never includes a PEO contact, and gives
 // anyone but an advisor a person at the PEO by their role only.

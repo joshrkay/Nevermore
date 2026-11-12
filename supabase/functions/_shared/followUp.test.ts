@@ -32,7 +32,8 @@ describe("isSettled (D26)", () => {
 describe("unsettledFields", () => {
   it("lists every field in rank order when nothing is captured, less what is excluded", () => {
     const all = unsettledFields({}, {});
-    expect(all.map((f) => f.key)).toEqual(INTAKE_FIELDS.map((f) => f.key));
+    // An ACORD 130 question's explanation is asked for only after a yes (K-3.4), so none is listed yet.
+    expect(all.map((f) => f.key)).toEqual(INTAKE_FIELDS.map((f) => f.key).filter((key) => !key.endsWith("_explain")));
     expect(all.map((f) => f.rank)).toEqual([...all.map((f) => f.rank)].sort((a, b) => a - b));
     expect(unsettledFields({}, {}, { exclude: new Set(["census"]) }).map((f) => f.key)).not.toContain("census");
   });
@@ -115,5 +116,26 @@ describe("readiness and the certification gate agree", () => {
       const shared = readyToCertify(data as unknown as Record<string, unknown>, statusesOf(provenance), censusSummary(data), verified);
       expect(shared, c.name).toBe(isReadyToCertify(data, provenance, verified));
     }
+  });
+});
+
+// K-3.4: the ACORD 130 questions in what Lenore asks next.
+describe("the ACORD 130 questions among the unsettled fields", () => {
+  const keys = (answers: Record<string, unknown> = {}, statuses: Record<string, string> = {}) => unsettledFields(answers, statuses).map((f) => f.key);
+
+  it("asks a question before its explanation, and the explanation only after a yes", () => {
+    expect(keys()).toContain("wcq_06");
+    expect(keys()).not.toContain("wcq_06_explain");
+    expect(keys({ wcq_06: false })).not.toContain("wcq_06_explain");
+    const yes = keys({ wcq_06: true });
+    expect(yes).toContain("wcq_06_explain");
+    expect(yes).not.toContain("wcq_06");
+    expect(keys({ wcq_06: true, wcq_06_explain: "About 20%" })).not.toContain("wcq_06_explain");
+  });
+
+  it("asks them after the answers Lenore already asked for, in the form's order", () => {
+    const all = keys();
+    expect(all.indexOf("wcq_01")).toBeGreaterThan(all.indexOf("peo_renewal_date"));
+    expect(all.filter((k) => /^wcq_\d\d$/.test(k)).slice(0, 3)).toEqual(["wcq_01", "wcq_02", "wcq_03"]);
   });
 });

@@ -27,8 +27,12 @@ const api = {
   documentUrl: vi.fn(),
   recordQuoteSend: vi.fn(),
   updateQuoteRequest: vi.fn(),
-  noteUnderwriterQuestion: vi.fn(),
   documentFile: vi.fn(),
+  addQuoteRequestNote: vi.fn(),
+  openQuoteRequestThread: vi.fn(),
+  mailAttachmentUrl: vi.fn(),
+  correctQuoteRequestNote: vi.fn(),
+  reissueQuoteRequestAddress: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
 // The intake as the database holds it at a download's click: what the page loaded, unless a test changes it since.
@@ -118,6 +122,11 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   informationRequests: [],
   quoteRequests: [],
   quoteRequestEvents: [],
+  quoteRequestNotes: [],
+  quoteRequestAddresses: [],
+  quoteRequestMessages: [],
+  quoteRequestMailAttachments: [],
+  quoteRequestThreadReads: [],
   currentVersion: 1,
   certificationLacksSnapshot: false,
   extraAnswers: {},
@@ -233,8 +242,8 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(pay).queryByTestId("audit-prospect_confirmed")).not.toBeInTheDocument();
     // A correction not yet verified overrides nothing, and an inferred answer isn't the prospect's confirmation.
     expect(within(screen.getByTestId("field-employee_count")).queryByTestId(/^audit-/)).not.toBeInTheDocument();
-    expect(screen.getByTestId("section-summary-payroll")).toHaveTextContent("1 of 5 verified · 1 advisor overridden");
-    expect(screen.getByTestId("section-summary-company")).toHaveTextContent("0 of 5 verified · 1 prospect confirmed");
+    expect(screen.getByTestId("section-summary-payroll")).toHaveTextContent("1 of 6 verified · 1 advisor overridden");
+    expect(screen.getByTestId("section-summary-company")).toHaveTextContent("0 of 16 verified · 1 prospect confirmed");
   });
 
   it("changes the status with a note and shows who changed it before", async () => {
@@ -1006,13 +1015,36 @@ describe("AdvisorSubmissionPage", () => {
     expect(screen.queryByRole("button", { name: "Download the answers as JSON" })).not.toBeInTheDocument();
   });
 
+  it("shows each PEO's thread and marks it read when opened, then reloads so the rest of the page drops the mark", async () => {
+    const request = { id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 1, sent_on: "2026-11-10",
+      quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null };
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "sent_to_carrier",
+      quoteRequests: [request],
+      quoteRequestMessages: [{ id: 1, provider_message_id: "re_1", quote_request_id: 7, session_id: "s1", address_local_part: "a.b.c", held_reason: null, held_at: null, moved_by: null, moved_by_email: null, moved_from_quote_request_id: null, moved_note: null, 
+        direction: "received", is_automatic: false, new_sender: true, from_address: "dana@trinet.example", from_name: "Dana", to_addresses: [], cc_addresses: [],
+        subject: "Proposal", body_text: "Proposal attached.", body_truncated: false, headers: {}, sent_at: "2026-11-10T15:00:00Z", recorded_at: "2026-11-10T15:00:05.5+00:00" }],
+    }));
+    api.openQuoteRequestThread.mockResolvedValue(undefined);
+    renderPage();
+    const threads = await screen.findByRole("region", { name: "PEO threads" });
+    expect(within(threads).getByText("New PEO mail")).toBeInTheDocument();
+    // The mark also shows on the quote request itself.
+    expect(within(await screen.findByTestId("quote-request-7")).getByText("New PEO mail")).toBeInTheDocument();
+    const loads = api.loadSubmission.mock.calls.length;
+    fireEvent.click(within(threads).getByRole("button", { name: /TriNet/ }));
+    expect(within(threads).getByText("Proposal attached.")).toBeInTheDocument();
+    await waitFor(() => expect(api.openQuoteRequestThread).toHaveBeenCalledWith(7, "2026-11-10T15:00:05.5+00:00"));
+    await waitFor(() => expect(api.loadSubmission.mock.calls.length).toBeGreaterThan(loads));
+  });
+
   it("puts an underwriter's question into Ask the prospect for the advisor to edit, without sending it or naming the PEO", async () => {
     api.loadSubmission.mockResolvedValue(detail({
       pipelineStatus: "sent_to_carrier",
       quoteRequests: [{ id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 1, sent_on: "2026-11-10",
         quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
-      quoteRequestEvents: [{ id: 3, quote_request_id: 7, session_id: "s1", field: "underwriter_question", old_value: null,
-        new_value: "Can they send last year's loss runs?", changed_by: "a1", changed_by_email: "adv@example.com", changed_at: "2026-11-12T15:00:00Z" }],
+      quoteRequestNotes: [{ id: 21, quote_request_id: 7, session_id: "s1", kind: "underwriter_question", noted_on: "2026-11-12",
+        body: "Can they send last year's loss runs?", created_by: "a1", created_by_email: "adv@example.com", created_at: "2026-11-12T15:00:00Z" }],
     }));
     renderPage();
     const quotes = await screen.findByRole("region", { name: "Quote requests" });

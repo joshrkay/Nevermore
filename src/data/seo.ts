@@ -64,6 +64,8 @@ export const PUBLIC_PAGES: PageMeta[] = [
 const PRIVATE_ROUTES: [RegExp, string][] = [
   [/^\/login$/, "Sign in"],
   [/^\/auth\/.+$/, "Signing you in"],
+  [/^\/broker\/sign-in$/, "Advisor and broker sign in"],
+  [/^\/broker\/callback$/, "Signing you in"],
   [/^\/start$/, "Your intake"],
   [/^\/profile$/, "Your profile"],
   [/^\/manuscript(\/[^/]+)?$/, "Your packet"],
@@ -74,6 +76,8 @@ const PRIVATE_ROUTES: [RegExp, string][] = [
 export const PRIVATE_PATH_EXAMPLES = [
   "/login",
   "/auth/callback",
+  "/broker/sign-in",
+  "/broker/callback",
   "/start",
   "/profile",
   "/manuscript",

@@ -1,7 +1,9 @@
+import { isRowListField, mergeRows, type RowListField } from "./rowColumns";
 import type { CensusEmployee, ChamberData } from "./chamberTypes";
 import { CENSUS_FACTS, isAssumed, samePerson, type CensusFact } from "./census";
 import { sanitizeChamberPatch } from "./chamberValidation";
-import { applyChosenValue, applyExtraction, applyFieldAction, outranks, type FieldSource, type IntakeState, type ProvenanceMap } from "./provenance";
+import { formatAnswer } from "./answerFormat";
+import { applyChosenValue, applyExtraction, applyFieldAction, FIELD_LABELS as INTAKE_LABELS, outranks, type FieldSource, type IntakeState, type ProvenanceMap } from "./provenance";
 
 // Values read out of an uploaded document are candidates, not answers: they are stored on the
 // document (with where they were found) and only reach the intake when the prospect applies
@@ -40,6 +42,10 @@ export const EMPTY_EXTRACTION: DocumentExtraction = { message: null, notes: [], 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+// A FEIN is typed into the workspace by the prospect, the employer's and each legal entity's (K-1.1): a document
+// never proposes one, whatever a stored extraction holds.
+const NEVER_FROM_A_DOCUMENT: ReadonlySet<string> = new Set(["fein", "entities"]);
+
 // Documents read before the census contract proposed the roster as `employees`.
 const candidateField = (f: string) => (f === "employees" ? "census" : f);
 
@@ -50,6 +56,7 @@ export function parseExtraction(raw: unknown): DocumentExtraction {
   for (const c of Array.isArray(raw.candidates) ? raw.candidates : []) {
     if (!isPlainObject(c) || typeof c.field !== "string") continue;
     const field = candidateField(c.field) as CandidateField;
+    if (NEVER_FROM_A_DOCUMENT.has(field)) continue;
     const patch = sanitizeChamberPatch({ [field]: c.value });
     if (!(field in patch) || isEmpty(patch[field])) continue;
     const facts = Array.isArray(c.facts) ? CENSUS_FACTS.filter((f) => (c.facts as unknown[]).includes(f)) : undefined;
@@ -115,12 +122,17 @@ export function planCandidateMerge(data: ChamberData, candidates: DocumentCandid
   return candidates.map((candidate) => {
     const current = data[candidate.field];
     const entry = provenance[candidate.field];
+    // A table of rows merges row by row (mergeRows): it is the same once every row and figure is in the table, and
+    // otherwise an update, never a conflict, since applying it changes nothing the prospect typed.
+    const table = isRowListField(candidate.field);
     const same =
       candidate.field === "census"
         ? censusAgrees(compareCensus(data.census, candidate.value as CensusEmployee[], candidate.facts))
-        : normalize(current) === normalize(candidate.value);
+        : table
+          ? JSON.stringify(mergeRows(candidate.field as RowListField, current as object[], candidate.value as object[], true)) === JSON.stringify(current)
+          : normalize(current) === normalize(candidate.value);
     // A census is always compared in the dialog, since it merges person by person.
-    const replaces = candidate.field !== "census" && entry !== undefined && outranks("document", entry);
+    const replaces = table || (candidate.field !== "census" && entry !== undefined && outranks("document", entry));
     const kind: MergeKind = isEmpty(current) ? "new" : same ? "same" : replaces ? "replace" : "conflict";
     return { candidate, kind, current };
   });
@@ -143,7 +155,13 @@ export interface CensusComparison {
   missing: CensusEmployee[];
 }
 
-const hasValue = (v: unknown) => v !== undefined && v !== null && v !== "";
+// A fact that is a list (a person's dependents) is stated only when it lists someone, and is compared by what it holds.
+const hasValue = (v: unknown) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0);
+// The intake's copy comes back from the database with its keys in another order, so a list is compared by what
+// each entry holds, key by key.
+const ordered = (v: unknown): unknown =>
+  Array.isArray(v) ? v.map(ordered) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, each]) => [k, ordered(each)])) : v;
+const sameFact = (a: unknown, b: unknown) => (Array.isArray(a) || Array.isArray(b) ? JSON.stringify(ordered(a ?? [])) === JSON.stringify(ordered(b ?? [])) : a === b);
 
 /** Whether the document stated `fact` for this row: a column it had, a value in it, and not a default. */
 const statesFact = (row: CensusEmployee, fact: CensusFact, facts: readonly CensusFact[]) =>
@@ -166,7 +184,7 @@ export function compareCensus(current: CensusEmployee[], incoming: CensusEmploye
     }
     const [existing] = unmatched.splice(i, 1);
     const changes = facts
-      .filter((f) => statesFact(row, f, facts) && row[f] !== existing[f])
+      .filter((f) => statesFact(row, f, facts) && !sameFact(row[f], existing[f]))
       .map((f) => ({ fact: f, from: existing[f], to: row[f] }));
     matched.push({ current: existing, incoming: row, changes });
   }
@@ -178,7 +196,7 @@ export const censusAgrees = (c: CensusComparison) =>
 
 /**
  * The intake's census updated from a document: people in both take the document's stated facts
- * (keeping their id and the dependents named in conversation), people only in the document are
+ * (keeping their id, and the dependents they have unless the document lists theirs), people only in the document are
  * added, and people only in the intake stay.
  */
 export function mergeCensus(current: CensusEmployee[], incoming: CensusEmployee[], facts: readonly CensusFact[] = CENSUS_FACTS): CensusEmployee[] {
@@ -226,7 +244,8 @@ export function applyDocumentCandidates(
   const now = opts.now ?? new Date();
   return chosen.reduce<IntakeState>((acc, c) => {
     const source = documentSource(doc, c);
-    return opts.replace
+    // A table's rows are always merged in, never traded for the table (applyExtraction's row rule).
+    return opts.replace && !isRowListField(c.field)
       ? applyChosenValue(acc, c.field, c.value, source, now)
       : applyExtraction(acc, { [c.field]: c.value }, { source, statuses: { [c.field]: "confirmed" }, now });
   }, state);
@@ -255,16 +274,14 @@ const FIELD_LABELS: Partial<Record<CandidateField, string>> = {
 };
 
 export function fieldLabel(field: CandidateField): string {
-  return FIELD_LABELS[field] ?? field.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+  return FIELD_LABELS[field] ?? INTAKE_LABELS[field];
 }
 
 /** A short, human-readable rendering of a candidate or current value. */
 export function formatValue(field: CandidateField, v: unknown): string {
   if (isEmpty(v)) return "—";
   if (field === "census" && Array.isArray(v)) return `${v.length} employee${v.length === 1 ? "" : "s"}`;
-  if (Array.isArray(v)) return v.join(", ");
-  if (typeof v === "boolean") return v ? "Yes" : "No";
-  return String(v);
+  return formatAnswer(field, v);
 }
 
 // ---------- The prospect's decision on a candidate ----------

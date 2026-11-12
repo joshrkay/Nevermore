@@ -1,9 +1,12 @@
+import { isRowListField, mergeRows } from "./rowColumns";
 import { z } from "zod";
-import type { ChamberData } from "./chamberTypes";
+import { ACORD_CLOSING_RULES, ACORD_DERIVED } from "./acordRules";
+import type { AcordAnswers, ChamberData } from "./chamberTypes";
+import { ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "../../supabase/functions/_shared/acord130.ts";
 import { sanitizeChamberPatch } from "./chamberValidation";
 import { INTAKE_FIELDS, INTAKE_SCHEMA } from "./intakeSchema";
 import { isRequiredField } from "./readiness";
-import { redactSensitive } from "./sensitive";
+import { redactSensitive, redactForModel } from "./sensitive";
 import { CERTIFICATION_REQUIRED } from "../../supabase/functions/_shared/followUp.ts";
 
 // Every captured field records how sure we are of it and where it came from, so the
@@ -66,7 +69,12 @@ export const FIELD_LABELS = Object.fromEntries(
   Object.keys(INTAKE_SCHEMA.properties as object).map((key) => [key, LABEL_BY_KEY.get(key)!]),
 ) as Record<FieldKey, string>;
 
-export type FieldKind = "text" | "number" | "decimal" | "boolean" | "list";
+/**
+ * How an answer is edited. "fein" is nine digits typed into its own box; "choice" is one of a field's listed
+ * values (FIELD_CHOICES); "naics" is an industry code picked from a search; "rows" is a table of rows, edited in
+ * its own tab rather than in one input.
+ */
+export type FieldKind = "text" | "number" | "decimal" | "boolean" | "list" | "fein" | "choice" | "naics" | "rows";
 
 /** Input kind per field, for editing. The census has its own tab and isn't edited here. */
 export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
@@ -111,6 +119,25 @@ export const FIELD_KINDS: Record<Exclude<FieldKey, "census">, FieldKind> = {
   wc_renewal_date: "text",
   wc_experience_mod: "decimal",
   wc_annual_premium: "number",
+  fein: "fein",
+  entity_type: "choice",
+  year_founded: "number",
+  street_address: "text",
+  website: "text",
+  entities: "rows",
+  naics_code: "naics",
+  operations_description: "text",
+  in_peo: "boolean",
+  current_peo: "text",
+  peo_renewal_date: "text",
+  owners_officers: "rows",
+  loss_history: "rows",
+  medical_plans: "rows",
+  suta_rates: "rows",
+  // The ACORD 130 questions (K-3.4): a yes or no each, with a text explanation.
+  ...(Object.fromEntries(
+    ACORD_130_QUESTIONS.flatMap((q) => [[acordAnswerKey(q.number), "boolean"], [acordExplainKey(q.number), "text"]]),
+  ) as Record<keyof AcordAnswers, FieldKind>),
 };
 
 const FIELD_KEYS = Object.keys(FIELD_LABELS) as FieldKey[];
@@ -309,10 +336,11 @@ export function mergeHeard(
   prev: FieldProvenance | undefined,
   prevValue: unknown,
   value: unknown,
-  heard: { source: FieldSource; status: ExtractedStatus; corrected: boolean; updated_at: string; replaces?: boolean },
+  heard: { source: FieldSource; status: ExtractedStatus; corrected: boolean; updated_at: string; replaces?: boolean; table?: boolean },
 ): { value: unknown; entry: FieldProvenance } | null {
   const { source, status, updated_at } = heard;
-  if (prev?.source.kind === "prospect_edit") return null;
+  // A table the prospect saved with nothing in it is still open to what is heard or read later; any other answer they gave stands.
+  if (prev?.source.kind === "prospect_edit" && !(heard.table && isEmpty(prevValue))) return null;
   // Only the prospect marks a field not applicable, and only they can take it back.
   if (prev?.status === "not_applicable") return null;
 
@@ -384,13 +412,37 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
     const quote = opts.evidence?.[field];
     const source: FieldSource =
       quote && opts.source.kind === "transcript" ? { ...opts.source, quote: clip(quote) } : opts.source;
-    const merged = mergeHeard(provenance[field], data[field], value, {
+    const status: ExtractedStatus = opts.statuses?.[field] ?? "inferred";
+    const prev = provenance[field];
+    const prevValue = data[field];
+    const rowList = isRowListField(field);
+
+    // A table of rows is added to, never traded: what was heard fills in or extends what the table holds, the
+    // prospect's own rows included, and only a better source changes a value already there.
+    // (A table closed as "Doesn't apply" holds no rows, and one the prospect typed outranks every source.)
+    const typed = prev?.source.kind === "prospect_edit";
+    if (rowList && !isEmpty(prevValue)) {
+      // The prospect correcting a row in conversation ("actually Dana owns 55%") changes it too (ADR 0007), unless
+      // they typed the table themselves.
+      const corrected = opts.corrections?.includes(field) === true && !typed;
+      const better = corrected || (prev !== undefined && RANK[source.kind] > fieldRank(prev));
+      const merged = mergeRows(field, prevValue as object[], value as object[], better);
+      if (JSON.stringify(merged) === JSON.stringify(prevValue)) continue;
+      (data as Record<FieldKey, unknown>)[field] = merged;
+      // The prospect confirms the whole table again, unless a document they applied supplied the rows. A table
+      // has one source, so one the prospect typed stays theirs: its rows are never fair game for a later source.
+      provenance[field] = { status: source.kind === "document" && !typed ? status : "inferred", source: typed ? prev!.source : source, updated_at };
+      continue;
+    }
+
+    const merged = mergeHeard(prev, prevValue, value, {
       source,
-      status: opts.statuses?.[field] ?? "inferred",
+      status,
       corrected: opts.corrections?.includes(field) ?? false,
       updated_at,
       // The roster is rebuilt as it grows; documents merge it in documentCandidates.ts.
       replaces: field === "census",
+      table: rowList,
     });
     if (!merged) continue;
     (data as Record<FieldKey, unknown>)[field] = merged.value;
@@ -409,7 +461,94 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
     provenance[field] = { status: "unknown", source: withoutQuote(opts.source), updated_at };
   }
 
-  return { data, provenance };
+  return applyClosingRules(state, { data, provenance }, opts.now ?? new Date());
+}
+
+// ---------- Answers that close other answers ----------
+
+/**
+ * An answer that makes other questions pointless: an employer in no PEO has no current PEO and no agreement to
+ * renew (K-1.3). While `by` holds `when`, each of `closes` that holds no answer is marked "Doesn't apply".
+ */
+const CLOSING_RULES: readonly { by: FieldKey; when: unknown; closes: readonly FieldKey[] }[] = [
+  { by: "in_peo", when: false, closes: ["current_peo", "peo_renewal_date"] },
+];
+
+/**
+ * Applies the closing rules after an answer changed (`before` is the intake as it was). A closed field carries
+ * the source of the answer that closed it. An answer already given is never closed: it stays for the prospect to
+ * settle. When the closing answer changes to something else, what it closed is opened again.
+ */
+function applyClosingRules(before: IntakeState, after: IntakeState, now: Date): IntakeState {
+  let provenance = after.provenance;
+  for (const rule of CLOSING_RULES) {
+    const closing = after.data[rule.by] === rule.when;
+    const wasClosing = before.data[rule.by] === rule.when;
+    for (const field of rule.closes) {
+      const status = provenance[field]?.status;
+      if (closing && isEmpty(after.data[field]) && status !== "not_applicable") {
+        const source = provenance[rule.by]?.source ?? { kind: "prospect_edit" as const };
+        provenance = { ...provenance, [field]: { status: "not_applicable", source: withoutQuote(source), updated_at: now.toISOString() } };
+      } else if (!closing && wasClosing && status === "not_applicable") {
+        const { [field]: _closed, ...rest } = provenance;
+        provenance = rest;
+      }
+    }
+  }
+  // The ACORD 130 questions (K-3.4, src/data/acordRules.ts). A question is closed once, when its rule becomes
+  // true, and only while unanswered and untouched, so one the prospect reopens stays open.
+  for (const rule of ACORD_CLOSING_RULES) {
+    const closing = rule.when(after.data);
+    const wasClosing = rule.when(before.data);
+    for (const field of rule.closes) {
+      if (closing && !wasClosing && isEmpty(after.data[field]) && provenance[field] === undefined) {
+        provenance = { ...provenance, [field]: { status: "not_applicable", source: { kind: "prospect_edit" }, updated_at: now.toISOString() } };
+      } else if (!closing && wasClosing && provenance[field]?.status === "not_applicable") {
+        const { [field]: _closed, ...rest } = provenance;
+        provenance = rest;
+      }
+    }
+  }
+
+  // Questions the intake can answer from what it holds are answered for the prospect to confirm. An answer worked
+  // out this way follows what it came from until the prospect confirms or changes it; never after.
+  let data = after.data;
+  const forget = (field: FieldKey) => {
+    data = { ...data, [field]: null };
+    const { [field]: _gone, ...rest } = provenance;
+    provenance = rest;
+  };
+  for (const rule of ACORD_DERIVED) {
+    const answer = rule.answer(data, now);
+    const was = rule.answer(before.data, now);
+    const entry = provenance[rule.field];
+    const held = data[rule.field];
+    const untouched = isEmpty(held) && entry === undefined;
+    const stillDerived = entry?.status === "inferred" && was !== undefined && held === was.value;
+    if (!(untouched || stillDerived)) continue;
+    // The explanation follows too, while it is empty or still the one worked out.
+    const explain = rule.explain && (isEmpty(data[rule.explain]) || data[rule.explain] === was?.explain) ? rule.explain : undefined;
+    if (!answer) {
+      // What it came from no longer says anything: an answer nobody confirmed goes with it.
+      if (stillDerived) {
+        forget(rule.field);
+        if (explain && !isEmpty(data[explain])) forget(explain);
+      }
+      continue;
+    }
+    const source = withoutQuote(provenance[rule.from]?.source ?? { kind: "prospect_edit" as const });
+    if (untouched || held !== answer.value) {
+      data = { ...data, [rule.field]: answer.value };
+      provenance = { ...provenance, [rule.field]: { status: "inferred", source, updated_at: now.toISOString() } };
+    }
+    if (explain && (data[explain] ?? null) !== (answer.explain ?? null)) {
+      if (answer.explain) {
+        data = { ...data, [explain]: answer.explain };
+        provenance = { ...provenance, [explain]: { status: "inferred", source, updated_at: now.toISOString() } };
+      } else forget(explain);
+    }
+  }
+  return provenance === after.provenance && data === after.data ? after : { data, provenance };
 }
 
 // ---------- Prospect actions ----------
@@ -458,10 +597,10 @@ export function applyFieldAction(state: IntakeState, action: FieldAction, now = 
   if (action.type === "resolve" && value === undefined) return state;
   const patch = sanitizeChamberPatch({ [field]: value });
   if (!(field in patch)) return state;
-  return {
+  return applyClosingRules(state, {
     data: { ...state.data, [field]: patch[field] },
     provenance: { ...state.provenance, [field]: confirmed() },
-  };
+  }, now);
 }
 
 /**
@@ -479,13 +618,13 @@ export function applyChosenValue(state: IntakeState, field: FieldKey, raw: unkno
   // The census isn't ranked, so a replaced roster isn't noted (as in applyExtraction).
   const displaced =
     prev && field !== "census" && !isEmpty(prevValue) ? heldValues(prev, prevValue).filter((c) => c.source.kind !== source.kind) : [];
-  return {
+  return applyClosingRules(state, {
     data: { ...state.data, [field]: value },
     provenance: {
       ...state.provenance,
       [field]: withNotes({ status: "confirmed", source, updated_at: now.toISOString() }, noteHeard(prev?.also_heard, displaced, value)),
     },
-  };
+  }, now);
 }
 
 // ---------- Open items ----------
@@ -589,7 +728,7 @@ export function parseEvidence(raw: unknown): Partial<Record<FieldKey, string>> {
   const out: Partial<Record<FieldKey, string>> = {};
   if (typeof raw !== "object" || raw === null) return out;
   for (const [k, v] of Object.entries(raw)) {
-    if (isFieldKey(k) && typeof v === "string" && v.trim()) out[k] = clip(redactSensitive(v.trim()));
+    if (isFieldKey(k) && typeof v === "string" && v.trim()) out[k] = clip(redactForModel(v.trim()));
   }
   return out;
 }

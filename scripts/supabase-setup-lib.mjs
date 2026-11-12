@@ -1,7 +1,7 @@
 // Pure helpers for scripts/supabase-setup.mjs: parsing, validation, the SQL it runs and how it
 // reads the results. No I/O, so they are unit-tested (scripts/supabase-setup-lib.test.ts).
 
-export const FUNCTIONS = ["chamber-extract", "document-upload", "census-template-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "purge-intakes", "ops-monitor"];
+export const FUNCTIONS = ["chamber-extract", "document-upload", "census-template-upload", "document-extract", "document-scan", "dispatch-outbox", "resend-webhook", "receive-mail", "held-mail", "mailbox", "purge-intakes", "ops-monitor"];
 
 /** What MALWARE_SCANNER may be (supabase/functions/_shared/malwareScan.ts). */
 export const MALWARE_SCANNERS = ["scanii", "clamav", "http", "none"];
@@ -413,12 +413,14 @@ export function vaultSecretSql(serviceRoleKey) {
  * - purge-intakes hourly: carries out intake deletions (docs/DATA_HANDLING.md).
  * - ops-monitor every five minutes: alerts on failures over their thresholds (docs/RUNBOOK.md).
  * - document-scan every five minutes: scans uploads that weren't settled when they arrived (docs/RUNBOOK.md).
+ * - held-mail daily: deletes PEO mail that waited 30 days on the holding list, files first (docs/RUNBOOK.md).
  */
 export const SCHEDULED_FUNCTIONS = [
   { fn: "dispatch-outbox", schedule: "* * * * *", status: "schedule", label: "Email schedule", every: "every minute", missing: "not scheduled" },
   { fn: "purge-intakes", schedule: "23 * * * *", status: "purge_schedule", label: "Deletion schedule", every: "hourly", missing: "not scheduled: requested and retention deletions never run" },
   { fn: "ops-monitor", schedule: "*/5 * * * *", status: "monitor_schedule", label: "Alert schedule", every: "every five minutes", missing: "not scheduled: failures are recorded but nobody is alerted" },
   { fn: "document-scan", schedule: "*/5 * * * *", status: "scan_schedule", label: "Malware scan schedule", every: "every five minutes", missing: "not scheduled: an upload the scanner couldn't check at once stays unreadable" },
+  { fn: "held-mail", schedule: "23 3 * * *", status: "held_mail_schedule", label: "Held mail schedule", every: "daily", missing: "not scheduled: mail nobody assigned is never deleted" },
 ];
 
 /** Runs one scheduled function on the project's own URL. Scheduling the same name again replaces the job. */
@@ -491,6 +493,7 @@ export const STATUS_QUERIES = {
   purge_schedule: "select count(*)::int as n from cron.job where jobname = 'purge-intakes';",
   monitor_schedule: "select count(*)::int as n from cron.job where jobname = 'ops-monitor';",
   scan_schedule: "select count(*)::int as n from cron.job where jobname = 'document-scan';",
+  held_mail_schedule: "select count(*)::int as n from cron.job where jobname = 'held-mail';",
   retention_schedule: "select count(*)::int as n from cron.job where jobname = 'run-retention';",
   role_grants: "select count(*)::int as n from public.user_roles;",
 };

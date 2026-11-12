@@ -76,7 +76,10 @@ describe("provenance in the workspace", () => {
     const list = screen.getByText(/Needs your review — 1 item/).parentElement!;
     expect(within(list).getAllByText("Conflicting answers").length).toBeGreaterThan(0);
     fireEvent.click(within(list).getByRole("button", { name: "Use 45 for Employee count" }));
-    expect(screen.queryByText(/Needs your review/)).not.toBeInTheDocument();
+    // The conflict is settled. What is left to confirm was worked out from the census just then: whether any
+    // employee is under 16 or over 60 (K-3.4).
+    expect(screen.queryByText("Conflicting answers")).not.toBeInTheDocument();
+    expect(screen.getByText(/Needs your review — 1 item/)).toBeInTheDocument();
   });
 
   it("shows a field the prospect doesn't know yet, or that doesn't apply, in place of an answer", () => {

@@ -1,5 +1,5 @@
 // The answers to a PEO's own extra questions (GLOSSARY.md, Extra question; L-2.3), kept with the intake in
-// chamber_sessions.extra_answers (supabase/migrations/20261113090000_extra_answers.sql) by PEO id, then question key.
+// chamber_sessions.extra_answers (supabase/migrations/20261115120000_extra_answers.sql) by PEO id, then question key.
 // Each answer keeps the question's wording as it was answered and how it is answered, beside the same field status and
 // source as a field's provenance, so the form and Lenore read and write it the same way.
 //
@@ -88,7 +88,7 @@ export function answerFor(all: ExtraAnswers, peoId: number, q: ExtraQuestion): E
 
 /**
  * The extra answers a certification kept, or null when it kept none: one recorded before they were kept
- * (20261113090000) says nothing about them, which is "can't tell", never "none answered".
+ * (20261115120000) says nothing about them, which is "can't tell", never "none answered".
  */
 export const parseCertifiedExtraAnswers = (raw: unknown): ExtraAnswers | null => (raw === undefined || raw === null ? null : parseExtraAnswers(raw));
 

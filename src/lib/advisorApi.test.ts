@@ -6,6 +6,7 @@ const upload = vi.fn();
 const remove = vi.fn();
 const download = vi.fn();
 const buckets: string[] = [];
+const createSignedUrl = vi.fn();
 /** Rows each table returns to the detail page's queries, which are all select/eq/order chains. */
 const tables: Record<string, unknown[]> = {};
 /** Each `.in(column, values)` filter a query asked for, by table. */
@@ -16,6 +17,7 @@ const query = (table: string) => {
   const chain: Record<string, unknown> = {
     select: () => chain,
     eq: () => chain,
+    is: () => chain,
     in: (column: string, values: unknown[]) => {
       inFilters.push({ table, column, values });
       const before = rows;
@@ -35,7 +37,7 @@ vi.mock("@/integrations/supabase/client", () => ({
     rpc: (...args: unknown[]) => rpc(...args),
     storage: { from: (bucket: string) => {
       buckets.push(bucket);
-      return { upload: (...a: unknown[]) => upload(...a), remove: (...a: unknown[]) => remove(...a), download: (...a: unknown[]) => download(...a) };
+      return { upload: (...a: unknown[]) => upload(...a), remove: (...a: unknown[]) => remove(...a), download: (...a: unknown[]) => download(...a), createSignedUrl: (...a: unknown[]) => createSignedUrl(bucket, ...a) };
     } },
   },
 }));
@@ -55,7 +57,6 @@ const {
   setStatus,
   recordQuoteSend,
   updateQuoteRequest,
-  noteUnderwriterQuestion,
   fetchIsAdmin,
   loadPeoDirectory,
   loadVersionContacts,
@@ -63,6 +64,11 @@ const {
   savePeoDraft,
   recheckPeoProfile,
   documentFile,
+  addQuoteRequestNote,
+  correctQuoteRequestNote,
+  reissueQuoteRequestAddress,
+  openQuoteRequestThread,
+  mailAttachmentUrl,
 } = await import("./advisorApi");
 
 const failWith = (error: { message: string; code?: string }) => rpc.mockResolvedValue({ data: null, error });
@@ -495,14 +501,24 @@ describe("quote requests", () => {
     tables.submission_workflow = [{ status: "quoted", won_quote_request_id: null }];
     tables.quote_requests = [{ id: 7, peo_name: "TriNet", status: "quoted" }];
     tables.quote_request_events = [{ id: 3, quote_request_id: 7, field: "status" }];
+    tables.quote_request_notes = [{ id: 21, quote_request_id: 7, kind: "call" }];
+    tables.quote_request_messages = [{ id: 41, quote_request_id: 7, direction: "received" }];
+    tables.quote_request_message_attachments = [{ id: 51, message_id: 41, status: "stored" }];
+    tables.quote_request_thread_reads = [{ quote_request_id: 7, last_opened_at: "2026-11-10T16:00:00+00:00" }];
+    tables.quote_request_addresses = [{ id: 31, quote_request_id: 7, local_part: "eaa-2026-0001.trinet.0123456789abcdef", revoked_at: null }];
     tables.chamber_certifications = [{ file_id: "EAA-2026-0001", version: 3, signed_at: null, recorded_at: null, chamber_data: null }];
     const d = (await loadSubmission("s1"))!;
     expect(d.quoteRequests).toEqual([{ id: 7, peo_name: "TriNet", status: "quoted" }]);
     expect(d.quoteRequestEvents).toEqual([{ id: 3, quote_request_id: 7, field: "status" }]);
+    expect(d.quoteRequestNotes).toEqual([{ id: 21, quote_request_id: 7, kind: "call" }]);
+    expect(d.quoteRequestMessages).toEqual([{ id: 41, quote_request_id: 7, direction: "received" }]);
+    expect(d.quoteRequestMailAttachments).toEqual([{ id: 51, message_id: 41, status: "stored" }]);
+    expect(d.quoteRequestThreadReads).toEqual([{ quote_request_id: 7, last_opened_at: "2026-11-10T16:00:00+00:00" }]);
+    expect(d.quoteRequestAddresses).toEqual([{ id: 31, quote_request_id: 7, local_part: "eaa-2026-0001.trinet.0123456789abcdef", revoked_at: null }]);
     expect(d.currentVersion).toBe(3);
   });
 
-  it("records a send, an answer and an underwriter's question through the advisor functions", async () => {
+  it("records a send, an answer and a note through the advisor functions", async () => {
     await recordQuoteSend("s1", "TriNet", "2026-11-10");
     expect(rpc).toHaveBeenLastCalledWith("advisor_record_quote_send", { p_session_id: "s1", p_peo: "TriNet", p_sent_on: "2026-11-10" });
     await updateQuoteRequest(7, { status: "quoted", receivedOn: "2026-11-14", expiresOn: "2026-12-14", startOn: null, adminFeePepm: 145.5, note: null });
@@ -510,8 +526,30 @@ describe("quote requests", () => {
       p_quote_request_id: 7, p_status: "quoted", p_received_on: "2026-11-14", p_expires_on: "2026-12-14", p_start_on: null,
       p_admin_fee_pepm: 145.5, p_note: null,
     });
-    await noteUnderwriterQuestion(7, "  Loss runs?  ");
-    expect(rpc).toHaveBeenLastCalledWith("advisor_note_underwriter_question", { p_quote_request_id: 7, p_question: "Loss runs?" });
+    await addQuoteRequestNote(7, { kind: "underwriter_question", notedOn: "2026-11-12", body: "  Loss runs?  " });
+    expect(rpc).toHaveBeenLastCalledWith("advisor_add_quote_request_note", {
+      p_quote_request_id: 7, p_kind: "underwriter_question", p_noted_on: "2026-11-12", p_body: "Loss runs?",
+    });
+    await openQuoteRequestThread(7, "2026-11-10T16:30:00.654321+00:00");
+    expect(rpc).toHaveBeenLastCalledWith("advisor_open_quote_request_thread", { p_quote_request_id: 7, p_seen_through: "2026-11-10T16:30:00.654321+00:00" });
+    await reissueQuoteRequestAddress(7);
+    expect(rpc).toHaveBeenLastCalledWith("advisor_reissue_quote_request_address", { p_quote_request_id: 7 });
+    await correctQuoteRequestNote(21, { kind: "call", notedOn: "2026-11-11", body: "Loss runs, three years." });
+    expect(rpc).toHaveBeenLastCalledWith("advisor_correct_quote_request_note", {
+      p_note_id: 21, p_kind: "call", p_noted_on: "2026-11-11", p_body: "Loss runs, three years.",
+    });
+  });
+
+  it("opens a PEO mail attachment through a signed link from the peo-mail bucket, as a download under its own name", async () => {
+    createSignedUrl.mockResolvedValue({ data: { signedUrl: "https://files.example/signed" }, error: null });
+    await expect(mailAttachmentUrl({ storage_path: "s1/41/51-proposal.pdf", file_name: "proposal.pdf" })).resolves.toBe("https://files.example/signed");
+    expect(createSignedUrl).toHaveBeenCalledWith("peo-mail", "s1/41/51-proposal.pdf", expect.any(Number), { download: "proposal.pdf" });
+  });
+
+  it("won't try to open an attachment with no stored file", () => {
+    createSignedUrl.mockReset();
+    expect(() => mailAttachmentUrl({ storage_path: null, file_name: "invoice.pdf" })).toThrow(/blocked, not kept, or is still being checked/);
+    expect(createSignedUrl).not.toHaveBeenCalled();
   });
 
   it("names the winning quote when marking a submission won, and nothing otherwise", async () => {

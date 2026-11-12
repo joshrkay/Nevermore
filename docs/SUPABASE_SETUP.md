@@ -280,6 +280,43 @@ only rejects a localhost or non-https Site URL.
 5. **The plan.** A Free project pauses after a week without activity and has no downloadable
    backups. Move to Pro before relying on it.
 
+## Broker sign-in with Google and Microsoft
+
+Brokers can sign in at `/broker/sign-in` with a Google or Microsoft account, and let the product send a submission from
+their own address (joshrkay/Nevermore#92, story M-4.1; `docs/adr/0005-brokers-send-through-their-own-mailbox.md`). The
+setup script does not do this: it needs an app registered with each company, which only a person with an account there can
+create. Until both are set, the buttons start a sign-in that Supabase refuses, and the page says it could not start.
+
+1. **Redirect URL.** Add `https://<your domain>/broker/callback` to Supabase's Redirect URLs. The script's `<origin>/**` entry
+   already covers it.
+2. **Google.** In Google Cloud, create an OAuth client (Web), add Supabase's callback URL as an authorized redirect, and enable
+   the Gmail API. The consent screen asks for `https://www.googleapis.com/auth/gmail.send` and nothing else (a sensitive
+   scope, not a restricted one). While the app is in Google's "testing" status the permission is believed to expire after
+   seven days: use an **internal** app for the advisory's own Workspace, or Google's verification for outside brokers. This has
+   not been confirmed against Google's current rules and has to be before release. Then turn the Google provider on in
+   Supabase (Authentication, Sign In / Providers) with the client ID and secret.
+3. **Microsoft.** In Microsoft Entra, register an application with the account types you will allow, add Supabase's callback
+   URL as a Web redirect, give it the delegated Microsoft Graph permission `Mail.Send` (and `offline_access`), and note that a
+   tenant's administrator may have to approve it. Turn the Azure provider on in Supabase with the application (client) ID,
+   the secret and the tenant URL. Not yet researched against Microsoft's current rules.
+4. **Check.** Sign in with each from a private window. A new account lands on "Waiting for access" until an administrator
+   grants the role; an existing advisor with the same verified email lands in the console with their role and history. The
+   product asks for only the permissions in `src/data/mailboxScopes.ts` (a test fails if a read permission is added).
+
+5. **Keeping the permission (story M-4.3).** Set the `mailbox` function's secrets (`supabase/env.production.example`):
+   `MAILBOX_TOKEN_KEY` (`openssl rand -base64 32`; only that function holds it, and losing it makes every stored token
+   unreadable, so brokers connect again), and each provider's `*_OAUTH_CLIENT_ID` / `*_OAUTH_CLIENT_SECRET`, the same app
+   Supabase's provider uses (the function refreshes tokens itself, since Supabase does not store or refresh a provider's).
+   Without them, connecting answers "Sending through a mailbox isn't set up yet" and brokers send by hand.
+
+What the product keeps: after sign-in the browser hands the refresh token once to the `mailbox` function, which tests it,
+refuses it unless it grants sending and nothing more, encrypts it (AES-GCM, bound to the broker's id) and stores the
+ciphertext in `broker_mailboxes`, which no API role can read. A broker connects, checks and disconnects at
+`/advisor/mailbox`. Disconnecting, the provider revoking the permission (found when a refresh is refused), the account being
+deleted and the broker losing the advisor role all delete the token; Google is asked to revoke it on disconnect, and a
+Microsoft broker removes the app from their account page. Microsoft rotates the refresh token on use, and the new one
+replaces the old.
+
 ## Moving to a new domain or Vercel project
 
 The front end reads the site's address from the browser (`window.location.origin`), so no code changes.

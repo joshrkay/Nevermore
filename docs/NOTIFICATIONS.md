@@ -1,7 +1,7 @@
 # Submission notifications
 
 When a prospect certifies an intake (which submits it), two emails are queued in the same database
-transaction and sent by the `dispatch-outbox` edge function. Two more go through the same outbox: an advisor's
+transaction and sent by the `dispatch-outbox` edge function. More go through the same outbox: an advisor's
 request for information, and the reminder before a draft closes for a prospect who asked for it.
 
 | Email | To | Contains |
@@ -9,6 +9,7 @@ request for information, and the reminder before a draft closes for a prospect w
 | Advisor alert (G-1) | `ADVISORY_NOTIFY_EMAIL` | Company legal name, primary signer, title, work email, phone, employee count, HQ state, File ID, when it was certified (UTC), link to the secure advisor review. Subject `New Intake Certified: <company> (<File ID>)`, or `Updated Intake: ...` when changed answers were certified again |
 | Prospect confirmation (G-2) | The signed-in account's own email | Company, File ID, what happens next, expected response time, support address. Subject `Your Nevermore intake is in (<File ID>)` |
 | Information request | The account's own email | The advisor's message, the labels of the answers it is about, the File ID, a link to the intake (sign-in required) and the support address. Subject `Your advisor needs a bit more info (<File ID>)`. Queued by `advisor_request_information()` in the transaction that records the request (migration `20261105090000`) |
+| New PEO mail (M-3.6) | The advisor distribution list (`ADVISORY_NOTIFY_EMAIL`), like the Advisor Alert | The PEO's name, the company, the File ID and a link to the thread on the submission page (sign-in required). Subject `New PEO mail: <PEO> on <company> (<File ID>)`. Nothing from the message: no sender, subject, text or file name. Queued by a trigger in the transaction that records a message a person at the PEO wrote on a quote request (not an automatic reply, not an advisor's own copied-in message, not held mail until an admin assigns it); one per message (migration `20261111140000`). A bounce on it never suppresses an advisor's address |
 | Draft reminder | The account's own email, only if it asked for reminders | The company, the day the draft closes (UTC), a link back to it, why it was sent and how to stop. Subject `Heads up: your intake for <company> closes on <day>`. Queued hourly by `queue_draft_expiry_reminders()` a week before an uncertified draft closes (migration `20261105091000`) |
 
 Both emails call the intake's identifier its **File ID**, as the app and the signed Manuscript do (`GLOSSARY.md`); the queued payload keeps the field name `reference`. Neither email contains census, payroll, benefits or document content. Every listed detail is always shown on the advisor alert, as "Not provided" when empty, so a blank is never mistaken for an omission. The email is a complete HTML document (title, phone-width layout, row headers for the details) with a plain-text twin. The queue row itself never
@@ -128,6 +129,7 @@ Set with `supabase secrets set` or the dashboard. Secrets never go in `VITE_*` v
 | `SUPPORT_EMAIL` | prospect | Shown in each prospect email and used as Reply-To. |
 | `PROSPECT_RESPONSE_TIME` | prospect | A phrase that follows "within", e.g. `2 business days`. This is a commitment shown to every prospect, so there is no default. |
 | `RESEND_WEBHOOK_SECRET` | bounces | The signing secret (`whsec_...`) of the Resend webhook that points at the `resend-webhook` function (see "Bounces and complaints"). Sending works without it; bounces and complaints are then not processed and a bounced address is mailed again. |
+| `RESEND_INBOUND_WEBHOOK_SECRET`, `QUOTE_REPLY_DOMAIN`, `PEO_MAIL_RECEIVING` | receiving PEO mail | Receiving is separate from sending: Resend receives mail for a subdomain (`QUOTE_REPLY_DOMAIN`, e.g. `quotes.nevermorepeo.com`, with its MX records added at the DNS host) and posts an `email.received` webhook to the `receive-mail` function, which has its own signing secret. `PEO_MAIL_RECEIVING=on` turns it on; anything else switches it off with nothing lost. Attachments are scanned like uploads, so `MALWARE_SCANNER` must be set. See `docs/adr/0004-peo-mail-is-received-before-the-product-sends.md` and `docs/RUNBOOK.md`. |
 | `ENGINEERING_ALERT_WEBHOOK_URL` | optional | An https URL (Slack-style incoming webhook: it reads a `text` field; the same facts also arrive as JSON fields). Called when an event goes `dead`, with the event id, kind, attempt count and failure kind only: no addresses, names or message content. Unset means log only. One that is set but is not an https URL is logged as `OUTBOX_CONFIG_MISSING`. |
 
 A kind whose settings are incomplete is **not sent**: its events stay queued, no attempts are spent,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isProfileStale, parsePeoCatalog, staleProfileWarning } from "./peoProfiles";
 
-// What public.peo_catalog() returns (20261111090000): each PEO alphabetically, with its newest published version.
+// What public.peo_catalog() returns (20261115090000): each PEO alphabetically, with its newest published version.
 const TRINET_ROW = {
   id: 5,
   name: "TriNet",

@@ -253,3 +253,84 @@ describe("helpers", () => {
     expect(censusRowId("x")).not.toBe(censusRowId("y"));
   });
 });
+
+// K-2.1: what health underwriters rate a group on, read from the census file.
+describe("normalizeCensusRow: gender, hire date, COBRA status and home state (K-2.1)", () => {
+  const base = { first_name: "Ana", last_name: "Diaz", classification: "w2", employment_type: "full_time" };
+  const read = (extra: Record<string, unknown>) => normalizeCensusRow({ ...base, ...extra }, NOW);
+
+  it("reads gender however a roster writes it", () => {
+    for (const v of ["F", "f", "Female", "female", "Woman"]) expect(read({ gender: v })?.gender, v).toBe("F");
+    for (const v of ["M", "male", "Male", "Man"]) expect(read({ gender: v })?.gender, v).toBe("M");
+    for (const v of ["X", "Non-binary", "nonbinary", "Other"]) expect(read({ gender: v })?.gender, v).toBe("X");
+    for (const v of ["", "unknown", "N/A", 1, null]) expect(read({ gender: v }), String(v)).not.toHaveProperty("gender");
+  });
+
+  it("reads a hire date in the formats rosters use, and keeps none it can't read", () => {
+    expect(read({ hire_date: "2019-04-01" })?.hire_date).toBe("2019-04-01");
+    expect(read({ hire_date: "4/1/2019" })?.hire_date).toBe("2019-04-01");
+    expect(read({ hire_date: "April 1, 2019" })?.hire_date).toBe("2019-04-01");
+    // Excel's serial number for 2019-04-01.
+    expect(read({ hire_date: 43556 })?.hire_date).toBe("2019-04-01");
+    expect(read({ hire_date: "last spring" })).not.toHaveProperty("hire_date");
+    expect(read({ hire_date: "2031-01-01" })).not.toHaveProperty("hire_date");
+  });
+
+  it("reads COBRA status as yes or no", () => {
+    for (const v of ["Y", "yes", "Yes", "true", true, "COBRA", "Active COBRA", "on cobra"]) expect(read({ cobra: v })?.cobra, String(v)).toBe(true);
+    for (const v of ["N", "no", "No", "false", false, "Active", "not on cobra"]) expect(read({ cobra: v })?.cobra, String(v)).toBe(false);
+    for (const v of ["", "maybe", null, 3]) expect(read({ cobra: v }), String(v)).not.toHaveProperty("cobra");
+  });
+
+  // Review finding: a cell that says no in other words is a no.
+  it("reads a negative COBRA status however it is worded", () => {
+    for (const v of ["No COBRA", "Non-COBRA", "Not COBRA", "No - active", "never on cobra"]) expect(read({ cobra: v })?.cobra, v).toBe(false);
+  });
+
+  it("reads a home state by code or name, apart from the work state", () => {
+    expect(read({ work_state: "CA", home_state: "Nevada" })).toMatchObject({ work_state: "CA", home_state: "NV" });
+    expect(read({ work_state: "CA", home_state: "Atlantis" })).not.toHaveProperty("home_state");
+  });
+
+  it("survives being saved and read again", () => {
+    const row = read({ gender: "F", hire_date: "4/1/2019", cobra: "no", home_state: "NV" })!;
+    expect(row).toMatchObject({ gender: "F", hire_date: "2019-04-01", cobra: false, home_state: "NV" });
+    expect(normalizeCensusRow(JSON.parse(JSON.stringify(row)), NOW)).toEqual(row);
+  });
+});
+
+// K-2.2: what a workers' comp underwriter needs to assign class codes.
+describe("normalizeCensusRow: worksite, remote and travels (K-2.2)", () => {
+  const base = { first_name: "Ana", last_name: "Diaz", classification: "w2", employment_type: "full_time" };
+  const read = (extra: Record<string, unknown>) => normalizeCensusRow({ ...base, ...extra }, NOW);
+
+  it("keeps a worksite as text, cut to 200 characters, and none when blank", () => {
+    expect(read({ worksite: "  Oakland   warehouse " })?.worksite).toBe("Oakland warehouse");
+    expect(read({ worksite: "x".repeat(250) })?.worksite).toHaveLength(200);
+    expect(read({ worksite: "  " })).not.toHaveProperty("worksite");
+  });
+
+  it("reads whether someone works remotely", () => {
+    for (const v of ["Y", "yes", true, "Remote", "WFH", "Work from home", "Hybrid", "Fully remote"]) expect(read({ remote: v })?.remote, String(v)).toBe(true);
+    for (const v of ["N", "no", false, "Onsite", "On-site", "In office", "Office"]) expect(read({ remote: v })?.remote, String(v)).toBe(false);
+    for (const v of ["", "sometimes?", null]) expect(read({ remote: v }), String(v)).not.toHaveProperty("remote");
+  });
+
+  it("reads whether someone travels for work", () => {
+    for (const v of ["Y", "yes", true, "Travels", "Frequent travel"]) expect(read({ travels: v })?.travels, String(v)).toBe(true);
+    for (const v of ["N", "no", false, "None", "No travel"]) expect(read({ travels: v })?.travels, String(v)).toBe(false);
+    for (const v of ["", null, 7]) expect(read({ travels: v }), String(v)).not.toHaveProperty("travels");
+  });
+
+  // Review finding: a cell that says no in other words is a no.
+  it("reads a negative remote or travel answer however it is worded", () => {
+    for (const v of ["Not remote", "Non-remote", "No remote work", "never remote"]) expect(read({ remote: v })?.remote, v).toBe(false);
+    for (const v of ["Does not travel", "Doesn't travel", "Never travels", "Non-travel", "No business travel"]) expect(read({ travels: v })?.travels, v).toBe(false);
+  });
+
+  it("survives being saved and read again", () => {
+    const row = read({ worksite: "Oakland warehouse", remote: "no", travels: "yes" })!;
+    expect(row).toMatchObject({ worksite: "Oakland warehouse", remote: false, travels: true });
+    expect(normalizeCensusRow(JSON.parse(JSON.stringify(row)), NOW)).toEqual(row);
+  });
+});

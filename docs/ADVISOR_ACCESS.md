@@ -36,12 +36,48 @@ Every way into an advisor page ends somewhere that says what happened:
 | Signed out on purpose | Sign-in page with "You've been signed out." The page is *not* remembered: the next person to sign in may be someone else, and lands on the queue |
 | Session ended on its own (refresh token expired, or sign-out in another tab) | Sign-in page with "Your session expired. Sign in again to continue." and a return to the same page |
 | The server rejects the token mid-use (`PGRST301`-`303`, "JWT expired") | "Your session has expired." The app ends the session and takes them to sign-in as above |
-| Signed in but not an advisor | "Advisor access required", with a way home or to another account |
+| Signed in but not an advisor (a new broker, say) | "Waiting for access": the account is created and an administrator has to grant the role; nothing is shared until then. A way home or to another account |
 | Role revoked while signed in (database refuses with `42501`) | "You no longer have advisor access.", no retry offered |
 | Anything else (network, timeout) | "We couldn't load …" with the reason and Try again |
 
 `useAuth().sessionEnded` is `"signed_out"` or `"expired"`; Supabase reports both as `SIGNED_OUT`, so
 a sign-out the app asked for is remembered until the event arrives.
+
+### Signing in with Google or Microsoft (story M-4.1)
+
+`/broker/sign-in` is a sign-in page for advisors and brokers, separate from the prospect's: "Sign in with Google" and "Sign in
+with Microsoft" ask for the send-only permission with the sign-in (`src/data/mailboxScopes.ts`), and the page says what that
+lets the product do and that it never reads a mailbox. The prospect's sign-in page never offers it. The advisor sign-in at
+`/login` links to it, and it links back to the password sign-in, which keeps working.
+
+- It uses its own PKCE client (`src/lib/brokerAuth.ts`): the app's main client never reads a session out of the address, so a
+  link someone sends can't sign a browser in as them. The provider returns to `/broker/callback` with a code, which is
+  redeemed once; the page then reloads so the whole app sees the session. A refusal at the provider, or a code that no longer
+  works, shows "We couldn't sign you in" in our own words.
+- A broker who unticks the send permission still gets an account and the console, and sends by hand with the thread's address
+  in CC.
+- The same verified email as an existing advisor links to that account (Supabase's default for a provider-verified email):
+  same role and history. A new account without the role sees "Waiting for access" until an administrator grants it. How a role
+  can be granted without an administrator, by organisation, is story M-4.2.
+- **The advisor role by organisation (story M-4.2).** An admin keeps a list of allowed organisations at
+  `/advisor/organisations` (the **Organisations** tab; admins only). A person who signs in with Google or Microsoft from one of
+  them gets the advisor role without waiting: right after sign-in the browser calls `claim_advisor_role_by_organisation()`,
+  which reads the caller's own sign-in claims from `auth.identities` (never anything the browser sends) and grants `advisor`
+  only if they match the list. Matched on what the provider vouches for, never on the email text: for Google the verified hosted
+  domain (`hd`, with the email verified), for Microsoft the tenant ID the token was issued by (`tid`, or the one in its issuer).
+  A sign-in that carries no such claim matches nothing, so the rule grants nothing rather than something it can't vouch for.
+  A free-mail domain (gmail.com, outlook.com and the like) and Microsoft's personal-account tenants can't be added. The rule
+  grants `advisor` only, never `admin`, and takes nothing away: removing an organisation stops later sign-ups matching, and
+  people already granted keep the role until an admin revokes it, as today. Every change to the list and every grant is in the
+  append-only `advisor_role_events`, which admins read on the same page: who, when and the organisation it matched. **Not yet
+  confirmed against a real sign-in:** the exact claim names Supabase keeps in `auth.identities` for Google and Azure; if they
+  differ the rule fails closed (nobody is matched) and the first real sign-in will show it.
+- The refresh token the provider returns is handed once to the `mailbox` function (story M-4.3), which tests it, refuses it
+  unless it grants sending and nothing more, encrypts it and stores the ciphertext in `broker_mailboxes`. No API role reads
+  that table, admins included: a broker learns only whether a mailbox is connected, through `my_mailbox()`. It is connected,
+  checked and disconnected at `/advisor/mailbox`, and deleted on disconnect, when the provider revokes it, when the account
+  is deleted and when the broker loses the advisor role. `mailbox_store`, `mailbox_secret` and `mailbox_delete` are for the
+  service role only.
 
 ## What advisors can and can't do
 
@@ -96,8 +132,41 @@ a sign-out the app asked for is remembered until the event arrives.
     the PEO's answer: `quoted`, `declined` or `closed`. Only a quote has dates and a fee (22023 otherwise); a
     closed request is answered again only after a send reopens it. The note is at most 2000 characters, and the
     fee 0 to 100000.
-  - `advisor_note_underwriter_question(id, question)` notes a question from the PEO's underwriter. It doesn't
-    change the status.
+  - `advisor_add_quote_request_note(id, kind, noted_on, body)` adds a **quote request note** (GLOSSARY.md) for
+    something that happened outside the product: a `call`, a `portal_entry`, an `email_elsewhere`, an
+    `underwriter_question` or `other`, with the day it happened and at most 2000 characters (22023 otherwise, and
+    for a date more than a day ahead; PT404 for no such quote request). A note changes nothing else: it never
+    records a send or changes the status, and a closed quote request takes one and stays closed. Notes are kept
+    in `quote_request_notes`, which advisors read and prospects don't (migration `20261111090000`).
+  - `advisor_correct_quote_request_note(note, kind, noted_on, body)` corrects a note. Each value changed is
+    appended to `quote_request_events` with the old one (`note_kind`, `note_noted_on`, `note_body`, and the
+    note's id in `note_id`). Who wrote the note and when never change.
+  - Each quote request has one live **reply address** (GLOSSARY.md, Thread), kept in `quote_request_addresses` as
+    the part before the @: the File ID, the PEO's name reduced to letters and digits, and 16 random hex characters
+    (migration `20261111100000`). `advisor_record_quote_send` issues it and keeps the one a quote request already
+    has; closing a quote request doesn't revoke it. `advisor_reissue_quote_request_address(id)` revokes the live
+    one and issues another (PT404 for no such quote request); the revoked row stays. Both are logged in
+    `quote_request_events` (`reply_address`). Advisors read the addresses and prospects don't. The console shows
+    an address only while `VITE_QUOTE_REPLY_DOMAIN` names the subdomain that receives mail.
+  - PEO mail (story M-3.2) is kept in `quote_request_messages` and `quote_request_message_attachments`, written only
+    by the `receive-mail` function as the service role (`record_inbound_mail`, `record_inbound_attachment`,
+    `finish_inbound_attachment`). Advisors read the mail on a quote request and the attachments of it; admins also
+    read held mail, which belongs to no quote request. A clean attachment's file is in the `peo-mail` bucket,
+    readable by an advisor through a signed link only while its row says `stored`. Prospects read none of it.
+  - The holding list (story M-3.3) is worked through the `held-mail` function, never the tables: it moves or removes a
+    message's files in storage and calls the service-role-only `plan_mail_move`, `apply_mail_move`,
+    `plan_held_mail_discard` and `finish_held_mail_discard`, passing the signed-in person, and each checks their role
+    again. An advisor (or admin) moves a message off a thread; only an admin assigns a held message or discards it.
+    The daily schedule discards what has been held 30 days, with no person named. An assignment and a move off are
+    logged on the quote request (`mail_assigned`, `mail_moved_off`: the message's id and nothing of its content).
+  - `advisor_open_quote_request_thread(id, seen_through)` (story M-3.4) marks a quote request's thread opened, for
+    the whole team, in `quote_request_thread_reads`: through `seen_through`, the time of the latest message the page
+    showed (without one, now; never in the future, never backwards). A quote request has **new PEO mail** while a
+    message a person at the PEO wrote (received, not automatic) was recorded after that; the queue counts those in
+    `new_peo_mail_requests`. An advisor's own copied-in message, an automatic reply and held mail never count.
+  - `advisor_note_underwriter_question(id, question)` is kept for the front end deployed before notes: it adds a
+    note of kind `underwriter_question` dated today. Questions recorded before the migration were copied to
+    notes; their log rows stay, and the console no longer shows them.
   - Every change to a quote request is appended to `quote_request_events` (who, when, the field, the old and new
     value) by a trigger, so nothing changes one unlogged; nobody can change or delete that history.
   - `set_submission_status(session, status, note, won_quote_request_id)`: moving to `won` names one of the

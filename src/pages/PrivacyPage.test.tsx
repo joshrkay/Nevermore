@@ -50,11 +50,19 @@ describe("Privacy Policy", () => {
   it("lists every data class under its sensitivity level", () => {
     renderPage();
     const collect = screen.getByRole("region", { name: "What we collect" });
-    for (const c of DATA_CLASSES) {
+    for (const c of DATA_CLASSES.filter((c) => !c.awaitingCounsel)) {
       const level = within(collect).getByRole("heading", { level: 3, name: SENSITIVITY[c.sensitivity].label });
       expect(level.parentElement).toHaveTextContent(c.label);
       expect(level.parentElement).toHaveTextContent(c.examples);
     }
+  });
+
+  it("leaves off the page a class whose wording counsel hasn't approved", () => {
+    renderPage();
+    const held = DATA_CLASSES.filter((c) => c.awaitingCounsel);
+    expect(held.map((c) => c.id)).toEqual(["mailbox_token"]);
+    const collect = screen.getByRole("region", { name: "What we collect" });
+    for (const c of held) expect(collect).not.toHaveTextContent(c.label);
   });
 
   it("shows every retention rule from the data policy, one row each", () => {

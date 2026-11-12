@@ -2,7 +2,7 @@
 // the real Supabase client and a connection for the scanner; the tests wire in fakes. No remote imports, so it runs
 // under Deno and Vitest alike.
 //
-// The only way a PEO template workbook reaches storage (L-3.1; migration 20261114090000_peo_census_templates.sql).
+// The only way a PEO template workbook reaches storage (L-3.1; migration 20261115140000_peo_census_templates.sql).
 // It is an upload like any other (docs/adr/0002), so it reuses document-upload's checks: an admin's browser sends
 // the file as multipart form data (peo_id, file), and
 //

@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh peo_census_templates
--- A PEO template workbook (joshrkay/Nevermore#91, L-3.1, 20261114090000_peo_census_templates.sql): an upload like
+-- A PEO template workbook (joshrkay/Nevermore#91, L-3.1, 20261115140000_peo_census_templates.sql): an upload like
 -- any other (docs/adr/0002). An admin's upload is recorded pending, and only the service role (census-template-upload,
 -- after the malware scan) records it clean, blocked or failed, once. A census layout names a template of its own PEO,
 -- and a version that names one is published only once that template is clean. Advisors read the templates' records;
@@ -72,12 +72,12 @@
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 \i supabase/migrations/20261110090000_quote_requests.sql
-\i supabase/migrations/20261111090000_peo_requirement_profiles.sql
-\i supabase/migrations/20261111100000_peo_profile_editor.sql
-\i supabase/migrations/20261112090000_peo_industry_class_codes.sql
-\i supabase/migrations/20261113090000_extra_answers.sql
-\i supabase/migrations/20261113100000_information_request_extra_questions.sql
-\i supabase/migrations/20261114090000_peo_census_templates.sql
+\i supabase/migrations/20261115090000_peo_requirement_profiles.sql
+\i supabase/migrations/20261115100000_peo_profile_editor.sql
+\i supabase/migrations/20261115110000_peo_industry_class_codes.sql
+\i supabase/migrations/20261115120000_extra_answers.sql
+\i supabase/migrations/20261115130000_information_request_extra_questions.sql
+\i supabase/migrations/20261115140000_peo_census_templates.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

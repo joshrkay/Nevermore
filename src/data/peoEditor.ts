@@ -1,6 +1,6 @@
 // The PEOs page's editor (L-1.2): a requirement profile as an admin edits it, the rules it is checked against next
 // to each field, and what changed between two versions. The rules are the database's (peo_profile_version_error and
-// peo_contact_error, 20261111090000); src/data/schemaSync.test.ts keeps their lists and limits equal.
+// peo_contact_error, 20261115090000); src/data/schemaSync.test.ts keeps their lists and limits equal.
 
 import { CENSUS_TEMPLATE_COLUMNS } from "./census";
 import { US_STATE_CODES } from "./chamberValidation";

@@ -1,7 +1,7 @@
 // What a PEO's extra question and an answer to it may hold (GLOSSARY.md, Extra question; L-2.3), in one place for the
 // browser (src/data/extraAnswers.ts) and chamber-extract (chamber-extract/extraQuestions.ts). The database holds the
-// same limits (peo_profile_version_error in 20261111090000, extra_answer_value_is_valid and extra_answers_error in
-// 20261113090000); src/data/schemaSync.test.ts keeps them equal.
+// same limits (peo_profile_version_error in 20261115090000, extra_answer_value_is_valid and extra_answers_error in
+// 20261115120000); src/data/schemaSync.test.ts keeps them equal.
 //
 // Text is measured as the database measures it, char_length(btrim(text)): spaces at either end don't count, and a
 // character is a code point, so an emoji is one character, not two. Measured any other way, a question the profile

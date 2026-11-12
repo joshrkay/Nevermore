@@ -11,6 +11,7 @@ import ManuscriptPanel from "@/components/advisor/ManuscriptPanel";
 import NeedsActionPanel from "@/components/advisor/NeedsActionPanel";
 import NotesPanel from "@/components/advisor/NotesPanel";
 import PeoNeedsPanel from "@/components/advisor/PeoNeedsPanel";
+import PeoThreadPanel from "@/components/advisor/PeoThreadPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
 import { usePeoCatalog } from "@/hooks/usePeoCatalog";
@@ -194,6 +195,16 @@ const Detail = ({
             onSendRecorded={reload}
             companyName={certifiedVersion?.intake.data.company_name ?? "Company not provided"}
           />
+          <PeoThreadPanel
+            prospectUserId={detail.userId}
+            requests={detail.quoteRequests}
+            messages={detail.quoteRequestMessages}
+            attachments={detail.quoteRequestMailAttachments}
+            notes={detail.quoteRequestNotes}
+            events={detail.quoteRequestEvents}
+            reads={detail.quoteRequestThreadReads}
+            onOpened={reload}
+          />
           <FieldReviewPanel
             sessionId={detail.id}
             data={detail.data}
@@ -242,6 +253,10 @@ const Detail = ({
             currentVersion={detail.currentVersion}
             requests={detail.quoteRequests}
             events={detail.quoteRequestEvents}
+            notes={detail.quoteRequestNotes}
+            addresses={detail.quoteRequestAddresses}
+            mail={detail.quoteRequestMessages}
+            threadReads={detail.quoteRequestThreadReads}
             data={detail.data}
             catalog={peoCatalog.peos}
             onAskProspect={(message) => askProspect(message)}

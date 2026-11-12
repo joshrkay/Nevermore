@@ -1,10 +1,10 @@
-// A PEO template workbook (GLOSSARY.md; L-3.1; migration 20261114090000_peo_census_templates.sql): uploading one to a
+// A PEO template workbook (GLOSSARY.md; L-3.1; migration 20261115140000_peo_census_templates.sql): uploading one to a
 // draft's census layout (census-template-upload scans it, as every upload is, docs/adr/0002), the ones uploaded for a
 // PEO with what their scan found, and reading a clean one's file to fill. Only a clean one's file can be read.
 import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 
-/** The sync:begin template_workbook_statuses list in 20261114090000; schemaSync.test.ts keeps them equal. */
+/** The sync:begin template_workbook_statuses list in 20261115140000; schemaSync.test.ts keeps them equal. */
 export const TEMPLATE_WORKBOOK_STATUSES = ["pending", "clean", "blocked", "failed"] as const;
 export type TemplateWorkbookStatus = (typeof TEMPLATE_WORKBOOK_STATUSES)[number];
 

@@ -2,7 +2,7 @@
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh information_request_extra_questions
 -- An advisor's information request can name a PEO's own extra questions (joshrkay/Nevermore#91, L-2.3,
--- 20261113100000_information_request_extra_questions.sql): each by its PEO, its key and its wording, which must be a
+-- 20261115130000_information_request_extra_questions.sql): each by its PEO, its key and its wording, which must be a
 -- question of that PEO's profile in use, as worded. The prospect reads them with the request. The email never carries
 -- them: it names no PEO.
 \set ON_ERROR_STOP 1
@@ -71,11 +71,11 @@
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 \i supabase/migrations/20261110090000_quote_requests.sql
-\i supabase/migrations/20261111090000_peo_requirement_profiles.sql
-\i supabase/migrations/20261111100000_peo_profile_editor.sql
-\i supabase/migrations/20261112090000_peo_industry_class_codes.sql
-\i supabase/migrations/20261113090000_extra_answers.sql
-\i supabase/migrations/20261113100000_information_request_extra_questions.sql
+\i supabase/migrations/20261115090000_peo_requirement_profiles.sql
+\i supabase/migrations/20261115100000_peo_profile_editor.sql
+\i supabase/migrations/20261115110000_peo_industry_class_codes.sql
+\i supabase/migrations/20261115120000_extra_answers.sql
+\i supabase/migrations/20261115130000_information_request_extra_questions.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

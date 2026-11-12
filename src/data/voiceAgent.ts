@@ -4,21 +4,23 @@
 // pasted into the ElevenLabs agent; src/data/voiceAgent.test.ts fingerprints it and this update's wording, so changing
 // either needs a new version.
 import { INTAKE_FIELDS } from "../../supabase/functions/_shared/intakeSchema.ts";
-import { NEXT_FIELDS, unsettledForTurn } from "../../supabase/functions/chamber-extract/prompt.ts";
+import { describeWorkspaceAnswer, NEXT_FIELDS, unsettledForTurn } from "../../supabase/functions/chamber-extract/prompt.ts";
 import type { ChamberData } from "./chamberTypes";
 import { chatAnswers } from "./chat";
-import { censusSummary, statusesOf } from "./followUp";
+import { censusSummary, fieldApplies, isSettled, statusesOf, workspaceAnswersOpen } from "./followUp";
+import { CHAT_NEVER_ASKS } from "../../supabase/functions/_shared/followUp.ts";
 import type { ProvenanceMap } from "./provenance";
 import type { ExtraQuestionForLenore } from "./extraAnswers";
 
 /** The version of Lenore's voice prompt this Chamber's updates are written for. */
-export const VOICE_PROMPT_VERSION = 3;
+export const VOICE_PROMPT_VERSION = 4;
 
 const list = (labels: string[]) => (labels.length > 0 ? labels.join("; ") : "none");
 
 /**
  * The intake update sent to Lenore's voice (`sendContextualUpdate`): the next fields to ask about, most important
- * first and as many as typed chat's prompt names, then the fields already settled, then whether a census is in.
+ * first and as many as typed chat's prompt names, then the fields already settled, then whether a census is in, then
+ * the answers still to enter in the workspace.
  * Field labels only, never an answer. It uses chamber-extract's rule for what is unsettled (`unsettledForTurn`), so
  * voice and typed chat never disagree about what to ask next.
  */
@@ -28,13 +30,21 @@ export function voiceContextUpdate(data: ChamberData, provenance: ProvenanceMap,
   const open = new Set(unsettled.map((f) => f.key));
   const next = unsettled.slice(0, NEXT_FIELDS).map((f) => (f.required ? `${f.label} (required)` : f.label));
   // The census is a file, never asked for aloud: it has its own line.
-  const settled = INTAKE_FIELDS.filter((f) => f.key !== "census" && !open.has(f.key)).map((f) => f.label);
+  // An answer entered in the workspace is never asked for aloud either (the FEIN, K-1.1): while open it is named on
+  // its own line with its tab, and it is called settled only once it holds an answer or was set aside.
+  const answers = chatAnswers(data);
+  const workspace = workspaceAnswersOpen(answers, statusesOf(provenance));
+  const statuses = statusesOf(provenance);
+  const answered = (key: string) =>
+    (!CHAT_NEVER_ASKS.has(key) && fieldApplies(key, answers)) || isSettled((answers as Record<string, unknown>)[key], statuses[key]);
+  const settled = INTAKE_FIELDS.filter((f) => f.key !== "census" && !open.has(f.key) && answered(f.key)).map((f) => f.label);
   return [
     "Intake update. Field names only: an update never holds the prospect's answers.",
     `Ask about next, most important first: ${list(next)}`,
     `Already settled, never ask again: ${list(settled)}`,
     `Employee census: ${census.rows > 0 ? "uploaded" : "not uploaded"}`,
     ...extraLine(extraQuestions),
+    `Entered in the workspace, never ask aloud: ${list(workspace.map(describeWorkspaceAnswer))}`,
   ].join("\n");
 }
 

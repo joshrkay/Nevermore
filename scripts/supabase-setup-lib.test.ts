@@ -478,7 +478,7 @@ describe("SQL", () => {
 
   it("schedules each scheduled function on the project's own URL, as often as its migration does", () => {
     const migrations = readdirSync("supabase/migrations").map((f) => readFileSync(`supabase/migrations/${f}`, "utf8")).join("\n");
-    expect(SCHEDULED_FUNCTIONS.map((j) => j.fn)).toEqual(["dispatch-outbox", "purge-intakes", "ops-monitor", "document-scan"]);
+    expect(SCHEDULED_FUNCTIONS.map((j) => j.fn)).toEqual(["dispatch-outbox", "purge-intakes", "ops-monitor", "document-scan", "held-mail"]);
     for (const job of SCHEDULED_FUNCTIONS) {
       expect(FUNCTIONS).toContain(job.fn);
       const sql = functionScheduleSql(REF, job.fn, job.schedule);
@@ -517,7 +517,7 @@ describe("interpretChecks", () => {
   const allSet = {
     status: {
       migrations: 16, intake_table: 1, table_grants: 1, buckets: 3, extensions: 2, vault_secret: 1, schedule: 1, expiry_schedule: 1, reminder_schedule: 1,
-      purge_schedule: 1, monitor_schedule: 1, scan_schedule: 1, retention_schedule: 1, role_grants: 0,
+      purge_schedule: 1, monitor_schedule: 1, scan_schedule: 1, held_mail_schedule: 1, retention_schedule: 1, role_grants: 0,
     },
     auth: { external: { anonymous_users: true }, mailer_autoconfirm: false },
     authConfig: {
@@ -592,6 +592,7 @@ describe("interpretChecks", () => {
       ["purge_schedule", "Deletion schedule", /deletions never run/],
       ["retention_schedule", "Retention schedule", /never deleted/],
       ["monitor_schedule", "Alert schedule", /nobody is alerted/],
+      ["held_mail_schedule", "Held mail schedule", /never deleted/],
     ] as const) {
       const unscheduled = { ...allSet, status: { ...allSet.status, [status]: 0 } };
       const checks = interpretChecks(unscheduled, { localMigrations: 16 });

@@ -33,7 +33,7 @@ describe("AnswersJsonDownload", () => {
   it("says what the file is and which certified version, before the click", () => {
     render(<AnswersJsonDownload source={source} builtFrom={builtFrom} />);
     expect(screen.getByText(
-      "The certified answers, census included, as one JSON file for a PEO's or an advisor's own system: intake schema version 2, each answer with its status as certified, and the certification. From certified version 3. It holds no PEO's own questions.",
+      "The certified answers, census included, as one JSON file for a PEO's or an advisor's own system: intake schema version 3, each answer with its status as certified, and the certification. From certified version 3. It holds no PEO's own questions.",
     )).toBeInTheDocument();
     expect(button()).toBeEnabled();
   });

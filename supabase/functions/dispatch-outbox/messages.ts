@@ -8,7 +8,7 @@
 // flattened to one line (a request's message keeps its line breaks), capped, and HTML-escaped before it
 // reaches a message.
 
-export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder";
+export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived";
 
 /** The kinds sent to the prospect's own address; the database's public.outbox_kind_reaches_prospect agrees. */
 export const PROSPECT_KINDS: readonly OutboxKind[] = ["prospect_confirmation", "information_request", "draft_expiry_reminder"];
@@ -33,6 +33,15 @@ export interface AdvisorNotification {
   certifiedAt: string | null;
   /** The intake was certified again after its answers changed. */
   resubmission: boolean;
+}
+
+/** The notice that a person at a PEO wrote on a quote request's thread (public.queue_peo_mail_alert). Nothing of the message. */
+export interface PeoMailArrived {
+  /** The intake's File ID. */
+  reference: string;
+  companyName: string | null;
+  /** The PEO the quote request is with. */
+  peoName: string;
 }
 
 export interface ProspectConfirmation {
@@ -128,6 +137,15 @@ export function parseAdvisorNotification(raw: unknown): AdvisorNotification | nu
     certifiedAt: certifiedAt !== null && CERTIFIED_AT.test(certifiedAt) && Number.isFinite(Date.parse(certifiedAt)) ? certifiedAt : null,
     resubmission: p.resubmission === true,
   };
+}
+
+/** The PEO mail notice's fields, or null without a File ID and a PEO name. Only these three are ever read. */
+export function parsePeoMailArrived(raw: unknown): PeoMailArrived | null {
+  const p = asObject(raw);
+  const reference = p && oneLine(p.reference, 64);
+  const peoName = p && oneLine(p.peo_name, 80);
+  if (!p || !reference || !peoName) return null;
+  return { reference, companyName: oneLine(p.company_name, 200), peoName };
 }
 
 /** The confirmation's fields, or null without a usable reference and recipient address. */
@@ -311,6 +329,41 @@ export function renderAdvisorNotification(n: AdvisorNotification, ctx: AdvisorCo
     `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>
 <table style="border-collapse:collapse;margin:0 0 20px;">${details.map(([l, v]) => row(l, v)).join("")}</table>
 ${button(ctx.reviewUrl, "Open the secure review")}
+${small(`Advisor sign-in is required. ${footnote}`)}`,
+  );
+  return { subject, text, html };
+}
+
+/**
+ * The notice to the advisory team that a person at a PEO wrote on a thread: which PEO, which employer and File ID, and
+ * where the thread is (behind advisor sign-in). It carries nothing from the message, not even who sent it.
+ */
+export function renderPeoMailArrived(n: PeoMailArrived, ctx: AdvisorContext): RenderedEmail {
+  const company = n.companyName ?? NO_COMPANY;
+  const subject = `New PEO mail: ${n.peoName} on ${company} (${n.reference})`;
+  const headline = `${n.peoName} wrote on the thread for ${company}.`;
+  const details: [string, string][] = [
+    ["PEO", n.peoName],
+    ["Company Legal Name", company],
+    ["File ID", n.reference],
+  ];
+  const footnote = "This email carries nothing from the message: read it on the thread.";
+  const text = [
+    headline,
+    "",
+    ...details.map(([label, value]) => `${label}: ${value}`),
+    "",
+    "Read it on the thread (advisor sign-in required):",
+    ctx.reviewUrl,
+    "",
+    footnote,
+  ].join("\n");
+  const html = layout(
+    subject,
+    `${headline} ${n.reference}`,
+    `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>
+<table style="border-collapse:collapse;margin:0 0 20px;">${details.map(([l, v]) => row(l, v)).join("")}</table>
+${button(ctx.reviewUrl, "Open the thread")}
 ${small(`Advisor sign-in is required. ${footnote}`)}`,
   );
   return { subject, text, html };

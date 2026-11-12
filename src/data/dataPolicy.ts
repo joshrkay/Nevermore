@@ -77,6 +77,8 @@ export const RETENTION = {
   submittedYears: 3,
   /** Unsaved answers kept in the prospect's own browser. */
   browserBackupDays: Math.round(BACKUP_MAX_AGE_MS / (24 * 60 * 60 * 1000)),
+  /** Held PEO mail nobody assigns (story M-3.3). */
+  heldMailDays: 30,
   /** Operational monitoring events. */
   opsEventDays: 90,
   /** Email delivery events (sent, delivered, bounced, complained). */
@@ -169,6 +171,11 @@ export interface DataClass {
   stored: { tables: string[]; buckets: string[]; elsewhere: string[] };
   retention: string;
   deletion: string;
+  /**
+   * Left off the public Privacy page until counsel has approved the wording for it (docs/LEGAL_REVIEW.md): a class
+   * listed here is stored and handled as the rest are, but what people are told about it isn't ours to publish alone.
+   */
+  awaitingCounsel?: string;
 }
 
 const WITH_INTAKE = "Kept with its intake: a draft or a submitted record (see the windows above).";
@@ -292,12 +299,31 @@ export const DATA_CLASSES: DataClass[] = [
     sensitivity: "confidential",
     examples: "Advisors' field reviews and corrections, internal notes, pipeline status and its history, the requests for information sent to the prospect, the PEOs each submission went to with what each quoted and every change to that, and who changed each uploaded document and when.",
     stored: {
-      tables: ["advisor_field_reviews", "advisor_review_events", "advisor_notes", "submission_workflow", "submission_status_history", "information_requests", "quote_requests", "quote_request_events", "document_events"],
+      tables: ["advisor_field_reviews", "advisor_review_events", "advisor_notes", "submission_workflow", "submission_status_history", "information_requests", "quote_requests", "quote_request_events", "quote_request_notes", "quote_request_addresses", "quote_request_thread_reads", "document_events"],
       buckets: [],
       elsewhere: [],
     },
     retention: WITH_INTAKE,
     deletion: `${DELETED_WITH_INTAKE} The append-only history can only be removed by that process.`,
+  },
+  {
+    id: "peo_mail",
+    label: "PEO correspondence",
+    sensitivity: "restricted",
+    examples: "Mail a PEO sent to a quote request's reply address, and the advisor's own messages copied to it: who wrote it, when, the plain text, a few headers, and its attachments (a proposal can carry an employer's details and a PEO's pricing). Mail to an address that matched nothing is held until an admin deals with it.",
+    stored: { tables: ["quote_request_messages", "quote_request_message_attachments"], buckets: ["peo-mail"], elsewhere: ["Resend"] },
+    retention: `${WITH_INTAKE} Held mail nobody assigns is deleted ${RETENTION.heldMailDays} days after it was held (story M-3.3), files first. Resend keeps what it received too, under its own terms, until it is deleted there.`,
+    deletion: `${DELETED_WITH_INTAKE} An attachment is stored only once it has been scanned for malware; one the scanner flags is never stored, only its signature.`,
+  },
+  {
+    id: "mailbox_token",
+    label: "Advisor mailbox connection",
+    sensitivity: "restricted",
+    examples: "The permission an advisor or broker gave to send email from their own address: the token that lets Nevermore send, kept encrypted, and the address and provider it is for. It can only send; it never reads a mailbox.",
+    stored: { tables: ["broker_mailboxes"], buckets: [], elsewhere: ["Google or Microsoft (the permission itself, which the advisor can withdraw there)"] },
+    retention: "Until the advisor disconnects it, the provider revokes it, the advisor leaves (the account is deleted or loses the advisor role), or it is found to carry more than the send permission.",
+    deletion: "Deleted at once when any of those happens: the stored token is removed, and Google is asked to revoke it. Not part of an intake: no prospect's data is in it.",
+    awaitingCounsel: "The Privacy Policy line on how a broker's mailbox permission is used (Google requires it) is counsel's to word (story M-4.3).",
   },
   {
     id: "notifications",
@@ -312,8 +338,8 @@ export const DATA_CLASSES: DataClass[] = [
     id: "account",
     label: "Accounts and access",
     sensitivity: "confidential",
-    examples: "Sign-in accounts (including guest accounts), profiles and advisor or admin roles.",
-    stored: { tables: ["profiles", "user_roles"], buckets: [], elsewhere: ["Supabase Auth (email, password hash, sign-in history)"] },
+    examples: "Sign-in accounts (including guest accounts), profiles and advisor or admin roles, the organisations whose members get the advisor role without an admin, and the log of who was granted it and why.",
+    stored: { tables: ["profiles", "user_roles", "allowed_organisations", "advisor_role_events"], buckets: [], elsewhere: ["Supabase Auth (email, password hash, sign-in history)"] },
     retention: "Until the account is deleted. Roles are reviewed every quarter (docs/RUNBOOK.md).",
     deletion: "By an admin, on request (docs/DATA_HANDLING.md, 'Deleting an account').",
   },

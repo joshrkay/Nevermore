@@ -4,7 +4,7 @@ import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import { parsePeoCatalog } from "@/data/peoProfiles";
 import PEOMatchTab from "./PEOMatchTab";
 
-// The five PEOs as the database seeds them (20261111090000): each with no published profile yet.
+// The five PEOs as the database seeds them (20261115090000): each with no published profile yet.
 const CATALOG = parsePeoCatalog(["ADP TotalSource", "Insperity", "Justworks", "Rippling", "TriNet"].map((name, i) => ({ id: i + 1, name, profile: null })));
 
 const renderTab = (selectedPeo: string | null = null) => {
@@ -17,6 +17,8 @@ const renderTab = (selectedPeo: string | null = null) => {
 describe("PEOMatchTab", () => {
   // Whether a profile is out of date goes by the reader's today: pinned, so every test reads the same day.
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
   });
   afterEach(() => vi.useRealTimers());
 

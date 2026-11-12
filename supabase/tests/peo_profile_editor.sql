@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh peo_profile_editor
--- The PEOs page's admin actions (joshrkay/Nevermore#91, L-1.2, 20261111100000_peo_profile_editor.sql): "Checked
+-- The PEOs page's admin actions (joshrkay/Nevermore#91, L-1.2, 20261115100000_peo_profile_editor.sql): "Checked
 -- again, nothing changed" publishes a new version with the same content and new sources for the parts re-checked,
 -- and a draft can be discarded. A published version is never touched by either.
 \set ON_ERROR_STOP 1
@@ -70,8 +70,8 @@
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 \i supabase/migrations/20261110090000_quote_requests.sql
-\i supabase/migrations/20261111090000_peo_requirement_profiles.sql
-\i supabase/migrations/20261111100000_peo_profile_editor.sql
+\i supabase/migrations/20261115090000_peo_requirement_profiles.sql
+\i supabase/migrations/20261115100000_peo_profile_editor.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

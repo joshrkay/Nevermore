@@ -11,6 +11,7 @@ import type { IntakeSource } from "@/data/intakeSource";
 import { contactsOf, EMPTY_PROFILE, parseProfileVersion, profilePayload, type DraftBasis, type EditableProfile, type PeoContact, type ProfileVersion } from "@/data/peoEditor";
 import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
 import { parseCertifiedExtraAnswers, parseExtraAnswers, type ExtraAnswers, type ExtraQuestionRef } from "@/data/extraAnswers";
+import type { QuoteNoteKind } from "@/data/quoteRequests";
 import {
   isPipelineStatus,
   manuscriptStoragePath,
@@ -39,6 +40,11 @@ export type DocumentEvent = Tables["document_events"]["Row"];
 export type InformationRequestRow = Tables["information_requests"]["Row"];
 export type QuoteRequestRow = Tables["quote_requests"]["Row"];
 export type QuoteRequestEventRow = Tables["quote_request_events"]["Row"];
+export type QuoteRequestNoteRow = Tables["quote_request_notes"]["Row"];
+export type QuoteRequestAddressRow = Tables["quote_request_addresses"]["Row"];
+export type QuoteRequestMessageRow = Tables["quote_request_messages"]["Row"];
+export type QuoteRequestMailAttachmentRow = Tables["quote_request_message_attachments"]["Row"];
+export type QuoteRequestThreadReadRow = Tables["quote_request_thread_reads"]["Row"];
 
 export class AdvisorApiError extends Error {
   constructor(message: string, readonly code?: string, readonly unauthenticated = false) {
@@ -265,8 +271,18 @@ export interface SubmissionDetail {
   informationRequests: InformationRequestRow[];
   /** The PEOs this submission went to and what each answered, oldest first. */
   quoteRequests: QuoteRequestRow[];
-  /** Every change to those quote requests, and the underwriters' questions, newest first. */
+  /** Every change to those quote requests and every correction to their notes, newest first. */
   quoteRequestEvents: QuoteRequestEventRow[];
+  /** What happened on those quote requests outside the product, the latest day first. */
+  quoteRequestNotes: QuoteRequestNoteRow[];
+  /** Each quote request's live reply address: the part before the @. */
+  quoteRequestAddresses: QuoteRequestAddressRow[];
+  /** The mail that reached those quote requests' reply addresses (held mail, which has no quote request, isn't here). */
+  quoteRequestMessages: QuoteRequestMessageRow[];
+  /** What became of each attachment on that mail. */
+  quoteRequestMailAttachments: QuoteRequestMailAttachmentRow[];
+  /** When an advisor last opened each quote request's thread. */
+  quoteRequestThreadReads: QuoteRequestThreadReadRow[];
   /** The submission's latest certified version (1, 2, ...); null before the first certification. */
   currentVersion: number | null;
   /**
@@ -316,7 +332,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   // Row security hides sessions the caller may not see; a missing pipeline row means the same.
   if (!row || !workflow.data) return null;
 
-  const [docs, profile, docEvents, requests, lastCertification, partner, quotes, quoteEvents] = await Promise.all([
+  const [docs, profile, docEvents, requests, lastCertification, partner, quotes, quoteEvents, quoteNotes, quoteAddresses] = await Promise.all([
     supabase
       .from("documents")
       .select("id, file_name, file_size, category, status, storage_path, created_at, file_sha256, scan_verdict")
@@ -343,6 +359,14 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
       : Promise.resolve({ data: null, error: null }),
     supabase.from("quote_requests").select("*").eq("session_id", id).order("id", { ascending: true }),
     supabase.from("quote_request_events").select("*").eq("session_id", id).order("id", { ascending: false }),
+    supabase
+      .from("quote_request_notes")
+      .select("*")
+      .eq("session_id", id)
+      .order("noted_on", { ascending: false })
+      .order("id", { ascending: false }),
+    // The live address of each quote request; revoked ones stay in the table and aren't shown.
+    supabase.from("quote_request_addresses").select("*").eq("session_id", id).is("revoked_at", null),
   ]);
   if (docs.error) fail(docs.error, "Couldn't load uploaded documents.");
   if (lastCertification.error) fail(lastCertification.error, "Couldn't load the certification on record.");
@@ -352,6 +376,26 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
   if (partner.error) fail(partner.error, "Couldn't load the referral partner.");
   if (quotes.error) fail(quotes.error, "Couldn't load the quote requests.");
   if (quoteEvents.error) fail(quoteEvents.error, "Couldn't load the quote requests' history.");
+  if (quoteNotes.error) fail(quoteNotes.error, "Couldn't load the quote requests' notes.");
+  if (quoteAddresses.error) fail(quoteAddresses.error, "Couldn't load the quote requests' reply addresses.");
+
+  // The mail on those quote requests, then what depends on it. Read after the quote requests, so a failure here
+  // is named for what it loads; the thread is only as complete as these.
+  const requestIds = (quotes.data ?? []).map((q) => q.id);
+  const [mail, threadReads] = await Promise.all([
+    supabase.from("quote_request_messages").select("*").eq("session_id", id).order("recorded_at", { ascending: false }).order("id", { ascending: false }),
+    requestIds.length > 0
+      ? supabase.from("quote_request_thread_reads").select("*").in("quote_request_id", requestIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (mail.error) fail(mail.error, "Couldn't load the mail on the quote requests.");
+  if (threadReads.error) fail(threadReads.error, "Couldn't load which threads were opened.");
+  const mailIds = (mail.data ?? []).map((m) => m.id);
+  const mailAttachments =
+    mailIds.length > 0
+      ? await supabase.from("quote_request_message_attachments").select("*").in("message_id", mailIds).order("id", { ascending: true })
+      : { data: [], error: null };
+  if (mailAttachments.error) fail(mailAttachments.error, "Couldn't load the attachments on that mail.");
 
   const submission = (row.submission as unknown as ChamberSubmission | null) ?? null;
   const certified = row.status === "submitted" && !!submission?.signer_name;
@@ -416,6 +460,11 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     informationRequests: requests.data ?? [],
     quoteRequests: quotes.data ?? [],
     quoteRequestEvents: quoteEvents.data ?? [],
+    quoteRequestNotes: quoteNotes.data ?? [],
+    quoteRequestAddresses: quoteAddresses.data ?? [],
+    quoteRequestMessages: mail.data ?? [],
+    quoteRequestMailAttachments: mailAttachments.data ?? [],
+    quoteRequestThreadReads: threadReads.data ?? [],
     currentVersion: recorded?.version ?? null,
     certificationLacksSnapshot: certified
       ? (useSnapshot && submission!.field_provenance == null) || !Array.isArray(submission!.documents)
@@ -457,7 +506,7 @@ export async function requestInformation(sessionId: string, message: string, fie
     p_session_id: sessionId,
     p_message: message.trim(),
     p_fields: [...fields],
-    // A PEO's own extra questions it names (20261113100000): by PEO, key and wording.
+    // A PEO's own extra questions it names (20261115130000): by PEO, key and wording.
     p_extra_questions: questions.map((q) => ({ peo_id: q.peo_id, key: q.key, question: q.question })) as unknown as Json,
   });
   if (error) fail(error, "Couldn't send the request.");
@@ -498,10 +547,182 @@ export async function updateQuoteRequest(id: number, answer: QuoteAnswer): Promi
   if (error) fail(error, "Couldn't record the answer.");
 }
 
-/** Notes a question the PEO's underwriter asked, on its quote request's history. The status doesn't change. */
-export async function noteUnderwriterQuestion(id: number, question: string): Promise<void> {
-  const { error } = await supabase.rpc("advisor_note_underwriter_question", { p_quote_request_id: id, p_question: question.trim() });
-  if (error) fail(error, "Couldn't note the question.");
+/**
+ * Revokes a quote request's reply address and issues a new one. Mail sent to the old address no longer reaches
+ * the quote request, so the PEO has to be given the new one.
+ */
+export async function reissueQuoteRequestAddress(quoteRequestId: number): Promise<void> {
+  const { error } = await supabase.rpc("advisor_reissue_quote_request_address", { p_quote_request_id: quoteRequestId });
+  if (error) fail(error, "Couldn't issue a new address.");
+}
+
+/**
+ * Marks a quote request's thread opened, for the whole team, through `seenThrough`: the time of the latest message
+ * the page showed, exactly as it was loaded, so mail that arrived since stays new. With none it is now.
+ */
+export async function openQuoteRequestThread(quoteRequestId: number, seenThrough: string | null): Promise<void> {
+  const { error } = await supabase.rpc("advisor_open_quote_request_thread", { p_quote_request_id: quoteRequestId, p_seen_through: seenThrough });
+  if (error) fail(error, "Couldn't mark the thread as read.");
+}
+
+type HeldMailAction =
+  | { action: "move_off"; message_id: number; note?: string }
+  | { action: "assign"; message_id: number; quote_request_id: number }
+  | { action: "discard"; message_id: number };
+
+/** Asks the held-mail function to move, assign or discard a message and its files. The database checks who may. */
+async function heldMail(body: HeldMailAction, fallback: string): Promise<void> {
+  const { error } = await supabase.functions.invoke("held-mail", { body });
+  if (!error) return;
+  let message = fallback;
+  const context = (error as { context?: unknown }).context;
+  if (context instanceof Response) {
+    const said = await context.json().catch(() => null) as { error?: unknown } | null;
+    if (typeof said?.error === "string") message = said.error;
+    if (context.status === 403) throw new AdvisorApiError(message, "42501");
+  }
+  throw new AdvisorApiError(message);
+}
+
+/** An advisor moves a message off its thread to the holding list, with the files, and may say why. */
+export const moveMessageOffThread = (messageId: number, note?: string) =>
+  heldMail({ action: "move_off", message_id: messageId, note: note?.trim() || undefined }, "Couldn't move the message.");
+
+/** An admin assigns a held message to a quote request. */
+export const assignHeldMessage = (messageId: number, quoteRequestId: number) =>
+  heldMail({ action: "assign", message_id: messageId, quote_request_id: quoteRequestId }, "Couldn't assign the message.");
+
+/** An admin discards a held message and its files. Nobody is told. */
+export const discardHeldMessage = (messageId: number) => heldMail({ action: "discard", message_id: messageId }, "Couldn't discard the message.");
+
+/** A quote request an admin can assign held mail to: its PEO and employer, and the address it once had. */
+export interface AssignableRequest {
+  id: number;
+  fileId: string;
+  company: string;
+  peo: string;
+  localParts: string[];
+}
+
+export interface HeldMail {
+  messages: QuoteRequestMessageRow[];
+  attachments: QuoteRequestMailAttachmentRow[];
+  requests: AssignableRequest[];
+  /** The file ID and PEO of each quote request an advisor moved a message from, for the "moved from" line. */
+  names: Map<number, string>;
+}
+
+/** The holding list, oldest first, with what an admin needs to place each message. Admins only: row security returns nothing else. */
+export async function loadHeldMail(): Promise<HeldMail> {
+  const held = await supabase.from("quote_request_messages").select("*").is("quote_request_id", null).order("held_at", { ascending: true });
+  if (held.error) fail(held.error, "Couldn't load the holding list.");
+  const messages = held.data ?? [];
+  const attachments = messages.length
+    ? await supabase.from("quote_request_message_attachments").select("*").in("message_id", messages.map((m) => m.id))
+    : { data: [], error: null };
+  if (attachments.error) fail(attachments.error, "Couldn't load the holding list.");
+  const requests = await supabase.from("quote_requests").select("id, session_id, peo_name").order("id", { ascending: false });
+  if (requests.error) fail(requests.error, "Couldn't load the quote requests.");
+  const rows = requests.data ?? [];
+  const sessionIds = [...new Set(rows.map((r) => r.session_id))];
+  const [summaries, addresses] = await Promise.all([
+    sessionIds.length ? supabase.from("chamber_sessions").select("id, file_id, chamber_data").in("id", sessionIds) : { data: [], error: null },
+    rows.length ? supabase.from("quote_request_addresses").select("quote_request_id, local_part").in("quote_request_id", rows.map((r) => r.id)) : { data: [], error: null },
+  ]);
+  if (summaries.error) fail(summaries.error, "Couldn't load the quote requests.");
+  if (addresses.error) fail(addresses.error, "Couldn't load the quote requests.");
+  const bySession = new Map((summaries.data ?? []).map((r) => [r.id, r]));
+  const requestsOut: AssignableRequest[] = rows.map((r) => ({
+    id: r.id,
+    fileId: bySession.get(r.session_id)?.file_id ?? "",
+    company: String((bySession.get(r.session_id)?.chamber_data as { company_name?: unknown } | null)?.company_name ?? "Unnamed"),
+    peo: r.peo_name,
+    localParts: (addresses.data ?? []).filter((a) => a.quote_request_id === r.id).map((a) => a.local_part),
+  }));
+  return {
+    messages,
+    attachments: attachments.data ?? [],
+    requests: requestsOut,
+    names: new Map(requestsOut.map((r) => [r.id, `${r.fileId || `quote request ${r.id}`}, ${r.peo}`])),
+  };
+}
+
+/** Whether the signed-in broker's own mailbox is connected (public.my_mailbox): never the token. */
+export interface MyMailbox {
+  connected: boolean;
+  provider?: "google" | "microsoft";
+  address?: string;
+  connectedAt?: string;
+}
+
+export async function fetchMyMailbox(): Promise<MyMailbox> {
+  const { data, error } = await supabase.rpc("my_mailbox");
+  if (error) fail(error, "Couldn't check your mailbox.");
+  const row = (data ?? {}) as { connected?: boolean; provider?: "google" | "microsoft"; address?: string; connected_at?: string };
+  return row.connected ? { connected: true, provider: row.provider, address: row.address, connectedAt: row.connected_at } : { connected: false };
+}
+
+/** Disconnects the broker's mailbox: the stored token is deleted, and a send then says no mailbox is connected. */
+export async function disconnectMailbox(): Promise<void> {
+  const { error } = await supabase.functions.invoke("mailbox", { body: { action: "disconnect" } });
+  if (error) throw new AdvisorApiError("Couldn't disconnect your mailbox. Try again.");
+}
+
+export type AllowedOrganisationRow = Tables["allowed_organisations"]["Row"];
+export type AdvisorRoleEventRow = Tables["advisor_role_events"]["Row"];
+
+/** The organisations whose members get the advisor role without an admin, and the log of changes and grants. Admins only. */
+export async function loadOrganisationRule(): Promise<{ organisations: AllowedOrganisationRow[]; events: AdvisorRoleEventRow[] }> {
+  const [orgs, events] = await Promise.all([
+    supabase.from("allowed_organisations").select("*").order("added_at", { ascending: false }),
+    supabase.from("advisor_role_events").select("*").order("at", { ascending: false }).limit(50),
+  ]);
+  if (orgs.error) fail(orgs.error, "Couldn't load the allowed organisations.");
+  if (events.error) fail(events.error, "Couldn't load the allowed organisations.");
+  return { organisations: orgs.data ?? [], events: events.data ?? [] };
+}
+
+/** Adds an organisation (a Google domain or a Microsoft tenant ID). The database refuses free-mail domains and says why. */
+export async function addAllowedOrganisation(provider: "google" | "microsoft", orgId: string, label: string): Promise<void> {
+  const { error } = await supabase.rpc("admin_add_allowed_organisation", { p_provider: provider, p_org_id: orgId, p_label: label });
+  if (error) fail(error, "Couldn't add the organisation.");
+}
+
+export async function removeAllowedOrganisation(id: number): Promise<void> {
+  const { error } = await supabase.rpc("admin_remove_allowed_organisation", { p_id: id });
+  if (error) fail(error, "Couldn't remove the organisation.");
+}
+
+/** A quote request note as the form holds it: its kind, the day it happened (YYYY-MM-DD) and its text. */
+export interface QuoteNoteInput {
+  kind: QuoteNoteKind;
+  notedOn: string;
+  body: string;
+}
+
+/**
+ * Adds a note to a quote request for something that happened outside the product. It changes nothing else: not
+ * the status, and not the send, even when the note is of an email sent elsewhere.
+ */
+export async function addQuoteRequestNote(quoteRequestId: number, note: QuoteNoteInput): Promise<void> {
+  const { error } = await supabase.rpc("advisor_add_quote_request_note", {
+    p_quote_request_id: quoteRequestId,
+    p_kind: note.kind,
+    p_noted_on: note.notedOn,
+    p_body: note.body.trim(),
+  });
+  if (error) fail(error, "Couldn't save the note.");
+}
+
+/** Corrects a note's kind, date or text. Each value changed is logged with the one it replaced. */
+export async function correctQuoteRequestNote(noteId: number, note: QuoteNoteInput): Promise<void> {
+  const { error } = await supabase.rpc("advisor_correct_quote_request_note", {
+    p_note_id: noteId,
+    p_kind: note.kind,
+    p_noted_on: note.notedOn,
+    p_body: note.body.trim(),
+  });
+  if (error) fail(error, "Couldn't correct the note.");
 }
 
 export async function addNote(sessionId: string, body: string): Promise<void> {
@@ -548,7 +769,7 @@ export const SIGNED_URL_SECONDS = 60;
  * doesn't sign that request, but every document is also stored as application/octet-stream
  * (20261104130000_document_scanning.sql), which a browser downloads whatever the link says.
  */
-async function signedUrl(bucket: "documents" | "manuscripts", path: string, download: string): Promise<string> {
+async function signedUrl(bucket: "documents" | "manuscripts" | "peo-mail", path: string, download: string): Promise<string> {
   const { data, error } = await supabase.storage
     .from(bucket)
     .createSignedUrl(path, SIGNED_URL_SECONDS, { download: downloadName(download) });
@@ -570,6 +791,11 @@ export async function documentFile(doc: Pick<UploadedDocument, "storage_path">):
   if (error || !data) throw new AdvisorApiError("Couldn't open that file.");
   return data;
 }
+/** A signed link to an attachment on PEO mail, which only a scanned-clean one has a file for. */
+export const mailAttachmentUrl = (a: { storage_path: string | null; file_name: string }) => {
+  if (!a.storage_path) throw new AdvisorApiError("That file isn't stored: it was blocked, not kept, or is still being checked.");
+  return signedUrl("peo-mail", a.storage_path, a.file_name);
+};
 
 export const manuscriptUrl = (v: ManuscriptVersion, filename: string) => signedUrl("manuscripts", v.storage_path, filename);
 
@@ -652,7 +878,7 @@ async function contactRows(versionIds: readonly number[]): Promise<Record<string
 
 /**
  * Every PEO with its profile versions, as row security lets the reader see them: advisors read the published
- * versions, admins drafts too (20261111090000). Alphabetical. Only the contacts of each PEO's version in use and its
+ * versions, admins drafts too (20261115090000). Alphabetical. Only the contacts of each PEO's version in use and its
  * draft are read, the ones the page shows and an edit starts from; an older version's are read with
  * loadVersionContacts() when its history is opened, and until then it lists none.
  */

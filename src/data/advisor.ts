@@ -105,7 +105,7 @@ export function prospectStatusAfter(next: PipelineStatus, history: readonly { to
 /** The longest message a request for information can carry; the database refuses longer (20261105090000). */
 export const INFORMATION_REQUEST_MAX = 1000;
 
-/** The most PEO extra questions one request can name; the database refuses more (20261113100000). */
+/** The most PEO extra questions one request can name; the database refuses more (20261115130000). */
 export const INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS = 60;
 
 /** Intake statuses a prospect can't answer from (public.advisor_request_information refuses them). */

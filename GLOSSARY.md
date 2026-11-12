@@ -21,7 +21,7 @@ What a prospect calls the space where they talk to Lenore and see their answers 
 _Avoid_: The Chamber in anything a prospect reads
 
 **Certify & sign tab** (code: The Reckoning):
-The workspace tab, labelled "⑨ Certify & sign", where the prospect certifies. The Reckoning stays its name in code (`ReckoningTab`). Tab ⑦ is "⑦ Review".
+The workspace tab, labelled "⑩ Certify & sign", where the prospect certifies. The Reckoning stays its name in code (`ReckoningTab`). Tab ⑧ is "⑧ Review".
 _Avoid_: The Reckoning in anything a prospect reads
 
 **The packet** (code: The Manuscript):
@@ -105,7 +105,19 @@ One person in the census.
 _Avoid_: census row, worker, member
 
 **Dependent**:
-A spouse, domestic partner, child or other person covered through an employee in the census.
+A spouse, domestic partner, child or other person covered through an employee in the census. Listed in the census file on the rows directly under their employee, told apart by the relationship column; never asked for in chat.
+
+**Workspace answer**:
+A field Lenore never asks for in conversation, because the prospect enters it on a workspace tab: the FEIN, the NAICS code and every table. Lenore says which tab it is on, and takes what the prospect volunteers of one where the conversation can hold it. The FEIN is the exception: it is never taken from the conversation or from a document.
+_Avoid_: manual field, typed answer, offline field
+
+**Table**:
+A field whose answer is rows rather than one value: the legal entities, the owners and officers, the loss history, the current medical plans and the state unemployment tax rates. What is heard or read later is added to a table, never traded for it.
+_Avoid_: list of rows, grid, roster (the roster is the census)
+
+**FEIN**:
+The employer's federal employer identification number, nine digits. The prospect, the advisors and the packet see all nine; everything else sees the last four.
+_Avoid_: EIN (in the app's own words), tax ID, TIN
 
 **Required field**:
 A field an intake needs before it can be certified: company legal name, states of operation and pay frequency (D2). The census is recommended: it can only come from an upload, so it never blocks, though Lenore points to the Upload tab for it. (The intake schema's `x-intake.required` still marks the census, for Lenore's ask order.)
@@ -120,7 +132,7 @@ An intake is ready to certify when every required field holds an answer that isn
 _Avoid_: ready for review, complete, done, discovery complete
 
 **Open item**:
-Something the prospect still owes on a field: a required field with no answer, or any field that is inferred, incomplete, conflicting or unknown. A recommended field with no answer is not an open item, except the census: a missing census is listed as an open item, under Recommended, and never blocks.
+Something the prospect still owes on an intake: a required field with no answer, or any field that is inferred, incomplete, conflicting or unknown. Four things are open items though they are not a field's status, and none of them ever blocks certification: a missing census, a fact PEOs ask of every employee that people on the census lack (once per fact, however many people lack it), employees with no workers' comp class code, and a state of operation with no unemployment tax rate (once per state). A recommended field with no answer is otherwise not an open item.
 _Avoid_: gap, missing item, to-do, issue
 
 **Eligibility check**:
@@ -152,11 +164,31 @@ An advisor's message asking the prospect for more, naming the answers it is abou
 _Avoid_: follow-up, RFI, query
 
 **Quote request**:
-One PEO's handling of one submission, from when an advisor sent it the packet until that PEO quotes, declines or the request is closed. A submission has at most one per PEO; sending a newer packet version to the same PEO continues it. Advisors record it after acting outside the product, and the product sends nothing to the PEO. The prospect never sees it.
+One PEO's handling of one submission, from when an advisor sent it the packet until that PEO quotes, declines or the request is closed. A submission has at most one per PEO; sending a newer packet version to the same PEO continues it. Advisors record it after acting outside the product: the product sends nothing to a PEO yet, and an advisor sends from their own mail. Counsel cleared the product sending (QP-D1) on 2026-11-11; it starts when Epic M's sending is built and counsel's wording is in. Each quote request has its own reply address and one **thread**. The prospect never sees it.
 _Avoid_: quote (a quote is what a PEO returns on a quote request), submission, RFP, deal
 
+**Thread**:
+Every email sent and received about one quote request, read newest first on its timeline with its sends, status changes and quote request notes; corrections to the quote request's fields stay in its change log. A submission's threads can also be read together on one combined timeline, each entry naming its PEO. A message the product sends for a broker through their **connected mailbox** lists the reply address first in Reply-To and the broker's own address second, so a plain Reply reaches the thread and their inbox. Mail reaches a thread through the quote request's reply address: the File ID, the PEO's short name and an unguessable part, on a subdomain of nevermorepeo.com. The address keeps receiving after the quote request closes, until the intake is deleted or an advisor revokes and reissues it. A message to it joins the thread whoever sent it, with a sender not seen before marked as new, an automatic reply marked as one, and an advisor's own copied-in email marked as sent by hand. Mail a person at the PEO wrote sets a "new PEO mail" mark, one for the whole team, until any advisor opens the thread. Messages are shown as plain text, and an attachment that fails its malware scan is blocked while the rest of the message stays readable. An arriving message never changes the quote request status. Kept and deleted with the intake; the prospect never sees it.
+_Avoid_: conversation, inbox, chain
+
+**Connected mailbox**:
+A broker's own Google or Microsoft mailbox, which they let the product send through, so a message to a PEO is from their real address and sits in their own Sent folder. The permission is send only: the product never reads the mailbox, so a PEO's reply reaches the **thread** only through the quote request's reply address, which every such message lists first in Reply-To, with the broker's own address second. A broker connects it when they sign in with Google or Microsoft on the broker sign-in page, which asks for send permission at the same time; the prospect sign-in page never asks. A broker can decline the permission and keeps an account, and then sends from their own mail with the reply address in CC. The product keeps only the token that lets it send, never a password, and deletes it when the broker disconnects or leaves. Not built yet (joshrkay/Nevermore#92).
+_Avoid_: linked account, email integration, inbox connection
+
+**Quote request note**:
+A dated entry an advisor adds to a quote request's timeline for something that happened outside the product, with its kind: a call, a portal entry, an email sent elsewhere, an underwriter's question, or other. It changes nothing else: it never records a send or changes the quote request status, and it can be added to a closed quote request, which stays closed. It can be corrected, and each correction is logged. The quote request's own single note stays beside it, as the request's summary.
+_Avoid_: activity, log entry, comment
+
+**Holding list**:
+Mail that arrived for a reply address that was revoked or never issued, or that an advisor moved off a thread it didn't belong to. Only an admin assigns a held message to a quote request or discards it; nothing is attached by guesswork. A message nobody assigns is deleted after 30 days, and its sender gets no reply. One ops alert is raised when the list stops being empty.
+_Avoid_: unmatched inbox, spam folder, quarantine (quarantine holds files waiting for or failing a malware scan)
+
+**Market authorization**:
+The prospect's recorded yes to sending their packet and supporting documents to the PEOs they picked: the PEOs, the wording and its version, who signed and when. Distinct from **Certification** (the answers are true) and the intake consent (how their information is used). It names PEOs, not a packet version, so certifying again leaves it in place. It names only PEOs on the product's list, each one by name: there is no "any PEO my advisor chooses". The prospect can add a PEO or withdraw one at any time, and each change is appended, never edited. An advisor who wants another PEO asks through an information request, and the prospect adds it themselves. No send to a PEO is possible without one. Withdrawing a PEO closes its quote request, revokes its download link, and marks the submission as needing advisor action so an advisor tells the PEO; after that an advisor can still write to that PEO, but with no document or link. A new version of the wording leaves signed authorizations in place. A prospect who accepted the intake consent from before the product sent to PEOs accepts the new one before the authorization is offered. Counsel cleared it (QP-D1) on 2026-11-11 and writes its wording; not built yet (joshrkay/Nevermore#85, #92).
+_Avoid_: consent (the intake consent is a different record), permission, release, authorization on its own
+
 **Quote**:
-What a PEO returns on a quote request when it offers to take the employer on: when it arrived, when it expires, the proposed start date and the headline admin fee per employee per month, with the advisor's note. Recorded by an advisor and seen only by advisors.
+What a PEO returns on a quote request when it offers to take the employer on: when it arrived, when it expires, the proposed start date and the headline admin fee per employee per month, with the advisor's note. Recorded by an advisor and seen only by advisors. The file a PEO attaches is the quote document: it arrives on the thread and is scanned before anyone can open it. When a newer packet version is sent to a PEO that has quoted, the quote request stays quoted and its quote is marked as given on the older version until an advisor records the PEO's new answer.
 _Avoid_: proposal, offer, pricing
 
 **Needs advisor action**:
@@ -308,7 +340,7 @@ The pipeline stage of a submission whose search ended without the employer takin
 _Avoid_: closed, dead, rejected (a PEO declines; a submission is lost)
 
 **Quote request status**:
-Where one PEO's quote request stands: sent (the packet went and the PEO hasn't answered; a quote request in this status is waiting), quoted, declined, or closed (withdrawn, expired, or the employer went elsewhere). A closed quote request goes back to sent when the packet is sent to that PEO again. A question from the PEO's underwriter is noted on the quote request and doesn't change its status.
+Where one PEO's quote request stands: sent (the packet went and the PEO hasn't answered; a quote request in this status is waiting), quoted, declined, or closed (withdrawn by an advisor or by the prospect withdrawing that PEO's market authorization, expired, or the employer went elsewhere). A closed quote request goes back to sent when the packet is sent to that PEO again. A question from the PEO's underwriter is a quote request note and doesn't change its status; nor does a message arriving on the thread.
 _Avoid_: status, pipeline stage, quote status
 
 **Also heard**:
@@ -345,4 +377,6 @@ _Avoid_: status, extraction status
 - An **Eligibility check** compares an **Intake**'s answers with the rules of a **PEO**'s **Requirement profile** in use
 - A **Submission** is or isn't **Complete for a PEO** by its last certified version, against that PEO's **Requirement profile** in use
 - An **Intake** holds at most one answer per **Extra question** per PEO; a **Certification** keeps them with their wording, and each PEO's go only into its **Supplement**
+- A **Quote request** has one **Thread** and one reply address at a time; a message to an address that no longer belongs to a quote request goes to the **Holding list**
+- A **Submission** has at most one **Market authorization**, naming zero or more PEOs; a PEO it doesn't name, or no longer names, can't be sent to
 - A **Submission** that is won names the **Quote request** whose **Quote** the employer took; its other open **Quote requests** close, as all of them do when it is lost or archived

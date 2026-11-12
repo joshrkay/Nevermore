@@ -46,6 +46,24 @@ const AdvisorHeader = () => {
           >
             PEOs
           </NavLink>
+          <NavLink
+            to="/advisor/held"
+            className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
+          >
+            Held mail
+          </NavLink>
+          <NavLink
+            to="/advisor/mailbox"
+            className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
+          >
+            Mailbox
+          </NavLink>
+          <NavLink
+            to="/advisor/organisations"
+            className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
+          >
+            Organisations
+          </NavLink>
         </nav>
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
           <LegalLinks compact />

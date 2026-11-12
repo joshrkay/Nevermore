@@ -283,7 +283,7 @@ export type Database = {
         ]
       }
       // An advisor's request for more information (20261105090000). Written only by advisor_request_information,
-      // read by advisors; never changed. extra_questions: 20261113100000.
+      // read by advisors; never changed. extra_questions: 20261115130000.
       information_requests: {
         Row: {
           extra_questions: Json
@@ -329,7 +329,151 @@ export type Database = {
           field: string
           id: number
           new_value: string | null
+          // The note a logged correction belongs to (20261111090000); null for a change to the quote request.
+          note_id: number | null
           old_value: string | null
+          quote_request_id: number
+          session_id: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // The address replies about a quote request are sent to (20261111100000): the part before the @, one live
+      // per quote request. Advisors read it; it is written only by advisor_record_quote_send and
+      // advisor_reissue_quote_request_address.
+      quote_request_addresses: {
+        Row: {
+          id: number
+          issued_at: string
+          issued_by: string | null
+          issued_by_email: string | null
+          local_part: string
+          quote_request_id: number
+          revoked_at: string | null
+          revoked_by: string | null
+          revoked_by_email: string | null
+          session_id: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // Mail that reached a quote request's reply address (20261111110000). Advisors read it (admins also read held
+      // mail, which has no quote request); it is written only by the receive-mail function.
+      quote_request_messages: {
+        Row: {
+          address_local_part: string | null
+          body_text: string | null
+          body_truncated: boolean
+          cc_addresses: string[]
+          direction: string
+          from_address: string
+          from_name: string | null
+          headers: Json
+          held_at: string | null
+          held_reason: string | null
+          id: number
+          is_automatic: boolean
+          moved_by: string | null
+          moved_by_email: string | null
+          moved_from_quote_request_id: number | null
+          moved_note: string | null
+          new_sender: boolean
+          provider_message_id: string
+          quote_request_id: number | null
+          recorded_at: string
+          sent_at: string | null
+          session_id: string | null
+          subject: string | null
+          to_addresses: string[]
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // What became of each attachment on that mail (20261111110000).
+      quote_request_message_attachments: {
+        Row: {
+          content_type: string | null
+          file_name: string
+          id: number
+          message_id: number
+          not_kept_reason: string | null
+          provider_attachment_id: string
+          recorded_at: string
+          scan_signature: string | null
+          scan_verdict: string | null
+          sha256: string | null
+          size_bytes: number
+          status: string
+          storage_bucket: string | null
+          storage_path: string | null
+          updated_at: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // When an advisor last opened a quote request's thread, for the whole team (20261111120000). Read-only from
+      // the browser: written only through advisor_open_quote_request_thread().
+      quote_request_thread_reads: {
+        Row: {
+          last_opened_at: string
+          last_opened_by: string | null
+          last_opened_by_email: string | null
+          quote_request_id: number
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // Organisations whose members get the advisor role without an admin (20261113100000). Admins read it; it is
+      // changed only through admin_add_allowed_organisation and admin_remove_allowed_organisation.
+      allowed_organisations: {
+        Row: {
+          added_at: string
+          added_by: string | null
+          added_by_email: string | null
+          id: number
+          label: string
+          // A Google hosted domain, or a Microsoft tenant ID.
+          org_id: string
+          provider: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // Every change to that list and every role it granted (20261113100000). Admins read it; append-only.
+      advisor_role_events: {
+        Row: {
+          actor_email: string | null
+          actor_id: string | null
+          at: string
+          id: number
+          kind: string
+          org_id: string
+          org_label: string | null
+          provider: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // What happened on a quote request outside the product (20261111090000). Advisors read it; it is written
+      // only through advisor_add_quote_request_note and advisor_correct_quote_request_note.
+      quote_request_notes: {
+        Row: {
+          body: string
+          created_at: string
+          created_by: string | null
+          created_by_email: string | null
+          id: number
+          // One of QUOTE_NOTE_KINDS (src/data/quoteRequests.ts).
+          kind: string
+          // The day it happened (YYYY-MM-DD).
+          noted_on: string
           quote_request_id: number
           session_id: string
         }
@@ -339,10 +483,10 @@ export type Database = {
       }
       // Who refers employers, by the code in their link (20261106100000). Advisors read it; it is written only
       // through advisor_add_referral_partner and advisor_update_referral_partner.
-      // PEOs and their requirement profiles (20261111090000). Advisors read the PEOs and the published versions
+      // PEOs and their requirement profiles (20261115090000). Advisors read the PEOs and the published versions
       // (admins read drafts too); everyone else signed in reads peo_catalog(). Only admins write, through admin_add_peo(),
       // admin_save_peo_profile(), admin_publish_peo_profile(), admin_set_peo_listed(), admin_recheck_peo_profile() and
-      // admin_discard_peo_draft() (20261111100000). A published version never changes; a PEO is never deleted.
+      // admin_discard_peo_draft() (20261115100000). A published version never changes; a PEO is never deleted.
       peos: {
         Row: {
           created_at: string
@@ -367,7 +511,7 @@ export type Database = {
           documents: Json
           excluded_class_codes: string[] | null
           excluded_industries: string[] | null
-          // { <industry, as excluded_industries words it>: [<class code>] } (20261112090000).
+          // { <industry, as excluded_industries words it>: [<class code>] } (20261115110000).
           excluded_industry_codes: Json
           // [{ key, text, kind, choices? }]
           extra_questions: Json
@@ -408,7 +552,7 @@ export type Database = {
         Relationships: []
       }
       peo_census_templates: {
-        // A PEO's own census template (20261114090000). Read by advisors; written only by census-template-upload.
+        // A PEO's own census template (20261115140000). Read by advisors; written only by census-template-upload.
         Row: {
           file_name: string
           file_sha256: string
@@ -565,7 +709,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      // Every PEO, alphabetically, with its newest published profile or null (20261111090000). Never a contact.
+      // Every PEO, alphabetically, with its newest published profile or null (20261115090000). Never a contact.
       peo_catalog: {
         Args: Record<PropertyKey, never>
         Returns: Json
@@ -594,10 +738,27 @@ export type Database = {
         Args: { p_peo_id: number }
         Returns: undefined
       }
-      // Where a clean PEO template workbook of this PEO is stored, or null (20261114090000).
+      // Where a clean PEO template workbook of this PEO is stored, or null (20261115140000).
       clean_template_workbook_path: {
         Args: { p_peo_id: number; p_template_id: number }
         Returns: string | null
+      }
+      admin_add_allowed_organisation: {
+        Args: { p_provider: string; p_org_id: string; p_label: string }
+        Returns: Json
+      }
+      admin_remove_allowed_organisation: {
+        Args: { p_id: number }
+        Returns: Json
+      }
+      claim_advisor_role_by_organisation: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      // Whether the signed-in broker's own mailbox is connected, never the token (20261113090000).
+      my_mailbox: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
       }
       advisor_email_problems: {
         Args: Record<PropertyKey, never>
@@ -687,6 +848,7 @@ export type Database = {
           needs_action: boolean
           needs_action_note: string | null
           earliest_quote_expires_on: string | null
+          new_peo_mail_requests: number
           oldest_waiting_on: string | null
           open_fields: number
           pipeline_status: string
@@ -715,8 +877,24 @@ export type Database = {
         Args: { p_extra_questions?: Json; p_fields?: string[]; p_message: string; p_session_id: string }
         Returns: Json
       }
+      advisor_add_quote_request_note: {
+        Args: { p_body: string; p_kind: string; p_noted_on: string; p_quote_request_id: number }
+        Returns: Json
+      }
+      advisor_correct_quote_request_note: {
+        Args: { p_body: string; p_kind: string; p_note_id: number; p_noted_on: string }
+        Returns: Json
+      }
       advisor_note_underwriter_question: {
         Args: { p_question: string; p_quote_request_id: number }
+        Returns: Json
+      }
+      advisor_open_quote_request_thread: {
+        Args: { p_quote_request_id: number; p_seen_through?: string | null }
+        Returns: Json
+      }
+      advisor_reissue_quote_request_address: {
+        Args: { p_quote_request_id: number }
         Returns: Json
       }
       advisor_record_quote_send: {

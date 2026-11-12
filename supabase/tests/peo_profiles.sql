@@ -1,7 +1,7 @@
 -- Run against a scratch Postgres as the superuser `postgres`, never one you care about: it loads the e2e
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh peo_profiles
--- PEOs and their requirement profiles (joshrkay/Nevermore#91, L-1.1, 20261111090000_peo_requirement_profiles.sql):
+-- PEOs and their requirement profiles (joshrkay/Nevermore#91, L-1.1, 20261115090000_peo_requirement_profiles.sql):
 -- each PEO's ask is dated, versioned data. Admins write a draft and publish it; a published version is never
 -- changed; a profile that breaks the shape can't be stored. Advisors read the published versions and contacts;
 -- prospects read only peo_catalog(), which names no person at the PEO and no admin.
@@ -71,7 +71,7 @@
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 \i supabase/migrations/20261110090000_quote_requests.sql
-\i supabase/migrations/20261111090000_peo_requirement_profiles.sql
+\i supabase/migrations/20261115090000_peo_requirement_profiles.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------
@@ -195,7 +195,7 @@ CREATE FUNCTION pg_temp.full_profile() RETURNS jsonb LANGUAGE sql AS $$
 $$;
 
 -- Saves and publishes as an editor opened just now would: based on the PEO's draft (its revision) and the version
--- in use as they stand (20261111090000 refuses anything else; supabase/tests/peo_profile_editor.sql tests that).
+-- in use as they stand (20261115090000 refuses anything else; supabase/tests/peo_profile_editor.sql tests that).
 CREATE FUNCTION pg_temp.draft_revision(peo bigint) RETURNS uuid LANGUAGE sql AS $$
   SELECT revision FROM public.peo_profile_versions WHERE peo_id = peo AND status = 'draft';
 $$;
@@ -429,7 +429,7 @@ BEGIN
 
   -- What the caps allow is stored: 200 columns, 30 questions, a template file (the sheet, the row of its headers
   -- and the first row of data); and a section with nothing in it, sourced, says the PEO asks for none (no
-  -- documents, here). Which uploaded template it names is checked where templates are kept (20261114090000).
+  -- documents, here). Which uploaded template it names is checked where templates are kept (20261115140000).
   PERFORM pg_temp.save(admin, justworks, jsonb_build_object(
     'census_layout', jsonb_build_object('format', 'xlsx', 'template_file', jsonb_build_object('id', 1, 'sheet', repeat('s', 31), 'header_row', 3, 'first_row', 4), 'columns', cols - 200),
     'extra_questions', qs - 30,

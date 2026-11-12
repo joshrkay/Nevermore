@@ -555,6 +555,26 @@ describe("ManuscriptPage", () => {
     expect(screen.getByRole("link", { name: /Go to the intake/ })).toHaveAttribute("href", "/start");
   });
 
+  // K-3.1
+  it("shows the owners and officers as a table under the workers' comp answers", async () => {
+    renderAt("/manuscript/demo");
+    const table = await screen.findByRole("table", { name: "Owners and Officers" });
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Name", "Title", "Ownership %", "Duties", "Covered by workers' comp"]);
+    expect(within(table).getAllByRole("row")[1]).toHaveTextContent("Dana ReyesChief Executive Officer60%");
+    // K-3.4: all 24 ACORD 130 questions, in the form's words.
+    const acord = screen.getByRole("table", { name: "ACORD 130 (2017/05): General Information" });
+    expect(within(acord).getAllByRole("row")).toHaveLength(25);
+    expect(within(acord).getAllByRole("row")[8]).toHaveTextContent("8IS A WRITTEN SAFETY PROGRAM IN OPERATION?YesA written ergonomics and office safety policy, reviewed each year");
+    // K-2.3: each dependent, with the date of birth masked as an employee's is on this page.
+    const dependents = screen.getByRole("table", { name: "Dependents" });
+    expect(within(dependents).getAllByRole("row")[1]).toHaveTextContent("Sarah ChenMichael ChenSpouse••/••/1985");
+    // K-5.3: the census facts v3 added sit under the census table.
+    expect(within(screen.getByRole("table", { name: "Census Details" })).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Name", "ZIP", "Gender", "Hire date", "COBRA", "Home state", "Worksite", "Remote", "Travels"]);
+    // K-4.1: the medical plans sit under the benefits answers.
+    expect(within(screen.getByRole("table", { name: "Current Medical Plans" })).getAllByRole("row")[1]).toHaveTextContent("Gold PPO 500Blue Shield$612.40");
+    expect(screen.getByRole("table", { name: "Medical Renewal Rates" })).toBeInTheDocument();
+  });
+
   it("renders the fictional sample only on the demo route, clearly labelled", async () => {
     renderAt("/manuscript/demo");
     expect(await screen.findByText("Sample underwriting packet")).toBeInTheDocument();

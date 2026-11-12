@@ -23,6 +23,51 @@ export const SENDABLE_STAGES = ["ready_for_market", "sent_to_carrier", "quoted"]
 
 export const canRecordSend = (stage: PipelineStatus) => (SENDABLE_STAGES as readonly PipelineStatus[]).includes(stage);
 
+/**
+ * What kind of thing a quote request note records (GLOSSARY.md, Quote request note). The database holds the same
+ * list (20261111090000_quote_request_notes.sql); src/data/schemaSync.test.ts keeps them equal.
+ */
+export const QUOTE_NOTE_KINDS = ["call", "portal_entry", "email_elsewhere", "underwriter_question", "other"] as const;
+export type QuoteNoteKind = (typeof QUOTE_NOTE_KINDS)[number];
+
+export const QUOTE_NOTE_KIND_LABELS: Record<QuoteNoteKind, string> = {
+  call: "Call",
+  portal_entry: "Portal entry",
+  email_elsewhere: "Email sent elsewhere",
+  underwriter_question: "Underwriter's question",
+  other: "Other",
+};
+
+/**
+ * The subdomain that receives mail for quote requests (VITE_QUOTE_REPLY_DOMAIN), or null while receiving is
+ * switched off. With none set the console shows no reply address, so nobody copies one that can't receive.
+ */
+export function quoteReplyDomain(value: unknown = import.meta.env.VITE_QUOTE_REPLY_DOMAIN): string | null {
+  const domain = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain) ? domain : null;
+}
+
+/** A quote request's whole reply address, from the part the database holds and the receiving subdomain. */
+export const replyAddress = (localPart: string, domain: string) => `${localPart}@${domain}`;
+
+/**
+ * What became of an attachment on PEO mail. The database holds the same lists
+ * (20261111110000_quote_request_messages.sql); src/data/schemaSync.test.ts keeps them equal.
+ */
+export const MAIL_ATTACHMENT_STATUSES = ["pending", "stored", "blocked", "not_kept"] as const;
+export const MAIL_NOT_KEPT_REASONS = ["too_large", "unsupported_type", "type_mismatch", "executable"] as const;
+
+/** The longest a message's text can be; the receiving function cuts to it and the database refuses more. */
+export const MAIL_BODY_MAX = 100_000;
+
+/** The longest a note can be; the database refuses a longer one. */
+export const QUOTE_NOTE_MAX = 2000;
+
+export const isQuoteNoteKind = (k: unknown): k is QuoteNoteKind =>
+  typeof k === "string" && (QUOTE_NOTE_KINDS as readonly string[]).includes(k);
+
+export const quoteNoteKindLabel = (kind: string) => (isQuoteNoteKind(kind) ? QUOTE_NOTE_KIND_LABELS[kind] : kind);
+
 export const isQuoteRequestStatus = (s: unknown): s is QuoteRequestStatus =>
   typeof s === "string" && (QUOTE_REQUEST_STATUSES as readonly string[]).includes(s);
 
@@ -83,16 +128,33 @@ const FIELD_NAMES: Record<string, string> = {
   proposed_start_on: "Proposed start",
   admin_fee_pepm: "Admin fee per employee per month",
   note: "Note",
+  reply_address: "Reply address",
+  note_kind: "Note kind",
+  note_noted_on: "Note date",
+  note_body: "Note text",
+};
+
+// A message moved on or off a thread (story M-3.3): the event names the message by id and carries nothing from it.
+const MAIL_EVENT_LABELS: Record<string, string> = {
+  mail_assigned: "A held message was assigned to this thread",
+  mail_moved_off: "A message was moved off this thread to the holding list",
 };
 
 const shown = (field: string, value: string | null) => {
   if (value === null) return "—";
+  if (field === "note_kind") return quoteNoteKindLabel(value);
   return field === "status" && isQuoteRequestStatus(value) ? QUOTE_REQUEST_LABELS[value] : value;
 };
 
-/** One line for a recorded change to a quote request, or an underwriter's question. */
+/**
+ * Whether a logged event belongs in a quote request's change log. An underwriter's question recorded before
+ * questions became notes is left out: the note that replaced it is shown instead.
+ */
+export const isChangeLogEvent = (e: { field: string }) => e.field !== "underwriter_question";
+
+/** One line for a recorded change to a quote request, or a correction to one of its notes. */
 export function describeQuoteRequestEvent(e: { field: string; old_value: string | null; new_value: string | null }): string {
-  if (e.field === "underwriter_question") return `Underwriter asked: ${e.new_value ?? ""}`;
+  if (e.field in MAIL_EVENT_LABELS) return `${MAIL_EVENT_LABELS[e.field]} (message ${e.new_value ?? "?"})`;
   return `${FIELD_NAMES[e.field] ?? e.field}: ${shown(e.field, e.old_value)} → ${shown(e.field, e.new_value)}`;
 }
 
@@ -107,3 +169,17 @@ export const waitingLabel = (sentOn: string, now?: Date) => {
   const days = daysSince(sentOn, now);
   return `Waiting ${days} day${days === 1 ? "" : "s"}`;
 };
+
+/** Why a message is on the holding list, in the words an admin sees. */
+export const HELD_REASON_LABELS: Record<string, string> = {
+  revoked_address: "Revoked address",
+  unknown_address: "Address never issued",
+  ambiguous_address: "Address on more than one quote request",
+  moved_by_advisor: "Moved off a thread",
+};
+
+/** Whole days left before an unassigned held message is deleted (30 days after it was held), never below 0. */
+export function heldDaysLeft(heldAt: string, now: Date = new Date(), keepDays = 30): number {
+  const left = keepDays - (now.getTime() - new Date(heldAt).getTime()) / 86_400_000;
+  return Math.max(0, Math.ceil(left));
+}

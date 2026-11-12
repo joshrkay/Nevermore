@@ -11,11 +11,14 @@ export const COVERAGE_TIERS = ["EE", "EE+SP", "EE+CH", "FAM", "WAIVE"] as const;
 export const COMPENSATION_TYPES = ["salary", "hourly"] as const;
 export const EMPLOYMENT_TYPES = ["full_time", "part_time"] as const;
 export const CLASSIFICATIONS = ["w2", "1099"] as const;
+// New in intake schema v3 (K-2.1): what a health underwriter rates a group on.
+export const GENDERS = ["F", "M", "X"] as const;
 
 export type CoverageTier = (typeof COVERAGE_TIERS)[number];
 export type CompensationType = (typeof COMPENSATION_TYPES)[number];
 export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
 export type WorkerClassification = (typeof CLASSIFICATIONS)[number];
+export type Gender = (typeof GENDERS)[number];
 
 /**
  * Facts of a row that can be filled in by a default rather than read: a blank classification is
@@ -55,7 +58,17 @@ export interface CensusEmployee {
   classification: WorkerClassification;
   coverage_tier?: CoverageTier;
   class_code?: string; // Workers' comp 4-digit code if present
-  /** Dependents the prospect named in conversation. Not read from documents. */
+  // New in intake schema v3 (K-2.1). Each is optional: a census without them is still a census.
+  gender?: Gender;
+  hire_date?: string; // YYYY-MM-DD
+  /** Whether they are covered under COBRA continuation rather than as an active employee. */
+  cobra?: boolean;
+  home_state?: string; // 2-letter uppercase, where they live; absent until known
+  // New in intake schema v3 (K-2.2): where and how they work, for assigning workers' comp class codes.
+  worksite?: string;
+  remote?: boolean;
+  travels?: boolean;
+  /** Their dependents, read from a census file that lists one per row under the employee (K-2.3). */
   dependents?: CensusDependent[];
   /** The facts whose values are defaults, not answers (see CENSUS_ASSUMABLE). Absent when none are. */
   assumed?: CensusAssumable[];
@@ -193,6 +206,52 @@ export function normalizeZip(v: unknown): string | undefined {
   return m[2] ? `${m[1]}-${m[2]}` : m[1];
 }
 
+// ---------- Gender, hire date and COBRA (K-2.1) ----------
+
+const GENDER_SPELLINGS: Record<string, Gender> = {
+  f: "F", female: "F", woman: "F",
+  m: "M", male: "M", man: "M",
+  x: "X", "non binary": "X", nonbinary: "X", other: "X",
+};
+
+/** F, M or X from how a roster writes it. Undefined for anything else. */
+export const normalizeGender = (v: unknown): Gender | undefined => GENDER_SPELLINGS[key(v)];
+
+/** A hire date as YYYY-MM-DD, read as a date of birth is: no date before 1900 or after `now`. */
+export const normalizeHireDate = (v: unknown, now: Date = new Date()): string | undefined => normalizeDob(v, now);
+
+// A cell that says no in so many words: "No COBRA", "Not remote", "Does not travel", "Non-travel".
+const NEGATED = /^(n|no|false|none)$|\b(no|not|non|never|doesn t|don t)\b/;
+
+/** Whether someone is on COBRA: yes or no however a roster writes it. Undefined when it doesn't say. */
+export function normalizeCobra(v: unknown): boolean | undefined {
+  if (typeof v === "boolean") return v;
+  const said = key(v);
+  if (NEGATED.test(said) || said === "active") return false;
+  if (/^(y|yes|true)$/.test(said) || /\bcobra\b/.test(said)) return true;
+  return undefined;
+}
+
+// ---------- Where and how they work (K-2.2) ----------
+
+/** Whether someone works remotely, at least some of the time. Undefined when the roster doesn't say. */
+export function normalizeRemote(v: unknown): boolean | undefined {
+  if (typeof v === "boolean") return v;
+  const said = key(v);
+  if (NEGATED.test(said) || /^(onsite|on site|in office|office)$/.test(said)) return false;
+  if (/^(y|yes|true|wfh|hybrid)$/.test(said) || /\bremote\b/.test(said) || said === "work from home") return true;
+  return undefined;
+}
+
+/** Whether someone travels for work. Undefined when the roster doesn't say. */
+export function normalizeTravels(v: unknown): boolean | undefined {
+  if (typeof v === "boolean") return v;
+  const said = key(v);
+  if (NEGATED.test(said)) return false;
+  if (/^(y|yes|true)$/.test(said) || /\btravels?\b/.test(said)) return true;
+  return undefined;
+}
+
 // ---------- Pay and work ----------
 
 /** A positive amount of money from 85000, "$85,000.00", "85k" or "$32.50/hr". */
@@ -267,16 +326,42 @@ export function normalizeClassCode(v: unknown): string | undefined {
 const RELATIONSHIPS = new Set(["spouse", "domestic_partner", "child", "other"]);
 
 /** Valid dependents, the first MAX_DEPENDENTS of them (invalid ones use no slot). */
+// How a census file names who a row is (K-2.3): the employee themselves, or one of their dependents.
+const EMPLOYEE_LABELS = new Set(["employee", "ee", "self", "subscriber", "primary", "insured", "member"]);
+const RELATIONSHIP_LABELS: Record<string, CensusDependent["relationship"]> = {
+  spouse: "spouse", husband: "spouse", wife: "spouse", sp: "spouse",
+  "domestic partner": "domestic_partner", dp: "domestic_partner", partner: "domestic_partner",
+  child: "child", son: "child", daughter: "child", ch: "child", "dependent child": "child", stepchild: "child", "step child": "child",
+  // Someone covered through the employee who is none of those.
+  dependent: "other", dep: "other", other: "other", parent: "other", mother: "other", father: "other", grandchild: "other",
+  grandparent: "other", sibling: "other", brother: "other", sister: "other", niece: "other", nephew: "other", ward: "other",
+  "ex spouse": "other", "former spouse": "other",
+};
+
+/**
+ * Who a census row is, from its relationship cell: "employee" (also for a blank cell), the kind of dependent, or
+ * "unknown" for a label that is neither. An unknown label is never taken for a dependent: a file that words
+ * "employee" its own way would otherwise read as one person with everyone else under them.
+ */
+export function rowRelationship(v: unknown): "employee" | "unknown" | CensusDependent["relationship"] {
+  const said = key(v);
+  if (said === "" || EMPLOYEE_LABELS.has(said)) return "employee";
+  return RELATIONSHIP_LABELS[said] ?? "unknown";
+}
+
 function normalizeDependents(v: unknown, now: Date): CensusDependent[] {
   if (!Array.isArray(v)) return [];
   return v.flatMap((d) => {
     if (!isRecord(d)) return [];
-    const first_name = cleanText(d.first_name);
+    let first_name = cleanText(d.first_name);
+    let last = cleanText(d.last_name);
+    // A census file may give a dependent's name in one cell, as it may an employee's.
+    if (!first_name && d.full_name !== undefined) [first_name, last] = splitFullName(cleanText(d.full_name));
     if (!first_name) return [];
     const relationship = typeof d.relationship === "string" && RELATIONSHIPS.has(d.relationship) ? d.relationship : "other";
     return [{
       first_name,
-      last_name: cleanText(d.last_name),
+      last_name: last,
       dob: normalizeDob(d.dob, now) ?? "",
       relationship: relationship as CensusDependent["relationship"],
     }];
@@ -360,6 +445,20 @@ export function normalizeCensusRow(raw: unknown, now: Date = new Date()): Omit<C
   if (tier) row.coverage_tier = tier;
   const classCode = normalizeClassCode(raw.class_code);
   if (classCode) row.class_code = classCode;
+  const gender = normalizeGender(raw.gender);
+  if (gender) row.gender = gender;
+  const hireDate = normalizeHireDate(raw.hire_date, now);
+  if (hireDate) row.hire_date = hireDate;
+  const cobra = normalizeCobra(raw.cobra);
+  if (cobra !== undefined) row.cobra = cobra;
+  const homeState = normalizeState(raw.home_state);
+  if (homeState) row.home_state = homeState;
+  const worksite = cleanText(raw.worksite);
+  if (worksite) row.worksite = worksite;
+  const remote = normalizeRemote(raw.remote);
+  if (remote !== undefined) row.remote = remote;
+  const travels = normalizeTravels(raw.travels);
+  if (travels !== undefined) row.travels = travels;
   const dependents = normalizeDependents(raw.dependents, now);
   if (dependents.length > 0) row.dependents = dependents;
   if (assumed.size > 0) row.assumed = CENSUS_ASSUMABLE.filter((a) => assumed.has(a));

@@ -9,7 +9,7 @@ import { FIELD_LABELS, type FieldKey, type ProvenanceMap } from "./provenance";
 export interface InformationRequest {
   message: string;
   fields: FieldKey[];
-  /** A PEO's own extra questions it names (20261113100000): that PEO's section is shown, marked as asked. */
+  /** A PEO's own extra questions it names (20261115130000): that PEO's section is shown, marked as asked. */
   extraQuestions: ExtraQuestionRef[];
   requestedAt: string;
 }

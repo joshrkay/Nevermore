@@ -43,6 +43,7 @@ answers, file names, messages, addresses or links.
 | `deletion_failed` | `fail_intake_deletion` when a deletion has used every attempt, and `claim_intake_deletions` when a worker died on the last one | `storage_remove:<status>`, `files_remain:<n>`, `rpc_files:<code>`, `rpc_complete:<code>`, `unexpected`, `worker_lost` |
 | `voice_failed` | The browser, when a voice call with Lenore (ElevenLabs) fails on our side or the service's (`src/hooks/useLenoreVoice.ts`, `docs/VOICE_ISSUES.md`). A microphone the prospect blocked or doesn't have is shown to them and not reported | `voice_connect_timeout` (no connection 15 seconds after the microphone was ready), `voice_connect_failed` (the connection was refused), `voice_dropped:<close code>` (a call under way closed with an error), `voice_error` (the service reported an error during a call that carried on) |
 | `malware_detected` | `record_document_scan` (from `document-upload` or `document-scan`) when the scanner names a signature in an upload | `malware:<signature>` |
+| `held_mail` | The database, when a message joins an empty holding list (mail to an address that matched nothing, or one an advisor moved off a thread). One event per time the list stops being empty, not one per message | `list_not_empty` |
 | `scan_failed` | `fail_document_scan` when an upload couldn't be scanned after every attempt, `claim_document_scans` when a worker died on the last one, and, while no scanner is set up (or `none` on production), `document-scan` on every run (`document-upload` only logs each upload it refuses) | `config_missing`, `unreachable`, `timeout`, `scanii:<status>`, `http:<status>`, `invalid_response`, `clamd_error`, `clamd_size_limit`, `clamd_no_reply`, `file_missing`, `storage_download:<code>`, `storage_release:<code>`, `rpc_record:<code>`, `worker_lost` |
 
 The browser's reports go through `public.report_client_event`, which drops reports past 30 an hour per
@@ -67,6 +68,7 @@ to it. `ops-monitor` runs every five minutes, raises each kind at most once per 
 | `voice_failed` | 5 events | 15 minutes | 60 minutes | [Voice failures](#voice-failures) |
 | `malware_detected` | 1 event | 60 minutes | 60 minutes | [Malware detected](#malware-detected) |
 | `scan_failed` | 1 event | 60 minutes | 60 minutes | [Scan failed](#scan-failed) |
+| `held_mail` | 1 event | 60 minutes | 60 minutes | [Held mail](#held-mail) |
 
 Alerts that come from elsewhere:
 
@@ -430,6 +432,29 @@ are stuck.
 3. Fix the cause. Pending documents are retried on their own; failed ones are requeued with
    `select public.requeue_document_scan(id) from public.documents where scan_verdict = 'failed';` as the
    service role.
+
+### PEO mail not arriving, or an attachment waiting
+
+Mail sent to a quote request's reply address reaches the `receive-mail` function (story M-3.2; `docs/adr/0004`). Nothing is lost while it is off or failing: the provider keeps the mail and retries the webhook, and a delivery can be replayed from the provider's dashboard.
+
+| What you see | What it means | What to do |
+|---|---|---|
+| `MAIL_RECEIVING_OFF` in the function's logs, answers 503 | `PEO_MAIL_RECEIVING` is not `on`. This is the switch that turns receiving off | Set it to `on` when receiving should run. The provider's retries then land |
+| `MAIL_CONFIG_MISSING` | A setting is missing; the log line names which of `RESEND_INBOUND_WEBHOOK_SECRET`, `QUOTE_REPLY_DOMAIN`, `RESEND_API_KEY` | Set it (`supabase/env.production.example`) |
+| `MAIL_REJECTED: reason=no_match` | The webhook's signature didn't verify: the secret is for another webhook, or it was rotated | Copy the signing secret of the webhook pointed at `receive-mail` into `RESEND_INBOUND_WEBHOOK_SECRET` |
+| `MAIL_SCAN_CONFIG_MISSING`, and a `scan_failed` ops event (`config_missing`) | No malware scanner is set, so attachments are recorded as pending and stay unreadable. The message itself is recorded | Set `MALWARE_SCANNER` (ADR 0002), then replay the webhook from the provider's dashboard (Webhooks, the event, Replay): pending attachments are scanned and stored, and nothing is recorded twice |
+| `MAIL_SCAN_UNAVAILABLE`, answers 500 | The scanner was reachable but could not answer. The provider retries, and each retry tries the pending attachments again | Nothing, unless it persists: then as for a scanner outage under "Scan failed" |
+| `MALWARE_DETECTED source=receive-mail` | An attachment was flagged. It is recorded as blocked with its signature, its bytes are not kept, and the message and its other attachments stay readable | As for "Malware detected" below: the sender is a PEO or someone copying its address, so tell the advisor on the quote request |
+| Mail in the holding list | It was sent to a revoked, unknown or ambiguous address, or an advisor moved it off a thread (story M-3.3) | See "Held mail" below |
+
+### Held mail
+
+`OPS_ALERT kind=held_mail`: the holding list stopped being empty (story M-3.3). One alert is raised each time the list goes from empty to not, not one per message, so a second message does not alert again until the list has been emptied.
+
+1. An admin opens **Held mail** at `/advisor/held`. Each message says why it is held (a revoked address, an address never issued, an ambiguous address or an advisor moved it) and when it will be deleted.
+2. **Assign** it to the quote request it belongs to, or **Discard** it. Nobody is replied to either way. An assignment makes it new PEO mail on that thread and is logged on the quote request.
+3. Mail nobody deals with is deleted 30 days after it was held, files first, by the daily `held-mail` job. `HELD_MAIL_DISCARDED by=schedule` lines show it ran; a message it could not remove raises a `deletion_failed` event with code `held_mail:<reason>` and the next run tries again.
+4. Many messages to an address never issued is spam or a guessed address: discard them. Many to a *revoked* address means a PEO still writes to the old one: tell the advisor on that quote request to reissue it and to tell the PEO.
 
 ### Notification emails
 

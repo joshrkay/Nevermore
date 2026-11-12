@@ -3,6 +3,8 @@
 // (_shared/intakeSchema.ts), so chat can answer every top-level field but the census, and nothing the schema
 // doesn't know. Relative imports only, so it runs under Deno and Vitest alike.
 
+import { ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "../_shared/acord130.ts";
+import { CHAT_CANNOT_TAKE } from "../_shared/followUp.ts";
 import { INTAKE_FIELDS, INTAKE_SCHEMA, LIMITS, type JsonSchema } from "../_shared/intakeSchema.ts";
 
 /**
@@ -51,6 +53,19 @@ export const FIELD_GUIDE: Record<string, string> = {
   wc_renewal_date: "When their workers' comp policy renews, as they said it",
   wc_experience_mod: "Their workers' comp experience modification factor, a decimal such as 0.92 (from 0 to 10)",
   wc_annual_premium: "Their annual workers' comp premium in whole US dollars (a whole number, from 0 to 100,000,000)",
+  entity_type: "How the business is organised: sole_proprietorship, partnership (including LP and LLP), llc, c_corporation, s_corporation, nonprofit, or other",
+  year_founded: "The year the business was founded, as four digits such as 2014 (work it out when they say how long they have been in business)",
+  street_address: "The street address of the business's main location, with city, state and ZIP code as they gave them",
+  website: "The business's website address",
+  naics_code: "The six-digit 2022 NAICS industry code that best fits what the business does. Propose one whenever the prospect describes their operations, with field_status \"inferred\"; never invent digits you aren't sure name a real industry",
+  operations_description: "What the business does, in the prospect's own plain words: its products or services and how the work is done (at most 1,000 characters)",
+  in_peo: "true if the business is in a PEO (a professional employer organization that co-employs its staff) right now, false if it is not",
+  current_peo: "The PEO the business is in now, by name; report in_peo with it",
+  peo_renewal_date: "When the agreement with their current PEO renews or ends, as they said it; report in_peo with it",
+  owners_officers: "Owners and officers the prospect names, one row per person: name, title, ownership_percent (their share, a number from 0 to 100), duties (what they do in the business), covered (true if workers' comp covers them, false if they are excluded). Give only the rows and keys this message states; never ask for the rest",
+  medical_plans: "Current medical plans the prospect describes, one row per plan: name, carrier, rate_ee, rate_ee_sp, rate_ee_ch, rate_fam (the monthly rate in dollars for employee only, employee and spouse, employee and children, and family), renewal_rate_ee, renewal_rate_ee_sp, renewal_rate_ee_ch, renewal_rate_fam (the renewal rates, when they have them), employer_contribution (what the employer pays toward the premium, as they put it), enrolled (how many employees are on the plan). Give only the plans and keys this message states; never ask for the rest",
+  suta_rates: "State unemployment tax (SUTA or SUI) rates the prospect states, one row per state: state (two-letter code), rate (the rate as a percentage, such as 3.4), year (the year it applies to). Give only the states and keys this message states; never ask for the rest",
+  loss_history: "Workers' comp loss history the prospect states, one row per policy year: policy_year (four digits), carrier, premium (whole dollars), experience_mod, claims (how many; 0 when they say there were none), paid and reserved (whole dollars), valuation_date (the date the figures are as of), no_coverage (true when they had no workers' comp coverage that year). Give only the years and keys this message states; never ask for the rest",
 };
 
 /**
@@ -99,18 +114,55 @@ export const FIELD_QUESTION: Record<string, string> = {
   wc_renewal_date: "When does your workers' comp policy renew?",
   wc_experience_mod: "Do you know your workers' comp experience mod?",
   wc_annual_premium: "What is your annual workers' comp premium?",
+  entity_type: "How is the business organised: an LLC, a corporation, a partnership, or something else?",
+  year_founded: "What year was the business founded?",
+  street_address: "What is the street address of your main location?",
+  website: "Does the business have a website?",
+  naics_code: "Do you know your NAICS industry code?",
+  operations_description: "In a sentence or two, what does the business do day to day?",
+  in_peo: "Is the business in a PEO right now?",
+  current_peo: "Which PEO are you with now?",
+  peo_renewal_date: "When does your agreement with your current PEO renew?",
+  owners_officers: "Who are the owners and officers of the business?",
+  loss_history: "What has your workers' comp claims history been over the last five years?",
+  medical_plans: "Which medical plans do you offer today, and what do they cost?",
+  suta_rates: "Do you know your state unemployment tax rate?",
 };
 
-// The census (the employee roster) comes only from an uploaded file (D21).
-const NOT_FROM_CHAT = new Set(["census"]);
+// The ACORD 130 questions (K-3.4): each a yes or no in the form's own sense, and the explanation a yes needs.
+for (const q of ACORD_130_QUESTIONS) {
+  const answer = acordAnswerKey(q.number);
+  FIELD_GUIDE[answer] = `true or false, as the prospect answers this question from the workers' comp application: "${q.ask}"`;
+  FIELD_GUIDE[acordExplainKey(q.number)] = `Their explanation, in their own words, once they have answered yes to "${q.ask}"${q.askMore ? ` (${q.askMore})` : ""}; report ${answer} with it`;
+  FIELD_QUESTION[answer] = q.ask;
+  FIELD_QUESTION[acordExplainKey(q.number)] = q.askMore ?? "Can you tell me a little more about that?";
+}
+
+
+// The census (the employee roster) comes only from an uploaded file (D21), and the FEIN is typed into the workspace.
+const NOT_FROM_CHAT = CHAT_CANNOT_TAKE;
 
 const PROPERTIES = INTAKE_SCHEMA.properties as Record<string, JsonSchema>;
+
+const MAX_TOOL_CHOICES = 20;
 
 /** The tool type for a schema rule: its non-null type, and a list's item type. */
 function toolType(rule: JsonSchema): JsonSchema {
   const types = Array.isArray(rule.type) ? rule.type : [rule.type];
   const type = types.find((t) => t !== "null") as string;
-  if (type === "array") return { type: "array", items: { type: "string" } };
+  if (type === "array") {
+    // A table of rows: each row an object of the list's own keys, typed as the schema types them.
+    const ref = (rule.items as JsonSchema | undefined)?.$ref;
+    const row = typeof ref === "string" ? (INTAKE_SCHEMA.$defs as Record<string, JsonSchema>)[ref.slice("#/$defs/".length)] : undefined;
+    if (row?.type === "object") {
+      const properties = Object.fromEntries(Object.entries(row.properties as Record<string, JsonSchema>).map(([key, cell]) => [key, { type: cell.type }]));
+      return { type: "array", items: { type: "object", properties, additionalProperties: false } };
+    }
+    return { type: "array", items: { type: "string" } };
+  }
+  // One of a short list of values (an entity type). A state code stays plain text: its guide says what it is.
+  const values = Array.isArray(rule.enum) ? rule.enum.filter((v) => v !== null) : [];
+  if (values.length > 0 && values.length <= MAX_TOOL_CHOICES) return { type, enum: values };
   return { type };
 }
 
@@ -122,7 +174,8 @@ export const FIELD_STATUSES = ["confirmed", "inferred", "incomplete", "unknown"]
 export const MAX_EVIDENCE_CHARS = 200;
 // An answer can carry a value, a status and a quote for every field, plus the reply: well past the
 // Anthropic adapter's default cap, which would cut it off. Not part of the contract hash.
-export const CHAT_MAX_TOKENS = 8192;
+// (Raised from 8192 with intake schema v3's fields: handler.test.ts works out what a full answer needs.)
+export const CHAT_MAX_TOKENS = 16384;
 
 const LABELS = new Map(INTAKE_FIELDS.map((f) => [f.key, f.label]));
 
@@ -143,10 +196,13 @@ const perField = (schema: unknown) => ({
 // unsettled, re-asks a question the message didn't answer, and adds prospect_stopping (QA F4, F11); 7 puts the
 // fields an advisor asked about first in "Not yet settled", marked, and has Lenore say the advisor asked; 8 is the
 // Nevermore rebrand: Lenore is Nevermore's intake assistant, warm, quick and plain-spoken rather than a gothic,
-// literary advisor, and the app's own names replace the Chamber's. The extraction rules are unchanged; 9 adds a PEO's
+// literary advisor, and the app's own names replace the Chamber's. The extraction rules are unchanged. 10 adds a PEO's
 // own extra questions (L-2.3): the user turn may list them as data, Lenore asks them once the intake's fields are
 // settled, saying once whose they are and never that they are required, and the tool reports answers in extra_answers.
-export const PROMPT_VERSION = 9;
+// 10 also brings in intake schema v3 (Epic K): the common questions join the fields, an entity type is one of a listed
+// set, the FEIN and the legal entities are never taken in chat, and the user turn names the answers entered in the
+// workspace so Lenore can say where each goes.
+export const PROMPT_VERSION = 10;
 
 const fieldLines = FIELDS.map((key) => `- ${key} (${LABELS.get(key)}): ${FIELD_GUIDE[key]}`).join("\n");
 
@@ -161,6 +217,8 @@ ${fieldLines}
 Integers are whole numbers from 0 to ${LIMITS.count.toLocaleString("en-US")} unless a field says otherwise. Text is at most ${LIMITS.text.toLocaleString("en-US")} characters. An array holds at most ${LIMITS.listItems} items, one entry per item, never a comma-separated string.
 
 Never extract the employee census or details of individual employees: the roster comes only from an uploaded file.
+
+Never extract a federal employer identification number (FEIN or EIN), the employer's or a legal entity's: the prospect types it into the workspace.
 
 A short answer ("yes", "no", "about twelve", "weekly") answers the question Lenore asked last in the recent conversation: capture it against the field that question was about.
 
@@ -183,6 +241,10 @@ How Lenore replies (the reply field):
 - When the prospect asks to stop, pause or finish for now, set prospect_stopping to true and ask nothing more: tell them their answers are saved, that they can come back to carry on, and that they can review them on the Review tab.
 - When no employee census is uploaded and the next fields aren't required ones, you may invite them to share one with the census template: they download it on the Upload tab, fill in one row per employee and upload it there.
 - Whenever the prospect brings up their employees' details, their roster or census, or starts listing employees, point them to the census template on the Upload tab instead of taking the details in chat, then carry on with the next field. Never ask for Social Security or bank numbers: the template has no place for them.
+- A table (owners and officers and the like) is filled in on its tab. When the prospect volunteers a row of one, capture it; never ask for a table's rows one by one.
+- Never ask for an answer named in "Entered in the workspace": the prospect types those into the app, not the chat. When "Not yet settled" is "none" and "Entered in the workspace" names any, end the wrap-up by saying where each one goes.
+- An entry in "Entered in the workspace" marked "[your advisor asked]" is one their advisor asked about after reviewing the intake: say their advisor asked about it and which tab it is on, once, then carry on.
+- When the prospect gives or offers their FEIN (their EIN or federal tax ID), tell them to type it into the FEIN box on the Company tab, where it is kept out of the conversation; never repeat the number, and carry on with the next field.
 - Don't tell them the intake is ready to certify: the app tells them itself when it is.
 - Keep it short: one or two sentences.
 

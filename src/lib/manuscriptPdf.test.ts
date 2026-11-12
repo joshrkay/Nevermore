@@ -102,6 +102,39 @@ describe("buildManuscriptPdf", () => {
     expect(text).toContain("8810"); // the class code column
   });
 
+  // K-3.1: a table of rows prints under its section, with its title, its columns and each row.
+  it("prints the owners and officers as a table in the workers' comp section", async () => {
+    const { text } = await render();
+    const section = text.slice(text.indexOf("8 — Workers' Compensation"), text.indexOf("9 — Operations & HR"));
+    // (A heading wraps inside its column: "Ownership %" prints on two lines.)
+    for (const expected of ["OWNERS AND OFFICERS", "Ownership", "Covered by", "Dana Reyes", "Chief Executive Officer", "60%", "Marcus Rivera"]) expect(section).toContain(expected);
+    // K-4.1: the medical plans and their renewal rates print under the benefits answers.
+    const benefits = text.slice(text.indexOf("7 — Current Benefits"), text.indexOf("8 — Workers' Compensation"));
+    // (A table's title is printed in capitals.)
+    for (const expected of ["CURRENT MEDICAL PLANS", "Gold PPO 500", "$612.40", "MEDICAL RENEWAL RATES", "$685.89"]) expect(benefits).toContain(expected);
+    // K-3.4: the ACORD 130 questions print in the form's words, with the edition named. (Long text wraps, so each
+    // is matched by a run of words that stays on one line.)
+    for (const expected of ["ACORD 130 \\(2017/05\\): GENERAL INFORMATION", "WRITTEN SAFETY PROGRAM", "A written ergonomics"]) expect(section).toContain(expected);
+    // K-4.2: each state's unemployment tax rate prints under the payroll answers.
+    const payroll = text.slice(text.indexOf("6 — Payroll & Time"), text.indexOf("7 — Current Benefits"));
+    for (const expected of ["STATE UNEMPLOYMENT TAX RATES", "3.4%", "2026"]) expect(payroll).toContain(expected);
+    // A four-digit class code prints whole in the census table, never split across two lines.
+    const censusTable = text.slice(text.indexOf("3 — Employee Census"), text.indexOf("CENSUS DETAILS"));
+    expect(censusTable).toContain("(8810)");
+    expect(censusTable).not.toContain("(881)");
+    // K-2.3: each dependent prints under the dependent summary, the date of birth masked to its year.
+    const dependents = text.slice(text.indexOf("4 — Dependent Summary"), text.indexOf("5 — Locations"));
+    for (const expected of ["DEPENDENTS", "Michael Chen", "Spouse", "/1985"]) expect(dependents).toContain(expected);
+    expect(dependents).not.toContain("1985-06-12");
+    const revealed = await render(DEMO_CHAMBER_DATA, { revealSensitive: true });
+    expect(revealed.text.slice(revealed.text.indexOf("4 — Dependent Summary"), revealed.text.indexOf("5 — Locations"))).toContain("1985-06-12");
+    // K-5.3: the census facts v3 added print under the census table.
+    const census = text.slice(text.indexOf("3 — Employee Census"), text.indexOf("4 — Dependent Summary"));
+    for (const expected of ["CENSUS DETAILS", "94107", "Hire date"]) expect(census).toContain(expected);
+    const none = await render({ ...DEMO_CHAMBER_DATA, owners_officers: [] });
+    expect(none.text).not.toContain("OWNERS AND OFFICERS");
+  });
+
   it("prints a multi-state submission's state breakdown, and an incomplete one without clipping", async () => {
     const states = ["CA", "TX", "NY", "OH", "WA", "FL", "IL", "PA", "GA", "NC", "AZ", "MA"];
     const { text } = await render({ ...DEMO_CHAMBER_DATA, states });

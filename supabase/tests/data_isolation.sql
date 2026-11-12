@@ -94,12 +94,31 @@
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 \i supabase/migrations/20261110090000_quote_requests.sql
-\i supabase/migrations/20261111090000_peo_requirement_profiles.sql
-\i supabase/migrations/20261111100000_peo_profile_editor.sql
-\i supabase/migrations/20261112090000_peo_industry_class_codes.sql
-\i supabase/migrations/20261113090000_extra_answers.sql
-\i supabase/migrations/20261113100000_information_request_extra_questions.sql
-\i supabase/migrations/20261114090000_peo_census_templates.sql
+\i supabase/migrations/20261111090000_quote_request_notes.sql
+\i supabase/migrations/20261111100000_quote_request_addresses.sql
+\i supabase/migrations/20261111110000_quote_request_messages.sql
+\i supabase/migrations/20261111120000_quote_request_threads.sql
+\i supabase/migrations/20261111130000_held_mail.sql
+\i supabase/migrations/20261111140000_peo_mail_alert.sql
+\i supabase/migrations/20261112090000_intake_schema_v3_version.sql
+\i supabase/migrations/20261112091000_intake_schema_v3_company_identity.sql
+\i supabase/migrations/20261112092000_intake_schema_v3_industry_code.sql
+\i supabase/migrations/20261112093000_intake_schema_v3_current_peo.sql
+\i supabase/migrations/20261112094000_intake_schema_v3_census_columns.sql
+\i supabase/migrations/20261112095000_intake_schema_v3_census_worksite.sql
+\i supabase/migrations/20261112096000_intake_schema_v3_owners_officers.sql
+\i supabase/migrations/20261112097000_intake_schema_v3_loss_history.sql
+\i supabase/migrations/20261112098000_intake_schema_v3_medical_plans.sql
+\i supabase/migrations/20261112099000_intake_schema_v3_suta_rates.sql
+\i supabase/migrations/20261112100000_intake_schema_v3_acord_130_questions.sql
+\i supabase/migrations/20261113090000_broker_mailboxes.sql
+\i supabase/migrations/20261113100000_allowed_organisations.sql
+\i supabase/migrations/20261115090000_peo_requirement_profiles.sql
+\i supabase/migrations/20261115100000_peo_profile_editor.sql
+\i supabase/migrations/20261115110000_peo_industry_class_codes.sql
+\i supabase/migrations/20261115120000_extra_answers.sql
+\i supabase/migrations/20261115130000_information_request_extra_questions.sql
+\i supabase/migrations/20261115140000_peo_census_templates.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -330,6 +349,9 @@ BEGIN
   -- history have rows to protect.
   PERFORM public.set_submission_status(pa_cert, 'ready_for_market', 'Reviewed');
   PERFORM public.advisor_record_quote_send(pa_cert, 'TriNet', NULL);
+  -- A note on it (20261111090000), so the notes have a row to protect.
+  PERFORM public.advisor_add_quote_request_note(
+    (SELECT id FROM public.quote_requests WHERE session_id = pa_cert), 'call', current_date, 'Their rep called');
   -- A request for information on prospect B's submission (20261105090000), so its table has a row to protect.
   PERFORM public.advisor_request_information(pb_cert, 'Please confirm the pay frequency', ARRAY['pay_frequency']);
   -- A referral partner (20261106100000), so its table has a row to protect.
@@ -356,7 +378,7 @@ BEGIN
   -- The admin asks for prospect B's draft to be deleted (it stays until purge-intakes runs).
   PERFORM pg_temp.become('admin');
   PERFORM public.request_intake_deletion(pb_open, 'The owner asked by email; verified from the account address');
-  -- The admin publishes TriNet's requirement profile, naming a contact (20261111090000); the other four PEOs keep
+  -- The admin publishes TriNet's requirement profile, naming a contact (20261115090000); the other four PEOs keep
   -- their empty drafts.
   PERFORM public.admin_save_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'), jsonb_build_object(
     'min_headcount', 5, 'sources', jsonb_build_object(
@@ -367,7 +389,7 @@ BEGIN
   PERFORM public.admin_publish_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'),
     (SELECT revision FROM public.peo_profile_versions v JOIN public.peos p ON p.id = v.peo_id WHERE p.name = 'TriNet' AND v.status = 'draft'));
 
-  -- The admin uploads TriNet's template workbook (20261114090000), which its scan finds clean.
+  -- The admin uploads TriNet's template workbook (20261115140000), which its scan finds clean.
   PERFORM public.admin_register_census_template((SELECT id FROM public.peos WHERE name = 'TriNet'), 'TriNet census.xlsx', 2048, repeat('c', 64));
 
   -- Email delivery, and the AI rate-limit counters.
@@ -385,6 +407,35 @@ BEGIN
   UPDATE public.documents SET scan_verdict = 'clean', scanned_at = now();
   INSERT INTO storage.objects (bucket_id, name) VALUES ('quarantine', ga || '/' || ga_open || '/held.pdf');
   INSERT INTO storage.objects (bucket_id, name) SELECT 'peo-templates', storage_path FROM public.peo_census_templates;
+  -- PEO mail (20261111110000): a message on prospect A's quote request with a stored attachment, an attachment still
+  -- pending (its file is in no bucket yet), and a held message that belongs to no intake. The receive-mail function
+  -- writes these as the service role; here they are written directly, as the superuser.
+  INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, body_text)
+  SELECT 'matrix_1', q.id, q.session_id, 'received', 'dana@trinet.example', 'Proposal attached'
+  FROM public.quote_requests q WHERE q.session_id = pa_cert;
+  INSERT INTO public.quote_request_messages (provider_message_id, held_reason, direction, from_address)
+  VALUES ('matrix_held', 'unknown_address', 'received', 'stranger@example.test');
+  INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
+  SELECT m.id, 'att_1', 'proposal.pdf', 100, 'stored', 'clean', 'peo-mail', pa_cert || '/' || m.id || '/1-proposal.pdf'
+  FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
+  INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status)
+  SELECT m.id, 'att_2', 'waiting.pdf', 100, 'pending' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
+  INSERT INTO storage.objects (bucket_id, name)
+  SELECT 'peo-mail', pa_cert || '/' || m.id || '/1-proposal.pdf' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
+  -- An advisor opened its thread (20261111120000), so the mark has a row to protect.
+  INSERT INTO public.quote_request_thread_reads (quote_request_id, last_opened_at)
+  SELECT q.id, now() FROM public.quote_requests q WHERE q.session_id = pa_cert;
+  -- An advisor's connected mailbox (20261113090000): the encrypted token, which no API role reads. The mailbox function writes it.
+  INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
+  SELECT adv, 'google', 'advisor@example.test', 'https://www.googleapis.com/auth/gmail.send', 'ciphertext', 'iv';
+  -- An allowed organisation and the log of its being added (20261113100000), which only admins read. The admin functions write
+  -- them; here they are written directly, as the superuser.
+  INSERT INTO public.allowed_organisations (provider, org_id, label, added_by, added_by_email)
+  VALUES ('google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
+  INSERT INTO public.advisor_role_events (kind, provider, org_id, org_label, actor_id, actor_email)
+  VALUES ('org_added', 'google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
+  -- A file in the bucket that no stored attachment names stays the service role's alone.
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', pa_cert || '/0/unrecorded.pdf');
   PERFORM set_config('request.jwt.claims', '', false);
   INSERT INTO fx VALUES
     ('ga_open', ga_open), ('ga_expired', ga_expired), ('ga_archived', ga_archived), ('ga_revoked', ga_revoked),
@@ -414,6 +465,8 @@ INSERT INTO matrix VALUES
   ('storage.objects WHERE bucket_id = ''manuscripts''', '{"prospect_a":1,"advisor":"all","admin":"all"}'),
   -- Uploads whose malware scan hasn't passed (20261104130000): the service role's alone.
   ('storage.objects WHERE bucket_id = ''quarantine''',  '{}'),
+  -- PEO mail attachments: advisors read the ones recorded as stored (one); nobody else reads any.
+  ('storage.objects WHERE bucket_id = ''peo-mail''',     '{"advisor":1,"admin":1}'),
   ('storage.buckets',                                   '{}'),
   -- Everyone sees their own profile; the advisor's account behind a guest token is still that account.
   ('public.profiles',                                   '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all","advisor_as_guest":1}'),
@@ -434,19 +487,31 @@ INSERT INTO matrix VALUES
   -- alone. The prospect never sees a quote request, even on their own submission.
   ('public.quote_requests',                             '{"advisor":"all","admin":"all"}'),
   ('public.quote_request_events',                       '{"advisor":"all","admin":"all"}'),
+  ('public.quote_request_notes',                        '{"advisor":"all","admin":"all"}'),
+  ('public.quote_request_addresses',                    '{"advisor":"all","admin":"all"}'),
+  -- Mail on a quote request reaches advisors; held mail (none here) only admins. The prospect reads none.
+  ('public.quote_request_messages',                     '{"advisor":1,"admin":2}'),
+  ('public.quote_request_message_attachments',          '{"advisor":2,"admin":2}'),
+  ('public.quote_request_thread_reads',                 '{"advisor":1,"admin":1}'),
+  -- A broker's connected mailbox (20261113090000): the encrypted token. Nobody reads it through the API, admins included;
+  -- the broker learns only whether it is connected, through my_mailbox().
+  ('public.broker_mailboxes',                           '{}'),
+  -- Who may get the advisor role without an admin (20261113100000), and the log of grants: admins' alone.
+  ('public.allowed_organisations',                      '{"admin":"all"}'),
+  ('public.advisor_role_events',                        '{"admin":"all"}'),
   -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
   ('public.intake_milestones',                          '{}'),
   -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
   -- advisor_add_referral_partner() and advisor_update_referral_partner().
   ('public.referral_partners',                          '{"advisor":"all","admin":"all"}'),
-  -- PEOs and their requirement profiles (20261111090000): advisors read the PEOs, the published version (one here)
+  -- PEOs and their requirement profiles (20261115090000): advisors read the PEOs, the published version (one here)
   -- and its contacts; drafts are the admin's. Prospects, guests included, read none of these tables (a version names
   -- people at the PEO and admins): peo_catalog() is their only way in, checked in part 4. Signed-out callers read
   -- nothing: public pages never name a PEO.
   ('public.peos',                                       '{"advisor":"all","admin":"all"}'),
   ('public.peo_profile_versions',                       '{"advisor":1,"admin":"all"}'),
   ('public.peo_contacts',                               '{"advisor":"all","admin":"all"}'),
-  -- PEO template workbooks (20261114090000): advisors read the records; anyone signed in reads a clean one's file
+  -- PEO template workbooks (20261115140000): advisors read the records; anyone signed in reads a clean one's file
   -- (a PEO's blank form, filled in the reader's browser), nobody signed out.
   ('public.peo_census_templates',                       '{"advisor":"all","admin":"all"}'),
   ('storage.objects WHERE bucket_id = ''peo-templates''', '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all"}'),
@@ -690,6 +755,7 @@ GRANT SELECT ON callable TO anon, authenticated, service_role;
 INSERT INTO callable VALUES
   ('has_role(_role app_role)',                 'anyone',  NULL, 'row security policies call it as the caller; answers about the caller only'),
   ('is_advisor()',                             'anyone',  NULL, 'row security policies and RequireAdvisor call it; answers about the caller only'),
+  ('my_mailbox()',                             'own',     NULL, 'whether the caller''s own mailbox is connected, and to whom; never the token; "not connected" for anyone else'),
   ('report_client_event(p_kind text, p_code text, p_detail text, p_route text, p_session_id uuid)', 'anyone', NULL,
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
@@ -702,7 +768,7 @@ INSERT INTO callable VALUES
   ('session_verified_fields(p_session_id uuid)', 'own',   NULL, 'the field names an advisor verified on the caller''s own intake (any intake, for advisors); empty for anyone else''s'),
   ('intake_conflicting_required(p jsonb)',     'anyone',  NULL, 'pure: required fields in conflict in the provenance it is given'),
   ('is_prospect_visible_status(s text)',       'anyone',  NULL, 'pure: whether a status name is shared with prospects'),
-  ('is_reviewable_field(f text)',              'anyone',  NULL, 'pure: whether a field name can be reviewed'),
+  ('is_reviewable_field(f text)',              'helper',  NULL, 'pure: whether a field name can be reviewed; reads chamber_data_field_kind, so closed to anon with it'),
   ('ops_clean_code(p_code text)',              'anyone',  NULL, 'pure: cleans a failure code'),
   ('ops_redact(p_text text, p_max integer)',   'anyone',  NULL, 'pure: redacts free text'),
   ('ops_event_retention()',                    'anyone',  NULL, 'a constant: how long monitoring events are kept'),
@@ -722,6 +788,9 @@ INSERT INTO callable VALUES
   ('extra_answers_error(p jsonb, OUT path text, OUT reason text)', 'helper', NULL, 'extra answers validation trigger; pure'),
   ('extra_answer_value_is_valid(v jsonb, kind text)', 'helper', NULL, 'pure: whether a value answers a question of that kind'),
   ('chamber_data_field_kind(field text)',      'helper',  NULL, 'intake validation trigger; pure'),
+  ('chamber_data_scalar_reason(kind text, val jsonb)', 'helper', NULL, 'intake validation trigger; pure'),
+  ('chamber_data_row_field_kind(list text, key text)', 'helper', NULL, 'intake validation trigger; pure'),
+  ('chamber_data_row_list_max(list text)',     'helper',  NULL, 'intake validation trigger; pure'),
   ('chamber_transcript_error(t jsonb, OUT path text, OUT reason text)', 'helper', NULL, 'transcript validation trigger; pure'),
   ('chamber_data_is_text(v jsonb, max_length integer)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_is_whole_number(v jsonb, max_value numeric)', 'helper', NULL, 'intake validation trigger; pure'),
@@ -745,6 +814,14 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
   ('advisor_note_underwriter_question(p_quote_request_id bigint, p_question text)', 'advisor',
                                                                      'SELECT public.advisor_note_underwriter_question(0, ''probe'')', 'noting an underwriter''s question'),
+  ('advisor_open_quote_request_thread(p_quote_request_id bigint, p_seen_through timestamp with time zone)', 'advisor',
+                                                                     'SELECT public.advisor_open_quote_request_thread(0)', 'marking a PEO thread as opened'),
+  ('advisor_add_quote_request_note(p_quote_request_id bigint, p_kind text, p_noted_on date, p_body text)', 'advisor',
+                                                                     'SELECT public.advisor_add_quote_request_note(0, ''call'', current_date, ''probe'')', 'adding a note to a quote request'),
+  ('advisor_correct_quote_request_note(p_note_id bigint, p_kind text, p_noted_on date, p_body text)', 'advisor',
+                                                                     'SELECT public.advisor_correct_quote_request_note(0, ''call'', current_date, ''probe'')', 'correcting a quote request note'),
+  ('advisor_reissue_quote_request_address(p_quote_request_id bigint)', 'advisor',
+                                                                     'SELECT public.advisor_reissue_quote_request_address(0)', 'revoking and reissuing a quote request''s reply address'),
   ('advisor_email_problems()',                 'advisor', 'SELECT count(*) FROM public.advisor_email_problems()', 'email problems on the queue'),
   ('advisor_list_outbox_events(p_status text, p_limit integer)', 'advisor', 'SELECT count(*) FROM public.advisor_list_outbox_events(NULL, 10)', 'the outbox page'),
   ('advisor_outbox_summary()',                 'advisor', 'SELECT count(*) FROM public.advisor_outbox_summary()', 'the outbox page'),
@@ -768,6 +845,9 @@ INSERT INTO callable VALUES
   ('advisor_update_referral_partner(p_code text, p_name text, p_kind text)', 'advisor',
                                                                      'SELECT public.advisor_update_referral_partner(''acme-cfo'', ''Probe'', ''other'')', 'renaming a referral partner'),
   ('revoke_chamber_session(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.revoke_chamber_session(%2$L, ''probe'')', 'closing a draft for good'),
+  ('admin_add_allowed_organisation(p_provider text, p_org_id text, p_label text)', 'admin', 'SELECT public.admin_add_allowed_organisation(''probe'', ''probe'', ''probe'')', 'adding an organisation whose members get the advisor role'),
+  ('admin_remove_allowed_organisation(p_id bigint)', 'admin', 'SELECT public.admin_remove_allowed_organisation(0)', 'removing one'),
+  ('claim_advisor_role_by_organisation()', 'own', NULL, 'the advisor role for a sign-in whose provider-vouched organisation an admin allowed; reads only the caller''s own sign-in claims, grants nothing to a guest or anyone else'),
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
   ('retry_intake_deletion(p_deletion_id uuid)', 'admin',  'SELECT public.retry_intake_deletion(%2$L)', 'retrying a failed deletion'),
   ('admin_ops_summary(p_hours integer)',       'admin',   'SELECT count(*) FROM public.admin_ops_summary(24)', 'monitoring counts'),
@@ -821,6 +901,17 @@ BEGIN
     'SELECT public.run_retention()',
     'SELECT public.queue_draft_expiry_reminders(1)',
     format('SELECT public.record_document_uploaded(%L)', nobody),
+    'SELECT public.record_inbound_mail(''probe'', ARRAY[''x''], ''a@b.example'', NULL, NULL, NULL, NULL, NULL, false, NULL, false, NULL)',
+    'SELECT public.record_inbound_attachment(0, ''probe'', ''x.pdf'', NULL, 1, NULL)',
+    'SELECT public.finish_inbound_attachment(0, ''clean'', NULL, ''peo-mail'', ''x'')',
+    format('SELECT public.plan_mail_move(0, NULL, %L)', nobody),
+    format('SELECT public.apply_mail_move(0, NULL, %L, NULL)', nobody),
+    format('SELECT public.plan_held_mail_discard(0, %L)', nobody),
+    format('SELECT public.finish_held_mail_discard(0, %L)', nobody),
+    'SELECT count(*) FROM public.held_mail_due(1)',
+    format('SELECT public.mailbox_store(%L, ''google'', ''advisor@example.test'', ''https://www.googleapis.com/auth/gmail.send'', ''ciphertext'', ''iv'')', pg_temp.id('advisor')),
+    format('SELECT public.mailbox_secret(%L)', nobody),
+    format('SELECT public.mailbox_delete(%L)', nobody),
     'SELECT public.queue_retention_deletions(1)',
     'SELECT count(*) FROM public.claim_intake_deletions(1, 600)',
     'SELECT count(*) FROM public.claim_document_scans(1, 60)',
@@ -930,7 +1021,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL: a guest token on an advisor''s account reads advisor data';
   END IF;
 
-  -- The PEO catalog (20261111090000), the only way a prospect reads a PEO: as each caller, it never holds a PEO
+  -- The PEO catalog (20261115090000), the only way a prospect reads a PEO: as each caller, it never holds a PEO
   -- contact or an admin's id, and only advisors read the name of the person at the PEO a source names (TriNet's
   -- minimum headcount was checked with Dana Reyes) or the contacts' source. Signed out, it is refused.
   FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor_as_guest', 'advisor', 'admin'] LOOP
@@ -1039,8 +1130,8 @@ BEGIN
   -- (c) Every bucket is private.
   SELECT string_agg(id, ', ') INTO missing FROM storage.buckets WHERE public IS DISTINCT FROM false;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'FAIL: public storage buckets: %', missing; END IF;
-  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'peo-templates', 'quarantine'] THEN
-    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts, peo-templates and quarantine buckets';
+  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'peo-mail', 'peo-templates', 'quarantine'] THEN
+    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts, peo-mail, peo-templates and quarantine buckets';
   END IF;
 
   -- (d) The API roles hold no TRUNCATE (it ignores row security), REFERENCES or TRIGGER on any public table

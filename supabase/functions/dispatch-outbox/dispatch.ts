@@ -11,10 +11,12 @@ import type { BlockedKind, DispatchConfig } from "./config.ts";
 import { fieldLabels } from "./fieldLabels.ts";
 import {
   parseAdvisorNotification,
+  parsePeoMailArrived,
   parseDraftExpiryReminder,
   parseInformationRequest,
   parseProspectConfirmation,
   renderAdvisorNotification,
+  renderPeoMailArrived,
   renderDraftExpiryReminder,
   renderInformationRequest,
   renderProspectConfirmation,
@@ -126,6 +128,14 @@ function buildMessage(row: OutboxRow, config: DispatchConfig): Built {
     if (!n) return { ok: false, reason: "invalid_payload", final: true };
     const reviewUrl = `${config.advisor.appBaseUrl}/advisor/submissions/${encodeURIComponent(row.session_id)}`;
     return { ok: true, message: { from: config.advisor.from, to: config.advisor.to, ...renderAdvisorNotification(n, { reviewUrl }) } };
+  }
+  if (row.kind === "peo_mail_arrived") {
+    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    const n = parsePeoMailArrived(row.payload);
+    if (!n) return { ok: false, reason: "invalid_payload", final: true };
+    // The thread is on the submission page, behind advisor sign-in.
+    const reviewUrl = `${config.advisor.appBaseUrl}/advisor/submissions/${encodeURIComponent(row.session_id)}`;
+    return { ok: true, message: { from: config.advisor.from, to: config.advisor.to, ...renderPeoMailArrived(n, { reviewUrl }) } };
   }
   if (row.kind === "prospect_confirmation") {
     if (!config.prospect.ok) return { ok: false, reason: "not_configured", final: false };
@@ -297,7 +307,7 @@ export async function dispatchEvents(rows: OutboxRow[], deps: DispatchDeps): Pro
 /** The kinds this configuration can send, for `claim_outbox_events`. */
 export function sendableKinds(config: DispatchConfig): OutboxKind[] {
   const kinds: OutboxKind[] = [];
-  if (config.advisor.ok) kinds.push("advisor_notification");
+  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived");
   if (config.prospect.ok) kinds.push("prospect_confirmation");
   if (config.prospectLink.ok) kinds.push("information_request", "draft_expiry_reminder");
   return kinds;

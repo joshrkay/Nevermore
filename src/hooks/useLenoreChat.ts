@@ -7,7 +7,7 @@ import { outstandingRequestedFields, type InformationRequest } from "@/data/info
 import type { ExtraQuestionForLenore } from "@/data/extraAnswers";
 import type { IntakeState, ProvenanceMap } from "@/data/provenance";
 import { MAX_CHAT_MESSAGE_CHARS } from "../../supabase/functions/_shared/chatContext.ts";
-import { redactSensitive } from "@/data/sensitive";
+import { redactForModel } from "@/data/sensitive";
 import { errorDetail, reportOpsEvent, unrecordedFunctionFailure } from "@/lib/monitoring";
 import type { OrbState } from "@/components/chamber/VoiceOrb";
 
@@ -215,7 +215,7 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
     failedRef.current = [];
     setFailure(null);
     // The model and the transcript only ever see the message with sensitive numbers removed.
-    const clean = redactSensitive(text);
+    const clean = redactForModel(text);
     await ask(clean, addUserMessage(clean));
   }, [addUserMessage, ask]);
 
@@ -227,7 +227,7 @@ export function useLenoreChat({ intakeId, ensureIntake, chamberData, provenance,
    */
   const extractSpoken = useCallback(
     (message: { id: string; text: string }): Promise<boolean> =>
-      askSpoken(fitMessage(redactSensitive(message.text)), { id: message.id, text: message.text, spoken: true }),
+      askSpoken(fitMessage(redactForModel(message.text)), { id: message.id, text: message.text, spoken: true }),
     [askSpoken],
   );
 

@@ -1,8 +1,11 @@
 // Pure helpers for document-extract: no Deno or network imports, so they're unit-tested
 // with the frontend suite (vitest includes supabase/functions/**/*.test.ts).
 
-import { isW2, MAX_CENSUS_ROWS, normalizeCensus, parseMoney, US_STATE_CODES, type CensusEmployee } from "../_shared/census.ts";
-import { isSensitiveHeader, redactSensitive } from "../_shared/sensitive.ts";
+import { isW2, MAX_CENSUS_ROWS, normalizeCensus, parseMoney, US_STATE_CODES, type CensusEmployee,
+  MAX_DEPENDENTS,
+  rowRelationship,
+} from "../_shared/census.ts";
+import { isSensitiveHeader, redactForModel, redactSensitive } from "../_shared/sensitive.ts";
 
 // The most people an intake's census holds and the states it accepts, which the intake database enforces
 // (src/data/schemaSync.test.ts compares them with the app's copies): a census or state column past
@@ -131,7 +134,8 @@ function trimPartialUtf8(b: Uint8Array): Uint8Array {
 export type ColumnKey =
   | "first_name" | "last_name" | "full_name" | "dob" | "age" | "work_state" | "home_state" | "zip_code"
   | "job_title" | "annual_salary" | "hourly_rate" | "hours_per_week" | "compensation_type"
-  | "employment_type" | "classification" | "coverage_tier" | "class_code";
+  | "employment_type" | "classification" | "coverage_tier" | "class_code"
+  | "gender" | "hire_date" | "cobra" | "worksite" | "remote" | "travels" | "relationship";
 
 // Header spellings, after normaliseHeader ("Work State:" -> "work state").
 const SYNONYMS: Record<ColumnKey, string[]> = {
@@ -152,6 +156,16 @@ const SYNONYMS: Record<ColumnKey, string[]> = {
   classification: ["classification", "worker type", "employee type", "emp type", "type", "tax type", "w2 1099", "w 2 1099", "1099 w2", "worker classification", "tax status", "worker category", "employment classification"],
   coverage_tier: ["coverage tier", "tier", "coverage", "coverage level", "medical tier", "medical coverage", "election", "medical election", "plan tier", "benefit tier", "enrollment tier", "health coverage", "coverage type", "med tier", "medical"],
   class_code: ["class code", "wc class code", "wc code", "workers comp code", "workers comp class", "comp code", "ncci code", "wc class", "workers compensation code", "workers comp class code", "gov class", "class"],
+  // New in intake schema v3 (K-2.1).
+  gender: ["gender", "sex", "m f", "f m", "male female", "gender identity"],
+  hire_date: ["hire date", "date of hire", "doh", "hired", "hired on", "original hire date", "start date", "date hired", "employment date", "service date"],
+  cobra: ["cobra", "cobra status", "on cobra", "cobra participant", "cobra enrolled", "cobra y n"],
+  // K-2.2
+  worksite: ["worksite", "work site", "work location", "location", "office", "site", "job site", "work address", "branch", "facility", "store"],
+  remote: ["remote", "remote worker", "works remotely", "work from home", "wfh", "telecommute", "telework", "remote status", "remote y n"],
+  travels: ["travels", "travel", "travels for work", "business travel", "travel required", "work travel"],
+  // K-2.3: who the row is, in a file that lists dependents under their employee.
+  relationship: ["relationship", "relation", "relationship to employee", "relationship to subscriber", "dependent type", "rel", "relationship code"],
 };
 
 // Words a header may carry that don't change what the column holds ("Employee DOB", "Current Salary").
@@ -160,6 +174,12 @@ const FILLER = new Set(["employee", "employees", "ee", "emp", "worker", "current
 // A header that names a column by its key words rather than an exact phrase.
 const KEYWORDS: [ColumnKey, (t: Set<string>) => boolean][] = [
   ["dob", (t) => t.has("dob") || [...t].some((w) => w.startsWith("birth"))],
+  ["hire_date", (t) => t.has("hire") || t.has("doh")],
+  ["gender", (t) => t.has("gender") || t.has("sex")],
+  ["cobra", (t) => t.has("cobra")],
+  ["remote", (t) => t.has("remote") || t.has("wfh") || t.has("telecommute")],
+  ["travels", (t) => t.has("travel") || t.has("travels")],
+  ["worksite", (t) => t.has("worksite") || t.has("site") || t.has("location")],
   ["zip_code", (t) => t.has("zip") || t.has("postal")],
   ["home_state", (t) => t.has("state") && (t.has("home") || t.has("residence") || t.has("resident"))],
   ["work_state", (t) => t.has("state") && !t.has("status")],
@@ -245,7 +265,7 @@ export function mapCensusColumns(header: unknown[]): ColumnMap {
 // Facts beyond the name that make a sheet a census rather than any list with names on it.
 const CENSUS_FACTS: ColumnKey[] = [
   "dob", "age", "work_state", "home_state", "zip_code", "job_title", "annual_salary", "hourly_rate",
-  "classification", "coverage_tier", "class_code", "employment_type",
+  "classification", "coverage_tier", "class_code", "employment_type", "gender", "hire_date", "cobra",
 ];
 
 const cell = (row: unknown[], i: number | undefined) => (i === undefined ? undefined : row[i]);
@@ -261,6 +281,12 @@ export interface CensusResult {
   skipped: number;
   /** Headers of columns that were never read because they hold an SSN or bank details. */
   ignoredColumns: string[];
+  /** Dependent rows with no employee row above them that could be read, so they belong to nobody and weren't read (K-2.3). */
+  orphanDependents: number;
+  /** Dependent rows that weren't read: no first name, or past the most one employee can list. */
+  droppedDependents: number;
+  /** Rows whose relationship wasn't recognised, read as employees, and the labels they carried. */
+  unknownRelationships: { rows: number; labels: string[] };
   /** The sheet has rows past the ones read (MAX_SHEET_ROWS): the census is only part of the company's. */
   cutOff?: boolean;
 }
@@ -280,16 +306,49 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
 
     const raw: Record<string, unknown>[] = [];
     let skipped = 0;
+    let orphanDependents = 0;
+    let droppedDependents = 0;
+    let listsDependents = false;
+    const unknown = { rows: 0, labels: [] as string[] };
+    // The employee whose dependents the next rows are: the last employee row, unless that row couldn't be read.
+    let owner: Record<string, unknown> | null = null;
     let firstData = -1;
     let lastData = h;
     for (let r = h + 1; r < rows.length; r++) {
       const row = rows[r] ?? [];
       if (!row.some(hasText)) continue;
       const name = cell(row, nameCol);
+      // A dependent's row (K-2.3) belongs to the employee on the row above it, and is nobody's employee. A label
+      // that isn't recognised is read as an employee, and the prospect is told which labels those were.
+      const said = c.relationship === undefined ? undefined : cell(row, c.relationship);
+      const read = rowRelationship(said);
+      const who = read === "unknown" ? "employee" : read;
       // Totals and notes under the table aren't people.
       if (!looksLikeName(name) || /^(total|totals|grand total|count|average|subtotal)\b/i.test(String(name).trim())) {
-        if (hasText(name) || row.some(hasText)) skipped++;
+        if (who !== "employee") droppedDependents++;
+        else {
+          skipped++;
+          // The dependents under an employee row that couldn't be read are that person's, not the one before's.
+          owner = null;
+        }
         continue;
+      }
+      if (who !== "employee") {
+        if (!owner) orphanDependents++;
+        else if ((owner.dependents as unknown[]).length >= MAX_DEPENDENTS) droppedDependents++;
+        else {
+          listsDependents = true;
+          (owner.dependents as Record<string, unknown>[]).push({
+            first_name: cell(row, c.first_name), last_name: cell(row, c.last_name), full_name: cell(row, c.full_name), dob: cell(row, c.dob), relationship: who,
+          });
+          lastData = r;
+        }
+        continue;
+      }
+      if (read === "unknown") {
+        unknown.rows++;
+        const label = String(said).trim();
+        if (!unknown.labels.includes(label) && unknown.labels.length < 5) unknown.labels.push(label);
       }
       const hourly = cell(row, c.hourly_rate);
       // A "pay rate" of 85,000 is a salary, not an hourly rate.
@@ -312,7 +371,16 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
         classification: cell(row, c.classification),
         coverage_tier: cell(row, c.coverage_tier),
         class_code: cell(row, c.class_code),
+        gender: cell(row, c.gender),
+        hire_date: cell(row, c.hire_date),
+        cobra: cell(row, c.cobra),
+        home_state: cell(row, c.home_state),
+        worksite: cell(row, c.worksite),
+        remote: cell(row, c.remote),
+        travels: cell(row, c.travels),
+        dependents: [],
       });
+      owner = raw[raw.length - 1];
       if (firstData === -1) firstData = r;
       lastData = r;
     }
@@ -332,12 +400,25 @@ export function findCensus(rows: unknown[][], sheet: string, firstRow = 1, now: 
       ["classification", has("classification")],
       ["coverage_tier", has("coverage_tier")],
       ["class_code", has("class_code")],
+      ["gender", has("gender")],
+      ["hire_date", has("hire_date")],
+      ["cobra", has("cobra")],
+      ["home_state", has("home_state")],
+      ["worksite", has("worksite")],
+      ["remote", has("remote")],
+      ["travels", has("travels")],
+      // Only a file that lists a dependent states them: one with a relationship column and no dependent rows
+      // says nothing about anyone's.
+      ["dependents", listsDependents],
     ];
     return {
       census,
       location: `${sheet}, rows ${firstRow + firstData}–${firstRow + lastData}`,
       facts: stated.filter(([, yes]) => yes).map(([fact]) => fact),
       skipped,
+      orphanDependents,
+      droppedDependents,
+      unknownRelationships: unknown,
       ignoredColumns: sensitive.map((i) => String(header[i] ?? "").trim()).filter(Boolean),
     };
   }
@@ -372,7 +453,7 @@ export function censusCandidates({ census, location, facts, cutOff }: CensusResu
 }
 
 /** What the prospect should know about how a census was read. */
-export function censusNotes({ skipped, ignoredColumns, cutOff }: CensusResult): string[] {
+export function censusNotes({ skipped, ignoredColumns, cutOff, orphanDependents, droppedDependents, unknownRelationships }: CensusResult): string[] {
   const notes: string[] = [];
   if (cutOff) {
     notes.push(
@@ -386,6 +467,23 @@ export function censusNotes({ skipped, ignoredColumns, cutOff }: CensusResult): 
         "nothing from it is kept with your intake. The file itself still contains it; consider uploading a copy without it.",
     );
   }
+  const rows = (n: number) => `${n} dependent row${n === 1 ? "" : "s"}`;
+  if (unknownRelationships.rows > 0) {
+    const n = unknownRelationships.rows;
+    notes.push(
+      `${n} row${n === 1 ? "" : "s"} had a relationship that wasn't recognised (${unknownRelationships.labels.map((l) => `"${l}"`).join(", ")}) and ${n === 1 ? "was" : "were"} read as ${n === 1 ? "an employee" : "employees"}. ` +
+        "For a dependent use spouse, domestic_partner, child or other; leave it blank for an employee.",
+    );
+  }
+  if (orphanDependents > 0) {
+    notes.push(
+      `${rows(orphanDependents)} had no employee row above ${orphanDependents === 1 ? "it" : "them"} that could be read, and ${orphanDependents === 1 ? "wasn't" : "weren't"} read. ` +
+        "List each dependent directly under their employee.",
+    );
+  }
+  if (droppedDependents > 0) {
+    notes.push(`${rows(droppedDependents)} ${droppedDependents === 1 ? "wasn't" : "weren't"} read: a dependent needs a first name, and an employee can list at most ${MAX_DEPENDENTS}.`);
+  }
   if (skipped > 0) {
     notes.push(
       `${skipped} row${skipped === 1 ? " was" : "s were"} left out: no name, a total line, or a worker type that isn't W-2 or 1099.`,
@@ -398,7 +496,7 @@ export function censusNotes({ skipped, ignoredColumns, cutOff }: CensusResult): 
  * A sheet as text for the model: comma-separated rows with SSN and bank columns blanked and any
  * sensitive number in the remaining cells removed.
  */
-export function sheetText(rows: unknown[][], redact: (text: string) => string = redactSensitive): string {
+export function sheetText(rows: unknown[][], redact: (text: string) => string = redactForModel): string {
   const sensitive = new Set<number>();
   for (const row of rows.slice(0, 10)) mapCensusColumns(row).sensitive.forEach((i) => sensitive.add(i));
   // Only the first MAX_AI_TEXT_CHARS of any text reach the model, so rows past that are never joined or
@@ -623,10 +721,24 @@ export const DOCUMENT_FIELDS = [
   "ancillary_benefits", "has_401k", "retirement_type", "employer_contributes",
   "payroll_vendor", "pay_frequency", "nonexempt_count", "exempt_count",
   "has_handbook", "has_1099", "ca_contractors",
+  // v3 (K-1.1): who the employer is. Never the FEIN, which the prospect types into the workspace.
+  "entity_type", "year_founded", "street_address", "website",
+  // K-1.2: the industry as a code and a description.
+  "naics_code", "operations_description",
+  // K-1.3: the PEO the employer is in now.
+  "in_peo", "current_peo", "peo_renewal_date",
+  // The workers' comp answers a declarations page or a loss run states (v2's, which no document proposed until now).
+  "wc_carrier", "wc_renewal_date", "wc_experience_mod", "wc_annual_premium",
 ] as const;
 
+/**
+ * Answers that are tables of rows a document can state (K-3.3 on): the model reports each as `rows`, a list of
+ * objects of that table's keys, and the browser keeps what the intake's rules accept of them.
+ */
+export const DOCUMENT_ROW_FIELDS = ["loss_history", "medical_plans", "suta_rates"] as const;
+
 const BOOLEAN_FIELDS = new Set([
-  "virgin_medical", "has_401k", "employer_contributes", "has_handbook", "has_1099", "ca_contractors",
+  "virgin_medical", "has_401k", "employer_contributes", "has_handbook", "has_1099", "ca_contractors", "in_peo",
 ]);
 
 export interface TextSection {
@@ -635,7 +747,7 @@ export interface TextSection {
 }
 
 /** Joins sections under numbered markers the model cites back, capped at the AI text limit. */
-export function buildPromptText(sections: TextSection[], redact: (text: string) => string = redactSensitive): string {
+export function buildPromptText(sections: TextSection[], redact: (text: string) => string = redactForModel): string {
   let out = "";
   for (const [i, s] of sections.entries()) {
     const header = `[[Section ${i + 1}]]\n`;
@@ -677,12 +789,29 @@ export function redactedPrefix(text: string, chars: number, redact: (text: strin
 export function shapeAiCandidates(raw: unknown, sections: TextSection[]): Candidate[] {
   if (!Array.isArray(raw)) return [];
   const allowed = new Set<string>(DOCUMENT_FIELDS);
+  const rowFields = new Set<string>(DOCUMENT_ROW_FIELDS);
   const seen = new Set<string>();
   const out: Candidate[] = [];
   for (const item of raw) {
     if (typeof item !== "object" || item === null) continue;
-    const { field, value, section } = item as Record<string, unknown>;
-    if (typeof field !== "string" || !allowed.has(field) || seen.has(field)) continue;
+    const { field, value, section, rows } = item as Record<string, unknown>;
+    if (typeof field !== "string" || !(allowed.has(field) || rowFields.has(field)) || seen.has(field)) continue;
+    if (rowFields.has(field)) {
+      // A table's rows: each a flat object of text, numbers and yes-or-no values, text redacted as everywhere.
+      const kept = (Array.isArray(rows) ? rows : []).flatMap((row) => {
+        if (typeof row !== "object" || row === null || Array.isArray(row)) return [];
+        const cells = Object.entries(row).flatMap(([key, cell]): [string, unknown][] => {
+          if (typeof cell === "string") return redactSensitive(cell).trim() ? [[key, redactSensitive(cell).trim()]] : [];
+          return typeof cell === "number" || typeof cell === "boolean" ? [[key, cell]] : [];
+        });
+        return cells.length > 0 ? [Object.fromEntries(cells)] : [];
+      });
+      if (kept.length === 0) continue;
+      const at = typeof section === "number" ? section - 1 : Number(section) - 1;
+      seen.add(field);
+      out.push({ field, value: kept, location: sections[at]?.label ?? null });
+      continue;
+    }
     let v: unknown = value;
     if (typeof v === "string") v = redactSensitive(v).trim();
     if (v === null || v === undefined || v === "") continue;

@@ -1,13 +1,17 @@
 import type { ChamberData } from "./chamberTypes";
+import { ACORD_130_EDITION, ACORD_130_QUESTIONS, acordAnswerKey, acordExplainKey } from "../../supabase/functions/_shared/acord130.ts";
 import { isDraftConsent } from "./certification";
+import { CLASS_CODE_PAYROLL_COLUMNS, classCodePayroll, classCodePayrollCells } from "./classCodePayroll";
 import { classificationLabel, COVERAGE_TIER_LABELS, isAssumed, isW2, type CensusEmployee } from "./census";
 import { categoryInfo } from "./documentCategories";
 import { documentStatusInfo } from "./documentStatus";
 import { headcount } from "./headcount";
 import { findPeo, peoFit, type FitStatus, type PeoRecord } from "./peoCatalog";
+import { formatAnswer } from "./answerFormat";
 import { localToday, staleProfileWarning } from "./peoProfiles";
-import { describeSource, FIELD_LABELS, showsSource, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
-import { isRequiredField } from "./readiness";
+import { describeSource, FIELD_LABELS, isEmpty, showsSource, verificationSettles, type FieldKey, type FieldProvenance, type ProvenanceMap } from "./provenance";
+import { isRequiredField, type ReviewSection } from "./readiness";
+import { formatCell, ROW_LISTS, type RowListField } from "./rowColumns";
 import { NO_VERIFIED_FIELDS } from "./requiredItems";
 import { describeOpenItem, openItems } from "./openItems";
 
@@ -224,7 +228,7 @@ export function wcSystem(state: string): string {
 }
 
 /**
- * The tier the census states, or else the one the dependents named in conversation imply, or null when
+ * The tier the census states, or else the one the dependents listed under the employee imply, or null when
  * neither says. No dependents named is not the same as none: nobody may have asked.
  */
 export function coverageTier(emp: CensusEmployee): string | null {
@@ -239,7 +243,7 @@ export function coverageTier(emp: CensusEmployee): string | null {
 }
 
 /**
- * How many dependents a person has, when that is known: the ones named in conversation, or none for a
+ * How many dependents a person has, when that is known: the ones listed under them, or none for a
  * stated Employee Only or Waived tier. Null otherwise (a family tier from a census names nobody).
  */
 function knownDependents(emp: CensusEmployee): number | null {
@@ -301,6 +305,57 @@ const counted = (n: number, of: number, what: string) => `${n} of ${of} ${what}`
  * is built from (a conflict in one of those shows too).
  */
 export type ManuscriptRow = [label: string, value: string, field?: FieldKey, alsoFrom?: readonly FieldKey[]];
+
+/** An answer that is a table of rows, as The Manuscript prints it: every cell text, "—" where a row holds nothing. */
+export interface ManuscriptTable {
+  /** The section it is printed in; "dependents" is the dependent summary, which has no answers of its own. */
+  section: ReviewSection | "dependents";
+  field: FieldKey;
+  title: string;
+  columns: string[];
+  rows: string[][];
+  /** The column holding dates of birth, which are masked to the year unless an advisor reveals them. */
+  dobColumn?: number;
+}
+
+const RELATIONSHIPS: Record<string, string> = { spouse: "Spouse", domestic_partner: "Domestic partner", child: "Child", other: "Other" };
+const fullName = (p: { first_name?: string; last_name?: string }) => [p.first_name, p.last_name].filter(Boolean).join(" ");
+
+/** The dependents the census lists one by one (K-2.3), each beside their employee; no table when it lists none. */
+function dependentsTable(census: readonly CensusEmployee[]): ManuscriptTable[] {
+  const rows = census.flatMap((e) =>
+    (e.dependents ?? []).map((d) => [fullName(e) || "—", fullName(d), RELATIONSHIPS[d.relationship] ?? "Other", d.dob || NOT_PROVIDED]),
+  );
+  if (rows.length === 0) return [];
+  return [{ section: "dependents", field: "census", title: "Dependents", columns: ["Employee", "Dependent", "Relationship", "Date of birth"], rows, dobColumn: 3 }];
+}
+
+const RENEWAL_RATES = ["renewal_rate_ee", "renewal_rate_ee_sp", "renewal_rate_ee_ch", "renewal_rate_fam"] as const;
+
+/** Each table's title in The Manuscript, and the section it is printed in. */
+const TABLES: {
+  field: RowListField;
+  title: string;
+  section: ReviewSection;
+  order?: (a: Record<string, unknown>, b: Record<string, unknown>) => number;
+  /** The columns printed, by key, with any heading that differs in print; all of the list's columns when absent. */
+  columns?: readonly (string | readonly [key: string, heading: string])[];
+  /** Printed only when some row holds one of these keys. */
+  onlyWith?: readonly string[];
+  /** Columns left out while no row holds them, so a table with many columns keeps room for the rest. */
+  optional?: readonly string[];
+}[] = [
+  { field: "owners_officers", title: "Owners and Officers", section: "workers_comp" },
+  // Newest policy year first, as a loss run reads.
+  { field: "loss_history", title: "Loss History by Year", section: "workers_comp", order: (a, b) => Number(b.policy_year ?? 0) - Number(a.policy_year ?? 0), optional: ["no_coverage"] },
+  { field: "suta_rates", title: "State Unemployment Tax Rates", section: "payroll", columns: ["state", ["rate", "Rate"], "year"], order: (a, b) => String(a.state ?? "").localeCompare(String(b.state ?? "")) },
+  // Twelve columns don't fit a page, so the renewal rates are a table of their own, printed when any is held.
+  { field: "medical_plans", title: "Current Medical Plans", section: "benefits", columns: ["name", "carrier", "rate_ee", "rate_ee_sp", "rate_ee_ch", "rate_fam", "employer_contribution", "enrolled"] },
+  {
+    field: "medical_plans", title: "Medical Renewal Rates", section: "benefits", onlyWith: RENEWAL_RATES,
+    columns: ["name", ["renewal_rate_ee", "EE"], ["renewal_rate_ee_sp", "EE + spouse"], ["renewal_rate_ee_ch", "EE + child(ren)"], ["renewal_rate_fam", "Family"]],
+  },
+];
 
 /**
  * The provenance the Manuscript shows: an answer an advisor verified that still needed the prospect reads as
@@ -372,6 +427,8 @@ export interface Manuscript {
   benefitsRows: ManuscriptRow[];
   workersCompRows: ManuscriptRow[];
   operationsRows: ManuscriptRow[];
+  /** The answers that are tables of rows, each under its section's own rows (K-3.1 on). None for an empty table. */
+  tables: ManuscriptTable[];
   /** The documents uploaded, as they stood at certification; null when the submission predates the record. */
   documents: ManuscriptDocument[] | null;
   /** Facts the prospect confirmed (the only "resolved" items), in business language. */
@@ -463,6 +520,63 @@ export function buildManuscript(
       return alsoFrom ? [label, shown, field, alsoFrom] : [label, shown, field];
     });
 
+  const tables: ManuscriptTable[] = TABLES.flatMap(({ field, title, section, order, columns: printed, onlyWith, optional = [] }) => {
+    const held = data[field] as Record<string, unknown>[];
+    const rows = order ? [...held].sort(order) : held;
+    if (rows.length === 0 || (onlyWith && !rows.some((row) => onlyWith.some((key) => row[key] !== undefined)))) return [];
+    const all = ROW_LISTS[field].columns.filter((c) => !optional.includes(c.key) || rows.some((row) => row[c.key] !== undefined));
+    const columns = printed
+      ? printed.map((each) => {
+          const [key, heading] = typeof each === "string" ? [each, undefined] : each;
+          const column = all.find((c) => c.key === key)!;
+          return { column, heading: heading ?? column.label };
+        })
+      : all.map((column) => ({ column, heading: column.label }));
+    return [{ section, field, title, columns: columns.map((c) => c.heading), rows: rows.map((row) => columns.map(({ column }) => formatCell(column, row[column.key]))) }];
+  });
+  tables.push(...dependentsTable(data.census));
+
+  // The census facts that have no column in the census table (K-5.3): each person's ZIP and what v3 added to a
+  // row. Printed once anyone on the census holds one of them.
+  const yesOrNo = (v: boolean | undefined) => (v === undefined ? "—" : v ? "Yes" : "No");
+  const details = data.census.map((e) => [e.zip_code ?? "—", e.gender ?? "—", e.hire_date ?? "—", yesOrNo(e.cobra), e.home_state ?? "—", e.worksite ?? "—", yesOrNo(e.remote), yesOrNo(e.travels)]);
+  if (details.some((row) => row.some((cell) => cell !== "—"))) {
+    tables.push({
+      section: "workforce", field: "census", title: "Census Details",
+      columns: ["Name", "ZIP", "Gender", "Hire date", "COBRA", "Home state", "Worksite", "Remote", "Travels"],
+      rows: data.census.map((e, i) => [`${e.first_name} ${e.last_name}`.trim(), ...details[i]]),
+    });
+  }
+
+  // The ACORD 130 questions (K-3.4): all 24, in the form's own words, with each answer and its explanation.
+  const acordAnswer = (field: FieldKey): string => {
+    if (provenance[field]?.status === "not_applicable") return NOT_APPLICABLE;
+    const value = data[field];
+    return value === null ? NOT_PROVIDED : value ? "Yes" : "No";
+  };
+  // Printed once any question is answered or closed: an intake that never reached them gets no table of blanks.
+  const acordKeys = ACORD_130_QUESTIONS.map((q) => acordAnswerKey(q.number) as FieldKey);
+  if (acordKeys.some((field) => data[field] !== null || provenance[field]?.status === "not_applicable")) {
+    tables.push({
+      section: "workers_comp", field: "wcq_01", title: `${ACORD_130_EDITION}: General Information`,
+      columns: ["No.", "Question", "Answer", "Explanation"],
+      rows: ACORD_130_QUESTIONS.map((q) => {
+        const answer = acordAnswerKey(q.number) as FieldKey;
+        const explanation = data[acordExplainKey(q.number) as FieldKey] as string | null;
+        return [String(q.number), q.text, acordAnswer(answer), data[answer] === true && explanation ? explanation : "—"];
+      }),
+    });
+  }
+
+  // Payroll by class code and state is worked out from the census (K-3.2): a table with no field of its own.
+  const payroll = classCodePayroll(data.census);
+  if (payroll.length > 0) {
+    tables.push({ section: "workers_comp", field: "census", title: "Payroll by Class Code and State", columns: [...CLASS_CODE_PAYROLL_COLUMNS], rows: payroll.map(classCodePayrollCells) });
+  }
+
+  // An answer as formatAnswer writes it, or "Not provided".
+  const answer = (field: FieldKey): string => (isEmpty(data[field]) ? NOT_PROVIDED : formatAnswer(field, data[field]));
+
   // Everyone but a stated 1099 contractor is counted for coverage; whose classification is only the
   // default is reported as not provided rather than as W-2.
   const w2 = data.census.filter(isW2);
@@ -540,9 +654,21 @@ export function buildManuscript(
     submittedTo: opts.submission?.peo ?? null,
     companyRows: finish([
       ["Legal Name", orNotProvided(data.company_name), "company_name"],
+      // In full: a PEO's own form asks for all nine digits (K-1.1).
+      ["FEIN", answer("fein"), "fein"],
+      ["Entity Type", answer("entity_type"), "entity_type"],
+      ["Year Founded", answer("year_founded"), "year_founded"],
+      ["Street Address", answer("street_address"), "street_address"],
+      ["Website", answer("website"), "website"],
       ["Industry", orNotProvided(data.industry), "industry"],
+      ["NAICS Code", answer("naics_code"), "naics_code"],
+      ["Description of Operations", answer("operations_description"), "operations_description"],
       ["Entity Structure", data.multiple_entities === null ? NOT_PROVIDED : data.multiple_entities ? "Multiple entities" : "Single entity", "multiple_entities"],
       ["FEINs", orNotProvided(data.fein_count), "fein_count"],
+      ["Legal Entities", answer("entities"), "entities"],
+      ["In a PEO Now", answer("in_peo"), "in_peo"],
+      ["Current PEO", answer("current_peo"), "current_peo"],
+      ["PEO Agreement Renewal", answer("peo_renewal_date"), "peo_renewal_date"],
       ["Target Start", orNotProvided(data.start_month), "start_month"],
     ]),
     workforceRows: finish([
@@ -588,6 +714,7 @@ export function buildManuscript(
       ["Funding Lead Time", data.funding_days === null ? NOT_PROVIDED : `${data.funding_days} day${data.funding_days === 1 ? "" : "s"}`, "funding_days"],
       ["Accrual Method", orNotProvided(data.accrual_method), "accrual_method"],
       ["PTO Types", data.pto_types.length ? data.pto_types.join(", ") : NOT_PROVIDED, "pto_types"],
+      ["State Unemployment Tax Rates", answer("suta_rates"), "suta_rates"],
     ]),
     benefitsRows: finish([
       ["Coverage Status", data.virgin_medical === null ? NOT_PROVIDED : data.virgin_medical ? "First-time — no prior employer health benefits" : "Switching existing coverage", "virgin_medical"],
@@ -595,17 +722,21 @@ export function buildManuscript(
       ["Renewal Date", orNotProvided(data.renewal_date), "renewal_date"],
       ["Rate History", orNotProvided(data.rate_history), "rate_history"],
       ["Waiting Period", orNotProvided(data.benefits_waiting_period), "benefits_waiting_period"],
+      ["Current Medical Plans", answer("medical_plans"), "medical_plans"],
       ["Ancillary Benefits", data.ancillary_benefits.length ? data.ancillary_benefits.join(", ") : NOT_PROVIDED, "ancillary_benefits"],
       ["Retirement Plan", yesNo(data.has_401k), "has_401k"],
       ["Retirement Plan Type", orNotProvided(data.retirement_type), "retirement_type"],
       ["Employer Retirement Contribution", yesNo(data.employer_contributes), "employer_contributes"],
     ]),
+    tables,
     workersCompRows: finish([
       ["Current Carrier", orNotProvided(data.wc_carrier), "wc_carrier"],
       ["Renewal Date", orNotProvided(data.wc_renewal_date), "wc_renewal_date"],
       ["Experience Mod", data.wc_experience_mod === null ? NOT_PROVIDED : data.wc_experience_mod.toFixed(2), "wc_experience_mod"],
       ["Annual Premium", dollars(data.wc_annual_premium), "wc_annual_premium"],
       ["Class Codes on Census", classCodes(data.census)],
+      ["Owners and Officers", answer("owners_officers"), "owners_officers"],
+      ["Loss History", answer("loss_history"), "loss_history"],
     ]),
     operationsRows: finish([
       ["Employee Handbook", yesNo(data.has_handbook), "has_handbook"],

@@ -40,6 +40,12 @@ These make claims that only counsel can stand behind. They are not part of the p
 
 ## Questions for counsel
 
+**Answered 2026-11-11 (QP-D1), as the founder reported it:** the product may send a prospect's submission to the PEOs the prospect authorizes, with no conditions beyond counsel supplying the wording. Counsel's written answer is not on file here; add it, with what it says on questions 1 and 2, before the release that carries the first send. Still owed by counsel: the market authorization statement (covering the packet and supporting documents, and how each PEO pays us), the new intake consent and Terms, the line every message to a PEO carries, and a Privacy Policy line saying we keep correspondence with PEOs about a submission. Not yet put to counsel: the product storing PEO mail (`docs/adr/0004-peo-mail-is-received-before-the-product-sends.md`).
+
+**Proposed wording for counsel, for receiving PEO mail (story M-3.2; not published).** The public Privacy Policy and the service provider list (`src/data/legal.ts`) are unchanged until counsel approves a line, because they are counsel's to word. The receiving function is built and ships switched off (`PEO_MAIL_RECEIVING`), so nothing is stored until then.
+- *Privacy Policy:* "When an advisor corresponds with a PEO about your submission, we keep that correspondence with your submission: the messages, their senders and times, and any files the PEO attaches, such as a proposal. Only our advisory team can read it, and it is deleted with your submission."
+- *Service providers, Resend:* add "receives the PEO's replies to your submission and the files attached to them" to what it handles.
+
 1. **Compensation and affiliation.** Does Edgar Allan Advisory receive, or expect to receive, referral fees,
    commissions or any other payment from a PEO or carrier, including one listed in the PEO comparison? If so, what
    must be disclosed, where (intake consent, PEO Match, Privacy Policy, Terms), and does it change the statement

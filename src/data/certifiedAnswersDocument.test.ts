@@ -8,7 +8,7 @@ import { assertSupportedSchema, validateAgainst, type JsonSchema } from "../../s
 import { certifiedAnswersDocument, certifiedAnswersFilename, certifiedAnswersSource, type CertifiedAnswersSource } from "./certifiedAnswersDocument";
 
 // The published schema, read from the file consumers get, not from the code that generates it.
-const published = JSON.parse(readFileSync("docs/intake-schema.v2.json", "utf8")) as JsonSchema;
+const published = JSON.parse(readFileSync("docs/intake-schema.v3.json", "utf8")) as JsonSchema;
 
 const by = { source: { kind: "prospect_edit" as const }, updated_at: "2026-05-01T00:00:00Z" };
 
@@ -40,7 +40,7 @@ describe("certifiedAnswersDocument: the certified answers as JSON against the pu
     const doc = certifiedAnswersDocument(source());
     expect(doc.answers.census.length).toBeGreaterThan(0);
     expect(validateAgainst(published, doc.answers)).toEqual([]);
-    expect(doc.answers_schema).toEqual({ id: "urn:edgar-allan-advisory:intake:chamber-data:v2", version: 2 });
+    expect(doc.answers_schema).toEqual({ id: "urn:edgar-allan-advisory:intake:chamber-data:v3", version: 3 });
   });
 
   it("names the File ID, the certified version and the certification as the database stamped it", () => {

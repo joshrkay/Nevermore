@@ -7,6 +7,7 @@ import {
   DOLLARS_MAX,
   EXPERIENCE_MOD_MAX,
   MAX_DEPENDENTS,
+  MAX_ENTITIES,
   NAME_MAX,
   MAX_EMPLOYEES,
   MAX_LIST_ITEMS,
@@ -14,6 +15,8 @@ import {
   SALARY_MAX,
   TEXT_MAX,
   US_STATE_CODES,
+  YEAR_MAX,
+  YEAR_MIN,
   parseChamberData,
   sanitizeChamberPatch,
 } from "./chamberValidation";
@@ -267,6 +270,164 @@ describe("limits shared with the database", () => {
   });
 });
 
+describe("company identity (K-1.1)", () => {
+  it("keeps a FEIN as its nine digits, with or without the hyphen, and nothing shaped like an SSN", () => {
+    expect(sanitizeChamberPatch({ fein: "84-1234567" })).toEqual({ fein: "841234567" });
+    expect(sanitizeChamberPatch({ fein: " 841234567 " })).toEqual({ fein: "841234567" });
+    expect(sanitizeChamberPatch({ fein: null })).toEqual({ fein: null });
+    // 3-2-4 is how a Social Security number is written: never a FEIN.
+    expect(sanitizeChamberPatch({ fein: "123-45-6789" })).toEqual({});
+    expect(sanitizeChamberPatch({ fein: "84-123456" })).toEqual({});
+    expect(sanitizeChamberPatch({ fein: "84 1234567" })).toEqual({});
+    expect(sanitizeChamberPatch({ fein: 841234567 })).toEqual({});
+  });
+
+  it("reads an entity type however it is commonly written", () => {
+    expect(sanitizeChamberPatch({ entity_type: "llc" })).toEqual({ entity_type: "llc" });
+    expect(sanitizeChamberPatch({ entity_type: "LLC" })).toEqual({ entity_type: "llc" });
+    expect(sanitizeChamberPatch({ entity_type: "S-Corp" })).toEqual({ entity_type: "s_corporation" });
+    expect(sanitizeChamberPatch({ entity_type: "C corporation" })).toEqual({ entity_type: "c_corporation" });
+    expect(sanitizeChamberPatch({ entity_type: "Sole proprietor" })).toEqual({ entity_type: "sole_proprietorship" });
+    expect(sanitizeChamberPatch({ entity_type: "Non-profit" })).toEqual({ entity_type: "nonprofit" });
+    expect(sanitizeChamberPatch({ entity_type: "a family business" })).toEqual({});
+  });
+
+  it("keeps a year founded that is a real year", () => {
+    expect(sanitizeChamberPatch({ year_founded: "1998" })).toEqual({ year_founded: 1998 });
+    expect(sanitizeChamberPatch({ year_founded: 2014 })).toEqual({ year_founded: 2014 });
+    expect(sanitizeChamberPatch({ year_founded: 1599 })).toEqual({});
+    expect(sanitizeChamberPatch({ year_founded: 2101 })).toEqual({});
+    expect(sanitizeChamberPatch({ year_founded: 1998.5 })).toEqual({});
+  });
+
+  it("keeps a street address with its ZIP+4 and a website as text", () => {
+    expect(sanitizeChamberPatch({ street_address: " 500 Main St, Austin, TX 78701-1234 ", website: "meridian.example" })).toEqual({
+      street_address: "500 Main St, Austin, TX 78701-1234", website: "meridian.example",
+    });
+  });
+
+  it("keeps each legal entity that has a name or a FEIN, drops the rest, and stops at 50", () => {
+    expect(sanitizeChamberPatch({ entities: [
+      { legal_name: " Meridian Creative LLC ", fein: "84-1234567", dba: "Meridian" },
+      { legal_name: "Meridian Studios Inc", fein: "123-45-6789" },
+      { fein: "841234568" },
+      { legal_name: "  " },
+      "Meridian Holdings",
+      null,
+    ] })).toEqual({ entities: [
+      { legal_name: "Meridian Creative LLC", fein: "841234567" },
+      { legal_name: "Meridian Studios Inc" },
+      { fein: "841234568" },
+    ] });
+    expect(sanitizeChamberPatch({ entities: Array.from({ length: 60 }, (_, i) => ({ legal_name: `Entity ${i}` })) }).entities).toHaveLength(50);
+    expect(sanitizeChamberPatch({ entities: "Meridian Creative LLC" })).toEqual({});
+  });
+});
+
+describe("industry as a code and a description (K-1.2)", () => {
+  it("keeps a NAICS code that is one of the 2022 industries, and drops one that isn't", () => {
+    expect(sanitizeChamberPatch({ naics_code: "541430" })).toEqual({ naics_code: "541430" });
+    expect(sanitizeChamberPatch({ naics_code: " 541430 " })).toEqual({ naics_code: "541430" });
+    expect(sanitizeChamberPatch({ naics_code: 541430 })).toEqual({ naics_code: "541430" });
+    expect(sanitizeChamberPatch({ naics_code: null })).toEqual({ naics_code: null });
+    // Six digits, but no 2022 industry has them.
+    expect(sanitizeChamberPatch({ naics_code: "999999" })).toEqual({});
+    expect(sanitizeChamberPatch({ naics_code: "54143" })).toEqual({});
+    expect(sanitizeChamberPatch({ naics_code: "Graphic design" })).toEqual({});
+  });
+
+  it("keeps a description of operations of up to 1,000 characters", () => {
+    expect(sanitizeChamberPatch({ operations_description: "  Brand and packaging design.  " })).toEqual({ operations_description: "Brand and packaging design." });
+    expect(sanitizeChamberPatch({ operations_description: "x".repeat(1000) }).operations_description).toHaveLength(1000);
+    expect(sanitizeChamberPatch({ operations_description: "x".repeat(1001) })).toEqual({});
+  });
+});
+
+describe("owners and officers (K-3.1)", () => {
+  it("keeps each person with what was given of them, reading percentages and yes or no as people write them", () => {
+    expect(sanitizeChamberPatch({ owners_officers: [
+      { name: " Dana Reyes ", title: "President", ownership_percent: "60%", duties: "Runs sales; no field work", covered: "no" },
+      { name: "Sam Okafor", ownership_percent: 12.5, covered: true },
+      { name: "Lee Park", ownership_percent: "a third", covered: "maybe" },
+      { title: "Treasurer" },
+      { ownership_percent: 150 },
+      "Pat",
+    ] })).toEqual({ owners_officers: [
+      { name: "Dana Reyes", title: "President", ownership_percent: 60, duties: "Runs sales; no field work", covered: false },
+      { name: "Sam Okafor", ownership_percent: 12.5, covered: true },
+      { name: "Lee Park" },
+      { title: "Treasurer" },
+    ] });
+  });
+
+  it("keeps a share to two decimal places, and stops at 20 people", () => {
+    expect(sanitizeChamberPatch({ owners_officers: [{ name: "A", ownership_percent: 33.3333 }] }).owners_officers).toEqual([{ name: "A", ownership_percent: 33.33 }]);
+    expect(sanitizeChamberPatch({ owners_officers: Array.from({ length: 25 }, (_, i) => ({ name: `Owner ${i}` })) }).owners_officers).toHaveLength(20);
+  });
+
+  it("never keeps a Social Security number typed into a name, title or duties", () => {
+    const [row] = sanitizeChamberPatch({ owners_officers: [{ name: "Dana Reyes", duties: "Owner, SSN 123-45-6789" }] }).owners_officers!;
+    expect(row.duties).toBe("Owner, SSN [redacted]");
+  });
+});
+
+describe("loss history by year (K-3.3)", () => {
+  it("reads each year's figures as people and loss runs write them", () => {
+    expect(sanitizeChamberPatch({ loss_history: [
+      { policy_year: "2025", carrier: " Pinnacle Mutual ", premium: "$18,400", experience_mod: "0.92", claims: "2", paid: "$12,500.40", reserved: 4000, valuation_date: "9/30/2026" },
+      { policy_year: 2024, claims: 0, paid: 0, reserved: 0 },
+      { policy_year: 2023, no_coverage: "yes" },
+      { policy_year: "last year", premium: "a lot", claims: -1 },
+      { carrier: "Pinnacle Mutual" },
+    ] })).toEqual({ loss_history: [
+      { policy_year: 2025, carrier: "Pinnacle Mutual", premium: 18400, experience_mod: 0.92, claims: 2, paid: 12500, reserved: 4000, valuation_date: "9/30/2026" },
+      // No claims is an answer: the zeros are kept.
+      { policy_year: 2024, claims: 0, paid: 0, reserved: 0 },
+      // So is no prior coverage.
+      { policy_year: 2023, no_coverage: true },
+      { carrier: "Pinnacle Mutual" },
+    ] });
+  });
+
+  it("stops at five years", () => {
+    expect(sanitizeChamberPatch({ loss_history: Array.from({ length: 8 }, (_, i) => ({ policy_year: 2018 + i })) }).loss_history).toHaveLength(5);
+  });
+});
+
+describe("current medical plans (K-4.1)", () => {
+  it("reads each plan's monthly rates as invoices print them, to the cent", () => {
+    expect(sanitizeChamberPatch({ medical_plans: [
+      { name: " Gold PPO 500 ", carrier: "Blue Shield", rate_ee: "$612.40", rate_ee_sp: "1,286.04", rate_ee_ch: 1102.321, rate_fam: 1837.2, renewal_rate_ee: "$685.89", employer_contribution: "75% of employee-only", enrolled: "14" },
+      { name: "Silver HMO", rate_ee: "ask the broker", rate_fam: 2_000_000 },
+      { rate_ee: 400 },
+      { deductible: 500 },
+    ] })).toEqual({ medical_plans: [
+      { name: "Gold PPO 500", carrier: "Blue Shield", rate_ee: 612.4, rate_ee_sp: 1286.04, rate_ee_ch: 1102.32, rate_fam: 1837.2, renewal_rate_ee: 685.89, employer_contribution: "75% of employee-only", enrolled: 14 },
+      { name: "Silver HMO" },
+      { rate_ee: 400 },
+    ] });
+    expect(sanitizeChamberPatch({ medical_plans: Array.from({ length: 30 }, (_, i) => ({ name: `Plan ${i}` })) }).medical_plans).toHaveLength(20);
+  });
+});
+
+describe("state unemployment rates (K-4.2)", () => {
+  it("reads each state's rate as a rate notice prints it, and keeps one rate per state", () => {
+    expect(sanitizeChamberPatch({ suta_rates: [
+      { state: "ca", rate: "3.4%", year: "2026" },
+      { state: "TX", rate: 2.7 },
+      // A second rate for a state already listed is dropped: one rate per state.
+      { state: "CA", rate: 9.9 },
+      { state: "Atlantis", rate: 1 },
+      { state: "NY", rate: "low" },
+      { rate: 2 },
+    ] })).toEqual({ suta_rates: [{ state: "CA", rate: 3.4, year: 2026 }, { state: "TX", rate: 2.7 }, { rate: 1 }, { state: "NY" }, { rate: 2 }] });
+  });
+
+  it("keeps a rate to four decimal places, which state notices print", () => {
+    expect(sanitizeChamberPatch({ suta_rates: [{ state: "NJ", rate: "2.68125" }] }).suta_rates).toEqual([{ state: "NJ", rate: 2.6813 }]);
+  });
+});
+
 // A TypeScript copy of the server's rules (public.chamber_data_error), used to prove that whatever
 // the sanitiser emits is accepted. The SQL tests prove the same against the real function.
 function serverRefusal(d: unknown): string | null {
@@ -279,10 +440,55 @@ function serverRefusal(d: unknown): string | null {
   for (const k of ["company_name", "industry", "start_month", "current_carrier", "renewal_date", "rate_history", "benefits_waiting_period", "retirement_type", "payroll_vendor", "pay_frequency", "accrual_method", "handbook_last_updated", "hris_system", "key_challenges", "business_goals", "wc_carrier", "wc_renewal_date"]) kinds[k] = "text";
   for (const k of ["employee_count", "fein_count", "funding_days", "nonexempt_count", "exempt_count", "hr_staff_count"]) kinds[k] = "count";
   for (const k of ["multiple_entities", "virgin_medical", "has_401k", "employer_contributes", "has_nonexempt", "has_handbook", "has_1099", "ca_contractors", "uses_physical_clocks", "uses_mobile_app", "uses_computer_timekeeping", "shift_differentials"]) kinds[k] = "bool";
+  for (const k of ["street_address", "website", "operations_description", "current_peo", "peo_renewal_date"]) kinds[k] = "text";
+  kinds.in_peo = "bool";
+  // K-3.4: each ACORD 130 question is a yes or no with an explanation.
+  for (let n = 1; n <= 24; n++) {
+    kinds[`wcq_${String(n).padStart(2, "0")}`] = "bool";
+    kinds[`wcq_${String(n).padStart(2, "0")}_explain`] = "text";
+  }
+  kinds.naics_code = "naics";
   for (const [k, kind] of [["hq_state", "state"], ["states", "states"], ["ancillary_benefits", "list"], ["pto_types", "list"], ["employees", "employees"], ["census", "census"], ["wc_experience_mod", "experience_mod"], ["wc_annual_premium", "dollars"]]) kinds[k] = kind;
+  // New in v3: the scalar kinds public.chamber_data_scalar_reason checks, and the lists of rows.
+  for (const [k, kind] of [["fein", "fein"], ["entity_type", "entity_type"], ["year_founded", "year"], ["entities", "rows"], ["owners_officers", "rows"], ["loss_history", "rows"], ["medical_plans", "rows"], ["suta_rates", "rows"]]) kinds[k] = kind;
+  const scalarOk = (kind: string, v: unknown): boolean => {
+    switch (kind) {
+      case "text": return isText(v, TEXT_MAX);
+      case "fein": return typeof v === "string" && /^[0-9]{9}$/.test(v);
+      case "naics": return typeof v === "string" && /^[0-9]{6}$/.test(v);
+      case "entity_type": return typeof v === "string" && ["sole_proprietorship", "partnership", "llc", "c_corporation", "s_corporation", "nonprofit", "other"].includes(v);
+      case "year": return isCount(v, YEAR_MAX) && (v as number) >= YEAR_MIN;
+      case "name": return isText(v, NAME_MAX);
+      case "percent": return typeof v === "number" && v >= 0 && v <= 100;
+      case "boolean": return typeof v === "boolean";
+      case "count": return isCount(v, COUNT_MAX);
+      case "money": return typeof v === "number" && v >= 0 && v <= 1_000_000;
+      case "state": return isState(v);
+      case "dollars": return isCount(v, DOLLARS_MAX);
+      case "experience_mod": return typeof v === "number" && v >= 0 && v <= EXPERIENCE_MOD_MAX;
+      default: return false;
+    }
+  };
+  const rowLists: Record<string, { max: number; keys: Record<string, string> }> = {
+    entities: { max: MAX_ENTITIES, keys: { legal_name: "text", fein: "fein" } },
+    loss_history: { max: 5, keys: { policy_year: "year", carrier: "name", premium: "dollars", experience_mod: "experience_mod", claims: "count", paid: "dollars", reserved: "dollars", valuation_date: "name", no_coverage: "boolean" } },
+    medical_plans: { max: 20, keys: { name: "name", carrier: "name", employer_contribution: "name", enrolled: "count", ...Object.fromEntries(["rate_ee", "rate_ee_sp", "rate_ee_ch", "rate_fam", "renewal_rate_ee", "renewal_rate_ee_sp", "renewal_rate_ee_ch", "renewal_rate_fam"].map((k) => [k, "money"])) } },
+    suta_rates: { max: 60, keys: { state: "state", rate: "percent", year: "year" } },
+    owners_officers: { max: 20, keys: { name: "name", title: "name", ownership_percent: "percent", duties: "text", covered: "boolean" } },
+  };
   for (const [k, v] of Object.entries(d)) {
     switch (kinds[k]) {
       case "text": if (v !== null && !isText(v, TEXT_MAX)) return k; break;
+      case "fein": case "entity_type": case "year": case "naics": if (v !== null && !scalarOk(kinds[k], v)) return k; break;
+      case "rows": {
+        const list = rowLists[k];
+        if (!Array.isArray(v) || v.length > list.max) return k;
+        for (const [i, row] of v.entries()) {
+          if (!isObj(row)) return `${k}[${i}]`;
+          for (const [rk, rv] of Object.entries(row)) if (!(rk in list.keys) || !scalarOk(list.keys[rk], rv)) return `${k}[${i}].${rk}`;
+        }
+        break;
+      }
       case "count": if (v !== null && !isCount(v, COUNT_MAX)) return k; break;
       case "experience_mod": if (v !== null && !(typeof v === "number" && v >= 0 && v <= EXPERIENCE_MOD_MAX)) return k; break;
       case "dollars": if (v !== null && !isCount(v, DOLLARS_MAX)) return k; break;
@@ -461,6 +667,11 @@ describe("sanitiser output the server must accept", () => {
       { hq_state: "ZZ" }, { states: ["CA", "ca"] }, { employee_count: 1_000_001 }, { employee_count: "5" },
       { census: [{ first_name: "A", work_state: "ZZ" }] }, { census: [{ first_name: "A", classification: "W2" }] },
       { census: [{ first_name: "A", annual_salary: 1_000_001 }] }, { census: [{ first_name: " " }] }, { extra: 1 }, [],
+      { fein: "12-3456789" }, { entity_type: "LLC" }, { year_founded: 1599 }, { entities: [{ dba: "x" }] }, { entities: [{ fein: "1" }] }, { entities: null }, { naics_code: "54143" }, { naics_code: 541430 },
+      { medical_plans: [{ rate_ee: 1_000_001 }] }, { medical_plans: [{ rate_ee: "612.40" }] }, { medical_plans: [{ enrolled: 1.5 }] },
+      { suta_rates: [{ state: "California" }] }, { suta_rates: [{ rate: 101 }] }, { suta_rates: [{ year: "2026" }] },
+      { loss_history: [{ policy_year: 1599 }] }, { loss_history: [{ premium: 1.5 }] }, { loss_history: [{ claims: "2" }] },
+      { owners_officers: [{ ownership_percent: 101 }] }, { owners_officers: [{ covered: "yes" }] }, { owners_officers: [{ name: "x".repeat(201) }] },
     ]) {
       expect(serverRefusal(refused), JSON.stringify(refused)).not.toBeNull();
       expect(validateChamberData(refused), JSON.stringify(refused)).not.toEqual([]);

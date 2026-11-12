@@ -22,12 +22,17 @@ import NotFound from "./pages/NotFound";
 // jsPDF and html2canvas are only needed here, so keep them out of the main bundle.
 const ManuscriptPage = lazy(() => import("./pages/ManuscriptPage"));
 // Advisor tools are only for advisors; keep them out of the prospect's bundle.
+const BrokerSignInPage = lazy(() => import("./pages/BrokerSignInPage"));
+const BrokerCallbackPage = lazy(() => import("./pages/BrokerCallbackPage"));
 const AdvisorDashboardPage = lazy(() => import("./pages/advisor/AdvisorDashboardPage"));
 const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissionPage"));
 const AdvisorOutboxPage = lazy(() => import("./pages/advisor/AdvisorOutboxPage"));
 const AdvisorFunnelPage = lazy(() => import("./pages/advisor/AdvisorFunnelPage"));
 const AdvisorPartnersPage = lazy(() => import("./pages/advisor/AdvisorPartnersPage"));
 const AdvisorPeosPage = lazy(() => import("./pages/advisor/AdvisorPeosPage"));
+const AdvisorHeldMailPage = lazy(() => import("./pages/advisor/AdvisorHeldMailPage"));
+const AdvisorMailboxPage = lazy(() => import("./pages/advisor/AdvisorMailboxPage"));
+const AdvisorOrganisationsPage = lazy(() => import("./pages/advisor/AdvisorOrganisationsPage"));
 // Read rarely, so kept out of the main bundle too.
 const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
 const TermsPage = lazy(() => import("./pages/TermsPage"));
@@ -58,6 +63,8 @@ const App = () => (
                 />
                 <Route path="/login" element={<AuthPage />} />
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
+                <Route path="/broker/sign-in" element={<BrokerSignInPage />} />
+                <Route path="/broker/callback" element={<BrokerCallbackPage />} />
                 {/* Nothing of the Chamber opens until the account has agreed to how intake information is used. */}
                 <Route path="/start" element={<RequireAuth><IntakeConsentGate><ChamberPage /></IntakeConsentGate></RequireAuth>} />
                 <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
@@ -73,6 +80,9 @@ const App = () => (
                 <Route path="/advisor/funnel" element={<RequireAdvisor><AdvisorFunnelPage /></RequireAdvisor>} />
                 <Route path="/advisor/partners" element={<RequireAdvisor><AdvisorPartnersPage /></RequireAdvisor>} />
                 <Route path="/advisor/peos" element={<RequireAdvisor><AdvisorPeosPage /></RequireAdvisor>} />
+                <Route path="/advisor/held" element={<RequireAdvisor><AdvisorHeldMailPage /></RequireAdvisor>} />
+                <Route path="/advisor/mailbox" element={<RequireAdvisor><AdvisorMailboxPage /></RequireAdvisor>} />
+                <Route path="/advisor/organisations" element={<RequireAdvisor><AdvisorOrganisationsPage /></RequireAdvisor>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
               </AuthRedirectGate>

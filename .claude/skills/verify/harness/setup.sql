@@ -21,7 +21,7 @@ CREATE TABLE public.chamber_sessions (
   chamber_data jsonb NOT NULL DEFAULT '{}'::jsonb, transcript jsonb NOT NULL DEFAULT '[]'::jsonb,
   status text NOT NULL DEFAULT 'in_progress', submission jsonb, created_at timestamptz NOT NULL DEFAULT now(),
   -- The intake schema version (20261103091000 and 20261103120100), which the submission record copies.
-  schema_version smallint NOT NULL DEFAULT 2);
+  schema_version smallint NOT NULL DEFAULT 3);
 -- Uploaded documents, as far as the submission record (20261104110000) copies them at certification. The
 -- document migrations need storage, which this harness does not model.
 CREATE TABLE public.documents (

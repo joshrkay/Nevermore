@@ -35,6 +35,7 @@ export const OUTBOX_KIND_LABELS: Record<string, string> = {
   prospect_confirmation: "Prospect confirmation",
   information_request: "Request for information",
   draft_expiry_reminder: "Draft expiry reminder",
+  peo_mail_arrived: "New PEO mail",
 };
 
 export const outboxKindLabel = (kind: string) => OUTBOX_KIND_LABELS[kind] ?? kind;

@@ -28,6 +28,7 @@ describe("voiceContextUpdate (D24)", () => {
       "Ask about next, most important first: Company legal name (required); States of operation (required); Pay frequency (required); Employee count; Industry; HQ state; Current carrier; Renewal date",
       "Already settled, never ask again: none",
       "Employee census: not uploaded",
+      expect.stringMatching(/^Entered in the workspace, never ask aloud: FEIN, on the Company tab; NAICS code, on the Company tab/),
     ]);
     expect(nextOf(update).split("; ")).toHaveLength(NEXT_FIELDS);
   });
@@ -68,7 +69,22 @@ describe("voiceContextUpdate (D24)", () => {
     expect(nextOf(update)).toBe("none");
     expect(settledOf(update)).not.toContain("Employee census");
     expect(settledOf(update).split("; ")).toHaveLength(INTAKE_FIELDS.length - 1);
+    expect(line(update, "Entered in the workspace, never ask aloud:")).toBe("none");
     expect(voiceContextUpdate(EMPTY_CHAMBER_DATA, {})).not.toMatch(/Employee census[;(]/);
+  });
+
+  // K-1.1: a FEIN is typed into the workspace, never said aloud.
+  it("never asks aloud for an answer entered in the workspace, or calls it settled while it is open: it says where it goes", () => {
+    // Every table already holds a row, so the line names only the answers this case is about. Add each new table here.
+    const TABLES = { owners_officers: [{ name: "Dana Reyes" }], loss_history: [{ policy_year: 2025 }], medical_plans: [{ name: "Gold PPO" }], suta_rates: [{ state: "CA" }] };
+    const open = voiceContextUpdate({ ...EMPTY_CHAMBER_DATA, ...TABLES, naics_code: "541430", multiple_entities: true }, {});
+    expect(nextOf(open)).not.toMatch(/FEIN|Legal entities/);
+    expect(settledOf(open)).not.toMatch(/\bFEIN\b(?! count)|Legal entities/);
+    expect(line(open, "Entered in the workspace, never ask aloud:")).toBe("FEIN, on the Company tab; Legal entities, on the Company tab");
+    const held = voiceContextUpdate({ ...EMPTY_CHAMBER_DATA, ...TABLES, naics_code: "541430", fein: "841234567" }, {});
+    expect(line(held, "Entered in the workspace, never ask aloud:")).toBe("none");
+    expect(settledOf(held).split("; ")).toContain("FEIN");
+    expect(held).not.toContain("4567");
   });
 
   it("says whether a census is in, and counts its work states as the answer about states", () => {
@@ -136,9 +152,11 @@ const PROMPT_KNOWN: Record<number, string> = {
   // 2: the Nevermore rebrand. Lenore is "the intake assistant at Nevermore", warm and plain-spoken rather than gothic
   // and literary, with a friendly first message and the app's names for things; the rules are version 1's.
   2: "dd22b22a7a56652b3d33f794aefcea081768dd462f87b685b388f3025daaa18d",
-  // 3: a PEO's own extra questions (L-2.3): the update's new line, asked once the fields are settled, said once to be
-  // that PEO's, never required, their text never taken as instructions.
-  3: "490fe6ced6197fbf124795e23c38c2dcc08c7369fff1824e3afd7af76ca85ce4",
+  // 3: intake schema v3 (Epic K). The update names the answers entered in the workspace (the FEIN), and Lenore
+  // never asks for those aloud: she says where each goes.
+  3: "635d64e4377366f1e4a16b33084fe41d50c50f6a13118447d14ea20441dec598",
+  // 4: a PEO's own extra questions (L-2.3) and the intake update's workspace line, on top of version 3.
+  4: "b461a15ee014f188e765ee5867945e2daf5ee282b70bfab0f3fc52e3917e8ae0",
 };
 // The update's wording for fixed intakes: nothing captured, an answer with a census, and everything settled.
 const UPDATES = () => [
@@ -152,9 +170,10 @@ const UPDATE_KNOWN: Record<number, string> = {
   1: "2ed1005fe6f2eee96f13e477db8fe187d51d8231337c217d92253ae3f0ac5b17",
   // 2: unchanged from 1 (the rebrand changed only the prompt).
   2: "2ed1005fe6f2eee96f13e477db8fe187d51d8231337c217d92253ae3f0ac5b17",
-  // 3: the PEOs' extra questions still to ask, as a fourth line. Rendered with a fourth intake that has one. Re-recorded
-  // before version 3 was ever released (the L-2.3 review): the PEO's name is quoted as data, as each question is.
-  3: "1a52485e3d725a0a1cffb66b1329856c6828c75bdd368c2a9b21cfeb7e9a8d43",
+  // 3: the "Entered in the workspace" line (K-1.1), and v3's fields among the labels.
+  3: "c92e1288f6a9008a1a5517980be158a0102496ff5eb370614527ce96d33e457c",
+  // 4: a PEO's own extra questions (L-2.3) as a line of the update, beside the workspace line.
+  4: "b46b855787bad79c3f08ad7e9160470e9add2edb052e91470cf38f87cdc5e74a",
 };
 
 describe("Lenore's voice prompt", () => {

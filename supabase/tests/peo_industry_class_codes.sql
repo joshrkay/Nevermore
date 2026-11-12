@@ -2,7 +2,7 @@
 -- Supabase bootstrap (roles, auth and storage) into the fresh database run.sh creates, then every migration:
 --   PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres supabase/tests/run.sh peo_industry_class_codes
 -- The class codes an admin maps each of a PEO's excluded industries to (joshrkay/Nevermore#91, L-2.1,
--- 20261112090000_peo_industry_class_codes.sql): the eligibility check compares them with the census's class codes,
+-- 20261115110000_peo_industry_class_codes.sql): the eligibility check compares them with the census's class codes,
 -- never with the intake's free-text industry. The PEO's own wording stays for people to read.
 \set ON_ERROR_STOP 1
 \i e2e/stack/bootstrap.sql
@@ -70,9 +70,9 @@
 \i supabase/migrations/20261107090000_intake_consent_v2.sql
 \i supabase/migrations/20261109090000_packet_error_messages.sql
 \i supabase/migrations/20261110090000_quote_requests.sql
-\i supabase/migrations/20261111090000_peo_requirement_profiles.sql
-\i supabase/migrations/20261111100000_peo_profile_editor.sql
-\i supabase/migrations/20261112090000_peo_industry_class_codes.sql
+\i supabase/migrations/20261115090000_peo_requirement_profiles.sql
+\i supabase/migrations/20261115100000_peo_profile_editor.sql
+\i supabase/migrations/20261115110000_peo_industry_class_codes.sql
 SET client_min_messages = notice;
 
 -- ---------- helpers ----------

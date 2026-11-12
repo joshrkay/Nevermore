@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
-import { CENSUS_ASSUMABLE, CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES, MAX_ANNUAL_SALARY, MAX_CENSUS_ROWS, MAX_DEPENDENTS as CENSUS_MAX_DEPENDENTS } from "@/data/census";
+import { CENSUS_ASSUMABLE, CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES, GENDERS, MAX_ANNUAL_SALARY, MAX_CENSUS_ROWS, MAX_DEPENDENTS as CENSUS_MAX_DEPENDENTS } from "@/data/census";
 import {
   COUNT_MAX,
   DOB_MAX,
@@ -15,6 +15,8 @@ import {
   SALARY_MAX,
   TEXT_MAX,
   US_STATE_CODES,
+  YEAR_MAX,
+  MONEY_MAX,
 } from "@/data/chamberValidation";
 import { FIELD_KINDS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
@@ -30,7 +32,8 @@ import { OUTBOX_KIND_LABELS } from "@/data/outbox";
 import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
-import { QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
+import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
+import { MAX_BODY_CHARS } from "../../supabase/functions/receive-mail/inbound";
 import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
 import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS, profileProblems, TEMPLATE_LIMITS } from "@/data/peoEditor";
 import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
@@ -39,9 +42,10 @@ import { TEMPLATE_WORKBOOK_STATUSES } from "@/lib/templateWorkbooks";
 import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
+import { CHAT_CANNOT_TAKE } from "../../supabase/functions/_shared/followUp";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
-import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
+import { ENTITY_TYPES, INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
 
 // censusTemplates reads storage through the client; nothing here does.
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
@@ -78,7 +82,7 @@ const blocks = (name: string): string[] => {
 describe("reading the migrations' sync blocks", () => {
   it("keeps each function's blocks from the latest migration that defines that function", () => {
     // 20261103120000 replaces chamber_data_error; the census row's caps stay those of 20261029092000.
-    expect(ownersOf("caps")).toEqual(["public.chamber_data_census_row_error", "public.chamber_data_error"]);
+    expect(ownersOf("caps")).toEqual(["public.chamber_data_census_row_error", "public.chamber_data_error", "public.chamber_data_scalar_reason"]);
     expect(ownersOf("field_kinds")).toEqual(["public.chamber_data_field_kind"]);
     expect(ownersOf("intake_schema_version")).toEqual(["chamber_sessions_schema_version_check"]);
   });
@@ -110,15 +114,15 @@ describe("server and client intake rules agree", () => {
   });
 
   it("checks each key as the kind the client edits it as", () => {
+    // Where the database's kind is narrower than the input the client edits the answer with.
+    const NARROWER: Record<string, string> = { wc_annual_premium: "dollars", year_founded: "year", entity_type: "entity_type", hq_state: "state" };
     const clientKind = (key: string) => {
       if (key === "employees" || key === "census") return key;
-      // Entered as a number, held to the dollars cap rather than the count cap.
-      if (key === "wc_annual_premium") return "dollars";
+      if (key in NARROWER) return NARROWER[key];
       const kind = FIELD_KINDS[key as keyof typeof FIELD_KINDS];
       if (kind === "decimal") return "experience_mod";
       if (kind === "number") return "count";
       if (kind === "list") return key === "states" ? "state_list" : "text_list";
-      if (key === "hq_state") return "state";
       return kind;
     };
     const mismatched = [...serverKinds].filter(([key, kind]) => clientKind(key) !== kind).map(([key]) => key);
@@ -147,6 +151,9 @@ describe("server and client intake rules agree", () => {
       max_salary: SALARY_MAX,
       max_experience_mod: EXPERIENCE_MOD_MAX,
       max_dollars: DOLLARS_MAX,
+      max_year: YEAR_MAX,
+      max_percent: 100,
+      max_money: MONEY_MAX,
     });
   });
 
@@ -157,6 +164,7 @@ describe("server and client intake rules agree", () => {
     expect(server("census_employment_types")).toEqual([...EMPLOYMENT_TYPES]);
     expect(server("census_classifications")).toEqual([...CLASSIFICATIONS]);
     expect(server("census_coverage_tiers")).toEqual([...COVERAGE_TIERS]);
+    expect(server("census_genders")).toEqual([...GENDERS]);
   });
 
   it("holds the same census limits as the shared census module", () => {
@@ -210,7 +218,7 @@ describe("server and client intake rules agree", () => {
   it("caps the PEO extra questions a request names as the database does, in its function and its table", () => {
     const [sql] = blocks("request_max_extra_questions");
     expect(Number(/jsonb_array_length\(questions\) > (\d+)/.exec(sql)?.[1])).toBe(INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS);
-    const table = readFileSync("supabase/migrations/20261113100000_information_request_extra_questions.sql", "utf8");
+    const table = readFileSync("supabase/migrations/20261115130000_information_request_extra_questions.sql", "utf8");
     expect(Number(/jsonb_array_length\(extra_questions\) <= (\d+)/.exec(table)?.[1])).toBe(INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS);
   });
 
@@ -245,15 +253,36 @@ describe("server and client intake rules agree", () => {
     expect(quoted(blocks("prospect_outbox_kinds").join("\n")).sort()).toEqual([...PROSPECT_KINDS].sort());
   });
 
-  it("lets advisors review every answer of the intake schema", () => {
-    const reviewable = quoted(blocks("reviewable_fields").join("\n"));
-    expect(reviewable.filter((f) => f !== "employees").sort()).toEqual(Object.keys(INTAKE_SCHEMA.properties as object).sort());
-  });
+  // What an advisor can review is whatever the database knows as an answer (20261112091000): the SQL test
+  // supabase/tests/intake_schema_v3.sql holds it, and no list is kept to compare here.
 
   // Quote requests (20261110090000): the statuses the panel shows and the stages it offers a send at.
   it("holds the same quote request statuses, and records sends at the same stages", () => {
     expect(quoted(blocks("quote_request_statuses").join("\n"))).toEqual([...QUOTE_REQUEST_STATUSES]);
     expect(quoted(blocks("quote_sendable_stages").join("\n"))).toEqual([...SENDABLE_STAGES]);
+  });
+
+  // Quote request notes (20261111090000): the kinds the note form offers, and how long a note can be.
+  it("holds the same kinds of quote request note, in the table and in the function that checks one", () => {
+    expect(quoted(blocks("quote_request_note_kinds").join("\n"))).toEqual([...QUOTE_NOTE_KINDS]);
+    expect(quoted(blocks("quote_request_note_kinds_checked").join("\n"))).toEqual([...QUOTE_NOTE_KINDS]);
+  });
+
+  it("caps a quote request note at the same length", () => {
+    const [sql] = blocks("quote_request_note_length");
+    expect(Number(/>\s*(\d+)/.exec(sql)?.[1])).toBe(QUOTE_NOTE_MAX);
+  });
+
+  // Received PEO mail (20261111110000): what became of an attachment, and how long a message's text can be.
+  it("holds the same attachment statuses and reasons for not keeping one", () => {
+    expect(quoted(blocks("mail_attachment_statuses").join("\n"))).toEqual([...MAIL_ATTACHMENT_STATUSES]);
+    expect(quoted(blocks("mail_not_kept_reasons").join("\n"))).toEqual([...MAIL_NOT_KEPT_REASONS]);
+  });
+
+  it("caps a received message's text at the same length in the database, the console and the function", () => {
+    const [sql] = blocks("mail_body_length");
+    expect(Number(/<=\s*(\d+)/.exec(sql)?.[1])).toBe(MAIL_BODY_MAX);
+    expect(MAX_BODY_CHARS).toBe(MAIL_BODY_MAX);
   });
 
   it("caps the PEO a packet went to at the longest PEO name", () => {
@@ -267,7 +296,7 @@ describe("server and client intake rules agree", () => {
     expect(limits?.slice(1).map(Number)).toEqual([1, PEO_NAME_MAX]);
   });
 
-  // Requirement profiles (20261111090000): the database refuses a profile the browser would describe differently.
+  // Requirement profiles (20261115090000): the database refuses a profile the browser would describe differently.
   it("holds the same requirement profile lists and caps", () => {
     expect(quoted(blocks("peo_profile_statuses").join("\n"))).toEqual([...PROFILE_STATUSES]);
     expect(quoted(blocks("peo_census_formats").join("\n"))).toEqual([...CENSUS_FILE_FORMATS]);
@@ -305,7 +334,7 @@ describe("server and client intake rules agree", () => {
     }).toEqual(CONTACT_LIMITS);
     expect(Number(blocks("peo_max_contacts")[0].trim())).toBe(PROFILE_CAPS.contacts);
     expect(Number(/\+\s*(\d+)/.exec(blocks("peo_check_grace_days")[0])?.[1])).toBe(CHECKED_ON_GRACE_DAYS);
-    // The class codes an excluded industry maps to (20261112090000).
+    // The class codes an excluded industry maps to (20261115110000).
     expect(Number(blocks("peo_industry_codes_max")[0].trim())).toBe(PROFILE_CAPS.industryCodes);
   });
 
@@ -318,11 +347,11 @@ describe("server and client intake rules agree", () => {
   });
 
   it("checks a question's key, a class code, a link and a contact's email with the database's own patterns", () => {
-    const sql = readFileSync("supabase/migrations/20261111090000_peo_requirement_profiles.sql", "utf8");
+    const sql = readFileSync("supabase/migrations/20261115090000_peo_requirement_profiles.sql", "utf8");
     for (const pattern of Object.values(PROFILE_PATTERNS)) expect(sql).toContain(`'${pattern}'`);
   });
 
-  // Extra answers (20261113090000): the browser keeps what the database accepts, within the same limits.
+  // Extra answers (20261115120000): the browser keeps what the database accepts, within the same limits.
   it("holds the same limits on extra answers", () => {
     const [caps] = blocks("extra_answer_caps");
     expect(Object.fromEntries([...caps.matchAll(/max_(\w+)\s+constant\s+integer\s*:=\s*(\d+)/g)].map((m) => [m[1], Number(m[2])]))).toEqual({
@@ -341,7 +370,7 @@ describe("server and client intake rules agree", () => {
     expect(EXTRA_ANSWER_LIMITS.choice).toBe(PROFILE_CAPS.header);
     expect(EXTRA_ANSWER_LIMITS.text).toBe(TEXT_MAX);
     // An answer's key is a profile question's key.
-    expect(readFileSync("supabase/migrations/20261113090000_extra_answers.sql", "utf8")).toContain(`'${PROFILE_PATTERNS.questionKey}'`);
+    expect(readFileSync("supabase/migrations/20261115120000_extra_answers.sql", "utf8")).toContain(`'${PROFILE_PATTERNS.questionKey}'`);
   });
 
   it("knows every state a PEO's census template's virus check can leave it in", () => {
@@ -375,9 +404,11 @@ describe("server and client intake rules agree", () => {
   // chamber-extract keeps its own field list (it can't import from src/). Chat asks for every answer the
   // intake holds except the census, which comes from a document, so a field added to ChamberData and not
   // to the tool would never be extracted from chat.
-  it("has chamber-extract ask for every answer but the census, as the JSON type of the kind the client edits", () => {
-    const { census: _census, ...answers } = EMPTY_CHAMBER_DATA;
-    expect(Object.keys(CHAT_FIELD_TYPES).sort()).toEqual(Object.keys(answers).sort());
+  it("has chamber-extract ask for every answer chat can take, as the JSON type of the kind the client edits", () => {
+    const fromChat = (key: string) => !CHAT_CANNOT_TAKE.has(key);
+    expect(Object.keys(CHAT_FIELD_TYPES).sort()).toEqual(Object.keys(EMPTY_CHAMBER_DATA).filter(fromChat).sort());
+    // The census is a file, and the FEIN is typed into its own box, never into the conversation (K-1.1).
+    expect([...CHAT_CANNOT_TAKE].sort()).toEqual(["census", "entities", "fein"]);
     const kindOf = (schema: unknown) => {
       const json = JSON.stringify(schema);
       if (json === '{"type":"string"}') return "text";
@@ -385,9 +416,13 @@ describe("server and client intake rules agree", () => {
       if (json === '{"type":"number"}') return "decimal";
       if (json === '{"type":"boolean"}') return "boolean";
       if (json === '{"type":"array","items":{"type":"string"}}') return "list";
+      if (/^\{"type":"string","enum":\[/.test(json)) return "choice";
+      if (/^\{"type":"array","items":\{"type":"object"/.test(json)) return "rows";
       return json;
     };
-    expect(Object.fromEntries(Object.entries(CHAT_FIELD_TYPES).map(([key, schema]) => [key, kindOf(schema)]))).toEqual(FIELD_KINDS);
+    // An industry code is picked from a search in the app; the model sends it as text.
+    const expected = Object.fromEntries(Object.entries(FIELD_KINDS).filter(([key]) => fromChat(key)).map(([key, kind]) => [key, kind === "naics" ? "text" : kind]));
+    expect(Object.fromEntries(Object.entries(CHAT_FIELD_TYPES).map(([key, schema]) => [key, kindOf(schema)]))).toEqual(expected);
   });
 
   // The intake schema (supabase/functions/_shared/intakeSchema.ts) must never accept what the database
@@ -415,8 +450,10 @@ describe("server and client intake rules agree", () => {
       expect({
         max_employees: LIMITS.census, max_dependents: LIMITS.dependents, max_states: LIMITS.states, max_list_items: LIMITS.listItems,
         max_text: LIMITS.text, max_name: LIMITS.name, max_dob: LIMITS.dob, max_count: LIMITS.count, max_salary: LIMITS.salary,
-        max_experience_mod: LIMITS.experienceMod, max_dollars: LIMITS.dollars,
+        max_experience_mod: LIMITS.experienceMod, max_dollars: LIMITS.dollars, max_year: LIMITS.yearMax,
+        max_percent: LIMITS.percent, max_money: LIMITS.money,
       }).toEqual(Object.fromEntries(server));
+      expect(props.year_founded.maximum).toBe(server.get("max_year"));
       expect(props.wc_experience_mod.maximum).toBe(server.get("max_experience_mod"));
       expect(props.wc_annual_premium.maximum).toBe(server.get("max_dollars"));
       expect(props.census.maxItems).toBe(server.get("max_employees"));
@@ -434,6 +471,9 @@ describe("server and client intake rules agree", () => {
       expect(row.employment_type.enum).toEqual(server("census_employment_types"));
       expect(row.classification.enum).toEqual(server("census_classifications"));
       expect(row.coverage_tier.enum).toEqual(server("census_coverage_tiers"));
+      expect(row.gender.enum).toEqual(server("census_genders"));
+      expect(row.home_state.enum).toEqual([...SCHEMA_STATE_CODES]);
+      expect(row.hire_date.maxLength).toBe(LIMITS.dob);
     });
 
     it("lists the same defaulted facts a census row can carry", () => {
@@ -442,25 +482,60 @@ describe("server and client intake rules agree", () => {
       expect(row.assumed.maxItems).toBe(CENSUS_ASSUMABLE.length);
     });
 
-    it("checks each key as the kind the database checks it as", () => {
-      const kindOf = (schema: JsonSchema): string => {
+    // The kind the database checks one value as, read from its rule in the schema.
+    const scalarKindOf = (schema: JsonSchema): string => {
+      const types = ([] as unknown[]).concat(schema.type);
+      const values = ((schema.enum ?? []) as unknown[]).filter((v) => v !== null);
+      if (values.length > 0) return values.includes("CA") ? "state" : JSON.stringify(values) === JSON.stringify(ENTITY_TYPES) ? "entity_type" : "unknown enum";
+      if (types.includes("number")) return schema.maximum === LIMITS.percent ? "percent" : schema.maximum === LIMITS.money ? "money" : "experience_mod";
+      if (types.includes("integer")) return schema.maximum === LIMITS.dollars ? "dollars" : schema.maximum === LIMITS.yearMax ? "year" : "count";
+      if (types.includes("boolean")) return "boolean";
+      if (schema.pattern === "^[0-9]{9}$") return "fein";
+      if (schema.pattern === "^[0-9]{6}$") return "naics";
+      return schema.maxLength === LIMITS.name ? "name" : "text";
+    };
+
+    const kindOf = (schema: JsonSchema): string => {
         const types = ([] as unknown[]).concat(schema.type);
         if (types.includes("array")) {
           const items = schema.items as JsonSchema;
           if (items.$ref === "#/$defs/stateCode") return "state_list";
           if (items.$ref === "#/$defs/censusRow") return "census";
+          if (items.$ref) return "rows";
           return "text_list";
         }
-        if (schema.enum) return "state";
-        if (types.includes("number")) return "experience_mod";
-        if (types.includes("integer")) return schema.maximum === LIMITS.dollars ? "dollars" : "count";
-        if (types.includes("boolean")) return "boolean";
-        return "text";
-      };
+      return scalarKindOf(schema);
+    };
+
+    it("checks each key as the kind the database checks it as", () => {
       const schemaKinds = Object.fromEntries(Object.entries(props).map(([key, schema]) => [key, kindOf(schema)]));
       // The legacy roster is the one key the database knows and v1 does not.
       const dbKinds = Object.fromEntries([...serverKinds].filter(([key]) => !LEGACY_KEYS.includes(key)));
       expect(schemaKinds).toEqual(dbKinds);
+    });
+
+    // v3's lists of rows: the database names each list's keys, their kinds and the most rows it holds.
+    it("checks each key of a list of rows as the kind the database checks it as, and holds each list to the same cap", () => {
+      const dbRowKinds: Record<string, Record<string, string>> = {};
+      for (const m of blocks("row_field_kinds").join("\n").matchAll(/WHEN list = '(\w+)' AND key IN \(([^)]*)\) THEN '(\w+)'/g)) {
+        for (const key of quoted(m[2])) (dbRowKinds[m[1]] ??= {})[key] = m[3];
+      }
+      const dbCaps = Object.fromEntries([...blocks("row_caps").join("\n").matchAll(/WHEN list = '(\w+)' THEN (\d+)/g)].map((m) => [m[1], Number(m[2])]));
+      const lists = Object.entries(props).filter(([, schema]) => kindOf(schema) === "rows");
+      const defOf = (schema: JsonSchema) => defs[String((schema.items as JsonSchema).$ref).slice("#/$defs/".length)];
+      expect(Object.fromEntries(lists.map(([key, schema]) => [
+        key, Object.fromEntries(Object.entries(defOf(schema).properties as Record<string, JsonSchema>).map(([rowKey, rule]) => [rowKey, scalarKindOf(rule)])),
+      ]))).toEqual(dbRowKinds);
+      expect(Object.fromEntries(lists.map(([key, schema]) => [key, schema.maxItems]))).toEqual(dbCaps);
+      // A row is strict on both sides: no unknown key, no null.
+      for (const [, schema] of lists) {
+        expect(defOf(schema).additionalProperties).toBe(false);
+        for (const rule of Object.values(defOf(schema).properties as Record<string, JsonSchema>)) expect(([] as unknown[]).concat(rule.type)).not.toContain("null");
+      }
+    });
+
+    it("accepts the same entity types", () => {
+      expect(quoted(blocks("entity_types").join("\n"))).toEqual([...ENTITY_TYPES]);
     });
   });
 
@@ -484,6 +559,7 @@ describe("server and client intake rules agree", () => {
     ["email_event_retention", "days", RETENTION.emailEventDays],
     ["ai_event_retention", "days", RETENTION.aiEventDays],
     ["funnel_retention", "days", RETENTION.funnelDays],
+    ["held_mail_retention", "days", RETENTION.heldMailDays],
   ] as const)("states the %s window the database enforces", (block, unit, value) => {
     const found = new RegExp(`interval\\s+'(\\d+) ${unit}'`).exec(blocks(block).join("\n"))?.[1];
     expect(Number(found)).toBe(value);
@@ -497,7 +573,7 @@ describe("server and client intake rules agree", () => {
       threshold: Number(m[3]),
       cooldown: Number(m[4]),
     }));
-    expect(rules.map((r) => r.kind).sort()).toEqual(["ai_failed", "app_error", "auth_denied", "deletion_failed", "malware_detected", "scan_failed", "upload_failed", "voice_failed"]);
+    expect(rules.map((r) => r.kind).sort()).toEqual(["ai_failed", "app_error", "auth_denied", "deletion_failed", "held_mail", "malware_detected", "scan_failed", "upload_failed", "voice_failed"]);
     const runbook = readFileSync("docs/RUNBOOK.md", "utf8");
     for (const r of rules) {
       const row = new RegExp(
