@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { actorName, formatDateTime } from "./format";
 import { toast } from "sonner";
 import { PIPELINE_LABELS, type PipelineStatus } from "@/data/advisor";
 import { hasNewMail } from "@/data/mailThread";
-import { cleanPeoName, PEO_CATALOG, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
+import { cleanPeoName, findPeo, listedPeos, PEO_NAME_MAX, peoFit, type PeoRecord } from "@/data/peoCatalog";
 import type { ChamberData } from "@/data/chamberTypes";
+import { localToday, staleProfileWarning } from "@/data/peoProfiles";
+import EligibilityChecks from "@/components/peo/EligibilityChecks";
 import {
   canRecordSend, describeQuote, describeQuoteRequestEvent, formatDay, isChangeLogEvent, isQuoteNoteKind, isQuoteRequestStatus, olderVersionNote,
   QUOTE_NOTE_KIND_LABELS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_LABELS, quoteNoteKindLabel, quoteReplyDomain, replyAddress, stageToOffer,
@@ -36,18 +38,12 @@ interface QuoteRequestsPanelProps {
   replyDomain?: string | null;
   /** The answers the advisor sees, to compare with each listed PEO's sourced facts. */
   data: ChamberData;
-  /** The PEOs with sourced facts; the app's catalog unless a test supplies one. */
-  catalog?: readonly PeoRecord[];
+  /** The PEOs the database holds, alphabetically, with their profiles in use (usePeoCatalog); only listed ones are offered. */
+  catalog: readonly PeoRecord[];
   /** Opens Ask the prospect with an underwriter's question in it, for the advisor to edit and send as their own. */
   onAskProspect: (question: string) => void;
   onChanged: () => void;
 }
-
-/** Today in the advisor's own calendar, as a date input holds it. */
-const today = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
 
 const inputClass = "w-full bg-muted border border-border rounded-md px-3 py-2 text-sm";
 
@@ -184,7 +180,7 @@ const ReplyAddress = ({ request, address, onChanged }: { request: QuoteRequestRo
 const NoteForm = ({ request, note, onSaved, onCancel }: { request: QuoteRequestRow; note?: QuoteRequestNoteRow; onSaved: () => void; onCancel: () => void }) => {
   const id = note ? `note-${note.id}` : `new-note-${request.id}`;
   const [kind, setKind] = useState<QuoteNoteKind>(note && isQuoteNoteKind(note.kind) ? note.kind : "call");
-  const [notedOn, setNotedOn] = useState(note?.noted_on ?? today());
+  const [notedOn, setNotedOn] = useState(note?.noted_on ?? localToday());
   const [body, setBody] = useState(note?.body ?? "");
   const [saving, setSaving] = useState(false);
   const save = async () => {
@@ -207,7 +203,7 @@ const NoteForm = ({ request, note, onSaved, onCancel }: { request: QuoteRequestR
         {QUOTE_NOTE_KINDS.map((k) => <option key={k} value={k}>{QUOTE_NOTE_KIND_LABELS[k]}</option>)}
       </select>
       <label htmlFor={`${id}-date`} className="block text-xs text-muted-foreground">Date it happened</label>
-      <input id={`${id}-date`} type="date" value={notedOn} max={today()} onChange={(e) => setNotedOn(e.target.value)} className={inputClass} />
+      <input id={`${id}-date`} type="date" value={notedOn} max={localToday()} onChange={(e) => setNotedOn(e.target.value)} className={inputClass} />
       <label htmlFor={`${id}-body`} className="block text-xs text-muted-foreground">Note</label>
       <textarea id={`${id}-body`} value={body} onChange={(e) => setBody(e.target.value)} maxLength={QUOTE_NOTE_MAX} rows={2} className={inputClass} />
       <p className="text-xs text-muted-foreground">
@@ -231,10 +227,11 @@ const NoteForm = ({ request, note, onSaved, onCancel }: { request: QuoteRequestR
  * The PEOs this submission went to, what each answered, and the notes on what happened outside the product.
  * Advisors send the packet outside the product and record it here; the prospect never sees any of it.
  */
-const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, events, notes, addresses, mail = [], threadReads = [], replyDomain = quoteReplyDomain(), currentVersion, data, catalog = PEO_CATALOG, onAskProspect, onChanged }: QuoteRequestsPanelProps) => {
+const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, events, notes, addresses, mail = [], threadReads = [], replyDomain = quoteReplyDomain(), currentVersion, data, catalog, onAskProspect, onChanged }: QuoteRequestsPanelProps) => {
   const [catalogPeo, setCatalogPeo] = useState("");
   const [otherPeo, setOtherPeo] = useState("");
-  const [sentOn, setSentOn] = useState(today);
+  // Today in the advisor's own calendar, as a date input holds it.
+  const [sentOn, setSentOn] = useState(localToday);
   const [saving, setSaving] = useState(false);
   // The pipeline step offered after a send or a quote, until the advisor takes it or says not now.
   const [offer, setOffer] = useState<PipelineStatus | null>(null);
@@ -244,6 +241,9 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
   const [noting, setNoting] = useState<number | null>(null);
   const [correcting, setCorrecting] = useState<number | null>(null);
   const peo = cleanPeoName(catalogPeo || otherPeo);
+  // The PEO chosen to record a send to, when it is one we list: a stale profile is still sent to, with a warning.
+  const chosen = catalogPeo ? findPeo(catalog, catalogPeo) : undefined;
+  const chosenStale = chosen ? staleProfileWarning(chosen, localToday()) : null;
   // Whether the PEO being recorded is the one the employer says it is in now, names compared ignoring case and spacing.
   const sameName = (a: string, b: string) => a.trim().toLowerCase().replace(/\s+/g, " ") === b.trim().toLowerCase().replace(/\s+/g, " ");
   const isCurrentPeo = data.in_peo !== false && Boolean(peo) && Boolean(data.current_peo) && sameName(peo, data.current_peo ?? "");
@@ -290,9 +290,10 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
         {requests.map((r) => {
           const quote = r.status === "quoted" ? describeQuote(r) : "";
           const older = olderVersionNote(r, currentVersion);
-          // The same warnings the prospect saw on PEO Match, for a PEO whose facts are listed.
-          const listed = catalog.find((p) => p.name.toLowerCase() === r.peo_name.toLowerCase());
-          const misfits = listed ? peoFit(data, listed).filter((c) => c.status === "does_not_meet") : [];
+          // The same checks the prospect saw on PEO Match, for a PEO the catalog holds.
+          const listed = findPeo(catalog, r.peo_name);
+          // A stale profile is still read, with when it was last checked (src/data/peoProfiles.ts).
+          const stale = listed ? staleProfileWarning(listed, localToday()) : null;
           // Shown only while a receiving subdomain is set: an address that can't receive would bounce.
           const local = replyDomain ? addresses.find((a) => a.quote_request_id === r.id && a.revoked_at === null)?.local_part : undefined;
           return (
@@ -316,10 +317,12 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
               {older && (
                 <p className="text-xs px-2 py-0.5 rounded-full bg-warning/15 text-warning inline-block">{older}</p>
               )}
-              {misfits.length > 0 && (
-                <div role="alert" className="text-xs rounded-md bg-warning/10 text-warning px-2 py-1">
-                  {misfits.map((m) => <p key={m.label}>{m.label}</p>)}
-                </div>
+              {listed && <EligibilityChecks peo={listed.name} checks={peoFit(data, listed, localToday())} />}
+              {stale && (
+                <p className="text-xs text-warning flex items-start gap-1">
+                  <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" aria-hidden="true" />
+                  {stale}
+                </p>
               )}
               {quote && <p className="text-sm">{quote}</p>}
               {local && replyDomain && <ReplyAddress request={r} address={replyAddress(local, replyDomain)} onChanged={onChanged} />}
@@ -402,10 +405,17 @@ const QuoteRequestsPanel = ({ sessionId, prospectUserId, status, requests, event
         <label htmlFor="quote-peo" className="block text-xs text-muted-foreground">PEO</label>
         <select id="quote-peo" value={catalogPeo} onChange={(e) => setCatalogPeo(e.target.value)} className={inputClass}>
           <option value="">Another PEO (type it below)</option>
-          {PEO_CATALOG.map((p) => (
+          {listedPeos(catalog).map((p) => (
             <option key={p.name} value={p.name}>{p.name}</option>
           ))}
         </select>
+        {chosen && <EligibilityChecks peo={chosen.name} checks={peoFit(data, chosen, localToday())} />}
+        {chosenStale && (
+          <p className="text-xs text-warning flex items-start gap-1">
+            <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" aria-hidden="true" />
+            {chosenStale}
+          </p>
+        )}
         {!catalogPeo && (
           <>
             <label htmlFor="quote-other-peo" className="block text-xs text-muted-foreground">Another PEO</label>

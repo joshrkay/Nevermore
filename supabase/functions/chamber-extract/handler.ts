@@ -19,6 +19,7 @@ import { FIELD_STATUSES as CONTEXT_STATUSES, type CensusSummary } from "../_shar
 import { INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION } from "../_shared/intakeSchema.ts";
 import { redactForModel } from "../_shared/sensitive.ts";
 import { shapeExtraction } from "./extraction.ts";
+import { fitExtraQuestions, readExtraQuestions, shapeExtraAnswers } from "./extraQuestions.ts";
 import { buildUserPrompt, NEXT_FIELDS, serializeTurn, unsettledForTurn, workspaceForTurn } from "./prompt.ts";
 import { guardReply } from "./reply.ts";
 import { CHAT_MAX_TOKENS, EXTRACT_TOOL, FIELD_QUESTION, PROMPT_VERSION, SYSTEM_PROMPT } from "./schema.ts";
@@ -41,6 +42,9 @@ export { MAX_CONTEXT_CHARS, MAX_RECENT_CHARS, MAX_RECENT_MESSAGES, NEXT_FIELDS }
 export { CLAIMS_COMPLETE, guardReply, STOPPING_REPLY, WRAP_UP_REPLY } from "./reply.ts";
 
 const SCHEMA_KEYS = new Set(Object.keys(INTAKE_SCHEMA.properties as object));
+// The PEOs' extra questions, as the user turn carries them (extraQuestionsLine), apart from the context cap. Those
+// past it are left out of this turn (and logged), never a refusal: the browser sends the unanswered ones first.
+export const MAX_EXTRA_QUESTIONS_CHARS = 30_000;
 
 /** The recent conversation as sent, or why it isn't acceptable. Only the prospect's and Lenore's lines. */
 function readRecent(raw: unknown): { ok: true; messages: { sender: "user" | "lenore"; text: string }[] } | { ok: false; message: string } {
@@ -179,7 +183,7 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
         : aiError("bad_request", { message: "The request body must be JSON." }));
     }
     const body = read.value;
-    const { message, context, statuses: rawStatuses, recent: rawRecent, census: rawCensus, requested: rawRequested, session_id: sessionId } = isObject(body) ? body : ({} as Record<string, unknown>);
+    const { message, context, statuses: rawStatuses, recent: rawRecent, census: rawCensus, requested: rawRequested, extra_questions: rawExtra, session_id: sessionId } = isObject(body) ? body : ({} as Record<string, unknown>);
     if (typeof message !== "string" || !message.trim()) {
       return await fail(aiError("bad_request", { message: "message is required" }));
     }
@@ -197,8 +201,14 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (!census.ok) return await fail(aiError("bad_request", { message: census.message }));
     const requested = readRequested(rawRequested);
     if (!requested.ok) return await fail(aiError("bad_request", { message: requested.message }));
+    const sent = readExtraQuestions(rawExtra);
+    if (!sent.ok) return await fail(aiError("bad_request", { message: sent.message }));
+    // One question this function can't ask, or more than fit in a turn, never stops Lenore answering: those are left
+    // out and logged by id (after the intake is checked, so the line names it).
+    const fitted = fitExtraQuestions(sent.questions, MAX_EXTRA_QUESTIONS_CHARS);
+    const extra = { questions: fitted.kept, skipped: [...sent.skipped, ...fitted.left] };
     // The same serialisation is measured here and sent to the model (prompt.ts, shared with the eval).
-    const turn = { context, statuses: statuses.statuses, recent: recent.messages, census: census.census, requested: requested.requested };
+    const turn = { context, statuses: statuses.statuses, recent: recent.messages, census: census.census, requested: requested.requested, extraQuestions: extra.questions };
     const { contextJson, statusesJson, recentJson } = serializeTurn(turn);
     if (contextJson.length + statusesJson.length + recentJson.length > MAX_CONTEXT_CHARS) {
       return await fail(aiError("bad_request", { status: 413, message: "context too large" }));
@@ -226,6 +236,9 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
       if (error) throw new Error("intake lookup failed");
       if (!intake || intake.user_id !== userId) return await fail(aiError("not_found", { message: "Intake not found" }));
       event.sessionId = sessionId;
+    }
+    if (extra.skipped.length > 0) {
+      deps.logError(`EXTRA_QUESTIONS_SKIPPED request=${requestId} session=${event.sessionId ?? "-"} ids=${extra.skipped.join(",")}`);
     }
 
     // 4. Spend from the caller's, their address's and the global budget. The last two are
@@ -282,7 +295,12 @@ export async function handleRequest(req: Request, deps: HandlerDeps): Promise<Re
     if (doubted.length > 0) {
       deps.logError(`EXTRACTION_UNKNOWN_DOUBTED request=${requestId} session=${event.sessionId ?? "-"} fields=${doubted.join(",")}`);
     }
-    return await finish({ ...shaped }, 200, null);
+    // A PEO's extra questions answered in the same message, as each question takes them. Ids only in the log.
+    const extraAnswers = shapeExtraAnswers(result.args.extra_answers, extra.questions, message);
+    if (extraAnswers.refused.length > 0) {
+      deps.logError(`EXTRA_ANSWERS_REFUSED request=${requestId} session=${event.sessionId ?? "-"} ids=${extraAnswers.refused.join(",")}`);
+    }
+    return await finish({ ...shaped, extra_answers: extraAnswers.answers }, 200, null);
   } catch (e) {
     deps.logError(unexpectedErrorLine(requestId, e));
     return await fail(aiError("internal"));

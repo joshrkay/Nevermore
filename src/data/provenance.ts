@@ -217,6 +217,12 @@ const provenanceSchema = z.object({
     .catch(undefined),
 }) as unknown as z.ZodType<FieldProvenance, z.ZodTypeDef, unknown>;
 
+/** One stored provenance entry as parseProvenance keeps it, or null when it would drop it. */
+export function parseProvenanceEntry(raw: unknown): FieldProvenance | null {
+  const result = provenanceSchema.safeParse(raw);
+  return result.success ? result.data : null;
+}
+
 /**
  * Rebuilds a provenance map from a stored jsonb column, dropping malformed entries. The census was
  * keyed `employees` before the census contract; that entry is read as `census`.
@@ -320,6 +326,82 @@ export interface ExtractionOptions {
 }
 
 /**
+ * How one heard value merges into an answer (a field's, or an extra question's): what the answer then holds and its
+ * provenance, or null when it stays as it is. The rules of applyExtraction: a prospect's own answer and "Doesn't
+ * apply" are never overwritten; an empty answer takes the value; the same value again can raise its confidence; a
+ * correction, a list that only adds entries, or a higher-ranked source replaces it, noting what it held; a
+ * lower-ranked source is only noted; two values from sources of the same rank are kept as a conflict.
+ */
+export function mergeHeard(
+  prev: FieldProvenance | undefined,
+  prevValue: unknown,
+  value: unknown,
+  heard: {
+    source: FieldSource;
+    status: ExtractedStatus;
+    corrected: boolean;
+    updated_at: string;
+    /** The heard value replaces whatever was held (the census roster). */
+    replaces?: boolean;
+    /** A table: one the prospect saved with nothing in it is still open to what is heard later. */
+    openWhenEmpty?: boolean;
+  },
+): { value: unknown; entry: FieldProvenance } | null {
+  const { source, status, updated_at } = heard;
+  if (prev?.source.kind === "prospect_edit" && !(heard.openWhenEmpty && isEmpty(prevValue))) return null;
+  // Only the prospect marks a field not applicable, and only they can take it back.
+  if (prev?.status === "not_applicable") return null;
+
+  // The answer takes the incoming value; `displaced` are the values it held that are noted.
+  const take = (takenStatus: FieldStatus, displaced: FieldCandidate[] = []) => ({
+    value,
+    entry: withNotes({ status: takenStatus, source, updated_at }, noteHeard(prev?.also_heard, displaced, value)),
+  });
+
+  // Nothing recorded yet (or a session saved before provenance existed).
+  if (!prev || isEmpty(prevValue) || heard.replaces) return take(status);
+
+  const rank = RANK[source.kind];
+  const heldRank = fieldRank(prev);
+  const conflicting = prev.status === "conflicting";
+  const held = heldValues(prev, prevValue);
+
+  if (!conflicting && same(prevValue, value)) {
+    // Hearing the same value again (a list in any order) can raise confidence, never lower it,
+    // and never trades the source for a lower-ranked one. The stored value is kept as it is.
+    const keep = prev.status === "confirmed" && status !== "confirmed";
+    return {
+      value: prevValue,
+      entry: withNotes(
+        { status: keep ? prev.status : status, source: rank < heldRank ? prev.source : source, updated_at },
+        noteHeard(prev.also_heard, [], value),
+      ),
+    };
+  }
+
+  // The prospect corrected it in chat. A value from another kind of source is noted; one from the same kind is what
+  // they corrected.
+  if (heard.corrected) return take(status, held.filter((c) => c.source.kind !== source.kind));
+
+  // Extended by a lower-ranked source, the prospect confirms the whole list again.
+  if (extendsList(prevValue, value)) return take(rank < heldRank ? "inferred" : status, held.filter((c) => !extendsList(c.value, value)));
+
+  if (rank > heldRank) return take(status, held);
+
+  if (held.some((c) => same(c.value, value))) return null; // already one of the competing values
+
+  if (rank < heldRank) return { value: prevValue, entry: withNotes({ ...prev, updated_at }, noteHeard(prev.also_heard, [{ value, source }], prevValue)) };
+
+  return {
+    value: prevValue,
+    entry: withNotes(
+      { status: "conflicting", source: prev.source, updated_at, candidates: [...held, { value, source }] },
+      noteHeard(prev.also_heard, [], prevValue),
+    ),
+  };
+}
+
+/**
  * Applies an untrusted AI patch (an extraction from a typed or spoken message, or a document the prospect applied). A prospect's own
  * edit is never overwritten. Otherwise, when values disagree, the higher-ranked source (RANK) stands
  * and the other is noted in also_heard; two values from sources of the same rank are kept as a
@@ -360,71 +442,19 @@ export function applyExtraction(state: IntakeState, raw: unknown, opts: Extracti
       continue;
     }
 
-    // A table the prospect saved with nothing in it is still open to what is heard or read later.
-    if (typed && !(isRowListField(field) && isEmpty(prevValue))) continue;
-    // Only the prospect marks a field not applicable, and only they can take it back.
-    if (prev?.status === "not_applicable") continue;
-
-    // The field takes the incoming value; `displaced` are the values it held that are noted.
-    const take = (takenStatus: FieldStatus, displaced: FieldCandidate[] = []) => {
-      (data as Record<FieldKey, unknown>)[field] = value;
-      provenance[field] = withNotes({ status: takenStatus, source, updated_at }, noteHeard(prev?.also_heard, displaced, value));
-    };
-
-    if (
-      !prev || // nothing recorded yet (or a session saved before provenance existed)
-      isEmpty(prevValue) ||
-      field === "census" // the roster is rebuilt as it grows; documents merge it in documentCandidates.ts
-    ) {
-      take(status);
-      continue;
-    }
-
-    const rank = RANK[source.kind];
-    const heldRank = fieldRank(prev);
-    const conflicting = prev.status === "conflicting";
-    const held = heldValues(prev, prevValue);
-
-    if (!conflicting && same(prevValue, value)) {
-      // Hearing the same value again (a list in any order) can raise confidence, never lower it,
-      // and never trades the source for a lower-ranked one. The stored value is kept as it is.
-      const keep = prev.status === "confirmed" && status !== "confirmed";
-      provenance[field] = withNotes(
-        { status: keep ? prev.status : status, source: rank < heldRank ? prev.source : source, updated_at },
-        noteHeard(prev.also_heard, [], value),
-      );
-      continue;
-    }
-
-    if (opts.corrections?.includes(field)) {
-      // The prospect corrected it in chat. A value from another kind of source is noted; one from
-      // the same kind is what they corrected.
-      take(status, held.filter((c) => c.source.kind !== source.kind));
-      continue;
-    }
-
-    if (extendsList(prevValue, value)) {
-      // Extended by a lower-ranked source, the prospect confirms the whole list again.
-      take(rank < heldRank ? "inferred" : status, held.filter((c) => !extendsList(c.value, value)));
-      continue;
-    }
-
-    if (rank > heldRank) {
-      take(status, held);
-      continue;
-    }
-
-    if (held.some((c) => same(c.value, value))) continue; // already one of the competing values
-
-    if (rank < heldRank) {
-      provenance[field] = withNotes({ ...prev, updated_at }, noteHeard(prev.also_heard, [{ value, source }], prevValue));
-      continue;
-    }
-
-    provenance[field] = withNotes(
-      { status: "conflicting", source: prev.source, updated_at, candidates: [...held, { value, source }] },
-      noteHeard(prev.also_heard, [], prevValue),
-    );
+    const merged = mergeHeard(prev, prevValue, value, {
+      source,
+      status,
+      corrected: opts.corrections?.includes(field) ?? false,
+      updated_at,
+      // The roster is rebuilt as it grows; documents merge it in documentCandidates.ts.
+      replaces: field === "census",
+      // A table the prospect saved with nothing in it is still open to what is heard or read later.
+      openWhenEmpty: isRowListField(field),
+    });
+    if (!merged) continue;
+    (data as Record<FieldKey, unknown>)[field] = merged.value;
+    provenance[field] = merged.entry;
   }
 
   for (const field of opts.unknown ?? []) {

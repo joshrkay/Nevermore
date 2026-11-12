@@ -1,12 +1,22 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { DEMO_CHAMBER_DATA, EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ProvenanceMap } from "@/data/provenance";
 import LiveWorkspace from "./LiveWorkspace";
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: null }) }));
-vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
+// The database lists the PEOs PEO Match offers (public.peo_catalog()); nothing else here reaches it.
+const catalog = vi.hoisted(() => ({
+  profiles: {} as Record<string, unknown>,
+}));
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: {
+    rpc: (fn: string) => Promise.resolve(fn === "peo_catalog"
+      ? { data: ["ADP TotalSource", "Insperity", "Justworks", "Rippling", "TriNet"].map((name, i) => ({ id: i + 1, name, profile: catalog.profiles[name] ?? null })), error: null }
+      : { data: null, error: { message: `no ${fn} here` } }),
+  },
+}));
 
 const TABS = [
   ["① Upload", "Drop your documents here."],
@@ -22,6 +32,11 @@ const TABS = [
 ] as const;
 
 describe("LiveWorkspace", () => {
+  // Shared with every test, so put back whether a test passes or fails.
+  afterEach(() => {
+    catalog.profiles = {};
+  });
+
   it.each([
     ["demo data", DEMO_CHAMBER_DATA],
     ["empty data", EMPTY_CHAMBER_DATA],
@@ -118,14 +133,15 @@ describe("LiveWorkspace", () => {
     expect(screen.getByRole("heading", { name: "Certify & sign" })).toBeInTheDocument();
   });
 
-  it("carries the chosen PEO into Certify & sign", () => {
+  it("carries the chosen PEO into Certify & sign", async () => {
     render(
       <MemoryRouter>
         <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} />
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("button", { name: "⑨ PEO Match" }));
-    fireEvent.click(screen.getByRole("button", { name: "Choose Rippling" }));
+    // The PEOs come from the database.
+    fireEvent.click(await screen.findByRole("button", { name: "Choose Rippling" }));
     expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("Rippling");
     fireEvent.click(screen.getByRole("button", { name: "Proceed with Rippling →" }));
     expect(screen.getByText(/prepared for Rippling/)).toBeInTheDocument();
@@ -147,7 +163,7 @@ describe("LiveWorkspace", () => {
     expect(screen.getByText(/send to Acme PEO myself/)).toBeInTheDocument();
   });
 
-  it("shows the PEO kept with the intake, and hands a new choice back to be saved", () => {
+  it("shows the PEO kept with the intake, and hands a new choice back to be saved", async () => {
     const onChoosePeo = vi.fn();
     const { rerender } = render(
       <MemoryRouter>
@@ -160,7 +176,7 @@ describe("LiveWorkspace", () => {
     expect(screen.getByText(/send to Insperity myself/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "⑨ PEO Match" }));
-    fireEvent.click(screen.getByRole("button", { name: "Choose TriNet" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Choose TriNet" }));
     expect(onChoosePeo).toHaveBeenCalledWith("TriNet");
     // What is shown is what the intake holds, not a copy kept here.
     expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("Insperity");
@@ -170,6 +186,47 @@ describe("LiveWorkspace", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText("✓ Selected").closest("div.rounded-xl")).toHaveTextContent("TriNet");
+  });
+
+  it("asks the chosen PEO's own questions on PEO Match, once it is chosen, and hands each answer back to be saved", async () => {
+    catalog.profiles = { TriNet: { version: 2, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] } };
+    const onExtraAnswers = vi.fn();
+    const { rerender } = render(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} chosenPeo="Insperity" onChoosePeo={() => {}} extraAnswers={{}} onExtraAnswers={onExtraAnswers} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "⑨ PEO Match" }));
+    await screen.findByRole("button", { name: "Choose TriNet" });
+    expect(screen.queryByRole("region", { name: "Questions from TriNet" })).not.toBeInTheDocument();
+    rerender(
+      <MemoryRouter>
+        <LiveWorkspace data={DEMO_CHAMBER_DATA} isDemo={false} sessionId="s1" onSubmit={async () => true} chosenPeo="TriNet" onChoosePeo={() => {}} extraAnswers={{}} onExtraAnswers={onExtraAnswers} />
+      </MemoryRouter>,
+    );
+    const section = screen.getByRole("region", { name: "Questions from TriNet" });
+    fireEvent.click(within(section).getByRole("radio", { name: "Yes" }));
+    const update = onExtraAnswers.mock.calls[0][0] as (prev: object) => object;
+    expect(update({})).toMatchObject({ "5": { vehicles: { question: "Do employees drive for work?", value: true } } });
+  });
+
+  it("shows another PEO's questions only when the advisor's request names them, and only those it names, each marked", async () => {
+    catalog.profiles = {
+      TriNet: { version: 2, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] },
+      Justworks: { version: 1, extra_questions: [{ key: "union", text: "Is anyone in a union?", kind: "yes_no" }, { key: "remote", text: "Does anyone work abroad?", kind: "yes_no" }] },
+    };
+    const props = { data: DEMO_CHAMBER_DATA, isDemo: false, sessionId: "s1", onSubmit: async () => true, chosenPeo: "TriNet", onChoosePeo: () => {}, extraAnswers: {}, onExtraAnswers: () => {} };
+    const { rerender } = render(<MemoryRouter><LiveWorkspace {...props} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "⑨ PEO Match" }));
+    await screen.findByRole("region", { name: "Questions from TriNet" });
+    expect(screen.queryByRole("region", { name: "Questions from Justworks" })).not.toBeInTheDocument();
+    rerender(<MemoryRouter><LiveWorkspace {...props} requestedQuestions={[{ peo_id: 3, key: "union", question: "Is anyone in a union?" }]} /></MemoryRouter>);
+    const justworks = screen.getByRole("region", { name: "Questions from Justworks" });
+    expect(within(within(justworks).getByRole("group", { name: "Is anyone in a union?" })).getByText("Your advisor asked about this")).toBeInTheDocument();
+    // Justworks isn't the prospect's choice: its question the request doesn't name isn't asked.
+    expect(within(justworks).queryByRole("group", { name: "Does anyone work abroad?" })).not.toBeInTheDocument();
+    expect(within(justworks).getByText("0 of 1 answered")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Questions from TriNet" })).queryByText("Your advisor asked about this")).not.toBeInTheDocument();
   });
 
   it("goes from Certify & sign back to Review to add a missing answer", () => {

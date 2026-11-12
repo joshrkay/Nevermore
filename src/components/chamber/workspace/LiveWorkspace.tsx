@@ -4,6 +4,8 @@ import type { CertificationRequest, CertificationState } from "@/data/manuscript
 import type { FieldAction, IntakeState, ProvenanceMap } from "@/data/provenance";
 import { resolutionFields, resolveCandidate, type CandidateResolution } from "@/data/documentCandidates";
 import { useSessionDocuments, type SessionDocument } from "@/hooks/useSessionDocuments";
+import { usePeoCatalog, type PeoCatalogStatus } from "@/hooks/usePeoCatalog";
+import type { PeoRecord } from "@/data/peoCatalog";
 import type { SubmitFailure } from "@/hooks/useChamberSession";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import UploadTab from "../UploadTab";
@@ -17,8 +19,10 @@ import ReviewTab from "./ReviewTab";
 import { VerifiedFieldsContext } from "./VerifiedFieldsContext";
 import { RequestedFieldsContext } from "./RequestedFieldsContext";
 import { NO_REQUESTED_FIELDS } from "@/data/informationRequest";
-import PEOMatchTab from "../PEOMatchTab";
+import PEOMatchTab, { type PEOMatchTabProps } from "../PEOMatchTab";
 import ReckoningTab from "../ReckoningTab";
+import ExtraQuestionsSection from "../ExtraQuestionsSection";
+import { askedPeos, NO_EXTRA_ANSWERS, type ExtraAnswers, type ExtraQuestionRef } from "@/data/extraAnswers";
 
 const WORKSPACE_TABS = [
   { key: "upload", label: "① Upload" },
@@ -57,7 +61,39 @@ interface LiveWorkspaceProps {
   openReview?: number;
   /** Creates the intake when the prospect starts with an upload (useChamberSession's ensureIntake). */
   ensureIntake?: () => Promise<string | null>;
+  /** The answers to PEOs' own extra questions, kept with the intake. */
+  extraAnswers?: ExtraAnswers;
+  /** Changes them (useChamberSession's updateExtraAnswers). Omit to show them read-only. */
+  onExtraAnswers?: (update: (prev: ExtraAnswers) => ExtraAnswers) => void;
+  /** The PEOs' own questions the advisor's open request names: their PEO's section is shown too, each marked. */
+  requestedQuestions?: readonly ExtraQuestionRef[];
+  /** The PEOs the database lists, when the page already reads them (usePeoCatalog); otherwise PEO Match reads them. */
+  peoCatalog?: { peos: PeoRecord[]; status: PeoCatalogStatus };
 }
+
+const NO_REQUESTED_QUESTIONS: readonly ExtraQuestionRef[] = [];
+
+/**
+ * PEO Match over the PEOs the database lists, read when the tab opens, with the chosen PEO's own extra questions under
+ * it (Questions from <PEO>).
+ */
+const PeoMatchFromDatabase = ({ extraAnswers, onExtraAnswers, requestedQuestions, given, ...props }: Omit<PEOMatchTabProps, "catalog" | "catalogStatus" | "children"> & {
+  extraAnswers: ExtraAnswers;
+  onExtraAnswers?: LiveWorkspaceProps["onExtraAnswers"];
+  requestedQuestions: readonly ExtraQuestionRef[];
+  given: LiveWorkspaceProps["peoCatalog"];
+}) => {
+  // Read here only when the page didn't pass the PEOs it already read.
+  const own = usePeoCatalog(given === undefined);
+  const { peos, status } = given ?? own;
+  return (
+    <PEOMatchTab {...props} catalog={peos} catalogStatus={status}>
+      {askedPeos(peos, props.selectedPeo, requestedQuestions).map((asked) => (
+        <ExtraQuestionsSection key={asked.peo.id} peo={asked.peo} questions={asked.questions} answers={extraAnswers} onChange={onExtraAnswers} requested={asked.requested} />
+      ))}
+    </PEOMatchTab>
+  );
+};
 
 const LiveWorkspace = ({
   data,
@@ -75,6 +111,10 @@ const LiveWorkspace = ({
   onChoosePeo,
   openReview = 0,
   ensureIntake,
+  extraAnswers = NO_EXTRA_ANSWERS,
+  onExtraAnswers,
+  requestedQuestions = NO_REQUESTED_QUESTIONS,
+  peoCatalog,
 }: LiveWorkspaceProps) => {
   const onAction = isDemo ? undefined : onFieldAction;
   const [activeTab, setActiveTab] = useState("upload");
@@ -146,7 +186,18 @@ const LiveWorkspace = ({
               focusRequest={openReview}
             />
           )}
-          {activeTab === "match" && <PEOMatchTab data={data} selectedPeo={chosenPeo} onSelect={setChosenPeo} onProceed={() => setActiveTab("reckoning")} />}
+          {activeTab === "match" && (
+            <PeoMatchFromDatabase
+              data={data}
+              selectedPeo={chosenPeo}
+              onSelect={setChosenPeo}
+              onProceed={() => setActiveTab("reckoning")}
+              extraAnswers={extraAnswers}
+              onExtraAnswers={isDemo ? undefined : onExtraAnswers}
+              requestedQuestions={requestedQuestions}
+              given={peoCatalog}
+            />
+          )}
           {activeTab === "reckoning" && (
             <ReckoningTab
               data={data}

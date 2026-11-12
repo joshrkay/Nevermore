@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CensusEmployee } from "./census";
-import { censusExport, layoutFor, OUR_CENSUS_LAYOUT } from "./censusExport";
+import { censusExport, censusLayoutFor, OUR_CENSUS_LAYOUT, type PeoCensusLayout } from "./censusExport";
+import type { PeoRecord } from "./peoCatalog";
 
 const sarah: CensusEmployee = {
   id: "1", first_name: "Sarah", last_name: "Chen", dob: "1988-03-15", work_state: "CA", zip_code: "94107",
@@ -22,8 +23,10 @@ describe("censusExport in our own layout", () => {
 });
 
 // A sample layout, as a PEO's own template would name its columns. No real PEO's template is in the repo yet.
-const SAMPLE_LAYOUT = {
+const SAMPLE_LAYOUT: PeoCensusLayout = {
   peo: "Sample PEO",
+  format: "csv",
+  template: null,
   columns: [
     { header: "Employee Last Name", from: "last_name" as const },
     { header: "Employee First Name", from: "first_name" as const },
@@ -49,7 +52,7 @@ describe("censusExport writes values a spreadsheet reads back as they are", () =
   });
 
   it("quotes a layout's header the same way", () => {
-    const { csv } = censusExport([], { peo: "Sample PEO", columns: [{ header: "Name, Last", from: "last_name" }] });
+    const { csv } = censusExport([], { ...SAMPLE_LAYOUT, columns: [{ header: "Name, Last", from: "last_name" }] });
     expect(csv).toBe('"Name, Last"\r\n');
   });
 
@@ -90,17 +93,29 @@ describe("censusExport with dependents", () => {
   });
 
   it("writes a PEO's own relationship column, and leaves dependents out of a layout that has none", () => {
-    const layout = { peo: "Sample PEO", columns: [{ header: "First", from: "first_name" as const }, { header: "Rel", from: "relationship" as const }] };
+    const layout = { peo: "Sample PEO", format: "csv" as const, template: null, columns: [{ header: "First", from: "first_name" as const }, { header: "Rel", from: "relationship" as const }] };
     expect(censusExport([withFamily], layout).csv).toBe("First,Rel\r\nSarah,\r\nMichael,spouse\r\nEmma,child\r\n");
-    const none = { peo: "Other PEO", columns: [{ header: "First", from: "first_name" as const }, { header: "State", from: "work_state" as const }] };
+    const none = { peo: "Other PEO", format: "csv" as const, template: null, columns: [{ header: "First", from: "first_name" as const }, { header: "State", from: "work_state" as const }] };
     expect(censusExport([withFamily], none).csv).toBe("First,State\r\nSarah,CA\r\n");
   });
 });
 
-describe("layoutFor", () => {
-  it("gives a PEO its own layout, whatever the capitalisation, and any other PEO our own", () => {
-    expect(layoutFor("sample peo", [SAMPLE_LAYOUT])).toBe(SAMPLE_LAYOUT);
-    expect(layoutFor("TriNet", [SAMPLE_LAYOUT])).toBe(OUR_CENSUS_LAYOUT);
-    expect(layoutFor(null, [SAMPLE_LAYOUT])).toBe(OUR_CENSUS_LAYOUT);
+describe("censusLayoutFor: the census layout in the PEO's profile in use, or ours", () => {
+  const peo = (name: string, layout: PeoCensusLayout | null, listed = true, id = 5): PeoRecord => ({ id, name, listed, lastVerified: null, profile: {
+    version: 3, neededToQuote: [], neededBeforeSigning: [], censusLayout: layout, documents: [], extraQuestions: [], sources: {}, publishedAt: null,
+    rules: { minHeadcount: null, statesServed: null, excludedIndustries: null, excludedClassCodes: null, minEnrolmentPercent: null },
+  } });
+  const catalog = [peo("Sample PEO", SAMPLE_LAYOUT), peo("No Layout PEO", null, true, 6), peo("Delisted PEO", SAMPLE_LAYOUT, false, 7)];
+
+  it("gives a listed PEO the layout its profile in use holds, whatever the capitalisation", () => {
+    expect(censusLayoutFor("sample peo", catalog)).toBe(SAMPLE_LAYOUT);
+  });
+
+  it("gives our own to a PEO typed in that isn't on the list, one whose profile has no census layout, one not listed, or none", () => {
+    expect(censusLayoutFor("Some Other PEO", catalog)).toBe(OUR_CENSUS_LAYOUT);
+    expect(censusLayoutFor("No Layout PEO", catalog)).toBe(OUR_CENSUS_LAYOUT);
+    expect(censusLayoutFor("Delisted PEO", catalog)).toBe(OUR_CENSUS_LAYOUT);
+    expect(censusLayoutFor(null, catalog)).toBe(OUR_CENSUS_LAYOUT);
+    expect(OUR_CENSUS_LAYOUT).toMatchObject({ peo: null, format: "csv", template: null });
   });
 });

@@ -41,6 +41,12 @@ const AdvisorHeader = () => {
             Partners
           </NavLink>
           <NavLink
+            to="/advisor/peos"
+            className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
+          >
+            PEOs
+          </NavLink>
+          <NavLink
             to="/advisor/held"
             className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}
           >

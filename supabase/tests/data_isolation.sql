@@ -113,6 +113,12 @@
 \i supabase/migrations/20261112100000_intake_schema_v3_acord_130_questions.sql
 \i supabase/migrations/20261113090000_broker_mailboxes.sql
 \i supabase/migrations/20261113100000_allowed_organisations.sql
+\i supabase/migrations/20261115090000_peo_requirement_profiles.sql
+\i supabase/migrations/20261115100000_peo_profile_editor.sql
+\i supabase/migrations/20261115110000_peo_industry_class_codes.sql
+\i supabase/migrations/20261115120000_extra_answers.sql
+\i supabase/migrations/20261115130000_information_request_extra_questions.sql
+\i supabase/migrations/20261115140000_peo_census_templates.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -372,9 +378,23 @@ BEGIN
   -- The admin asks for prospect B's draft to be deleted (it stays until purge-intakes runs).
   PERFORM pg_temp.become('admin');
   PERFORM public.request_intake_deletion(pb_open, 'The owner asked by email; verified from the account address');
+  -- The admin publishes TriNet's requirement profile, naming a contact (20261115090000); the other four PEOs keep
+  -- their empty drafts.
+  PERFORM public.admin_save_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'), jsonb_build_object(
+    'min_headcount', 5, 'sources', jsonb_build_object(
+      'min_headcount', jsonb_build_object('kind', 'person', 'name', 'Dana Reyes', 'role', 'Broker desk', 'checked_on', '2026-11-02'),
+      'contacts', jsonb_build_object('kind', 'person', 'name', 'Dana Reyes', 'role', 'Broker desk', 'checked_on', '2026-11-02')),
+    'contacts', jsonb_build_array(jsonb_build_object('name', 'Dana Reyes', 'email', 'dana@trinet.example'))),
+    (SELECT revision FROM public.peo_profile_versions v JOIN public.peos p ON p.id = v.peo_id WHERE p.name = 'TriNet' AND v.status = 'draft'), NULL);
+  PERFORM public.admin_publish_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'),
+    (SELECT revision FROM public.peo_profile_versions v JOIN public.peos p ON p.id = v.peo_id WHERE p.name = 'TriNet' AND v.status = 'draft'));
+
+  -- The admin uploads TriNet's template workbook (20261115140000), which its scan finds clean.
+  PERFORM public.admin_register_census_template((SELECT id FROM public.peos WHERE name = 'TriNet'), 'TriNet census.xlsx', 2048, repeat('c', 64));
 
   -- Email delivery, and the AI rate-limit counters.
   PERFORM pg_temp.become('service');
+  PERFORM public.record_census_template_scan((SELECT max(id) FROM public.peo_census_templates), 'clean', NULL);
   PERFORM public.record_email_delivery_event('evt_matrix_1', 'email.bounced', 'msg_matrix_1', ARRAY['prospect_a@example.test'], 'Permanent', 'Mailbox does not exist', now());
   IF NOT public.consume_ip_quota(repeat('a', 64), 20, 400) THEN RAISE EXCEPTION 'setup: ip quota refused'; END IF;
   IF NOT public.consume_global_ai_budget(2000) THEN RAISE EXCEPTION 'setup: global budget refused'; END IF;
@@ -415,6 +435,7 @@ BEGIN
   VALUES ('org_added', 'google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
   -- A file in the bucket that no stored attachment names stays the service role's alone.
   INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', pa_cert || '/0/unrecorded.pdf');
+  INSERT INTO storage.objects (bucket_id, name) SELECT 'peo-templates', storage_path FROM public.peo_census_templates;
   PERFORM set_config('request.jwt.claims', '', false);
   INSERT INTO fx VALUES
     ('ga_open', ga_open), ('ga_expired', ga_expired), ('ga_archived', ga_archived), ('ga_revoked', ga_revoked),
@@ -483,6 +504,17 @@ INSERT INTO matrix VALUES
   -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
   -- advisor_add_referral_partner() and advisor_update_referral_partner().
   ('public.referral_partners',                          '{"advisor":"all","admin":"all"}'),
+  -- PEOs and their requirement profiles (20261115090000): advisors read the PEOs, the published version (one here)
+  -- and its contacts; drafts are the admin's. Prospects, guests included, read none of these tables (a version names
+  -- people at the PEO and admins): peo_catalog() is their only way in, checked in part 4. Signed-out callers read
+  -- nothing: public pages never name a PEO.
+  ('public.peos',                                       '{"advisor":"all","admin":"all"}'),
+  ('public.peo_profile_versions',                       '{"advisor":1,"admin":"all"}'),
+  ('public.peo_contacts',                               '{"advisor":"all","admin":"all"}'),
+  -- PEO template workbooks (20261115140000): advisors read the records; anyone signed in reads a clean one's file
+  -- (a PEO's blank form, filled in the reader's browser), nobody signed out.
+  ('public.peo_census_templates',                       '{"advisor":"all","admin":"all"}'),
+  ('storage.objects WHERE bucket_id = ''peo-templates''', '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all"}'),
   ('public.intake_lifecycle_events',                    '{"advisor":"all","admin":"all"}'),
   ('public.intake_deletions',                           '{"advisor":"all","admin":"all"}'),
   -- Monitoring is the admin's: advisors don't need failure codes, routes or account ids.
@@ -717,6 +749,7 @@ END $$;
 --   helper        called as the signed-in user by a trigger or an invoker function; holds no data itself
 --   advisor       refuses anyone who isn't an advisor or admin
 --   admin         refuses anyone who isn't an admin, advisors included
+--   signed_in     any signed-in caller, guests included; reads only what row security lets the caller read
 CREATE TEMP TABLE callable (fn text PRIMARY KEY, audience text NOT NULL, call text, why text NOT NULL);
 GRANT SELECT ON callable TO anon, authenticated, service_role;
 INSERT INTO callable VALUES
@@ -752,6 +785,8 @@ INSERT INTO callable VALUES
   ('current_intake_consent_id(p_user_id uuid)', 'helper', NULL, 'the consent triggers call it as the caller; row security limits it to the caller''s own agreement (all, for advisors)'),
   ('chamber_data_census_row_error(census_row jsonb, base text, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_error(d jsonb, OUT path text, OUT reason text)', 'helper', NULL, 'intake validation trigger; pure'),
+  ('extra_answers_error(p jsonb, OUT path text, OUT reason text)', 'helper', NULL, 'extra answers validation trigger; pure'),
+  ('extra_answer_value_is_valid(v jsonb, kind text)', 'helper', NULL, 'pure: whether a value answers a question of that kind'),
   ('chamber_data_field_kind(field text)',      'helper',  NULL, 'intake validation trigger; pure'),
   ('chamber_data_scalar_reason(kind text, val jsonb)', 'helper', NULL, 'intake validation trigger; pure'),
   ('chamber_data_row_field_kind(list text, key text)', 'helper', NULL, 'intake validation trigger; pure'),
@@ -799,7 +834,7 @@ INSERT INTO callable VALUES
   ('record_manuscript_version(p_session_id uuid, p_version integer, p_storage_path text, p_pdf_sha256 text, p_review_event_id bigint, p_corrections_applied integer, p_sensitive_revealed boolean, p_certified_data_hash text, p_certified_at timestamp with time zone)', 'advisor',
                                                                      'SELECT public.record_manuscript_version(%1$L, 2, %1$L || ''/probe.pdf'', repeat(''d'', 64), 0, 0, false, NULL, NULL)', 'storing a Manuscript version'),
   ('retention_review_due(p_limit integer)',    'advisor', 'SELECT count(*) FROM public.retention_review_due(10)', 'submitted records due for review'),
-  ('advisor_request_information(p_session_id uuid, p_message text, p_fields text[])', 'advisor',
+  ('advisor_request_information(p_session_id uuid, p_message text, p_fields text[], p_extra_questions jsonb)', 'advisor',
                                                                      'SELECT public.advisor_request_information(%1$L, ''probe'', ''{}'')', 'asking the prospect for information'),
   ('advisor_intake_funnel(p_from timestamp with time zone, p_to timestamp with time zone)', 'advisor',
                                                                      'SELECT count(*) FROM public.advisor_intake_funnel(now() - interval ''1 day'', now())', 'the pilot funnel'),
@@ -815,7 +850,18 @@ INSERT INTO callable VALUES
   ('claim_advisor_role_by_organisation()', 'own', NULL, 'the advisor role for a sign-in whose provider-vouched organisation an admin allowed; reads only the caller''s own sign-in claims, grants nothing to a guest or anyone else'),
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
   ('retry_intake_deletion(p_deletion_id uuid)', 'admin',  'SELECT public.retry_intake_deletion(%2$L)', 'retrying a failed deletion'),
-  ('admin_ops_summary(p_hours integer)',       'admin',   'SELECT count(*) FROM public.admin_ops_summary(24)', 'monitoring counts');
+  ('admin_ops_summary(p_hours integer)',       'admin',   'SELECT count(*) FROM public.admin_ops_summary(24)', 'monitoring counts'),
+  ('peo_catalog()',                            'signed_in', NULL, 'the PEOs and each one''s published profile; never a contact or an admin''s id, and for anyone but an advisor no person''s name'),
+  ('admin_add_peo(p_name text)',               'admin',   'SELECT public.admin_add_peo(''Probe PEO'')', 'adding a PEO'),
+  ('admin_save_peo_profile(p_peo_id bigint, p_profile jsonb, p_draft_revision uuid, p_in_use_version integer)', 'admin', 'SELECT public.admin_save_peo_profile(0, ''{}'', NULL, NULL)', 'saving a PEO''s draft profile, based on the draft as the editor opened it'),
+  ('admin_publish_peo_profile(p_peo_id bigint, p_draft_revision uuid)', 'admin', 'SELECT public.admin_publish_peo_profile(0, NULL)', 'publishing the draft the admin reviewed'),
+  ('admin_set_peo_listed(p_peo_id bigint, p_listed boolean)', 'admin', 'SELECT public.admin_set_peo_listed(0, true)', 'listing a PEO, or not'),
+  ('admin_recheck_peo_profile(p_peo_id bigint, p_sources jsonb)', 'admin', 'SELECT public.admin_recheck_peo_profile(0, ''{"answers": {}}'')', 'checked again: a new published version with new sources'),
+  ('admin_discard_peo_draft(p_peo_id bigint)', 'admin', 'SELECT public.admin_discard_peo_draft(0)', 'discarding a PEO''s draft profile'),
+  ('admin_register_census_template(p_peo_id bigint, p_file_name text, p_size_bytes integer, p_sha256 text)', 'admin',
+                                                                     'SELECT public.admin_register_census_template(0, ''x.xlsx'', 1, NULL)', 'recording an upload of a PEO template workbook, before its scan'),
+  ('is_clean_census_template_file(p_name text)', 'signed_in', NULL, 'the storage policy on peo-templates: whether a file is a clean template''s; names no one'),
+  ('clean_template_workbook_path(p_peo_id bigint, p_template_id bigint)', 'signed_in', NULL, 'where a clean PEO template workbook''s file is, to read it; a PEO''s blank form, names no one');
 
 DO $$
 DECLARE
@@ -872,7 +918,8 @@ BEGIN
     'SELECT count(*) FROM public.document_scan_orphans(10)',
     format('SELECT count(*) FROM public.intake_stored_files(%L, %L)', sid, pg_temp.id('prospect_a')),
     format('SELECT public.complete_intake_deletion(%L, 0)', nobody),
-    format('SELECT public.fail_intake_deletion(%L, ''probe'', 60)', nobody)
+    format('SELECT public.fail_intake_deletion(%L, ''probe'', 60)', nobody),
+    'SELECT public.record_census_template_scan(0, ''failed'', NULL)'
   ] LOOP
     FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'prospect_a', 'advisor', 'admin'] LOOP
       PERFORM pg_temp.become(who);
@@ -969,9 +1016,37 @@ BEGIN
   -- The advisor's account behind a guest token is a guest: none of the advisor-only data.
   PERFORM pg_temp.become('advisor_as_guest');
   IF pg_temp.visible('public.chamber_sessions') <> 0 OR pg_temp.visible('public.advisor_notes') <> 0
-     OR pg_temp.visible('public.intake_consents') <> 0 OR pg_temp.visible('storage.objects') <> 0 THEN
+     -- A clean PEO template workbook is anyone's who is signed in (the matrix above); no other file is a guest's.
+     OR pg_temp.visible('public.intake_consents') <> 0 OR pg_temp.visible('storage.objects WHERE bucket_id <> ''peo-templates''') <> 0 THEN
     RAISE EXCEPTION 'FAIL: a guest token on an advisor''s account reads advisor data';
   END IF;
+
+  -- The PEO catalog (20261115090000), the only way a prospect reads a PEO: as each caller, it never holds a PEO
+  -- contact or an admin's id, and only advisors read the name of the person at the PEO a source names (TriNet's
+  -- minimum headcount was checked with Dana Reyes) or the contacts' source. Signed out, it is refused.
+  FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor_as_guest', 'advisor', 'admin'] LOOP
+    PERFORM pg_temp.become(who);
+    IF who = 'signed_out' THEN
+      PERFORM pg_temp.refused('SELECT public.peo_catalog()', 'a signed-out caller reading the PEO catalog');
+      CONTINUE;
+    END IF;
+    DECLARE
+      catalog constant text := public.peo_catalog()::text;
+      trinet constant jsonb := (SELECT p -> 'profile' FROM jsonb_array_elements(public.peo_catalog()) p WHERE p ->> 'name' = 'TriNet');
+    BEGIN
+      RESET ROLE;
+      IF catalog LIKE '%dana@trinet.example%' OR catalog LIKE '%' || pg_temp.id('admin') || '%' OR catalog LIKE '%' || pg_temp.id('advisor') || '%' THEN
+        RAISE EXCEPTION 'FAIL: % reads a PEO contact or an admin''s id in the catalog: %', who, catalog;
+      END IF;
+      IF trinet ->> 'min_headcount' <> '5' OR trinet -> 'sources' -> 'min_headcount' ->> 'role' <> 'Broker desk'
+         OR trinet -> 'sources' -> 'min_headcount' ->> 'checked_on' <> '2026-11-02' THEN
+        RAISE EXCEPTION 'FAIL: % doesn''t read TriNet''s profile in use: %', who, trinet;
+      END IF;
+      IF (catalog LIKE '%Dana Reyes%' OR trinet -> 'sources' ? 'contacts') <> (who IN ('advisor', 'admin')) THEN
+        RAISE EXCEPTION 'FAIL: % % the name of a person at the PEO: %', who, CASE WHEN who IN ('advisor', 'admin') THEN 'doesn''t read' ELSE 'reads' END, catalog;
+      END IF;
+    END;
+  END LOOP;
 
   -- Nobody but the service role makes a bucket public or adds one.
   FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'prospect_a', 'advisor', 'admin'] LOOP
@@ -1055,8 +1130,8 @@ BEGIN
   -- (c) Every bucket is private.
   SELECT string_agg(id, ', ') INTO missing FROM storage.buckets WHERE public IS DISTINCT FROM false;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'FAIL: public storage buckets: %', missing; END IF;
-  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'peo-mail', 'quarantine'] THEN
-    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts, peo-mail and quarantine buckets';
+  IF (SELECT array_agg(id ORDER BY id) FROM storage.buckets) IS DISTINCT FROM ARRAY['documents', 'manuscripts', 'peo-mail', 'peo-templates', 'quarantine'] THEN
+    RAISE EXCEPTION 'FAIL: expected exactly the documents, manuscripts, peo-mail, peo-templates and quarantine buckets';
   END IF;
 
   -- (d) The API roles hold no TRUNCATE (it ignores row security), REFERENCES or TRIGGER on any public table

@@ -105,6 +105,9 @@ export function prospectStatusAfter(next: PipelineStatus, history: readonly { to
 /** The longest message a request for information can carry; the database refuses longer (20261105090000). */
 export const INFORMATION_REQUEST_MAX = 1000;
 
+/** The most PEO extra questions one request can name; the database refuses more (20261115130000). */
+export const INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS = 60;
+
 /** Intake statuses a prospect can't answer from (public.advisor_request_information refuses them). */
 const CLOSED_INTAKE_STATUSES: ReadonlySet<string> = new Set(["archived", "revoked", "expired"]);
 
@@ -115,6 +118,14 @@ const CLOSED_INTAKE_STATUSES: ReadonlySet<string> = new Set(["archived", "revoke
 export function canRequestInformation(status: PipelineStatus, certifiedOnce: boolean, intakeStatus: string): boolean {
   if (!certifiedOnce || CLOSED_INTAKE_STATUSES.has(intakeStatus)) return false;
   return status === "information_requested" || PIPELINE_TRANSITIONS[status].includes("information_requested");
+}
+
+/** Why an advisor can't ask the prospect for more information now (canRequestInformation), in their terms; null when they can. */
+export function informationRequestBlockedReason(status: PipelineStatus, certifiedOnce: boolean, intakeStatus: string): string | null {
+  if (canRequestInformation(status, certifiedOnce, intakeStatus)) return null;
+  if (!certifiedOnce) return "Available once the prospect has certified their intake.";
+  if (CLOSED_INTAKE_STATUSES.has(intakeStatus)) return "This intake is closed, so the prospect can't answer a request on it.";
+  return `A submission at ${PIPELINE_LABELS[status]} can't move to ${PIPELINE_LABELS.information_requested}.`;
 }
 
 /**

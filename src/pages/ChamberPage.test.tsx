@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { ChatMessage } from "@/data/chat";
 import type { IntakeState, ProvenanceMap } from "@/data/provenance";
@@ -37,7 +37,13 @@ const session = {
   verifiedFields: new Set<string>() as ReadonlySet<string>,
   chamberData: { ...EMPTY_CHAMBER_DATA } as ChamberData,
   provenance: {} as ProvenanceMap,
+  chosenPeo: null as string | null,
+  extraAnswers: {} as Record<string, unknown>,
+  updateExtraAnswers: vi.fn(),
 };
+// The PEOs the database lists (usePeoCatalog), for the chosen PEO's extra questions.
+let peoCatalog: unknown[] = [];
+vi.mock("@/hooks/usePeoCatalog", () => ({ usePeoCatalog: () => ({ peos: peoCatalog, status: "ready", retry: () => {} }) }));
 
 // What the page hands the voice and chat hooks, so their extraction paths can be driven directly.
 const hooks = {
@@ -47,6 +53,7 @@ const hooks = {
     onExtracted: (extracted: unknown, response: unknown, message: { id: string; text: string; spoken?: boolean }) => void;
     onOrbStateChange: (state: OrbState) => void;
     readIntake?: unknown;
+    extraQuestions?: () => unknown[];
   },
   orb: null as null | { orbState: OrbState; voice: VoiceState; onTypeInstead: () => void; compact?: boolean; orbSize?: number; id?: string; narrow?: boolean },
 };
@@ -70,7 +77,7 @@ let storageWorks = true;
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 vi.mock("@/hooks/useChamberSession", () => ({ useChamberSession: () => session }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
-let informationRequest: null | { message: string; fields: string[]; requestedAt: string } = null;
+let informationRequest: null | { message: string; fields: string[]; requestedAt: string; extraQuestions: unknown[] } = null;
 vi.mock("@/hooks/useInformationRequest", () => ({ useInformationRequest: () => informationRequest }));
 vi.mock("@/data/intakeBackup", () => ({ browserStorageWorks: () => storageWorks }));
 vi.mock("@/hooks/useLenoreVoice", () => ({
@@ -117,6 +124,12 @@ const lenore = (id: string, text: string): ChatMessage => ({ id, sender: "lenore
 const prospect = (id: string, text: string): ChatMessage => ({ id, sender: "user", text, timestamp: "" });
 
 describe("ChamberPage", () => {
+  // Shared with every test, so put back whether a test passes or fails.
+  afterEach(() => {
+    session.chosenPeo = null;
+    peoCatalog = [];
+  });
+
   beforeEach(() => {
     session.sessionId = null;
     session.resumeFailed = false;
@@ -307,6 +320,20 @@ describe("ChamberPage", () => {
         status: "inferred",
         source: { kind: "transcript", message_id: "v1", quote: "We're about 40 people", prompt_version: 4 },
       });
+    });
+
+    it("has Lenore ask the chosen PEO's extra questions, by text and voice, and keeps what she hears as their answers", () => {
+      const drives = { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" as const };
+      peoCatalog = [{ id: 5, name: "TriNet", listed: true, lastVerified: null, profile: { version: 1, neededToQuote: [], neededBeforeSigning: [], censusLayout: null, documents: [], extraQuestions: [drives], sources: {}, publishedAt: null,
+        rules: { minHeadcount: null, statesServed: null, excludedIndustries: null, excludedClassCodes: null, minEnrolmentPercent: null } } }];
+      session.chosenPeo = "TriNet";
+      renderPage();
+      const question = { id: "5.vehicles", peo: "TriNet", text: "Do employees drive for work?", kind: "yes_no", answered: false };
+      expect(hooks.chat!.extraQuestions!()).toEqual([question]);
+      expect(hooks.voice!.context).toBe(voiceContextUpdate(session.chamberData, session.provenance, [question as never]));
+      hooks.chat!.onExtracted({}, { extra_answers: [{ id: "5.vehicles", value: true, field_status: "confirmed" }] }, { ...spoken, spoken: true });
+      const update = session.updateExtraAnswers.mock.calls[0][0] as (prev: object) => Record<string, Record<string, { value: unknown; status: string }>>;
+      expect(update({})["5"].vehicles).toMatchObject({ question: "Do employees drive for work?", value: true, status: "inferred" });
     });
 
     it("merges a chat extraction with its provenance", () => {
@@ -661,7 +688,7 @@ describe("ChamberPage", () => {
     it("shows the request and hands its fields to the workspace and to Lenore", () => {
       session.sessionId = "s1";
       session.certification = { status: "certified" };
-      informationRequest = { message: "Please confirm your pay frequency.", fields: ["pay_frequency"], requestedAt: "2026-11-05T12:00:00Z" };
+      informationRequest = { message: "Please confirm your pay frequency.", fields: ["pay_frequency"], requestedAt: "2026-11-05T12:00:00Z", extraQuestions: [] };
       renderPage();
       expect(screen.getByText("Please confirm your pay frequency.")).toBeInTheDocument();
       expect([...(hooks.workspace?.requested ?? [])]).toEqual(["pay_frequency"]);

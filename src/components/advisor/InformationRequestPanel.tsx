@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import { Loader2, MailQuestion, X } from "lucide-react";
 import { toast } from "sonner";
 import {
-  canRequestInformation,
   followUpFieldsOf,
+  informationRequestBlockedReason,
   INFORMATION_REQUEST_MAX,
   PIPELINE_LABELS,
   REQUESTABLE_FIELDS,
@@ -11,6 +11,7 @@ import {
   type ReviewMap,
 } from "@/data/advisor";
 import { FIELD_LABELS, type FieldKey } from "@/data/provenance";
+import { parseExtraQuestionRefs, type ExtraQuestionRef } from "@/data/extraAnswers";
 import { requestInformation, type InformationRequestRow } from "@/lib/advisorApi";
 import { actorName, formatDateTime } from "./format";
 
@@ -25,17 +26,17 @@ interface InformationRequestPanelProps {
   requests: readonly InformationRequestRow[];
   /** A message to start from, such as an underwriter's question the advisor chose to ask. */
   initialMessage?: string;
+  /**
+   * The answers to start from instead of the fields marked Needs follow-up, such as a PEO's missing answers
+   * (PeoNeedsPanel). The advisor can still add or remove any.
+   */
+  initialFields?: readonly FieldKey[];
+  /** A PEO's own extra questions to start with (PeoNeedsPanel's draft). The advisor can take any out. */
+  initialQuestions?: readonly ExtraQuestionRef[];
   onChanged: () => void;
 }
 
 const labelOf = (field: string) => FIELD_LABELS[(field === "employees" ? "census" : field) as FieldKey] ?? field;
-
-/** Why a request can't be sent now, in the advisor's terms. */
-function blockedReason(status: PipelineStatus, certifiedOnce: boolean, intakeStatus: string): string {
-  if (!certifiedOnce) return "Available once the prospect has certified their intake.";
-  if (["archived", "revoked", "expired"].includes(intakeStatus)) return "This intake is closed, so the prospect can't answer a request on it.";
-  return `A submission at ${PIPELINE_LABELS[status]} can't move to ${PIPELINE_LABELS.information_requested}.`;
-}
 
 /**
  * Asks the prospect for more information: a message and the answers it is about, which start as the fields
@@ -52,14 +53,18 @@ const InformationRequestPanel = ({
   reviews,
   requests,
   initialMessage,
+  initialFields,
+  initialQuestions,
   onChanged,
 }: InformationRequestPanelProps) => {
+  const [questions, setQuestions] = useState<ExtraQuestionRef[]>(() => [...(initialQuestions ?? [])]);
   const followUps = useMemo(() => followUpFieldsOf(reviews), [reviews]);
   const [message, setMessage] = useState(initialMessage ?? "");
   // The selection follows the follow-up marks as the advisor changes them on this page, keeping what the advisor
-  // chose here: a follow-up they took out stays out, and an answer they added stays in.
-  const [removed, setRemoved] = useState<ReadonlySet<FieldKey>>(new Set());
-  const [added, setAdded] = useState<FieldKey[]>([]);
+  // chose here: a follow-up they took out stays out, and an answer they added stays in. A draft that starts from its
+  // own answers starts with only those.
+  const [removed, setRemoved] = useState<ReadonlySet<FieldKey>>(() => new Set(initialFields ? followUps.filter((f) => !initialFields.includes(f)) : []));
+  const [added, setAdded] = useState<FieldKey[]>(() => [...(initialFields ?? [])]);
   const fields = useMemo(
     () => [...followUps.filter((f) => !removed.has(f)), ...added.filter((f) => !followUps.includes(f))],
     [followUps, removed, added],
@@ -77,13 +82,13 @@ const InformationRequestPanel = ({
     setAdded((current) => (current.includes(f) ? current : [...current, f]));
   };
   const [saving, setSaving] = useState(false);
-  const allowed = canRequestInformation(status, certifiedOnce, intakeStatus);
+  const blocked = informationRequestBlockedReason(status, certifiedOnce, intakeStatus);
   const others = REQUESTABLE_FIELDS.filter((f) => !fields.includes(f));
 
   const send = async () => {
     setSaving(true);
     try {
-      await requestInformation(sessionId, message, fields);
+      await requestInformation(sessionId, message, fields, questions);
       setMessage("");
       toast.success("Request sent. The prospect will get an email and see it in their intake.");
       onChanged();
@@ -101,7 +106,7 @@ const InformationRequestPanel = ({
         Ask the prospect
       </h2>
 
-      {allowed ? (
+      {blocked === null ? (
         <>
           <p className="text-xs text-muted-foreground">
             Emailed to the prospect and shown in their intake, and the submission moves to{" "}
@@ -167,6 +172,27 @@ const InformationRequestPanel = ({
             )}
           </fieldset>
 
+          {questions.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">And a PEO's own questions, which the prospect sees under that PEO's name</p>
+              <ul className="flex flex-wrap gap-1.5" aria-label="Extra questions the request is about">
+                {questions.map((q) => (
+                  <li key={`${q.peo_id}-${q.key}`} className="inline-flex items-center gap-1 text-xs rounded-full bg-muted px-2 py-0.5">
+                    {q.question}
+                    <button
+                      type="button"
+                      onClick={() => setQuestions((current) => current.filter((x) => x !== q))}
+                      aria-label={`Remove ${q.question}`}
+                      className="rounded-full p-0.5 hover:bg-background"
+                    >
+                      <X className="w-3 h-3" aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <button
             onClick={send}
             disabled={saving || message.trim() === ""}
@@ -177,22 +203,28 @@ const InformationRequestPanel = ({
           </button>
         </>
       ) : (
-        <p className="text-xs text-muted-foreground">{blockedReason(status, certifiedOnce, intakeStatus)}</p>
+        <p className="text-xs text-muted-foreground">{blocked}</p>
       )}
 
       {requests.length > 0 && (
         <div className="pt-2 border-t border-border space-y-3">
           <h3 className="text-xs font-medium text-muted-foreground">Sent to the prospect</h3>
           <ul className="space-y-3">
-            {requests.map((r) => (
-              <li key={r.id} className="text-sm space-y-1">
-                <p className="whitespace-pre-wrap">{r.message}</p>
-                {r.fields.length > 0 && <p className="text-xs text-muted-foreground">About: {r.fields.map(labelOf).join(", ")}</p>}
-                <p className="text-xs text-muted-foreground">
-                  {actorName(r.requested_by, r.requested_by_email, prospectUserId)} · {formatDateTime(r.requested_at)}
-                </p>
-              </li>
-            ))}
+            {requests.map((r) => {
+              const named = parseExtraQuestionRefs(r.extra_questions);
+              return (
+                <li key={r.id} className="text-sm space-y-1">
+                  <p className="whitespace-pre-wrap">{r.message}</p>
+                  {r.fields.length > 0 && <p className="text-xs text-muted-foreground">About: {r.fields.map(labelOf).join(", ")}</p>}
+                  {named.length > 0 && (
+                    <p className="text-xs text-muted-foreground">Its own questions: {named.map((q) => q.question).join("; ")}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    {actorName(r.requested_by, r.requested_by_email, prospectUserId)} · {formatDateTime(r.requested_at)}
+                  </p>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

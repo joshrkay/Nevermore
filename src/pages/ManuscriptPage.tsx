@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
-import { CheckCircle, AlertTriangle, Download, HelpCircle, ArrowLeft, Loader2 } from "lucide-react";
+import { CheckCircle, AlertTriangle, Download, ArrowLeft, Loader2 } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -9,17 +9,31 @@ import { DEMO_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
 import { CONSENT_DRAFT_LABEL } from "@/data/certification";
-import { buildManuscript, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, rowSourceLine, type ChamberSubmission, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
+import { buildManuscript, CHECK_OUTCOME, isFileId, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, rowSourceLine, type ChamberSubmission, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
 import { parseProvenance, STATUS_LABELS, type FieldKey, type FieldProvenance, type ProvenanceMap } from "@/data/provenance";
+import { checkedLine, localToday } from "@/data/peoProfiles";
+import { FIT_WORDS, NOT_MET_NOTE } from "@/data/peoCatalog";
+
+/** A packet check's outcome in the words the eligibility checks use everywhere. */
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { NO_VERIFIED_FIELDS } from "@/data/requiredItems";
 import { readVerifiedFields } from "@/lib/verifiedFields";
 import { SITE_DOMAIN } from "@/data/site";
 import { downloadBlob } from "@/lib/downloadFile";
 import { recordManuscriptDownload } from "@/lib/milestones";
+import AnswersJsonDownload from "@/components/AnswersJsonDownload";
 import CensusDownload from "@/components/CensusDownload";
-import { PEO_CATALOG } from "@/data/peoCatalog";
+import WorkersCompDownload from "@/components/WorkersCompDownload";
+import { workersCompApplication } from "@/data/workersCompApplication";
+import SupplementDownload from "@/components/SupplementDownload";
+import BundleDownload from "@/components/BundleDownload";
+import { parseCertifiedExtraAnswers } from "@/data/extraAnswers";
+import { supplementFor, supplementPeos } from "@/data/peoSupplement";
+import FitIcon from "@/components/peo/FitIcon";
+import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import { finalManuscriptUrl } from "@/lib/advisorApi";
+import { certificationOf } from "@/lib/certificationCheck";
+import { certifiedAnswersSource } from "@/data/certifiedAnswersDocument";
 import ProspectStatusNote from "@/components/ProspectStatusNote";
 import LegalLinks from "@/components/LegalLinks";
 
@@ -107,6 +121,8 @@ type LoadState =
   | {
       kind: "ready";
       sessionId: string;
+      /** The intake's status as loaded: what each download checks again at its click. */
+      status: string;
       data: ChamberData;
       provenance: ProvenanceMap;
       /** Fields an advisor has verified since: settled, so not open items. */
@@ -203,6 +219,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
         setState({
           kind: "ready",
           sessionId: data.id,
+          status: data.status,
           // Render what was signed, not whatever the session holds now. Without a snapshot the intake is
           // still certified, and the database keeps its saved answers equal to what was signed.
           data: parseChamberData(hasSnapshot ? submission.chamber_data : data.chamber_data),
@@ -219,6 +236,8 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
   // The database offers the latest advisor version only when it was built from this certification.
   const ready = state.kind === "ready";
+  // The PEOs and their profiles in use, for a prospect's own packet (signed out, nobody reads a PEO).
+  const peoCatalog = usePeoCatalog(ready);
   useEffect(() => {
     setFinalVersion(null);
     if (!ready || !sessionId) return;
@@ -233,14 +252,17 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
 
   const d = useMemo(() => {
     if (state.kind === "ready") {
-      return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, provenance: state.provenance, verified: state.verified });
+      return buildManuscript(state.data, { fileId: state.fileId, submission: state.submission, catalog: peoCatalog.peos, catalogStatus: peoCatalog.status, provenance: state.provenance, verified: state.verified, today: localToday() });
     }
     if (state.kind === "sample") return buildManuscript(DEMO_CHAMBER_DATA, { fileId: SAMPLE_FILE_ID, date: SAMPLE_DATE, provenance: SAMPLE_PROVENANCE });
     return null;
-  }, [state]);
+  }, [state, peoCatalog.peos, peoCatalog.status]);
 
   const isSample = state.kind === "sample";
   const withdrawn = state.kind === "ready" && state.withdrawn;
+  // A prospect's own packet runs its eligibility checks against the PEOs' profiles: until they are read, every check
+  // would read can't tell, so the PDF waits for them. The sample reads no PEO.
+  const catalogPending = state.kind === "ready" && peoCatalog.status !== "ready";
   const backUrl = state.kind === "ready" ? `/start?session=${state.sessionId}` : "/start";
 
   const handleDownloadPDF = async () => {
@@ -367,6 +389,10 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
     );
   }
 
+  // The certification every file below was built from, checked again at each download's click.
+  const builtFrom = state.kind === "ready" ? certificationOf(state.sessionId, state.status, state.submission) : null;
+  const answersJson = state.kind === "ready" ? certifiedAnswersSource(state) : null;
+
   const versionLine = d.version ? `v${d.version}${d.dataVersion ? ` · data version ${d.dataVersion}` : ""}` : isSample ? "Sample" : "Not recorded";
 
   return (
@@ -381,7 +407,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             <span className="text-xs text-muted-foreground hidden sm:inline">Dates of birth masked</span>
             {!withdrawn && (finalVersion ? (
               <>
-                <button onClick={handleDownloadPDF} disabled={downloading}
+                <button onClick={handleDownloadPDF} disabled={downloading || catalogPending}
                   className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60">
                   {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                   As certified (PDF)
@@ -394,7 +420,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
                 </button>
               </>
             ) : (
-              <button onClick={handleDownloadPDF} disabled={downloading}
+              <button onClick={handleDownloadPDF} disabled={downloading || catalogPending}
                 className="inline-flex items-center gap-2 text-sm whitespace-nowrap bg-primary text-primary-foreground px-3 sm:px-4 py-1.5 rounded-md hover:bg-primary/90 transition-colors disabled:opacity-60">
                 {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 <span className="sm:hidden">Download PDF</span>
@@ -423,6 +449,17 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
             </Link>
           </div>
         )}
+        {state.kind === "ready" && !withdrawn && peoCatalog.status === "loading" && (
+          <p aria-live="polite" className="text-sm text-muted-foreground">
+            Loading the PEOs' profiles. You can download your packet once they're in.
+          </p>
+        )}
+        {state.kind === "ready" && !withdrawn && peoCatalog.status === "failed" && (
+          <div role="alert" className="bg-warning/10 border border-warning/40 rounded-xl p-4 text-sm text-foreground space-y-2">
+            <p>We couldn't load the PEOs' profiles, so your packet's eligibility checks can't be run. Try again before downloading.</p>
+            <button onClick={peoCatalog.retry} className="min-h-11 text-primary underline hover:text-primary/90">Try again</button>
+          </div>
+        )}
         {state.kind === "ready" && <ProspectStatusNote sessionId={state.sessionId} />}
         {finalVersion && (
           <div className="bg-success/10 border border-success/40 rounded-xl p-4 text-sm text-foreground" data-testid="final-manuscript">
@@ -437,15 +474,90 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
           </div>
         )}
 
-        {/* The certified census as a file, in a PEO's layout when we hold it (#86). Not while withdrawn: nothing
-            here may pass as a current certification. */}
+        {/* The certified answers as JSON against the published intake schema (L-3.3), for a PEO's or advisor's own system.
+            Never a PEO's own answers or anything an advisor wrote. Not while withdrawn, as every file here. */}
+        {builtFrom && answersJson && !withdrawn && (
+          <section aria-labelledby="answers-json-heading" className="bg-card border border-border rounded-xl p-5 space-y-2">
+            <h2 id="answers-json-heading" className="font-display text-lg font-bold">Your answers as a JSON file</h2>
+            <p className="text-sm text-muted-foreground">For a PEO or advisor whose own system reads intake answers.</p>
+            <AnswersJsonDownload source={answersJson} builtFrom={builtFrom} />
+          </section>
+        )}
+
+        {/* The certified census as a file for the PEO the prospect chose, in the census layout its profile holds (L-3.1),
+            or ours. Not while withdrawn: nothing here may pass as a current certification. */}
         {state.kind === "ready" && !withdrawn && state.data.census.length > 0 && (
           <section aria-labelledby="census-file-heading" className="bg-card border border-border rounded-xl p-5 space-y-2">
             <h2 id="census-file-heading" className="font-display text-lg font-bold">Your census, as a file</h2>
             <p className="text-sm text-muted-foreground">
               Send it with your packet so the PEO's underwriters don't have to re-type it. It's the census you certified.
             </p>
-            <CensusDownload census={state.data.census} fileId={state.fileId} peos={PEO_CATALOG.map((p) => p.name)} />
+            <CensusDownload census={state.data.census} fileId={state.fileId} version={state.submission.version ?? null} peo={state.submission.peo ?? null} catalog={peoCatalog.peos} builtFrom={builtFrom!} />
+          </section>
+        )}
+
+        {/* The workers' comp application data (L-3.2), our own summary of the certified answers in the standard
+            application's order, the same for every PEO. Not while withdrawn. */}
+        {state.kind === "ready" && !withdrawn && (
+          <section aria-labelledby="workers-comp-heading" className="bg-card border border-border rounded-xl p-5 space-y-2">
+            <h2 id="workers-comp-heading" className="font-display text-lg font-bold">Your workers' comp application data</h2>
+            <p className="text-sm text-muted-foreground">
+              What you certified that a workers' comp application asks, laid out in its order, for your PEO. What we don't ask yet is listed as blank, for you or your advisor to fill in.
+            </p>
+            <WorkersCompDownload
+              application={workersCompApplication({
+                intake: { data: state.data, provenance: state.provenance, verified: state.verified },
+                fileId: state.fileId,
+                version: state.submission.version ?? null,
+                changedSince: false,
+              })}
+              builtFrom={builtFrom!}
+            />
+          </section>
+        )}
+
+        {/* Each PEO's own questions, as their own file for that PEO alone (L-2.3): the PEO chosen, and any other whose
+            questions this certification answers. Never in the packet below, and not while withdrawn. */}
+        {state.kind === "ready" && !withdrawn && (() => {
+          const certifiedExtra = parseCertifiedExtraAnswers((state.submission as { extra_answers?: unknown }).extra_answers);
+          const from = { certified: certifiedExtra, fileId: state.fileId, version: state.submission.version ?? null, companyName: state.data.company_name ?? "Company not provided" };
+          const supplements = supplementPeos(peoCatalog.peos, state.submission.peo ?? null, certifiedExtra).flatMap((p) => supplementFor(p, from) ?? []);
+          if (supplements.length === 0) return null;
+          return (
+            <section aria-labelledby="supplements-heading" className="bg-card border border-border rounded-xl p-5 space-y-4">
+              <h2 id="supplements-heading" className="font-display text-lg font-bold">Your PEOs' own questions</h2>
+              <p className="text-sm text-muted-foreground">
+                Each PEO's extra questions and your answers are their own file, for that PEO only. They aren't in the packet. Send each one with the packet to its PEO.
+              </p>
+              {supplements.map((s) => <SupplementDownload key={s.peo} supplement={s} builtFrom={builtFrom!} />)}
+            </section>
+          );
+        })()}
+
+        {/* The chosen PEO's bundle (L-3.4): one file of what is offered above, with a contents page. Never the documents:
+            the prospect uploaded those and adds their own copies. Not while withdrawn, and not until the PEOs are read. */}
+        {state.kind === "ready" && !withdrawn && state.submission.peo && peoCatalog.status === "ready" && (
+          <section aria-labelledby="bundle-heading" className="bg-card border border-border rounded-xl p-5 space-y-2">
+            <h2 id="bundle-heading" className="font-display text-lg font-bold">{`Everything for ${state.submission.peo} in one file`}</h2>
+            <p className="text-sm text-muted-foreground">
+              The packet and the files above for your PEO, as one file with a contents page that lists what's in it and what's still missing.
+            </p>
+            <BundleDownload
+              source={{
+                audience: "prospect",
+                peo: { name: state.submission.peo },
+                catalog: peoCatalog.peos,
+                intake: { data: state.data, provenance: state.provenance, verified: state.verified, extraAnswers: parseCertifiedExtraAnswers((state.submission as { extra_answers?: unknown }).extra_answers) },
+                documents: [],
+                submission: state.submission,
+                fileId: state.fileId,
+                version: state.submission.version ?? null,
+                changedSince: false,
+                today: localToday(),
+              }}
+              builtFrom={builtFrom!}
+              label="Download bundle"
+            />
           </section>
         )}
 
@@ -637,16 +749,44 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               </div>
             ))}
             <p className="text-xs font-medium text-muted-foreground pt-4">Eligibility checks</p>
+            {d.peoChecks === "loading" && (
+              <p className="flex items-start gap-2.5 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 flex-shrink-0 mt-0.5 animate-spin" aria-hidden="true" />
+                Loading {d.checkedPeo}'s profile to run its eligibility checks.
+              </p>
+            )}
+            {d.peoChecks === "failed" && (
+              <p className="flex items-start gap-2.5 text-sm text-warning">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                We couldn't load {d.checkedPeo}'s profile, so its eligibility checks can't be run yet. Try again at the top of the packet.
+              </p>
+            )}
             {d.checks.map((c) => (
               <div key={c.label} className="flex items-start gap-2.5">
-                {c.status === "pass" && <CheckCircle className="w-4 h-4 text-success flex-shrink-0 mt-0.5" />}
-                {c.status === "fail" && <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />}
-                {c.status === "unknown" && <HelpCircle className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />}
-                <span className={`text-sm ${c.status === "unknown" ? "text-muted-foreground" : "text-foreground"}`}>
-                  {c.label}{c.status === "unknown" && " — not yet verified"}{c.status === "fail" && " — not met"}
-                </span>
+                <FitIcon status={CHECK_OUTCOME[c.status]} />
+                {c.ofPeoRule ? (
+                  // A check against the PEO's rules: its outcome in words and when the rule was checked.
+                  <span className={`text-sm ${c.status === "unknown" ? "text-muted-foreground" : "text-foreground"}`}>
+                    {c.label}{" "}
+                    <span className={c.status === "fail" ? "text-warning" : undefined}>{FIT_WORDS[CHECK_OUTCOME[c.status]]}</span>
+                    {c.checkedOn && (
+                      <span className={c.stale ? "text-warning" : "text-muted-foreground"}>{` · ${checkedLine(c.checkedOn, !!c.stale)}`}</span>
+                    )}
+                  </span>
+                ) : (
+                  <span className={`text-sm ${c.status === "unknown" ? "text-muted-foreground" : "text-foreground"}`}>
+                    {c.label}{c.status === "unknown" && " — not yet verified"}{c.status === "fail" && " — not met"}
+                  </span>
+                )}
               </div>
             ))}
+            {d.checks.some((c) => c.status === "fail") && <p className="text-xs text-warning">{NOT_MET_NOTE}</p>}
+            {d.checksNote && (
+              <p className="flex items-start gap-2.5 text-sm text-warning">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                {d.checksNote}
+              </p>
+            )}
             {d.open.length > 0 && (
               <div className="mt-4 bg-warning/10 border border-warning/30 rounded-lg p-4 space-y-2">
                 <p className="text-warning text-xs font-medium mb-1">Open items</p>
@@ -738,7 +878,7 @@ const ManuscriptPage = ({ demo = false }: { demo?: boolean }) => {
               {openingFinal ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download the final packet (PDF)
             </button>
           ) : (
-            <button onClick={handleDownloadPDF} disabled={downloading}
+            <button onClick={handleDownloadPDF} disabled={downloading || catalogPending}
               className="inline-flex items-center justify-center gap-2 bg-primary text-primary-foreground font-medium px-8 py-3.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-60">
               {downloading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />} Download the packet (PDF)
             </button>

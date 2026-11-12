@@ -41,6 +41,8 @@ const pendingVerifiedReads: ((value: { data: unknown; error: MockError | null })
 let heldToken: string | null = null;
 let refreshedToken: string | null = null;
 let refreshes = 0;
+// Something that happens while certifying checks the signer's token: after the save, before the certification is sent.
+let duringTokenCheck: (() => void) | null = null;
 const token = (isAnonymous: boolean) => `header.${btoa(JSON.stringify({ sub: "u1", is_anonymous: isAnonymous })).replace(/=+$/, "")}.signature`;
 
 // Who is signed in. A test can switch it and rerender, as signing in with an emailed code does.
@@ -50,7 +52,10 @@ vi.mock("@/lib/dispatchOutbox", () => ({ dispatchOutbox: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     auth: {
-      getSession: async () => ({ data: { session: heldToken ? { access_token: heldToken } : null } }),
+      getSession: async () => {
+        duringTokenCheck?.();
+        return { data: { session: heldToken ? { access_token: heldToken } : null } };
+      },
       refreshSession: async () => {
         refreshes += 1;
         if (refreshedToken) heldToken = refreshedToken;
@@ -176,6 +181,7 @@ const submission = { signer_name: "Jo", signer_title: "CEO", signed_at: "2026-01
 
 describe("useChamberSession", () => {
   beforeEach(() => {
+    duringTokenCheck = null;
     updates.length = 0;
     resumeRow = null;
     readError = null;
@@ -2004,6 +2010,125 @@ describe("useChamberSession", () => {
       expect(inserts).toBe(2);
       expect(result.current.chosenPeo).toBeNull();
       expect(insertedRows[1]).toMatchObject({ chosen_peo: null });
+    });
+  });
+
+  describe("the extra answers", () => {
+    const autosave = async () => { await act(async () => { vi.advanceTimersByTime(2000); }); };
+    const open = async () => {
+      const hook = renderHook(() => useChamberSession());
+      await startIntake(hook.result);
+      vi.useFakeTimers();
+      return hook;
+    };
+    const drives = { question: "Do employees drive for work?", kind: "yes_no" as const, status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "2026-11-13T10:00:00.000Z" };
+    const answered = (value: boolean) => ({ "3": { vehicles: { ...drives, value } } });
+
+    it("start with none, and are saved with the intake in the same versioned write as the answers", async () => {
+      const { result } = await open();
+      expect(result.current.extraAnswers).toEqual({});
+      expect(insertedRows[0]).toMatchObject({ extra_answers: {} });
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      expect(result.current.extraAnswers).toEqual(answered(true));
+      await autosave();
+      expect(updates).toHaveLength(1);
+      expect(updates[0].filters).toEqual({ id: "s1", data_version: 1 });
+      expect(updates[0].payload).toMatchObject({ extra_answers: answered(true) });
+      expect(updates[0].payload).toHaveProperty("chamber_data");
+      updates[0].resolve({ error: null });
+      await drain();
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("are restored when the intake is opened again, keeping only what the database would", async () => {
+      resumeRow = serverRow({ id: "s9", extra_answers: { ...answered(false), TriNet: { vehicles: drives } } });
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.sessionId).toBe("s9"));
+      expect(result.current.extraAnswers).toEqual(answered(false));
+    });
+
+    it("go out with the keepalive request when the page unloads", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+      const { result } = await open();
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+      expect(JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string)).toMatchObject({ extra_answers: answered(true) });
+      fetchSpy.mockRestore();
+    });
+
+    it("withdraw a certification when one changes, as any answer does, and not when it is given again unchanged", async () => {
+      resumeRow = { id: "s9", data_version: 3, chamber_data: parseChamberData({ company_name: "Acme" }), transcript: [], status: "submitted", submission, extra_answers: answered(true) };
+      const { result } = renderHook(() => useChamberSession("s9"));
+      await waitFor(() => expect(result.current.certification.status).toBe("certified"));
+      act(() => result.current.updateExtraAnswers((prev) => ({ ...prev })));
+      expect(result.current.certification.status).toBe("certified");
+      act(() => result.current.updateExtraAnswers(() => answered(false)));
+      expect(result.current.certification.status).toBe("stale");
+    });
+
+    it("report a conflict when only the extra answers differ from what was sent, and recognise their own write", async () => {
+      const { result } = await open();
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      await autosave();
+      const sent = JSON.parse(JSON.stringify(updates[0].payload));
+      resumeRow = serverRow({ data_version: 2, ...sent, extra_answers: answered(false) });
+      updates[0].resolve({ error: null, data: [] });
+      await drain();
+      expect(result.current.saveStatus).toBe("conflict");
+      act(() => result.current.loadLatest());
+      expect(result.current.extraAnswers).toEqual(answered(false));
+    });
+
+    it("are recognised as this tab's own write when only the response was lost", async () => {
+      const { result } = await open();
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      await autosave();
+      const sent = JSON.parse(JSON.stringify(updates[0].payload));
+      resumeRow = serverRow({ data_version: 2, ...sent });
+      updates[0].resolve({ error: null, data: [] });
+      await drain();
+      expect(result.current.saveStatus).toBe("saved");
+    });
+
+    it("that change after the save before certifying, as Lenore's reply lands, stop the certification as changed answers do", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await startIntake(result);
+      act(() => result.current.setChamberData((prev) => ({ ...prev, company_name: "Acme" })));
+      const signedKey = JSON.stringify(result.current.chamberData);
+      duringTokenCheck = () => { duringTokenCheck = null; result.current.updateExtraAnswers(() => answered(true)); };
+      let submitted: SubmitResult | undefined;
+      const pending = result.current.submit(submission, signedKey).then((ok) => { submitted = ok; });
+      await drain();
+      await act(async () => { updates[0].resolve({ error: null }); });
+      await drain();
+      expect(updates.some((u) => u.payload.status === "submitted")).toBe(false);
+      for (const u of updates.slice(1)) u.resolve({ error: null });
+      await act(async () => { await pending; });
+      expect(submitted).toBe(false);
+    });
+
+    it("certify when the extra answers still match what was saved and signed", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await startIntake(result);
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      const signedKey = JSON.stringify(result.current.chamberData);
+      let submitted: SubmitResult | undefined;
+      const pending = result.current.submit(submission, signedKey).then((ok) => { submitted = ok; });
+      await drain();
+      await act(async () => { updates[0].resolve({ error: null }); });
+      await drain();
+      await act(async () => { updates[1].resolve({ error: null }); await pending; });
+      expect(submitted).toBe(true);
+      expect(updates[1].payload).toMatchObject({ status: "submitted" });
+    });
+
+    it("are cleared when the prospect starts over", async () => {
+      const { result } = renderHook(() => useChamberSession());
+      await startIntake(result);
+      act(() => result.current.updateExtraAnswers(() => answered(true)));
+      await act(async () => { await result.current.startOver(); });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.extraAnswers).toEqual({});
     });
   });
 

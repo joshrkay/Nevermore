@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { QuoteRequestAddressRow, QuoteRequestEventRow, QuoteRequestNoteRow, QuoteRequestRow } from "@/lib/advisorApi";
 import type { PipelineStatus } from "@/data/advisor";
 import { EMPTY_CHAMBER_DATA, type ChamberData } from "@/data/chamberTypes";
 import type { PeoRecord } from "@/data/peoCatalog";
+import { parsePeoCatalog } from "@/data/peoProfiles";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const api = {
@@ -33,6 +34,12 @@ const request = (over: Partial<QuoteRequestRow> = {}): QuoteRequestRow => ({
   ...over,
 });
 
+/** A PEO whose profile in use holds a sourced minimum headcount, checked on `checked`. */
+const withMinimum = (name: string, min: number, checked: string, listed = true): PeoRecord =>
+  parsePeoCatalog([{ id: name.length, name, listed, profile: { version: 1, min_headcount: min, sources: { min_headcount: { kind: "document", name: "Broker guide", checked_on: checked } } } }])[0];
+
+// The PEOs as the database lists them (usePeoCatalog), none with a published profile.
+const CATALOG: PeoRecord[] = ["Insperity", "Justworks", "TriNet"].map((name) => ({ name, listed: true, lastVerified: null }));
 const note = (over: Partial<QuoteRequestNoteRow> = {}): QuoteRequestNoteRow => ({
   id: 21,
   quote_request_id: 7,
@@ -77,7 +84,7 @@ const panel = (
       addresses={over.addresses ?? []}
       replyDomain={over.replyDomain === undefined ? null : over.replyDomain}
       data={over.data ?? EMPTY_CHAMBER_DATA}
-      catalog={over.catalog}
+      catalog={over.catalog ?? CATALOG}
       onAskProspect={over.onAskProspect ?? vi.fn()}
       onChanged={onChanged}
     />,
@@ -88,7 +95,11 @@ const panel = (
 describe("QuoteRequestsPanel", () => {
   beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset().mockResolvedValue(undefined);
+    // Whether a profile is out of date goes by the reader's today: pinned, so every test reads the same day.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
   });
+  afterEach(() => vi.useRealTimers());
 
   it("lists each PEO with where its quote request stands, when it was sent and which version", () => {
     panel({
@@ -130,6 +141,25 @@ describe("QuoteRequestsPanel", () => {
     fireEvent.change(screen.getByLabelText("Another PEO"), { target: { value: "  Regional HR Co  " } });
     fireEvent.click(screen.getByRole("button", { name: "Record send" }));
     await waitFor(() => expect(api.recordQuoteSend).toHaveBeenLastCalledWith("s1", "Regional HR Co", "2026-11-09"));
+  });
+
+  it("offers the PEOs the database lists, alphabetically as given, and only those", () => {
+    panel({ status: "ready_for_market", requests: [], catalog: [{ name: "Acme PEO", listed: true, lastVerified: null }] });
+    const options = within(screen.getByLabelText("PEO")).getAllByRole("option").map((o) => o.textContent);
+    expect(options.slice(1)).toEqual(["Acme PEO"]);
+  });
+
+  it("doesn't offer a PEO that isn't listed, yet still checks a quote request already sent to it", () => {
+    panel({
+      status: "sent_to_carrier",
+      data: { ...EMPTY_CHAMBER_DATA, employee_count: 8 },
+      catalog: [
+        { name: "Insperity", listed: true, lastVerified: null },
+        withMinimum("TriNet", 10, "2026-11-01", false),
+      ],
+    });
+    expect(within(screen.getByLabelText("PEO")).getAllByRole("option").map((o) => o.textContent).slice(1)).toEqual(["Insperity"]);
+    expect(within(screen.getByRole("list", { name: "Eligibility checks for TriNet" })).getAllByRole("listitem")[0]).toHaveTextContent("Doesn't meet · Minimum headcount: TriNet takes groups of 10 or more employees; this employer has 8.");
   });
 
   it("offers sending only from Ready for market on, and says so before then", () => {
@@ -298,18 +328,60 @@ describe("QuoteRequestsPanel", () => {
     expect(within(row).getByRole("button", { name: "Add a note" })).toBeInTheDocument();
   });
 
-  it("warns, on its row, about a PEO whose sourced facts don't fit the submission", () => {
+  it("shows, on its row, each eligibility check against the PEO's profile, dated, and that one not met never stops a send", () => {
     panel({
       data: { ...EMPTY_CHAMBER_DATA, employee_count: 8 },
-      catalog: [{ name: "TriNet", minHeadcount: 10, statesServed: null, excludedClassCodes: null, lastVerified: "2026-11-01",
-        sources: { minHeadcount: "https://trinet.example/minimums" } }],
+      catalog: [withMinimum("TriNet", 10, "2026-11-01")],
       requests: [request(), request({ id: 8, peo_name: "Regional HR Co" })],
     });
-    const alert = within(screen.getByTestId("quote-request-7")).getByRole("alert");
-    expect(alert).toHaveTextContent("TriNet lists a 10-employee minimum; you have 8");
-    // Only what doesn't fit: the checks that pass or can't be told aren't warnings.
-    expect(alert).not.toHaveTextContent(/States of operation|Class codes/);
-    expect(within(screen.getByTestId("quote-request-8")).queryByRole("alert")).not.toBeInTheDocument();
+    const row = screen.getByTestId("quote-request-7");
+    const checks = within(within(row).getByRole("list", { name: "Eligibility checks for TriNet" })).getAllByRole("listitem");
+    expect(checks.map((c) => c.textContent?.split(":")[0])).toEqual([
+      "Doesn't meet · Minimum headcount", "Can't tell yet · States served", "Can't tell yet · Excluded industries", "Can't tell yet · Excluded class codes", "Can't tell yet · Minimum participation",
+    ]);
+    expect(checks[0]).toHaveTextContent("TriNet takes groups of 10 or more employees; this employer has 8.checked 1 Nov 2026");
+    expect(row).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
+    // A PEO that isn't listed has no profile to check against.
+    expect(within(screen.getByTestId("quote-request-8")).queryByRole("list", { name: /Eligibility checks/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the chosen PEO's checks before the send is recorded", () => {
+    panel({ status: "ready_for_market", requests: [], data: { ...EMPTY_CHAMBER_DATA, employee_count: 8 }, catalog: [withMinimum("TriNet", 10, "2026-11-01")] });
+    expect(screen.queryByRole("list", { name: "Eligibility checks for TriNet" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "TriNet" } });
+    expect(within(screen.getByRole("list", { name: "Eligibility checks for TriNet" })).getAllByRole("listitem")[0]).toHaveTextContent("Doesn't meet · Minimum headcount");
+    expect(screen.getByRole("button", { name: /Record send/ })).toBeEnabled();
+  });
+
+  it("warns, on its row, that a PEO's profile is out of date, with when it was last checked", () => {
+    panel({
+      catalog: [
+        withMinimum("TriNet", 10, "2026-03-02"),
+        withMinimum("Justworks", 10, "2026-11-01"),
+      ],
+      requests: [request(), request({ id: 8, peo_name: "Justworks" })],
+    });
+    expect(within(screen.getByTestId("quote-request-7")).getByText("TriNet's profile was last checked 2 Mar 2026 and may be out of date.")).toBeInTheDocument();
+    expect(within(screen.getByTestId("quote-request-8")).queryByText(/may be out of date/)).not.toBeInTheDocument();
+  });
+
+  it("warns, when recording a send, that the chosen PEO's profile is out of date, and still records it", async () => {
+    api.recordQuoteSend.mockResolvedValue(undefined);
+    panel({
+      status: "ready_for_market",
+      requests: [],
+      catalog: [
+        withMinimum("Justworks", 10, "2026-11-01"),
+        withMinimum("TriNet", 10, "2026-03-02"),
+      ],
+    });
+    const warning = "TriNet's profile was last checked 2 Mar 2026 and may be out of date.";
+    fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "Justworks" } });
+    expect(screen.queryByText(/may be out of date/)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("PEO"), { target: { value: "TriNet" } });
+    expect(screen.getByText(warning)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Record send/ }));
+    await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "TriNet", "2026-11-11"));
   });
 
   it("marks a quote request with PEO mail nobody has opened, and clears the mark once its thread was opened", () => {
@@ -320,14 +392,14 @@ describe("QuoteRequestsPanel", () => {
     });
     const { unmount } = render(
       <QuoteRequestsPanel sessionId="s1" prospectUserId="p1" status="sent_to_carrier" currentVersion={1} requests={[request()]} events={[]} notes={[]}
-        addresses={[]} mail={[mail()]} threadReads={[]} data={EMPTY_CHAMBER_DATA} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
+        addresses={[]} mail={[mail()]} threadReads={[]} data={EMPTY_CHAMBER_DATA} catalog={[]} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
     );
     expect(within(screen.getByTestId("quote-request-7")).getByText("New PEO mail")).toBeInTheDocument();
     unmount();
     render(
       <QuoteRequestsPanel sessionId="s1" prospectUserId="p1" status="sent_to_carrier" currentVersion={1} requests={[request()]} events={[]} notes={[]}
         addresses={[]} mail={[mail()]} threadReads={[{ quote_request_id: 7, last_opened_at: "2026-11-10T15:00:05+00:00", last_opened_by: null, last_opened_by_email: null }]}
-        data={EMPTY_CHAMBER_DATA} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
+        data={EMPTY_CHAMBER_DATA} catalog={[]} onAskProspect={vi.fn()} onChanged={vi.fn()} />,
     );
     expect(within(screen.getByTestId("quote-request-7")).queryByText("New PEO mail")).not.toBeInTheDocument();
   });

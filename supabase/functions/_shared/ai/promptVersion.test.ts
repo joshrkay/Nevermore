@@ -34,6 +34,10 @@ const KNOWN = {
     // 9: intake schema v3 (Epic K): the common questions join the fields, the FEIN and the legal entities are never
     // taken in chat, and Lenore says where the answers entered in the workspace go.
     9: "5046e1c69e0ca3c978e9644d1bb0c0c27a4d0d5abeb611c9b591711d4e4bfb6e",
+    // 10: a PEO's own extra questions (L-2.3): listed as data in the user turn, asked once the intake's fields are
+    // settled, said once to be that PEO's and never required, and answered through the tool's extra_answers. (Built as
+    // 9 beside Epic K's 9 and renumbered when the two met, before either was released with it.)
+    10: "df3a793a3cb84740390f082c6a48b8294e95f5ff63a265b587f2ce99c1bb043c",
   } as Record<number, string>,
   "document-extract": {
     1: "744ca691694607cec176b5b8b3d868fa3345204572e88411123dc6e27bb9f526",
@@ -56,6 +60,8 @@ const USER_TURNS = [
   buildUserPrompt({ message: "<message>", census: { rows: 2, workStates: true } }),
   // From version 7: the fields an advisor asked about come first, marked.
   buildUserPrompt({ message: "<message>", context: { pay_frequency: "<value>" }, statuses: { pay_frequency: "confirmed" }, requested: ["pay_frequency", "census"] }),
+  // From version 10: a PEO's extra questions, as a line of data.
+  buildUserPrompt({ message: "<message>", extraQuestions: [{ id: "1.key", peo: "<peo>", text: "<question>", kind: "choice", choices: ["<choice>"], answered: false }] }),
 ];
 const USER_TURN_KNOWN: Record<number, string> = {
   // 1 and B-1.1's 2: the captured answers and the message, rendered by the earlier buildUserPrompt(message, context).
@@ -75,6 +81,8 @@ const USER_TURN_KNOWN: Record<number, string> = {
   8: "720e99e10e619db28c25b43a612ac07584636a08e8ef91a65bc5763fb264bb5b",
   // 9: the "Entered in the workspace" line (K-1.1), and v3's fields in "Not yet settled".
   9: "c435f04f957a6d7d5f62d8ff23607e7a3141c27704a16c038eb0a7e3e368e675",
+  // 10: a PEO's extra questions as their own line of data. Rendered with a fifth turn that has one.
+  10: "9ed94133ab76d220cd2934a822dfa1bd2f8d32acf06e7f36af0a7ea4d4f91313",
 };
 
 describe("prompt versions", () => {

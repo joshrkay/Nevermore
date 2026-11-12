@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { rowProvenance } from "@/data/manuscript";
+import { blobBytes, blobText } from "@/test/blob";
+import { unzip } from "@/test/zip";
 
 let row: Record<string, unknown> | null = null;
 // What the page asked the database for: the column it filtered on and the value.
@@ -14,17 +16,33 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 let sharedStatus: string | null = null;
 let finalVersions: unknown[] = [];
 let verifiedFields: string[] = [];
+// What public.peo_catalog() returns: the PEOs and their profiles in use.
+let peoCatalogRows: unknown[] = [];
+// Set to make the next catalog reads hang ("pending") or fail ("error"); each read takes the next one.
+const peoCatalogReads: ("pending" | "error")[] = [];
 const createSignedUrl = vi.fn();
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
-    rpc: async (fn: string) => ({
-      data: fn === "prospect_final_manuscript" ? finalVersions : fn === "session_verified_fields" ? verifiedFields : sharedStatus,
-      error: null,
-    }),
+    rpc: async (fn: string) => {
+      const read = fn === "peo_catalog" ? peoCatalogReads.shift() : undefined;
+      if (read === "pending") await new Promise(() => {});
+      if (read === "error") return { data: null, error: { message: "network down" } };
+      return {
+        data: fn === "prospect_final_manuscript" ? finalVersions : fn === "session_verified_fields" ? verifiedFields
+          : fn === "peo_catalog" ? peoCatalogRows : sharedStatus,
+        error: null,
+      };
+    },
     storage: { from: () => ({ createSignedUrl: (...a: unknown[]) => createSignedUrl(...a) }) },
     from: () => ({
-      select: () => ({
+      select: (columns: string) => ({
         eq: (column: string, value: unknown) => {
+          // The check a download makes at its click: the status, and the certification's hash and version as text.
+          if (columns.includes("->>")) {
+            const sub = (row?.submission ?? null) as Record<string, unknown> | null;
+            const text = (v: unknown) => (v === undefined || v === null ? null : String(v));
+            return { maybeSingle: async () => ({ data: row ? { status: row.status, data_sha256: text(sub?.data_sha256), version: text(sub?.version) } : null, error: null }) };
+          }
           lastQuery = { column, value };
           return { maybeSingle: async () => ({ data: row ? { id: "s1", file_id: null, ...row } : null, error: null }) };
         },
@@ -81,8 +99,13 @@ const certified = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("ManuscriptPage", () => {
+  // A test that fakes the clock gets the real one back even when it fails.
+  afterEach(() => vi.useRealTimers());
+
   beforeEach(() => {
     lastQuery = null;
+    peoCatalogRows = [];
+    peoCatalogReads.length = 0;
     row = null;
   });
 
@@ -115,7 +138,8 @@ describe("ManuscriptPage", () => {
     expect(screen.getByTestId("consent-draft-watermark")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByText(/The information I've provided is accurate\./)).toBeInTheDocument();
 
-    // The PDF is built from the same packet, with the same mark.
+    // The PDF is built from the same packet, with the same mark (once the PEOs are read).
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]).toBeEnabled());
     fireEvent.click(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]);
     await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
     expect(vi.mocked(buildManuscriptPdf).mock.calls[0][0].signer).toMatchObject({ consentVersion: "2026-10-draft-1", consentDraft: true });
@@ -251,6 +275,50 @@ describe("ManuscriptPage", () => {
     expect(readiness).toHaveTextContent("Company legal name — confirmed by the prospect");
     expect(readiness).toHaveTextContent("Eligibility checks");
     expect(readiness).toHaveTextContent("States of operation — not provided");
+  });
+
+  it("checks eligibility against the chosen PEO's profile in use, as the database holds it", async () => {
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 10, states_served: null, excluded_class_codes: null, sources: { min_headcount: { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-02" } } } }];
+    row = certified({ submission: { ...certified().submission, chamber_data: { ...signed, employee_count: 4 } } });
+    renderAt("/manuscript?session=s1");
+    const readiness = (await screen.findByRole("heading", { name: "11 — Underwriting Readiness" })).closest("section")!;
+    await waitFor(() => expect(readiness).toHaveTextContent("Minimum headcount: Justworks takes groups of 10 or more employees; this employer has 4. Doesn't meet · checked 2 Nov 2026"));
+    expect(readiness).toHaveTextContent("Minimum participation: Justworks's minimum participation isn't checked yet. Can't tell yet");
+    expect(readiness).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
+  });
+
+  it("shows the checks as loading while the PEOs' profiles are read, never as rules not checked yet", async () => {
+    peoCatalogReads.push("pending");
+    row = certified();
+    renderAt("/manuscript?session=s1");
+    const readiness = (await screen.findByRole("heading", { name: "11 — Underwriting Readiness" })).closest("section")!;
+    expect(readiness).toHaveTextContent("Loading Justworks's profile to run its eligibility checks.");
+    expect(readiness).not.toHaveTextContent("isn't checked yet");
+    expect(readiness).not.toHaveTextContent("Minimum headcount");
+  });
+
+  it("says the checks can't be run when the PEOs' profiles couldn't be read, and runs them once they are", async () => {
+    peoCatalogReads.push("error");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 10, sources: { min_headcount: { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-02" } } } }];
+    row = certified();
+    renderAt("/manuscript?session=s1");
+    const readiness = (await screen.findByRole("heading", { name: "11 — Underwriting Readiness" })).closest("section")!;
+    await waitFor(() => expect(readiness).toHaveTextContent("We couldn't load Justworks's profile, so its eligibility checks can't be run yet."));
+    expect(readiness).not.toHaveTextContent("isn't checked yet");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(readiness).toHaveTextContent("Minimum headcount: Justworks takes groups of 10 or more employees"));
+  });
+
+  it("notes beside the eligibility checks that the chosen PEO's profile is out of date, and still checks against it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 10, sources: { min_headcount: { kind: "document", name: "Broker guide", checked_on: "2026-04-01" } } } }];
+    row = certified({ submission: { ...certified().submission, chamber_data: { ...signed, employee_count: 4 } } });
+    renderAt("/manuscript?session=s1");
+    const readiness = (await screen.findByRole("heading", { name: "11 — Underwriting Readiness" })).closest("section")!;
+    await waitFor(() => expect(readiness).toHaveTextContent("Justworks's profile was last checked 1 Apr 2026 and may be out of date."));
+    expect(readiness).toHaveTextContent("Minimum headcount: Justworks takes groups of 10 or more employees; this employer has 4. Doesn't meet · checked 1 Apr 2026 · may be out of date");
   });
 
   it("says when a certification predates the document record", async () => {
@@ -562,6 +630,41 @@ describe("ManuscriptPage", () => {
       expect(screen.getByText("Version").parentElement).toHaveTextContent("v2 · data version 17");
     });
 
+    it("won't download while the PEOs are loading: the eligibility checks would all read can't tell", async () => {
+      peoCatalogReads.push("pending");
+      renderAt("/manuscript/EAA-2026-0042");
+      const downloads = await screen.findAllByRole("button", { name: /Download the packet \(PDF\)/ });
+      // Both of them: the top bar's and the one at the foot of the packet.
+      expect(downloads.length).toBe(2);
+      for (const download of downloads) expect(download).toBeDisabled();
+      expect(screen.getByText("Loading the PEOs' profiles. You can download your packet once they're in.")).toBeInTheDocument();
+      for (const download of downloads) fireEvent.click(download);
+      expect(downloadBlob).not.toHaveBeenCalled();
+    });
+
+    it("won't download the packet as certified while the PEOs are loading, but offers the advisor's final packet", async () => {
+      peoCatalogReads.push("pending");
+      finalVersions = [{ version: 2, storage_path: "s1/v2-x.pdf", generated_at: "2026-05-03T00:00:00Z", corrections_applied: 0 }];
+      renderAt("/manuscript/EAA-2026-0042");
+      expect(await screen.findByRole("button", { name: /As certified \(PDF\)/ })).toBeDisabled();
+      for (const final of screen.getAllByRole("button", { name: /Download the final packet \(PDF\)/ })) expect(final).toBeEnabled();
+      finalVersions = [];
+    });
+
+    it("says when the PEOs couldn't be read, won't download until they are, and reads them again on request", async () => {
+      peoCatalogReads.push("error");
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      renderAt("/manuscript/EAA-2026-0042");
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "We couldn't load the PEOs' profiles, so your packet's eligibility checks can't be run. Try again before downloading.",
+      );
+      expect(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]).toBeEnabled());
+      fireEvent.click(screen.getAllByRole("button", { name: /Download the packet \(PDF\)/ })[0]);
+      await waitFor(() => expect(downloadBlob).toHaveBeenCalledTimes(1));
+    });
+
     it("tells the user when the PDF can't be generated", async () => {
       vi.mocked(buildManuscriptPdf).mockImplementationOnce(() => { throw new Error("boom"); });
       renderAt("/manuscript/EAA-2026-0042");
@@ -581,17 +684,176 @@ describe("ManuscriptPage", () => {
       chamber_data: { ...base.chamber_data, census: [{ id: "2", first_name: "Added", last_name: "Later" }] },
       submission: { ...base.submission, chamber_data: { ...signed, census: signedCensus } },
     });
+    // The prospect chose Justworks, whose profile in use has no census layout: ours, and the page says so.
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: null }, { id: 5, name: "TriNet", listed: false, profile: null }];
     renderAt("/manuscript/EAA-2026-0042");
-    fireEvent.click(await screen.findByRole("button", { name: "Download the census" }));
+    expect(await screen.findByText("We don't have Justworks's census layout yet, so this is ours: every column is named.")).toBeInTheDocument();
+    expect(screen.getByText("Our layout, every column named, as a CSV file. From certified version 2.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download the census" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalled());
     const [blob, name] = downloadBlob.mock.calls.at(-1)!;
-    expect(name).toBe("EAA-2026-0042-census.csv");
-    const csv = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.readAsText(blob as Blob);
-    });
+    expect(name).toBe("EAA-2026-0042-census-v2.csv");
+    const csv = await blobText(blob as Blob);
     expect(csv).toContain("Signed,Person");
     expect(csv).not.toContain("Added");
+  });
+
+  it("offers each PEO's own questions as their own file beside the packet: the chosen PEO's, and one a request asked; never in the packet", async () => {
+    const by = { status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-05-01T00:00:00Z" };
+    peoCatalogRows = [
+      { id: 3, name: "Justworks", profile: { version: 1, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }, { key: "fleet", text: "How many vans?", kind: "number" }] } },
+      { id: 4, name: "Oasis", profile: { version: 1, extra_questions: [{ key: "pets", text: "Do you allow pets at work?", kind: "yes_no" }] } },
+      { id: 5, name: "TriNet", profile: { version: 1, extra_questions: [{ key: "hazmat", text: "Any hazardous materials?", kind: "yes_no" }] } },
+    ];
+    row = certified({ submission: { ...certified().submission, extra_answers: {
+      "3": { vehicles: { question: "Do employees drive for work?", kind: "yes_no", value: true, ...by } },
+      "4": { pets: { question: "Do you allow pets at work?", kind: "yes_no", value: false, ...by } },
+    } } });
+    renderAt("/manuscript/EAA-2026-0042");
+    const files = await screen.findByRole("region", { name: "Your PEOs' own questions" });
+    expect(within(files).getByText("Additional questions from Justworks")).toBeInTheDocument();
+    expect(within(files).getByText("Additional questions from Oasis")).toBeInTheDocument();
+    expect(within(files).queryByText("Additional questions from TriNet")).not.toBeInTheDocument();
+    expect(files).toHaveTextContent("From certified version 2, for Justworks only. 1 of 2 answered.Listed as not answered: How many vans?");
+    fireEvent.click(within(files).getByRole("button", { name: "Download Additional questions from Justworks" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-additional-questions-justworks-v2.pdf"));
+    // The packet itself shows none of them.
+    const packet = screen.getByText("Underwriting packet").closest("div.bg-card")!;
+    expect(packet).not.toHaveTextContent(/Do employees drive|pets at work/);
+  });
+
+  it("says it can't tell the answers to the chosen PEO's questions from a certification made before they were kept, and offers no file", async () => {
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] } }];
+    row = certified({ submission: { ...certified().submission, peo: "Justworks" } });
+    renderAt("/manuscript/EAA-2026-0042");
+    const files = await screen.findByRole("region", { name: "Your PEOs' own questions" });
+    expect(files).toHaveTextContent("Version 2 was certified before we kept the answers to Justworks's own questions, so we can't tell them from it. Certifying again adds them.");
+    expect(within(files).queryByText(/not answered/)).not.toBeInTheDocument();
+    expect(within(files).queryByRole("button", { name: /Download/ })).not.toBeInTheDocument();
+  });
+
+  it("offers the census in the chosen PEO's own census layout, from its profile in use", async () => {
+    downloadBlob.mockClear();
+    const base = certified();
+    row = certified({ submission: { ...base.submission, chamber_data: { ...signed, census: [{ id: "1", first_name: "Signed", last_name: "Person", work_state: "CA" }] } } });
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 4, census_layout: { format: "csv", template_file: null, columns: [{ header: "Surname", from: "last_name" }, { header: "Start Date", from: null }] } } }];
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Justworks's census layout, as a CSV file. From certified version 2.")).toBeInTheDocument();
+    expect(screen.getByText("Justworks's layout also asks for: Start Date. Fill these in before sending.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download the census in Justworks's layout" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalled());
+    const [blob, name] = downloadBlob.mock.calls.at(-1)!;
+    expect(name).toBe("EAA-2026-0042-census-justworks-v2.csv");
+    const csv = await blobText(blob as Blob);
+    expect(csv).toBe("Surname,Start Date\r\nPerson,\r\n");
+  });
+
+  it("offers the workers' comp application data beside the packet, from the version certified, its blanks listed before the click", async () => {
+    row = certified();
+    renderAt("/manuscript/EAA-2026-0042");
+    const files = await screen.findByRole("region", { name: "Your workers' comp application data" });
+    expect(files).toHaveTextContent("From certified version 2.");
+    expect(files).toHaveTextContent(/Left blank, not in the certified answers: \d+ items/);
+    fireEvent.click(within(files).getByRole("button", { name: "Download Workers' compensation application data" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-workers-comp-application-v2.pdf"));
+  });
+
+  it("offers no workers' comp application data while the certification is withdrawn", async () => {
+    row = certified({ status: "in_progress" });
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Your workers' comp application data" })).not.toBeInTheDocument();
+  });
+
+  it("offers the certified answers as JSON beside the packet: the snapshot, as certified, without any PEO's own answers", async () => {
+    const extra_answers = { "3": { vehicles: { question: "Do employees drive for work?", kind: "yes_no", value: true, status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-05-01T00:00:00Z" } } };
+    row = certified({ submission: { ...(certified().submission as object), extra_answers } });
+    renderAt("/manuscript/EAA-2026-0042");
+    const files = await screen.findByRole("region", { name: "Your answers as a JSON file" });
+    expect(files).toHaveTextContent("From certified version 2.");
+    fireEvent.click(within(files).getByRole("button", { name: "Download the answers as JSON" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-answers-v2.json"));
+    const blob = downloadBlob.mock.calls.find((c) => c[1] === "EAA-2026-0042-answers-v2.json")![0] as Blob;
+    const json = await blobText(blob);
+    const doc = JSON.parse(json);
+    expect(doc.answers.company_name).toBe("Signed Co");
+    expect(doc.answer_status.company_name).toBe("confirmed");
+    expect(doc.certification).toMatchObject({ signer_name: "Jo Doe", certified_at: "2026-05-01T12:00:03Z", data_version: 17 });
+    expect(json).not.toContain("vehicles");
+  });
+
+  it("gives no file from a tab left open across a withdrawal: each download checks the certification at its click", async () => {
+    const { toast } = await import("sonner");
+    const error = vi.spyOn(toast, "error").mockImplementation(() => "");
+    downloadBlob.mockClear();
+    const base = certified();
+    row = certified({ submission: { ...base.submission, data_sha256: "a".repeat(64), chamber_data: { ...signed, census: [{ id: "1", first_name: "Signed", last_name: "Person", work_state: "CA" }] } } });
+    renderAt("/manuscript/EAA-2026-0042");
+    const json = await screen.findByRole("region", { name: "Your answers as a JSON file" });
+    // The prospect changes an answer in another tab: the database withdraws the certification.
+    row = { ...row, status: "in_progress" };
+    const refused = "This intake changed since you opened the page. Reload to get the certified version.";
+    fireEvent.click(within(json).getByRole("button", { name: "Download the answers as JSON" }));
+    await waitFor(() => expect(error).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Download the census" }));
+    await waitFor(() => expect(error).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Download Workers' compensation application data" }));
+    await waitFor(() => expect(error).toHaveBeenCalledTimes(3));
+    expect(error.mock.calls.map((c) => c[0])).toEqual([refused, refused, refused]);
+    expect(downloadBlob).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it("offers the prospect their chosen PEO's bundle: what they could download one by one, never documents, and no send to record", async () => {
+    downloadBlob.mockClear();
+    createSignedUrl.mockClear();
+    const base = certified();
+    row = certified({ submission: { ...base.submission, chamber_data: { ...signed, census: [{ id: "1", first_name: "Signed", last_name: "Person", work_state: "CA" }] } } });
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 4, documents: [{ category: "workers_comp_loss_runs", description: "Three years of loss runs" }] } }];
+    renderAt("/manuscript/EAA-2026-0042");
+    const bundle = await screen.findByRole("region", { name: "Everything for Justworks in one file" });
+    expect(bundle).toHaveTextContent("Includes: packet, census in our layout, workers' comp application. Not included: the documents Justworks asks for (Workers' comp loss runs). Add your own copies when you send it.");
+    expect(bundle).toHaveTextContent("The packet and the files above for your PEO, as one file with a contents page that lists what's in it and what's still missing.");
+    // Nothing the prospect reads here uses GLOSSARY.md's Avoid words: not the file's format, nor our own names.
+    expect(bundle.textContent).not.toMatch(/\b(manuscript|chamber|reckoning|package|zip|PEO requirements|ready)\b/i);
+    fireEvent.click(within(bundle).getByRole("button", { name: "Download bundle" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-0042-justworks-v2.zip"));
+    const blob = downloadBlob.mock.calls.find((c) => c[1] === "EAA-2026-0042-justworks-v2.zip")![0] as Blob;
+    const names = unzip(await blobBytes(blob)).map((p) => p.name);
+    expect(names[0]).toBe("CONTENTS.txt");
+    expect(names).toContain("EAA-2026-0042-census-v2.csv");
+    expect(names.filter((n) => n.startsWith("documents/"))).toEqual([]);
+    expect(createSignedUrl).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Sent this to/)).not.toBeInTheDocument();
+  });
+
+  it("offers no bundle while the certification is withdrawn, or when no PEO was chosen", async () => {
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 4 } }];
+    row = certified({ status: "in_progress" });
+    const { unmount } = renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download bundle" })).not.toBeInTheDocument();
+    unmount();
+    row = certified({ submission: { ...certified().submission, peo: undefined } });
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download bundle" })).not.toBeInTheDocument();
+  });
+
+  it("offers no answers as JSON while the certification is withdrawn", async () => {
+    row = certified({ status: "in_progress" });
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Your answers as a JSON file" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download the answers as JSON" })).not.toBeInTheDocument();
+  });
+
+  it("offers no PEO's questions while the certification is withdrawn", async () => {
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, extra_questions: [{ key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }] } }];
+    row = certified({ status: "in_progress" });
+    renderAt("/manuscript/EAA-2026-0042");
+    expect(await screen.findByText("Underwriting packet")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Your PEOs' own questions" })).not.toBeInTheDocument();
   });
 
   it("offers no census download when the certified packet has no census", async () => {

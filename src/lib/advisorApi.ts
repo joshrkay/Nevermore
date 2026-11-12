@@ -8,6 +8,9 @@ import type { ChamberSubmission } from "@/data/manuscript";
 import { parseProvenance, type FieldKey, type ProvenanceMap } from "@/data/provenance";
 import type { OutboxStatus } from "@/data/outbox";
 import type { IntakeSource } from "@/data/intakeSource";
+import { contactsOf, EMPTY_PROFILE, parseProfileVersion, profilePayload, type DraftBasis, type EditableProfile, type PeoContact, type ProfileVersion } from "@/data/peoEditor";
+import type { ProfilePart, ProfileSource } from "@/data/peoProfiles";
+import { parseCertifiedExtraAnswers, parseExtraAnswers, type ExtraAnswers, type ExtraQuestionRef } from "@/data/extraAnswers";
 import type { QuoteNoteKind } from "@/data/quoteRequests";
 import {
   isPipelineStatus,
@@ -227,13 +230,27 @@ export interface SubmissionDetail {
    */
   storedAnswers: Record<string, Json | undefined>;
   provenance: ProvenanceMap;
+  /**
+   * The answers to PEOs' own extra questions, as `data`: the certified copy while certified, otherwise as they stand.
+   * They go only to their PEO. Null when the certification shown was recorded before they were kept: can't tell.
+   */
+  extraAnswers: ExtraAnswers | null;
   /** True when `data` is the certified snapshot. */
   certified: boolean;
   /**
    * What the prospect signed, when they changed their answers afterwards and so withdrew the
    * certification: `data` is then their current answers, and this the copy they certified.
    */
-  signed: { data: ChamberData; signedAt: string } | null;
+  signed: {
+    data: ChamberData;
+    signedAt: string;
+    /** The field status and sources as certified. */
+    provenance: ProvenanceMap;
+    /** The documents set against the list that certification covered (reconcileDocuments). */
+    documents: ReviewedDocument[];
+    /** The extra answers as certified; null for a certification from before they were kept (can't tell). */
+    extraAnswers: ExtraAnswers | null;
+  } | null;
   submission: ChamberSubmission | null;
   /** The conversation as certified when the intake is certified (otherwise as it stands). */
   transcript: ChatMessage[];
@@ -268,6 +285,12 @@ export interface SubmissionDetail {
   quoteRequestThreadReads: QuoteRequestThreadReadRow[];
   /** The submission's latest certified version (1, 2, ...); null before the first certification. */
   currentVersion: number | null;
+  /**
+   * The certification on record (the submission while it stands, else the last chamber_certifications row) kept no
+   * field status or no list of the documents it covered: one recorded before 20261104117000 / 20261104120000. What
+   * it held can't then be told apart from what the intake holds now.
+   */
+  certificationLacksSnapshot: boolean;
   /** The quote request whose quote the employer took, once won. */
   wonQuoteRequestId: number | null;
 }
@@ -279,13 +302,16 @@ interface RecordedCertification {
   signed_at: string | null;
   recorded_at: string | null;
   chamber_data: Json | null;
+  field_provenance?: Json | null;
+  documents?: Json | null;
+  extra_answers?: Json | null;
 }
 
 export async function loadSubmission(id: string): Promise<SubmissionDetail | null> {
   const [session, workflow, history, notes, reviews, events, versions] = await Promise.all([
     supabase
       .from("chamber_sessions")
-      .select("id, user_id, chamber_data, field_provenance, transcript, status, submission, created_at, updated_at, file_id, referral_code, utm_source, utm_medium, utm_campaign")
+      .select("id, user_id, chamber_data, field_provenance, extra_answers, transcript, status, submission, created_at, updated_at, file_id, referral_code, utm_source, utm_medium, utm_campaign")
       .eq("id", id)
       .maybeSingle(),
     supabase
@@ -322,7 +348,7 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     // chamber_certifications isn't in the generated types (src/integrations/supabase/types.ts).
     (supabase as unknown as SupabaseClient)
       .from("chamber_certifications")
-      .select("file_id, version, signed_at, recorded_at, chamber_data")
+      .select("file_id, version, signed_at, recorded_at, chamber_data, field_provenance, documents, extra_answers")
       .eq("session_id", id)
       .order("recorded_at", { ascending: false })
       .limit(1)
@@ -405,10 +431,17 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     storedAnswers,
     // Pair provenance with whichever copy of the data is shown, as the prospect's Manuscript does.
     provenance: parseProvenance(useSnapshot ? submission!.field_provenance : row.field_provenance),
+    extraAnswers: certified ? parseCertifiedExtraAnswers((submission as { extra_answers?: unknown }).extra_answers) : parseExtraAnswers(row.extra_answers),
     certified,
     signed:
       !certified && recorded && recorded.chamber_data !== null && recorded.chamber_data !== undefined
-        ? { data: parseChamberData(recorded.chamber_data), signedAt: recorded.recorded_at ?? recorded.signed_at }
+        ? {
+            data: parseChamberData(recorded.chamber_data),
+            signedAt: recorded.recorded_at ?? recorded.signed_at,
+            provenance: parseProvenance(recorded.field_provenance),
+            documents: reconcileDocuments(docs.data ?? [], recorded.documents ?? undefined),
+            extraAnswers: parseCertifiedExtraAnswers(recorded.extra_answers),
+          }
         : null,
     submission,
     transcript: parseTranscript(certifiedTranscript ?? row.transcript),
@@ -433,6 +466,9 @@ export async function loadSubmission(id: string): Promise<SubmissionDetail | nul
     quoteRequestMailAttachments: mailAttachments.data ?? [],
     quoteRequestThreadReads: threadReads.data ?? [],
     currentVersion: recorded?.version ?? null,
+    certificationLacksSnapshot: certified
+      ? (useSnapshot && submission!.field_provenance == null) || !Array.isArray(submission!.documents)
+      : !!recorded && (recorded.field_provenance == null || !Array.isArray(recorded.documents)),
     wonQuoteRequestId: workflow.data.won_quote_request_id ?? null,
   };
 }
@@ -465,11 +501,13 @@ export async function setNeedsAction(sessionId: string, needsAction: boolean, no
  * Asks the prospect for more information: records the request, moves the pipeline to information requested (or
  * keeps it there), and emails the prospect, in one transaction. `fields` are the answers it is about.
  */
-export async function requestInformation(sessionId: string, message: string, fields: readonly FieldKey[]): Promise<void> {
+export async function requestInformation(sessionId: string, message: string, fields: readonly FieldKey[], questions: readonly ExtraQuestionRef[] = []): Promise<void> {
   const { error } = await supabase.rpc("advisor_request_information", {
     p_session_id: sessionId,
     p_message: message.trim(),
     p_fields: [...fields],
+    // A PEO's own extra questions it names (20261115130000): by PEO, key and wording.
+    p_extra_questions: questions.map((q) => ({ peo_id: q.peo_id, key: q.key, question: q.question })) as unknown as Json,
   });
   if (error) fail(error, "Couldn't send the request.");
 }
@@ -557,6 +595,7 @@ export const assignHeldMessage = (messageId: number, quoteRequestId: number) =>
 /** An admin discards a held message and its files. Nobody is told. */
 export const discardHeldMessage = (messageId: number) => heldMail({ action: "discard", message_id: messageId }, "Couldn't discard the message.");
 
+/** Whether the signed-in advisor is also an admin (held mail, organisations, editing PEO profiles). The database checks it again on every write. */
 export async function fetchIsAdmin(): Promise<boolean> {
   const { data, error } = await supabase.rpc("has_role", { _role: "admin" });
   if (error) fail(error, "Couldn't check admin access.");
@@ -748,6 +787,18 @@ async function signedUrl(bucket: "documents" | "manuscripts" | "peo-mail", path:
 export const documentUrl = (doc: Pick<UploadedDocument, "storage_path" | "file_name">) =>
   signedUrl("documents", doc.storage_path, doc.file_name);
 
+/**
+ * One uploaded document's file, read on the caller's own storage rights: the same policies that sign its links, so a
+ * file blocked or not yet through its virus check is refused. For a PEO's bundle, which carries the file itself. A
+ * refusal says only that the file couldn't be opened, never its path.
+ */
+export async function documentFile(doc: Pick<UploadedDocument, "storage_path">): Promise<Blob> {
+  const { data, error } = await supabase.storage.from("documents").download(doc.storage_path);
+  if (error && isEndedSession(error)) fail(error, "Couldn't open that file.");
+  if (error || !data) throw new AdvisorApiError("Couldn't open that file.");
+  return data;
+}
+
 /** A signed link to an attachment on PEO mail, which only a scanned-clean one has a file for. */
 export const mailAttachmentUrl = (a: { storage_path: string | null; file_name: string }) => {
   if (!a.storage_path) throw new AdvisorApiError("That file isn't stored: it was blocked, not kept, or is still being checked.");
@@ -800,4 +851,117 @@ export async function saveManuscriptVersion(opts: {
     fail(error, "Couldn't record the packet version.");
   }
   return data!;
+}
+
+// ---------- PEOs and their requirement profiles (L-1.2, the PEOs page) ----------
+
+/* fetchIsAdmin (above, with held mail) says whether the signed-in advisor is also an admin: only admins edit profiles. */
+
+/** A PEO on the PEOs page: whether it is listed, and every version an advisor may read (drafts for admins), newest first. */
+export interface PeoDirectoryEntry {
+  id: number;
+  name: string;
+  listed: boolean;
+  versions: ProfileVersion[];
+}
+
+/** Versions whose contacts one request reads: at most 20 contacts each, well under the API's row cap. */
+const CONTACT_VERSIONS_PER_READ = 40;
+
+async function contactRows(versionIds: readonly number[]): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < versionIds.length; i += CONTACT_VERSIONS_PER_READ) {
+    const { data, error } = await supabase.from("peo_contacts").select("*")
+      .in("profile_version_id", versionIds.slice(i, i + CONTACT_VERSIONS_PER_READ)).order("position");
+    if (error) fail(error, "Couldn't load the PEOs' contacts.");
+    rows.push(...((data ?? []) as Record<string, unknown>[]));
+  }
+  return rows;
+}
+
+/**
+ * Every PEO with its profile versions, as row security lets the reader see them: advisors read the published
+ * versions, admins drafts too (20261115090000). Alphabetical. Only the contacts of each PEO's version in use and its
+ * draft are read, the ones the page shows and an edit starts from; an older version's are read with
+ * loadVersionContacts() when its history is opened, and until then it lists none.
+ */
+export async function loadPeoDirectory(): Promise<PeoDirectoryEntry[]> {
+  const [peos, versions] = await Promise.all([
+    supabase.from("peos").select("id, name, listed").order("name"),
+    supabase.from("peo_profile_versions").select("*").order("version", { ascending: false }),
+  ]);
+  for (const r of [peos, versions]) if (r.error) fail(r.error, "Couldn't load the PEOs.");
+  const rows = (versions.data ?? []) as Record<string, unknown>[];
+  const current = (peoId: number) => {
+    const mine = rows.filter((v) => Number(v.peo_id) === peoId);
+    const inUse = mine.filter((v) => v.status === "published").sort((a, b) => Number(b.version) - Number(a.version))[0];
+    return [mine.find((v) => v.status === "draft"), inUse].filter(Boolean).map((v) => Number(v!.id));
+  };
+  const contacts = await contactRows((peos.data ?? []).flatMap((p) => current(p.id)));
+  return [...(peos.data ?? [])]
+    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      listed: p.listed,
+      versions: rows
+        .filter((v) => Number(v.peo_id) === p.id)
+        .map((v) => parseProfileVersion(p.name, v, contacts))
+        .sort((a, b) => b.version - a.version),
+    }));
+}
+
+/** The contacts each of these profile versions names, in order, by version id: for a PEO's history. */
+export async function loadVersionContacts(versionIds: readonly number[]): Promise<Map<number, PeoContact[]>> {
+  const rows = await contactRows(versionIds);
+  return new Map(versionIds.map((id) => [id, contactsOf(id, rows)]));
+}
+
+/** Adds a PEO, listed, with no profile. The database refuses a name already listed, in words to show. */
+export async function addPeo(name: string): Promise<{ id: number }> {
+  const { data, error } = await supabase.rpc("admin_add_peo", { p_name: name });
+  if (error || !data) fail(error, "Couldn't add the PEO.");
+  return data as { id: number };
+}
+
+/**
+ * Saves the PEO's draft from the whole profile, making the draft when there is none. `basis` is what the editor was
+ * based on: the database refuses the save (PT409) when the draft changed since, so old content is never written back.
+ */
+export async function savePeoDraft(peoId: number, profile: EditableProfile, basis: DraftBasis): Promise<void> {
+  const { error } = await supabase.rpc("admin_save_peo_profile", {
+    p_peo_id: peoId,
+    p_profile: profilePayload(profile) as Json,
+    p_draft_revision: basis.draftRevision,
+    p_in_use_version: basis.inUseVersion,
+  });
+  if (error) fail(error, "Couldn't save the draft.");
+}
+
+/**
+ * Publishes the PEO's draft, the revision the admin reviewed: it is the profile in use from now on, and never changes.
+ * The database refuses it (PT409) when the draft changed since.
+ */
+export async function publishPeoDraft(peoId: number, draftRevision: string | null): Promise<void> {
+  const { error } = await supabase.rpc("admin_publish_peo_profile", { p_peo_id: peoId, p_draft_revision: draftRevision });
+  if (error) fail(error, "Couldn't publish the draft.");
+}
+
+/** Drops the PEO's draft. Nobody but admins ever saw it. */
+export async function discardPeoDraft(peoId: number): Promise<void> {
+  const { error } = await supabase.rpc("admin_discard_peo_draft", { p_peo_id: peoId });
+  if (error) fail(error, "Couldn't discard the draft.");
+}
+
+/** "Checked again, nothing changed": a new published version, with `source` for each part re-checked. */
+export async function recheckPeoProfile(peoId: number, parts: readonly ProfilePart[], source: ProfileSource): Promise<void> {
+  const payload = profilePayload({ ...EMPTY_PROFILE, sources: Object.fromEntries(parts.map((p) => [p, source])) }).sources as Json;
+  const { error } = await supabase.rpc("admin_recheck_peo_profile", { p_peo_id: peoId, p_sources: payload });
+  if (error) fail(error, "Couldn't record the re-check.");
+}
+
+/** Lists a PEO again, or takes it off the list. Nothing else about it changes. */
+export async function setPeoListed(peoId: number, listed: boolean): Promise<void> {
+  const { error } = await supabase.rpc("admin_set_peo_listed", { p_peo_id: peoId, p_listed: listed });
+  if (error) fail(error, "Couldn't change whether the PEO is listed.");
 }

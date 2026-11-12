@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { CENSUS_ASSUMABLE, CLASSIFICATIONS, COMPENSATION_TYPES, COVERAGE_TIERS, EMPLOYMENT_TYPES, GENDERS, MAX_ANNUAL_SALARY, MAX_CENSUS_ROWS, MAX_DEPENDENTS as CENSUS_MAX_DEPENDENTS } from "@/data/census";
 import {
@@ -27,19 +27,28 @@ import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
 import { isFileId } from "@/data/manuscript";
 import { OPEN_ITEM_STATUSES } from "@/data/openItems";
-import { INFORMATION_REQUEST_MAX, NEEDS_ACTION_NOTE_MAX, PIPELINE_STATUSES, PIPELINE_TRANSITIONS } from "@/data/advisor";
+import { INFORMATION_REQUEST_MAX, INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS, NEEDS_ACTION_NOTE_MAX, PIPELINE_STATUSES, PIPELINE_TRANSITIONS } from "@/data/advisor";
 import { OUTBOX_KIND_LABELS } from "@/data/outbox";
 import { FUNNEL_STEPS } from "@/data/funnel";
 import { SOURCE_CODE_MAX, SOURCE_CODE_PATTERN } from "@/data/intakeSource";
 import { REFERRAL_PARTNER_KINDS } from "@/data/referralPartners";
 import { MAIL_ATTACHMENT_STATUSES, MAIL_BODY_MAX, MAIL_NOT_KEPT_REASONS, QUOTE_NOTE_KINDS, QUOTE_NOTE_MAX, QUOTE_REQUEST_STATUSES, SENDABLE_STAGES } from "@/data/quoteRequests";
 import { MAX_BODY_CHARS } from "../../supabase/functions/receive-mail/inbound";
+import { CENSUS_FILE_FORMATS, EXTRA_QUESTION_KINDS, PROFILE_CAPS, PROFILE_PARTS, PROFILE_SOURCE_KINDS, PROFILE_STATUSES } from "@/data/peoProfiles";
+import { CHECKED_ON_GRACE_DAYS, CONTACT_LIMITS, EMPTY_PROFILE, PROFILE_PATTERNS, profileProblems, TEMPLATE_LIMITS } from "@/data/peoEditor";
+import { CENSUS_TEMPLATE_COLUMNS } from "@/data/census";
+import { EXTRA_ANSWER_LIMITS } from "@/data/extraAnswers";
+import { TEMPLATE_WORKBOOK_STATUSES } from "@/lib/templateWorkbooks";
+import { DOCUMENT_CATEGORIES } from "@/data/documentCategories";
 import { PROSPECT_KINDS } from "../../supabase/functions/dispatch-outbox/messages";
 import { FIELD_TYPES as CHAT_FIELD_TYPES } from "../../supabase/functions/chamber-extract/schema";
 import { CHAT_CANNOT_TAKE } from "../../supabase/functions/_shared/followUp";
 import { MAX_MESSAGE_CHARS, MAX_MESSAGE_ID_CHARS, MAX_TIMESTAMP_CHARS, TRANSCRIPT_SENDERS } from "@/data/chat";
 import { MAX_EMPLOYEES as EXTRACT_MAX_EMPLOYEES, US_STATE_CODES as EXTRACT_STATE_CODES } from "../../supabase/functions/document-extract/parse";
 import { ENTITY_TYPES, INTAKE_SCHEMA, INTAKE_SCHEMA_VERSION, LIMITS, STATE_CODES as SCHEMA_STATE_CODES, type JsonSchema } from "../../supabase/functions/_shared/intakeSchema";
+
+// censusTemplates reads storage through the client; nothing here does.
+vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 
 // The server (supabase/migrations/20261027090000_intake_validation_and_versioning.sql, and later
 // migrations that replace its functions) refuses what the client sanitiser would never produce, so the
@@ -206,6 +215,13 @@ describe("server and client intake rules agree", () => {
     expect(Number(/char_length\(message\) <= (\d+)/.exec(sql)?.[1])).toBe(INFORMATION_REQUEST_MAX);
   });
 
+  it("caps the PEO extra questions a request names as the database does, in its function and its table", () => {
+    const [sql] = blocks("request_max_extra_questions");
+    expect(Number(/jsonb_array_length\(questions\) > (\d+)/.exec(sql)?.[1])).toBe(INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS);
+    const table = readFileSync("supabase/migrations/20261115130000_information_request_extra_questions.sql", "utf8");
+    expect(Number(/jsonb_array_length\(extra_questions\) <= (\d+)/.exec(table)?.[1])).toBe(INFORMATION_REQUEST_MAX_EXTRA_QUESTIONS);
+  });
+
   it("lists the funnel's steps in the order the database records and counts them", () => {
     expect(quoted(blocks("intake_milestones").join("\n"))).toEqual([...FUNNEL_STEPS]);
     const sql = readFileSync("supabase/migrations/20261105092000_intake_milestones.sql", "utf8");
@@ -278,6 +294,105 @@ describe("server and client intake rules agree", () => {
     const [sql] = blocks("chosen_peo_length");
     const limits = /BETWEEN\s+(\d+)\s+AND\s+(\d+)/.exec(sql);
     expect(limits?.slice(1).map(Number)).toEqual([1, PEO_NAME_MAX]);
+  });
+
+  // Requirement profiles (20261115090000): the database refuses a profile the browser would describe differently.
+  it("holds the same requirement profile lists and caps", () => {
+    expect(quoted(blocks("peo_profile_statuses").join("\n"))).toEqual([...PROFILE_STATUSES]);
+    expect(quoted(blocks("peo_census_formats").join("\n"))).toEqual([...CENSUS_FILE_FORMATS]);
+    expect(quoted(blocks("peo_question_kinds").join("\n"))).toEqual([...EXTRA_QUESTION_KINDS]);
+    expect(quoted(blocks("peo_source_kinds").join("\n"))).toEqual([...PROFILE_SOURCE_KINDS]);
+    // Each of these parts carries its own source and date.
+    expect(quoted(blocks("peo_profile_parts").join("\n"))).toEqual([...PROFILE_PARTS]);
+    // A census column is filled from one of the census template's columns, the ones our census export knows.
+    expect(quoted(blocks("peo_census_columns").join("\n"))).toEqual([...CENSUS_TEMPLATE_COLUMNS]);
+    // A document a PEO asks for is one of the kinds the intake takes.
+    expect(quoted(blocks("peo_document_categories").join("\n"))).toEqual(DOCUMENT_CATEGORIES.map((c) => c.key));
+    const [caps] = blocks("peo_profile_caps");
+    expect(Object.fromEntries([...caps.matchAll(/max_(\w+)\s+constant\s+integer\s*:=\s*(\d+)/g)].map((m) => [m[1], Number(m[2])]))).toEqual({
+      census_columns: PROFILE_CAPS.censusColumns,
+      documents: PROFILE_CAPS.documents,
+      extra_questions: PROFILE_CAPS.extraQuestions,
+      choices: PROFILE_CAPS.choices,
+      list_items: PROFILE_CAPS.listItems,
+      header: PROFILE_CAPS.header,
+      text: PROFILE_CAPS.text,
+      source_name: PROFILE_CAPS.sourceName,
+      link: PROFILE_CAPS.link,
+      headcount: PROFILE_CAPS.headcount,
+    });
+  });
+
+  // The PEOs page's editor (L-1.2) refuses, next to each field, what the database would refuse on saving.
+  it("holds the same contact limits, contact cap and date grace as the editor", () => {
+    const [contact] = blocks("peo_contact_limits");
+    expect({
+      name: Number(/btrim\(COALESCE\(p_name, ''\)\)\) NOT BETWEEN 1 AND (\d+)/.exec(contact)?.[1]),
+      role: Number(/char_length\(p_role\) > (\d+)/.exec(contact)?.[1]),
+      email: Number(/char_length\(p_email\) > (\d+)/.exec(contact)?.[1]),
+      phone: Number(/char_length\(p_phone\) > (\d+)/.exec(contact)?.[1]),
+    }).toEqual(CONTACT_LIMITS);
+    expect(Number(blocks("peo_max_contacts")[0].trim())).toBe(PROFILE_CAPS.contacts);
+    expect(Number(/\+\s*(\d+)/.exec(blocks("peo_check_grace_days")[0])?.[1])).toBe(CHECKED_ON_GRACE_DAYS);
+    // The class codes an excluded industry maps to (20261115110000).
+    expect(Number(blocks("peo_industry_codes_max")[0].trim())).toBe(PROFILE_CAPS.industryCodes);
+  });
+
+  // What each PEO still needs (peoCompleteness) counts an answer once: needed to quote, or only before signing.
+  it("refuses an answer listed both to quote and before signing, with the editor's words", () => {
+    const [sql] = blocks("peo_answer_listed_once");
+    expect(sql).toMatch(/cardinality\(v\.needed_to_quote \|\| v\.needed_before_signing\) <> \(SELECT count\(DISTINCT f\)/);
+    const [problem] = profileProblems({ ...EMPTY_PROFILE, neededToQuote: ["states"], neededBeforeSigning: ["states"] }, "2026-11-11");
+    expect(sql).toContain(`RETURN '${problem.message}'`);
+  });
+
+  it("checks a question's key, a class code, a link and a contact's email with the database's own patterns", () => {
+    const sql = readFileSync("supabase/migrations/20261115090000_peo_requirement_profiles.sql", "utf8");
+    for (const pattern of Object.values(PROFILE_PATTERNS)) expect(sql).toContain(`'${pattern}'`);
+  });
+
+  // Extra answers (20261115120000): the browser keeps what the database accepts, within the same limits.
+  it("holds the same limits on extra answers", () => {
+    const [caps] = blocks("extra_answer_caps");
+    expect(Object.fromEntries([...caps.matchAll(/max_(\w+)\s+constant\s+integer\s*:=\s*(\d+)/g)].map((m) => [m[1], Number(m[2])]))).toEqual({
+      peos: EXTRA_ANSWER_LIMITS.peos,
+      answers: EXTRA_ANSWER_LIMITS.answersPerPeo,
+      question: EXTRA_ANSWER_LIMITS.question,
+    });
+    const [values] = blocks("extra_answer_limits");
+    expect(Number(/abs\(.*?\)\s*<=\s*(\d+)/.exec(values)?.[1])).toBe(EXTRA_ANSWER_LIMITS.number);
+    // Text is measured as the profile measures a question and its choices: trimmed, in characters.
+    expect(values).toMatch(/'text' THEN .*char_length\(btrim\(v #>> '\{\}'\)\) BETWEEN 1 AND (\d+)/);
+    expect(Number(/'text' THEN .*BETWEEN 1 AND (\d+)/.exec(values)?.[1])).toBe(EXTRA_ANSWER_LIMITS.text);
+    expect(Number(/'choice' THEN .*char_length\(btrim\(v #>> '\{\}'\)\) BETWEEN 1 AND (\d+)/.exec(values)?.[1])).toBe(EXTRA_ANSWER_LIMITS.choice);
+    // The limits chamber-extract shares are a profile's: a question is a profile's text, a choice one of its choices.
+    expect(EXTRA_ANSWER_LIMITS.question).toBe(PROFILE_CAPS.text);
+    expect(EXTRA_ANSWER_LIMITS.choice).toBe(PROFILE_CAPS.header);
+    expect(EXTRA_ANSWER_LIMITS.text).toBe(TEXT_MAX);
+    // An answer's key is a profile question's key.
+    expect(readFileSync("supabase/migrations/20261115120000_extra_answers.sql", "utf8")).toContain(`'${PROFILE_PATTERNS.questionKey}'`);
+  });
+
+  it("knows every state a PEO's census template's virus check can leave it in", () => {
+    expect(quoted(blocks("template_workbook_statuses").join("\n"))).toEqual([...TEMPLATE_WORKBOOK_STATUSES]);
+  });
+
+  // A census layout's template file (L-3.1): where it is filled, with the editor's words.
+  it("checks where a PEO's template is filled as the database does, with the editor's words", () => {
+    const [sql] = blocks("peo_template_rules");
+    expect(Number(/BETWEEN 1 AND (\d+)/.exec(sql)?.[1])).toBe(TEMPLATE_LIMITS.sheet);
+    expect(Number(/header_row\}'\)::integer > (\d+)/.exec(sql)?.[1])).toBe(TEMPLATE_LIMITS.headerRow);
+    expect(Number(/first_row\}'\)::integer > (\d+)/.exec(sql)?.[1])).toBe(TEMPLATE_LIMITS.lastRow);
+    const layout = (template: object, format = "xlsx") => ({ ...EMPTY_PROFILE, censusLayout: { peo: "TriNet", format, template, columns: [{ header: "Name", from: null }] } }) as never;
+    const [shape] = profileProblems(layout({ id: 1, sheet: " ", headerRow: 1, firstRow: 2 }), "2026-11-11");
+    const [csv] = profileProblems(layout({ id: 1, sheet: "Census", headerRow: 1, firstRow: 2 }, "csv"), "2026-11-11");
+    expect(sql).toContain(`RETURN '${shape.message}'`);
+    expect(sql).toContain(`RETURN '${csv.message.replace("'", "''")}'`);
+  });
+
+  it("keeps a listed PEO's name to the longest PEO name", () => {
+    const [sql] = blocks("peo_name_limits");
+    expect(/(\d+)\s+AND\s+(\d+)/.exec(sql)?.slice(1).map(Number)).toEqual([1, PEO_NAME_MAX]);
   });
 
   // document-extract can't import from src/, so it keeps its own copies of the roster cap and the state list.

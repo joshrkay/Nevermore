@@ -1,0 +1,282 @@
+// Requirement profiles (GLOSSARY.md, docs/adr/0010): what each PEO asks for, as dated, versioned data in the
+// database (supabase/migrations/20261115090000_peo_requirement_profiles.sql). Admins write a draft and publish
+// it; a published version never changes, and the newest published one is the profile in use. The browser reads
+// the PEOs and their profiles in use through public.peo_catalog(), which never includes a PEO contact, and gives
+// anyone but an advisor a person at the PEO by their role only.
+import type { TemplateWorkbookRef, PeoCensusLayout } from "./censusExport";
+import type { DocumentCategory } from "./documentCategories";
+import type { PeoRecord } from "./peoCatalog";
+import type { FieldKey } from "./provenance";
+
+// The lists and caps below are the database's too (peo_profile_version_error); src/data/schemaSync.test.ts keeps
+// them equal.
+export const PROFILE_STATUSES = ["draft", "published"] as const;
+export const CENSUS_FILE_FORMATS = ["csv", "xlsx"] as const;
+export type CensusFileFormat = (typeof CENSUS_FILE_FORMATS)[number];
+export const EXTRA_QUESTION_KINDS = ["text", "yes_no", "number", "choice"] as const;
+export type ExtraQuestionKind = (typeof EXTRA_QUESTION_KINDS)[number];
+export const PROFILE_SOURCE_KINDS = ["document", "person"] as const;
+export type ProfileSourceKind = (typeof PROFILE_SOURCE_KINDS)[number];
+/** The eligibility rules, as parts of a profile, in the order their checks always come in. */
+export const RULE_PARTS_IN_ORDER = ["min_headcount", "states_served", "excluded_industries", "excluded_class_codes", "min_enrolment_percent"] as const;
+export type RulePart = (typeof RULE_PARTS_IN_ORDER)[number];
+/** The parts of a profile that each carry their own source and date: the sections, then each eligibility rule. */
+export const PROFILE_PARTS = ["answers", "census_layout", "documents", "extra_questions", "contacts", ...RULE_PARTS_IN_ORDER] as const;
+export type ProfilePart = (typeof PROFILE_PARTS)[number];
+
+/**
+ * Where one part of a profile was checked, and when: a document, by its title with a link when there is one, or a
+ * named person at the PEO, with their role. Only advisors and admins read the person's name: for anyone else
+ * public.peo_catalog() leaves it out, and it reads as null.
+ */
+export type ProfileSource =
+  | { kind: "document"; name: string; link?: string; checkedOn: string }
+  | { kind: "person"; name: string | null; role: string; checkedOn: string };
+
+export const PROFILE_CAPS = {
+  censusColumns: 200,
+  documents: 30,
+  extraQuestions: 30,
+  choices: 20,
+  listItems: 100,
+  header: 100,
+  text: 500,
+  /** A source's name (a document's title or a person's name), and a template file's path. */
+  sourceName: 300,
+  link: 2000,
+  /** The largest minimum headcount a rule can hold. */
+  headcount: 100000,
+  /** Contacts a profile version names. */
+  contacts: 20,
+  /** Class codes one excluded industry maps to. */
+  industryCodes: 100,
+} as const;
+
+/** A PEO's census layout: its columns in order, the file it takes, and its own template file when it has one. */
+export interface ProfileCensusLayout extends PeoCensusLayout {
+  format: CensusFileFormat;
+}
+
+export interface ProfileDocument {
+  category: DocumentCategory;
+  /** What exactly the PEO wants, such as "Three years of loss runs". */
+  description: string;
+}
+
+/** A question only this PEO asks. `key` names the answer; a choice question lists its choices. */
+export interface ExtraQuestion {
+  key: string;
+  text: string;
+  kind: ExtraQuestionKind;
+  choices?: string[];
+}
+
+/** A PEO's eligibility rules. Each is null until sourced: "can't tell yet", never "no rule". */
+export interface EligibilityRules {
+  minHeadcount: number | null;
+  statesServed: string[] | null;
+  /** In the PEO's own words, for people to read. The check goes by the class codes each is mapped to. */
+  excludedIndustries: string[] | null;
+  /** The class codes an admin mapped each excluded industry to, by its wording; one with none mapped can't be checked. */
+  excludedIndustryCodes?: Record<string, string[]>;
+  excludedClassCodes: string[] | null;
+  /** Minimum participation: the share of employees eligible for the health plan who must enrol, as a percentage. */
+  minEnrolmentPercent: number | null;
+}
+
+/** Each eligibility rule's key in EligibilityRules, by its part: the one table both the editor and the checks read. */
+export const RULE_KEYS = {
+  min_headcount: "minHeadcount",
+  states_served: "statesServed",
+  excluded_industries: "excludedIndustries",
+  excluded_class_codes: "excludedClassCodes",
+  min_enrolment_percent: "minEnrolmentPercent",
+} as const satisfies Record<RulePart, keyof EligibilityRules>;
+
+/** How people name a part of a profile: its name in a sentence, and whether it reads as one thing or many. */
+export interface PartName {
+  /** Its name in a sentence, such as "minimum headcount". */
+  label: string;
+  /** "was" or "were": "Where the states served were checked", "the states served aren't checked yet". */
+  verb: "was" | "were";
+}
+
+/** Every part of a profile by name, the words the PEOs page, the editor and the eligibility checks all use. */
+export const PART_NAMES: Record<ProfilePart, PartName> = {
+  answers: { label: "answers", verb: "were" },
+  census_layout: { label: "census layout", verb: "was" },
+  documents: { label: "documents", verb: "were" },
+  extra_questions: { label: "questions", verb: "were" },
+  contacts: { label: "contacts", verb: "were" },
+  min_headcount: { label: "minimum headcount", verb: "was" },
+  states_served: { label: "states served", verb: "were" },
+  excluded_industries: { label: "excluded industries", verb: "were" },
+  excluded_class_codes: { label: "excluded class codes", verb: "were" },
+  min_enrolment_percent: { label: "minimum participation", verb: "was" },
+};
+
+/** The parts of a profile by the names the PEOs page gives them. */
+export const PART_LABELS = Object.fromEntries(PROFILE_PARTS.map((part) => [part, PART_NAMES[part].label])) as Record<ProfilePart, string>;
+
+/** "Justworks's minimum headcount isn't checked yet." or "Justworks's states served aren't checked yet." */
+export const notCheckedYet = (peo: string, part: ProfilePart) =>
+  `${peo}'s ${PART_NAMES[part].label} ${PART_NAMES[part].verb === "was" ? "isn't" : "aren't"} checked yet.`;
+
+/** A part's name to start a line with: "Minimum headcount". */
+export const capitalised = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** "class code 5551", "class codes 5551, 5645", or "no class codes mapped". */
+export const codesPhrase = (codes: readonly string[]) =>
+  codes.length === 0 ? "no class codes mapped" : `class code${codes.length === 1 ? "" : "s"} ${codes.join(", ")}`;
+
+/** One published version of a PEO's requirement profile. PEO contacts are not in it: only advisors read them. */
+export interface RequirementProfile {
+  version: number;
+  /** Intake answers the PEO needs before it will quote. */
+  neededToQuote: FieldKey[];
+  /** Intake answers it needs only before the client signs. */
+  neededBeforeSigning: FieldKey[];
+  /** Null until the PEO's census columns are sourced. */
+  censusLayout: ProfileCensusLayout | null;
+  documents: ProfileDocument[];
+  rules: EligibilityRules;
+  extraQuestions: ExtraQuestion[];
+  /**
+   * Where each part was checked, and when. A part with no source isn't sourced. Only an advisor's catalog holds the
+   * contacts' source and the names of people at the PEO.
+   */
+  sources: Partial<Record<ProfilePart, ProfileSource>>;
+  publishedAt: string | null;
+}
+
+type Row = Record<string, unknown>;
+const isRow = (v: unknown): v is Row => typeof v === "object" && v !== null && !Array.isArray(v);
+const list = <T = string>(v: unknown): T[] | null => (Array.isArray(v) ? (v as T[]) : null);
+const num = (v: unknown): number | null => (typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
+const text = (v: unknown): string | null => (typeof v === "string" ? v : null);
+
+/** The PEO's own template a layout fills, as the database holds it ({ id, sheet, header_row, first_row }), or null. */
+function parseTemplateRef(v: unknown): TemplateWorkbookRef | null {
+  if (!isRow(v)) return null;
+  const id = num(v.id), headerRow = num(v.header_row), firstRow = num(v.first_row), sheet = text(v.sheet);
+  return id !== null && headerRow !== null && firstRow !== null && sheet ? { id, sheet, headerRow, firstRow } : null;
+}
+
+function parseProfile(peo: string, p: Row): RequirementProfile {
+  const layout = isRow(p.census_layout) ? p.census_layout : null;
+  const rules: EligibilityRules = {
+    minHeadcount: num(p.min_headcount),
+    statesServed: list(p.states_served),
+    excludedIndustries: list(p.excluded_industries),
+    ...(isRow(p.excluded_industry_codes) && Object.keys(p.excluded_industry_codes).length > 0
+      ? { excludedIndustryCodes: Object.fromEntries(Object.entries(p.excluded_industry_codes).map(([k, v]) => [k, list(v) ?? []])) }
+      : {}),
+    excludedClassCodes: list(p.excluded_class_codes),
+    minEnrolmentPercent: num(p.min_enrolment_percent),
+  };
+  const sources: Partial<Record<ProfilePart, ProfileSource>> = {};
+  if (isRow(p.sources)) {
+    for (const [part, raw] of Object.entries(p.sources)) {
+      if (!(PROFILE_PARTS as readonly string[]).includes(part) || !isRow(raw)) continue;
+      const name = text(raw.name);
+      const checkedOn = text(raw.checked_on);
+      if (!checkedOn) continue;
+      if (raw.kind === "person" && text(raw.role)) sources[part as ProfilePart] = { kind: "person", name: name || null, role: text(raw.role)!, checkedOn };
+      else if (raw.kind === "document" && name) {
+        const link = text(raw.link);
+        sources[part as ProfilePart] = link ? { kind: "document", name, link, checkedOn } : { kind: "document", name, checkedOn };
+      }
+    }
+  }
+  return {
+    version: num(p.version) ?? 0,
+    neededToQuote: list<FieldKey>(p.needed_to_quote) ?? [],
+    neededBeforeSigning: list<FieldKey>(p.needed_before_signing) ?? [],
+    censusLayout: layout
+      ? {
+          peo,
+          format: layout.format as CensusFileFormat,
+          template: parseTemplateRef(layout.template_file),
+          columns: list<PeoCensusLayout["columns"][number]>(layout.columns) ?? [],
+        }
+      : null,
+    documents: list<ProfileDocument>(p.documents) ?? [],
+    rules,
+    extraQuestions: list<ExtraQuestion>(p.extra_questions) ?? [],
+    sources,
+    publishedAt: text(p.published_at),
+  };
+}
+
+/** The date of a profile's oldest sourced part, which says how long ago it was checked; null when none is sourced. */
+export function oldestCheck(profile: Pick<RequirementProfile, "sources">): string | null {
+  const dates = Object.values(profile.sources).map((s) => s.checkedOn).sort();
+  return dates[0] ?? null;
+}
+
+/**
+ * What public.peo_catalog() returns, as PEO records: each PEO in the database's (alphabetical) order, listed or not,
+ * with its profile in use, or none. The fit checks (peoFit) read the profile's rules; a PEO with no profile has no
+ * facts. A PEO that isn't listed is kept so that what was sent to it still reads; nothing offers it.
+ */
+export function parsePeoCatalog(raw: unknown): PeoRecord[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry): PeoRecord[] => {
+    if (!isRow(entry) || typeof entry.name !== "string" || entry.name.trim() === "") return [];
+    const profile = isRow(entry.profile) ? parseProfile(entry.name, entry.profile) : null;
+    return [{
+      id: num(entry.id) ?? undefined,
+      name: entry.name,
+      listed: entry.listed !== false,
+      lastVerified: profile ? oldestCheck(profile) : null,
+      profile,
+    }];
+  });
+}
+
+/** How long a profile's checks hold: one whose oldest sourced part was checked longer ago than this is stale. */
+export const STALE_AFTER_DAYS = 180;
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** A date checked (YYYY-MM-DD) as people read it, such as "3 Nov 2026". */
+export function formatCheckedOn(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return MONTHS[m - 1] ? `${d} ${MONTHS[m - 1]} ${y}` : isoDate;
+}
+
+/** Days from one YYYY-MM-DD date to another, by the calendar. */
+function daysBetween(from: string, to: string): number {
+  const day = (iso: string) => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return Date.UTC(y, m - 1, d) / 86_400_000;
+  };
+  return day(to) - day(from);
+}
+
+/**
+ * The one staleness rule: a profile is stale when its oldest sourced part (`lastChecked`, oldestCheck) was checked
+ * more than 180 days before `today` (YYYY-MM-DD, the reader's own date). A profile with nothing checked is not stale:
+ * it is no profile yet. A stale profile is still used everywhere, with a warning.
+ */
+export function isProfileStale(lastChecked: string | null, today: string): boolean {
+  return lastChecked !== null && daysBetween(lastChecked, today) > STALE_AFTER_DAYS;
+}
+
+/** When a rule was checked, as every eligibility check shows it: "checked 3 Nov 2026", and when stale, that it may be out of date. */
+export const checkedLine = (checkedOn: string, stale: boolean) => `checked ${formatCheckedOn(checkedOn)}${stale ? " · may be out of date" : ""}`;
+
+/** The warning a stale profile carries wherever it is used, naming when it was last checked; null when it isn't stale. */
+export function staleProfileWarning(peo: Pick<PeoRecord, "name" | "lastVerified">, today: string): string | null {
+  return isProfileStale(peo.lastVerified, today) ? `${peo.name}'s profile was last checked ${formatCheckedOn(peo.lastVerified!)} and may be out of date.` : null;
+}
+
+/** Today by the database's clock (UTC), as YYYY-MM-DD: what its date rules, such as a source's date, go by. */
+export function utcToday(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
+/** Today in the reader's own calendar, as YYYY-MM-DD. */
+export function localToday(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}

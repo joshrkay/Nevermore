@@ -10,19 +10,24 @@ import InformationRequestPanel from "@/components/advisor/InformationRequestPane
 import ManuscriptPanel from "@/components/advisor/ManuscriptPanel";
 import NeedsActionPanel from "@/components/advisor/NeedsActionPanel";
 import NotesPanel from "@/components/advisor/NotesPanel";
+import PeoNeedsPanel from "@/components/advisor/PeoNeedsPanel";
 import PeoThreadPanel from "@/components/advisor/PeoThreadPanel";
 import QuoteRequestsPanel from "@/components/advisor/QuoteRequestsPanel";
 import CensusDownload from "@/components/CensusDownload";
-import { PEO_CATALOG } from "@/data/peoCatalog";
+import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import StatusPanel from "@/components/advisor/StatusPanel";
 import TranscriptEvidence from "@/components/advisor/TranscriptEvidence";
 import { formatDateTime, messageAnchor } from "@/components/advisor/format";
-import { changesSinceSigning, NEEDS_ACTION_LABEL } from "@/data/advisor";
+import { changesSinceSigning, informationRequestBlockedReason, NEEDS_ACTION_LABEL, verifiedFieldsOf } from "@/data/advisor";
 import { censusPay, isW2 } from "@/data/census";
 import { coverageTier, NOT_PROVIDED } from "@/data/manuscript";
 import { emailProblemHelp, emailProblemLabel } from "@/data/outbox";
 import { describeSource } from "@/data/referralPartners";
+import { lastCertifiedVersion } from "@/data/peoCompleteness";
+import type { FieldKey } from "@/data/provenance";
+import type { ExtraQuestionRef } from "@/data/extraAnswers";
 import { listEmailProblems, loadSubmission, type EmailProblem, type SubmissionDetail } from "@/lib/advisorApi";
+import { certificationOf } from "@/lib/certificationCheck";
 
 type Load =
   | { kind: "loading" }
@@ -115,14 +120,28 @@ const Detail = ({
   onShowMessage: (id: string) => void;
   emailProblem: EmailProblem | null;
 }) => {
+  // The PEOs and their profiles in use, from the database: the quote requests' fit checks, the packet's checks and
+  // the census layouts read them.
+  const peoCatalog = usePeoCatalog();
   // An underwriter's question the advisor chose to ask the prospect: it opens Ask the prospect with the text in it,
   // as a fresh draft each time, for the advisor to edit and send as their own request.
-  const [askDraft, setAskDraft] = useState<{ message: string; n: number } | null>(null);
-  const askProspect = (message: string) => {
-    setAskDraft((current) => ({ message, n: (current?.n ?? 0) + 1 }));
+  // What a PEO still needs comes the same way, with the answers the request names. Once a request is sent the
+  // draft is spent: the next one starts afresh, from the fields marked Needs follow-up. `n` only ever grows, so each
+  // draft, and each send, starts the panel anew.
+  const [askDraft, setAskDraft] = useState<{ message?: string; fields?: FieldKey[]; questions?: ExtraQuestionRef[]; n: number }>({ n: 0 });
+  const askProspect = (message: string, fields?: FieldKey[], questions?: ExtraQuestionRef[]) => {
+    setAskDraft((current) => ({ message, fields, questions, n: current.n + 1 }));
     window.requestAnimationFrame?.(() => document.getElementById("information-request-message")?.focus());
   };
+  const requestSent = () => {
+    setAskDraft((current) => ({ n: current.n + 1 }));
+    reload();
+  };
+  // What each PEO still needs is built from the last certified version, never from answers given since.
+  const certifiedVersion = lastCertifiedVersion(detail, verifiedFieldsOf(detail.reviews));
   const sub = detail.submission;
+  // The certification the page's files were built from, checked again at each download's click.
+  const builtFrom = certificationOf(detail.id, detail.intakeStatus, sub ?? {});
   return (
     <>
       {emailProblem && (
@@ -159,6 +178,23 @@ const Detail = ({
       <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
         <div className="space-y-6 min-w-0">
           {detail.signed && <ChangedSinceSigning detail={detail} signed={detail.signed} />}
+          <PeoNeedsPanel
+            certified={certifiedVersion}
+            catalog={peoCatalog.peos}
+            catalogStatus={peoCatalog.status}
+            onRetryCatalog={peoCatalog.retry}
+            chosenPeo={sub?.peo ?? null}
+            quoteRequests={detail.quoteRequests}
+            askBlocked={informationRequestBlockedReason(detail.pipelineStatus, !!sub?.signer_name, detail.intakeStatus)}
+            onDraft={(draft) => askProspect(draft.message, draft.fields, draft.questions)}
+            fileId={detail.fileId ?? "No File ID"}
+            builtFrom={builtFrom}
+            submission={sub}
+            sessionId={detail.id}
+            stage={detail.pipelineStatus}
+            onSendRecorded={reload}
+            companyName={certifiedVersion?.intake.data.company_name ?? "Company not provided"}
+          />
           <PeoThreadPanel
             prospectUserId={detail.userId}
             requests={detail.quoteRequests}
@@ -197,8 +233,10 @@ const Detail = ({
           <InformationRequestPanel
             // A sent request starts the next one afresh, from the fields marked Needs follow-up; until then the
             // panel follows the marks as they change.
-            key={`${detail.informationRequests.length}-${askDraft?.n ?? 0}`}
-            initialMessage={askDraft?.message}
+            key={`${detail.informationRequests.length}-${askDraft.n}`}
+            initialMessage={askDraft.message}
+            initialFields={askDraft.fields}
+            initialQuestions={askDraft.questions}
             sessionId={detail.id}
             prospectUserId={detail.userId}
             status={detail.pipelineStatus}
@@ -206,7 +244,7 @@ const Detail = ({
             intakeStatus={detail.intakeStatus}
             reviews={detail.reviews}
             requests={detail.informationRequests}
-            onChanged={reload}
+            onChanged={requestSent}
           />
           <QuoteRequestsPanel
             sessionId={detail.id}
@@ -220,7 +258,8 @@ const Detail = ({
             mail={detail.quoteRequestMessages}
             threadReads={detail.quoteRequestThreadReads}
             data={detail.data}
-            onAskProspect={askProspect}
+            catalog={peoCatalog.peos}
+            onAskProspect={(message) => askProspect(message)}
             onChanged={reload}
           />
           <StatusPanel
@@ -234,7 +273,7 @@ const Detail = ({
             quoteRequests={detail.quoteRequests}
             onChanged={reload}
           />
-          <ManuscriptPanel detail={detail} onChanged={reload} />
+          <ManuscriptPanel detail={detail} catalog={peoCatalog.peos} catalogStatus={peoCatalog.status} onRetryCatalog={peoCatalog.retry} onChanged={reload} />
           <DocumentsPanel documents={detail.documents} events={detail.documentEvents} prospectUserId={detail.userId} />
           <NotesPanel sessionId={detail.id} notes={detail.notes} onAdded={reload} />
           <AuditTrail events={detail.reviewEvents} prospectUserId={detail.userId} />
@@ -254,12 +293,17 @@ const RELATIONSHIP_LABELS: Record<string, string> = {
 /** What the prospect certified beside what the intake holds now, for an intake edited after signing. */
 const ChangedSinceSigning = ({ detail, signed }: { detail: SubmissionDetail; signed: NonNullable<SubmissionDetail["signed"]> }) => {
   const changes = changesSinceSigning(signed.data, detail.data);
+  // A PEO's own answers go only to that PEO, so they aren't listed here: only that one changed.
+  const extraChanged = JSON.stringify(signed.extraAnswers) !== JSON.stringify(detail.extraAnswers);
   return (
     <section aria-labelledby="changed-heading" className="border border-warning/40 bg-warning/5 rounded-xl p-5">
       <h2 id="changed-heading" className="font-display text-lg font-bold">Changed since signing</h2>
       <p className="text-xs text-muted-foreground mb-3">Signed {formatDateTime(signed.signedAt)}</p>
+      {extraChanged && (
+        <p className="text-sm text-muted-foreground mb-2">An answer to a PEO's own questions changed since signing. Each PEO's supplement keeps the certified answers.</p>
+      )}
       {changes.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No answer differs from the signed copy.</p>
+        !extraChanged && <p className="text-sm text-muted-foreground">No answer differs from the signed copy.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -290,10 +334,11 @@ const ChangedSinceSigning = ({ detail, signed }: { detail: SubmissionDetail; sig
 const CensusTable = ({ detail }: { detail: SubmissionDetail }) => (
   <section aria-labelledby="census-heading" className="border border-border rounded-lg p-4">
     <h4 id="census-heading" className="text-sm font-medium mb-3">Employee census</h4>
-    {/* The certified census as a file for a PEO (#86): only from the certified copy, never a draft. */}
+    {/* The certified census as a file in our own layout (#86): only from the certified copy, never a draft. Each PEO's
+        own layout is on its card in What each PEO still needs (L-3.1). */}
     {detail.certified && detail.fileId && detail.data.census.length > 0 && (
       <div className="mb-3">
-        <CensusDownload census={detail.data.census} fileId={detail.fileId} peos={PEO_CATALOG.map((p) => p.name)} />
+        <CensusDownload census={detail.data.census} fileId={detail.fileId} version={detail.currentVersion} peo={null} catalog={[]} builtFrom={certificationOf(detail.id, detail.intakeStatus, detail.submission ?? {})} />
       </div>
     )}
     {detail.data.census.length === 0 ? (

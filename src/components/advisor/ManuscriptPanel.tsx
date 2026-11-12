@@ -1,11 +1,17 @@
 import { useState } from "react";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import AnswersJsonDownload from "@/components/AnswersJsonDownload";
 import { applyAdvisorReview, isCurrentVersion, isStaleRefusal, verifiedFieldsOf } from "@/data/advisor";
 import { buildManuscript, manuscriptFilename } from "@/data/manuscript";
+import type { PeoRecord } from "@/data/peoCatalog";
+import { localToday } from "@/data/peoProfiles";
+import type { PeoCatalogStatus } from "@/hooks/usePeoCatalog";
 import { buildManuscriptPdf } from "@/lib/manuscriptPdf";
 import { downloadBlob } from "@/lib/downloadFile";
 import { manuscriptUrl, saveManuscriptVersion, type ManuscriptVersion, type SubmissionDetail } from "@/lib/advisorApi";
+import { certificationOf } from "@/lib/certificationCheck";
+import { certifiedAnswersSource } from "@/data/certifiedAnswersDocument";
 import { formatDateTime } from "./format";
 
 /**
@@ -18,12 +24,22 @@ import { formatDateTime } from "./format";
 const versionFilename = (companyName: string | null, v: Pick<ManuscriptVersion, "file_id" | "version" | "certified_at" | "certified_signed_at">) =>
   manuscriptFilename(v.file_id, companyName, { date: v.certified_at ?? v.certified_signed_at, suffix: `advisor-v${v.version}` });
 
+interface ManuscriptPanelProps {
+  detail: SubmissionDetail;
+  /** The PEOs and their profiles in use (usePeoCatalog), which the packet's eligibility checks read. */
+  catalog: readonly PeoRecord[];
+  /** Whether they are read yet: a packet is generated only once they are, or every check would read can't tell. */
+  catalogStatus: PeoCatalogStatus;
+  onRetryCatalog: () => void;
+  onChanged: () => void;
+}
+
 /**
  * Download or regenerate the advisor-reviewed Manuscript, one stored version per generation. Each
  * version names the certification and review state it was built from; `onChanged` reloads the
  * submission after a version is stored, or when the database refuses one because either has moved on.
  */
-const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onChanged: () => void }) => {
+const ManuscriptPanel = ({ detail, catalog, catalogStatus, onRetryCatalog, onChanged }: ManuscriptPanelProps) => {
   const [revealSensitive, setRevealSensitive] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [opening, setOpening] = useState<string | null>(null);
@@ -34,6 +50,9 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
   // Only a version built from the current certification is offered to the prospect (and is current).
   const current = (v: ManuscriptVersion) => detail.certified && isCurrentVersion(v, detail.submission);
 
+  const catalogReady = catalogStatus === "ready";
+  const answersJson = certifiedAnswersSource(detail);
+
   const generate = async () => {
     setGenerating(true);
     try {
@@ -42,6 +61,9 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
       const manuscript = buildManuscript(packet.data, {
         fileId: detail.fileId ?? "EAA-UNCERTIFIED",
         submission: detail.submission,
+        catalog,
+        catalogStatus,
+        today: localToday(),
         provenance: packet.provenance,
         verified: verifiedFieldsOf(detail.reviews),
         advisor: { version, corrections: packet.corrections, followUps: packet.followUps },
@@ -133,18 +155,36 @@ const ManuscriptPanel = ({ detail, onChanged }: { detail: SubmissionDetail; onCh
             The latest version is the prospect's final packet: they can download it from their packet page and send it
             on. Correction reasons are printed in it.
           </p>
+          {catalogStatus === "loading" && (
+            <p className="text-xs text-muted-foreground" role="status">
+              Loading the PEOs' profiles. You can generate the packet once they're in.
+            </p>
+          )}
+          {catalogStatus === "failed" && (
+            <div role="alert" className="text-xs rounded-md bg-warning/10 text-warning px-2 py-1.5 space-y-1">
+              <p>We couldn't load the PEOs' profiles, so the packet's eligibility checks can't be run. Try again before generating.</p>
+              <button onClick={onRetryCatalog} className="min-h-11 underline">Try again</button>
+            </div>
+          )}
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={revealSensitive} onChange={(e) => setRevealSensitive(e.target.checked)} />
             Include full dates of birth
           </label>
           <button
             onClick={generate}
-            disabled={generating}
+            disabled={generating || !catalogReady}
             className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 disabled:opacity-50"
           >
             {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
             {latest ? "Regenerate as new version" : "Generate packet"}
           </button>
+          {/* The certified answers as JSON (L-3.3): the prospect's certification alone, never the review, the
+              corrections, the notes or a PEO's own answers. */}
+          {answersJson && (
+            <div className="border-t border-border pt-3">
+              <AnswersJsonDownload source={answersJson} builtFrom={certificationOf(detail.id, detail.intakeStatus, answersJson.submission)} />
+            </div>
+          )}
         </div>
       )}
 

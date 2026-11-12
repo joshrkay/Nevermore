@@ -62,7 +62,7 @@ export const SENSITIVITY: Record<Sensitivity, SensitivityLevel> = {
   },
   public: {
     label: "Public",
-    meaning: "What the site publishes: marketing copy, the sample packet (invented data) and the sourced PEO catalog.",
+    meaning: "What the site publishes: marketing copy and the sample packet (invented data).",
     handling: ["Anyone may see it. Keep it accurate and free of anything above this level."],
   },
 };
@@ -241,6 +241,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: DELETED_WITH_INTAKE,
   },
   {
+    id: "extra_answers",
+    label: "Answers to a PEO's own questions",
+    sensitivity: "restricted",
+    examples: "The prospect's answers to the questions one PEO asks beyond the intake's own, each with the question as it was asked. They go only to that PEO, in its own file, never in the packet or another PEO's files.",
+    stored: { tables: ["chamber_sessions", "chamber_certifications"], buckets: [], elsewhere: ["The AI provider, for each message Lenore reads while she asks them (D11)"] },
+    retention: WITH_INTAKE,
+    deletion: DELETED_WITH_INTAKE,
+  },
+  {
     id: "documents",
     label: "Uploaded documents",
     sensitivity: "restricted",
@@ -377,6 +386,24 @@ export const DATA_CLASSES: DataClass[] = [
     stored: { tables: ["referral_partners"], buckets: [], elsewhere: [] },
     retention: "Kept while we work with the partner, so the codes on past intakes still name them.",
     deletion: "By an admin, on the partner's request or when we stop working with them (docs/DATA_HANDLING.md).",
+  },
+  {
+    id: "peo_requirement_profiles",
+    label: "PEOs and their requirement profiles",
+    sensitivity: "confidential",
+    examples: "The PEOs we prepare packets for and what each asks for, version by version: the answers and documents it needs, its census columns, its eligibility rules, its own questions, and where and when that was checked; and the names, roles, work emails and phones of the people at each PEO we deal with.",
+    stored: { tables: ["peos", "peo_profile_versions", "peo_contacts"], buckets: [], elsewhere: [] },
+    retention: "For good: a published profile version never changes, so a packet can always be read against what the PEO asked for at the time. A PEO contact stays with the version that names them.",
+    deletion: "Nothing about an intake is in them, so deleting an intake leaves them. A PEO contact who asks to be removed is removed by hand (docs/DATA_HANDLING.md).",
+  },
+  {
+    id: "peo_census_templates",
+    label: "PEO template workbooks",
+    sensitivity: "confidential",
+    examples: "The blank census spreadsheet a PEO asks to have filled, as an admin uploaded it, with its file name, size, hash and virus-check result. Nothing about an intake: the census is written into a copy in the browser of whoever downloads it.",
+    stored: { tables: ["peo_census_templates"], buckets: ["peo-templates", "quarantine"], elsewhere: ["The malware scanner, while it checks an upload (docs/adr/0002)"] },
+    retention: "For good, as the profile versions that name them are, so a census can always be filled as the PEO asked at the time. A blocked one stays in quarantine for incident review.",
+    deletion: "Nothing about an intake is in them, so deleting an intake leaves them. A template is removed by hand if a PEO asks (docs/DATA_HANDLING.md).",
   },
 ];
 

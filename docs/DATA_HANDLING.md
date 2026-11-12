@@ -24,7 +24,7 @@ database are what runs. Fix this document to match, or change all three (see "Ch
 | **Restricted** | Personal information about the prospect's employees: who they are, dates of birth, pay, benefits, dependents and injuries, and anything that holds it (uploaded files, the conversation with Lenore, the Manuscript). | Only the prospect who provided it and our advisors can open it, and the database enforces that. Never put it in email, chat, tickets, alerts, logs, analytics or a link. Stored only in the private database and private buckets; files open through links that expire after 60 seconds. Dates of birth are masked on the Manuscript unless an advisor reveals them for the task at hand, and a version generated with them revealed is recorded as such. Don't keep downloaded copies; delete a download once the task is done. |
 | **Confidential** | Business and contact information about the prospect's company and the people who represent it, and the advisory team's own working records about a submission. | Prospect and advisory team only. Internal notification emails may carry the named contact fields (company, signer, title, work email, phone, headcount, state, reference) and nothing more. Shared outside Edgar Allan Advisory only by the prospect, or with the prospect's permission. |
 | **Internal** | Operational records with no intake content: ids, counts, failure codes, timestamps. | Engineering and admins. Safe in a shared engineering channel: it never names a person or quotes an intake. |
-| **Public** | Marketing copy, the sample Manuscript (invented data), the sourced PEO catalog. | Anyone. Keep it accurate and free of anything above this level. |
+| **Public** | Marketing copy and the sample Manuscript (invented data). | Anyone. Keep it accurate and free of anything above this level. |
 
 ## What we hold
 
@@ -39,6 +39,7 @@ doesn't.
 | Payroll | Restricted | Pay frequency, payroll provider, annual payroll, payroll reports | `chamber_sessions`, `chamber_certifications`, `documents`, `documents` and `quarantine` buckets | With the intake | The deletion process |
 | Benefits | Restricted | Plans, carriers, contributions, renewal dates, summaries and invoices (which can list employees and premiums) | `chamber_sessions`, `chamber_certifications`, `documents`, `documents` and `quarantine` buckets | With the intake | The deletion process |
 | Workers' compensation records | Restricted | Class codes, experience modifier, loss runs, claims history (can describe injuries to named employees) | `chamber_sessions`, `chamber_certifications`, `documents`, `documents` and `quarantine` buckets | With the intake | The deletion process |
+| Answers to a PEO's own questions | Restricted | The prospect's answers to the questions one PEO asks beyond the intake's own (its extra questions), each with the question as it was asked; they can be about anything, employees included. They go only to that PEO, in its own supplement, never in the packet, an email or another PEO's files | `chamber_sessions` (`extra_answers`), `chamber_certifications` (`extra_answers`, as each certification covered them, and their hash, `extra_answers_sha256`); the AI provider per message while Lenore asks them (D11) | With the intake | The deletion process |
 | Uploaded documents | Restricted | Every uploaded file and the values read from it | `documents`, `documents` and `quarantine` buckets; the AI provider while a file is read (D11); the malware scanner while a file is checked (D13) | With the intake; the prospect can remove one while the intake is open (while it is certified, the file it was certified with stays for the advisor until the intake is deleted). A file waiting for, or failing, its malware scan is kept in `quarantine`, which only the service reaches; once its document is removed, `document-scan` deletes it within five minutes | The deletion process, file before row (both buckets) |
 | Conversation transcripts | Restricted | Everything typed or said to Lenore, her replies, and the evidence quotes behind captured answers | `chamber_sessions` (`transcript`, `field_provenance`), `chamber_certifications` (`field_provenance`); the AI provider per message (D11); ElevenLabs for voice (opt-in beta), which passes a call's transcript to Anthropic for Lenore's spoken replies (D42) | With the intake | The deletion process |
 | Generated Manuscript PDFs | Restricted | The packet, which carries the census. The prospect's own copy is made in their browser and never stored by us; the advisor-reviewed final version is stored, and the prospect can download it | `manuscript_versions`, `manuscripts` bucket (advisor versions); the prospect's device | Advisor versions with the submitted record | The deletion process |
@@ -52,6 +53,8 @@ doesn't.
 | Operational monitoring and abuse limits | Internal | Failure counts and codes, alerts raised, a record of each AI call (ids, codes and field names, never values), AI rate-limit counters (a one-way hash of the network address, never the address), the per-year counter that numbers File IDs | `ops_events`, `ops_alerts`, `ai_extraction_events`, `ai_request_log`, `ai_ip_log`, `ai_global_usage`, `submission_reference_counters`; Supabase and Vercel logs | Events, AI call records and daily AI totals 90 days; rate-limit records 1 day; alerts for incident review | The retention jobs; AI call records for an intake also with the intake |
 | Intake progress (the pilot funnel) | Internal | Which steps each intake reached (started, first answer, a document, a census, ready to certify, a verified email, certified, The Manuscript downloaded), when, and when it started; and the referral code and campaign tags of the link it was started from, as short codes (its intake source); never an answer, a name, an address or a document | `intake_milestones`; the source codes also in `chamber_sessions` | 365 days from the intake's start, a whole start date at once; the codes on the intake itself, with the intake | `run_retention()`; deleting an intake removes its link to these rows, which stay unattached (source codes included) so the funnel still counts it |
 | Referral partners | Confidential | The people and firms who refer employers: name, kind of partner, the code in their link, and which advisor added or last changed them | `referral_partners` | While we work with the partner, so past intakes' codes still name them | An admin, on the partner's request or when we stop working with them (below) |
+| PEOs and their requirement profiles | Confidential | The PEOs we prepare packets for and what each asks for, version by version (answers, documents, census columns, eligibility rules, its own questions, where and when it was checked), and the PEO contacts each version names: name, role, work email and phone. Advisors read it all; prospects read only the profiles in use, through `peo_catalog()`, with a person at the PEO named by their role alone, never a contact or an admin's id. Signed out, nothing. Never anything about an intake | `peos`, `peo_profile_versions`, `peo_contacts` | For good: a published version never changes (docs/adr/0010) | Deleting an intake leaves them. A PEO contact, on their request (below) |
+| PEO template workbooks | Confidential | The blank census spreadsheet a PEO asks to have filled, uploaded by an admin, with its file name, size, hash and virus-check result. Scanned before anyone can use it (docs/adr/0002); only a clean one is read, by anyone signed in, and the census is written into a copy in the reader's browser. Never anything about an intake | `peo_census_templates`; the `peo-templates` bucket (clean), `quarantine` (blocked or not checked); the malware scanner while it checks one | For good, as the profile versions that name them | Deleting an intake leaves them. By hand, if a PEO asks |
 
 The prospect's browser also keeps a copy of answers whose save hasn't been confirmed, for at most 7 days, in
 that browser only (`src/data/intakeBackup.ts`). It also keeps the referral code and campaign tags of the last
@@ -182,6 +185,33 @@ delete from public.referral_partners where code = '<code>';
 
 Intakes and milestones keep the code, which then shows as unlisted; nothing else names the partner. Tell the
 partner their link no longer counts for them.
+
+### Removing a PEO contact
+
+A published requirement profile version never changes, and neither do the PEO contacts it names: a trigger refuses it
+(docs/adr/0010). A person at a PEO can be named in two places: as a PEO contact, and as the source a part of a profile
+was checked with (`sources`, a person's name and role). When they ask to be removed, an admin first publishes a new
+version of that PEO's profile without them (as a contact, and as a source: re-check those parts with someone else or a
+document), then removes them from the older versions, from the SQL editor, in one transaction. The source keeps its
+role and date, so the version still says when each part was checked, and their name becomes "Removed on request":
+
+```sql
+begin;
+alter table public.peo_contacts disable trigger peo_contacts_frozen_once_published;
+delete from public.peo_contacts where email = '<their email>';
+alter table public.peo_contacts enable trigger peo_contacts_frozen_once_published;
+alter table public.peo_profile_versions disable trigger peo_profile_versions_frozen_once_published;
+update public.peo_profile_versions v
+set sources = (
+  select jsonb_object_agg(s.key, case when s.value ->> 'kind' = 'person' and s.value ->> 'name' = '<their name>'
+    then jsonb_set(s.value, '{name}', '"Removed on request"') else s.value end)
+  from jsonb_each(v.sources) s)
+where exists (select 1 from jsonb_each(v.sources) s where s.value ->> 'kind' = 'person' and s.value ->> 'name' = '<their name>');
+alter table public.peo_profile_versions enable trigger peo_profile_versions_frozen_once_published;
+commit;
+```
+
+Record who asked and when in the team's deletion log. Nothing else about the version changes.
 
 ### Reviewing submitted records
 

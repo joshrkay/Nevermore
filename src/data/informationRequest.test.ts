@@ -9,8 +9,14 @@ describe("parseInformationRequest", () => {
     expect(parseInformationRequest(raw)).toEqual({
       message: "Please confirm your pay frequency.",
       fields: ["pay_frequency", "census"],
+      extraQuestions: [],
       requestedAt: "2026-11-05T12:00:00+00:00",
     });
+  });
+
+  it("reads the PEOs' own questions it names, by PEO, key and wording, leaving out anything else", () => {
+    const drives = { peo_id: 5, key: "vehicles", question: "Do employees drive for work?" };
+    expect(parseInformationRequest({ ...raw, extra_questions: [drives, { peo_id: "5", key: "x", question: "y" }, null] })?.extraQuestions).toEqual([drives]);
   });
 
   it("is null for no request, or anything that isn't one", () => {

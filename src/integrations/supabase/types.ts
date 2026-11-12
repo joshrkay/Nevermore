@@ -120,6 +120,7 @@ export type Database = {
           chamber_data: Json
           // The PEO chosen on PEO Match, kept across reloads. The certified PEO is submission.peo.
           chosen_peo: string | null
+          extra_answers: Json
           created_at: string
           // Set by the database: 1 on insert, +1 on every update. Writes name the version they saw.
           data_version: number
@@ -152,6 +153,7 @@ export type Database = {
         Insert: {
           chamber_data?: Json
           chosen_peo?: string | null
+          extra_answers?: Json
           created_at?: string
           data_version?: never
           expires_at?: never
@@ -174,6 +176,7 @@ export type Database = {
         Update: {
           chamber_data?: Json
           chosen_peo?: string | null
+          extra_answers?: Json
           created_at?: string
           data_version?: never
           expires_at?: never
@@ -280,9 +283,10 @@ export type Database = {
         ]
       }
       // An advisor's request for more information (20261105090000). Written only by advisor_request_information,
-      // read by advisors; never changed.
+      // read by advisors; never changed. extra_questions: 20261115130000.
       information_requests: {
         Row: {
+          extra_questions: Json
           fields: string[]
           id: number
           message: string
@@ -479,6 +483,94 @@ export type Database = {
       }
       // Who refers employers, by the code in their link (20261106100000). Advisors read it; it is written only
       // through advisor_add_referral_partner and advisor_update_referral_partner.
+      // PEOs and their requirement profiles (20261115090000). Advisors read the PEOs and the published versions
+      // (admins read drafts too); everyone else signed in reads peo_catalog(). Only admins write, through admin_add_peo(),
+      // admin_save_peo_profile(), admin_publish_peo_profile(), admin_set_peo_listed(), admin_recheck_peo_profile() and
+      // admin_discard_peo_draft() (20261115100000). A published version never changes; a PEO is never deleted.
+      peos: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: number
+          // False once an admin stops listing the PEO; a PEO is never deleted.
+          listed: boolean
+          name: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      peo_profile_versions: {
+        Row: {
+          // Each { format, template_file, columns: [{ header, from }] } (src/data/peoProfiles.ts), or null. template_file is
+          // null or { id, sheet, header_row, first_row }: the PEO's own template the census fills (L-3.1).
+          census_layout: Json | null
+          created_at: string
+          created_by: string | null
+          // [{ category, description }]
+          documents: Json
+          excluded_class_codes: string[] | null
+          excluded_industries: string[] | null
+          // { <industry, as excluded_industries words it>: [<class code>] } (20261115110000).
+          excluded_industry_codes: Json
+          // [{ key, text, kind, choices? }]
+          extra_questions: Json
+          id: number
+          min_enrolment_percent: number | null
+          min_headcount: number | null
+          needed_before_signing: string[]
+          needed_to_quote: string[]
+          peo_id: number
+          published_at: string | null
+          published_by: string | null
+          // A draft's state, new on every save; a save or a publish names the one it was based on.
+          revision: string
+          // { <part>: { kind, name, role?, link?, checked_on } }, one per sourced part (PROFILE_PARTS in src/data/peoProfiles.ts).
+          sources: Json
+          states_served: string[] | null
+          // One of PROFILE_STATUSES.
+          status: string
+          version: number
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // The people at a PEO a profile version names: advisors read them, prospects never do.
+      peo_contacts: {
+        Row: {
+          email: string | null
+          id: number
+          name: string
+          phone: string | null
+          position: number
+          profile_version_id: number
+          role: string | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      peo_census_templates: {
+        // A PEO's own census template (20261115140000). Read by advisors; written only by census-template-upload.
+        Row: {
+          file_name: string
+          file_sha256: string
+          id: number
+          peo_id: number
+          scan_signature: string | null
+          // One of TEMPLATE_WORKBOOK_STATUSES (src/lib/templateWorkbooks.ts).
+          scan_status: string
+          scanned_at: string | null
+          size_bytes: number
+          storage_path: string
+          uploaded_at: string
+          uploaded_by: string | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       referral_partners: {
         Row: {
           code: string
@@ -617,6 +709,40 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      // Every PEO, alphabetically, with its newest published profile or null (20261115090000). Never a contact.
+      peo_catalog: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      admin_add_peo: {
+        Args: { p_name: string }
+        Returns: Json
+      }
+      admin_save_peo_profile: {
+        Args: { p_draft_revision: string | null; p_in_use_version: number | null; p_peo_id: number; p_profile: Json }
+        Returns: Json
+      }
+      admin_publish_peo_profile: {
+        Args: { p_draft_revision: string | null; p_peo_id: number }
+        Returns: Json
+      }
+      admin_set_peo_listed: {
+        Args: { p_listed: boolean; p_peo_id: number }
+        Returns: Json
+      }
+      admin_recheck_peo_profile: {
+        Args: { p_peo_id: number; p_sources: Json }
+        Returns: Json
+      }
+      admin_discard_peo_draft: {
+        Args: { p_peo_id: number }
+        Returns: undefined
+      }
+      // Where a clean PEO template workbook of this PEO is stored, or null (20261115140000).
+      clean_template_workbook_path: {
+        Args: { p_peo_id: number; p_template_id: number }
+        Returns: string | null
+      }
       admin_add_allowed_organisation: {
         Args: { p_provider: string; p_org_id: string; p_label: string }
         Returns: Json
@@ -748,7 +874,7 @@ export type Database = {
         }[]
       }
       advisor_request_information: {
-        Args: { p_fields?: string[]; p_message: string; p_session_id: string }
+        Args: { p_extra_questions?: Json; p_fields?: string[]; p_message: string; p_session_id: string }
         Returns: Json
       }
       advisor_add_quote_request_note: {

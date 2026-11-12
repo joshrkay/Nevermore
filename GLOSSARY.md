@@ -39,7 +39,7 @@ The person who gives the answers and certifies them for an employer: the employe
 _Avoid_: user, customer, client, guest (a guest is only a prospect who hasn't verified an email yet)
 
 **PEO**:
-A professional employer organization: a company that co-employs the employer's staff and runs their payroll, benefits and workers' comp. The packet is prepared for PEOs, and each quote request is to one.
+A professional employer organization: a company that co-employs the employer's staff and runs their payroll, benefits and workers' comp. The packet is prepared for PEOs, and each quote request is to one. The PEOs we list are kept by admins, each with its **Requirement profile**; a PEO is never removed, only marked not listed, after which nothing offers it but what was sent to it still reads. A PEO a prospect or advisor names that isn't listed stays a name in free text, with no profile.
 _Avoid_: carrier (an insurance carrier is a different business), vendor, provider
 
 **Advisor**:
@@ -61,16 +61,44 @@ The space where the prospect talks to Lenore and sees their answers fill in. Its
 _Avoid_: the workspace (the workspace is the tabs inside The Chamber)
 
 **Field**:
-One underwriting question the intake can hold an answer to, such as company legal name, pay frequency or the census.
+One underwriting question the intake can hold an answer to, such as company legal name, pay frequency or the census. Every intake asks the same fields; a question only one PEO asks is an **Extra question**, not a field.
 _Avoid_: attribute, property, key
+
+**Extra question**:
+A question one PEO asks beyond the intake's fields, from its **Requirement profile** in use (up to 30, each answered as text, yes or no, a number, or a choice). The intake asks it only for that PEO: the PEO the prospect chose, or another one an **Information request** names. The prospect answers it in "Questions from <PEO>" or to Lenore, one stored answer each with the same field status and source as a field's, and can always certify without it. An answer belongs to the question as worded when it was given: a reworded question is a new one, unanswered until answered. Answered ones are covered by the certification, with their wording; changing one withdraws it like any answer. The answers go only to that PEO, in its **Supplement**, never in The Manuscript, an email or another PEO's files.
+_Avoid_: custom field, supplemental question, PEO question
+
+**Supplement**:
+One PEO's own file beside the packet, "Additional questions from <PEO>": its **Extra questions** and the answers in the last certified version, which version that is, the ones not answered, and any answer certified to wording it no longer asks, under that wording. Offered to the prospect for their chosen PEO and any PEO whose questions they answered, and to advisors for every PEO with extra questions. Only that PEO's.
+_Avoid_: addendum, rider, PEO questionnaire
+
+**Workers' comp application data**:
+Our own PDF, "Workers' compensation application data", of what the last certified version holds that a workers' comp application asks, in the order of the standard application (applicant, locations, owners and officers, the rating table by state, prior carriers and loss history, nature of business, general questions), and which version it is from. It is not the ACORD form and never presents itself as it. Nothing is guessed: whatever the certified answers don't hold is printed "Not in the certified answers", and every blank is counted and listed at its start and beside the download. The rating table groups the certified census by work state and class code, counting full and part time and summing pay only where the census states them. People the census marks 1099 are not employees there: they are left out of the counts and the payroll and shown apart with the pay stated for them; whether any must be rated is for the carrier. The same for every PEO; offered to advisors on each PEO's card and to the prospect beside their packet.
+_Avoid_: ACORD 130, ACORD form, workers' comp form
+
+**Answers as JSON**:
+The certified answers as one JSON file for a PEO's or advisor's own system: the File ID, the certified version, the certification, and the answers, census included, which validate against the published intake schema, each with its field status as certified. Offered beside the packet to the prospect and to advisors, only while the certification stands. Never a PEO's **Extra question** answers, and never anything an advisor wrote. Its stored data hash identifies the stored record the certification covers; it can't be recomputed from the answers in the file, which are laid out in the schema's order.
+_Avoid_: export, data dump, API file
+
+**Bundle**:
+One .zip of what a PEO needs, built from one certified version and named for the File ID, the PEO and the version: the packet prepared for that PEO, its census file (in its **PEO census layout**, its **PEO template workbook** filled, or the **Census template**'s layout), the **Workers' comp application data**, its **Supplement** when it asks **Extra questions**, and, for an advisor, the uploaded documents its **Requirement profile** lists that are on file (certified and through the virus check; never a file blocked or not yet checked). A contents page, CONTENTS.txt and the zip's comment, leads with what is missing (each required document not on file and why, any file that couldn't be included, the answers it needs to quote), then names every file, the blanks and the certified version. Offered to advisors on each PEO's card in "What each PEO still needs" and to the prospect for their chosen PEO, whose bundle holds only what they can download one by one, never the documents. Never another PEO's answers, and nothing an advisor wrote. Downloading one is never a send: the advisor is asked, and records it only if they say so.
+_Avoid_: package, zip, submission package
 
 **Census**:
 The list of the employer's employees, one row per person, with the facts underwriting needs about each.
 _Avoid_: roster, employee list, employees
 
+**Census template**:
+Our own census layout: the columns the census upload reads, offered to prospects as a CSV to fill in, and the layout a PEO's census file takes when the PEO has none of its own.
+_Avoid_: census format, PEO template workbook (that is a PEO's own file)
+
 **PEO census layout**:
-A PEO's own column layout for a census, so the certified census can be sent in the shape its underwriters read. Columns the intake doesn't collect are left blank and named. A PEO whose layout isn't held gets the census template's own layout.
+A PEO's own column layout for a census, so the certified census can be sent in the shape its underwriters read: its columns in order, each filled from one of our census columns or left blank, and the file it takes, CSV or xlsx. Where the PEO wants its own spreadsheet filled in, the layout names its **PEO template workbook** with the sheet, the row its headers are on and the first row of data, and the census is written under its headers, matched by their text, the rest of the workbook kept. Columns the intake doesn't collect are left blank and named before the download. Every file is built from the last certified version and says which. A PEO whose profile in use holds no layout, or a PEO typed in that isn't on the list, gets the **Census template**'s layout. It is part of the PEO's **Requirement profile**.
 _Avoid_: census template (that is our own layout), census format
+
+**PEO template workbook**:
+A PEO's own blank census spreadsheet (.xlsx) that an admin uploads so the census can be written into it. An upload like any other: scanned before anyone can use it, and only a clean one is used. The rows from its first row of data down to the end of the sheet must be empty, so no employee is ever written over the PEO's own words (a footer, a totals row, a signature line, example rows); one with anything there, or with parts that filling it would lose (charts, pivot tables, macros, slicers, data connections and the like), is refused, saying what is in the way.
+_Avoid_: census template (that is our own layout), template file, PEO template
 
 **Employee**:
 One person in the census.
@@ -108,15 +136,31 @@ Something the prospect still owes on an intake: a required field with no answer,
 _Avoid_: gap, missing item, to-do, issue
 
 **Eligibility check**:
-A test of the intake's answers against what a PEO accepts, such as its minimum headcount, the states it serves, or the workers' comp class codes it excludes (how a PEO's industry exclusions are compared, since the intake's industry is free text). It passes, fails, or can't be told yet: it can't be told until the PEO's own materials have been checked for that fact. A failed check is a warning, never a reason to hide or rule out a PEO. It is not an open item.
+A test of the intake's answers against what a PEO accepts, such as its minimum headcount, the states it serves, or the workers' comp class codes it excludes (how a PEO's industry exclusions are compared, since the intake's industry is free text). The rules come from the PEO's **Requirement profile** in use. It passes, fails, or can't be told yet: it can't be told until the PEO's own materials have been checked for that fact. A failed check is a warning, never a reason to hide or rule out a PEO. It is not an open item.
 _Avoid_: requirement, open item
+
+**Minimum participation**:
+The share of an employer's employees eligible for the health plan who must enrol for a PEO to take it on, as a percentage: 7 enrolling of 12 eligible is 58%. One of a PEO's eligibility rules. It is told only from how many employees are eligible and how many enrol, both given by the employer; until both are, the **Eligibility check** can't be told.
+_Avoid_: minimum enrolment, enrolment rate, take-up
+
+**Requirement profile**:
+What one PEO asks for, as dated, versioned data: the answers it needs to quote and those it needs only before signing, its **PEO census layout**, the documents it wants, its eligibility rules (each "can't tell yet" until sourced), up to 30 questions of its own, and the **PEO contacts** to deal with. Each eligibility rule and each of those other parts carries its own source, either a document (its title, with a link when there is one) or a named person at the PEO (name and role), and the date it was checked; prospects see such a person by their role alone, never their name. How current a profile is goes by its oldest check: one last checked more than 180 days ago is out of date, and is still used everywhere, with a warning giving that date. A version is a draft until an admin publishes it; publishing freezes it, dates included, and the newest published version is the one in use. A change or a re-check is a new version.
+_Avoid_: PEO requirements, PEO rules, appetite, catalog entry
+
+**Complete for a PEO**:
+A submission is complete for a PEO when its last certified version holds an answer for every **Field** that PEO's **Requirement profile** needs to quote, and none of those fields is an **Open item** (so a field marked **Unknown** is still needed, while one the prospect marked **Not applicable** counts as answered), every one of its **Extra questions** is answered as worded and isn't an open item, and every document the profile asks for is on file: part of that certification and through the virus check. What the PEO needs only before signing is listed apart and doesn't count. An **Eligibility check** that isn't met is a warning beside it and never changes it. It says only what is on file; whether an advisor may record a send is still the **Pipeline stage**'s rule.
+_Avoid_: ready for a PEO, ready to send, ready
+
+**PEO contact**:
+A person at a PEO that a **Requirement profile** version names: their name, role, work email and phone. Read by advisors only, never by prospects.
+_Avoid_: rep, PEO rep, underwriter (an underwriter is one kind of PEO contact)
 
 **Advisor follow-up**:
 A field an advisor has marked as needing more from the prospect. It belongs to the advisor's review, not to the prospect's open items. It reaches the prospect only through an information request, which starts out naming the fields marked this way.
 _Avoid_: open item, flag
 
 **Information request**:
-An advisor's message asking the prospect for more, naming the answers it is about (or none, for something no answer holds, such as a document). Sending one emails the prospect, shows it in The Chamber with "Your advisor asked about this" on each answer it names, has Lenore ask about those answers first, and moves the pipeline stage to information requested. Certifying again answers it, as does the advisor moving the stage on. The record of each is kept with the intake and never changed.
+An advisor's message asking the prospect for more, naming the answers it is about (or none, for something no answer holds, such as a document) and any PEO's **Extra questions** it asks, each by its PEO and wording. Sending one emails the prospect (the email names no PEO and no extra question), shows it in The Chamber with "Your advisor asked about this" on each answer and extra question it names (that PEO's questions are shown too), has Lenore ask about those answers first, and moves the pipeline stage to information requested. Certifying again answers it, as does the advisor moving the stage on. The record of each is kept with the intake and never changed.
 _Avoid_: follow-up, RFI, query
 
 **Quote request**:
@@ -329,6 +373,10 @@ _Avoid_: status, extraction status
 - Each **Certification** of new answers produces one **Advisor Alert** and one **Confirmation**; certifying the same answers again produces neither
 - Every **Submission** appears in the **Advisor Console**
 - A **Submission** has zero or more **Quote requests**, at most one per PEO; each **Quote request** records the version of the **Submission** last sent and holds at most one current **Quote**
+- A **PEO** has zero or more **Requirement profile** versions, at most one a draft; the newest published one is in use, and each version names zero or more **PEO contacts**
+- An **Eligibility check** compares an **Intake**'s answers with the rules of a **PEO**'s **Requirement profile** in use
+- A **Submission** is or isn't **Complete for a PEO** by its last certified version, against that PEO's **Requirement profile** in use
+- An **Intake** holds at most one answer per **Extra question** per PEO; a **Certification** keeps them with their wording, and each PEO's go only into its **Supplement**
 - A **Quote request** has one **Thread** and one reply address at a time; a message to an address that no longer belongs to a quote request goes to the **Holding list**
 - A **Submission** has at most one **Market authorization**, naming zero or more PEOs; a PEO it doesn't name, or no longer names, can't be sent to
 - A **Submission** that is won names the **Quote request** whose **Quote** the employer took; its other open **Quote requests** close, as all of them do when it is lost or archived

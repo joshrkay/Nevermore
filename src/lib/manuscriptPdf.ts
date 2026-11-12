@@ -1,6 +1,8 @@
 import jsPDF from "jspdf";
+import { FIT_WORDS, NOT_MET_NOTE } from "@/data/peoCatalog";
+import { checkedLine } from "@/data/peoProfiles";
 import { CONSENT_DRAFT_LABEL } from "@/data/certification";
-import { foldLatin, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
+import { CHECK_OUTCOME, foldLatin, manuscriptFilename, maskDob, NOT_PROVIDED, rowProvenance, type Manuscript, type ManuscriptRow } from "@/data/manuscript";
 
 export interface ManuscriptPdfOptions {
   /** Show dates of birth in full. Off unless an authorized workflow turns it on. */
@@ -42,6 +44,9 @@ const OK: RGB = [27, 115, 71];
 const HEAD_FILL: RGB = [255, 240, 229];
 const FLAG_FILL: RGB = [255, 243, 212]; // a census row with a note: pale amber, apart from the peach header fill
 const WATERMARK: RGB = [247, 228, 212]; // a faint warm tint on white
+
+/** The packet's print palette and page, for the other files made beside it (a PEO's supplement). */
+export const PACKET_STYLE = { INK, MUTED, RULE, ACCENT, WARN, PAGE_W, PAGE_H, MARGIN } as const;
 
 /** The packet's name in the running header of every page. */
 const RUNNING_TITLE = "Underwriting packet";
@@ -422,9 +427,13 @@ export function buildManuscriptPdf(m: Manuscript, opts: ManuscriptPdfOptions = {
   y += 2;
   subheading("Eligibility checks");
   m.checks.forEach((c) => {
-    const word = c.status === "pass" ? "Passes" : c.status === "fail" ? "Not met" : "Not yet verified";
-    paragraph(`•  ${c.label} — ${word}`, 9, "normal", c.status === "pass" ? OK : c.status === "fail" ? WARN : MUTED, 1);
+    // A check of the PEO's rules says its outcome as every eligibility check does, and when its rule was checked.
+    const word = c.ofPeoRule ? FIT_WORDS[CHECK_OUTCOME[c.status]] : c.status === "pass" ? "Passes" : c.status === "fail" ? "Not met" : "Not yet verified";
+    const dated = c.checkedOn ? ` · ${checkedLine(c.checkedOn, !!c.stale)}` : "";
+    paragraph(`•  ${c.label} — ${word}${dated}`, 9, "normal", c.status === "pass" ? OK : c.status === "fail" ? WARN : MUTED, 1);
   });
+  if (m.checks.some((c) => c.status === "fail")) paragraph(NOT_MET_NOTE, 9, "normal", WARN, 1);
+  if (m.checksNote) paragraph(m.checksNote, 9, "normal", WARN, 1);
   if (m.open.length > 0) {
     y += 2;
     subheading("Open items");

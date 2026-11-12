@@ -14,7 +14,7 @@ The codes are `AI_ERROR_CODES` in `supabase/functions/_shared/ai/errors.ts`. The
 
 | Code | HTTP | When | The prospect sees (`src/data/aiFailure.ts`) |
 | --- | --- | --- | --- |
-| `bad_request` | 400, or 413 for size | A missing or blank message, a message over 2,000 characters, a context that isn't an object, statuses for unknown fields or with unknown statuses, more than 10 recent messages or one from anyone but the prospect or Lenore or over 2,000 characters, context, statuses and recent messages over 20,000 characters together, an intake or document id that isn't one, a body that isn't JSON | "Lenore couldn't respond" |
+| `bad_request` | 400, or 413 for size | A missing or blank message, a message over 2,000 characters, a context that isn't an object, statuses for unknown fields or with unknown statuses, more than 10 recent messages or one from anyone but the prospect or Lenore or over 2,000 characters, context, statuses and recent messages over 20,000 characters together, `extra_questions` that isn't a list or lists more than 40 (one question in it the function can't ask is skipped and logged, never refused), an intake or document id that isn't one, a body that isn't JSON | "Lenore couldn't respond" |
 | `unauthorized` | 401 | No signed-in user (the publishable key alone isn't one) | — |
 | `not_found` | 404 | The intake or document isn't the caller's, or doesn't exist. An advisor can read every intake but can't run Lenore on someone else's | "Lenore couldn't respond" |
 | `rate_limited` | 429 | The caller's, their address's or the provider's rate limit | "You're writing faster than Lenore can keep up…" |
@@ -48,6 +48,7 @@ Both functions check, in order:
 | Per address (hashed, never stored raw) | 20 a minute, 400 a rolling day (`AI_IP_PER_MINUTE`, `AI_IP_PER_DAY`) | `consume_ip_quota` | `ai_abuse_limits.sql`, `budget.test.ts` |
 | Everyone | 2,000 a UTC day (`AI_GLOBAL_DAILY_CALLS`) | `consume_global_ai_budget` | `ai_abuse_limits.sql`, `allowance.test.ts` |
 | Chat message / context (answers, statuses and recent messages together) | 2,000 / 20,000 characters | `chamber-extract/handler.ts`, `_shared/chatContext.ts` | `chamber-extract/handler.test.ts`, `_shared/chatContext.test.ts` |
+| A PEO's extra questions in one chat call | 40 questions (more is a 400); 30,000 characters as the user turn carries them, those past it left out of that turn and logged, never refused. A question's text up to 500 characters and each choice up to 100, measured as the database measures (trimmed, in characters) | `chamber-extract/extraQuestions.ts`, `_shared/extraAnswerRules.ts`, `src/data/extraAnswers.ts` (`LENORE_MAX_EXTRA_QUESTIONS`, the unanswered ones first) | `chamber-extract/extraQuestions.test.ts`, `chamber-extract/handler.test.ts`, `src/data/extraAnswers.test.ts` |
 | Recent messages per call | 10, each at most 2,000 characters | `_shared/chatContext.ts` | `_shared/chatContext.test.ts` |
 | Provider timeout | 20 s a chat attempt, 30 s a document attempt | `_shared/ai/model.ts`, `document-extract/ask.ts` | `model.test.ts`, `handler.test.ts`, `ask.test.ts` |
 | Retry | One, after 1 s, on 429, 5xx or a network error; none on a timeout, 402, other 4xx or a bad answer | `_shared/ai/model.ts` | `model.test.ts` |
@@ -113,6 +114,8 @@ Every line has fixed fields, built from codes and ids, never from a message, a d
 | `AI_CALL_FAILED request= session= provider= kind= status= attempts= latency_ms=` | The model call failed after its retry |
 | `AI_NO_TOOL_CALL request= session= provider=` | The model answered without the tool call |
 | `EXTRACTION_REFUSED request= session= paths=` | The intake schema refused extracted values, by path |
+| `EXTRA_QUESTIONS_SKIPPED request= session= ids=` | Extra questions sent that the function couldn't ask (by id, or `#<position>` without a well-formed one), or that didn't fit in the turn's 30,000 characters. The call goes on with the rest |
+| `EXTRA_ANSWERS_REFUSED request= session= ids=` | Answers to extra questions the model gave that the question doesn't take (the wrong kind, a choice not offered, a question not sent), by id, never by value |
 | `DOCUMENT_READ_FAILED request= session= document= error=<class>` | A file reader threw. The class only: its message can quote the file |
 | `DOCUMENT_HASH_NOT_RECORDED request= document= code=` | The stored file's hash couldn't be saved |
 | `AI_UNEXPECTED_ERROR request= error=<class>` | Anything else |

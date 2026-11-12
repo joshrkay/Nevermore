@@ -13,7 +13,6 @@ import {
   type FieldKind,
   type FieldKey,
   type FieldProvenance,
-  type FieldSource,
   verificationSettles,
   visibleAlsoHeard,
 } from "@/data/provenance";
@@ -21,15 +20,7 @@ import { isRequiredField } from "@/data/readiness";
 import { searchNaics } from "../../../../supabase/functions/_shared/naics2022.ts";
 import { useVerifiedFields } from "./VerifiedFieldsContext";
 import { useRequestedFields } from "./RequestedFieldsContext";
-
-const BADGES: Record<FieldProvenance["status"], { text: string; color: string }> = {
-  confirmed: { text: "Confirmed", color: "bg-success/15 text-success" },
-  inferred: { text: "Lenore captured this — please confirm", color: "border border-warning/50 text-warning" },
-  incomplete: { text: "Incomplete", color: "bg-warning/15 text-warning" },
-  conflicting: { text: "Conflicting answers", color: "bg-destructive/15 text-destructive" },
-  unknown: { text: "Not known yet", color: "border border-warning/50 text-warning" },
-  not_applicable: { text: "Doesn't apply", color: "bg-muted text-muted-foreground" },
-};
+import { BADGES, sourceLine } from "./statusBadges";
 
 // An advisor verified an answer the prospect hadn't confirmed: it is settled, so no badge asks for a confirmation
 // and there are no rival answers to choose between (the Manuscript shows it the same way).
@@ -37,18 +28,6 @@ const VERIFIED_BADGE = { text: "Verified by your advisor", color: "bg-success/15
 
 // Statuses that close or park a field without an answer.
 const NO_ANSWER_STATUSES: ReadonlySet<FieldProvenance["status"]> = new Set(["unknown", "not_applicable"]);
-
-// Prospect-facing wording; the Manuscript uses describeSource() for advisors.
-function sourceLine(source: FieldSource): string {
-  switch (source.kind) {
-    case "transcript":
-      return source.quote ? `From your message: “${source.quote}”` : "From your conversation with Lenore";
-    case "document":
-      return `From ${source.document_name ?? "an uploaded document"}${source.location ? ` (${source.location})` : ""}`;
-    case "prospect_edit":
-      return "You confirmed this";
-  }
-}
 
 const toInput = (kind: FieldKind, raw: unknown): string => {
   if (raw === null || raw === undefined) return "";

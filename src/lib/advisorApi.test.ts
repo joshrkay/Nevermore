@@ -4,16 +4,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 const upload = vi.fn();
 const remove = vi.fn();
+const download = vi.fn();
+const buckets: string[] = [];
 const createSignedUrl = vi.fn();
 /** Rows each table returns to the detail page's queries, which are all select/eq/order chains. */
 const tables: Record<string, unknown[]> = {};
+/** Each `.in(column, values)` filter a query asked for, by table. */
+const inFilters: { table: string; column: string; values: unknown[] }[] = [];
 const query = (table: string) => {
-  const result = () => ({ data: tables[table] ?? [], error: null });
+  let rows = () => tables[table] ?? [];
+  const result = () => ({ data: rows(), error: null });
   const chain: Record<string, unknown> = {
     select: () => chain,
     eq: () => chain,
     is: () => chain,
-    in: () => chain,
+    in: (column: string, values: unknown[]) => {
+      inFilters.push({ table, column, values });
+      const before = rows;
+      rows = () => before().filter((r) => values.includes((r as Record<string, unknown>)[column]));
+      return chain;
+    },
     order: () => chain,
     limit: () => chain,
     maybeSingle: async () => ({ data: (tables[table] ?? [])[0] ?? null, error: null }),
@@ -25,7 +35,15 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: (table: string) => query(table),
     rpc: (...args: unknown[]) => rpc(...args),
-    storage: { from: (bucket: string) => ({ upload: (...a: unknown[]) => upload(...a), remove: (...a: unknown[]) => remove(...a), createSignedUrl: (...a: unknown[]) => createSignedUrl(bucket, ...a) }) },
+    storage: { from: (bucket: string) => {
+      buckets.push(bucket);
+      return {
+        upload: (...a: unknown[]) => upload(...a),
+        remove: (...a: unknown[]) => remove(...a),
+        download: (...a: unknown[]) => download(...a),
+        createSignedUrl: (...a: unknown[]) => createSignedUrl(bucket, ...a),
+      };
+    } },
   },
 }));
 
@@ -44,6 +62,13 @@ const {
   setStatus,
   recordQuoteSend,
   updateQuoteRequest,
+  fetchIsAdmin,
+  loadPeoDirectory,
+  loadVersionContacts,
+  publishPeoDraft,
+  savePeoDraft,
+  recheckPeoProfile,
+  documentFile,
   addQuoteRequestNote,
   correctQuoteRequestNote,
   reissueQuoteRequestAddress,
@@ -394,8 +419,56 @@ describe("loadSubmission", () => {
     }];
     const d = (await loadSubmission("s1"))!;
     expect(d.certified).toBe(false);
-    expect(d.signed).toEqual({ data: expect.objectContaining({ company_name: "Signed Co", employee_count: 12 }), signedAt: "2026-10-02T00:00:05Z" });
+    expect(d.signed).toEqual({ data: expect.objectContaining({ company_name: "Signed Co", employee_count: 12 }), signedAt: "2026-10-02T00:00:05Z", provenance: {}, documents: expect.any(Array), extraAnswers: null });
     expect(d.fileId).toBe("EAA-1");
+  });
+
+  it("keeps what a withdrawn certification covered: its field status and its documents, set against the documents now", async () => {
+    tables.chamber_sessions = [row({ status: "in_progress" })];
+    const inferred = { status: "inferred", source: { kind: "prospect_edit" }, updated_at: "2026-10-02T00:00:00Z" };
+    tables.chamber_certifications = [{
+      file_id: "EAA-1", version: 2, signed_at: "2026-10-02T00:00:00Z", recorded_at: "2026-10-02T00:00:05Z", chamber_data: certifiedData,
+      field_provenance: { employee_count: inferred }, documents: [doc("d1"), doc("d2")],
+    }];
+    const d = (await loadSubmission("s1"))!;
+    expect(d.signed?.provenance).toEqual({ employee_count: inferred });
+    expect(d.signed?.documents.map((x) => [x.id, x.certification])).toEqual([["d3", "added"], ["d2", "removed"], ["d1", "certified"]]);
+    expect(d.currentVersion).toBe(2);
+  });
+
+  it("reads the extra answers of the last certified version: the submission's while it stands, else the certification record's", async () => {
+    const drives = (value: boolean) => ({ "7": { vehicles: { question: "Do employees drive for work?", kind: "yes_no", value, status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-02T00:00:00Z" } } });
+    tables.chamber_sessions = [row({ extra_answers: drives(false), submission: { ...row().submission, extra_answers: drives(true) } })];
+    expect((await loadSubmission("s1"))!.extraAnswers).toEqual(drives(true));
+    tables.chamber_sessions = [row({ status: "in_progress", extra_answers: drives(false) })];
+    tables.chamber_certifications = [{ file_id: "EAA-1", version: 2, signed_at: "2026-10-02T00:00:00Z", recorded_at: "2026-10-02T00:00:05Z", chamber_data: certifiedData,
+      field_provenance: {}, documents: [], extra_answers: drives(true) }];
+    const withdrawn = (await loadSubmission("s1"))!;
+    expect(withdrawn.extraAnswers).toEqual(drives(false));
+    expect(withdrawn.signed?.extraAnswers).toEqual(drives(true));
+    // A certification from before extra answers were kept: what it held of them can't be told (null), never "none".
+    tables.chamber_certifications = [{ ...tables.chamber_certifications[0] as object, extra_answers: null }];
+    expect((await loadSubmission("s1"))!.signed?.extraAnswers).toBeNull();
+    tables.chamber_sessions = [row({ extra_answers: drives(false) })];
+    expect((await loadSubmission("s1"))!.extraAnswers).toBeNull();
+  });
+
+  it("says when the certification on record kept no field status or no document list, so nothing can be told from it", async () => {
+    const withdrawn = (over: object) => {
+      tables.chamber_sessions = [row({ status: "in_progress" })];
+      tables.chamber_certifications = [{ file_id: "EAA-1", version: 2, signed_at: "2026-10-02T00:00:00Z", recorded_at: "2026-10-02T00:00:05Z", chamber_data: certifiedData, ...over }];
+      return loadSubmission("s1").then((d) => d!.certificationLacksSnapshot);
+    };
+    expect(await withdrawn({ field_provenance: {}, documents: [] })).toBe(false);
+    expect(await withdrawn({ field_provenance: null, documents: [] })).toBe(true);
+    expect(await withdrawn({ field_provenance: {}, documents: null })).toBe(true);
+    // A certification that stands is read from the submission, which can be as old.
+    tables.chamber_sessions = [row()];
+    expect((await loadSubmission("s1"))!.certificationLacksSnapshot).toBe(false);
+    tables.chamber_sessions = [row({ submission: { ...row().submission, documents: undefined } })];
+    expect((await loadSubmission("s1"))!.certificationLacksSnapshot).toBe(true);
+    tables.chamber_sessions = [row({ submission: { ...row().submission, field_provenance: undefined } })];
+    expect((await loadSubmission("s1"))!.certificationLacksSnapshot).toBe(true);
   });
 
   it("shows nothing as signed for an intake that was never certified, whatever its submission says", async () => {
@@ -499,4 +572,112 @@ describe("quote requests", () => {
     expect(rpc).toHaveBeenLastCalledWith("advisor_list_submissions", expect.objectContaining({ p_waiting: null, p_sort: null }));
   });
 });
+});
+
+describe("the PEOs page's reads and writes", () => {
+  beforeEach(() => {
+    rpc.mockReset();
+    for (const t of Object.keys(tables)) delete tables[t];
+  });
+
+  it("learns whether the signed-in advisor is an admin from the database's own role check", async () => {
+    rpc.mockResolvedValue({ data: true, error: null });
+    expect(await fetchIsAdmin()).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("has_role", { _role: "admin" });
+    rpc.mockResolvedValue({ data: false, error: null });
+    expect(await fetchIsAdmin()).toBe(false);
+  });
+
+  it("reads each PEO with its versions, newest first, and each version's contacts", async () => {
+    tables.peos = [{ id: 1, name: "TriNet", listed: true }, { id: 2, name: "Justworks", listed: false }];
+    tables.peo_profile_versions = [
+      { id: 10, peo_id: 1, version: 1, status: "published", published_at: "2026-11-01T00:00:00Z", created_at: "2026-10-30T00:00:00Z", min_headcount: 5,
+        sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-10-30" } } },
+      { id: 11, peo_id: 1, version: 2, status: "draft", published_at: null, created_at: "2026-11-05T00:00:00Z", min_headcount: 10, sources: {} },
+    ];
+    tables.peo_contacts = [{ profile_version_id: 10, position: 1, name: "Dana Reyes", role: "Broker desk", email: null, phone: null }];
+    // Alphabetical, whatever order the rows come in.
+    const [justworks, trinet] = await loadPeoDirectory();
+    expect(trinet).toMatchObject({ id: 1, name: "TriNet", listed: true });
+    expect(trinet.versions.map((v) => [v.version, v.status, v.profile.rules.minHeadcount, v.profile.contacts.map((c) => c.name)])).toEqual([
+      [2, "draft", 10, []],
+      [1, "published", 5, ["Dana Reyes"]],
+    ]);
+    expect(justworks).toMatchObject({ id: 2, name: "Justworks", listed: false, versions: [] });
+  });
+
+  it("reads only the contacts of each PEO's version in use and its draft; an older version's on request, for its history", async () => {
+    inFilters.length = 0;
+    tables.peos = [{ id: 1, name: "TriNet", listed: true }];
+    const published = (id: number, version: number) => ({ id, peo_id: 1, version, status: "published", published_at: "2026-11-01T00:00:00Z", created_at: "2026-10-30T00:00:00Z", sources: {} });
+    tables.peo_profile_versions = [published(10, 1), published(11, 2), { id: 12, peo_id: 1, version: 3, status: "draft", revision: "r3", published_at: null, created_at: "2026-11-05T00:00:00Z", sources: {} }];
+    tables.peo_contacts = [10, 11, 12].map((id) => ({ profile_version_id: id, position: 1, name: `Contact of ${id}`, role: null, email: null, phone: null }));
+    const [trinet] = await loadPeoDirectory();
+    expect(inFilters).toEqual([{ table: "peo_contacts", column: "profile_version_id", values: [12, 11] }]);
+    expect(trinet.versions.map((v) => [v.version, v.revision, v.profile.contacts.map((c) => c.name)])).toEqual([
+      [3, "r3", ["Contact of 12"]], [2, null, ["Contact of 11"]], [1, null, []],
+    ]);
+    const history = await loadVersionContacts([11, 10]);
+    expect(history.get(10)).toEqual([{ name: "Contact of 10", role: null, email: null, phone: null }]);
+    expect(history.get(11)).toEqual([{ name: "Contact of 11", role: null, email: null, phone: null }]);
+  });
+
+  it("asks for contacts a bounded number of versions at a time", async () => {
+    inFilters.length = 0;
+    tables.peo_contacts = [];
+    await loadVersionContacts(Array.from({ length: 45 }, (_, i) => i + 1));
+    expect(inFilters.map((f) => f.values.length)).toEqual([40, 5]);
+    inFilters.length = 0;
+    expect(await loadVersionContacts([])).toEqual(new Map());
+    expect(inFilters).toEqual([]);
+  });
+
+  it("saves the whole draft, and records a re-check with the new sources, as the database takes them", async () => {
+    rpc.mockResolvedValue({ data: {}, error: null });
+    await savePeoDraft(1, { neededToQuote: [], neededBeforeSigning: [], censusLayout: null, documents: [], extraQuestions: [], contacts: [],
+      rules: { minHeadcount: 5, statesServed: null, excludedIndustries: null, excludedClassCodes: null, minEnrolmentPercent: null },
+      sources: { min_headcount: { kind: "document", name: "Guide", checkedOn: "2026-11-01" } } }, { draftRevision: "r3", inUseVersion: 2 });
+    expect(rpc).toHaveBeenCalledWith("admin_save_peo_profile", { p_peo_id: 1, p_draft_revision: "r3", p_in_use_version: 2, p_profile: expect.objectContaining({
+      min_headcount: 5, sources: { min_headcount: { kind: "document", name: "Guide", checked_on: "2026-11-01" } } }) });
+    await publishPeoDraft(1, "r3");
+    expect(rpc).toHaveBeenLastCalledWith("admin_publish_peo_profile", { p_peo_id: 1, p_draft_revision: "r3" });
+    await recheckPeoProfile(1, ["min_headcount", "answers"], { kind: "person", name: "Dana Reyes", role: "Broker desk", checkedOn: "2026-11-10" });
+    const source = { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-10" };
+    expect(rpc).toHaveBeenLastCalledWith("admin_recheck_peo_profile", { p_peo_id: 1, p_sources: { min_headcount: source, answers: source } });
+  });
+
+  it("shows the database's own words when it refuses a save", async () => {
+    failWith({ message: "A census file is CSV or xlsx", code: "22023" });
+    const err = await caught(() => savePeoDraft(1, { neededToQuote: [], neededBeforeSigning: [], censusLayout: null, documents: [], extraQuestions: [], contacts: [],
+      rules: { minHeadcount: null, statesServed: null, excludedIndustries: null, excludedClassCodes: null, minEnrolmentPercent: null }, sources: {} }, { draftRevision: null, inUseVersion: null }));
+    expect(err.message).toBe("A census file is CSV or xlsx");
+  });
+});
+
+describe("documentFile: an uploaded document's file, for a bundle", () => {
+  beforeEach(() => {
+    download.mockReset();
+    buckets.length = 0;
+  });
+
+  it("reads the file from the documents bucket by its path, on the caller's own storage rights", async () => {
+    const file = new Blob(["%PDF"]);
+    download.mockResolvedValue({ data: file, error: null });
+    expect(await documentFile({ storage_path: "u1/loss-runs.pdf" })).toBe(file);
+    expect(buckets).toEqual(["documents"]);
+    expect(download).toHaveBeenCalledWith("u1/loss-runs.pdf");
+  });
+
+  it("fails with a fixed message, never the path, when storage refuses it (a blocked or unscanned file)", async () => {
+    download.mockResolvedValue({ data: null, error: { message: "Object not found: u1/loss-runs.pdf" } });
+    const err = await caught(() => documentFile({ storage_path: "u1/loss-runs.pdf" }));
+    expect(err.message).toBe("Couldn't open that file.");
+  });
+
+  it("says the session ended, for a lapsed token, so the page can send the advisor to sign in", async () => {
+    download.mockResolvedValue({ data: null, error: { message: "jwt expired" } });
+    const err = await caught(() => documentFile({ storage_path: "u1/loss-runs.pdf" }));
+    expect(err.message).toBe("Your session has expired. Sign in again to continue.");
+    expect(err.unauthenticated).toBe(true);
+  });
 });

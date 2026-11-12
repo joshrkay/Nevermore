@@ -56,9 +56,26 @@ describe("useLenoreChat", () => {
     expect(invoke.mock.calls[0][1].body.message).toBe("My SSN is [redacted]");
   });
 
+  it("sends the PEOs' extra questions as they stand when the message is sent, and none when there are none", async () => {
+    invoke.mockResolvedValue({ data: { extracted: {}, reply: "ok" }, error: null });
+    const question = { id: "5.vehicles", peo: "TriNet", text: "Do employees drive for work?", kind: "yes_no" as const, answered: false };
+    let current = [question];
+    const hook = renderHook(() =>
+      useLenoreChat({
+        chamberData: EMPTY_CHAMBER_DATA, provenance: {}, extraQuestions: () => current,
+        addUserMessage: (text) => ({ id: "m1", text }), addLenoreMessage: vi.fn(), onOrbStateChange: vi.fn(), onExtracted: vi.fn(),
+      }),
+    );
+    await act(async () => { await hook.result.current.send("hello"); });
+    expect(invoke.mock.calls[0][1].body.extra_questions).toEqual([question]);
+    current = [];
+    await act(async () => { await hook.result.current.send("again"); });
+    expect(invoke.mock.calls[1][1].body).not.toHaveProperty("extra_questions");
+  });
+
   it("sends the fields an advisor asked about that the prospect hasn't answered since, and none without a request", async () => {
     invoke.mockResolvedValue({ data: { extracted: {}, reply: "ok" }, error: null });
-    const request = { message: "Please confirm", fields: ["pay_frequency", "hq_state"] as const, requestedAt: "2026-11-05T12:00:00Z" };
+    const request = { message: "Please confirm", fields: ["pay_frequency", "hq_state"] as const, requestedAt: "2026-11-05T12:00:00Z", extraQuestions: [] };
     const provenance = {
       // Answered after the request: dropped. Last touched before it: still asked.
       pay_frequency: { status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "2026-11-05T13:00:00Z" },

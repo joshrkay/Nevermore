@@ -1,10 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import type { Manuscript } from "@/data/manuscript";
+import type { Supplement } from "@/data/peoSupplement";
+import { workersCompFilename, type WorkersCompApplication } from "@/data/workersCompApplication";
 import type { SubmissionDetail } from "@/lib/advisorApi";
 import { toast } from "sonner";
+import { blobBytes, blobText } from "@/test/blob";
+import { unzip } from "@/test/zip";
 
 const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "adv@example.com" }, signOut }) }));
@@ -23,6 +27,7 @@ const api = {
   documentUrl: vi.fn(),
   recordQuoteSend: vi.fn(),
   updateQuoteRequest: vi.fn(),
+  documentFile: vi.fn(),
   addQuoteRequestNote: vi.fn(),
   openQuoteRequestThread: vi.fn(),
   mailAttachmentUrl: vi.fn(),
@@ -30,10 +35,34 @@ const api = {
   reissueQuoteRequestAddress: vi.fn(),
 };
 vi.mock("@/lib/advisorApi", () => api);
+// The intake as the database holds it at a download's click: what the page loaded, unless a test changes it since.
+let intakeNow: { status: string; data_sha256: string | null; version: string | null } | null = null;
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: {
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => {
+      const loaded = (await api.loadSubmission.mock.results.at(-1)?.value) as SubmissionDetail;
+      const v = loaded.submission?.version;
+      return { data: intakeNow ?? { status: loaded.intakeStatus, data_sha256: loaded.submission?.data_sha256 ?? null, version: v === undefined ? null : String(v) }, error: null };
+    } }) }) }),
+  },
+}));
 const downloadBlob = vi.fn();
 vi.mock("@/lib/downloadFile", () => ({ downloadBlob: (...a: unknown[]) => downloadBlob(...a) }));
 const buildManuscriptPdf = vi.fn((m: Manuscript, _opts?: unknown) => ({ blob: new Blob(["%PDF"]), filename: `${m.fileId}.pdf`, pageCount: 1 }));
 vi.mock("@/lib/manuscriptPdf", () => ({ buildManuscriptPdf: (m: Manuscript, o: unknown) => buildManuscriptPdf(m, o) }));
+const buildSupplementPdf = vi.fn((s: Supplement) => ({ blob: new Blob(["%PDF"]), filename: `${s.fileId}-${s.peo}.pdf`, pageCount: 1 }));
+vi.mock("@/lib/supplementPdf", () => ({ buildSupplementPdf: (s: Supplement) => buildSupplementPdf(s) }));
+const buildWorkersCompPdf = vi.fn((a: WorkersCompApplication) => ({ blob: new Blob(["%PDF"]), filename: workersCompFilename(a), pageCount: 1 }));
+vi.mock("@/lib/workersCompPdf", () => ({ buildWorkersCompPdf: (a: WorkersCompApplication) => buildWorkersCompPdf(a) }));
+
+// The PEOs the database lists (public.peo_catalog()), as src/lib/peoCatalog.ts reads them.
+let peoCatalogRows: unknown = [];
+// Set to make the next reads hang or fail; each read takes the next one, then the rows above are read.
+const peoCatalogReads: (() => Promise<unknown>)[] = [];
+vi.mock("@/lib/peoCatalog", async () => {
+  const { parsePeoCatalog } = await import("@/data/peoProfiles");
+  return { readPeoCatalog: async () => parsePeoCatalog(await (peoCatalogReads.shift()?.() ?? peoCatalogRows)) };
+});
 
 const { default: AdvisorSubmissionPage } = await import("./AdvisorSubmissionPage");
 
@@ -99,6 +128,8 @@ const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   quoteRequestMailAttachments: [],
   quoteRequestThreadReads: [],
   currentVersion: 1,
+  certificationLacksSnapshot: false,
+  extraAnswers: {},
   wonQuoteRequestId: null,
   ...over,
 });
@@ -113,13 +144,19 @@ const renderPage = () =>
   );
 
 describe("AdvisorSubmissionPage", () => {
+  // A test that fakes the clock gets the real one back even when it fails.
+  afterEach(() => vi.useRealTimers());
+
   beforeEach(() => {
+    peoCatalogRows = [];
+    peoCatalogReads.length = 0;
     for (const fn of Object.values(api)) fn.mockReset();
     vi.mocked(toast.error).mockReset();
     downloadBlob.mockReset();
     buildManuscriptPdf.mockClear();
     api.loadSubmission.mockResolvedValue(detail());
     api.listEmailProblems.mockResolvedValue([]);
+    intakeNow = null;
   });
 
   it("shows every captured field with its source, the transcript and the documents", async () => {
@@ -233,7 +270,7 @@ describe("AdvisorSubmissionPage", () => {
     api.loadSubmission.mockResolvedValue(detail({
       reviews: { pay_frequency: review("pay_frequency", "follow_up"), census: review("census", "follow_up"), company_name: review("company_name", "verified") } as SubmissionDetail["reviews"],
       informationRequests: [
-        { id: 1, session_id: "s1", message: "Is the HQ still in New York?", fields: ["hq_state"], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-10-03T09:00:00Z" },
+        { id: 1, session_id: "s1", message: "Is the HQ still in New York?", fields: ["hq_state"], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-10-03T09:00:00Z" },
       ],
     }));
     renderPage();
@@ -251,7 +288,7 @@ describe("AdvisorSubmissionPage", () => {
     fireEvent.change(within(panel).getByLabelText("What do you need from them?"), { target: { value: "Which payroll vendor, and how often do you pay?" } });
     api.requestInformation.mockResolvedValue(undefined);
     fireEvent.click(send);
-    await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", "Which payroll vendor, and how often do you pay?", ["pay_frequency", "payroll_vendor"]));
+    await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", "Which payroll vendor, and how often do you pay?", ["pay_frequency", "payroll_vendor"], []));
     await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
   });
 
@@ -658,6 +695,69 @@ describe("AdvisorSubmissionPage", () => {
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "Nevermore_Packet_EAA-2026-S1_Signed_Co_20261001_advisor-v2.pdf"));
   });
 
+  it("generates the packet with its eligibility checks against the chosen PEO's profile in the database", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 20, states_served: null, excluded_class_codes: null,
+      sources: { min_headcount: { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-02" } } } }];
+    api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "sent_to_carrier", submission: { ...detail().submission!, peo: "Justworks" } }));
+    api.saveManuscriptVersion.mockResolvedValue({});
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    // Once the PEOs have been read.
+    await screen.findByRole("option", { name: "Justworks" });
+    fireEvent.click(screen.getByRole("button", { name: /Generate packet/ }));
+    await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
+    const [manuscript] = buildManuscriptPdf.mock.calls[0] as unknown as [Manuscript];
+    expect(manuscript.checks[0]).toEqual({ label: "Minimum headcount: Justworks takes groups of 20 or more employees; this employer has 12.", status: "fail", ofPeoRule: true, checkedOn: "2026-11-02", stale: false });
+  });
+
+  it("notes in the packet that the chosen PEO's profile is out of date as of the day it is generated", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 11, 12));
+    peoCatalogRows = [{ id: 3, name: "Justworks", profile: { version: 1, min_headcount: 20,
+      sources: { min_headcount: { kind: "document", name: "Broker guide", checked_on: "2026-05-01" } } } }];
+    // Fresh when it was certified (1 Oct), stale by the day the packet is generated.
+    api.loadSubmission.mockResolvedValue(detail({ submission: { ...detail().submission!, peo: "Justworks" } }));
+    api.saveManuscriptVersion.mockResolvedValue({});
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Generate packet/ })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /Generate packet/ }));
+    await waitFor(() => expect(buildManuscriptPdf).toHaveBeenCalled());
+    const [manuscript] = buildManuscriptPdf.mock.calls[0] as unknown as [Manuscript];
+    expect(manuscript.checksNote).toBe("Justworks's profile was last checked 1 May 2026 and may be out of date.");
+  });
+
+  it("won't generate a packet while the PEOs are loading: its eligibility checks would all read can't tell", async () => {
+    peoCatalogReads.push(() => new Promise(() => {}));
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    const generate = screen.getByRole("button", { name: /Generate packet/ });
+    expect(generate).toBeDisabled();
+    expect(screen.getByText("Loading the PEOs' profiles. You can generate the packet once they're in.")).toBeInTheDocument();
+    fireEvent.click(generate);
+    expect(api.saveManuscriptVersion).not.toHaveBeenCalled();
+  });
+
+  it("says when the PEOs couldn't be read, won't generate until they are, and reads them again on request", async () => {
+    peoCatalogReads.push(() => Promise.reject(new Error("network down")));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    api.saveManuscriptVersion.mockResolvedValue({});
+    renderPage();
+    await screen.findByRole("heading", { name: "Signed Co" });
+    const panel = screen.getByRole("region", { name: "Advisor packet" });
+    expect(await within(panel).findByRole("alert")).toHaveTextContent(
+      "We couldn't load the PEOs' profiles, so the packet's eligibility checks can't be run. Try again before generating.",
+    );
+    expect(within(panel).getByRole("button", { name: /Generate packet/ })).toBeDisabled();
+    fireEvent.click(within(panel).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(within(panel).getByRole("button", { name: /Generate packet/ })).toBeEnabled());
+    expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: /Generate packet/ }));
+    await waitFor(() => expect(api.saveManuscriptVersion).toHaveBeenCalled());
+  });
+
   it("reloads, and keeps no file, when the prospect certified again while the packet was being generated", async () => {
     renderPage();
     await screen.findByRole("heading", { name: "Signed Co" });
@@ -744,7 +844,7 @@ describe("AdvisorSubmissionPage", () => {
   it("shows what the prospect signed beside their current answers when they changed them afterwards", async () => {
     const current = { ...signedData, employee_count: 14, pay_frequency: "Weekly" };
     api.loadSubmission.mockResolvedValue(
-      detail({ certified: false, intakeStatus: "in_progress", data: current, signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z" } }),
+      detail({ certified: false, intakeStatus: "in_progress", data: current, signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: {} } }),
     );
     renderPage();
     const section = (await screen.findByRole("heading", { name: "Changed since signing" })).closest("section")!;
@@ -753,6 +853,16 @@ describe("AdvisorSubmissionPage", () => {
     expect(rows.find((r) => r?.includes("Bi-weekly"))).toContain("Weekly");
     expect(rows.find((r) => r?.includes("12"))).toContain("14");
     expect(screen.getByText(/what changed is listed below/)).toBeInTheDocument();
+  });
+
+  it("says when it was an answer to a PEO's own questions that changed, without showing it there", async () => {
+    const drives = (value: boolean) => ({ "5": { vehicles: { question: "Do employees drive for work?", kind: "yes_no" as const, value, status: "confirmed" as const, source: { kind: "prospect_edit" as const }, updated_at: "2026-10-02T00:00:00Z" } } });
+    api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", data: signedData, extraAnswers: drives(false),
+      signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: drives(true) } }));
+    renderPage();
+    const section = (await screen.findByRole("heading", { name: "Changed since signing" })).closest("section")!;
+    expect(section).toHaveTextContent("An answer to a PEO's own questions changed since signing. Each PEO's supplement keeps the certified answers.");
+    expect(section).not.toHaveTextContent("No answer differs from the signed copy.");
   });
 
   it("has no signed-copy section while the certification holds", async () => {
@@ -835,6 +945,28 @@ describe("AdvisorSubmissionPage", () => {
     expect(within(panel).getByText("Sent v1, current v2")).toBeInTheDocument();
   });
 
+  it("checks each PEO against the profile in use the database holds for it, and offers the PEOs it lists", async () => {
+    peoCatalogRows = [
+      { id: 2, name: "Insperity", profile: null },
+      { id: 4, name: "Rippling", listed: false, profile: null },
+      { id: 5, name: "TriNet", profile: { version: 3, min_headcount: 20, states_served: null, excluded_class_codes: null, sources: { min_headcount: { kind: "person", name: "Dana Reyes", role: "Broker desk", checked_on: "2026-11-02" } } } },
+    ];
+    api.loadSubmission.mockResolvedValue(detail({
+      pipelineStatus: "sent_to_carrier",
+      data: { ...signedData, census: [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary", employment_type: "full_time", classification: "w2" }] },
+      quoteRequests: [{ id: 7, session_id: "s1", peo_name: "TriNet", status: "sent", sent_version: 1, sent_on: "2026-11-10",
+        quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
+    }));
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote requests" });
+    expect(await within(within(panel).getByTestId("quote-request-7")).findByText("TriNet takes groups of 20 or more employees; this employer has 12.", { exact: false })).toBeInTheDocument();
+    expect(within(panel).getByTestId("quote-request-7")).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
+    expect(within(within(panel).getByLabelText("PEO")).getAllByRole("option").map((o) => o.textContent).slice(1)).toEqual(["Insperity", "TriNet"]);
+    // The census beside the table is in our own layout; each PEO's is on its card in What each PEO still needs.
+    const census = screen.getByRole("region", { name: "Employee census" });
+    expect(within(census).getByText("Our layout, every column named, as a CSV file. From certified version 1.")).toBeInTheDocument();
+  });
+
   it("offers the certified census as a file in a PEO's layout, only while the intake is certified", async () => {
     const census = [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
     api.loadSubmission.mockResolvedValue(detail({ data: { ...signedData, census } }));
@@ -847,6 +979,40 @@ describe("AdvisorSubmissionPage", () => {
     renderPage();
     const draft = await screen.findByRole("region", { name: "Employee census" });
     expect(within(draft).queryByRole("button", { name: "Download the census" })).not.toBeInTheDocument();
+  });
+
+  it("offers the certified answers as JSON beside the packet, without a PEO's own answers or the advisor's reviews and notes", async () => {
+    api.loadSubmission.mockResolvedValue(detail({
+      submission: { ...detail().submission!, version: 1, data_version: 9, consent_version: "2026-04-01", extra_answers: { "3": { vehicles: { question: "Do employees drive for work?" } } } } as SubmissionDetail["submission"],
+      extraAnswers: { "3": { vehicles: { question: "Do employees drive for work?", kind: "yes_no", value: true, status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-01T00:00:00Z" } } },
+      notes: [{ id: 1, session_id: "s1", body: "Call the CFO on Monday", author_id: "a1", author_email: "adv@example.com", created_at: "2026-10-02T00:00:00Z" }] as unknown as SubmissionDetail["notes"],
+      reviews: { employee_count: { review_state: "verified", has_correction: true, advisor_value: 14, reason: "Payroll register says 14" } } as unknown as SubmissionDetail["reviews"],
+    }));
+    renderPage();
+    const packet = await screen.findByRole("region", { name: "Advisor packet" });
+    expect(within(packet).getByText(/From certified version 1\./)).toBeInTheDocument();
+    fireEvent.click(within(packet).getByRole("button", { name: "Download the answers as JSON" }));
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-answers-v1.json"));
+    const blob = downloadBlob.mock.calls.find((c) => c[1] === "EAA-2026-S1-answers-v1.json")![0] as Blob;
+    const json = await blobText(blob);
+    const doc = JSON.parse(json);
+    // The prospect's answer and its status as certified: the advisor's correction and verification are not in it.
+    expect(doc.answers.employee_count).toBe(12);
+    expect(doc.answer_status.employee_count).toBe("inferred");
+    expect(doc.certification).toEqual({
+      signer_name: "Jo Doe", signer_title: "CEO", signed_at: "2026-10-01T12:00:00Z", certified_at: "2026-10-01T12:00:05Z",
+      statement_version: "2026-04-01", data_version: 9, stored_data_sha256: "c".repeat(64),
+    });
+    expect(json).not.toMatch(/vehicles|drive for work|Call the CFO|Payroll register|advisor_value|verified/);
+    expect(doc.answers.employee_count).not.toBe(14);
+  });
+
+  it("offers no answers as JSON while the certification is withdrawn, saying why as the packet does", async () => {
+    api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", signed: { data: signedData, signedAt: "2026-10-01T12:00:00Z", provenance: {}, documents: [], extraAnswers: null } }));
+    renderPage();
+    const packet = await screen.findByRole("region", { name: "Advisor packet" });
+    expect(within(packet).getByText("The prospect changed their answers after certifying. A packet can be generated once they certify again.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download the answers as JSON" })).not.toBeInTheDocument();
   });
 
   it("shows each PEO's thread and marks it read when opened, then reloads so the rest of the page drops the mark", async () => {
@@ -887,5 +1053,542 @@ describe("AdvisorSubmissionPage", () => {
     expect(message.value).toBe("Can they send last year's loss runs?");
     expect(message.value).not.toMatch(/TriNet/);
     expect(api.requestInformation).not.toHaveBeenCalled();
+    // Once sent, the question is spent: the next request starts empty.
+    api.requestInformation.mockResolvedValue(undefined);
+    api.loadSubmission.mockResolvedValue({ ...(await api.loadSubmission.mock.results[0].value), informationRequests: [
+      { id: 1, session_id: "s1", message: "Can they send last year's loss runs?", fields: [], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-12T16:00:00Z" },
+    ] });
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByLabelText(/What do you need from them/i)).toHaveValue(""));
+  });
+
+  describe("What each PEO still needs", () => {
+    const sourced = { kind: "document", name: "Broker guide", checked_on: "2026-11-02" };
+    const catalog = () => [
+      { id: 1, name: "ADP TotalSource", listed: false, profile: { version: 1, needed_to_quote: ["hris_system"], sources: { answers: sourced } } },
+      { id: 2, name: "Insperity", profile: null },
+      { id: 3, name: "Justworks", profile: { version: 2, needed_to_quote: ["company_name", "pay_frequency"], sources: { answers: sourced } } },
+      { id: 4, name: "Oasis", profile: null },
+      { id: 5, name: "TriNet", profile: {
+        version: 4, needed_to_quote: ["company_name", "hris_system"], needed_before_signing: ["payroll_vendor"],
+        documents: [{ category: "workers_comp_loss_runs", description: "Three years of loss runs" }],
+        min_headcount: 20, sources: { answers: sourced, documents: sourced, min_headcount: sourced },
+      } },
+    ];
+    const panel = async () => screen.findByRole("region", { name: "What each PEO still needs" });
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(2026, 10, 11, 12));
+      peoCatalogRows = catalog();
+    });
+
+    it("gives no file from a page left open across a withdrawal: the JSON, the census and each PEO's files check at the click", async () => {
+      const census = [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
+      api.loadSubmission.mockResolvedValue(detail({ data: { ...signedData, census } }));
+      renderPage();
+      const packet = await screen.findByRole("region", { name: "Advisor packet" });
+      const trinet = (await within(await screen.findByRole("region", { name: "What each PEO still needs" })).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      // The prospect changed an answer since the page loaded: the database withdrew the certification.
+      intakeNow = { status: "in_progress", data_sha256: "c".repeat(64), version: null };
+      const refused = "This intake changed since you opened the page. Reload to get the certified version.";
+      const clicks = [
+        within(packet).getByRole("button", { name: "Download the answers as JSON" }),
+        within(screen.getByRole("region", { name: "Employee census" })).getByRole("button", { name: "Download the census" }),
+        within(trinet).getByRole("button", { name: "Download the census" }),
+        within(trinet).getByRole("button", { name: "Download Workers' compensation application data" }),
+      ];
+      for (const [n, button] of clicks.entries()) {
+        fireEvent.click(button);
+        await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(n + 1));
+      }
+      expect(vi.mocked(toast.error).mock.calls.map((c) => c[0])).toEqual([refused, refused, refused, refused]);
+      expect(downloadBlob).not.toHaveBeenCalled();
+      expect(buildWorkersCompPdf).not.toHaveBeenCalled();
+    });
+
+    it("groups every listed PEO with a profile by whether the certified version is complete for it, alphabetical and never ranked", async () => {
+      renderPage();
+      const needs = await panel();
+      await within(needs).findByRole("heading", { name: "Complete · 1" });
+      expect(within(needs).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Complete · 1", "Something missing · 1", "No profile yet · 2"]);
+      expect(needs).toHaveTextContent("Alphabetical in each group. Nothing here is a ranking.");
+      expect(needs).toHaveTextContent("From version 1, the prospect's last certification.");
+      const complete = within(needs).getByRole("list", { name: "Complete" });
+      expect(within(complete).getAllByRole("heading", { level: 4 }).map((h) => h.textContent)).toEqual(["Justworks"]);
+      expect(complete).toHaveTextContent("Everything it needs to quote is on file");
+      const missing = within(needs).getByRole("list", { name: "Something missing" });
+      expect(within(missing).getAllByRole("heading", { level: 4 }).map((h) => h.textContent)).toEqual(["TriNet"]);
+      expect(missing).toHaveTextContent("1 answer and 1 document missing · 1 answer needed only before signing");
+      // PEOs with no profile are one sentence, and a PEO no longer listed isn't there at all.
+      expect(needs).toHaveTextContent("No profile yet for Insperity and Oasis, so there's nothing to check against.");
+      expect(needs).not.toHaveTextContent("ADP TotalSource");
+      expect(needs).not.toHaveTextContent(/ready|best|rank(ed|ing) \d/i);
+    });
+
+    it("counts a PEO's own extra questions the certified version doesn't answer against it, by their wording", async () => {
+      const drives = { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" };
+      peoCatalogRows = catalog().map((p) => (p.name === "Justworks" ? { ...p, profile: { ...p.profile!, extra_questions: [drives, { key: "fleet", text: "How many vans?", kind: "number" }] } } : p));
+      api.loadSubmission.mockResolvedValue(detail({ extraAnswers: { "3": { vehicles: { question: drives.text, kind: "yes_no", value: true, status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-01T00:00:00Z" } } } }));
+      renderPage();
+      const needs = await panel();
+      const missing = await within(needs).findByRole("list", { name: "Something missing" });
+      const justworks = within(missing).getByRole("heading", { name: "Justworks" }).closest("article")!;
+      expect(justworks).toHaveTextContent("1 of its own questions missing");
+      fireEvent.click(within(justworks).getByRole("button", { name: "Show what's missing" }));
+      expect(within(within(justworks).getByRole("region", { name: "Needed to quote" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["How many vans?: not answered"]);
+    });
+
+    it("offers each PEO's own questions as its supplement, from the certified version, saying what it leaves unanswered", async () => {
+      const drives = { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" };
+      peoCatalogRows = catalog().map((p) => (p.name === "TriNet" ? { ...p, profile: { ...p.profile!, extra_questions: [drives, { key: "fleet", text: "How many vans?", kind: "number" }] } } : p));
+      api.loadSubmission.mockResolvedValue(detail({
+        extraAnswers: { "5": { vehicles: { question: drives.text, kind: "yes_no", value: true, status: "confirmed", source: { kind: "prospect_edit" }, updated_at: "2026-10-01T00:00:00Z" } } },
+      }));
+      renderPage();
+      const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      expect(trinet).toHaveTextContent("From certified version 1, for TriNet only. 1 of 2 answered.");
+      expect(trinet).toHaveTextContent("Listed as not answered: How many vans?");
+      fireEvent.click(within(trinet).getByRole("button", { name: "Download Additional questions from TriNet" }));
+      await waitFor(() => expect(buildSupplementPdf).toHaveBeenCalledWith(expect.objectContaining({ peo: "TriNet", fileId: "EAA-2026-S1", version: 1, rows: [
+        { question: "Do employees drive for work?", answer: "Yes" }, { question: "How many vans?", answer: null },
+      ] })));
+      expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-TriNet.pdf");
+      // A PEO that asks no questions of its own has no supplement.
+      const justworks = within(await panel()).getByRole("heading", { name: "Justworks" }).closest("article")!;
+      expect(within(justworks).queryByRole("button", { name: /Additional questions/ })).not.toBeInTheDocument();
+    });
+
+    it("can't tell a PEO's own questions from a version certified before they were kept, in the list and the supplement", async () => {
+      const drives = { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" };
+      peoCatalogRows = catalog().map((p) => (p.name === "TriNet" ? { ...p, profile: { ...p.profile!, extra_questions: [drives] } } : p));
+      api.loadSubmission.mockResolvedValue(detail({ extraAnswers: null }));
+      renderPage();
+      const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Show what's missing" }));
+      expect(within(trinet).getByRole("region", { name: "Needed to quote" })).toHaveTextContent("Do employees drive for work?: can't tell: certified before these questions were kept");
+      expect(trinet).toHaveTextContent("Version 1 was certified before we kept the answers to TriNet's own questions, so we can't tell them from it.");
+      expect(within(trinet).queryByRole("button", { name: /Additional questions/ })).not.toBeInTheDocument();
+    });
+
+    it("opens what a PEO still needs in place: what it needs to quote, and apart what it needs only before signing", async () => {
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      const show = within(trinet).getByRole("button", { name: "Show what's missing" });
+      expect(show).toHaveAttribute("aria-expanded", "false");
+      expect(within(trinet).queryByRole("region", { name: "Needed to quote" })).not.toBeInTheDocument();
+      fireEvent.click(show);
+      expect(within(trinet).getByRole("button", { name: "Hide what's missing" })).toHaveAttribute("aria-expanded", "true");
+      expect(within(within(trinet).getByRole("region", { name: "Needed to quote" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+        "HRIS system: not provided",
+        "Workers' comp loss runs: Three years of loss runs (not uploaded)",
+      ]);
+      expect(within(within(trinet).getByRole("region", { name: "Needed only before signing" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+        "Payroll vendor: not provided",
+      ]);
+    });
+
+    it("marks the prospect's choice and each PEO the packet was sent to, with when and which version", async () => {
+      api.loadSubmission.mockResolvedValue(detail({
+        submission: { ...detail().submission!, peo: "trinet" },
+        // Named as typed when the send was recorded.
+        quoteRequests: [{ id: 7, session_id: "s1", peo_name: "justworks", status: "sent", sent_version: 1, sent_on: "2026-11-03",
+          quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null }],
+      }));
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      const justworks = within(needs).getByRole("heading", { name: "Justworks" }).closest("article")!;
+      expect(within(trinet).getByText("Prospect's choice")).toBeInTheDocument();
+      expect(within(trinet).queryByText(/^Sent /)).not.toBeInTheDocument();
+      expect(within(justworks).getByText("Sent Nov 3, 2026 · version 1")).toBeInTheDocument();
+      expect(within(justworks).queryByText("Prospect's choice")).not.toBeInTheDocument();
+    });
+
+    it("names the prospect's choice among the PEOs with no profile", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ submission: { ...detail().submission!, peo: "Oasis" } }));
+      renderPage();
+      const needs = await panel();
+      await within(needs).findByRole("heading", { name: "Complete · 1" });
+      expect(needs).toHaveTextContent("No profile yet for Insperity and Oasis (the prospect's choice), so there's nothing to check against.");
+      expect(needs).not.toHaveTextContent("isn't on the PEO list");
+    });
+
+    it("says a PEO named in the prospect's own words isn't on the list", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ submission: { ...detail().submission!, peo: "Acme PEO" } }));
+      renderPage();
+      const needs = await panel();
+      await within(needs).findByRole("heading", { name: "Complete · 1" });
+      expect(needs).toHaveTextContent("The prospect named Acme PEO, which isn't on the PEO list, so it has no profile.");
+    });
+
+    it("says when the prospect's chosen PEO has been taken off the list", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ submission: { ...detail().submission!, peo: "adp totalsource" } }));
+      renderPage();
+      const needs = await panel();
+      await within(needs).findByRole("heading", { name: "Complete · 1" });
+      expect(needs).toHaveTextContent("The prospect chose ADP TotalSource, which has been taken off the PEO list, so it isn't shown here.");
+      expect(needs).not.toHaveTextContent("isn't on the PEO list");
+    });
+
+    it("shows each PEO's eligibility checks under it as warnings that never move it, and when its profile is out of date", async () => {
+      // TriNet's minimum is 20 and this employer has 12: a warning, while Justworks stays complete.
+      peoCatalogRows = catalog().map((p) => (p.name === "Justworks" ? { ...p, profile: { ...p.profile!, min_headcount: 20, sources: { answers: { ...sourced, checked_on: "2026-03-02" }, min_headcount: sourced } } } : p));
+      renderPage();
+      const needs = await panel();
+      const complete = await within(needs).findByRole("list", { name: "Complete" });
+      const justworks = within(complete).getByRole("heading", { name: "Justworks" }).closest("article")!;
+      expect(within(justworks).getByRole("list", { name: "Eligibility checks for Justworks" })).toHaveTextContent("Doesn't meet · Minimum headcount: Justworks takes groups of 20 or more employees; this employer has 12.checked 2 Nov 2026");
+      expect(justworks).toHaveTextContent("A check that isn't met is a warning. It never stops you sending.");
+      expect(justworks).toHaveTextContent("Justworks's profile was last checked 2 Mar 2026 and may be out of date.");
+      // Complete: its one main action is the bundle, beside its files.
+      expect(within(justworks).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Download Workers' compensation application data", "Download bundle"]);
+    });
+
+    it("turns what a PEO still needs into a draft in Ask the prospect, for the advisor to edit and send: the click sends nothing", async () => {
+      api.requestInformation.mockResolvedValue(undefined);
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
+      const message = screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement;
+      expect(message.value).toBe([
+        "We need a few more things from you to get a quote.",
+        "",
+        "Please upload these on the Upload tab of your intake:",
+        "- Workers' comp loss runs: Three years of loss runs",
+        "",
+        "Please also answer or confirm the answers this request is about.",
+      ].join("\n"));
+      expect(message.value).not.toMatch(/TriNet/);
+      expect(within(screen.getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HRIS system", "Payroll vendor"]);
+      expect(api.requestInformation).not.toHaveBeenCalled();
+      fireEvent.change(message, { target: { value: `${message.value}\nThanks!` } });
+      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", expect.stringMatching(/Thanks!$/), ["hris_system", "payroll_vendor"], []));
+    });
+
+    it("names the PEO's unanswered extra questions in the draft, which the advisor can take out, and sends them with it", async () => {
+      peoCatalogRows = catalog().map((p) => (p.name === "TriNet" ? { ...p, profile: { ...p.profile!, extra_questions: [
+        { key: "vehicles", text: "Do employees drive for work?", kind: "yes_no" }, { key: "fleet", text: "How many vans?", kind: "number" },
+      ] } } : p));
+      api.requestInformation.mockResolvedValue(undefined);
+      renderPage();
+      const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
+      const asked = () => within(screen.getByRole("list", { name: "Extra questions the request is about" })).getAllByRole("listitem").map((li) => li.textContent);
+      expect(asked()).toEqual(["Do employees drive for work?", "How many vans?"]);
+      expect((screen.getByLabelText(/What do you need from them/i) as HTMLTextAreaElement).value).not.toMatch(/TriNet/);
+      fireEvent.click(screen.getByRole("button", { name: "Remove How many vans?" }));
+      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      await waitFor(() => expect(api.requestInformation).toHaveBeenCalledWith("s1", expect.any(String), ["hris_system", "payroll_vendor"],
+        [{ peo_id: 5, key: "vehicles", question: "Do employees drive for work?" }]));
+    });
+
+    it("starts the next request afresh once a drafted one is sent: no copy of the draft, and the follow-up fields again", async () => {
+      const followUp = { field: "hq_state", review_state: "follow_up", has_correction: false, corrected_value: null, reason: null, updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z" };
+      const reviews = { hq_state: followUp } as SubmissionDetail["reviews"];
+      api.loadSubmission.mockResolvedValue(detail({ reviews }));
+      api.requestInformation.mockResolvedValue(undefined);
+      renderPage();
+      const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
+      // The send reloads the submission, which now lists the request just sent.
+      api.loadSubmission.mockResolvedValue(detail({
+        reviews,
+        informationRequests: [{ id: 1, session_id: "s1", message: "We need a few more things", fields: ["hris_system", "payroll_vendor"], extra_questions: [], requested_by: "adv-1", requested_by_email: "adv@example.com", requested_at: "2026-11-11T12:00:00Z" }],
+      }));
+      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(screen.getByLabelText(/What do you need from them/i)).toHaveValue(""));
+      expect(within(screen.getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["HQ state"]);
+    });
+
+    it("starts the draft from the PEO's missing answers alone, not the fields marked Needs follow-up", async () => {
+      const followUp = { field: "hq_state", review_state: "follow_up", has_correction: false, corrected_value: null, reason: null, updated_by_email: "adv@example.com", updated_at: "2026-10-02T00:00:00Z" };
+      api.loadSubmission.mockResolvedValue(detail({ reviews: { hq_state: followUp } as SubmissionDetail["reviews"] }));
+      renderPage();
+      const answers = () => within(screen.getByRole("list", { name: "Answers the request is about" })).getAllByRole("listitem").map((li) => li.textContent);
+      await screen.findByRole("list", { name: "Answers the request is about" });
+      expect(answers()).toEqual(["HQ state"]);
+      const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Draft information request" }));
+      expect(answers()).toEqual(["HRIS system", "Payroll vendor"]);
+    });
+
+    it("lists what is missing as of the version certified when the prospect has changed answers since", async () => {
+      // Certified as version 3 without an HRIS system; the prospect has since added one, which withdrew it.
+      const now = { ...signedData, hris_system: "Rippling" };
+      api.loadSubmission.mockResolvedValue(detail({
+        certified: false, intakeStatus: "in_progress", data: now, currentVersion: 3,
+        signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: {} },
+      }));
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      expect(needs).toHaveTextContent("The prospect has changed answers since certifying. What's listed here is as of version 3.");
+      fireEvent.click(within(trinet).getByRole("button", { name: "Show what's missing" }));
+      expect(within(trinet).getByRole("region", { name: "Needed to quote" })).toHaveTextContent("HRIS system: not provided");
+    });
+
+    it("offers the workers' comp application data on each PEO's card, from the last certified version, its blanks listed before the click", async () => {
+      // Certified as version 3 with Acme's carrier; the prospect has since changed answers, which withdrew it.
+      api.loadSubmission.mockResolvedValue(detail({
+        certified: false, intakeStatus: "in_progress", data: { ...signedData, wc_carrier: "Changed Mutual" }, currentVersion: 3,
+        signed: { data: { ...signedData, wc_carrier: "Sample Mutual" }, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: {} },
+      }));
+      renderPage();
+      const needs = await panel();
+      for (const name of ["Justworks", "TriNet"]) {
+        const card = (await within(needs).findByRole("heading", { name })).closest("article")!;
+        const app = within(card).getByRole("group", { name: "Workers' compensation application data" });
+        expect(card).toHaveTextContent("The prospect has changed answers since certifying. These files are from version 3.");
+        expect(app).toHaveTextContent("From certified version 3. Our own summary of the certified answers, in the standard application's order. It isn't the ACORD form. The same for every PEO.");
+        expect(app).toHaveTextContent(/Left blank, not in the certified answers: \d+ items/);
+        expect(within(app).getByRole("list", { name: "Left blank" })).toHaveTextContent("Applicant: Doing business as (DBA), FEIN");
+      }
+      const trinet = within(needs).getByRole("heading", { name: "TriNet" }).closest("article")!;
+      fireEvent.click(within(trinet).getByRole("button", { name: "Download Workers' compensation application data" }));
+      await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-workers-comp-application-v3.pdf"));
+      // Built from the version certified, never the answers given since.
+      const built = buildWorkersCompPdf.mock.calls.at(-1)![0];
+      expect(built.sections.find((s) => s.title === "Prior carriers and loss history")!.entries[0]).toEqual({ label: "Current workers' comp carrier", value: "Sample Mutual" });
+    });
+
+    it("offers each PEO's census in the layout its profile holds, on its card, from the last certified version", async () => {
+      const census = [{ id: "e1", first_name: "Ana", last_name: "Lee", work_state: "CA", compensation_type: "salary" as const, employment_type: "full_time" as const, classification: "w2" as const }];
+      peoCatalogRows = catalog().map((p) => (p.name === "TriNet"
+        ? { ...p, profile: { ...p.profile!, census_layout: { format: "csv", template_file: null, columns: [{ header: "Surname", from: "last_name" }, { header: "Gender", from: null }] } } }
+        : p));
+      // Certified as version 3 with Ana; the prospect has since changed answers, which withdrew it.
+      api.loadSubmission.mockResolvedValue(detail({
+        certified: false, intakeStatus: "in_progress", data: { ...signedData, census: [] }, currentVersion: 3,
+        signed: { data: { ...signedData, census }, signedAt: "2026-10-01T12:00:05Z", provenance: {}, documents: [], extraAnswers: {} },
+      }));
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      expect(trinet).toHaveTextContent("The prospect has changed answers since certifying. These files are from version 3.");
+      expect(trinet).toHaveTextContent("TriNet's census layout, as a CSV file. From certified version 3.");
+      expect(trinet).toHaveTextContent("TriNet's layout also asks for: Gender. Fill these in before sending.");
+      fireEvent.click(within(trinet).getByRole("button", { name: "Download the census in TriNet's layout" }));
+      await waitFor(() => expect(downloadBlob).toHaveBeenCalledWith(expect.any(Blob), "EAA-2026-S1-census-trinet-v3.csv"));
+      // A PEO whose profile has no census layout gets ours.
+      const justworks = within(needs).getByRole("heading", { name: "Justworks" }).closest("article")!;
+      expect(justworks).toHaveTextContent("We don't have Justworks's census layout yet, so this is ours: every column is named.");
+    });
+
+    it("can't tell what a PEO still needs from a certification older than its kept field status and documents", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ certificationLacksSnapshot: true }));
+      renderPage();
+      const needs = await panel();
+      expect(needs).toHaveTextContent("Version 1 was certified before we kept each answer's status and the documents it covered, so we can't tell what each PEO still needs from it. Ask the prospect to certify again.");
+      expect(within(needs).queryByRole("heading", { level: 3 })).not.toBeInTheDocument();
+    });
+
+    it("waits for the prospect's first certification", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ certified: false, intakeStatus: "in_progress", signed: null, submission: null, currentVersion: null }));
+      renderPage();
+      expect(await panel()).toHaveTextContent("Available once the prospect has certified their intake: each PEO's list is built from what they certified.");
+    });
+
+    it("says while the PEOs' profiles load, and when they couldn't be loaded, and loads them again on request", async () => {
+      let fail!: (e: Error) => void;
+      peoCatalogReads.push(() => new Promise((_, reject) => { fail = reject; }));
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      renderPage();
+      const needs = await panel();
+      expect(needs).toHaveTextContent("Loading the PEOs' profiles to see what each still needs.");
+      await act(async () => fail(new Error("offline")));
+      expect(await within(needs).findByRole("alert")).toHaveTextContent("We couldn't load the PEOs' profiles, so we can't say what each still needs.");
+      fireEvent.click(within(needs).getByRole("button", { name: "Load the profiles again" }));
+      expect(await within(needs).findByRole("heading", { name: "Complete · 1" })).toBeInTheDocument();
+    });
+
+    it("offers no draft when the prospect can't be asked at this stage, and still lists what each PEO needs", async () => {
+      api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "won" }));
+      renderPage();
+      const needs = await panel();
+      const trinet = (await within(needs).findByRole("heading", { name: "TriNet" })).closest("article")!;
+      expect(trinet).toHaveTextContent("1 answer and 1 document missing");
+      expect(within(trinet).queryByRole("button", { name: "Draft information request" })).not.toBeInTheDocument();
+      // It says why instead, in the words Ask the prospect uses.
+      expect(trinet).toHaveTextContent("The prospect can't be asked for it now: a submission at Won can't move to Information requested.");
+    });
+
+    describe("the bundle", () => {
+      const lossRuns = { id: "d7", file_name: "loss-runs.pdf", file_size: "80 KB", category: "workers_comp_loss_runs", status: "uploaded", storage_path: "prospect-1/loss-runs.pdf", created_at: "2026-10-01T00:00:00Z", scan_verdict: "clean", certification: "certified" as const };
+      const blocked = { ...lossRuns, id: "d8", file_name: "loss-runs-2024.pdf", storage_path: "prospect-1/loss-runs-2024.pdf", scan_verdict: "infected" };
+      const zipOf = async () => {
+        await waitFor(() => expect(downloadBlob).toHaveBeenCalled());
+        const [blob, name] = downloadBlob.mock.calls.at(-1) as [Blob, string];
+        return { name, parts: unzip(await blobBytes(blob)).map((p) => ({ name: p.name, text: new TextDecoder().decode(p.data as Uint8Array) })) };
+      };
+
+      beforeEach(() => {
+        api.documentFile.mockImplementation(async (d: { storage_path: string }) => new Blob([`BYTES OF ${d.storage_path}`]));
+      });
+
+      it("offers a complete PEO's bundle as its main action, saying what is in it, and a PEO missing something the bundle anyway", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", documents: [lossRuns] }));
+        renderPage();
+        const needs = await panel();
+        const justworks = (await within(needs).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        expect(within(justworks).getByRole("button", { name: "Download bundle" })).toHaveClass("bg-primary");
+        expect(justworks).toHaveTextContent("Includes: packet, workers' comp application. No census file: the certified version holds none. Nothing it requires is missing.");
+        const trinet = within(needs).getByRole("heading", { name: "TriNet" }).closest("article")!;
+        expect(within(trinet).getByRole("button", { name: "Draft information request" })).toHaveClass("bg-primary");
+        expect(within(trinet).getByRole("button", { name: "Download bundle anyway" })).not.toHaveClass("bg-primary");
+        expect(trinet).toHaveTextContent("Includes: packet, workers' comp application, 1 document. No census file: the certified version holds none. Missing: 1 answer.");
+      });
+
+      it("builds the bundle from the certified copy, not answers changed since, with only documents on file, and names what is missing", async () => {
+        const changed = { ...signedData, company_name: "Edited Later Inc" };
+        api.loadSubmission.mockResolvedValue(detail({
+          pipelineStatus: "ready_for_market", certified: false, intakeStatus: "in_progress", data: changed, currentVersion: 1,
+          submission: { ...detail().submission!, version: 1 },
+          signed: { data: signedData, signedAt: "2026-10-01T12:00:05Z", provenance: detail().provenance, documents: [blocked], extraAnswers: {} },
+        }));
+        renderPage();
+        const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+        fireEvent.click(within(trinet).getByRole("button", { name: "Download bundle anyway" }));
+        const { name, parts } = await zipOf();
+        expect(name).toBe("EAA-2026-S1-trinet-v1.zip");
+        const contents = parts[0].text;
+        expect(contents).toContain("Signed Co · File ID EAA-2026-S1 · certified version 1");
+        expect(contents).toContain("The prospect has changed answers since certifying. These files are from version 1.");
+        expect(contents).toContain("Documents TriNet requires that aren't in this bundle:\r\n- Workers' comp loss runs (Three years of loss runs): blocked by the virus check");
+        expect(parts.map((p) => p.text).join("\n")).not.toContain("Edited Later Inc");
+        // The blocked file is never fetched, let alone included.
+        expect(api.documentFile).not.toHaveBeenCalled();
+        expect(parts.map((p) => p.name).filter((n) => n.startsWith("documents/"))).toEqual([]);
+      });
+
+      it("warns on the contents page when the PEO's profile is out of date, as its card does, by today's date", async () => {
+        // Today is pinned to 11 Nov 2026: checked 2 Mar 2026 is more than 180 days ago.
+        peoCatalogRows = catalog().map((p) => (p.name === "Justworks" ? { ...p, profile: { ...p.profile!, sources: { answers: { ...sourced, checked_on: "2026-03-02" } } } } : p));
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market" }));
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        const { parts } = await zipOf();
+        expect(parts[0].text.split("\r\n")[3]).toBe("Justworks's profile was last checked 2 Mar 2026 and may be out of date.");
+      });
+
+      it("carries the documents on file, fetched as the page opens them, and holds no advisor notes or reviews", async () => {
+        api.loadSubmission.mockResolvedValue(detail({
+          pipelineStatus: "ready_for_market", documents: [lossRuns, blocked],
+          notes: [{ id: 1, session_id: "s1", body: "Call the CFO on Monday", author_id: "a1", author_email: "adv@example.com", created_at: "2026-10-02T00:00:00Z" }] as unknown as SubmissionDetail["notes"],
+          reviews: { employee_count: { review_state: "follow_up", has_correction: true, corrected_value: 14, reason: "Payroll register says 14" } } as unknown as SubmissionDetail["reviews"],
+        }));
+        renderPage();
+        const trinet = (await within(await panel()).findByRole("heading", { name: "TriNet" })).closest("article")!;
+        fireEvent.click(within(trinet).getByRole("button", { name: "Download bundle anyway" }));
+        const { parts } = await zipOf();
+        expect(api.documentFile).toHaveBeenCalledTimes(1);
+        expect(api.documentFile).toHaveBeenCalledWith(expect.objectContaining({ storage_path: "prospect-1/loss-runs.pdf" }));
+        expect(parts.find((p) => p.name === "documents/loss-runs.pdf")?.text).toBe("BYTES OF prospect-1/loss-runs.pdf");
+        expect(parts.map((p) => p.text).join("\n")).not.toMatch(/Call the CFO|Payroll register says/);
+      });
+
+      it("asks whether it was sent once downloaded, and records the send only when the advisor says so", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));
+        api.recordQuoteSend.mockResolvedValue(undefined);
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        expect(within(justworks).queryByText("Sent this to Justworks?")).not.toBeInTheDocument();
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        await zipOf();
+        // A download is never a send by itself.
+        expect(await within(justworks).findByText("Sent this to Justworks?")).toBeInTheDocument();
+        expect(api.recordQuoteSend).not.toHaveBeenCalled();
+        fireEvent.click(within(justworks).getByRole("button", { name: "Not yet" }));
+        expect(within(justworks).queryByText("Sent this to Justworks?")).not.toBeInTheDocument();
+        expect(api.recordQuoteSend).not.toHaveBeenCalled();
+
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        fireEvent.click(await within(justworks).findByRole("button", { name: "Record it" }));
+        await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "Justworks", "2026-11-11"));
+        expect(api.recordQuoteSend).toHaveBeenCalledTimes(1);
+        await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+      });
+
+      it("records no send once the certification has changed since the bundle was made", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market" }));
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        const record = await within(justworks).findByRole("button", { name: "Record it" });
+        intakeNow = { status: "submitted", data_sha256: "d".repeat(64), version: "2" };
+        fireEvent.click(record);
+        await waitFor(() => expect(toast.error).toHaveBeenCalledWith("This intake changed since you opened the page. Reload to get the certified version."));
+        expect(api.recordQuoteSend).not.toHaveBeenCalled();
+      });
+
+      it("says what the send function refuses instead of hiding it", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "ready_for_market" }));
+        api.recordQuoteSend.mockRejectedValue(new Error("Move this submission to Ready for market first. It is submitted"));
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        fireEvent.click(await within(justworks).findByRole("button", { name: "Record it" }));
+        expect(await within(justworks).findByRole("alert")).toHaveTextContent("Move this submission to Ready for market first. It is submitted");
+      });
+
+      describe("for a PEO that already has a quote request", () => {
+        const request = (status: string) => ({ id: 7, session_id: "s1", peo_name: "justworks", status, sent_version: 1, sent_on: "2026-11-03",
+          quote_received_on: null, quote_expires_on: null, proposed_start_on: null, admin_fee_pepm: null, note: null });
+        const downloaded = async (status: string, stage = "sent_to_carrier") => {
+          api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: stage as SubmissionDetail["pipelineStatus"], quoteRequests: [request(status)] as SubmissionDetail["quoteRequests"] }));
+          api.recordQuoteSend.mockResolvedValue(undefined);
+          renderPage();
+          const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+          fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+          await zipOf();
+          await within(justworks).findByText("Already recorded as sent to Justworks on Nov 3, 2026.");
+          return justworks;
+        };
+
+        it("says when it was sent, and while it is still waiting offers only to record it again as sent today", async () => {
+          const justworks = await downloaded("sent");
+          expect(within(justworks).queryByText("Sent this to Justworks?")).not.toBeInTheDocument();
+          expect(within(justworks).queryByRole("button", { name: "Record it" })).not.toBeInTheDocument();
+          fireEvent.click(within(justworks).getByRole("button", { name: "Record it again as sent today" }));
+          await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "Justworks", "2026-11-11"));
+        });
+
+        it("records nothing on Not yet", async () => {
+          const justworks = await downloaded("sent");
+          fireEvent.click(within(justworks).getByRole("button", { name: "Not yet" }));
+          expect(within(justworks).queryByText("Already recorded as sent to Justworks on Nov 3, 2026.")).not.toBeInTheDocument();
+          expect(api.recordQuoteSend).not.toHaveBeenCalled();
+        });
+
+        it.each(["quoted", "declined", "closed"])("offers no send to record once it is %s, so its send date is never lost", async (status) => {
+          const justworks = await downloaded(status);
+          expect(within(justworks).queryByRole("button", { name: /Record it/ })).not.toBeInTheDocument();
+          fireEvent.click(within(justworks).getByRole("button", { name: "Close" }));
+          expect(within(justworks).queryByText("Already recorded as sent to Justworks on Nov 3, 2026.")).not.toBeInTheDocument();
+          expect(api.recordQuoteSend).not.toHaveBeenCalled();
+        });
+
+        it("still says what the stage needs before a waiting one can be recorded again", async () => {
+          const justworks = await downloaded("sent", "submitted");
+          expect(justworks).toHaveTextContent("To record a send to Justworks, move this submission to Ready for market first.");
+          expect(within(justworks).queryByRole("button", { name: /Record it/ })).not.toBeInTheDocument();
+        });
+      });
+
+      it("offers no Record it where the stage allows no send, and says what would", async () => {
+        api.loadSubmission.mockResolvedValue(detail({ pipelineStatus: "submitted" }));
+        renderPage();
+        const justworks = (await within(await panel()).findByRole("heading", { name: "Justworks" })).closest("article")!;
+        fireEvent.click(within(justworks).getByRole("button", { name: "Download bundle" }));
+        expect(await within(justworks).findByText("To record a send to Justworks, move this submission to Ready for market first.")).toBeInTheDocument();
+        expect(within(justworks).queryByRole("button", { name: "Record it" })).not.toBeInTheDocument();
+      });
+    });
   });
 });

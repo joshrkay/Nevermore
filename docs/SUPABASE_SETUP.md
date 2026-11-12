@@ -22,7 +22,7 @@ front end that uses it is deployed.
 | Auth: guest sign-in on, email confirmation on, Site URL and Redirect URLs (below), the sign-up, email-change and sign-in (magic-link) messages (below), sign-in emails through Resend's SMTP with `RESEND_API_KEY` as the password (it says whether the stored password matched, when Supabase shows it). First, so a later failure can't leave sign-up links broken | Management API `PATCH /v1/projects/{ref}/config/auth` | Authentication → Sign In / Providers, URL Configuration, Emails, SMTP Settings |
 | Apply the migrations (tables, row security, storage buckets) | `supabase link`, `supabase db push --remote --yes` (CLI 3; CLI 2: `supabase db push`) | SQL editor, file by file |
 | Set function secrets (AI key, `APP_BASE_URL`, email settings) and generate `IP_HASH_SECRET` if missing | `supabase secrets set --remote=<ref> --yes` from a private temporary file | Edge Functions → Secrets |
-| Deploy `chamber-extract`, `document-upload`, `document-extract`, `document-scan`, `dispatch-outbox`, `resend-webhook`, `purge-intakes`, `ops-monitor` | `supabase functions deploy <name> --remote=<ref> --yes`, bundled with Docker | (CLI only) |
+| Deploy `chamber-extract`, `document-upload`, `census-template-upload`, `document-extract`, `document-scan`, `dispatch-outbox`, `resend-webhook`, `purge-intakes`, `ops-monitor` | `supabase functions deploy <name> --remote=<ref> --yes`, bundled with Docker | (CLI only) |
 | Schedules: `pg_cron`, `pg_net`, the service-role key in Vault, and the five jobs in "Schedules" below | Management API SQL endpoint | SQL editor: the statements in "Schedules" below |
 | Print a summary: the migrations applied (by file), the secrets set (names only, never values) and the functions deployed. A step that fails prints what was done before it | | |
 | Check all of the above, and that each function boots | SQL counts, the public auth settings, the auth config (Site URL, Redirect URLs, templates), a signed-out call to each function (a deployed one answers its own 401) | |
@@ -88,7 +88,7 @@ It must be https (http only for localhost).
 
 ### Malware scanning
 
-Every upload goes through `document-upload`, which checks the file's bytes, scans it, and stores it: in the
+Every upload goes through `document-upload` (a PEO template workbook, through `census-template-upload`, the same way), which checks the file's bytes, scans it, and stores it: in the
 `documents` bucket once the scan passed, in the private `quarantine` bucket otherwise. Nobody signed in can
 read a quarantined file, and Lenore and advisors can open a file only once its scan passed. The scanner is
 chosen by the `MALWARE_SCANNER` secret. Production uses Scanii (decision D13):

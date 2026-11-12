@@ -1,3 +1,4 @@
+import { parseExtraQuestionRefs, type ExtraQuestionRef } from "./extraAnswers";
 import type { CertificationState } from "./manuscript";
 import { FIELD_LABELS, type FieldKey, type ProvenanceMap } from "./provenance";
 
@@ -8,6 +9,8 @@ import { FIELD_LABELS, type FieldKey, type ProvenanceMap } from "./provenance";
 export interface InformationRequest {
   message: string;
   fields: FieldKey[];
+  /** A PEO's own extra questions it names (20261115130000): that PEO's section is shown, marked as asked. */
+  extraQuestions: ExtraQuestionRef[];
   requestedAt: string;
 }
 
@@ -22,7 +25,7 @@ export function parseInformationRequest(raw: unknown): InformationRequest | null
         .map((f) => (f === "employees" ? "census" : f))
         .filter((f, i, all): f is FieldKey => typeof f === "string" && f in FIELD_LABELS && all.indexOf(f) === i)
     : [];
-  return { message: r.message.trim(), fields, requestedAt: r.requested_at };
+  return { message: r.message.trim(), fields, extraQuestions: parseExtraQuestionRefs(r.extra_questions), requestedAt: r.requested_at };
 }
 
 /**
