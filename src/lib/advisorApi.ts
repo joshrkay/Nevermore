@@ -636,6 +636,31 @@ export async function disconnectMailbox(): Promise<void> {
   if (error) throw new AdvisorApiError("Couldn't disconnect your mailbox. Try again.");
 }
 
+export type AllowedOrganisationRow = Tables["allowed_organisations"]["Row"];
+export type AdvisorRoleEventRow = Tables["advisor_role_events"]["Row"];
+
+/** The organisations whose members get the advisor role without an admin, and the log of changes and grants. Admins only. */
+export async function loadOrganisationRule(): Promise<{ organisations: AllowedOrganisationRow[]; events: AdvisorRoleEventRow[] }> {
+  const [orgs, events] = await Promise.all([
+    supabase.from("allowed_organisations").select("*").order("added_at", { ascending: false }),
+    supabase.from("advisor_role_events").select("*").order("at", { ascending: false }).limit(50),
+  ]);
+  if (orgs.error) fail(orgs.error, "Couldn't load the allowed organisations.");
+  if (events.error) fail(events.error, "Couldn't load the allowed organisations.");
+  return { organisations: orgs.data ?? [], events: events.data ?? [] };
+}
+
+/** Adds an organisation (a Google domain or a Microsoft tenant ID). The database refuses free-mail domains and says why. */
+export async function addAllowedOrganisation(provider: "google" | "microsoft", orgId: string, label: string): Promise<void> {
+  const { error } = await supabase.rpc("admin_add_allowed_organisation", { p_provider: provider, p_org_id: orgId, p_label: label });
+  if (error) fail(error, "Couldn't add the organisation.");
+}
+
+export async function removeAllowedOrganisation(id: number): Promise<void> {
+  const { error } = await supabase.rpc("admin_remove_allowed_organisation", { p_id: id });
+  if (error) fail(error, "Couldn't remove the organisation.");
+}
+
 /** A quote request note as the form holds it: its kind, the day it happened (YYYY-MM-DD) and its text. */
 export interface QuoteNoteInput {
   kind: QuoteNoteKind;

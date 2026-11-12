@@ -59,6 +59,19 @@ lets the product do and that it never reads a mailbox. The prospect's sign-in pa
 - The same verified email as an existing advisor links to that account (Supabase's default for a provider-verified email):
   same role and history. A new account without the role sees "Waiting for access" until an administrator grants it. How a role
   can be granted without an administrator, by organisation, is story M-4.2.
+- **The advisor role by organisation (story M-4.2).** An admin keeps a list of allowed organisations at
+  `/advisor/organisations` (the **Organisations** tab; admins only). A person who signs in with Google or Microsoft from one of
+  them gets the advisor role without waiting: right after sign-in the browser calls `claim_advisor_role_by_organisation()`,
+  which reads the caller's own sign-in claims from `auth.identities` (never anything the browser sends) and grants `advisor`
+  only if they match the list. Matched on what the provider vouches for, never on the email text: for Google the verified hosted
+  domain (`hd`, with the email verified), for Microsoft the tenant ID the token was issued by (`tid`, or the one in its issuer).
+  A sign-in that carries no such claim matches nothing, so the rule grants nothing rather than something it can't vouch for.
+  A free-mail domain (gmail.com, outlook.com and the like) and Microsoft's personal-account tenants can't be added. The rule
+  grants `advisor` only, never `admin`, and takes nothing away: removing an organisation stops later sign-ups matching, and
+  people already granted keep the role until an admin revokes it, as today. Every change to the list and every grant is in the
+  append-only `advisor_role_events`, which admins read on the same page: who, when and the organisation it matched. **Not yet
+  confirmed against a real sign-in:** the exact claim names Supabase keeps in `auth.identities` for Google and Azure; if they
+  differ the rule fails closed (nobody is matched) and the first real sign-in will show it.
 - The refresh token the provider returns is handed once to the `mailbox` function (story M-4.3), which tests it, refuses it
   unless it grants sending and nothing more, encrypts it and stores the ciphertext in `broker_mailboxes`. No API role reads
   that table, admins included: a broker learns only whether a mailbox is connected, through `my_mailbox()`. It is connected,

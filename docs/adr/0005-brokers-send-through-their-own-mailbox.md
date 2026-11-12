@@ -20,7 +20,9 @@ Sign-in (M-4.1) and keeping and refreshing the permission (M-4.3) are built. The
 disconnects a broker's mailbox, and `getMailboxAccess` (`supabase/functions/_shared/mailbox.ts`) is what the sending story
 (M-2.1) will call for an access token; it deletes a token the provider took back and says plainly why a send can't go
 through. Nothing sends through the mailbox yet, and no Google or Microsoft app is configured. The allowed-organisation rule
-(M-4.2) is not built.
+(M-4.2) is built: an admin's list at `/advisor/organisations`, matched on Google's verified domain or Microsoft's tenant ID and never on the
+email text, granting `advisor` only and logging every grant. The claim names Supabase keeps for each provider have not been
+observed; the rule grants nothing if they differ.
 
 ## Considered Options
 

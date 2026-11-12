@@ -54,9 +54,10 @@ export type BrokerSignInResult =
       ok: true;
       /**
        * What became of the mailbox: `connected` (the product keeps what lets it send), `not_granted` (the broker
-       * didn't allow sending, so there is nothing to keep) or `failed` (they allowed it but it couldn't be kept).
+       * didn't allow sending, so there is nothing to keep), `waiting` (they have no advisor role yet, so there is no
+       * mailbox to connect until an administrator gives them access) or `failed` (they allowed it but it couldn't be kept).
        */
-      mailbox: "connected" | "not_granted" | "failed";
+      mailbox: "connected" | "not_granted" | "waiting" | "failed";
     }
   | { ok: false };
 
@@ -89,7 +90,14 @@ export async function finishBrokerSignIn(code: string): Promise<BrokerSignInResu
   const { data, error } = await pkceClient().auth.exchangeCodeForSession(code);
   if (error || !data.session) return { ok: false };
   const { session } = data;
+  // The advisor role by organisation (story M-4.2): the database reads what the provider vouched for in this sign-in, and
+  // grants the role only if the organisation is on an admin's list. Nothing here decides it; a failure just leaves the
+  // broker waiting for an administrator, as before.
+  const claimed = await pkceClient().rpc("claim_advisor_role_by_organisation");
+  const reason = (claimed.data as { granted?: boolean; reason?: string } | null)?.reason;
+  const hasRole = !claimed.error && ((claimed.data as { granted?: boolean } | null)?.granted === true || reason === "already_has_role");
   const refreshToken = session.provider_refresh_token;
+  if (!hasRole) return { ok: true, mailbox: "waiting" };
   if (!refreshToken) return { ok: true, mailbox: "not_granted" };
   const provider = providerOf(session.user?.app_metadata?.provider);
   if (!provider) return { ok: true, mailbox: "failed" };
