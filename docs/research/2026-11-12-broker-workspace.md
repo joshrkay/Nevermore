@@ -124,8 +124,13 @@ A lead sees the same for their team, an owner for the firm, each with a table by
   the submission page shows them today; then the placement.
 - **A note or task** is the broker's own, dated, seen inside the firm only. A task has a due date and shows on the
   dashboard.
-- **The list** filters by owner, stage, state and headcount, and exports as CSV at any time, with no limit and no
-  request to us.
+- **The list** shows each business with its main contact, their email and phone, its stage, its quotes and its
+  owner, and searches by business, person or email. It filters by owner, stage, state and headcount, and exports
+  as CSV at any time, with no limit and no request to us.
+- **Navigation** is a menu down the left: Today, Book, Quoting, Renewals, Firm.
+- **Quotes attach to the business by the outbound email.** Each send carries its quote request's reply address
+  (`docs/adr/0004`, `docs/adr/0005`), so a PEO's answer lands on that business's page under that PEO, with nobody
+  filing it. This is the **thread** as built; the book only gives it a business to sit on.
 - **What the book never holds:** the FEIN (`docs/adr/0006`: typed into the workspace only), a census, or anything
   about an employee. Those stay in the intake, where the employer owns them.
 
