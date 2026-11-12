@@ -184,6 +184,45 @@ email, the business's web domain, or its name and state.
 - This is new work: threads today exist only on quote requests. It is the same machinery (reply addresses,
   `receive-mail`, scanning, the holding list) pointed at two more kinds of conversation.
 
+### 4.3b Fields: standard, required and custom (founder's direction, 2026-11-12)
+
+**The benchmark** is what a broker already fills in in Pipedrive or Pipeline CRM (formerly PipelineDeals). The
+lists below are those products' default fields as recalled, not read from their current documentation; check them
+against both before building. Fields a PEO broker has no use for are left out, and the few a PEO search needs are
+added and marked **(PEO)**.
+
+**Required** is the founder's rule: every record needs a name, and a contact also needs an email or a phone number.
+Everything else is optional.
+
+| Record | Required | Standard fields |
+|---|---|---|
+| **Lead** | Name (the person's, or the business's when no person is known yet) | Business name, title, email, phone, source, status, owner, label, state, rough employee count, **current PEO or payroll provider (PEO)**, note |
+| **Account** | Name | Trade name, website, phone, address (street, city, state, ZIP), industry, rough employee count, owner, label, source, **states of operation (PEO)**, **current PEO or payroll provider (PEO)**, **renewal date (PEO)** |
+| **Contact** | Name, and an email or a phone | First and last name, account, title, email, phone, mobile, owner, label, do not email |
+| **Opportunity** | Name (offered as "account · start date") and its account | Main contact, stage, owner, source, expected close date, value, lost reason, next step, **target start date (PEO)**, **employees in this search (PEO)** |
+| **Quote** | As built | The PEO, status, version sent, when sent, when the quote arrived and expires, proposed start, admin fee per employee per month, note. No custom fields at first: what a quote holds is what lets quotes be compared on the same lines |
+
+- **What carries into the intake.** Account name, state, states of operation, employee count, current PEO and the
+  main contact are written into the opportunity's intake as "Your broker entered this" (section 5, step 3).
+- **Never a standard or custom field:** the FEIN (`docs/adr/0006`), a census, or anything about an employee. The
+  field editor refuses a label that asks for one.
+
+**Custom fields.** A firm's owner adds its own fields to leads, accounts, contacts and opportunities.
+
+- **Kinds:** text, long text, number, money, date, yes or no, one choice, several choices, link, phone, email.
+- **Where they show:** on the record's page under the standard fields, as a column and a filter on its list, in
+  the CSV export, and as something a CSV column or a linked CRM's field can be matched to. An import can add a
+  field for a column that matches nothing.
+- **Changing them.** Renaming a field keeps its values. A field is archived, never deleted, so old records keep
+  what they held. A choice that is removed stays on the records that have it.
+- **They are the firm's alone.** A custom field never enters an intake, the packet or anything sent to a PEO. What
+  a PEO asks beyond the intake is an **Extra question**, kept by admins on its **Requirement profile**.
+- **Limits to start:** 30 per record, the same ceiling as extra questions. Optional only; letting a firm make its
+  own field required can follow if firms ask.
+- **In the tables:** a `custom_fields` table (firm, record, label, kind, choices, order, archived) and, on each
+  record, its values keyed by field. A lead's values go to the account, contact or opportunity the same field
+  exists on when it is qualified.
+
 ### 4.4 Bringing the book in
 
 In the order to build. Each is useful without the next.
