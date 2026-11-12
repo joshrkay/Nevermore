@@ -112,6 +112,7 @@
 \i supabase/migrations/20261112099000_intake_schema_v3_suta_rates.sql
 \i supabase/migrations/20261112100000_intake_schema_v3_acord_130_questions.sql
 \i supabase/migrations/20261113090000_broker_mailboxes.sql
+\i supabase/migrations/20261113100000_allowed_organisations.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -406,6 +407,12 @@ BEGIN
   -- An advisor's connected mailbox (20261113090000): the encrypted token, which no API role reads. The mailbox function writes it.
   INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
   SELECT adv, 'google', 'advisor@example.test', 'https://www.googleapis.com/auth/gmail.send', 'ciphertext', 'iv';
+  -- An allowed organisation and the log of its being added (20261113100000), which only admins read. The admin functions write
+  -- them; here they are written directly, as the superuser.
+  INSERT INTO public.allowed_organisations (provider, org_id, label, added_by, added_by_email)
+  VALUES ('google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
+  INSERT INTO public.advisor_role_events (kind, provider, org_id, org_label, actor_id, actor_email)
+  VALUES ('org_added', 'google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
   -- A file in the bucket that no stored attachment names stays the service role's alone.
   INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', pa_cert || '/0/unrecorded.pdf');
   PERFORM set_config('request.jwt.claims', '', false);
@@ -468,6 +475,9 @@ INSERT INTO matrix VALUES
   -- A broker's connected mailbox (20261113090000): the encrypted token. Nobody reads it through the API, admins included;
   -- the broker learns only whether it is connected, through my_mailbox().
   ('public.broker_mailboxes',                           '{}'),
+  -- Who may get the advisor role without an admin (20261113100000), and the log of grants: admins' alone.
+  ('public.allowed_organisations',                      '{"admin":"all"}'),
+  ('public.advisor_role_events',                        '{"admin":"all"}'),
   -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
   ('public.intake_milestones',                          '{}'),
   -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
@@ -800,6 +810,9 @@ INSERT INTO callable VALUES
   ('advisor_update_referral_partner(p_code text, p_name text, p_kind text)', 'advisor',
                                                                      'SELECT public.advisor_update_referral_partner(''acme-cfo'', ''Probe'', ''other'')', 'renaming a referral partner'),
   ('revoke_chamber_session(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.revoke_chamber_session(%2$L, ''probe'')', 'closing a draft for good'),
+  ('admin_add_allowed_organisation(p_provider text, p_org_id text, p_label text)', 'admin', 'SELECT public.admin_add_allowed_organisation(''probe'', ''probe'', ''probe'')', 'adding an organisation whose members get the advisor role'),
+  ('admin_remove_allowed_organisation(p_id bigint)', 'admin', 'SELECT public.admin_remove_allowed_organisation(0)', 'removing one'),
+  ('claim_advisor_role_by_organisation()', 'own', NULL, 'the advisor role for a sign-in whose provider-vouched organisation an admin allowed; reads only the caller''s own sign-in claims, grants nothing to a guest or anyone else'),
   ('request_intake_deletion(p_session_id uuid, p_reason text)', 'admin', 'SELECT public.request_intake_deletion(%2$L, ''probe'')', 'asking for a deletion'),
   ('retry_intake_deletion(p_deletion_id uuid)', 'admin',  'SELECT public.retry_intake_deletion(%2$L)', 'retrying a failed deletion'),
   ('admin_ops_summary(p_hours integer)',       'admin',   'SELECT count(*) FROM public.admin_ops_summary(24)', 'monitoring counts');

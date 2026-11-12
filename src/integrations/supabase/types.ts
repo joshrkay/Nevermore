@@ -424,6 +424,39 @@ export type Database = {
         Update: never
         Relationships: []
       }
+      // Organisations whose members get the advisor role without an admin (20261113100000). Admins read it; it is
+      // changed only through admin_add_allowed_organisation and admin_remove_allowed_organisation.
+      allowed_organisations: {
+        Row: {
+          added_at: string
+          added_by: string | null
+          added_by_email: string | null
+          id: number
+          label: string
+          // A Google hosted domain, or a Microsoft tenant ID.
+          org_id: string
+          provider: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      // Every change to that list and every role it granted (20261113100000). Admins read it; append-only.
+      advisor_role_events: {
+        Row: {
+          actor_email: string | null
+          actor_id: string | null
+          at: string
+          id: number
+          kind: string
+          org_id: string
+          org_label: string | null
+          provider: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       // What happened on a quote request outside the product (20261111090000). Advisors read it; it is written
       // only through advisor_add_quote_request_note and advisor_correct_quote_request_note.
       quote_request_notes: {
@@ -584,6 +617,18 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_add_allowed_organisation: {
+        Args: { p_provider: string; p_org_id: string; p_label: string }
+        Returns: Json
+      }
+      admin_remove_allowed_organisation: {
+        Args: { p_id: number }
+        Returns: Json
+      }
+      claim_advisor_role_by_organisation: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       // Whether the signed-in broker's own mailbox is connected, never the token (20261113090000).
       my_mailbox: {
         Args: Record<PropertyKey, never>

@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const signInWithOAuth = vi.fn();
 const exchangeCodeForSession = vi.fn();
-const createClient = vi.fn(() => ({ auth: { signInWithOAuth, exchangeCodeForSession } }));
+const rpc = vi.fn();
+const createClient = vi.fn(() => ({ auth: { signInWithOAuth, exchangeCodeForSession }, rpc }));
 vi.mock("@supabase/supabase-js", () => ({ createClient }));
 
 const { brokerCallbackUrl, brokerNext, finishBrokerSignIn, startBrokerSignIn } = await import("./brokerAuth");
@@ -27,6 +28,7 @@ describe("signing in with a provider", () => {
   beforeEach(() => {
     signInWithOAuth.mockReset().mockResolvedValue({ error: null });
     exchangeCodeForSession.mockReset();
+    rpc.mockReset().mockResolvedValue({ data: { granted: true }, error: null });
   });
 
   it("uses the PKCE flow on its own client, which never reads a session out of the address", async () => {
@@ -64,6 +66,35 @@ describe("signing in with a provider", () => {
   const session = (over: Record<string, unknown> = {}) => ({
     data: { session: { access_token: "sb-jwt", provider_token: "pt", provider_refresh_token: "1//refresh-from-google", user: { app_metadata: { provider: "google" } }, ...over } },
     error: null,
+  });
+
+  it("claims the advisor role first: the database decides from what the provider vouched for, and the caller sends nothing", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+    exchangeCodeForSession.mockResolvedValueOnce(session());
+    await finishBrokerSignIn("code-0");
+    expect(rpc).toHaveBeenCalledWith("claim_advisor_role_by_organisation");
+    expect(rpc.mock.calls[0]).toHaveLength(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("connects the mailbox of someone who already had the role", async () => {
+    rpc.mockResolvedValue({ data: { granted: false, reason: "already_has_role" }, error: null });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+    exchangeCodeForSession.mockResolvedValueOnce(session());
+    expect(await finishBrokerSignIn("code-7")).toEqual({ ok: true, mailbox: "connected" });
+    vi.unstubAllGlobals();
+  });
+
+  it("connects nothing, and keeps nothing, for someone with no role yet: they wait for an administrator", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    for (const claimed of [{ data: { granted: false, reason: "no_match" }, error: null }, { data: null, error: new Error("down") }]) {
+      rpc.mockResolvedValueOnce(claimed);
+      exchangeCodeForSession.mockResolvedValueOnce(session());
+      expect(await finishBrokerSignIn("code-8")).toEqual({ ok: true, mailbox: "waiting" });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
   it("hands the refresh token once to the mailbox function, as the broker, and says it is connected", async () => {
