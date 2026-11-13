@@ -6,6 +6,8 @@ const auth = { user: { id: "u1", email: "advisor@example.com" }, session: { acce
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const api = { fetchOwnedFirms: vi.fn(), fetchMyFirms: vi.fn(), fetchIsAdmin: vi.fn() };
 vi.mock("@/lib/advisorApi", () => api);
+let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
+vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));
 
 const { clearOwnedFirms, clearMyFirms } = await import("@/hooks/useOwnedFirms");
 const { default: AdvisorHeader } = await import("./AdvisorHeader");
@@ -13,45 +15,78 @@ const renderHeader = () => render(<MemoryRouter><AdvisorHeader /></MemoryRouter>
 // Lets the question to the database be answered before the page is looked at.
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 
-// The record of who did what is for a firm's owners (CRM-P2.3): the console's navigation offers it to them alone, so an
-// agent or a lead never walks into a page that turns them away (each turn-away is an auth_denied event on the alert).
+// The record of who did what is for the owners of the firm the console is showing (CRM-P2.3, P-1.4): the navigation offers it to
+// them alone, so an agent or a lead, or an owner of some other firm, never walks into a page that turns them away.
 describe("the advisor header's Activity link", () => {
+  const owner = (f: { firm_id: string; name: string; address: string }) => ({ ...f, role: "owner" });
+  const alphaFirm = { firm_id: "firm-1", name: "Alpha", address: "alpha" };
+  const betaFirm = { firm_id: "firm-2", name: "Beta", address: "beta" };
   beforeEach(() => {
     clearOwnedFirms();
     clearMyFirms();
     auth.session = { access_token: "tok-1" };
+    firmAddress = { status: "none" };
     api.fetchOwnedFirms.mockReset();
-    api.fetchMyFirms.mockReset().mockResolvedValue([{ firm_id: "firm-1", name: "Alpha", address: "alpha", role: "agent" }]);
+    api.fetchMyFirms.mockReset().mockResolvedValue([{ ...alphaFirm, role: "agent" }]);
     api.fetchIsAdmin.mockReset().mockResolvedValue(false);
   });
 
-  it("is offered to someone who owns a firm", async () => {
-    api.fetchOwnedFirms.mockResolvedValue([{ firm_id: "firm-1", name: "Alpha" }]);
+  it("is offered to the owner of the firm the console shows", async () => {
+    api.fetchMyFirms.mockResolvedValue([owner(alphaFirm)]);
     renderHeader();
     expect(await screen.findByRole("link", { name: "Activity" })).toHaveAttribute("href", "/advisor/activity");
   });
 
-  it("is not offered to someone who owns no firm, an agent or a lead among them", async () => {
-    api.fetchOwnedFirms.mockResolvedValue([]);
+  it("is not offered to a member who is not an owner, an agent or a lead among them", async () => {
     renderHeader();
     await settle();
     expect(await screen.findByRole("link", { name: "Submissions" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
   });
 
-  it("is offered once the sign-in changes to one that owns a firm, such as after the second factor, not held back by the answer from before it", async () => {
-    api.fetchOwnedFirms.mockResolvedValueOnce([]).mockResolvedValue([{ firm_id: "firm-1", name: "Alpha" }]);
+  it("is not offered to an owner of one firm who is only an agent at another firm's address", async () => {
+    firmAddress = { status: "known", address: "beta", name: "Beta" };
+    api.fetchMyFirms.mockResolvedValue([owner(alphaFirm), { ...betaFirm, role: "agent" }]);
+    renderHeader();
+    await settle();
+    expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
+  });
+
+  it("is offered at the address of the firm they own to an owner who is an agent of another firm too (D-40)", async () => {
+    firmAddress = { status: "known", address: "alpha", name: "Alpha" };
+    api.fetchMyFirms.mockResolvedValue([owner(alphaFirm), { ...betaFirm, role: "agent" }]);
+    renderHeader();
+    expect(await screen.findByRole("link", { name: "Activity" })).toBeInTheDocument();
+  });
+
+  it("is not offered at the address of a firm the owner of another firm does not belong to", async () => {
+    firmAddress = { status: "known", address: "beta", name: "Beta" };
+    api.fetchMyFirms.mockResolvedValue([owner(alphaFirm)]);
+    renderHeader();
+    await settle();
+    expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
+  });
+
+  it("is not offered on the bare domain to an owner of several firms, who chooses a firm first (D-40)", async () => {
+    api.fetchMyFirms.mockResolvedValue([owner(alphaFirm), owner(betaFirm)]);
+    renderHeader();
+    await settle();
+    expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
+  });
+
+  it("is offered once the sign-in changes to one that owns the firm, such as after the second factor, not held back by the answer from before it", async () => {
+    api.fetchMyFirms.mockResolvedValueOnce([]).mockResolvedValue([owner(alphaFirm)]);
     const view = renderHeader();
     await settle();
     expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
     auth.session = { access_token: "tok-2-after-second-factor" };
     view.rerender(<MemoryRouter><AdvisorHeader /></MemoryRouter>);
     expect(await screen.findByRole("link", { name: "Activity" })).toBeInTheDocument();
-    expect(api.fetchOwnedFirms).toHaveBeenCalledTimes(2);
+    expect(api.fetchMyFirms).toHaveBeenCalledTimes(2);
   });
 
   it("is not offered while the answer is unknown, or when it can't be had", async () => {
-    api.fetchOwnedFirms.mockRejectedValue(new Error("offline"));
+    api.fetchMyFirms.mockRejectedValue(new Error("offline"));
     renderHeader();
     await settle();
     expect(screen.queryByRole("link", { name: "Activity" })).not.toBeInTheDocument();
@@ -106,7 +141,7 @@ describe("the console header's menu", () => {
     expect(screen.getByRole("link", { name: "Submissions" })).toBeInTheDocument();
   });
 
-  it("names no firm when the person belongs to several, since the console can't show them together", async () => {
+  it("names no firm on the bare domain when the person belongs to several: they choose one first (D-40)", async () => {
     api.fetchMyFirms.mockResolvedValue([alpha, beta]);
     renderHeader();
     await settle();

@@ -125,30 +125,50 @@ describe("production domain", () => {
   });
 });
 
-// The Privacy Policy and Terms of Use must be reachable from every page (US-6.2). Every page component
-// renders <LegalLinks> (the legal pages through their shared layout); advisor pages through AdvisorHeader.
+// The Privacy Policy and Terms of Use must be reachable from every page (US-6.2). Every page component renders <LegalLinks>
+// (the legal pages through their shared layout). A member's page sits inside the workspace shell, which carries them
+// (story CRM-S1.1a); a platform admin's page keeps the console header, which carries them.
 describe("legal links", () => {
+  const PLATFORM_PAGES = ["AdvisorHeldMailPage", "AdvisorFirmsPage", "AdvisorOrganisationsPage"];
+  const MEMBER_PAGE_OUTSIDE_ADVISOR_DIR = ["FirmInvitationsPage"];
   const pageFiles = readdirSync("src/pages")
     .filter((f) => f.endsWith(".tsx") && !f.endsWith(".test.tsx"))
     .map((f) => `src/pages/${f}`);
   const advisorPages = readdirSync("src/pages/advisor")
     .filter((f) => f.endsWith(".tsx") && !f.endsWith(".test.tsx"))
     .map((f) => `src/pages/advisor/${f}`);
+  const name = (file: string) => file.replace(/^.*\//, "").replace(/\.tsx$/, "");
+  const memberPages = [...advisorPages.filter((f) => !PLATFORM_PAGES.includes(name(f))), ...MEMBER_PAGE_OUTSIDE_ADVISOR_DIR.map((n) => `src/pages/${n}.tsx`)];
+  const platformPages = advisorPages.filter((f) => PLATFORM_PAGES.includes(name(f)));
+  const app = readFileSync("src/App.tsx", "utf8");
+  // What the workspace's layout route wraps: from its opening tag to its closing one.
+  const shellRoutes = app.slice(app.indexOf("<Route element={<RequireFirm><WorkspaceShell />"), app.indexOf("</Route>\n", app.indexOf("<WorkspaceShell />")));
 
   it("finds the pages it checks", () => {
     expect(pageFiles).toEqual(expect.arrayContaining(["src/pages/LandingPage.tsx", "src/pages/PrivacyPage.tsx", "src/pages/ChamberPage.tsx"]));
     expect(advisorPages.length).toBeGreaterThan(0);
+    expect(platformPages).toHaveLength(PLATFORM_PAGES.length);
+    expect(shellRoutes).toContain("<AdvisorDashboardPage />");
   });
 
-  it.each(pageFiles)("%s links to the Privacy Policy and Terms of Use", (file) => {
+  it.each(pageFiles.filter((f) => !MEMBER_PAGE_OUTSIDE_ADVISOR_DIR.includes(name(f))))("%s links to the Privacy Policy and Terms of Use", (file) => {
     expect(readFileSync(file, "utf8")).toMatch(/<LegalLinks\b|<LegalPageLayout\b/);
   });
 
-  it.each(advisorPages)("%s shows the advisor header, which carries the legal links", (file) => {
-    expect(readFileSync(file, "utf8")).toMatch(/<AdvisorHeader\b/);
+  it.each(memberPages)("%s is a page inside the workspace shell, not one with a header of its own", (file) => {
+    expect(readFileSync(file, "utf8")).not.toMatch(/<AdvisorHeader\b/);
+    // The shell's route wraps it, so it has the menu and the legal links. A member page left outside would have neither.
+    expect(shellRoutes).toContain(`<${name(file)} />`);
   });
 
-  it("puts the legal links in the advisor header and the legal pages' layout", () => {
+  it.each(platformPages)("%s keeps the console header, which carries the legal links, and stays outside the shell", (file) => {
+    expect(readFileSync(file, "utf8")).toMatch(/<AdvisorHeader\b/);
+    expect(shellRoutes).not.toContain(`<${name(file)}`);
+    expect(app).toContain(`<${name(file)} />`);
+  });
+
+  it("puts the legal links in the workspace shell, the platform header and the legal pages' layout", () => {
+    expect(readFileSync("src/components/workspace/WorkspaceShell.tsx", "utf8")).toMatch(/<LegalLinks\b/);
     expect(readFileSync("src/components/advisor/AdvisorHeader.tsx", "utf8")).toMatch(/<LegalLinks\b/);
     expect(readFileSync("src/components/LegalPageLayout.tsx", "utf8")).toMatch(/<LegalLinks\b/);
   });

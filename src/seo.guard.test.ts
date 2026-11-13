@@ -34,7 +34,7 @@ describe("page meta table", () => {
       expect(pageMetaFor(path).index, path).toBe(false);
     }
     expect(pageMetaFor("/no-such-page").title).toBe("Page not found | Nevermore");
-    expect(pageMetaFor("/advisor/funnel").title).toBe("Advisor Console | Nevermore");
+    expect(pageMetaFor("/advisor/funnel").title).toBe("Funnel | Nevermore");
   });
 
   it("indexes the landing page and the sample packet, and the legal pages only once counsel has approved them", () => {
@@ -51,6 +51,22 @@ describe("page meta table", () => {
       const path = route.replace(/:\w+/g, "x1");
       expect(pageMetaFor(path).title, route).not.toBe("Page not found | Nevermore");
     }
+  });
+});
+
+// Every page has its own title (story CRM-S1.1a): a tab, a bookmark and the browser's history name the page, not "Advisor Console".
+describe("the title of each workspace page", () => {
+  const PAGES = [
+    "/settings", "/advisor", "/advisor/submissions/123", "/advisor/outbox", "/advisor/funnel", "/advisor/partners", "/advisor/peos",
+    "/advisor/mailbox", "/advisor/activity", "/advisor/held", "/advisor/firms", "/advisor/organisations", "/firm/invitations",
+  ];
+  it("is different for each page and never the console's generic one", () => {
+    const titles = PAGES.map((path) => pageMetaFor(path).title);
+    expect(new Set(titles).size).toBe(PAGES.length);
+    for (const title of titles) expect(title).not.toMatch(/Advisor Console/);
+  });
+  it("is private: never indexed", () => {
+    for (const path of PAGES) expect(pageMetaFor(path).index, path).toBe(false);
   });
 });
 

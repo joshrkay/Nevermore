@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Link, Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { BrandMark, Wordmark } from "@/components/BrandMark";
 import { formatDateTime } from "@/components/advisor/format";
-import LegalLinks from "@/components/LegalLinks";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
 import {
@@ -35,7 +33,7 @@ type Load =
 
 /**
  * A firm's invitations (story CRM-P1.2): an owner invites an email address with a role, sees who is still pending and resends or
- * withdraws an invitation. A plain page in today's console look; the Settings screen that replaces it is Epic 9. Only what a
+ * withdraws an invitation. A page inside the workspace shell (reached from Settings); the Settings screen that replaces it is Epic 9. Only what a
  * person sees is decided here: the database lets only a current owner of the firm do any of it (D-18).
  */
 const FirmInvitationsPage = () => {
@@ -119,16 +117,7 @@ const FirmInvitationsPage = () => {
       : `Expires ${formatDateTime(i.expiresAt)}`;
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-card">
-        <div className="container mx-auto px-6 min-h-14 py-2 flex items-center gap-2">
-          <Link to="/" className="flex items-center gap-2">
-            <BrandMark className="w-7 h-7 text-primary" />
-            <Wordmark className="text-xl whitespace-nowrap" />
-          </Link>
-          <span className="text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5 ml-1">{firm.status === "known" ? firm.name : "Firm"}</span>
-        </div>
-      </header>
+    <div className="bg-background">
       <main className="container mx-auto px-6 py-8 max-w-3xl space-y-6">
         <div>
           <h1 className="font-display text-3xl font-bold mb-1">Invitations</h1>
@@ -193,7 +182,6 @@ const FirmInvitationsPage = () => {
           </>
         )}
       </main>
-      <div className="pb-8 flex justify-center"><LegalLinks compact /></div>
     </div>
   );
 };

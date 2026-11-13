@@ -27,7 +27,6 @@ import {
   type OutboxStatus,
 } from "@/data/outbox";
 import { listOutboxEvents, outboxSummary, requeueOutboxEvent, type OutboxEvent, type OutboxSummaryRow } from "@/lib/advisorApi";
-import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 
@@ -117,8 +116,7 @@ const AdvisorOutboxPage = () => {
   const now = Date.now();
 
   return (
-    <div className="min-h-screen bg-background">
-      <AdvisorHeader />
+    <div className="bg-background">
       <main className="container mx-auto px-6 py-8">
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-6">
           <div>

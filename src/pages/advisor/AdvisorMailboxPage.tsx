@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import { formatDateTime } from "@/components/advisor/format";
 import { BROKER_PROVIDER_LABELS, BROKER_PROVIDERS, type BrokerProvider } from "@/data/mailboxScopes";
@@ -60,8 +59,7 @@ const AdvisorMailboxPage = () => {
   const button = "min-h-11 px-4 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50";
 
   return (
-    <div className="min-h-screen bg-background">
-      <AdvisorHeader />
+    <div className="bg-background">
       <main className="container mx-auto px-6 py-8 max-w-3xl space-y-6">
         <div>
           <h1 className="font-display text-3xl font-bold mb-1">Your mailbox</h1>

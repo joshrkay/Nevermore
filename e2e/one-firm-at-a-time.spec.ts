@@ -3,7 +3,7 @@ import pg from "pg";
 import { ANON_KEY, APP_URL, DATABASE, firmUrl, GATEWAY_URL, PG } from "./stack/config.mjs";
 import { totpCode } from "./stack/totp.mjs";
 
-// One firm at a time (story CRM-S1.1b, decision D-40, ADR 0014). One person belongs to two firms. On the bare domain they are
+// One firm at a time (story CRM-S1.1b, decision D-40, ADR 0015). One person belongs to two firms. On the bare domain they are
 // shown "Choose a firm", with a link to each firm's address. At firm A's address the browser names that address on every
 // request to the database, the gateway hands the request's headers to Postgres as hosted PostgREST does, and the database
 // answers for firm A alone: the submissions list holds A's and none of B's; at B's address, B's and none of A's. Without the

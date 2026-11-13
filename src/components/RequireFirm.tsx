@@ -1,37 +1,15 @@
 import { Link, Navigate } from "react-router-dom";
 import { useRef, type MutableRefObject, type ReactNode } from "react";
-import { fetchIsAdmin, type MyFirm } from "@/lib/advisorApi";
+import { fetchIsAdmin } from "@/lib/advisorApi";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
-import { loadMyFirms, loadOwnedFirms } from "@/hooks/useOwnedFirms";
+import { loadMyFirms } from "@/hooks/useOwnedFirms";
+import { currentFirm, type Refusal } from "@/lib/currentFirm";
 import RequireAccess, { AccessMessage } from "./RequireAccess";
 
 // The guards of the console (story P-1.4). Each asks the database a question about the person's firms or their platform role
 // and only decides what to render: the database refuses the data to everyone else anyway (D-18). A password sign-in still owes
 // its second factor first (D-19), for a member with no platform role as for one with it.
-
-/**
- * Why a member can't open the console here: they belong to no firm, or not to this address's firm; or, on the bare domain,
- * they belong to several and choose one first.
- */
-type Refusal = "none" | "not_this_firm" | "choose";
-
-/**
- * Whether the firms a person belongs to let them into the console at this address. The console shows one firm's records. At
- * a firm's address the database answers for that firm only (D-40, ADR 0014), so a current member of it is let in whatever
- * other firms they belong to. On the bare domain it answers for every firm the person belongs to, so a member of exactly one
- * lands in it, and a member of several is sent to choose a firm, whose address they then work at.
- */
-function refusal(firms: MyFirm[], address: string | null): Refusal | null {
-  if (firms.length === 0) return "none";
-  if (address !== null) return firms.some((f) => f.address === address) ? null : "not_this_firm";
-  if (firms.length > 1) return "choose";
-  return null;
-}
-
-/** Choosing a firm is not a refusal: the person is let past the check, then sent to choose. Read when the page mounts. */
-const EnterOrChoose = ({ seen, children }: { seen: MutableRefObject<{ refusal: Refusal | null }>; children: ReactNode }) =>
-  seen.current.refusal === "choose" ? <Navigate to="/choose-firm" replace /> : <>{children}</>;
 
 const SignOutLinks = () => {
   const { signOut } = useAuth();
@@ -44,6 +22,13 @@ const SignOutLinks = () => {
     </div>
   );
 };
+
+/**
+ * On the bare domain a member of several firms has no current firm until they choose one (D-40): they are let past the check,
+ * since choosing is not a refusal, and sent to "Choose a firm". Read when the page mounts, after the check has run.
+ */
+const EnterOrChoose = ({ seen, children }: { seen: MutableRefObject<{ refusal: Refusal | null }>; children: ReactNode }) =>
+  seen.current.refusal === "several" ? <Navigate to="/choose-firm" replace /> : <>{children}</>;
 
 /**
  * A page of the firm's console. By default the person must be a current member of the firm, at a firm's address that
@@ -62,16 +47,23 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
   if (as === "owner") {
     return (
       <RequireAccess
-        check={async () => (await loadOwnedFirms(userId, sessionKey)).length > 0}
+        check={async () => {
+          const firms = await loadMyFirms(userId, sessionKey);
+          const here = currentFirm(firms, address);
+          seen.current = { refusal: "firm" in here ? null : here.refusal };
+          return ("firm" in here && here.firm.role === "owner") || seen.current.refusal === "several";
+        }}
         deniedCode="firm_owner_route"
-        denied={() => (
-          <AccessMessage title="For a firm's owners">
-            <p className="text-muted-foreground mb-4">Only a firm's owners can read its record of who did what.</p>
-            <Link to="/advisor" className="text-primary underline hover:text-primary/90">Back to the console</Link>
-          </AccessMessage>
-        )}
+        denied={() => {
+          return (
+            <AccessMessage title="For a firm's owners">
+              <p className="text-muted-foreground mb-4">Only a firm's owners can read its record of who did what.</p>
+              <Link to="/advisor" className="text-primary underline hover:text-primary/90">Back to the console</Link>
+            </AccessMessage>
+          );
+        }}
       >
-        {children}
+        <EnterOrChoose seen={seen}>{children}</EnterOrChoose>
       </RequireAccess>
     );
   }
@@ -80,8 +72,9 @@ const RequireFirm = ({ children, as = "member" }: { children: ReactNode; as?: "m
     <RequireAccess
       check={async () => {
         const firms = await loadMyFirms(userId, sessionKey);
-        seen.current = { refusal: refusal(firms, address) };
-        return seen.current.refusal === null || seen.current.refusal === "choose";
+        const here = currentFirm(firms, address);
+        seen.current = { refusal: "firm" in here ? null : here.refusal };
+        return seen.current.refusal === null || seen.current.refusal === "several";
       }}
       deniedCode="firm_member_route"
       denied={(email) => {

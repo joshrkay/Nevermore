@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
-import AdvisorHeader from "@/components/advisor/AdvisorHeader";
 import AdvisorLoadError from "@/components/advisor/AdvisorLoadError";
 import {
   DEFAULT_FUNNEL_PERIOD,
@@ -46,8 +45,7 @@ const AdvisorFunnelPage = () => {
   const choose = (key: FunnelPeriodKey) => setParams(key === DEFAULT_FUNNEL_PERIOD ? {} : { period: key });
 
   return (
-    <div className="min-h-screen bg-background">
-      <AdvisorHeader />
+    <div className="bg-background">
       <main className="container mx-auto px-6 py-8 max-w-4xl">
         <h1 className="font-display text-3xl font-bold mb-1">Intake funnel</h1>
         <p className="text-sm text-muted-foreground mb-6">
