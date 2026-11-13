@@ -120,6 +120,7 @@
 \i supabase/migrations/20261115130000_information_request_extra_questions.sql
 \i supabase/migrations/20261115140000_peo_census_templates.sql
 \i supabase/migrations/20261116090000_firms.sql
+\i supabase/migrations/20261116110000_firm_scoped_policies.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -253,6 +254,20 @@ DECLARE
   pb uuid := pg_temp.new_user('prospect_b@example.test', false);
   adv uuid := pg_temp.new_user('advisor@example.test', false);
   adm uuid := pg_temp.new_user('admin@example.test', false);
+  -- Firms (20261116090000, 20261116110000). Firm A is Edgar Allan Advisory (everyone sees everything): the advisor is
+  -- an agent, agent_2 another agent and lead_1 a lead, the admin an owner. Firm B is a second firm: agent_b an agent
+  -- and owner_b its owner; prospect B's intakes are its. platform_admin holds the admin role and no membership;
+  -- former_agent holds the advisor role and a membership that ended.
+  firm_a constant uuid := '00000000-0000-4000-8000-00000000eaa1';
+  firm_b constant uuid := '00000000-0000-4000-8000-0000000000b2';
+  ag2 uuid := pg_temp.new_user('agent_2@example.test', false);
+  ld1 uuid := pg_temp.new_user('lead_1@example.test', false);
+  agb uuid := pg_temp.new_user('agent_b@example.test', false);
+  owb uuid := pg_temp.new_user('owner_b@example.test', false);
+  pad uuid := pg_temp.new_user('platform_admin@example.test', false);
+  fag uuid := pg_temp.new_user('former_agent@example.test', false);
+  team_a uuid := gen_random_uuid();
+  team_b uuid := gen_random_uuid();
   ready constant text := '{"company_name":"%s","states":["CA"],"pay_frequency":"Bi-weekly","employee_count":3}';
   ga_open uuid; ga_expired uuid; ga_archived uuid; ga_revoked uuid;
   gb_open uuid; pa_cert uuid; pa_open uuid; pb_cert uuid; pb_open uuid;
@@ -260,8 +275,17 @@ DECLARE
   latest bigint;
   r text;
 BEGIN
-  INSERT INTO fx VALUES ('guest_a', ga), ('guest_b', gb), ('prospect_a', pa), ('prospect_b', pb), ('advisor', adv), ('admin', adm);
-  INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor'), (adm, 'admin');
+  INSERT INTO fx VALUES ('guest_a', ga), ('guest_b', gb), ('prospect_a', pa), ('prospect_b', pb), ('advisor', adv), ('admin', adm),
+    ('agent_2', ag2), ('lead_1', ld1), ('agent_b', agb), ('owner_b', owb), ('platform_admin', pad), ('former_agent', fag),
+    ('firm_a', firm_a), ('firm_b', firm_b);
+  INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor'), (adm, 'admin'), (agb, 'advisor'), (pad, 'admin'), (fag, 'advisor');
+  INSERT INTO public.firms (id, name, address, visibility, approved_at) VALUES (firm_b, 'Second Brokers', 'second-brokers', 'by_level', now());
+  INSERT INTO public.firm_teams (id, firm_id, name) VALUES (team_a, firm_a, 'Sales'), (team_b, firm_b, 'Brokers');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id) VALUES
+    (firm_a, adm, 'owner', NULL), (firm_a, adv, 'agent', NULL), (firm_a, ag2, 'agent', team_a), (firm_a, ld1, 'lead', team_a),
+    (firm_b, owb, 'owner', NULL), (firm_b, agb, 'agent', team_b);
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
+  VALUES (firm_a, fag, 'agent', now() - interval '30 days', now() - interval '1 day');
 
   -- Everyone who starts an intake agrees first, from the browser.
   FOREACH who IN ARRAY ARRAY['guest_a', 'guest_b', 'prospect_a', 'prospect_b'] LOOP
@@ -330,12 +354,22 @@ BEGIN
 
   PERFORM pg_temp.become('prospect_b');
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, format(ready, 'Prospect B Co')::jsonb) RETURNING id INTO pb_cert;
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path)
+  VALUES (pb, pb_cert, 'payroll.csv', '1 KB', pb || '/' || pb_cert || '/payroll.csv');
+  PERFORM pg_temp.store_file('documents', pb || '/' || pb_cert || '/payroll.csv');
   UPDATE public.chamber_sessions
   SET status = 'submitted',
       submission = jsonb_build_object('signer_name', 'Bo B', 'signer_title', 'COO', 'signed_at', '2026-11-01T12:00:00Z',
         'file_id', 'EAA-2026-BBBBBBBB', 'consent_version', 'v1', 'consent_text', 'I certify.', 'chamber_data', chamber_data)
   WHERE id = pb_cert;
+  -- Prospect B starts over once, so a closed intake of the second firm leaves its lifecycle event, then keeps a new draft.
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, '{"company_name":"Prospect B First Draft"}') RETURNING id INTO pb_open;
+  IF public.archive_chamber_session(pb_open) <> 'archived' THEN RAISE EXCEPTION 'setup: archive failed'; END IF;
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, '{"company_name":"Prospect B Draft"}') RETURNING id INTO pb_open;
+  -- Prospect B's intakes belong to the second firm. The API can't choose a firm (an intake always starts in Edgar Allan
+  -- Advisory's, keep_intake_firm); here the superuser places them, as the address a prospect arrives at will.
+  RESET ROLE;
+  UPDATE public.chamber_sessions SET firm_id = firm_b WHERE user_id = pb;
 
   -- A file planted in guest B's folder under guest A's intake: neither of them may read it.
   RESET ROLE;
@@ -353,15 +387,32 @@ BEGIN
   -- A note on it (20261111090000), so the notes have a row to protect.
   PERFORM public.advisor_add_quote_request_note(
     (SELECT id FROM public.quote_requests WHERE session_id = pa_cert), 'call', current_date, 'Their rep called');
-  -- A request for information on prospect B's submission (20261105090000), so its table has a row to protect.
-  PERFORM public.advisor_request_information(pb_cert, 'Please confirm the pay frequency', ARRAY['pay_frequency']);
   -- A referral partner (20261106100000), so its table has a row to protect.
   PERFORM public.advisor_add_referral_partner('acme-cfo', 'Acme CFO Partners', 'accounting');
+
   SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = pa_cert;
   INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', pa_cert || '/v1-matrix.pdf');
   PERFORM public.record_manuscript_version(pa_cert, 1, pa_cert || '/v1-matrix.pdf', repeat('c', 64), latest, 0, false,
     (SELECT s.submission ->> 'data_sha256' FROM public.chamber_sessions s WHERE s.id = pa_cert),
     (SELECT (s.submission ->> 'certified_at')::timestamptz FROM public.chamber_sessions s WHERE s.id = pa_cert));
+
+  -- The second firm's agent works prospect B's submission the same way, so every advisor-side table has a row of the
+  -- second firm's to protect too: a request for information (20261105090000), status, a note, a field review, a quote
+  -- request with a note, and a stored Manuscript.
+  PERFORM pg_temp.become('agent_b');
+  PERFORM public.advisor_request_information(pb_cert, 'Please confirm the pay frequency', ARRAY['pay_frequency']);
+  PERFORM public.set_submission_status(pb_cert, 'under_review', 'Picked up');
+  INSERT INTO public.advisor_notes (session_id, body) VALUES (pb_cert, 'Payroll looks complete');
+  PERFORM public.review_submission_field(pb_cert, 'company_name', 'verified');
+  PERFORM public.set_submission_status(pb_cert, 'ready_for_market', 'Reviewed');
+  PERFORM public.advisor_record_quote_send(pb_cert, 'Justworks', NULL);
+  PERFORM public.advisor_add_quote_request_note(
+    (SELECT id FROM public.quote_requests WHERE session_id = pb_cert), 'call', current_date, 'Their rep emailed');
+  SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = pb_cert;
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', pb_cert || '/v1-matrix.pdf');
+  PERFORM public.record_manuscript_version(pb_cert, 1, pb_cert || '/v1-matrix.pdf', repeat('d', 64), latest, 0, false,
+    (SELECT s.submission ->> 'data_sha256' FROM public.chamber_sessions s WHERE s.id = pb_cert),
+    (SELECT (s.submission ->> 'certified_at')::timestamptz FROM public.chamber_sessions s WHERE s.id = pb_cert));
 
   -- Monitoring: a guest's report, a signed-out visitor's, and a function's; and one alert.
   PERFORM pg_temp.become('guest_a');
@@ -374,11 +425,13 @@ BEGIN
   INSERT INTO public.ops_alerts (kind, event_count, window_minutes, threshold, top_codes) VALUES ('ai_failed', 5, 15, 5, 'timeout x5');
   -- The record chamber-extract keeps of a call (US-2.4a), on prospect A's submission.
   INSERT INTO public.ai_extraction_events (request_id, function_name, user_id, session_id, outcome, error_code, http_status)
-  VALUES (gen_random_uuid(), 'chamber-extract', pa, pa_cert, 'error', 'timeout', 504);
+  VALUES (gen_random_uuid(), 'chamber-extract', pa, pa_cert, 'error', 'timeout', 504),
+         (gen_random_uuid(), 'chamber-extract', pb, pb_cert, 'error', 'timeout', 504);
 
   -- The admin asks for prospect B's draft to be deleted (it stays until purge-intakes runs).
   PERFORM pg_temp.become('admin');
   PERFORM public.request_intake_deletion(pb_open, 'The owner asked by email; verified from the account address');
+  PERFORM public.request_intake_deletion(pa_open, 'The owner asked by email; verified from the account address');
   -- The admin publishes TriNet's requirement profile, naming a contact (20261115090000); the other four PEOs keep
   -- their empty drafts.
   PERFORM public.admin_save_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'), jsonb_build_object(
@@ -422,23 +475,32 @@ BEGIN
   SELECT m.id, 'att_2', 'waiting.pdf', 100, 'pending' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
   INSERT INTO storage.objects (bucket_id, name)
   SELECT 'peo-mail', pa_cert || '/' || m.id || '/1-proposal.pdf' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
-  -- An advisor opened its thread (20261111120000), so the mark has a row to protect.
+  -- The same on prospect B's quote request, the second firm's mail.
+  INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, body_text)
+  SELECT 'matrix_b1', q.id, q.session_id, 'received', 'sam@justworks.example', 'Our terms attached'
+  FROM public.quote_requests q WHERE q.session_id = pb_cert;
+  INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
+  SELECT m.id, 'att_b1', 'terms.pdf', 100, 'stored', 'clean', 'peo-mail', pb_cert || '/' || m.id || '/1-terms.pdf'
+  FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_b1';
+  INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status)
+  SELECT m.id, 'att_b2', 'waiting.pdf', 100, 'pending' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_b1';
+  INSERT INTO storage.objects (bucket_id, name)
+  SELECT 'peo-mail', pb_cert || '/' || m.id || '/1-terms.pdf' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_b1';
+  -- An advisor opened each thread (20261111120000), so the mark has a row to protect.
   INSERT INTO public.quote_request_thread_reads (quote_request_id, last_opened_at)
-  SELECT q.id, now() FROM public.quote_requests q WHERE q.session_id = pa_cert;
+  SELECT q.id, now() FROM public.quote_requests q WHERE q.session_id IN (pa_cert, pb_cert);
   -- An advisor's connected mailbox (20261113090000): the encrypted token, which no API role reads. The mailbox function writes it.
   INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
   SELECT adv, 'google', 'advisor@example.test', 'https://www.googleapis.com/auth/gmail.send', 'ciphertext', 'iv';
+  -- A request for information on prospect A's submission too (20261105090000; written here, as the superuser, so the
+  -- pipeline stays where the cases below expect it), so its table has a row of each firm's to protect.
+  INSERT INTO public.information_requests (session_id, message, fields) VALUES (pa_cert, 'Please send the latest loss runs', ARRAY['workers_comp_loss_runs']);
   -- An allowed organisation and the log of its being added (20261113100000), which only admins read. The admin functions write
   -- them; here they are written directly, as the superuser.
   INSERT INTO public.allowed_organisations (provider, org_id, label, added_by, added_by_email)
   VALUES ('google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
   INSERT INTO public.advisor_role_events (kind, provider, org_id, org_label, actor_id, actor_email)
   VALUES ('org_added', 'google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
-  -- Firms (20261116090000): the migration seeded Edgar Allan Advisory before these accounts held their roles, so
-  -- the advisor and the admin join it here as it would have joined them (D-15), with one team.
-  INSERT INTO public.firm_memberships (firm_id, user_id, role)
-  VALUES ('00000000-0000-4000-8000-00000000eaa1', adv, 'agent'), ('00000000-0000-4000-8000-00000000eaa1', adm, 'owner');
-  INSERT INTO public.firm_teams (firm_id, name) VALUES ('00000000-0000-4000-8000-00000000eaa1', 'Sales');
   -- A file in the bucket that no stored attachment names stays the service role's alone.
   INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', pa_cert || '/0/unrecorded.pdf');
   INSERT INTO storage.objects (bucket_id, name) SELECT 'peo-templates', storage_path FROM public.peo_census_templates;
@@ -458,90 +520,103 @@ END $$;
 -- ---------- 1. the matrix ----------
 -- Rows each caller sees of each source. A missing caller key means 0; "all" means every row there is. Every
 -- source must hold at least one row, or the check would prove nothing.
-CREATE TEMP TABLE matrix (src text PRIMARY KEY, expect jsonb NOT NULL);
+CREATE TEMP TABLE matrix (src text PRIMARY KEY, expect jsonb NOT NULL, firm_rows jsonb);
 GRANT SELECT ON matrix TO anon, authenticated, service_role;
+-- A table that holds a firm's data says how many rows each of the two firms has, in firm_rows. For it, the members of
+-- Edgar Allan Advisory (advisor, admin, agent_2, lead_1: "A") see exactly the first firm's rows and the second firm's
+-- members (agent_b, owner_b: "B") exactly the second's, unless expect says otherwise for one of them. Nobody else, the
+-- platform admin and a former member included, sees a row of either unless expect names them.
 INSERT INTO matrix VALUES
   -- Guest A sees its open and expired drafts, not the archived or revoked ones.
-  ('public.chamber_sessions',                           '{"guest_a":2,"guest_b":1,"prospect_a":2,"prospect_b":2,"advisor":"all","admin":"all"}'),
-  ('public.chamber_certifications',                     '{"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all"}'),
-  ('public.documents',                                  '{"guest_a":2,"guest_b":1,"prospect_a":1,"advisor":"all","admin":"all"}'),
-  ('storage.objects WHERE bucket_id = ''documents''',   '{"guest_a":2,"guest_b":1,"prospect_a":1,"advisor":"all","admin":"all"}'),
+  ('public.chamber_sessions',                           '{"guest_a":2,"guest_b":1,"prospect_a":2,"prospect_b":2}', '{"A":7,"B":3}'),
+  ('public.chamber_certifications',                     '{"prospect_a":1,"prospect_b":1}', '{"A":1,"B":1}'),
+  ('public.documents',                                  '{"guest_a":2,"guest_b":1,"prospect_a":1,"prospect_b":1}', '{"A":5,"B":1}'),
+  ('storage.objects WHERE bucket_id = ''documents''',   '{"guest_a":2,"guest_b":1,"prospect_a":1,"prospect_b":1}', '{"A":6,"B":1}'),
   -- A prospect reads one stored Manuscript: their final one (the latest version, built from their current
-  -- certification; prospect_final_manuscript). Every other file in the bucket is the advisors'.
-  ('storage.objects WHERE bucket_id = ''manuscripts''', '{"prospect_a":1,"advisor":"all","admin":"all"}'),
+  -- certification; prospect_final_manuscript). Every other file in the bucket is the firm's advisors'.
+  ('storage.objects WHERE bucket_id = ''manuscripts''', '{"prospect_a":1,"prospect_b":1}', '{"A":1,"B":1}'),
   -- Uploads whose malware scan hasn't passed (20261104130000): the service role's alone.
-  ('storage.objects WHERE bucket_id = ''quarantine''',  '{}'),
-  -- PEO mail attachments: advisors read the ones recorded as stored (one); nobody else reads any.
-  ('storage.objects WHERE bucket_id = ''peo-mail''',     '{"advisor":1,"admin":1}'),
-  ('storage.buckets',                                   '{}'),
-  -- Everyone sees their own profile; the advisor's account behind a guest token is still that account.
-  ('public.profiles',                                   '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all","advisor_as_guest":1}'),
-  ('public.user_roles',                                 '{"advisor":1,"admin":1,"advisor_as_guest":1}'),
-  ('public.intake_consents',                            '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all"}'),
-  ('public.submission_workflow',                        '{"advisor":"all","admin":"all"}'),
-  ('public.submission_status_history',                  '{"advisor":"all","admin":"all"}'),
-  ('public.advisor_notes',                              '{"advisor":"all","admin":"all"}'),
-  ('public.advisor_field_reviews',                      '{"advisor":"all","admin":"all"}'),
-  ('public.advisor_review_events',                      '{"advisor":"all","admin":"all"}'),
-  ('public.manuscript_versions',                        '{"advisor":"all","admin":"all"}'),
-  -- Who added, removed, renamed or re-categorised each document, and when: the advisors' audit trail.
-  ('public.document_events',                            '{"advisor":"all","admin":"all"}'),
+  ('storage.objects WHERE bucket_id = ''quarantine''',  '{}', NULL),
+  -- PEO mail attachments: a firm's members read the ones recorded as stored on their own firm's quote requests; nobody else reads any.
+  ('storage.objects WHERE bucket_id = ''peo-mail''',     '{}', '{"A":1,"B":1}'),
+  ('storage.buckets',                                   '{}', NULL),
+  -- Everyone sees their own profile (the advisor's account behind a guest token is still that account); a firm's
+  -- members also see the profiles of its current members and of the owners of its intakes, no one else's.
+  ('public.profiles',                                   '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor_as_guest":1,"platform_admin":1,"former_agent":1}', '{"A":7,"B":3}'),
+  ('public.user_roles',                                 '{"advisor":1,"admin":1,"advisor_as_guest":1,"agent_b":1,"platform_admin":1,"former_agent":1}', NULL),
+  ('public.intake_consents',                            '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1}', '{"A":3,"B":1}'),
+  ('public.submission_workflow',                        '{}', '{"A":7,"B":3}'),
+  ('public.submission_status_history',                  '{}', '{"A":10,"B":7}'),
+  ('public.advisor_notes',                              '{}', '{"A":1,"B":1}'),
+  ('public.advisor_field_reviews',                      '{}', '{"A":1,"B":1}'),
+  ('public.advisor_review_events',                      '{}', '{"A":1,"B":1}'),
+  ('public.manuscript_versions',                        '{}', '{"A":1,"B":1}'),
+  -- Who added, removed, renamed or re-categorised each document, and when: the firm's advisors' audit trail.
+  ('public.document_events',                            '{}', '{"A":5,"B":1}'),
   -- What advisors asked prospects for (20261105090000): the prospect reads their own open request only through
   -- prospect_information_request(), never the table.
-  ('public.information_requests',                       '{"advisor":"all","admin":"all"}'),
-  -- Which PEOs each submission went to and what they answered (20261110090000), with every change: the advisors'
-  -- alone. The prospect never sees a quote request, even on their own submission.
-  ('public.quote_requests',                             '{"advisor":"all","admin":"all"}'),
-  ('public.quote_request_events',                       '{"advisor":"all","admin":"all"}'),
-  ('public.quote_request_notes',                        '{"advisor":"all","admin":"all"}'),
-  ('public.quote_request_addresses',                    '{"advisor":"all","admin":"all"}'),
-  -- Mail on a quote request reaches advisors; held mail (none here) only admins. The prospect reads none.
-  ('public.quote_request_messages',                     '{"advisor":1,"admin":2}'),
-  ('public.quote_request_message_attachments',          '{"advisor":2,"admin":2}'),
-  ('public.quote_request_thread_reads',                 '{"advisor":1,"admin":1}'),
+  ('public.information_requests',                       '{}', '{"A":1,"B":1}'),
+  -- Which PEOs each submission went to and what they answered (20261110090000), with every change: the firm's
+  -- advisors' alone. The prospect never sees a quote request, even on their own submission.
+  ('public.quote_requests',                             '{}', '{"A":1,"B":1}'),
+  ('public.quote_request_events',                       '{}', '{"A":5,"B":5}'),
+  ('public.quote_request_notes',                        '{}', '{"A":1,"B":1}'),
+  ('public.quote_request_addresses',                    '{}', '{"A":1,"B":1}'),
+  -- Mail on a quote request reaches the firm's members; held mail (one here, and it belongs to no firm) only platform admins,
+  -- the admin here included. The prospect reads none.
+  ('public.quote_request_messages',                     '{"admin":2,"platform_admin":1}', '{"A":1,"B":1}'),
+  ('public.quote_request_message_attachments',          '{}', '{"A":2,"B":2}'),
+  ('public.quote_request_thread_reads',                 '{}', '{"A":1,"B":1}'),
   -- A broker's connected mailbox (20261113090000): the encrypted token. Nobody reads it through the API, admins included;
   -- the broker learns only whether it is connected, through my_mailbox().
-  ('public.broker_mailboxes',                           '{}'),
+  ('public.broker_mailboxes',                           '{}', NULL),
   -- Who may get the advisor role without an admin (20261113100000), and the log of grants: admins' alone.
-  ('public.allowed_organisations',                      '{"admin":"all"}'),
-  ('public.advisor_role_events',                        '{"admin":"all"}'),
+  ('public.allowed_organisations',                      '{"admin":"all","platform_admin":"all"}', NULL),
+  ('public.advisor_role_events',                        '{"admin":"all","platform_admin":"all"}', NULL),
   -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
-  ('public.intake_milestones',                          '{}'),
-  -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
-  -- advisor_add_referral_partner() and advisor_update_referral_partner().
-  ('public.referral_partners',                          '{"advisor":"all","admin":"all"}'),
-  -- PEOs and their requirement profiles (20261115090000): advisors read the PEOs, the published version (one here)
-  -- and its contacts; drafts are the admin's. Prospects, guests included, read none of these tables (a version names
-  -- people at the PEO and admins): peo_catalog() is their only way in, checked in part 4. Signed-out callers read
-  -- nothing: public pages never name a PEO.
-  ('public.peos',                                       '{"advisor":"all","admin":"all"}'),
-  ('public.peo_profile_versions',                       '{"advisor":1,"admin":"all"}'),
-  ('public.peo_contacts',                               '{"advisor":"all","admin":"all"}'),
+  ('public.intake_milestones',                          '{}', NULL),
+  -- Who refers employers, by the code in their link (20261106100000): read by Edgar Allan Advisory's members, which is
+  -- whose partners they are until CRM-P2.1c gives them a firm, and written only through advisor_add_referral_partner()
+  -- and advisor_update_referral_partner().
+  ('public.referral_partners',                          '{"advisor":"all","admin":"all","agent_2":"all","lead_1":"all"}', NULL),
+  -- PEOs and their requirement profiles (20261115090000) are the platform's, the same for every firm: advisors read the PEOs,
+  -- the published version (one here) and its contacts; drafts are the admin's. Prospects, guests included, read none of
+  -- these tables (a version names people at the PEO and admins): peo_catalog() is their only way in, checked in part 4.
+  -- Signed-out callers read nothing: public pages never name a PEO. They hold no firm's data, so a platform admin reads
+  -- them and an advisor of either firm does.
+  ('public.peos',                                       '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
+  ('public.peo_profile_versions',                       '{"advisor":1,"admin":"all","agent_b":1,"platform_admin":"all","former_agent":1}', NULL),
+  ('public.peo_contacts',                               '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
   -- PEO template workbooks (20261115140000): advisors read the records; anyone signed in reads a clean one's file
   -- (a PEO's blank form, filled in the reader's browser), nobody signed out.
-  ('public.peo_census_templates',                       '{"advisor":"all","admin":"all"}'),
-  ('storage.objects WHERE bucket_id = ''peo-templates''', '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all"}'),
+  ('public.peo_census_templates',                       '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
+  ('storage.objects WHERE bucket_id = ''peo-templates''', '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all","agent_2":"all","lead_1":"all","agent_b":"all","owner_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
   -- Firms, their teams and dated memberships (20261116090000): a current member reads their own firm and its teams, and
-  -- their own membership; nobody else, prospects and guests included. No existing table's policy reads them yet.
-  ('public.firms',                                      '{"advisor":1,"admin":1}'),
-  ('public.firm_teams',                                 '{"advisor":1,"admin":1}'),
-  ('public.firm_memberships',                           '{"advisor":1,"admin":1}'),
-  ('public.intake_lifecycle_events',                    '{"advisor":"all","admin":"all"}'),
-  ('public.intake_deletions',                           '{"advisor":"all","admin":"all"}'),
-  -- Monitoring is the admin's: advisors don't need failure codes, routes or account ids.
-  ('public.ops_events',                                 '{"admin":"all"}'),
-  ('public.ops_alerts',                                 '{"admin":"all"}'),
-  -- AI call records (US-2.4a) are for advisors investigating an intake.
-  ('public.ai_extraction_events',                       '{"advisor":"all","admin":"all"}'),
+  -- their own membership; nobody else, prospects, guests and platform admins included.
+  ('public.firms',                                      '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
+  ('public.firm_teams',                                 '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
+  ('public.firm_memberships',                           '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
+  ('public.intake_lifecycle_events',                    '{}', '{"A":3,"B":1}'),
+  ('public.intake_deletions',                           '{}', '{"A":1,"B":1}'),
+  -- Monitoring is the platform admin's: advisors don't need failure codes, routes or account ids.
+  ('public.ops_events',                                 '{"admin":"all","platform_admin":"all"}', NULL),
+  ('public.ops_alerts',                                 '{"admin":"all","platform_admin":"all"}', NULL),
+  -- AI call records (US-2.4a) are for a firm's advisors investigating its intake.
+  ('public.ai_extraction_events',                       '{}', '{"A":1,"B":1}'),
   -- Reached only through SECURITY DEFINER functions, by nobody directly.
-  ('public.outbox_events',                              '{}'),
+  ('public.outbox_events',                              '{}', NULL),
   -- The File ID sequence (20261104110000): taken by the certification trigger, read by nobody.
-  ('public.submission_reference_counters',              '{}'),
-  ('public.email_delivery_events',                      '{}'),
-  ('public.email_suppressions',                         '{}'),
-  ('public.ai_request_log',                             '{}'),
-  ('public.ai_ip_log',                                  '{}'),
-  ('public.ai_global_usage',                            '{}');
+  ('public.submission_reference_counters',              '{}', NULL),
+  ('public.email_delivery_events',                      '{}', NULL),
+  ('public.email_suppressions',                         '{}', NULL),
+  ('public.ai_request_log',                             '{}', NULL),
+  ('public.ai_ip_log',                                  '{}', NULL),
+  ('public.ai_global_usage',                            '{}', NULL);
+
+CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
+  SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
+               'agent_2', 'lead_1', 'agent_b', 'owner_b', 'platform_admin', 'former_agent', 'service']
+$$;
 
 DO $$
 DECLARE
@@ -550,27 +625,38 @@ DECLARE
   total bigint;
   want bigint;
   seen bigint;
+  token text;
+  expect jsonb;
   cases integer := 0;
+  wrong text := '';
 BEGIN
   FOR m IN SELECT * FROM matrix ORDER BY src LOOP
     RESET ROLE;
     total := pg_temp.visible(m.src);
     IF total = 0 THEN RAISE EXCEPTION 'FAIL: % holds no rows, so the matrix proves nothing for it', m.src; END IF;
-    FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest', 'service'] LOOP
+    IF m.firm_rows IS NOT NULL AND (LEAST((m.firm_rows ->> 'A')::bigint, (m.firm_rows ->> 'B')::bigint) < 1) THEN
+      RAISE EXCEPTION 'FAIL: % holds no rows of one of the two firms, so the matrix proves nothing for it', m.src;
+    END IF;
+    expect := CASE WHEN m.firm_rows IS NULL THEN '{}'::jsonb
+      ELSE '{"advisor":"A","admin":"A","agent_2":"A","lead_1":"A","agent_b":"B","owner_b":"B"}'::jsonb END || m.expect;
+    FOREACH who IN ARRAY pg_temp.matrix_callers() LOOP
+      token := expect ->> who;
       want := CASE
         WHEN who = 'service' THEN total  -- the service role bypasses row security
-        WHEN m.expect ->> who = 'all' THEN total
-        ELSE COALESCE((m.expect ->> who)::bigint, 0)
+        WHEN token = 'all' THEN total
+        WHEN token IN ('A', 'B') THEN (m.firm_rows ->> token)::bigint
+        ELSE COALESCE(token::bigint, 0)
       END;
       PERFORM pg_temp.become(who);
       seen := pg_temp.visible(m.src);
       RESET ROLE;
       IF seen <> want THEN
-        RAISE EXCEPTION 'FAIL: % sees % row(s) of %, expected %', who, seen, m.src, want;
+        wrong := wrong || format(E'\n  %s sees %s row(s) of %s, expected %s', who, seen, m.src, want);
       END IF;
       cases := cases + 1;
     END LOOP;
   END LOOP;
+  IF wrong <> '' THEN RAISE EXCEPTION 'FAIL: the matrix is wrong for:%', wrong; END IF;
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: % matrix cases passed', cases;
 END $$;
