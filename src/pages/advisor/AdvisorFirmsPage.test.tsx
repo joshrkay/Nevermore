@@ -88,4 +88,15 @@ describe("AdvisorFirmsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: /try again/i }));
     expect(await screen.findByText("No firm is waiting for approval.")).toBeInTheDocument();
   });
+
+  it("lets no second decision start while one is being saved", async () => {
+    let finish: () => void = () => {};
+    firms.decideFirm.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Approve Fresh Benefits" }));
+    expect(screen.getByRole("button", { name: "Approve Capital Brokers" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Refuse Capital Brokers" })).toBeDisabled();
+    finish();
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  });
 });

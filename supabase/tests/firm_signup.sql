@@ -295,6 +295,34 @@ BEGIN
   RAISE NOTICE 'firm_signup: admin list cases passed';
 END $$;
 
+-- Break caught: the list is not oldest first, or names a member who is not the owner (an agent who joined earlier)
+-- as the person who signed the firm up.
+DO $$
+DECLARE
+  fresh uuid := (SELECT id FROM public.firms WHERE address = 'fresh-benefits');
+  capital uuid := (SELECT id FROM public.firms WHERE address = 'capital-brokers');
+  was_fresh timestamptz; was_capital timestamptz;
+BEGIN
+  RESET ROLE;
+  SELECT created_at INTO was_fresh FROM public.firms WHERE id = fresh;
+  SELECT created_at INTO was_capital FROM public.firms WHERE id = capital;
+  UPDATE public.firms SET created_at = now() - interval '2 days' WHERE id = capital;
+  UPDATE public.firms SET created_at = now() - interval '1 day' WHERE id = fresh;
+  PERFORM pg_temp.new_user('earlier_agent');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from)
+    VALUES (fresh, pg_temp.id('earlier_agent'), 'agent', now() - interval '3 days');
+  PERFORM pg_temp.as_user('platform_admin');
+  PERFORM pg_temp.is((SELECT array_agg(w.address) FROM public.admin_waiting_firms() w),
+    ARRAY['capital-brokers', 'fresh-benefits'], 'the oldest waiting firm is first');
+  PERFORM pg_temp.is((SELECT w.owner_email FROM public.admin_waiting_firms() w WHERE w.firm_id = fresh), 'founder@example.test',
+    'the person named is the owner, not an agent who joined earlier');
+  RESET ROLE;
+  DELETE FROM public.firm_memberships WHERE firm_id = fresh AND user_id = pg_temp.id('earlier_agent');
+  UPDATE public.firms SET created_at = was_capital WHERE id = capital;
+  UPDATE public.firms SET created_at = was_fresh WHERE id = fresh;
+  RAISE NOTICE 'firm_signup: admin list order and owner cases passed';
+END $$;
+
 -- Break caught: the list, or a decision, is open to someone who isn't a platform admin: an advisor, a firm's owner
 -- (the waiting firm's own included), a guest, or a signed-out caller.
 DO $$

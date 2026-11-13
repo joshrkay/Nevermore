@@ -258,6 +258,15 @@ _Avoid_: subdomain, slug, URL
 **Firm host** (code: `firmAddressFromHost`, `src/lib/firmHost.ts`):
 The firm address read out of the host the app is served on: `name.nevermorepeo.com`, or `name.localhost` for local development and the end-to-end tests. The bare domain, `www` and any other host name no firm and keep today's behaviour; a name with more than one label in front of the domain matches no firm and shows as not found. It only picks what the screen shows (D-17, D-18).
 
+**Firm sign-up** (code: `sign_up_firm`, `/firms/new`):
+A signed-in person with a verified email gives a firm name and a firm address and becomes the firm's first owner in one step. The firm exists at once and its members can work, but it is waiting for approval: it cannot send to a PEO until a platform admin approves it (Q-1.2). The address is read as every firm address is (lower case, no surrounding spaces) and the address rules of the table apply.
+
+**Waiting for approval** (code: `firms.approved_at` empty and `firms.decision` empty):
+A firm that has signed up and has no decision yet. A platform admin sees these through `admin_waiting_firms`, oldest first, and no other way (D-16).
+
+**Firm decision** (code: `admin_decide_firm`, `firms.decision`, `decided_at`, `decided_by`, `decision_note`):
+A platform admin's approval or refusal of a waiting firm, with an optional note. Approving sets `approved_at`; refusing leaves it empty. A firm is decided once, and an admin does not decide on a firm they belong to. The event is written through `record_firm_event`, the one small function the record of who did what (CRM-P2.3) takes over.
+
 **Public firm name** (code: `firm_public_name`):
 What a firm's address shows before anyone signs in: the firm's name, and nothing else, for any firm that exists, approved or still waiting for approval (a waiting firm's members can work before approval; approval gates sending, not signing in). Only an address no firm holds gives nothing, and it shows a plain not-found page to everyone, with no sign-in and no sign-in callback pages (D-27). Firms have no logo field yet.
 

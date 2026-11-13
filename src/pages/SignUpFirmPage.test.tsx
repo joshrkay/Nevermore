@@ -110,4 +110,25 @@ describe("SignUpFirmPage", () => {
     await screen.findByRole("heading", { name: "Fresh Benefits is set up" });
     expect(signUpFirm).toHaveBeenCalledTimes(1);
   });
+
+  it("does not send twice when the form is submitted again by the keyboard while the first is on its way", async () => {
+    let finish: (id: string) => void = () => {};
+    signUpFirm.mockReturnValue(new Promise<string>((resolve) => { finish = resolve; }));
+    renderPage();
+    fill("Fresh Benefits", "fresh-benefits");
+    const form = screen.getByRole("form", { name: "Sign up your firm" });
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    finish("firm-1");
+    await screen.findByRole("heading", { name: "Fresh Benefits is set up" });
+    expect(signUpFirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the firm without the spaces around what was typed", async () => {
+    renderPage();
+    fill("  Fresh Benefits  ", "fresh-benefits");
+    fireEvent.click(screen.getByRole("button", { name: "Sign up your firm" }));
+    await screen.findByText(/waiting for approval/);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Fresh Benefits is set up");
+  });
 });
