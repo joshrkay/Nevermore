@@ -695,3 +695,19 @@ BEGIN
   RESET ROLE;
   RAISE NOTICE 'firm_members: alerts and invitations passed';
 END $$;
+
+-- A session held at the firm's address: the address asks "is this person a member of this firm" (D-27), and a removed or suspended
+-- person is not, so it lands on "You aren't a member of this firm".
+DO $$
+BEGIN
+  PERFORM pg_temp.as_user('al_owner');
+  PERFORM pg_temp.is(public.my_firm_at_address('alert-firm') IS NOT NULL, true, 'a current member is a member at the firm''s address');
+  PERFORM pg_temp.as_user('al_removed');
+  PERFORM pg_temp.is(public.my_firm_at_address('alert-firm'), NULL::uuid, 'a removed person is not a member at the firm''s address');
+  PERFORM pg_temp.is(public.is_member_of_firm_address('alert-firm'), false, 'by the other question the address asks too');
+  PERFORM pg_temp.as_user('al_suspended');
+  PERFORM pg_temp.is(public.my_firm_at_address('alert-firm'), NULL::uuid, 'nor is a suspended one');
+  PERFORM pg_temp.is(public.is_member_of_firm_address('alert-firm'), false, 'by the other question the address asks too');
+  RESET ROLE;
+  RAISE NOTICE 'firm_members: firm address passed';
+END $$;
