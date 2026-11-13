@@ -52,6 +52,9 @@ Microsoft sign-in relies on that provider's and is never asked; prospects and gu
 - **In the database** (`20261116150000_second_factor_for_password_sign_ins.sql`): `second_factor_rule_met()` reads the token's own
   claims: it is false only when `amr` lists `password` and `aal` is not `aal2`. `has_role()` asks it, so `is_advisor()`,
   `require_advisor()`, every advisor policy and every admin-only function refuse such a sign-in. The rule holds without the screen.
+  The `held-mail` and `mailbox` functions run as the service role and take the caller's id from their login, so before any work
+  they ask `is_advisor()` (or `has_role('admin')` to assign or discard held mail) with the caller's own login, and answer 403 to a
+  password sign-in with no second factor. Their own role checks in the database stay as a second line.
   `advisor_needs_second_factor()` tells the screens that a person with a role is held back by this alone.
 - **On screen**: `RequireAdvisor` sends such a person to `/advisor/second-factor` instead of showing "Waiting for access". The
   page sets up an authenticator app (Supabase Auth's TOTP calls) the first time and asks for its code at later sign-ins. After a

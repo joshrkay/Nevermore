@@ -23,8 +23,23 @@ $$;
 REVOKE ALL ON FUNCTION public.second_factor_rule_met() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.second_factor_rule_met() TO anon, authenticated;
 
--- Every role check (is_advisor, require_advisor and the admin-only functions and policies all end here)
--- now also asks for the second factor. A role granted to the account is not enough on its own.
+-- A signed-in person, not a guest: the preamble every role check shares. It reads only the caller's own token.
+CREATE OR REPLACE FUNCTION public.is_signed_in_person()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+  SELECT auth.uid() IS NOT NULL
+    AND COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) = false;
+$$;
+
+REVOKE ALL ON FUNCTION public.is_signed_in_person() FROM PUBLIC, anon, authenticated;
+
+-- Every role check that reads the caller's token (is_advisor, require_advisor and the admin-only functions and
+-- policies all end here) now also asks for the second factor. A role granted to the account is not enough on its own.
+-- The held-mail and mailbox functions run as the service role and cannot read the caller's token, so they ask
+-- is_advisor() or has_role('admin') with the caller's own login before doing any work (their handlers do).
 CREATE OR REPLACE FUNCTION public.has_role(_role public.app_role)
 RETURNS boolean
 LANGUAGE sql
@@ -32,8 +47,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT auth.uid() IS NOT NULL
-    AND COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) = false
+  SELECT public.is_signed_in_person()
     AND public.second_factor_rule_met()
     AND EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid() AND role = _role);
 $$;
@@ -51,8 +65,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT auth.uid() IS NOT NULL
-    AND COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) = false
+  SELECT public.is_signed_in_person()
     AND NOT public.second_factor_rule_met()
     AND EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid());
 $$;

@@ -15,6 +15,8 @@ interface Options {
   env?: Record<string, string | undefined>;
   user?: { id: string; email?: string | null } | null;
   rpc?: Record<string, { data?: unknown; error?: { code?: string } | null }>;
+  /** Whether the caller's own token passes the advisor check, as the database answers it (false: a password sign-in with no second factor). */
+  roleCheck?: boolean;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
 }
 
@@ -30,9 +32,18 @@ function setup(o: Options = {}) {
     },
     auth: { getUser: async () => ({ data: { user: o.user === undefined ? { id: "u1", email: "Marcus@Advisory.example" } : o.user } }) },
   };
-  const createClient = vi.fn((_u: string, _k: string, _opt?: unknown) => client);
+  // The caller's own client asks the database about their token; it does none of the work.
+  const asked: string[] = [];
+  const userClient: MailboxClient = {
+    ...client,
+    rpc: async (fn, args) => {
+      asked.push(`${fn}:${JSON.stringify(args)}`);
+      return { data: o.roleCheck ?? true, error: null };
+    },
+  };
+  const createClient = vi.fn((_u: string, key: string, _opt?: unknown) => (key === "anon" ? userClient : client));
   const deps: MailboxDeps = { env: (n) => (o.env ?? ENV)[n], createClient, fetch: fetchFn as unknown as MailboxDeps["fetch"], log: (l) => logs.push(l) };
-  return { deps, logs, calls, fetchFn, createClient };
+  return { deps, logs, calls, fetchFn, createClient, asked };
 }
 
 const post = (body: unknown, token: string | null = "user-jwt", method = "POST") =>
@@ -134,6 +145,16 @@ describe("mailbox: connecting", () => {
     const res = await handleMailboxRequest(post({ action: "connect", provider: "google", refresh_token: "1//the-refresh-token" }), s.deps);
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe("not_advisor");
+  });
+
+  it.each(["connect", "check", "disconnect"])("refuses %s with 403 and does nothing when the token has no second factor", async (action) => {
+    const s = setup({ roleCheck: false, rpc: { mailbox_secret: { data: null } } });
+    const res = await handleMailboxRequest(post({ action, provider: "google", refresh_token: "1//the-refresh-token" }), s.deps);
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("not_advisor");
+    expect(s.asked).toEqual(["is_advisor:{}"]);
+    expect(s.calls).toEqual([]);
+    expect(s.fetchFn).not.toHaveBeenCalled();
   });
 
   it("says something went wrong, without detail, when the database fails", async () => {

@@ -3,8 +3,8 @@
 // uses email-and-password sign-up and sign-in and the multi-factor endpoints (an authenticator app, TOTP):
 // a password sign-in's token is at assurance level aal1 and lists "password" in `amr`, and completing a
 // second factor issues one at aal2 that lists "totp" too, which is what the database's second-factor
-// rule reads. Token refresh and POST /logout are implemented too, but no spec reaches them: tokens last an
-// hour and signOut is only called from the advisor's pages. An unknown endpoint answers 404 and an
+// rule reads. Token refresh is reached by advisor-second-factor.spec.ts; only POST /logout is reached by no
+// spec (signOut is only called from the advisor's pages). An unknown endpoint answers 404 and an
 // unsupported option on a known one 422, both with code e2e_unsupported, so a gap in this stand-in is
 // obvious, not silent.
 import { randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
@@ -90,6 +90,12 @@ export function createAuth({ pool, log = () => {} }) {
   // Authenticator apps by user id. Like the refresh tokens they need not outlive the process.
   const factorsByUser = new Map(); // userId -> [{ id, friendlyName, secret, status, createdAt, challenges: Map(id -> expiresAt) }]
   const factorsOf = (userId) => factorsByUser.get(userId) ?? [];
+  const passwordAmr = () => ({ amr: [{ method: "password", timestamp: Math.floor(Date.now() / 1000) }] });
+  const factorFor = (userId, id) => {
+    const factor = factorsOf(userId).find((f) => f.id === id);
+    if (!factor) throw new AuthError(404, "mfa_factor_not_found", "MFA factor not found", API_VERSION);
+    return factor;
+  };
 
   // GoTrue connects as supabase_auth_admin; its writes fire the same triggers (the profile row).
   const asAuthAdmin = (fn) => withRequest(pool, { role: "supabase_auth_admin", claims: {}, method: "POST" }, fn);
@@ -164,7 +170,7 @@ export function createAuth({ pool, log = () => {} }) {
         [ZERO_UUID, randomUUID(), email, hashPassword(String(json.password)), JSON.stringify(metadata)],
       ),
     );
-    return { body: issueSession(rows[0], randomUUID(), { amr: [{ method: "password", timestamp: Math.floor(Date.now() / 1000) }] }) };
+    return { body: issueSession(rows[0], randomUUID(), passwordAmr()) };
   }
 
   const routes = {
@@ -270,7 +276,7 @@ export function createAuth({ pool, log = () => {} }) {
           throw new AuthError(400, "invalid_credentials", "Invalid login credentials", API_VERSION);
         }
         await asAuthAdmin((db) => db.query("UPDATE auth.users SET last_sign_in_at = now() WHERE id = $1", [row.id]));
-        return { body: issueSession(row, randomUUID(), { amr: [{ method: "password", timestamp: Math.floor(Date.now() / 1000) }] }) };
+        return { body: issueSession(row, randomUUID(), passwordAmr()) };
       }
       if (grant !== "refresh_token") {
         throw new AuthError(422, "e2e_unsupported", `The e2e auth stand-in only supports grant_type=password and refresh_token (got ${grant})`);
@@ -302,8 +308,7 @@ export function createAuth({ pool, log = () => {} }) {
     // mfa.unenroll(): GoTrue lets a verified factor go only from a session that has completed one.
     async "DELETE /factors/:id"(req, json, url, [factorId]) {
       const { row, claims } = await userFromBearer(req);
-      const factor = factorsOf(row.id).find((f) => f.id === factorId);
-      if (!factor) throw new AuthError(404, "mfa_factor_not_found", "MFA factor not found", API_VERSION);
+      const factor = factorFor(row.id, factorId);
       if (factor.status === "verified" && claims.aal !== "aal2") throw new AuthError(422, "insufficient_aal", "AAL2 required to unenroll a verified factor", API_VERSION);
       factorsByUser.set(row.id, factorsOf(row.id).filter((f) => f.id !== factorId));
       return { body: { id: factorId } };
@@ -312,8 +317,7 @@ export function createAuth({ pool, log = () => {} }) {
     // mfa.challenge()
     async "POST /factors/:id/challenge"(req, json, url, [factorId]) {
       const { row } = await userFromBearer(req);
-      const factor = factorsOf(row.id).find((f) => f.id === factorId);
-      if (!factor) throw new AuthError(404, "mfa_factor_not_found", "MFA factor not found", API_VERSION);
+      const factor = factorFor(row.id, factorId);
       const id = randomUUID();
       const expiresAt = Math.floor(Date.now() / 1000) + CHALLENGE_VALID_SECONDS;
       factor.challenges.set(id, expiresAt);
@@ -323,8 +327,7 @@ export function createAuth({ pool, log = () => {} }) {
     // mfa.verify(): a right code verifies the factor and answers with a new token at aal2 for the same session.
     async "POST /factors/:id/verify"(req, json, url, [factorId]) {
       const { row, claims } = await userFromBearer(req);
-      const factor = factorsOf(row.id).find((f) => f.id === factorId);
-      if (!factor) throw new AuthError(404, "mfa_factor_not_found", "MFA factor not found", API_VERSION);
+      const factor = factorFor(row.id, factorId);
       const expiresAt = factor.challenges.get(json.challenge_id);
       if (!expiresAt) throw new AuthError(404, "mfa_factor_not_found", "MFA challenge not found", API_VERSION);
       if (expiresAt * 1000 < Date.now()) throw new AuthError(422, "mfa_challenge_expired", "MFA challenge has expired, verify against another challenge or create a new challenge.", API_VERSION);
