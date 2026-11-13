@@ -3,12 +3,13 @@
 // everything (who may invite, one pending invitation per email, who is already a member) and is asked as the caller, so
 // this function cannot be talked into doing more than the caller could. What it does is the part SQL can't: it makes the
 // token, gives the database only the token's hash, and emails the link. The token travels in that one email and nowhere
-// else: it is not stored, not returned to the caller and not logged. The outcome of the send is recorded on the
+// else: it is not stored, not returned to the caller and not logged, and it travels after the # of the link so no server sees it (D-34). The outcome of the send is recorded on the
 // invitation (a time, or a short kind of failure), as the service role.
 //
 // It uses the same mail provider as the submission notifications (selectEmailAdapter, sendEmail) without touching how that
 // pipeline works: that pipeline queues a payload in a row, and a link's token must not be kept in a row.
 
+import { parseBaseUrl, parseFrom } from "../dispatch-outbox/config.ts";
 import { escapeHtml, EMAIL_PATTERN, oneLine } from "../dispatch-outbox/messages.ts";
 import { selectEmailAdapter, sendEmail, type EmailMessage } from "../dispatch-outbox/providers.ts";
 import { bearerToken } from "../_shared/serviceAuth.ts";
@@ -35,13 +36,14 @@ export interface InviteDeps {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
+const ROLES: readonly string[] = ["owner", "lead", "agent"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Request_ =
   | { action: "invite"; firmId: string; email: string; role: string; teamId: string | null }
   | { action: "resend"; invitationId: string };
 
-function parseBody(raw: unknown): Request_ | null {
+function parseBody(raw: unknown): Request_ | "check_address_and_role" | null {
   if (typeof raw !== "object" || raw === null) return null;
   const b = raw as Record<string, unknown>;
   if (b.action === "resend") {
@@ -49,8 +51,14 @@ function parseBody(raw: unknown): Request_ | null {
   }
   if (b.action === "invite") {
     const teamOk = b.team_id === undefined || b.team_id === null || (typeof b.team_id === "string" && UUID.test(b.team_id));
-    if (typeof b.firm_id === "string" && UUID.test(b.firm_id) && typeof b.email === "string" && typeof b.role === "string" && teamOk) {
-      return { action: "invite", firmId: b.firm_id, email: b.email, role: b.role, teamId: (b.team_id as string | null | undefined) ?? null };
+    // The address is checked with the mail sender's own rule and kept in the form the database keeps it (lower case, no
+    // surrounding spaces), before anything is made: an address that could never be emailed must not become a pending
+    // invitation, which would block the corrected one.
+    const email = typeof b.email === "string" ? b.email.trim().toLowerCase() : "";
+    const addressOk = email.length <= 254 && EMAIL_PATTERN.test(email);
+    if (typeof b.firm_id === "string" && UUID.test(b.firm_id) && teamOk) {
+      if (!addressOk || typeof b.role !== "string" || !ROLES.includes(b.role)) return "check_address_and_role";
+      return { action: "invite", firmId: b.firm_id, email, role: b.role, teamId: (b.team_id as string | null | undefined) ?? null };
     }
   }
   return null;
@@ -62,6 +70,7 @@ function refusal(code: string | undefined, message: string | undefined): { statu
     case "42501": return { status: 403, error: "Only an owner of the firm can invite people." };
     case "PT409": return { status: 409, error: message || "That can't be done now." };
     case "PT410": return { status: 409, error: "That invitation has already been used or withdrawn." };
+    case "PT403": return { status: 403, error: message || "This firm can't invite people." };
     case "23514":
     case "23502": return { status: 400, error: "Check the email address and the role." };
     case "23503": return { status: 400, error: "That team isn't in this firm." };
@@ -105,13 +114,16 @@ export async function handleInviteRequest(req: Request, deps: InviteDeps): Promi
   if (!bearerToken(authorization)) return json({ error: "Sign in to invite people." }, 401);
 
   const body = parseBody(await req.json().catch(() => null));
+  if (body === "check_address_and_role") return json({ error: "Check the email address and the role." }, 400);
   if (!body) return json({ error: "That request is not valid." }, 400);
 
   const url = deps.env("SUPABASE_URL");
   const anonKey = deps.env("SUPABASE_ANON_KEY");
   const serviceKey = deps.env("SUPABASE_SERVICE_ROLE_KEY");
-  const appBase = deps.env("APP_BASE_URL");
-  const from = deps.env("EMAIL_FROM");
+  // The same rules as the dispatcher's own configuration: a sender that is an address, an app address that is https (plain http only
+  // for localhost). A malformed value is found here, before a token is made, not after the invitation is committed.
+  const appBase = parseBaseUrl(deps.env("APP_BASE_URL"));
+  const from = parseFrom(deps.env("EMAIL_FROM"));
   const adapter = selectEmailAdapter(deps.env);
   // Nothing is made that could not be sent: an invitation with no email to carry it would sit as pending for no reason.
   if (!url || !anonKey || !serviceKey || !appBase || !from || !adapter.ok) {
@@ -137,17 +149,27 @@ export async function handleInviteRequest(req: Request, deps: InviteDeps): Promi
     return json({ error: "Something went wrong. Try again." }, 500);
   }
 
-  const link = `${firmBaseUrl(appBase, row.firm_address)}/join/${token}`;
+  // The secret goes in the part after the #: a browser never sends it to a server, so it reaches no request log and no Referer (D-34).
+  const link = `${firmBaseUrl(appBase, row.firm_address)}/join#token=${token}`;
   const message = inviteMessage(from, row.email, row.firm_name ?? "", link, row.expires_at ?? "");
-  const sent = await sendEmail(adapter.adapter, message, `invitation:${row.invitation_id}:${row.expires_at}`, { fetch: deps.fetch });
+  // One key for this link: the provider treats a repeat of it as the same message, so trying again after an unclear answer cannot
+  // deliver it twice. A resend makes a new link, so a new key (and never the token in it: only the start of its hash).
+  const key = `invitation:${row.invitation_id}:${hash.slice(0, 32)}`;
+  let sent = await sendEmail(adapter.adapter, message, key, { fetch: deps.fetch });
+  // An answer that does not prove the provider refused (a timeout, a network failure, most server errors) may follow an accepted
+  // message: it is tried once more, with the same message and key, which the provider drops if the first was accepted.
+  if (!sent.ok && sent.ambiguous) sent = await sendEmail(adapter.adapter, message, key, { fetch: deps.fetch });
+  const outcome = sent.ok ? "sent" : sent.ambiguous ? "unknown" : "failed";
 
+  // Recorded against this link: a result that arrives after the invitation was sent again is not the current link's, and is dropped.
   const asService = deps.createClient(url, serviceKey);
   const recorded = await asService.rpc("record_invitation_delivery", {
     p_invitation_id: row.invitation_id,
-    p_sent: sent.ok,
+    p_token_hash: hash,
+    p_outcome: outcome,
     p_error: sent.ok ? null : sent.kind,
   });
   if (recorded.error) deps.log(`INVITE_FAILED action=${body.action} step=record_delivery code=${recorded.error.code ?? "unknown"}`);
-  if (!sent.ok) deps.log(`INVITE_EMAIL_FAILED action=${body.action} kind=${sent.kind}`);
-  return json({ ok: true, invitation_id: row.invitation_id, emailed: sent.ok });
+  if (!sent.ok) deps.log(`INVITE_EMAIL_${outcome === "unknown" ? "UNCLEAR" : "FAILED"} action=${body.action} kind=${sent.kind}`);
+  return json({ ok: true, invitation_id: row.invitation_id, delivery: outcome });
 }
