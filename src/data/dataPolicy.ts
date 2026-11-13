@@ -435,6 +435,15 @@ export const DATA_CLASSES: DataClass[] = [
     retention: `${RETENTION.firmActivityDays} days, the window for operational events (D4); no one can change or delete an entry before then, an admin included. The window is a draft (D4): counsel may ask for longer.`,
     deletion: "Only by the daily retention job (prune_firm_activity), which removes entries past the window and nothing else. A firm's owners read their own firm's record; no one else does, platform admins included; an entry made by a platform admin from outside the firm reads as \"Nevermore\" (no name, email or id), D-33.",
   },
+  {
+    id: "table_settings",
+    label: "Column choices and saved views",
+    sensitivity: "internal",
+    examples: "Which columns a member shows on a table and in what order, and the views a member saved (a name, filters, a sort and columns), with who saved and who shared each. A filter can hold a value a member typed to filter by. Nothing else about an intake.",
+    stored: { tables: ["saved_views", "table_preferences"], buckets: [], elsewhere: [] },
+    retention: "Kept with the firm until the member changes or deletes them. A member who leaves keeps their rows, read by nobody, and finds them again if they rejoin; a view they shared stays with the firm until an owner unshares it.",
+    deletion: "A member's account deleted at their request removes their views and column choices. Closing a firm (CRM-P1.7) deletes its saved views with its other data.",
+  },
 ];
 
 /** The classes a table or bucket belongs to. */

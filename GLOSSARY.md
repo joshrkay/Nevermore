@@ -360,6 +360,22 @@ _Avoid_: offset, page number (as the way a page is found)
 **Owned firm**:
 A firm the caller is a current owner of, as the database answers (`my_owner_firms()`). A page that reads a firm's record says which firm it wants, and the database checks the caller currently owns that one; there is no "the caller's firm" for someone who owns two.
 
+**Workspace table** (code: the domain `workspace_table`):
+A table of the workspace whose column choices and saved views are kept: today only the submissions queue (`submissions`); accounts, leads, quotes, the inbox and the lists inside a record join the list as their stories ship, one small migration each. A name not on the list is refused.
+_Avoid_: grid, list (as the name of the whole thing)
+
+**Saved view** (code: `saved_views`, `save_view`, `list_saved_views`):
+A named set of a table's filters, sort and columns that a person keeps, shown as a tab over the table. It belongs to the person who saved it, in one firm: only they rename, change or delete it, and nobody else reads it until a current owner **shares** it with the firm; then every current member reads it and only an owner can stop sharing it (it goes back to its saver, nothing is lost). An owner shares a view they saved. Names are unique per person per table and, among shared views, per firm per table, ignoring case; a person keeps at most thirty per table. A person who leaves the firm reaches none of theirs at once; what they shared stays with the firm until an owner unshares it. Reached only through its functions, never the table.
+_Avoid_: filter preset, saved search, report
+
+**Built-in view**:
+A view a table ships with (for the queue, today's status tabs), written in the page's code, not kept as a row, so it can't be deleted or shared. Its columns are the person's column choice for the table.
+_Avoid_: default view (the table's default sort and columns are something else)
+
+**Column choice** (code: `table_preferences`, `my_table_columns`, `set_my_table_columns`):
+Which columns a person shows on a table, in what order, kept in the database per firm, person and table, so it follows them to any device (D-43); nothing is kept in the browser. A person may also keep their own choice on a saved view they can read, which wins for them alone. What they see on a saved view is, in order: their own choice for that view, the view's own columns, their choice for the table, the table's defaults.
+_Avoid_: layout, column settings, preferences (on its own)
+
 **Entry kind** (code: `firm_activity.kind`):
 What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. A firm's sign-up and its approval or refusal are `firm_signed_up`, `firm_approved` and `firm_refused`, an invitation withdrawn is `invitation_withdrawn` (one made or resent is `invitation_sent`, and one accepted is the `member_added` the membership trigger writes), written through `record_firm_event` with no address and no note. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.
 
