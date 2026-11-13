@@ -39,7 +39,10 @@ export function useUnsavedChangesGuard(dirty: boolean): UnsavedChangesGuard {
     if (activeRef.current) setPending(() => proceed);
     else proceed();
   }, []);
-  const release = useCallback(() => { released.current = true; }, []);
+  const release = useCallback(() => {
+    released.current = true;
+    activeRef.current = false; // at once: a move made in the same breath as the save must not be asked about
+  }, []);
   const isActive = useCallback(() => activeRef.current, []);
 
   const prompt = (

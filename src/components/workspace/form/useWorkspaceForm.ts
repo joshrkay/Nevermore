@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type BaseSyntheticEvent, type ReactNode } from "react";
+import { useCallback, useState, type BaseSyntheticEvent, type ReactNode } from "react";
 import { useForm, type FieldValues, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { z } from "zod";
@@ -75,14 +75,11 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: W
   });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const inFlight = useRef(false);
   const [formId] = useState(() => `workspace-form-${++formCount}`);
   const dirty = form.formState.isDirty;
   const guard = useUnsavedChangesGuard(dirty);
 
   const submit = form.handleSubmit(async (values) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
     setSaving(true);
     setSaveError(null);
     try {
@@ -95,7 +92,6 @@ export function useWorkspaceForm<S extends z.ZodTypeAny, R = unknown>(options: W
       if (said.field) form.setError(said.field, { type: "server", message: said.message }, { shouldFocus: true });
       else setSaveError(said.message);
     } finally {
-      inFlight.current = false;
       setSaving(false);
     }
   });

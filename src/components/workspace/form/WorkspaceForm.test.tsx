@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
+import { createMemoryRouter, RouterProvider, useNavigate } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -78,5 +79,31 @@ describe("a workspace form in a dialog", () => {
     expect(screen.getByText("Form open")).toBeInTheDocument();
     expect(screen.getByLabelText("Account name")).toHaveValue("Harborview");
     await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+  });
+});
+
+// A new record's form usually goes to the record's page the moment it is saved. That move must not be asked about.
+describe("a workspace form that moves on when it is saved", () => {
+  const NavigatingForm = () => {
+    const navigate = useNavigate();
+    const api = useWorkspaceForm({ schema, defaultValues: { name: "" }, save: async () => undefined, onSaved: () => navigate("/account/1") });
+    return (
+      <WorkspaceForm api={api} aria-label="New account">
+        <Field name="name" label="Account name" required>{(field) => <Input {...field} />}</Field>
+      </WorkspaceForm>
+    );
+  };
+
+  it("goes straight on after a successful save, with no question", async () => {
+    const router = createMemoryRouter(
+      [{ path: "/", element: <NavigatingForm /> }, { path: "/account/1", element: <p>Account page</p> }],
+      { initialEntries: ["/"] },
+    );
+    render(<RouterProvider router={router} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Account name"), "Harborview");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Account page")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 });
