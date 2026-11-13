@@ -13,7 +13,9 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 const fetchFirmName = vi.fn();
 const fetchIsMemberOfFirmAddress = vi.fn();
 const recordFirmSignIn = vi.fn();
+const fetchIsMySuspendedFirmAtAddress = vi.fn();
 vi.mock("@/lib/firmApi", () => ({
+  fetchIsMySuspendedFirmAtAddress: (...a: unknown[]) => fetchIsMySuspendedFirmAtAddress(...a),
   fetchFirmName: (...a: unknown[]) => fetchFirmName(...a),
   fetchIsMemberOfFirmAddress: (...a: unknown[]) => fetchIsMemberOfFirmAddress(...a),
   recordFirmSignIn: (...a: unknown[]) => recordFirmSignIn(...a),
@@ -45,6 +47,7 @@ describe("the firm address gate", () => {
     fetchFirmName.mockReset().mockResolvedValue("Acme Brokers");
     fetchIsMemberOfFirmAddress.mockReset().mockResolvedValue(true);
     recordFirmSignIn.mockReset().mockResolvedValue(true);
+    fetchIsMySuspendedFirmAtAddress.mockReset().mockResolvedValue(false);
     try { window.localStorage.clear(); } catch { /* no storage here */ }
   });
 
@@ -368,4 +371,76 @@ describe("the firm address gate", () => {
       expect(recordFirmSignIn).not.toHaveBeenCalled();
     });
   });
+  // A suspended firm (story CRM-P1.8): its members can still sign in at its address and are told it is suspended, with a way to
+  // sign out, and nothing of the firm: no console, no lists, no counts. The firm's name still shows (D-27) before sign-in.
+  describe("a suspended firm", () => {
+    beforeEach(() => {
+      fetchIsMySuspendedFirmAtAddress.mockResolvedValue(true);
+      auth.user = { id: "u1", email: "pat@acme.example", last_sign_in_at: "t1" };
+    });
+
+    it("tells its member it is suspended and to contact Nevermore, and shows nothing of the firm's console", async () => {
+      const { container } = renderAt("acme-brokers.nevermorepeo.com", "/advisor");
+      expect(await screen.findByRole("heading", { name: "Acme Brokers is suspended" })).toBeInTheDocument();
+      expect(screen.getByText(/contact Nevermore/i)).toBeInTheDocument();
+      expect(screen.queryByText("The console")).not.toBeInTheDocument();
+      expect(container.textContent).not.toContain("pat@acme.example");
+      expect(fetchIsMySuspendedFirmAtAddress).toHaveBeenCalledWith("acme-brokers");
+    });
+
+    it("has a Sign out that works", async () => {
+      renderAt("acme-brokers.nevermorepeo.com");
+      fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+      expect(auth.signOut).toHaveBeenCalledTimes(1);
+    });
+
+    it("closes every page of the firm to its member, not only the first they open", async () => {
+      for (const path of ["/advisor", "/advisor/activity", "/advisor/submissions/abc", "/advisor/firms"]) {
+        const view = renderAt("acme-brokers.nevermorepeo.com", path);
+        expect(await screen.findByRole("heading", { name: "Acme Brokers is suspended" }), path).toBeInTheDocument();
+        expect(screen.queryByText("The console"), path).not.toBeInTheDocument();
+        view.unmount();
+      }
+    });
+
+    it("is not recorded as a sign-in to the firm: nothing of the firm is written for them", async () => {
+      renderAt("acme-brokers.nevermorepeo.com");
+      await screen.findByRole("heading", { name: "Acme Brokers is suspended" });
+      await act(async () => {});
+      expect(recordFirmSignIn).not.toHaveBeenCalled();
+    });
+
+    it("is asked only of a member: a person who is not one is told so and nothing is asked about the firm's state", async () => {
+      fetchIsMemberOfFirmAddress.mockResolvedValue(false);
+      renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByRole("heading", { name: "You aren't a member of this firm" })).toBeInTheDocument();
+      expect(fetchIsMySuspendedFirmAtAddress).not.toHaveBeenCalled();
+    });
+
+    it("still shows a signed-out visitor the firm's sign-in", async () => {
+      auth.user = null;
+      renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+      expect(fetchIsMySuspendedFirmAtAddress).not.toHaveBeenCalled();
+    });
+
+    it("says it couldn't check, with a retry, when the state can't be read, rather than showing the console", async () => {
+      fetchIsMySuspendedFirmAtAddress.mockRejectedValueOnce(new Error("boom"));
+      renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByRole("heading", { name: "We couldn't check your access" })).toBeInTheDocument();
+      expect(screen.queryByText("The console")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      expect(await screen.findByRole("heading", { name: "Acme Brokers is suspended" })).toBeInTheDocument();
+    });
+
+    it("gives the console back when the suspension is lifted and the page is asked again", async () => {
+      const view = renderAt("acme-brokers.nevermorepeo.com");
+      await screen.findByRole("heading", { name: "Acme Brokers is suspended" });
+      view.unmount();
+      fetchIsMySuspendedFirmAtAddress.mockResolvedValue(false);
+      renderAt("acme-brokers.nevermorepeo.com");
+      expect(await screen.findByText("The console")).toBeInTheDocument();
+    });
+  });
+
 });

@@ -158,6 +158,8 @@
 \i supabase/migrations/20261116200000_firm_scope_unsubmitted_data.sql
 \i supabase/migrations/20261116210000_console_per_firm.sql
 \i supabase/migrations/20261116210500_console_per_firm_fixes.sql
+\i supabase/migrations/20261116210600_mailbox_kept_for_members.sql
+\i supabase/migrations/20261116230000_firm_suspension.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -337,6 +339,11 @@ BEGIN
   INSERT INTO public.firm_invitations (firm_id, email, role, token_hash, invited_by, expires_at) VALUES
     (firm_a, 'invitee_a@example.test', 'agent', encode(extensions.digest('invitation-a', 'sha256'), 'hex'), adm, now() + interval '7 days'),
     (firm_b, 'invitee_b@example.test', 'agent', encode(extensions.digest('invitation-b', 'sha256'), 'hex'), owb, now() + interval '7 days');
+
+  -- A suspension of each firm that has been lifted (20261116230000): the history is kept, and neither firm is suspended now.
+  INSERT INTO public.firm_suspensions (firm_id, reason, suspended_at, suspended_by, lifted_at, lifted_by) VALUES
+    (firm_a, 'fixture', now() - interval '2 days', adm, now() - interval '1 day', adm),
+    (firm_b, 'fixture', now() - interval '2 days', adm, now() - interval '1 day', adm);
 
   -- Everyone who starts an intake agrees first, from the browser.
   FOREACH who IN ARRAY ARRAY['guest_a', 'guest_b', 'prospect_a', 'prospect_b'] LOOP
@@ -681,6 +688,9 @@ INSERT INTO matrix VALUES
   -- Invitations to join a firm (20261116190000): nobody reads them through the API, owners included; an owner reaches
   -- the pending ones through firm_pending_invitations(), and the token's hash is never returned (supabase/tests/firm_invitations.sql).
   ('public.firm_invitations',                           '{}', NULL),
+  -- The platform's record of each suspension and its reason (20261116230000): nobody reads it through the API, firm owners and
+  -- platform admins included; admins reach it through admin_firm_states().
+  ('public.firm_suspensions',                           '{}', NULL),
   ('public.intake_lifecycle_events',                    '{}', '{"A":3,"B":1}'),
   ('public.intake_deletions',                           '{}', '{"A":1,"B":1}'),
   -- Monitoring is the platform admin's: advisors don't need failure codes, routes or account ids.
@@ -964,6 +974,10 @@ INSERT INTO callable VALUES
   ('accept_invitation(p_token_hash text, p_firm_address text)', 'own', NULL, 'the invited person, signed in with the invited email verified, becomes a member of the inviting firm at that firm''s own address; acts only for the caller and the one invitation its token opens'),
   ('admin_waiting_firms()',                  'admin',   'SELECT * FROM public.admin_waiting_firms()', 'the firms waiting for approval, for platform admins only (D-16: an admin is no firm member)'),
   ('admin_decide_firm(p_firm_id uuid, p_approve boolean, p_note text)', 'admin', 'SELECT public.admin_decide_firm(%2$L, true, NULL)', 'a platform admin approves or refuses a waiting firm, once (Q-1.2)'),
+  ('admin_suspend_firm(p_firm_id uuid, p_reason text)', 'admin', 'SELECT public.admin_suspend_firm(%2$L, ''probe'')', 'a platform admin who is no member of the firm suspends it with a reason (CRM-P1.8); refused for everyone else, a firm''s own owner included'),
+  ('admin_lift_firm_suspension(p_firm_id uuid)', 'admin', 'SELECT public.admin_lift_firm_suspension(%2$L)', 'a platform admin who is no member of the firm lifts its suspension (CRM-P1.8); refused for everyone else, a firm''s own owner included'),
+  ('admin_firm_states()', 'admin', 'SELECT * FROM public.admin_firm_states()', 'every firm with its approval state and whether it is suspended, with the reason, for platform admins only (D-16)'),
+  ('my_suspended_firm_at_address(p_address text)', 'own', NULL, 'whether the firm at an address is suspended, true only for a current member of it, so the screen can say so; false for anyone else (supabase/tests/firm_suspension.sql)'),
   ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
   ('membership_is_current(p_valid_from timestamp with time zone, p_valid_until timestamp with time zone)', 'anyone', NULL,
                                                                      'pure: whether a membership has begun and not ended, as of now; reads nothing'),
@@ -1665,6 +1679,106 @@ BEGIN
   RAISE NOTICE 'data_isolation: % function probe cases passed', cases;
 END $$;
 
+-- 4e-2. A suspended firm (CRM-P1.8, D-28): the first firm is suspended, and each of its members is refused its data exactly as a
+-- non-member is: every firm table reads, counts, changes and deletes nothing, and every function probed above refuses them on the firm's
+-- rows (or lists and counts none), with the second firm untouched. Lifting the suspension gives the same members the same rows
+-- back (the positive control: a member refused for another reason would pass the refusals above).
+DO $$
+DECLARE
+  e record;
+  m record;
+  who text;
+  r text;
+  tbl text;
+  col text;
+  allids text[];
+  want bigint;
+  cases integer := 0;
+BEGIN
+  -- What the first firm's advisor and the second firm's members read now, to be read again after.
+  CREATE TEMP TABLE before_suspension (src text, caller text, n bigint, PRIMARY KEY (src, caller));
+  GRANT SELECT ON before_suspension TO anon, authenticated, service_role;
+  FOREACH who IN ARRAY ARRAY['advisor', 'agent_b', 'owner_b'] LOOP
+    FOR m IN SELECT * FROM matrix WHERE firm_rows IS NOT NULL ORDER BY src LOOP
+      PERFORM pg_temp.become(who);
+      want := pg_temp.visible(m.src);
+      RESET ROLE;
+      INSERT INTO before_suspension VALUES (m.src, who, want);
+    END LOOP;
+  END LOOP;
+  INSERT INTO public.firm_suspensions (firm_id, reason) VALUES (pg_temp.id('firm_a'), 'isolation probe');
+  FOR e IN SELECT * FROM fprobe ORDER BY fn LOOP
+    FOREACH who IN ARRAY ARRAY['advisor', 'admin', 'agent_2', 'lead_1'] LOOP
+      IF e.shape = 'by_id' THEN
+        r := pg_temp.call_as(who, pg_temp.fill(e.call, 'a'));
+        IF NOT r = ANY (e.refused) THEN
+          RAISE EXCEPTION 'FAIL: % of a suspended firm calling % on its own row gave %, expected a refusal (%)', who, e.fn, r, e.refused;
+        END IF;
+      ELSE
+        r := pg_temp.call_as(who, e.call);
+        IF r LIKE 'ok:%' AND ((e.shape = 'list' AND substr(r, 4) <> '') OR (e.shape = 'count' AND substr(r, 4) <> '0')) THEN
+          RAISE EXCEPTION 'FAIL: % of a suspended firm got % from % (%)', who, r, e.fn, e.shape;
+        ELSIF r NOT LIKE 'ok:%' AND r <> '42501' THEN
+          RAISE EXCEPTION 'FAIL: % of a suspended firm calling % gave %', who, e.fn, r;
+        END IF;
+      END IF;
+      cases := cases + 1;
+    END LOOP;
+  END LOOP;
+  FOR m IN SELECT * FROM matrix WHERE firm_rows IS NOT NULL ORDER BY src LOOP
+    tbl := pg_temp.src_table(m.src);
+    col := pg_temp.src_column(m.src);
+    RESET ROLE;
+    EXECUTE format('SELECT COALESCE(array_agg(ctid::text), ''{}'') FROM %s', m.src) INTO allids;
+    FOREACH who IN ARRAY ARRAY['advisor', 'admin', 'agent_2', 'lead_1'] LOOP
+      PERFORM pg_temp.become(who);
+      -- Everyone reads their own profile, suspended firm or not, and the admin role keeps what it opens for a platform admin who is no
+      -- member of any firm (D-16): what the matrix says that caller reads.
+      want := CASE WHEN m.src = 'public.profiles' THEN 1
+                   WHEN who = 'admin' THEN COALESCE((m.expect ->> 'platform_admin')::bigint, 0)
+                   ELSE 0 END;
+      IF pg_temp.visible(m.src) <> want THEN
+        RAISE EXCEPTION 'FAIL: % of a suspended firm reads % row(s) of %, expected %', who, pg_temp.visible(m.src), m.src, want;
+      END IF;
+      IF m.src <> 'public.profiles' THEN
+        PERFORM pg_temp.changes_nothing(format('UPDATE %s SET %I = %I WHERE ctid::text = ANY (%L)', tbl, col, col, allids), who || ' of a suspended firm changed a row of ' || m.src);
+        PERFORM pg_temp.changes_nothing(format('DELETE FROM %s WHERE ctid::text = ANY (%L)', tbl, allids), who || ' of a suspended firm deleted a row of ' || m.src);
+      END IF;
+      RESET ROLE;
+      cases := cases + 1;
+    END LOOP;
+    -- The other firm is untouched.
+    FOREACH who IN ARRAY ARRAY['agent_b', 'owner_b'] LOOP
+      PERFORM pg_temp.become(who);
+      IF pg_temp.visible(m.src) <> (SELECT b.n FROM before_suspension b WHERE b.src = m.src AND b.caller = who) THEN
+        RAISE EXCEPTION 'FAIL: % of the other firm no longer reads what they did of % while the first firm is suspended', who, m.src;
+      END IF;
+      RESET ROLE;
+      cases := cases + 1;
+    END LOOP;
+  END LOOP;
+  -- What a member of a suspended firm adds is refused as a non-member's is.
+  PERFORM pg_temp.become('advisor');
+  PERFORM pg_temp.refused(format('INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES (%L, auth.uid(), %L)', pg_temp.id('pa_cert'), 'x'), 'a member of a suspended firm adding a note to its intake');
+  RESET ROLE;
+  -- Lifting gives the firm back as it was.
+  UPDATE public.firm_suspensions SET lifted_at = now() WHERE firm_id = pg_temp.id('firm_a') AND lifted_at IS NULL;
+  FOR m IN SELECT * FROM matrix WHERE firm_rows IS NOT NULL AND src <> 'public.profiles' ORDER BY src LOOP
+    PERFORM pg_temp.become('advisor');
+    IF pg_temp.visible(m.src) <> (SELECT b.n FROM before_suspension b WHERE b.src = m.src AND b.caller = 'advisor') THEN
+      RAISE EXCEPTION 'FAIL: after the suspension is lifted a member does not read what they did of % before it', m.src;
+    END IF;
+    RESET ROLE;
+  END LOOP;
+  FOR e IN SELECT * FROM fprobe WHERE shape = 'by_id' AND fn IN ('set_submission_needs_action', 'advisor_open_quote_request_thread') ORDER BY fn LOOP
+    r := pg_temp.call_as('advisor', pg_temp.fill(e.call, 'a'));
+    IF r = ANY (e.refused) THEN RAISE EXCEPTION 'FAIL: after the suspension is lifted a member is still refused % (%)', e.fn, r; END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', '', false);
+  DROP TABLE before_suspension;
+  RAISE NOTICE 'data_isolation: % suspended-firm cases passed', cases;
+END $$;
+
 DO $$
 BEGIN
   SET LOCAL session_replication_role = replica;
@@ -2282,6 +2396,10 @@ INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
       VALUES ({firm}, 'probe-{tag}@example.test', 'agent', encode(extensions.digest('probe-{tag}', 'sha256'), 'hex'), now() + interval '7 days') RETURNING ctid::text$m$, false),
   ('public.firm_activity', 'firm', 'its own firm_id; only its owners read it (not every member), and nobody changes or deletes an entry',
    $m$INSERT INTO public.firm_activity (firm_id, kind, record_type, record_id) VALUES ({firm}, 'invitation_sent', 'firm', {firm}::text) RETURNING ctid::text$m$, false),
+  -- The platform's record of suspensions (20261116230000): its own firm_id, read by no member (the reason is Nevermore's); the probe's
+  -- row is a lifted one, so making it suspends neither firm.
+  ('public.firm_suspensions', 'firm', 'its own firm_id; closed to the API, platform admins reach it through functions',
+   $m$INSERT INTO public.firm_suspensions (firm_id, reason, suspended_at, lifted_at) VALUES ({firm}, 'probe-{tag}', now() - interval '1 hour', now()) RETURNING ctid::text$m$, false),
   ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
    $m$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ({firm}, {u}, 'agent') RETURNING ctid::text$m$, false);
 INSERT INTO registry (src, scope, why, make_row) VALUES
@@ -2295,7 +2413,7 @@ UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advi
   'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
   'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
 UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.firm_activity', 'public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions', 'public.referral_partners',
-  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations');
+  'public.quote_request_messages WHERE quote_request_id IS NULL', 'public.firm_invitations', 'public.firm_suspensions');
 UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
   'public.quote_request_thread_reads', 'public.quote_request_messages');
 UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
@@ -2814,6 +2932,13 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('is_clean_census_template_file', 'platform_wide', 'the storage policy on the template bucket; names no one'),
   ('peo_catalog', 'platform_wide', 'the PEOs and their published profiles: the same for every firm'),
   ('admin_waiting_firms', 'platform_wide', 'the firms waiting for a platform admin''s decision: no firm''s member sees them by row security, so only platform admins read this list'),
+  ('admin_suspend_firm', 'platform_wide', 'a platform admin suspends a firm: no firm''s member can, and the firm''s data is touched by nothing (supabase/tests/firm_suspension.sql)'),
+  ('admin_lift_firm_suspension', 'platform_wide', 'a platform admin lifts a firm''s suspension'),
+  ('admin_firm_states', 'platform_wide', 'every firm''s state and suspension for the platform admin''s page: no firm''s member reads it'),
+  ('my_suspended_firm_at_address', 'own', 'whether the caller''s own firm at an address is suspended'),
+  ('firm_is_suspended', 'service_only', 'whether a firm is suspended now: the helper every policy and function asks, as the database''s own question; no API role can call it'),
+  ('admin_belongs_to_firm', 'service_only', 'whether the caller is a current member of a firm, suspended or not: the helper the platform admin''s rule asks'),
+  ('person_is_member_of_a_firm_in_good_standing', 'service_only', 'whether a person is a current member of a firm that is not suspended: the mailbox functions ask it'),
   ('admin_decide_firm', 'platform_wide', 'a platform admin approves or refuses a waiting firm'),
   ('accept_invitation', 'own', 'the invited person, signed in with the invited email verified, becomes a member of the inviting firm at that firm''s own address; acts only for the caller and the one invitation its token opens'),
   ('sign_up_firm', 'own', 'a signed-in person with a verified email makes a firm of their own and becomes its owner; acts only for the caller'),

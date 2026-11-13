@@ -267,6 +267,16 @@ A firm that has signed up and has no decision yet. A platform admin sees these t
 **Firm decision** (code: `admin_decide_firm`, `firms.decision`, `decided_at`, `decided_by`, `decision_note`):
 A platform admin's approval or refusal of a waiting firm, with an optional note. Approving sets `approved_at`; refusing leaves it empty. A firm is decided once, and an admin does not decide on a firm they belong to. A refused firm is hidden at its address and its founder is not let in there, yet the address stays taken (D-31). The event is written through `record_firm_event`, the one small function the record of who did what (CRM-P2.3) takes over.
 
+**Suspended firm** (code: `firm_suspensions`, `firm_is_suspended`, `admin_suspend_firm`, `admin_lift_firm_suspension`, CRM-P1.8):
+A firm a platform admin has shut for now, with a reason. It is a state of its own, separate from the **Firm decision**: an approved firm can be suspended, a firm still waiting for approval can be suspended and simply gains the suspended state (it stays in the approvals list and can still be decided), and a refused firm already behaves as an address no firm holds (D-31), so suspending it adds nothing visible. While it is suspended the database answers "not a member" for every member of it, so every table policy and every firm-scoped function refuses them as it refuses a non-member (D-18); the firm cannot invite, resend or have an invitation accepted; its alerts are not sent (and one prepared before the suspension is not sent either, D-35); mail addressed to it is still received and stays held. Nothing is deleted: lifting the suspension gives back everything as it was. Only a platform admin who is not a member of the firm suspends or lifts, enforced in the database; a firm's owner cannot lift it. Suspending and lifting are in the firm's record of who did what as done by Nevermore (D-33), and in the platform's own record, `firm_suspensions` (who, when, why, and when and by whom it was lifted), which no firm reads. A firm has at most one open suspension (a unique index, D-29).
+_Avoid_: banned, disabled, frozen, closed (closing a firm for good is CRM-P1.7)
+
+**Suspended screen** (code: `FirmAddressGate`, `my_suspended_firm_at_address`):
+What a current member of a suspended firm sees at the firm's address: "<Firm name> is suspended", to contact Nevermore, and a working sign-out, and nothing of the firm. The firm's name and sign-in still show before sign-in, as for a waiting firm (D-27). `my_suspended_firm_at_address` answers true only for a current member of that firm, so no one else learns a firm is suspended.
+
+**Firm states list** (code: `admin_firm_states`):
+Every firm with its approval state (waiting, approved, refused), whether it is suspended and, for a platform admin only, since when and why. It is what the Firm approvals page's "Every firm" section shows.
+
 **Public firm name** (code: `firm_public_name`):
 What a firm's address shows before anyone signs in: the firm's name, and nothing else, for any firm that exists and is not refused, approved or still waiting for approval (a waiting firm's members can work before approval; approval gates sending, not signing in). An address no firm holds, or one a refused firm holds (D-31), gives nothing, and it shows a plain not-found page to everyone, with no sign-in and no sign-in callback pages (D-27). Firms have no logo field yet.
 
@@ -370,7 +380,7 @@ The advisory team's operating workflow: every submission with its pipeline stage
 _Avoid_: CRM, admin queue
 
 **Firm guard** (code: `RequireFirm`, `src/components/RequireFirm.tsx`; the database's answer is `my_firms()`):
-The one guard in front of the firm's console pages. A person is let in when the database says they are a current member of a firm (an owner of that firm, for the firm's record of who did what: the role the caller holds at the **current firm**, never ownership of some other firm), past the second factor a password sign-in owes (D-19); whether they hold a platform role is never asked. At a firm's address the firm must be that address's; on the bare domain a member of exactly one firm lands in it. A person who belongs to no firm is told so ("You aren't a member of any firm"). A person who belongs to several firms is told so too and kept out for now: the database narrows each answer to the firms the person belongs to, not to the one the address names (D-18), so the console would show the firms' records together until it can tell them apart.
+The one guard in front of the firm's console pages. A person is let in when the database says they are a current member of a firm (an owner of that firm, for the firm's record of who did what: the role the caller holds at the **current firm**, never ownership of some other firm), past the second factor a password sign-in owes (D-19); whether they hold a platform role is never asked. At a firm's address the firm must be that address's; on the bare domain a member of exactly one firm lands in it. A person who belongs to no firm is told so ("You aren't a member of any firm"). A person who belongs to several firms is told so and kept out of the member pages for now, at a firm's address as on the bare domain: those pages do not filter by the address, and the database narrows each answer to the firms the person belongs to, not to one (D-18). Only the owner-only route, whose page checks the address's firm, lets them in (ADR 0015).
 _Avoid_: advisor guard, role check
 
 **Workspace** (code: `src/components/workspace/`):
@@ -385,7 +395,7 @@ _Avoid_: layout, sidebar (in screen words)
 The grey page, white cards, blue actions and dark navy menu of `docs/prd-screens/`. The shell puts the class on the document's root element while it is mounted, so a dialog or sheet drawn outside the shell takes the look; the employer's intake and the landing page never have it (D-41).
 
 **Current firm** (code: `currentFirm()`, `src/lib/currentFirm.ts`):
-The one firm the console acts for, from the person's own memberships and the address they are at: at a firm's address that address's firm, which must be one of theirs; on the bare domain the firm of a member of exactly one. A person with no current firm (none, not this firm's, or several) is kept out. The guard, the header's links and the pages that offer an owner-only view all ask it.
+The one firm the console acts for, from the person's own memberships and the address they are at: at a firm's address that address's firm, which must be one of theirs, whatever other firms they belong to (it says so, so a member route can keep them out); on the bare domain the firm of a member of exactly one. A person with no current firm (none, not this firm's, or several on the bare domain) is kept out. The guard, the header's links and the pages that offer an owner-only view all ask it.
 _Avoid_: active firm, selected firm
 
 **Platform page** (code: `RequirePlatformAdmin`):

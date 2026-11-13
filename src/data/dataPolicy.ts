@@ -435,6 +435,15 @@ export const DATA_CLASSES: DataClass[] = [
     retention: `${RETENTION.firmActivityDays} days, the window for operational events (D4); no one can change or delete an entry before then, an admin included. The window is a draft (D4): counsel may ask for longer.`,
     deletion: "Only by the daily retention job (prune_firm_activity), which removes entries past the window and nothing else. A firm's owners read their own firm's record; no one else does, platform admins included; an entry made by a platform admin from outside the firm reads as \"Nevermore\" (no name, email or id), D-33.",
   },
+  {
+    id: "firm_suspensions",
+    label: "Nevermore's record of firms it suspended",
+    sensitivity: "internal",
+    examples: "For each time a platform admin suspended a firm: which firm, who suspended it and why (a short reason typed by the admin), when, and when and by whom the suspension was lifted. The firm never reads it: its own record of who did what shows only that Nevermore suspended or lifted (D-33). Nothing about an intake.",
+    stored: { tables: ["firm_suspensions"], buckets: [], elsewhere: [] },
+    retention: "Kept with the firm, as the record of why its members were shut out and when they were let back in; a lifted suspension is closed, never deleted. A rule to clear old ones is not built yet (docs/DATA_HANDLING.md).",
+    deletion: "An admin's account deleted at their request clears who suspended or lifted from the rows that name them; the reason and dates stay.",
+  },
 ];
 
 /** The classes a table or bucket belongs to. */

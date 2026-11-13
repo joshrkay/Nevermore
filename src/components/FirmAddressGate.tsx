@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useFirmAddress } from "@/hooks/useFirmAddress";
-import { fetchIsMemberOfFirmAddress, recordFirmSignIn } from "@/lib/firmApi";
+import { fetchIsMemberOfFirmAddress, fetchIsMySuspendedFirmAtAddress, recordFirmSignIn } from "@/lib/firmApi";
 import NotFound from "@/pages/NotFound";
 import { AUTH_CALLBACK_PATH } from "@/lib/authRedirect";
 import { BROKER_CALLBACK_PATH } from "@/lib/brokerAuth";
@@ -15,7 +15,8 @@ import { onMembershipChanged } from "@/lib/membershipChanged";
 // twice. At an address no firm holds they are not mounted at all (D-27).
 const SIGN_IN_LANDING_PATHS: readonly string[] = [AUTH_CALLBACK_PATH, BROKER_CALLBACK_PATH];
 
-type Membership = "checking" | "member" | "not_member" | "error";
+// "suspended": a current member of a firm that Nevermore has suspended (story CRM-P1.8).
+type Membership = "checking" | "member" | "suspended" | "not_member" | "error";
 
 // Which sign-ins have been written to the firm's record (CRM-P2.3), so a person is recorded once for each sign-in and not
 // once for each page they open. A convenience only: where the browser keeps nothing, the answer lasts until the page is
@@ -43,7 +44,7 @@ function markSignInReported(key: string): void {
  * What a firm's address shows (story CRM-P1.3a, D-17, D-18, D-27). On the bare domain it changes nothing. At an address
  * no firm holds: a plain not-found page for everyone, with a sign-out when a session exists there anyway; no sign-in
  * screen and no callback page. At a firm that exists and is not refused (approved or still waiting; a refused firm is treated as an address no firm holds, D-31): a signed-out visitor reaches the
- * sign-in screens, which name the firm; a signed-in current member reaches the console; a signed-in person who is not a
+ * sign-in screens, which name the firm; a signed-in current member reaches the console, unless Nevermore has suspended the firm, when they are told so and can sign out (CRM-P1.8); a signed-in person who is not a
  * current member sees "You aren't a member of this firm" and a sign-out, and nothing else, whichever firm they do
  * belong to. This decides only what to render: the database refuses the data to a non-member anyway, and no firm is
  * put in the token.
@@ -70,10 +71,16 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
     if (!address || !signedIn) return;
     let cancelled = false;
     setAnswer(null);
-    fetchIsMemberOfFirmAddress(address).then(
-      (ok) => !cancelled && setAnswer({ asked, result: ok ? "member" : "not_member" }),
-      () => !cancelled && setAnswer({ asked, result: "error" }),
-    );
+    // Whether the firm is suspended is asked only of a member: the database tells no one else.
+    fetchIsMemberOfFirmAddress(address)
+      .then(async (ok): Promise<Exclude<Membership, "checking">> => {
+        if (!ok) return "not_member";
+        return (await fetchIsMySuspendedFirmAtAddress(address)) ? "suspended" : "member";
+      })
+      .then(
+        (result) => !cancelled && setAnswer({ asked, result }),
+        () => !cancelled && setAnswer({ asked, result: "error" }),
+      );
     return () => { cancelled = true; };
   }, [address, userId, signedIn, asked, attempt]);
 
@@ -129,6 +136,14 @@ const FirmAddressGate = ({ children }: { children: ReactNode }) => {
   if (membership === "not_member") {
     return (
       <Message title="You aren't a member of this firm">
+        <button onClick={() => void signOut()} className="text-primary underline hover:text-primary/90">Sign out</button>
+      </Message>
+    );
+  }
+  if (membership === "suspended") {
+    return (
+      <Message title={`${firm.name} is suspended`}>
+        <p className="text-muted-foreground mb-4">Nobody can use this firm until Nevermore lifts the suspension. Contact Nevermore to ask why and what to do next. Nothing has been deleted.</p>
         <button onClick={() => void signOut()} className="text-primary underline hover:text-primary/90">Sign out</button>
       </Message>
     );
