@@ -31,7 +31,7 @@ export interface SavedView {
   shared: boolean;
   /** Saved by the person asking. */
   mine: boolean;
-  /** May rename, change and delete it (the person who saved it). */
+  /** May rename, change and delete it: the person who saved it, and for a shared view only while they are a current owner. */
   canChange: boolean;
   /** May share it (an owner, on a view of their own not yet shared). */
   canShare: boolean;

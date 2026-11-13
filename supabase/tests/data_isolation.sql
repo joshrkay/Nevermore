@@ -163,6 +163,7 @@
 \i supabase/migrations/20261117100000_queue_query.sql
 \i supabase/migrations/20261117100500_queue_query_fast_path.sql
 \i supabase/migrations/20261117120000_table_settings.sql
+\i supabase/migrations/20261117120500_table_settings_fixes.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
