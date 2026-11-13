@@ -273,6 +273,13 @@ _Avoid_: seat, user (for a member)
 The three roles in a firm (D-5; `agent` is now a code and screen word, see ADR 0011). In Edgar Allan Advisory today's admins are owners and today's advisors are agents (D-15).
 _Avoid_: member (as a role), broker, advisor (the platform role in `user_roles`)
 
+**Firm activity** (code: `firm_activity`):
+A firm's record of who did what: one row for each sign-in to the firm's console, submission opened, file downloaded, send recorded, export, invitation, removal, support access and membership, role or ownership change, with who did it, when, the kind and the id of the record it was about. Never content: no answer, name, email text or file. Nobody can change or delete a row, an admin included; the daily retention job removes entries after 90 days (D4). A firm's current owners read their own firm's and nobody else does, a platform admin included (D-16). Written only through `record_firm_activity`, which works out the firm from the record and the person from the caller's own sign-in.
+_Avoid_: audit log, access log, activity feed, history (a submission's status history is a different record)
+
+**Entry kind** (code: `firm_activity.kind`):
+What sort of thing an entry records: `sign_in`, `submission_viewed`, `document_downloaded`, `packet_downloaded`, `send_recorded`, `member_added`, `member_ended`, `owner_added`, `owner_ended`, and the ones later stories write: `export_made`, `invitation_sent`, `member_removed`, `support_access`. A role change shows as a member ended and a member added; a change to an owner has its own two kinds.
+
 ### Advisors
 
 **Advisor Console**:

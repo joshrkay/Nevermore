@@ -556,6 +556,7 @@ describe("server and client intake rules agree", () => {
     ["closed_draft_retention", "days", RETENTION.closedDraftDays],
     ["submitted_record_retention", "years", RETENTION.submittedYears],
     ["ops_event_retention", "days", RETENTION.opsEventDays],
+    ["firm_activity_retention", "days", RETENTION.firmActivityDays],
     ["email_event_retention", "days", RETENTION.emailEventDays],
     ["ai_event_retention", "days", RETENTION.aiEventDays],
     ["funnel_retention", "days", RETENTION.funnelDays],

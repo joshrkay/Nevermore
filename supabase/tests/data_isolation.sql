@@ -121,6 +121,7 @@
 \i supabase/migrations/20261115140000_peo_census_templates.sql
 \i supabase/migrations/20261116090000_firms.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
+\i supabase/migrations/20261116160000_firm_activity.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -527,6 +528,9 @@ INSERT INTO matrix VALUES
   ('public.firms',                                      '{"advisor":1,"admin":1}'),
   ('public.firm_teams',                                 '{"advisor":1,"admin":1}'),
   ('public.firm_memberships',                           '{"advisor":1,"admin":1}'),
+  -- The record of who did what (20261116160000): a firm's owners read their own firm's; here the admin is the first firm's
+  -- owner (D-15) and the advisor an agent, who reads none. No prospect or guest reads it.
+  ('public.firm_activity',                              '{"admin":"all"}'),
   ('public.intake_lifecycle_events',                    '{"advisor":"all","admin":"all"}'),
   ('public.intake_deletions',                           '{"advisor":"all","admin":"all"}'),
   -- Monitoring is the admin's: advisors don't need failure codes, routes or account ids.
@@ -772,6 +776,9 @@ INSERT INTO callable VALUES
   ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
   ('membership_is_current(p_valid_from timestamp with time zone, p_valid_until timestamp with time zone)', 'anyone', NULL,
                                                                      'pure: whether a membership has begun and not ended, as of now; reads nothing'),
+  ('record_member_activity(p_kind text, p_record_type text, p_record_id text)', 'own', NULL, 'a browser reporting a submission opened or a file downloaded, as the caller, about a record of a firm they belong to; refuses anyone else (supabase/tests/firm_activity.sql)'),
+  ('firm_activity_list(p_firm_id uuid, p_person uuid, p_kind text, p_limit integer, p_offset integer)', 'own', NULL, 'a firm''s record of who did what, for that firm''s owners only; 42501 for everyone else, platform admins included (supabase/tests/firm_activity.sql)'),
+  ('firm_activity_people(p_firm_id uuid)', 'own', NULL, 'who appears in a firm''s record, for that firm''s owners only; 42501 for everyone else (supabase/tests/firm_activity.sql)'),
   ('second_factor_rule_met()',                'anyone',  NULL, 'has_role calls it as the caller; answers from the caller''s own token claims only (supabase/tests/second_factor.sql)'),
   ('advisor_needs_second_factor()',            'own',     NULL, 'whether the caller''s own password sign-in is all that holds back their role; false for anyone else'),
   ('my_mailbox()',                             'own',     NULL, 'whether the caller''s own mailbox is connected, and to whom; never the token; "not connected" for anyone else'),

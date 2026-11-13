@@ -57,6 +57,8 @@ AS $$
     -- sync:end firm_activity_retention
 $$;
 
+REVOKE ALL ON FUNCTION public.firm_activity_retention() FROM PUBLIC, anon, authenticated;
+
 -- Nothing changes or deletes a row. Only the retention job's own function, which says so for the one statement it
 -- runs, may delete, and only as the table's owner: the API roles never can, whatever they set.
 CREATE FUNCTION public.guard_firm_activity()
@@ -85,7 +87,8 @@ CREATE TRIGGER firm_activity_no_truncate
 
 ALTER TABLE public.firm_activity ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.firm_activity FROM PUBLIC, anon, authenticated, service_role;
-GRANT SELECT ON public.firm_activity TO authenticated;
+-- The service reads it (a later story's alert counts a member's exports) but writes only through record_firm_activity().
+GRANT SELECT ON public.firm_activity TO authenticated, service_role;
 
 CREATE POLICY firm_activity_owners_read ON public.firm_activity
   FOR SELECT TO authenticated USING (public.firm_role(firm_id) = 'owner');

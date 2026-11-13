@@ -431,7 +431,7 @@ SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L)', pg_t
 SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L)', pg_temp.id('firm_b')), '42501', 'a platform admin reading the other firm''s record');
 SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity), 0::bigint, 'a platform admin reads no row of the table');
 SELECT pg_temp.as_service();
-SELECT pg_temp.expect('SELECT count(*) FROM public.firm_activity', '42501', 'the service reading the table through the API');
+SELECT pg_temp.is((SELECT count(*) FROM public.firm_activity) > 0, true, 'the service reads the table, to count what a member did');
 RESET ROLE;
 SELECT set_config('role', 'anon', false);
 SELECT pg_temp.expect(format('SELECT * FROM public.firm_activity_list(%L)', pg_temp.id('firm_a')), '42501', 'someone signed out reading a firm''s record');
