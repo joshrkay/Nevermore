@@ -984,10 +984,10 @@ describe("AdvisorSubmissionPage", () => {
     expect(signOut).toHaveBeenCalledWith("expired");
   });
 
-  it("tells an account that has lost advisor access, and doesn't offer a retry", async () => {
-    api.loadSubmission.mockRejectedValueOnce(Object.assign(new Error("You don't have advisor access."), { forbidden: true }));
+  it("tells an account that has lost access to the firm, and doesn't offer a retry", async () => {
+    api.loadSubmission.mockRejectedValueOnce(Object.assign(new Error("You don't have access to this firm's records."), { forbidden: true }));
     renderPage();
-    expect(await screen.findByRole("alert")).toHaveTextContent("You no longer have advisor access");
+    expect(await screen.findByRole("alert")).toHaveTextContent("You no longer have access to this firm's records");
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
   describe("when the prospect cannot be reached by email", () => {

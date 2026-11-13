@@ -3,9 +3,10 @@
 -- edited, so a database that ran them and a fresh one end in the same state.
 
 -- 1. Withdrawing an invitation is recorded as its own kind of entry. The kinds list belongs to 20261116160001_firm_activity.sql, which
--- databases have run without this kind: the check is dropped and added again here with it. src/data/firmActivity.ts (ENTRY_KINDS) is
+-- databases have run with or without this kind, depending on whether they ran it before or after the invitations story edited it:
+-- the check is dropped (if it is there) and added again here with the full list, which is right for both. src/data/firmActivity.ts (ENTRY_KINDS) is
 -- kept in step by src/data/schemaSync.test.ts, which reads the list of the latest migration that holds it.
-ALTER TABLE public.firm_activity DROP CONSTRAINT firm_activity_kind_check;
+ALTER TABLE public.firm_activity DROP CONSTRAINT IF EXISTS firm_activity_kind_check;
 ALTER TABLE public.firm_activity ADD CONSTRAINT firm_activity_kind_check CHECK (kind IN (
     -- sync:begin firm_activity_kinds
     'sign_in', 'submission_viewed', 'document_downloaded', 'packet_downloaded', 'send_recorded',
@@ -39,10 +40,10 @@ REVOKE ALL ON FUNCTION public.record_firm_event(uuid, text, uuid, jsonb) FROM PU
 -- twenty-four hours; the next is refused with a message saying when it can send again. Both limits end when the firm is approved.
 -- Each email is one 'invitation_sent' entry in the firm's record, written in the same transaction as the send, so the emails of the
 -- last twenty-four hours are those entries. The refusal says when the oldest of the last twenty leaves the window, which is when the
--- next email can go. An approved firm is not limited here, and a refused firm is refused by its callers before this runs.
+-- next email can go, shown to the minute and rounded up to the next whole minute so it is never a time that is still refused. An approved firm is not limited here, and a refused firm is refused by its callers before this runs.
 -- Callers hold the firm's row lock (FOR NO KEY UPDATE) when they call this, so two owners sending at once are counted one after the
 -- other; the two-session test in supabase/tests/firm_invitations.sql goes red without that lock.
-CREATE FUNCTION public.guard_invitation_mail_rate(p_firm public.firms)
+CREATE OR REPLACE FUNCTION public.guard_invitation_mail_rate(p_firm public.firms)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -59,7 +60,9 @@ BEGIN
         ORDER BY a.at DESC LIMIT 20) w;
   IF recent >= 20 THEN
     RAISE EXCEPTION 'A firm waiting for approval can send at most twenty invitation emails in 24 hours. It can send again at %',
-      to_char((oldest + interval '24 hours') AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI "UTC"') USING ERRCODE = 'PT409';
+      to_char((date_trunc('minute', oldest + interval '24 hours') + CASE WHEN oldest + interval '24 hours' = date_trunc('minute', oldest + interval '24 hours')
+                                                                         THEN interval '0' ELSE interval '1 minute' END) AT TIME ZONE 'UTC',
+              'YYYY-MM-DD HH24:MI "UTC"') USING ERRCODE = 'PT409';
   END IF;
 END;
 $$;

@@ -858,8 +858,7 @@ BEGIN
   SELECT min(a.at) INTO first_at FROM pg_temp.acts(rf, 'invitation_sent') a;
   PERFORM pg_temp.as_user('rate_owner');
   msg := pg_temp.refusal(format('SELECT * FROM public.resend_invitation(%L, %L)', invs[1], pg_temp.hash_of('rate-r21')));
-  PERFORM pg_temp.is(msg, head || to_char((first_at + interval '24 hours') AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI "UTC"'),
-    'the twenty-first email is refused, saying when it can send again');
+  PERFORM pg_temp.is(left(msg, length(head)), head, 'the twenty-first email is refused, saying when it can send again');
   PERFORM public.cancel_invitation(invs[2]);
   PERFORM pg_temp.is(left(pg_temp.refusal(format($q$SELECT public.invite_member(%L, 'rate6@example.test', 'agent', NULL, %L)$q$, rf, pg_temp.hash_of('rate-6'))), 40),
     left(head, 40), 'a first send is refused as well');
@@ -910,6 +909,104 @@ BEGIN
     'a waiting firm whose five invitations were accepted can invite again');
   RESET ROLE;
   RAISE NOTICE 'firm_invitations: waiting firm rate limit cases passed';
+END $$;
+
+-- ---------- the time the refusal advertises is one the firm can really send at ----------
+-- Break caught: a time shown to the minute that is earlier than the moment sending is allowed (an oldest email at 09:30:45 turned
+-- away "until 09:30" while sending stays refused until 09:30:45); one that is later than the next minute boundary, or that moves
+-- a time that is already on a whole minute.
+DO $$
+DECLARE rf uuid; n integer; inv uuid; invs uuid[] := '{}'; msg text; oldest timestamptz; shown timestamptz; allowed timestamptz;
+  head text := 'PT409: A firm waiting for approval can send at most twenty invitation emails in 24 hours. It can send again at ';
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.firms (name, address) VALUES ('Round Firm', 'round-firm') RETURNING id INTO rf;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (rf, pg_temp.new_user('round_owner'), 'owner');
+  PERFORM pg_temp.as_user('round_owner');
+  FOR n IN 1..5 LOOP
+    SELECT r.invitation_id INTO inv FROM public.invite_member(rf, 'round' || n || '@example.test', 'agent', NULL, pg_temp.hash_of('round-' || n)) r;
+    invs := invs || inv;
+  END LOOP;
+  FOR n IN 1..15 LOOP
+    PERFORM public.resend_invitation(invs[1 + n % 5], pg_temp.hash_of('round-r' || n));
+  END LOOP;
+  RESET ROLE;
+  -- The oldest email was sent at a time with seconds in it (the record is append-only: the test lifts the guard to age it).
+  ALTER TABLE public.firm_activity DISABLE TRIGGER firm_activity_append_only;
+  UPDATE public.firm_activity SET at = date_trunc('minute', now()) - interval '23 hours 40 minutes' + interval '45 seconds'
+  WHERE entry_key = (SELECT a.entry_key FROM pg_temp.acts(rf, 'invitation_sent') a ORDER BY a.at, a.entry_key LIMIT 1);
+  ALTER TABLE public.firm_activity ENABLE TRIGGER firm_activity_append_only;
+  SELECT min(a.at) INTO oldest FROM pg_temp.acts(rf, 'invitation_sent') a;
+  allowed := oldest + interval '24 hours';
+  PERFORM pg_temp.as_user('round_owner');
+  msg := pg_temp.refusal(format('SELECT * FROM public.resend_invitation(%L, %L)', invs[1], pg_temp.hash_of('round-r21')));
+  RESET ROLE;
+  PERFORM pg_temp.is(left(msg, length(head)), head, 'the twenty-first email is refused');
+  shown := (substr(msg, length(head) + 1, 16) || ' UTC')::timestamptz;
+  PERFORM pg_temp.is(shown >= allowed, true, 'the time advertised is not before sending is allowed');
+  PERFORM pg_temp.is(shown - allowed < interval '1 minute', true, 'and is the next whole minute, not later');
+  -- At exactly the advertised time the send goes through: move every email back by the wait, which is the same as waiting.
+  ALTER TABLE public.firm_activity DISABLE TRIGGER firm_activity_append_only;
+  UPDATE public.firm_activity SET at = at - (shown - now()) WHERE firm_id = rf AND kind = 'invitation_sent';
+  ALTER TABLE public.firm_activity ENABLE TRIGGER firm_activity_append_only;
+  PERFORM pg_temp.as_user('round_owner');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT * FROM public.resend_invitation(%L, %L)', invs[1], pg_temp.hash_of('round-r21'))), 'rows:1',
+    'a send at exactly the advertised time succeeds');
+  RESET ROLE;
+  -- A time already on a whole minute is shown as it is.
+  ALTER TABLE public.firm_activity DISABLE TRIGGER firm_activity_append_only;
+  UPDATE public.firm_activity SET at = date_trunc('minute', now()) - interval '23 hours 40 minutes'
+  WHERE firm_id = rf AND kind = 'invitation_sent';
+  UPDATE public.firm_activity SET at = date_trunc('minute', now()) - interval '10 minutes' WHERE firm_id = rf AND kind = 'invitation_sent'
+    AND entry_key NOT IN (SELECT a.entry_key FROM pg_temp.acts(rf, 'invitation_sent') a ORDER BY a.at, a.entry_key LIMIT 1);
+  ALTER TABLE public.firm_activity ENABLE TRIGGER firm_activity_append_only;
+  SELECT min(a.at) INTO oldest FROM pg_temp.acts(rf, 'invitation_sent') a;
+  PERFORM pg_temp.as_user('round_owner');
+  msg := pg_temp.refusal(format('SELECT * FROM public.resend_invitation(%L, %L)', invs[1], pg_temp.hash_of('round-r22')));
+  RESET ROLE;
+  PERFORM pg_temp.is(substr(msg, length(head) + 1), to_char((oldest + interval '24 hours') AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI "UTC"'),
+    'a time on a whole minute is not moved');
+  RAISE NOTICE 'firm_invitations: advertised time cases passed';
+END $$;
+
+-- ---------- a database that ran the activity migration before the invitations story edited it ----------
+-- Break caught: the migration that fixes invitations only works on a database whose kinds check already lists 'invitation_withdrawn'
+-- (one that ran the edited activity migration); on one that ran the original it leaves the check as it was, and withdrawing an
+-- invitation fails. The check is put back as the original migration built it, then this story's migration is run again.
+DO $$
+DECLARE rf uuid; inv uuid;
+BEGIN
+  RESET ROLE;
+  INSERT INTO public.firms (name, address) VALUES ('Old Check Firm', 'old-check-firm') RETURNING id INTO rf;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (rf, pg_temp.new_user('old_owner'), 'owner');
+  PERFORM pg_temp.as_user('old_owner');
+  SELECT r.invitation_id INTO inv FROM public.invite_member(rf, 'old1@example.test', 'agent', NULL, pg_temp.hash_of('old-1')) r;
+  RESET ROLE;
+  INSERT INTO fx VALUES ('old_inv', inv);
+  ALTER TABLE public.firm_activity DROP CONSTRAINT firm_activity_kind_check;
+  ALTER TABLE public.firm_activity ADD CONSTRAINT firm_activity_kind_check CHECK (kind IN (
+    'sign_in', 'submission_viewed', 'document_downloaded', 'packet_downloaded', 'send_recorded',
+    'member_added', 'member_ended', 'owner_added', 'owner_ended',
+    'export_made', 'invitation_sent', 'member_removed', 'support_access',
+    'firm_signed_up', 'firm_approved', 'firm_refused'
+  )) NOT VALID;
+  PERFORM pg_temp.as_user('old_owner');
+  PERFORM pg_temp.is(pg_temp.attempt(format('SELECT public.cancel_invitation(%L)', inv)) LIKE 'rows:%', false,
+    'on the original check, withdrawing an invitation fails (the starting state is the old one)');
+  RESET ROLE;
+END $$;
+
+\i supabase/migrations/20261116190500_invitation_fixes.sql
+
+DO $$
+DECLARE inv uuid := pg_temp.id('old_inv');
+BEGIN
+  PERFORM pg_temp.as_user('old_owner');
+  PERFORM public.cancel_invitation(inv);
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT count(*) FROM pg_temp.acts((SELECT firm_id FROM public.firm_invitations WHERE id = inv), 'invitation_withdrawn')), 1::bigint,
+    'after this migration, withdrawing an invitation works on a database that ran the original activity migration, and is in the firm''s record');
+  RAISE NOTICE 'firm_invitations: old activity check cases passed';
 END $$;
 
 DO $$

@@ -49,7 +49,7 @@ vi.mock("@/integrations/supabase/client", () => ({
 
 const {
   AdvisorApiError,
-  fetchIsAdvisor,
+  fetchMyFirms,
   fetchNeedsSecondFactor,
   listEmailProblems,
   listOutboxEvents,
@@ -96,11 +96,16 @@ const caught = async (run: () => Promise<unknown>) => {
 describe("advisor API errors", () => {
   beforeEach(() => rpc.mockReset());
 
-  it("reports a role check that comes back true or false", async () => {
-    rpc.mockResolvedValueOnce({ data: true, error: null });
-    await expect(fetchIsAdvisor()).resolves.toBe(true);
-    rpc.mockResolvedValueOnce({ data: false, error: null });
-    await expect(fetchIsAdvisor()).resolves.toBe(false);
+  it("asks which firms the caller currently belongs to, and their role in each, never whether they hold a platform role", async () => {
+    const firms = [{ firm_id: "firm-1", name: "Alpha", address: "alpha", role: "agent" }];
+    rpc.mockResolvedValueOnce({ data: firms, error: null });
+    await expect(fetchMyFirms()).resolves.toEqual(firms);
+    expect(rpc).toHaveBeenCalledWith("my_firms");
+    expect(rpc).not.toHaveBeenCalledWith("is_advisor");
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await expect(fetchMyFirms()).resolves.toEqual([]);
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "JWT expired", code: "PGRST301" } });
+    expect((await caught(() => fetchMyFirms())).unauthenticated).toBe(true);
   });
 
   it("reports whether only a second factor holds an advisor back, and says nothing is wrong when the answer is empty", async () => {
@@ -113,13 +118,13 @@ describe("advisor API errors", () => {
     expect(rpc).toHaveBeenLastCalledWith("advisor_needs_second_factor");
   });
 
-  it("calls a database refusal a lack of advisor access", async () => {
+  it("calls a database refusal a lack of access to the firm's records", async () => {
     failWith({ code: "42501", message: "Advisor access required" });
     const err = await caught(() => listSubmissions({ status: null }));
     expect(err).toBeInstanceOf(AdvisorApiError);
     expect(err.forbidden).toBe(true);
     expect(err.unauthenticated).toBe(false);
-    expect(err.message).toBe("You don't have advisor access.");
+    expect(err.message).toBe("You don't have access to this firm's records.");
   });
 
   it.each([
@@ -191,12 +196,12 @@ describe("outbox API", () => {
     ["listing", () => listOutboxEvents(null)],
     ["counting", () => outboxSummary()],
     ["retrying", () => requeueOutboxEvent("e1", false)],
-  ])("calls the database's refusal of a non-advisor %s a lack of advisor access", async (_what, run) => {
+  ])("calls the database's refusal of a non-advisor %s a lack of access to the firm's records", async (_what, run) => {
     failWith({ code: "42501", message: "Advisor access required" });
     const err = await caught(run);
     expect(err).toBeInstanceOf(AdvisorApiError);
     expect(err.forbidden).toBe(true);
-    expect(err.message).toBe("You don't have advisor access.");
+    expect(err.message).toBe("You don't have access to this firm's records.");
   });
 
   it("says the session ended, for a lapsed token, so the page can send the advisor to sign in", async () => {
@@ -226,11 +231,11 @@ describe("email problems API", () => {
     await expect(listEmailProblems()).resolves.toEqual([]);
   });
 
-  it("calls the database's refusal of a non-advisor a lack of advisor access (HTTP 403)", async () => {
+  it("calls the database's refusal of a non-advisor a lack of access to the firm's records (HTTP 403)", async () => {
     failWith({ code: "42501", message: "Advisor access required" });
     const err = await caught(() => listEmailProblems());
     expect(err.forbidden).toBe(true);
-    expect(err.message).toBe("You don't have advisor access.");
+    expect(err.message).toBe("You don't have access to this firm's records.");
   });
 });
 

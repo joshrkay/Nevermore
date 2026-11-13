@@ -2,13 +2,16 @@
 
 Advisor pages live under `/advisor`: the Advisor Console, which is the team's operating workflow
 (no CRM; its field mapping and ownership rules are in `docs/ADVISOR_CONSOLE.md`). The UI guard
-(`RequireAdvisor`) only decides what to render; the database enforces access
-(`supabase/migrations/20261022090000_advisor_operations.sql`).
+(`RequireFirm`, and `RequirePlatformAdmin` for the platform's own pages) only decides what to render; the database enforces
+access (`supabase/migrations/20261022090000_advisor_operations.sql`, and since story P-1.4
+`20261116210000_console_per_firm.sql`, docs/adr/0013). The console asks for a current membership of a firm (`my_firms()`), not
+for a platform role; a platform admin who belongs to no firm gets the platform's pages only (D-16).
 
 | Route | Audience | Enforced by |
 |---|---|---|
-| `/advisor` | Advisor or admin | `advisor_list_submissions()` refuses non-advisors (42501) |
-| `/advisor/submissions/:id` | Advisor or admin | Row security on every table it reads; advisor-only functions for every write |
+| `/advisor`, `/advisor/submissions/:id`, `/advisor/outbox`, `/advisor/funnel`, `/advisor/partners`, `/advisor/peos`, `/advisor/mailbox` | A current member of a firm (at a firm's address, of that firm) | `require_advisor()` (a platform role or a current membership), then each function's firm filter; row security on every table it reads |
+| `/advisor/activity` | A firm's owner | `firm_activity_list()` refuses everyone else |
+| `/advisor/firms`, `/advisor/organisations`, `/advisor/held` | A platform admin | `has_role('admin')` in each function and policy |
 
 ## Roles
 
@@ -56,7 +59,7 @@ Microsoft sign-in relies on that provider's and is never asked; prospects and gu
   they ask `is_advisor()` (or `has_role('admin')` to assign or discard held mail) with the caller's own login, and answer 403 to a
   password sign-in with no second factor. Their own role checks in the database stay as a second line.
   `advisor_needs_second_factor()` tells the screens that a person with a role is held back by this alone.
-- **On screen**: `RequireAdvisor` sends such a person to `/advisor/second-factor` instead of showing "Waiting for access". The
+- **On screen**: `RequireFirm` (and `RequirePlatformAdmin`) sends such a person to `/advisor/second-factor` instead of showing that they belong to no firm. The
   page sets up an authenticator app (Supabase Auth's TOTP calls) the first time and asks for its code at later sign-ins. After a
   Google or Microsoft sign-in, or for someone with no role, it shows nothing and goes straight on.
 - **Setting it up on a project**: turn on TOTP multi-factor in the Supabase project's Authentication settings (enrol and verify).

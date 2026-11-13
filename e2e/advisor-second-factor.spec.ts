@@ -20,6 +20,8 @@ async function newAdvisor(request: APIRequestContext): Promise<string> {
   await client.connect();
   try {
     await client.query("INSERT INTO public.user_roles (user_id, role) VALUES ($1, 'advisor')", [user.id]);
+    // Today's advisors are agents of Edgar Allan Advisory (D-15), and the console opens for a member of a firm (P-1.4).
+    await client.query("INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (public.default_firm_id(), $1, 'agent')", [user.id]);
   } finally {
     await client.end();
   }
