@@ -279,6 +279,14 @@ describe("AdvisorActivityPage", () => {
         expect(api.listFirmActivity).not.toHaveBeenCalledWith("firm-1", expect.anything());
       });
 
+      it("reads nothing at an address of a firm the person doesn't belong to at all, whatever other firm they own", async () => {
+        api.fetchOwnedFirms.mockResolvedValue([firms[0]]);
+        api.fetchMyFirms.mockResolvedValue([mine[0]]);
+        renderPage("/advisor/activity?firm=firm-1");
+        expect(await screen.findByText("Only a firm's owners can read its record of who did what.")).toBeInTheDocument();
+        expect(api.listFirmActivity).not.toHaveBeenCalled();
+      });
+
       it("reads nothing of a firm at an address the person doesn't own: an owner of another firm only is told it is for owners", async () => {
         api.fetchOwnedFirms.mockResolvedValue([firms[0]]);
         api.fetchMyFirms.mockResolvedValue([mine[0], { ...mine[1], role: "agent" }]);

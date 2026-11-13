@@ -89,8 +89,15 @@ test("a member of firm B, at firm B's address, sees none of firm A's submissions
   });
 
   await test.step("the platform's pages are not the member's", async () => {
-    await page.goto(`${firmUrl(FIRM_B)}/advisor/firms`);
-    await expect(page.getByRole("heading", { name: "For Nevermore's platform admins" })).toBeVisible();
+    for (const path of ["firms", "organisations", "held"]) {
+      await page.goto(`${firmUrl(FIRM_B)}/advisor/${path}`);
+      await expect(page.getByRole("heading", { name: "For Nevermore's platform admins" })).toBeVisible();
+    }
+  });
+
+  await test.step("the firm's record of who did what is for owners: an agent is turned away", async () => {
+    await page.goto(`${firmUrl(FIRM_B)}/advisor/activity`);
+    await expect(page.getByRole("heading", { name: "For a firm's owners" })).toBeVisible();
   });
 });
 

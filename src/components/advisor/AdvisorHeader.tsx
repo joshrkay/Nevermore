@@ -99,7 +99,7 @@ const AdvisorHeader = () => {
           </NavLink>
             </>
           )}
-          {isMember && ownsAFirm && (
+          {ownsAFirm && (
             <NavLink
               to="/advisor/activity"
               className={({ isActive }) => (isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground")}

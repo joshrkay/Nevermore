@@ -48,10 +48,10 @@ const AdvisorActivityPage = () => {
   const { user, session } = useAuth();
   const userId = user?.id ?? "";
   const sessionKey = session?.access_token ?? "";
-  // At a firm's own address the firm is that address's: the link's ?firm= and the choice of firm are for the bare domain.
+  // At a firm's own address the firm is that address's, which wins over the link's ?firm= and the choice of firm: those are for the bare domain.
   const firmAddress = useFirmAddress();
   const address = firmAddress.status === "known" ? firmAddress.address : null;
-  const firmParam = address === null ? params.get("firm") : null;
+  const firmParam = params.get("firm");
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [person, setPerson] = useState<string | null>(null);
