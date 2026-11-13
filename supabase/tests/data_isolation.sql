@@ -8,7 +8,12 @@
 --   signed_out        no token (the `anon` role)
 --   guest_a, guest_b  anonymous-auth guests, each with their own intakes and files
 --   prospect_a/_b     email-verified prospects, each with a certified intake and a draft
---   advisor, admin    hold a role; own no intake
+--   advisor, admin    hold a role and a membership of the first firm (Edgar Allan Advisory: an agent and an owner); own no intake
+--   agent_2, lead_1   members of the first firm with no advisor role: an agent and a team lead
+--   agent_b, owner_b  the second firm's agent (who also holds the advisor role) and owner
+--   platform_admin    holds the admin role and a membership of no firm (D-16)
+--   former_agent      holds the advisor role; their membership of the first firm has ended
+--   advisor_pw        the advisor signed in with a password and no second factor; advisor_pw_mfa, with one (D-19)
 --   advisor_as_guest  the advisor's account presenting a guest token (must count as a guest)
 --   service           the service role (what the scheduled jobs and edge functions use)
 --
@@ -19,11 +24,23 @@
 --    change an expired one.
 -- 4. Prospects against advisor records and functions; advisors against admin-only, service-only and
 --    prospect-owned data.
--- 5. Catalogue checks, so the matrix can't fall behind the schema: every public table has row security and
---    a row in the matrix; every function the API roles can execute is in the allowlist below with a reason;
---    every bucket is private; the API roles hold no TRUNCATE, REFERENCES or TRIGGER; every SECURITY DEFINER
---    function pins its search_path.
---
+-- 4c. One firm against the other, table by table, on the matrix's rows: what a member of one can read, change or delete of the other's.
+-- 4d. A deletion record keeps its firm after its intake is gone.
+-- 5. The gate and the catalogue checks, so the matrix can't fall behind the schema:
+--    5a every public table and storage bucket is in the registry with what it holds (a firm's data, platform-wide data, a
+--       person's own data, or nothing the API reaches); a table or bucket missing from it fails (D-28);
+--    5b every firm table and bucket is probed: a row is made for each of two firms and every caller (the other firm's members,
+--       a non-member, a former member, a platform admin) reads, counts, changes, deletes none of it, inserts none into it, and a
+--       member can neither move their firm's row to the other firm nor take the other firm's for their own. Only a refusal
+--       (no row matched, or insufficient privilege) counts as safe; no policy text is read;
+--    5c the gate's own negative cases: the two shapes a text check was fooled by, a second open policy, an open insert, an open
+--       update, a delete a foreign key stops, a rule that shows nothing to the firm, a table with no way to make a row, a maker
+--       that finds no row, one whose probe cannot run, a platform table with a firm column, a closed table with a policy, an
+--       unregistered table and bucket;
+--    then: every public table has row security and a row in the matrix; every function the API roles can execute is in the
+--    allowlist below with a reason; every bucket is private; the API roles hold no TRUNCATE, REFERENCES or TRIGGER; every
+--    SECURITY DEFINER function pins its search_path.
+
 -- When you add a migration, add it to the list below and bump the count after it. When you add a table,
 -- bucket or API-callable function, the catalogue checks fail until you add it to the matrix or allowlist.
 \set ON_ERROR_STOP 1
@@ -120,8 +137,10 @@
 \i supabase/migrations/20261115130000_information_request_extra_questions.sql
 \i supabase/migrations/20261115140000_peo_census_templates.sql
 \i supabase/migrations/20261116090000_firms.sql
+\i supabase/migrations/20261116110000_firm_scoped_policies.sql
 \i supabase/migrations/20261116140000_firm_address_lookup.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
+\i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -169,12 +188,17 @@ BEGIN
     SET LOCAL ROLE service_role;
     RETURN;
   END IF;
-  uid := pg_temp.id(CASE WHEN who = 'advisor_as_guest' THEN 'advisor' ELSE who END);
+  uid := pg_temp.id(CASE WHEN who IN ('advisor_as_guest', 'advisor_pw', 'advisor_pw_mfa') THEN 'advisor' ELSE who END);
   IF uid IS NULL THEN RAISE EXCEPTION 'unknown caller %', who; END IF;
   guest := who IN ('guest_a', 'guest_b', 'advisor_as_guest');
   PERFORM set_config('request.jwt.claims',
-    jsonb_build_object('sub', uid, 'role', 'authenticated', 'is_anonymous', guest,
-      'email', CASE WHEN guest THEN NULL ELSE who || '@example.test' END)::text, false);
+    (jsonb_build_object('sub', uid, 'role', 'authenticated', 'is_anonymous', guest,
+      'email', CASE WHEN guest THEN NULL ELSE who || '@example.test' END)
+     -- A sign-in that used a password, with and without the second factor completed (D-19, CRM-P1.3b).
+     || CASE WHEN who IN ('advisor_pw', 'advisor_pw_mfa')
+          THEN jsonb_build_object('amr', jsonb_build_array(jsonb_build_object('method', 'password', 'timestamp', 1)),
+                                  'aal', CASE WHEN who = 'advisor_pw' THEN 'aal1' ELSE 'aal2' END)
+          ELSE '{}'::jsonb END)::text, false);
   SET LOCAL ROLE authenticated;
 END $$;
 
@@ -241,9 +265,14 @@ BEGIN
   END IF;
 END $$;
 
--- The callers that must never reach someone else's intake.
-CREATE FUNCTION pg_temp.outsiders(owner text) RETURNS SETOF text LANGUAGE sql AS $$
-  SELECT c FROM unnest(ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor_as_guest']) c WHERE c <> owner
+-- The callers that must never reach someone else's intake: signed out, guests, prospects, an advisor's account behind a
+-- guest token, a platform admin (a member of no firm), a former member, and every member of the other firm. The first
+-- firm's own members read its intakes, so they are outsiders only to the second firm's.
+CREATE FUNCTION pg_temp.outsiders(owner text, firm text) RETURNS SETOF text LANGUAGE sql AS $$
+  SELECT c
+  FROM unnest(ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor_as_guest', 'platform_admin', 'former_agent']
+              || CASE WHEN firm = 'a' THEN ARRAY['agent_b', 'owner_b'] ELSE ARRAY['advisor', 'admin', 'agent_2', 'lead_1'] END) c
+  WHERE c <> owner
 $$;
 
 -- ---------- data for everyone to protect ----------
@@ -255,6 +284,20 @@ DECLARE
   pb uuid := pg_temp.new_user('prospect_b@example.test', false);
   adv uuid := pg_temp.new_user('advisor@example.test', false);
   adm uuid := pg_temp.new_user('admin@example.test', false);
+  -- Firms (20261116090000, 20261116110000). Firm A is Edgar Allan Advisory (everyone sees everything): the advisor is
+  -- an agent, agent_2 another agent and lead_1 a lead, the admin an owner. Firm B is a second firm: agent_b an agent
+  -- and owner_b its owner; prospect B's intakes are its. platform_admin holds the admin role and no membership;
+  -- former_agent holds the advisor role and a membership that ended.
+  firm_a constant uuid := '00000000-0000-4000-8000-00000000eaa1';
+  firm_b constant uuid := '00000000-0000-4000-8000-0000000000b2';
+  ag2 uuid := pg_temp.new_user('agent_2@example.test', false);
+  ld1 uuid := pg_temp.new_user('lead_1@example.test', false);
+  agb uuid := pg_temp.new_user('agent_b@example.test', false);
+  owb uuid := pg_temp.new_user('owner_b@example.test', false);
+  pad uuid := pg_temp.new_user('platform_admin@example.test', false);
+  fag uuid := pg_temp.new_user('former_agent@example.test', false);
+  team_a uuid := gen_random_uuid();
+  team_b uuid := gen_random_uuid();
   ready constant text := '{"company_name":"%s","states":["CA"],"pay_frequency":"Bi-weekly","employee_count":3}';
   ga_open uuid; ga_expired uuid; ga_archived uuid; ga_revoked uuid;
   gb_open uuid; pa_cert uuid; pa_open uuid; pb_cert uuid; pb_open uuid;
@@ -262,8 +305,17 @@ DECLARE
   latest bigint;
   r text;
 BEGIN
-  INSERT INTO fx VALUES ('guest_a', ga), ('guest_b', gb), ('prospect_a', pa), ('prospect_b', pb), ('advisor', adv), ('admin', adm);
-  INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor'), (adm, 'admin');
+  INSERT INTO fx VALUES ('guest_a', ga), ('guest_b', gb), ('prospect_a', pa), ('prospect_b', pb), ('advisor', adv), ('admin', adm),
+    ('agent_2', ag2), ('lead_1', ld1), ('agent_b', agb), ('owner_b', owb), ('platform_admin', pad), ('former_agent', fag),
+    ('firm_a', firm_a), ('firm_b', firm_b);
+  INSERT INTO public.user_roles (user_id, role) VALUES (adv, 'advisor'), (adm, 'admin'), (agb, 'advisor'), (pad, 'admin'), (fag, 'advisor');
+  INSERT INTO public.firms (id, name, address, visibility, approved_at) VALUES (firm_b, 'Second Brokers', 'second-brokers', 'by_level', now());
+  INSERT INTO public.firm_teams (id, firm_id, name) VALUES (team_a, firm_a, 'Sales'), (team_b, firm_b, 'Brokers');
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, team_id) VALUES
+    (firm_a, adm, 'owner', NULL), (firm_a, adv, 'agent', NULL), (firm_a, ag2, 'agent', team_a), (firm_a, ld1, 'lead', team_a),
+    (firm_b, owb, 'owner', NULL), (firm_b, agb, 'agent', team_b);
+  INSERT INTO public.firm_memberships (firm_id, user_id, role, valid_from, valid_until)
+  VALUES (firm_a, fag, 'agent', now() - interval '30 days', now() - interval '1 day');
 
   -- Everyone who starts an intake agrees first, from the browser.
   FOREACH who IN ARRAY ARRAY['guest_a', 'guest_b', 'prospect_a', 'prospect_b'] LOOP
@@ -332,12 +384,22 @@ BEGIN
 
   PERFORM pg_temp.become('prospect_b');
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, format(ready, 'Prospect B Co')::jsonb) RETURNING id INTO pb_cert;
+  INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path)
+  VALUES (pb, pb_cert, 'payroll.csv', '1 KB', pb || '/' || pb_cert || '/payroll.csv');
+  PERFORM pg_temp.store_file('documents', pb || '/' || pb_cert || '/payroll.csv');
   UPDATE public.chamber_sessions
   SET status = 'submitted',
       submission = jsonb_build_object('signer_name', 'Bo B', 'signer_title', 'COO', 'signed_at', '2026-11-01T12:00:00Z',
         'file_id', 'EAA-2026-BBBBBBBB', 'consent_version', 'v1', 'consent_text', 'I certify.', 'chamber_data', chamber_data)
   WHERE id = pb_cert;
+  -- Prospect B starts over once, so a closed intake of the second firm leaves its lifecycle event, then keeps a new draft.
+  INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, '{"company_name":"Prospect B First Draft"}') RETURNING id INTO pb_open;
+  IF public.archive_chamber_session(pb_open) <> 'archived' THEN RAISE EXCEPTION 'setup: archive failed'; END IF;
   INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (pb, '{"company_name":"Prospect B Draft"}') RETURNING id INTO pb_open;
+  -- Prospect B's intakes belong to the second firm. The API can't choose a firm (an intake always starts in Edgar Allan
+  -- Advisory's, keep_intake_firm); here the superuser places them, as the address a prospect arrives at will.
+  RESET ROLE;
+  UPDATE public.chamber_sessions SET firm_id = firm_b WHERE user_id = pb;
 
   -- A file planted in guest B's folder under guest A's intake: neither of them may read it.
   RESET ROLE;
@@ -355,15 +417,32 @@ BEGIN
   -- A note on it (20261111090000), so the notes have a row to protect.
   PERFORM public.advisor_add_quote_request_note(
     (SELECT id FROM public.quote_requests WHERE session_id = pa_cert), 'call', current_date, 'Their rep called');
-  -- A request for information on prospect B's submission (20261105090000), so its table has a row to protect.
-  PERFORM public.advisor_request_information(pb_cert, 'Please confirm the pay frequency', ARRAY['pay_frequency']);
   -- A referral partner (20261106100000), so its table has a row to protect.
   PERFORM public.advisor_add_referral_partner('acme-cfo', 'Acme CFO Partners', 'accounting');
+
   SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = pa_cert;
   INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', pa_cert || '/v1-matrix.pdf');
   PERFORM public.record_manuscript_version(pa_cert, 1, pa_cert || '/v1-matrix.pdf', repeat('c', 64), latest, 0, false,
     (SELECT s.submission ->> 'data_sha256' FROM public.chamber_sessions s WHERE s.id = pa_cert),
     (SELECT (s.submission ->> 'certified_at')::timestamptz FROM public.chamber_sessions s WHERE s.id = pa_cert));
+
+  -- The second firm's agent works prospect B's submission the same way, so every advisor-side table has a row of the
+  -- second firm's to protect too: a request for information (20261105090000), status, a note, a field review, a quote
+  -- request with a note, and a stored Manuscript.
+  PERFORM pg_temp.become('agent_b');
+  PERFORM public.advisor_request_information(pb_cert, 'Please confirm the pay frequency', ARRAY['pay_frequency']);
+  PERFORM public.set_submission_status(pb_cert, 'under_review', 'Picked up');
+  INSERT INTO public.advisor_notes (session_id, body) VALUES (pb_cert, 'Payroll looks complete');
+  PERFORM public.review_submission_field(pb_cert, 'company_name', 'verified');
+  PERFORM public.set_submission_status(pb_cert, 'ready_for_market', 'Reviewed');
+  PERFORM public.advisor_record_quote_send(pb_cert, 'Justworks', NULL);
+  PERFORM public.advisor_add_quote_request_note(
+    (SELECT id FROM public.quote_requests WHERE session_id = pb_cert), 'call', current_date, 'Their rep emailed');
+  SELECT max(id) INTO latest FROM public.advisor_review_events WHERE session_id = pb_cert;
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', pb_cert || '/v1-matrix.pdf');
+  PERFORM public.record_manuscript_version(pb_cert, 1, pb_cert || '/v1-matrix.pdf', repeat('d', 64), latest, 0, false,
+    (SELECT s.submission ->> 'data_sha256' FROM public.chamber_sessions s WHERE s.id = pb_cert),
+    (SELECT (s.submission ->> 'certified_at')::timestamptz FROM public.chamber_sessions s WHERE s.id = pb_cert));
 
   -- Monitoring: a guest's report, a signed-out visitor's, and a function's; and one alert.
   PERFORM pg_temp.become('guest_a');
@@ -376,11 +455,15 @@ BEGIN
   INSERT INTO public.ops_alerts (kind, event_count, window_minutes, threshold, top_codes) VALUES ('ai_failed', 5, 15, 5, 'timeout x5');
   -- The record chamber-extract keeps of a call (US-2.4a), on prospect A's submission.
   INSERT INTO public.ai_extraction_events (request_id, function_name, user_id, session_id, outcome, error_code, http_status)
-  VALUES (gen_random_uuid(), 'chamber-extract', pa, pa_cert, 'error', 'timeout', 504);
+  VALUES (gen_random_uuid(), 'chamber-extract', pa, pa_cert, 'error', 'timeout', 504),
+         (gen_random_uuid(), 'chamber-extract', pb, pb_cert, 'error', 'timeout', 504),
+         -- A call that failed before it knew which intake it was for: no firm's, a platform admin's.
+         (gen_random_uuid(), 'chamber-extract', NULL, NULL, 'error', 'bad_request', 400);
 
   -- The admin asks for prospect B's draft to be deleted (it stays until purge-intakes runs).
   PERFORM pg_temp.become('admin');
   PERFORM public.request_intake_deletion(pb_open, 'The owner asked by email; verified from the account address');
+  PERFORM public.request_intake_deletion(pa_open, 'The owner asked by email; verified from the account address');
   -- The admin publishes TriNet's requirement profile, naming a contact (20261115090000); the other four PEOs keep
   -- their empty drafts.
   PERFORM public.admin_save_peo_profile((SELECT id FROM public.peos WHERE name = 'TriNet'), jsonb_build_object(
@@ -424,23 +507,32 @@ BEGIN
   SELECT m.id, 'att_2', 'waiting.pdf', 100, 'pending' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
   INSERT INTO storage.objects (bucket_id, name)
   SELECT 'peo-mail', pa_cert || '/' || m.id || '/1-proposal.pdf' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_1';
-  -- An advisor opened its thread (20261111120000), so the mark has a row to protect.
+  -- The same on prospect B's quote request, the second firm's mail.
+  INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address, body_text)
+  SELECT 'matrix_b1', q.id, q.session_id, 'received', 'sam@justworks.example', 'Our terms attached'
+  FROM public.quote_requests q WHERE q.session_id = pb_cert;
+  INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
+  SELECT m.id, 'att_b1', 'terms.pdf', 100, 'stored', 'clean', 'peo-mail', pb_cert || '/' || m.id || '/1-terms.pdf'
+  FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_b1';
+  INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status)
+  SELECT m.id, 'att_b2', 'waiting.pdf', 100, 'pending' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_b1';
+  INSERT INTO storage.objects (bucket_id, name)
+  SELECT 'peo-mail', pb_cert || '/' || m.id || '/1-terms.pdf' FROM public.quote_request_messages m WHERE m.provider_message_id = 'matrix_b1';
+  -- An advisor opened each thread (20261111120000), so the mark has a row to protect.
   INSERT INTO public.quote_request_thread_reads (quote_request_id, last_opened_at)
-  SELECT q.id, now() FROM public.quote_requests q WHERE q.session_id = pa_cert;
+  SELECT q.id, now() FROM public.quote_requests q WHERE q.session_id IN (pa_cert, pb_cert);
   -- An advisor's connected mailbox (20261113090000): the encrypted token, which no API role reads. The mailbox function writes it.
   INSERT INTO public.broker_mailboxes (user_id, provider, address, scope, token_ciphertext, token_iv)
   SELECT adv, 'google', 'advisor@example.test', 'https://www.googleapis.com/auth/gmail.send', 'ciphertext', 'iv';
+  -- A request for information on prospect A's submission too (20261105090000; written here, as the superuser, so the
+  -- pipeline stays where the cases below expect it), so its table has a row of each firm's to protect.
+  INSERT INTO public.information_requests (session_id, message, fields) VALUES (pa_cert, 'Please send the latest loss runs', ARRAY['workers_comp_loss_runs']);
   -- An allowed organisation and the log of its being added (20261113100000), which only admins read. The admin functions write
   -- them; here they are written directly, as the superuser.
   INSERT INTO public.allowed_organisations (provider, org_id, label, added_by, added_by_email)
   VALUES ('google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
   INSERT INTO public.advisor_role_events (kind, provider, org_id, org_label, actor_id, actor_email)
   VALUES ('org_added', 'google', 'advisory.example', 'Edgar Allan Advisory', adm, 'admin@example.test');
-  -- Firms (20261116090000): the migration seeded Edgar Allan Advisory before these accounts held their roles, so
-  -- the advisor and the admin join it here as it would have joined them (D-15), with one team.
-  INSERT INTO public.firm_memberships (firm_id, user_id, role)
-  VALUES (public.default_firm_id(), adv, 'agent'), (public.default_firm_id(), adm, 'owner');
-  INSERT INTO public.firm_teams (firm_id, name) VALUES (public.default_firm_id(), 'Sales');
   -- A file in the bucket that no stored attachment names stays the service role's alone.
   INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', pa_cert || '/0/unrecorded.pdf');
   INSERT INTO storage.objects (bucket_id, name) SELECT 'peo-templates', storage_path FROM public.peo_census_templates;
@@ -460,90 +552,103 @@ END $$;
 -- ---------- 1. the matrix ----------
 -- Rows each caller sees of each source. A missing caller key means 0; "all" means every row there is. Every
 -- source must hold at least one row, or the check would prove nothing.
-CREATE TEMP TABLE matrix (src text PRIMARY KEY, expect jsonb NOT NULL);
+CREATE TEMP TABLE matrix (src text PRIMARY KEY, expect jsonb NOT NULL, firm_rows jsonb);
 GRANT SELECT ON matrix TO anon, authenticated, service_role;
+-- A table that holds a firm's data says how many rows each of the two firms has, in firm_rows. For it, the members of
+-- Edgar Allan Advisory (advisor, admin, agent_2, lead_1: "A") see exactly the first firm's rows and the second firm's
+-- members (agent_b, owner_b: "B") exactly the second's, unless expect says otherwise for one of them. Nobody else, the
+-- platform admin and a former member included, sees a row of either unless expect names them.
 INSERT INTO matrix VALUES
   -- Guest A sees its open and expired drafts, not the archived or revoked ones.
-  ('public.chamber_sessions',                           '{"guest_a":2,"guest_b":1,"prospect_a":2,"prospect_b":2,"advisor":"all","admin":"all"}'),
-  ('public.chamber_certifications',                     '{"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all"}'),
-  ('public.documents',                                  '{"guest_a":2,"guest_b":1,"prospect_a":1,"advisor":"all","admin":"all"}'),
-  ('storage.objects WHERE bucket_id = ''documents''',   '{"guest_a":2,"guest_b":1,"prospect_a":1,"advisor":"all","admin":"all"}'),
+  ('public.chamber_sessions',                           '{"guest_a":2,"guest_b":1,"prospect_a":2,"prospect_b":2}', '{"A":7,"B":3}'),
+  ('public.chamber_certifications',                     '{"prospect_a":1,"prospect_b":1}', '{"A":1,"B":1}'),
+  ('public.documents',                                  '{"guest_a":2,"guest_b":1,"prospect_a":1,"prospect_b":1}', '{"A":5,"B":1}'),
+  ('storage.objects WHERE bucket_id = ''documents''',   '{"guest_a":2,"guest_b":1,"prospect_a":1,"prospect_b":1}', '{"A":6,"B":1}'),
   -- A prospect reads one stored Manuscript: their final one (the latest version, built from their current
-  -- certification; prospect_final_manuscript). Every other file in the bucket is the advisors'.
-  ('storage.objects WHERE bucket_id = ''manuscripts''', '{"prospect_a":1,"advisor":"all","admin":"all"}'),
+  -- certification; prospect_final_manuscript). Every other file in the bucket is the firm's members'.
+  ('storage.objects WHERE bucket_id = ''manuscripts''', '{"prospect_a":1,"prospect_b":1}', '{"A":1,"B":1}'),
   -- Uploads whose malware scan hasn't passed (20261104130000): the service role's alone.
-  ('storage.objects WHERE bucket_id = ''quarantine''',  '{}'),
-  -- PEO mail attachments: advisors read the ones recorded as stored (one); nobody else reads any.
-  ('storage.objects WHERE bucket_id = ''peo-mail''',     '{"advisor":1,"admin":1}'),
-  ('storage.buckets',                                   '{}'),
-  -- Everyone sees their own profile; the advisor's account behind a guest token is still that account.
-  ('public.profiles',                                   '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all","advisor_as_guest":1}'),
-  ('public.user_roles',                                 '{"advisor":1,"admin":1,"advisor_as_guest":1}'),
-  ('public.intake_consents',                            '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor":"all","admin":"all"}'),
-  ('public.submission_workflow',                        '{"advisor":"all","admin":"all"}'),
-  ('public.submission_status_history',                  '{"advisor":"all","admin":"all"}'),
-  ('public.advisor_notes',                              '{"advisor":"all","admin":"all"}'),
-  ('public.advisor_field_reviews',                      '{"advisor":"all","admin":"all"}'),
-  ('public.advisor_review_events',                      '{"advisor":"all","admin":"all"}'),
-  ('public.manuscript_versions',                        '{"advisor":"all","admin":"all"}'),
-  -- Who added, removed, renamed or re-categorised each document, and when: the advisors' audit trail.
-  ('public.document_events',                            '{"advisor":"all","admin":"all"}'),
+  ('storage.objects WHERE bucket_id = ''quarantine''',  '{}', NULL),
+  -- PEO mail attachments: a firm's members read the ones recorded as stored on their own firm's quote requests; nobody else reads any.
+  ('storage.objects WHERE bucket_id = ''peo-mail''',     '{}', '{"A":1,"B":1}'),
+  ('storage.buckets',                                   '{}', NULL),
+  -- Everyone sees their own profile (the advisor's account behind a guest token is still that account); a firm's
+  -- members also see the profiles of its current members and of the owners of its intakes, no one else's.
+  ('public.profiles',                                   '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1,"advisor_as_guest":1,"platform_admin":1,"former_agent":1}', '{"A":7,"B":3}'),
+  ('public.user_roles',                                 '{"advisor":1,"admin":1,"advisor_as_guest":1,"agent_b":1,"platform_admin":1,"former_agent":1}', NULL),
+  ('public.intake_consents',                            '{"guest_a":1,"guest_b":1,"prospect_a":1,"prospect_b":1}', '{"A":3,"B":1}'),
+  ('public.submission_workflow',                        '{}', '{"A":7,"B":3}'),
+  ('public.submission_status_history',                  '{}', '{"A":10,"B":7}'),
+  ('public.advisor_notes',                              '{}', '{"A":1,"B":1}'),
+  ('public.advisor_field_reviews',                      '{}', '{"A":1,"B":1}'),
+  ('public.advisor_review_events',                      '{}', '{"A":1,"B":1}'),
+  ('public.manuscript_versions',                        '{}', '{"A":1,"B":1}'),
+  -- Who added, removed, renamed or re-categorised each document, and when: the firm's members' audit trail.
+  ('public.document_events',                            '{}', '{"A":5,"B":1}'),
   -- What advisors asked prospects for (20261105090000): the prospect reads their own open request only through
   -- prospect_information_request(), never the table.
-  ('public.information_requests',                       '{"advisor":"all","admin":"all"}'),
-  -- Which PEOs each submission went to and what they answered (20261110090000), with every change: the advisors'
-  -- alone. The prospect never sees a quote request, even on their own submission.
-  ('public.quote_requests',                             '{"advisor":"all","admin":"all"}'),
-  ('public.quote_request_events',                       '{"advisor":"all","admin":"all"}'),
-  ('public.quote_request_notes',                        '{"advisor":"all","admin":"all"}'),
-  ('public.quote_request_addresses',                    '{"advisor":"all","admin":"all"}'),
-  -- Mail on a quote request reaches advisors; held mail (none here) only admins. The prospect reads none.
-  ('public.quote_request_messages',                     '{"advisor":1,"admin":2}'),
-  ('public.quote_request_message_attachments',          '{"advisor":2,"admin":2}'),
-  ('public.quote_request_thread_reads',                 '{"advisor":1,"admin":1}'),
+  ('public.information_requests',                       '{}', '{"A":1,"B":1}'),
+  -- Which PEOs each submission went to and what they answered (20261110090000), with every change: the firm's
+  -- members' alone. The prospect never sees a quote request, even on their own submission.
+  ('public.quote_requests',                             '{}', '{"A":1,"B":1}'),
+  ('public.quote_request_events',                       '{}', '{"A":5,"B":5}'),
+  ('public.quote_request_notes',                        '{}', '{"A":1,"B":1}'),
+  ('public.quote_request_addresses',                    '{}', '{"A":1,"B":1}'),
+  -- Mail on a quote request reaches the firm's members; held mail (one here, and it belongs to no firm) only platform admins,
+  -- the admin here included. The prospect reads none.
+  ('public.quote_request_messages',                     '{"admin":2,"platform_admin":1}', '{"A":1,"B":1}'),
+  ('public.quote_request_message_attachments',          '{}', '{"A":2,"B":2}'),
+  ('public.quote_request_thread_reads',                 '{}', '{"A":1,"B":1}'),
   -- A broker's connected mailbox (20261113090000): the encrypted token. Nobody reads it through the API, admins included;
   -- the broker learns only whether it is connected, through my_mailbox().
-  ('public.broker_mailboxes',                           '{}'),
+  ('public.broker_mailboxes',                           '{}', NULL),
   -- Who may get the advisor role without an admin (20261113100000), and the log of grants: admins' alone.
-  ('public.allowed_organisations',                      '{"admin":"all"}'),
-  ('public.advisor_role_events',                        '{"admin":"all"}'),
+  ('public.allowed_organisations',                      '{"admin":"all","platform_admin":"all"}', NULL),
+  ('public.advisor_role_events',                        '{"admin":"all","platform_admin":"all"}', NULL),
   -- The pilot funnel's steps (20261105092000): read only through advisor_intake_funnel(), as counts.
-  ('public.intake_milestones',                          '{}'),
-  -- Who refers employers, by the code in their link (20261106100000): advisors read it, and write it only through
-  -- advisor_add_referral_partner() and advisor_update_referral_partner().
-  ('public.referral_partners',                          '{"advisor":"all","admin":"all"}'),
-  -- PEOs and their requirement profiles (20261115090000): advisors read the PEOs, the published version (one here)
-  -- and its contacts; drafts are the admin's. Prospects, guests included, read none of these tables (a version names
-  -- people at the PEO and admins): peo_catalog() is their only way in, checked in part 4. Signed-out callers read
-  -- nothing: public pages never name a PEO.
-  ('public.peos',                                       '{"advisor":"all","admin":"all"}'),
-  ('public.peo_profile_versions',                       '{"advisor":1,"admin":"all"}'),
-  ('public.peo_contacts',                               '{"advisor":"all","admin":"all"}'),
+  ('public.intake_milestones',                          '{}', NULL),
+  -- Who refers employers, by the code in their link (20261106100000): read by Edgar Allan Advisory's members, which is
+  -- whose partners they are until CRM-P2.1c gives them a firm, and written only through advisor_add_referral_partner()
+  -- and advisor_update_referral_partner().
+  ('public.referral_partners',                          '{"advisor":"all","admin":"all","agent_2":"all","lead_1":"all"}', NULL),
+  -- PEOs and their requirement profiles (20261115090000) are the platform's, the same for every firm: advisors read the PEOs,
+  -- the published version (one here) and its contacts; drafts are the admin's. Prospects, guests included, read none of
+  -- these tables (a version names people at the PEO and admins): peo_catalog() is their only way in, checked in part 4.
+  -- Signed-out callers read nothing: public pages never name a PEO. They hold no firm's data, so a platform admin reads
+  -- them and an advisor of either firm does.
+  ('public.peos',                                       '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
+  ('public.peo_profile_versions',                       '{"advisor":1,"admin":"all","agent_b":1,"platform_admin":"all","former_agent":1}', NULL),
+  ('public.peo_contacts',                               '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
   -- PEO template workbooks (20261115140000): advisors read the records; anyone signed in reads a clean one's file
   -- (a PEO's blank form, filled in the reader's browser), nobody signed out.
-  ('public.peo_census_templates',                       '{"advisor":"all","admin":"all"}'),
-  ('storage.objects WHERE bucket_id = ''peo-templates''', '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all"}'),
+  ('public.peo_census_templates',                       '{"advisor":"all","admin":"all","agent_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
+  ('storage.objects WHERE bucket_id = ''peo-templates''', '{"guest_a":"all","guest_b":"all","prospect_a":"all","prospect_b":"all","advisor":"all","admin":"all","advisor_as_guest":"all","agent_2":"all","lead_1":"all","agent_b":"all","owner_b":"all","platform_admin":"all","former_agent":"all"}', NULL),
   -- Firms, their teams and dated memberships (20261116090000): a current member reads their own firm and its teams, and
-  -- their own membership; nobody else, prospects and guests included. No existing table's policy reads them yet.
-  ('public.firms',                                      '{"advisor":1,"admin":1}'),
-  ('public.firm_teams',                                 '{"advisor":1,"admin":1}'),
-  ('public.firm_memberships',                           '{"advisor":1,"admin":1}'),
-  ('public.intake_lifecycle_events',                    '{"advisor":"all","admin":"all"}'),
-  ('public.intake_deletions',                           '{"advisor":"all","admin":"all"}'),
-  -- Monitoring is the admin's: advisors don't need failure codes, routes or account ids.
-  ('public.ops_events',                                 '{"admin":"all"}'),
-  ('public.ops_alerts',                                 '{"admin":"all"}'),
-  -- AI call records (US-2.4a) are for advisors investigating an intake.
-  ('public.ai_extraction_events',                       '{"advisor":"all","admin":"all"}'),
+  -- their own membership; nobody else, prospects, guests and platform admins included.
+  ('public.firms',                                      '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
+  ('public.firm_teams',                                 '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
+  ('public.firm_memberships',                           '{"advisor":1,"admin":1,"agent_2":1,"lead_1":1,"agent_b":1,"owner_b":1}', NULL),
+  ('public.intake_lifecycle_events',                    '{}', '{"A":3,"B":1}'),
+  ('public.intake_deletions',                           '{}', '{"A":1,"B":1}'),
+  -- Monitoring is the platform admin's: advisors don't need failure codes, routes or account ids.
+  ('public.ops_events',                                 '{"admin":"all","platform_admin":"all"}', NULL),
+  ('public.ops_alerts',                                 '{"admin":"all","platform_admin":"all"}', NULL),
+  -- AI call records (US-2.4a) are for a firm's members investigating its intake.
+  ('public.ai_extraction_events',                       '{"admin":2,"platform_admin":1}', '{"A":1,"B":1}'),
   -- Reached only through SECURITY DEFINER functions, by nobody directly.
-  ('public.outbox_events',                              '{}'),
+  ('public.outbox_events',                              '{}', NULL),
   -- The File ID sequence (20261104110000): taken by the certification trigger, read by nobody.
-  ('public.submission_reference_counters',              '{}'),
-  ('public.email_delivery_events',                      '{}'),
-  ('public.email_suppressions',                         '{}'),
-  ('public.ai_request_log',                             '{}'),
-  ('public.ai_ip_log',                                  '{}'),
-  ('public.ai_global_usage',                            '{}');
+  ('public.submission_reference_counters',              '{}', NULL),
+  ('public.email_delivery_events',                      '{}', NULL),
+  ('public.email_suppressions',                         '{}', NULL),
+  ('public.ai_request_log',                             '{}', NULL),
+  ('public.ai_ip_log',                                  '{}', NULL),
+  ('public.ai_global_usage',                            '{}', NULL);
+
+CREATE FUNCTION pg_temp.matrix_callers() RETURNS text[] LANGUAGE sql AS $$
+  SELECT ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest',
+               'agent_2', 'lead_1', 'agent_b', 'owner_b', 'platform_admin', 'former_agent', 'advisor_pw', 'advisor_pw_mfa', 'service']
+$$;
 
 DO $$
 DECLARE
@@ -552,27 +657,45 @@ DECLARE
   total bigint;
   want bigint;
   seen bigint;
+  token text;
+  expect jsonb;
   cases integer := 0;
+  wrong text := '';
 BEGIN
   FOR m IN SELECT * FROM matrix ORDER BY src LOOP
     RESET ROLE;
     total := pg_temp.visible(m.src);
     IF total = 0 THEN RAISE EXCEPTION 'FAIL: % holds no rows, so the matrix proves nothing for it', m.src; END IF;
-    FOREACH who IN ARRAY ARRAY['signed_out', 'guest_a', 'guest_b', 'prospect_a', 'prospect_b', 'advisor', 'admin', 'advisor_as_guest', 'service'] LOOP
+    IF m.firm_rows IS NOT NULL AND (LEAST((m.firm_rows ->> 'A')::bigint, (m.firm_rows ->> 'B')::bigint) < 1) THEN
+      RAISE EXCEPTION 'FAIL: % holds no rows of one of the two firms, so the matrix proves nothing for it', m.src;
+    END IF;
+    expect := CASE WHEN m.firm_rows IS NULL THEN '{}'::jsonb
+      ELSE '{"advisor":"A","admin":"A","agent_2":"A","lead_1":"A","agent_b":"B","owner_b":"B"}'::jsonb END || m.expect;
+    FOREACH who IN ARRAY pg_temp.matrix_callers() LOOP
+      token := CASE
+        -- The advisor with a second factor is the advisor; without one they are a signed-in person with no role and no
+        -- firm: their own profile and role row, and the PEO template workbooks everyone signed in reads.
+        WHEN who = 'advisor_pw_mfa' THEN expect ->> 'advisor'
+        WHEN who = 'advisor_pw' THEN CASE WHEN m.src IN ('public.profiles', 'public.user_roles') THEN '1'
+                                          WHEN m.src LIKE '%peo-templates%' THEN 'all' ELSE '0' END
+        ELSE expect ->> who
+      END;
       want := CASE
         WHEN who = 'service' THEN total  -- the service role bypasses row security
-        WHEN m.expect ->> who = 'all' THEN total
-        ELSE COALESCE((m.expect ->> who)::bigint, 0)
+        WHEN token = 'all' THEN total
+        WHEN token IN ('A', 'B') THEN (m.firm_rows ->> token)::bigint
+        ELSE COALESCE(token::bigint, 0)
       END;
       PERFORM pg_temp.become(who);
       seen := pg_temp.visible(m.src);
       RESET ROLE;
       IF seen <> want THEN
-        RAISE EXCEPTION 'FAIL: % sees % row(s) of %, expected %', who, seen, m.src, want;
+        wrong := wrong || format(E'\n  %s sees %s row(s) of %s, expected %s', who, seen, m.src, want);
       END IF;
       cases := cases + 1;
     END LOOP;
   END LOOP;
+  IF wrong <> '' THEN RAISE EXCEPTION 'FAIL: the matrix is wrong for:%', wrong; END IF;
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: % matrix cases passed', cases;
 END $$;
@@ -588,10 +711,11 @@ DECLARE
 BEGIN
   FOR t IN
     SELECT * FROM (VALUES
-      ('guest_a', 'ga_open', 'census.csv'),
-      ('guest_b', 'gb_open', 'roster.xlsx'),
-      ('prospect_a', 'pa_cert', 'benefits.pdf')
-    ) AS v(owner, intake, file)
+      ('guest_a', 'ga_open', 'census.csv', 'a'),
+      ('guest_b', 'gb_open', 'roster.xlsx', 'a'),
+      ('prospect_a', 'pa_cert', 'benefits.pdf', 'a'),
+      ('prospect_b', 'pb_cert', 'payroll.csv', 'b')
+    ) AS v(owner, intake, file, firm)
   LOOP
     DECLARE
       owner_id constant uuid := pg_temp.id(t.owner);
@@ -601,7 +725,7 @@ BEGIN
     BEGIN
       SELECT d.id INTO doc FROM public.documents d WHERE d.session_id = sid;
 
-      FOR who IN SELECT pg_temp.outsiders(t.owner) LOOP
+      FOR who IN SELECT pg_temp.outsiders(t.owner, t.firm) LOOP
         me := CASE WHEN who = 'signed_out' THEN NULL ELSE pg_temp.id(CASE WHEN who = 'advisor_as_guest' THEN 'advisor' ELSE who END) END;
         PERFORM pg_temp.become(who);
 
@@ -674,7 +798,7 @@ BEGIN
       -- A certified intake keeps the file it was certified with, for the advisor (20261104112000); removing the
       -- document still succeeds for its owner. Any other file of theirs they can remove.
       PERFORM pg_temp.expect(format('DELETE FROM storage.objects WHERE name = %L', path),
-        CASE WHEN t.intake = 'pa_cert' THEN 'rows:0' ELSE 'rows:1' END, t.owner || ' removing their own file');
+        CASE WHEN t.intake IN ('pa_cert', 'pb_cert') THEN 'rows:0' ELSE 'rows:1' END, t.owner || ' removing their own file');
       RESET ROLE;
     END;
   END LOOP;
@@ -699,7 +823,7 @@ BEGIN
   DELETE FROM public.ops_events WHERE code IN ('probe', 'own');
 
   PERFORM set_config('request.jwt.claims', '', false);
-  RAISE NOTICE 'data_isolation: % outsider cases passed (3 intakes x their outsiders)', cases;
+  RAISE NOTICE 'data_isolation: % outsider cases passed (4 intakes x their outsiders)', cases;
 END $$;
 
 -- ---------- 3. closed intakes, from their owner ----------
@@ -770,6 +894,13 @@ INSERT INTO callable VALUES
   ('is_advisor()',                             'anyone',  NULL, 'row security policies and RequireAdvisor call it; answers about the caller only'),
   ('firm_role(p_firm_id uuid)',               'own',     NULL, 'the caller''s own current role in a firm, NULL for anyone not a member; signed-out callers can''t call it'),
   ('is_firm_member(p_firm_id uuid)',          'own',     NULL, 'whether the caller is a current member of a firm; about the caller only; signed-out callers can''t call it'),
+  ('can_see_firm_record(p_firm_id uuid, p_owner_id uuid)', 'own', NULL, 'whether the caller may see a record of a firm that a person owns: a current member of the firm, by level; about the caller only; signed-out callers can''t call it'),
+  ('intake_in_my_firm(p_session_id uuid)',    'own',     NULL, 'row security policies call it as the caller: whether an intake is of a firm the caller currently belongs to; false for anyone else'),
+  ('intake_folder_in_my_firm(p_folder text)', 'own',     NULL, 'the storage policies call it as the caller: the same for the intake a folder names; false for anything that is not an intake''s id'),
+  ('quote_request_in_my_firm(p_quote_request_id bigint)', 'own', NULL, 'row security policies call it as the caller: whether a quote request is on an intake of a firm the caller currently belongs to'),
+  ('can_read_peo_mail(p_quote_request_id bigint)', 'own', NULL, 'the mail policies call it as the caller: a message on a quote request is its firm''s members''; held mail (none) is a platform admin''s'),
+  ('intake_owner_in_my_firm(p_user_id uuid)', 'own',     NULL, 'the consent and profile policies call it as the caller: whether a person owns an intake of a firm the caller currently belongs to'),
+  ('colleague_in_my_firm(p_user_id uuid)',    'own',     NULL, 'the profile policy calls it as the caller: whether a person is a current member of a firm the caller currently belongs to'),
   ('firm_public_name(p_address text)',       'anyone',  NULL, 'what a firm address shows before sign-in: the name of any firm that exists (approved or waiting), NULL only for an address no firm holds; nothing else'),
   ('is_member_of_firm_address(p_address text)', 'own',   NULL, 'whether the caller is a current member of the firm at an address; about the caller only; signed-out callers can''t call it'),
   ('default_firm_id()',                      'anyone',  NULL, 'a constant: Edgar Allan Advisory''s id; the intake firm column default calls it as the writer'),
@@ -1080,6 +1211,757 @@ BEGIN
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', false);
   RAISE NOTICE 'data_isolation: advisor record and advisor limit cases passed';
+END $$;
+
+-- ---------- 4c. one firm against the other's rows, table by table ----------
+-- For every table and bucket that holds a firm's data, each member of one firm and each member of the other: the rows
+-- each can see share none (read), the same member counting finds only their own firm's (count: the matrix), and
+-- changing or deleting the other's rows touches nothing (change, delete), whatever the table's grants.
+CREATE FUNCTION pg_temp.row_ids(src text) RETURNS text[] LANGUAGE plpgsql AS $$
+DECLARE ids text[];
+BEGIN
+  EXECUTE format('SELECT COALESCE(array_agg(ctid::text), ''{}'') FROM %s', src) INTO ids;
+  RETURN ids;
+EXCEPTION WHEN insufficient_privilege THEN RETURN '{}';
+END $$;
+
+-- The table a matrix source names, and a column to write back to it.
+CREATE FUNCTION pg_temp.src_table(src text) RETURNS text LANGUAGE sql AS $$ SELECT split_part(src, ' WHERE ', 1) $$;
+CREATE FUNCTION pg_temp.src_column(src text) RETURNS text LANGUAGE sql AS $$
+  SELECT attname::text FROM pg_attribute
+  WHERE attrelid = pg_temp.src_table(src)::regclass AND attnum > 0 AND NOT attisdropped AND attidentity = '' AND attgenerated = ''
+  ORDER BY attnum LIMIT 1
+$$;
+
+DO $$
+DECLARE
+  m record;
+  a text;
+  b text;
+  mine text[];
+  theirs text[];
+  tbl text;
+  col text;
+  cases integer := 0;
+  pairs text[][] := ARRAY[['advisor', 'agent_b'], ['agent_2', 'owner_b'], ['lead_1', 'agent_b'], ['admin', 'owner_b']];
+  i integer;
+  swap integer;
+BEGIN
+  FOR m IN SELECT * FROM matrix WHERE firm_rows IS NOT NULL ORDER BY src LOOP
+    tbl := pg_temp.src_table(m.src);
+    col := pg_temp.src_column(m.src);
+    FOR i IN 1 .. array_length(pairs, 1) LOOP
+      FOR swap IN 0 .. 1 LOOP
+        a := pairs[i][1 + swap];
+        b := pairs[i][2 - swap];
+        PERFORM pg_temp.become(a);
+        mine := pg_temp.row_ids(m.src);
+        PERFORM pg_temp.become(b);
+        theirs := pg_temp.row_ids(m.src);
+        RESET ROLE;
+        IF cardinality(mine) = 0 OR cardinality(theirs) = 0 THEN
+          RAISE EXCEPTION 'FAIL: % or % reads nothing of %, so the comparison proves nothing', a, b, m.src;
+        END IF;
+        IF mine && theirs THEN RAISE EXCEPTION 'FAIL: % and % of different firms both read a row of %', a, b, m.src; END IF;
+        PERFORM pg_temp.become(a);
+        PERFORM pg_temp.changes_nothing(format('UPDATE %s SET %I = %I WHERE ctid::text = ANY (%L)', tbl, col, col, theirs), a || ' changed a row of ' || b || '''s firm in ' || m.src);
+        PERFORM pg_temp.changes_nothing(format('DELETE FROM %s WHERE ctid::text = ANY (%L)', tbl, theirs), a || ' deleted a row of ' || b || '''s firm in ' || m.src);
+        RESET ROLE;
+        cases := cases + 1;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+
+  -- What a member can add. A note on an intake of the other firm, or a Manuscript in its folder, is refused.
+  PERFORM pg_temp.become('advisor');
+  PERFORM pg_temp.refused(format('INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES (%L, auth.uid(), %L)', pg_temp.id('pb_cert'), 'x'), 'a member adding a note to another firm''s intake');
+  PERFORM pg_temp.expect(format('INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES (%L, auth.uid(), %L)', pg_temp.id('pa_cert'), 'x'), 'rows:1', 'a member adding a note to their own firm''s intake');
+  PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'manuscripts', pg_temp.id('pb_cert') || '/v9-other.pdf'), '42501', 'a member storing a Manuscript for another firm''s intake');
+  PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'manuscripts', pg_temp.id('pa_cert') || '/v9-own.pdf'), 'rows:1', 'a member storing a Manuscript for their own firm''s intake');
+  PERFORM pg_temp.refused(format('INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES (%L, %L, %L)', pg_temp.id('pa_cert'), pg_temp.id('agent_2'), 'x'), 'a member adding a note in a colleague''s name');
+  -- No Manuscript is stored for an intake whose deletion is pending (prospect A's open draft).
+  PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'manuscripts', pg_temp.id('pa_open') || '/v1-pending.pdf'), '42501', 'a member storing a Manuscript for an intake being deleted');
+  PERFORM pg_temp.become('agent_b');
+  PERFORM pg_temp.refused(format('INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES (%L, auth.uid(), %L)', pg_temp.id('pa_cert'), 'x'), 'the other firm''s member adding a note to an intake');
+  PERFORM pg_temp.expect(format('INSERT INTO storage.objects (bucket_id, name) VALUES (%L, %L)', 'manuscripts', pg_temp.id('pa_cert') || '/v9-other.pdf'), '42501', 'the other firm''s member storing a Manuscript');
+  -- An unrecorded Manuscript upload is removable by its own firm's members only.
+  RESET ROLE;
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', pg_temp.id('pa_cert') || '/v8-unrecorded.pdf');
+  PERFORM pg_temp.become('agent_b');
+  PERFORM pg_temp.changes_nothing(format('DELETE FROM storage.objects WHERE name = %L', pg_temp.id('pa_cert') || '/v8-unrecorded.pdf'), 'the other firm''s member removing an unrecorded Manuscript upload');
+  PERFORM pg_temp.become('advisor');
+  PERFORM pg_temp.expect(format('DELETE FROM storage.objects WHERE name = %L', pg_temp.id('pa_cert') || '/v8-unrecorded.pdf'), 'rows:1', 'a member removing their firm''s unrecorded Manuscript upload');
+  RESET ROLE;
+  DELETE FROM storage.objects WHERE name = pg_temp.id('pa_cert') || '/v8-unrecorded.pdf';
+
+  -- Odd files in the buckets (a folder that is no intake's id, a file with no folder) are read by no firm's member and
+  -- never make a read fail.
+  RESET ROLE;
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', 'loose.csv'), ('documents', 'x/y/odd.csv'), ('manuscripts', 'notes/odd.pdf'), ('manuscripts', 'odd.pdf');
+  FOREACH a IN ARRAY ARRAY['advisor', 'agent_b', 'platform_admin'] LOOP
+    PERFORM pg_temp.become(a);
+    IF pg_temp.visible('storage.objects WHERE name IN (''loose.csv'', ''x/y/odd.csv'', ''notes/odd.pdf'', ''odd.pdf'')') <> 0 THEN
+      RAISE EXCEPTION 'FAIL: % reads a file in no intake''s folder', a;
+    END IF;
+  END LOOP;
+  RESET ROLE;
+  DELETE FROM storage.objects WHERE name IN ('loose.csv', 'x/y/odd.csv', 'notes/odd.pdf', 'odd.pdf');
+
+  -- A file that has not passed its malware scan stays withheld from the firm's members too, until it does.
+  UPDATE public.documents SET scan_verdict = 'pending' WHERE storage_path = pg_temp.id('guest_a') || '/' || pg_temp.id('ga_open') || '/census.csv';
+  PERFORM pg_temp.become('advisor');
+  IF pg_temp.visible(format('storage.objects WHERE name = %L', pg_temp.id('guest_a') || '/' || pg_temp.id('ga_open') || '/census.csv')) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: a member reads a file whose malware scan hasn''t passed';
+  END IF;
+  RESET ROLE;
+  UPDATE public.documents SET scan_verdict = 'clean' WHERE storage_path = pg_temp.id('guest_a') || '/' || pg_temp.id('ga_open') || '/census.csv';
+  PERFORM pg_temp.become('advisor');
+  IF pg_temp.visible(format('storage.objects WHERE name = %L', pg_temp.id('guest_a') || '/' || pg_temp.id('ga_open') || '/census.csv')) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: a member can''t read a file whose malware scan has passed';
+  END IF;
+  RESET ROLE;
+
+  -- A platform admin is a member of no firm (D-16): their role opens nothing of either firm's; held mail, which belongs to no firm, is theirs.
+  PERFORM pg_temp.become('platform_admin');
+  IF pg_temp.visible('public.chamber_sessions') + pg_temp.visible('public.documents') + pg_temp.visible('public.advisor_notes')
+     + pg_temp.visible('public.quote_requests') + pg_temp.visible('public.profiles WHERE user_id <> auth.uid()')
+     + pg_temp.visible('storage.objects WHERE bucket_id IN (''documents'', ''manuscripts'', ''peo-mail'')') <> 0 THEN
+    RAISE EXCEPTION 'FAIL: a platform admin who is a member of no firm reads a firm''s intakes, notes, quote requests, profiles or files';
+  END IF;
+  IF pg_temp.visible('public.quote_request_messages WHERE quote_request_id IS NULL') <> 1 THEN
+    RAISE EXCEPTION 'FAIL: a platform admin can''t read held mail';
+  END IF;
+  -- A former member, with the advisor role still, reads nothing either.
+  PERFORM pg_temp.become('former_agent');
+  IF pg_temp.visible('public.chamber_sessions') + pg_temp.visible('public.advisor_notes') + pg_temp.visible('public.firms') <> 0 THEN
+    RAISE EXCEPTION 'FAIL: a former member reads their old firm''s records';
+  END IF;
+  -- A membership that ends closes the firm to its member at once, and a new one opens it again.
+  RESET ROLE;
+  UPDATE public.firm_memberships SET valid_until = now() WHERE user_id = pg_temp.id('agent_2') AND valid_until IS NULL;
+  PERFORM pg_temp.become('agent_2');
+  IF pg_temp.visible('public.chamber_sessions') <> 0 OR pg_temp.visible('public.firms') <> 0 THEN
+    RAISE EXCEPTION 'FAIL: a member whose membership just ended still reads the firm''s intakes';
+  END IF;
+  RESET ROLE;
+  INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES (pg_temp.id('firm_a'), pg_temp.id('agent_2'), 'agent');
+  PERFORM pg_temp.become('agent_2');
+  IF pg_temp.visible('public.chamber_sessions') <> 7 THEN RAISE EXCEPTION 'FAIL: a member whose membership begins again doesn''t read the firm''s intakes'; END IF;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', false);
+  RAISE NOTICE 'data_isolation: % cross-firm table cases passed', cases;
+END $$;
+
+-- ---------- 4d. a deletion record keeps its firm after its intake is gone ----------
+DO $$
+DECLARE
+  d uuid;
+  gone uuid;
+  sid constant uuid := pg_temp.id('pb_open');
+  r text;
+BEGIN
+  -- The record takes the firm of the intake it is about, whatever the writer says; nobody moves it afterwards.
+  SELECT id INTO d FROM public.intake_deletions WHERE session_id = sid;
+  IF (SELECT firm_id FROM public.intake_deletions WHERE id = d) <> pg_temp.id('firm_b') THEN
+    RAISE EXCEPTION 'FAIL: a deletion record of the second firm''s intake isn''t the second firm''s';
+  END IF;
+  -- One for an intake that isn't there (it was never the second firm's to name) is Edgar Allan Advisory's, as every record was.
+  INSERT INTO public.intake_deletions (session_id, trigger, reason) VALUES (gen_random_uuid(), 'request', 'x') RETURNING id INTO gone;
+  IF (SELECT firm_id FROM public.intake_deletions WHERE id = gone) <> pg_temp.id('firm_a') THEN
+    RAISE EXCEPTION 'FAIL: a deletion record of an intake that is gone isn''t Edgar Allan Advisory''s';
+  END IF;
+  DELETE FROM public.intake_deletions WHERE id = gone;
+  UPDATE public.intake_deletions SET firm_id = pg_temp.id('firm_a') WHERE id = d;
+  IF (SELECT firm_id FROM public.intake_deletions WHERE id = d) <> pg_temp.id('firm_b') THEN
+    RAISE EXCEPTION 'FAIL: a deletion record was moved to another firm';
+  END IF;
+  -- The purge removes the intake and keeps the record, which its firm's members still read and the other's don't.
+  PERFORM pg_temp.become('service');
+  PERFORM public.claim_intake_deletions(10, 600);
+  PERFORM public.complete_intake_deletion(d, 0);
+  RESET ROLE;
+  IF EXISTS (SELECT 1 FROM public.chamber_sessions WHERE id = sid) THEN RAISE EXCEPTION 'FAIL: setup: the purge left the intake'; END IF;
+  PERFORM pg_temp.become('owner_b');
+  IF pg_temp.visible(format('public.intake_deletions WHERE id = %L AND status = %L', d, 'done')) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: the firm''s members can''t read a deletion record once its intake is gone';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['advisor', 'platform_admin', 'former_agent', 'prospect_b'] LOOP
+    PERFORM pg_temp.become(r);
+    IF pg_temp.visible(format('public.intake_deletions WHERE id = %L', d)) <> 0 THEN
+      RAISE EXCEPTION 'FAIL: % reads another firm''s deletion record', r;
+    END IF;
+  END LOOP;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', false);
+  RAISE NOTICE 'data_isolation: deletion record cases passed';
+END $$;
+
+-- ---------- 5a. every table and bucket says what it holds, and every firm's data is probed with two firms (D-28) ----------
+-- The check that a table "has a firm rule" is by behaviour, never by reading a policy's text: a policy can mention a firm
+-- helper without tying it to the row being read, and a text check passes on a table that is open across firms.
+-- Every public table and every storage bucket is registered here with what its rows are:
+--   firm       a firm's data. It carries make_row, how to make one row that belongs to a firm: a statement that inserts the row
+--              (or selects an existing one) and returns its ctid::text. {firm} is the firm's id, {intake} a new intake of that
+--              firm owned by a new person {u}, {qr} a new quote request on it, {msg} a new message on that, {tag} a unique word.
+--              The probe (5b) makes one row for each of the two firms and proves the other firm's members, a non-member, a
+--              former member and a platform admin read, count, change and delete none of it.
+--   platform   nothing of any firm's: the same for every firm, kept by platform admins; no firm_id, session_id or
+--              quote_request_id column unless names_intakes says a failure report may name the intake
+--   own        a person's own rows only (the matrix shows each caller reads just theirs)
+--   closed     no policy at all: the API roles read and write nothing, only functions and the service role do
+-- A table or bucket that isn't registered fails the build, as does a firm one with no make_row, one whose probe did not run,
+-- and one the probe finds open across firms.
+CREATE TEMP TABLE registry (src text PRIMARY KEY, scope text NOT NULL CHECK (scope IN ('firm', 'platform', 'own', 'closed')), why text NOT NULL,
+  names_intakes boolean NOT NULL DEFAULT false,
+  make_row text,
+  -- false when a member of the firm legitimately reads only some rows of it (a membership: their own)
+  member_reads boolean NOT NULL DEFAULT true,
+  -- true when only Edgar Allan Advisory can have such a row until a later story gives the table a firm
+  firm_a_only boolean NOT NULL DEFAULT false,
+  -- an INSERT a caller who is not a member of the firm tries into that firm's records ({intake}, {qr}, {msg}, {firm}, {u} are the
+  -- firm's); it must be refused. Defaults to make_row when that is an INSERT, without its RETURNING (which row security would
+  -- check against the caller's read rule and so refuse an insert whose write rule is open).
+  foreign_insert text,
+  -- a SET clause that moves a row to the other firm ({intake}, {qr}, {msg}, {firm}, {u} are the other firm's); a member of the
+  -- row's firm must be refused. It names no column of the table on its right side, so it is a write that reads nothing.
+  move_to text);
+CREATE TEMP TABLE probe_ran (src text PRIMARY KEY, ran boolean NOT NULL, detail text);
+
+INSERT INTO registry (src, scope, why, make_row) VALUES
+  ('public.advisor_field_reviews', 'firm', 'by intake',
+   $m$INSERT INTO public.advisor_field_reviews (session_id, field, review_state, updated_by) VALUES ({intake}, 'company_name', 'verified', {u}) RETURNING ctid::text$m$),
+  ('public.advisor_notes', 'firm', 'by intake',
+   $m$INSERT INTO public.advisor_notes (session_id, author_id, body) VALUES ({intake}, {u}, 'probe {tag}') RETURNING ctid::text$m$),
+  ('public.advisor_review_events', 'firm', 'by intake',
+   $m$INSERT INTO public.advisor_review_events (session_id, field, correction_changed, had_correction, has_correction, actor_id) VALUES ({intake}, 'company_name', false, false, false, {u}) RETURNING ctid::text$m$),
+  ('public.ai_extraction_events', 'firm', 'by intake; a call with no intake is a platform admin''s',
+   $m$INSERT INTO public.ai_extraction_events (request_id, function_name, session_id, outcome, http_status) VALUES (gen_random_uuid(), 'chamber-extract', {intake}, 'ok', 200) RETURNING ctid::text$m$),
+  ('public.chamber_certifications', 'firm', 'by intake',
+   $m$SELECT pg_temp.make_certification({intake}, {u}, '{tag}')$m$),
+  ('public.chamber_sessions', 'firm', 'its own firm_id',
+   $m$SELECT ctid::text FROM public.chamber_sessions WHERE id = {intake}$m$),
+  ('public.document_events', 'firm', 'by intake',
+   $m$INSERT INTO public.document_events (session_id, document_id, kind, file_name) VALUES ({intake}, gen_random_uuid(), 'added', 'probe.csv') RETURNING ctid::text$m$),
+  ('public.documents', 'firm', 'by intake',
+   $m$INSERT INTO public.documents (user_id, session_id, file_name, file_size, storage_path) VALUES ({u}, {intake}, 'probe.csv', '1 KB', {u} || '/' || {intake} || '/probe.csv') RETURNING ctid::text$m$),
+  ('public.firm_teams', 'firm', 'its own firm_id',
+   $m$INSERT INTO public.firm_teams (firm_id, name) VALUES ({firm}, 'Probe {tag}') RETURNING ctid::text$m$),
+  ('public.information_requests', 'firm', 'by intake',
+   $m$INSERT INTO public.information_requests (session_id, message) VALUES ({intake}, 'probe {tag}') RETURNING ctid::text$m$),
+  ('public.intake_consents', 'firm', 'by the owner of an intake of the firm; a person reads their own',
+   $m$SELECT ctid::text FROM public.intake_consents WHERE user_id = {u}$m$),
+  ('public.intake_deletions', 'firm', 'its own firm_id, kept after the intake is gone',
+   $m$INSERT INTO public.intake_deletions (session_id, user_id, trigger, reason, firm_id) VALUES ({intake}, {u}, 'request', 'probe', {firm}) RETURNING ctid::text$m$),
+  ('public.intake_lifecycle_events', 'firm', 'by intake',
+   $m$INSERT INTO public.intake_lifecycle_events (session_id, user_id, from_status, to_status) VALUES ({intake}, {u}, 'in_progress', 'archived') RETURNING ctid::text$m$),
+  ('public.manuscript_versions', 'firm', 'by intake',
+   $m$INSERT INTO public.manuscript_versions (session_id, version, file_id, storage_path, pdf_sha256, certified_data_hash, certified_signed_at, generated_by)
+      VALUES ({intake}, 99, 'EAA-PROBE', {intake} || '/v99-probe.pdf', repeat('a', 64), 'h', now(), {u}) RETURNING ctid::text$m$),
+  ('public.profiles', 'firm', 'by the owner of an intake of the firm, or a colleague; a person reads their own',
+   $m$SELECT ctid::text FROM public.profiles WHERE user_id = {u}$m$),
+  ('public.quote_request_addresses', 'firm', 'by quote request',
+   $m$INSERT INTO public.quote_request_addresses (quote_request_id, session_id, local_part) VALUES ({qr}, {intake}, 'probe-{tag}') RETURNING ctid::text$m$),
+  ('public.quote_request_events', 'firm', 'by quote request',
+   $m$INSERT INTO public.quote_request_events (quote_request_id, session_id, field) VALUES ({qr}, {intake}, 'note') RETURNING ctid::text$m$),
+  ('public.quote_request_message_attachments', 'firm', 'by message',
+   $m$INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status) VALUES ({msg}, 'probe-{tag}', 'probe.pdf', 1, 'pending') RETURNING ctid::text$m$),
+  ('public.quote_request_messages', 'firm', 'by quote request; held mail is a platform admin''s',
+   $m$SELECT ctid::text FROM public.quote_request_messages WHERE id = {msg}$m$),
+  ('public.quote_request_notes', 'firm', 'by quote request',
+   $m$INSERT INTO public.quote_request_notes (quote_request_id, session_id, kind, noted_on, body) VALUES ({qr}, {intake}, 'call', current_date, 'probe {tag}') RETURNING ctid::text$m$),
+  ('public.quote_request_thread_reads', 'firm', 'by quote request',
+   $m$INSERT INTO public.quote_request_thread_reads (quote_request_id, last_opened_at) VALUES ({qr}, now()) RETURNING ctid::text$m$),
+  ('public.quote_requests', 'firm', 'by intake',
+   $m$SELECT ctid::text FROM public.quote_requests WHERE id = {qr}$m$),
+  ('public.submission_status_history', 'firm', 'by intake',
+   $m$INSERT INTO public.submission_status_history (session_id, to_status) VALUES ({intake}, 'under_review') RETURNING ctid::text$m$),
+  ('public.submission_workflow', 'firm', 'by intake',
+   $m$SELECT ctid::text FROM public.submission_workflow WHERE session_id = {intake}$m$),
+  -- A firm's own row, and a membership of it: a member reads their own firm, their own membership and nobody else's.
+  ('public.firms', 'firm', 'a member reads their own firm',
+   $m$SELECT ctid::text FROM public.firms WHERE id = {firm}$m$),
+  -- Storage: a file is a firm's by the intake its folder names.
+  ('storage.objects WHERE bucket_id = ''documents''', 'firm', 'by the intake in the folder',
+   $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('documents', {u} || '/' || {intake} || '/probe-{tag}.csv') RETURNING ctid::text$m$),
+  ('storage.objects WHERE bucket_id = ''manuscripts''', 'firm', 'by the intake in the folder',
+   $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('manuscripts', {intake} || '/v99-probe-{tag}.pdf') RETURNING ctid::text$m$),
+  ('storage.objects WHERE bucket_id = ''peo-mail''', 'firm', 'by the quote request of the attachment recorded as stored',
+   $m$SELECT pg_temp.store_peo_mail({msg}, {intake}, '{tag}')$m$);
+INSERT INTO registry (src, scope, why, make_row, member_reads) VALUES
+  ('public.firm_memberships', 'firm', 'a member reads their own membership of a firm they belong to',
+   $m$INSERT INTO public.firm_memberships (firm_id, user_id, role) VALUES ({firm}, {u}, 'agent') RETURNING ctid::text$m$, false);
+INSERT INTO registry (src, scope, why, make_row, firm_a_only) VALUES
+  ('public.referral_partners', 'firm', 'Edgar Allan Advisory''s until CRM-P2.1c gives them a firm',
+   $m$INSERT INTO public.referral_partners (code, name, kind) VALUES ('probe-{tag}', 'Probe', 'accounting') RETURNING ctid::text$m$, true);
+-- How a caller who is not a member writes into a firm's records (foreign_insert, when make_row is not itself an INSERT), and the
+-- SET clause that moves a row to another firm (move_to). Both are tried as callers who must be refused (5b).
+UPDATE registry SET move_to = 'session_id = {intake}' WHERE src IN ('public.advisor_field_reviews', 'public.advisor_notes', 'public.advisor_review_events',
+  'public.ai_extraction_events', 'public.chamber_certifications', 'public.document_events', 'public.documents', 'public.information_requests',
+  'public.intake_lifecycle_events', 'public.manuscript_versions', 'public.submission_status_history', 'public.submission_workflow', 'public.quote_requests');
+UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src IN ('public.chamber_sessions', 'public.firm_teams', 'public.firm_memberships', 'public.intake_deletions');
+UPDATE registry SET move_to = 'quote_request_id = {qr}' WHERE src IN ('public.quote_request_addresses', 'public.quote_request_events', 'public.quote_request_notes',
+  'public.quote_request_thread_reads', 'public.quote_request_messages');
+UPDATE registry SET move_to = 'user_id = {u}' WHERE src IN ('public.intake_consents', 'public.profiles');
+UPDATE registry SET move_to = 'message_id = {msg}' WHERE src = 'public.quote_request_message_attachments';
+UPDATE registry SET move_to = 'id = {firm}' WHERE src = 'public.firms';
+UPDATE registry SET move_to = 'code = ''moved-{tag}''' WHERE src = 'public.referral_partners';
+UPDATE registry SET move_to = 'name = {u} || ''/'' || {intake} || ''/moved-{tag}.csv''' WHERE src = 'storage.objects WHERE bucket_id = ''documents''';
+UPDATE registry SET move_to = 'name = {intake} || ''/v99-moved-{tag}.pdf''' WHERE src = 'storage.objects WHERE bucket_id = ''manuscripts''';
+UPDATE registry SET move_to = 'name = {intake} || ''/'' || {msg} || ''/moved-{tag}.pdf''' WHERE src = 'storage.objects WHERE bucket_id = ''peo-mail''';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.chamber_certifications (session_id, user_id, signer_name, signer_title, consent_version, consent_text, signed_at, data_sha256, file_id)
+  VALUES ({intake}, {u}, 'Probe', 'CEO', 'v1', 'I certify.', now(), 'x{tag}', 'EAA-9998-' || upper('{tag}'))$m$ WHERE src = 'public.chamber_certifications';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.chamber_sessions (user_id, firm_id, chamber_data) VALUES ({u}, {firm}, '{}')$m$ WHERE src = 'public.chamber_sessions';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.intake_consents (user_id, consent_version, consent_text) VALUES ({u}, 'v1', 'I agree.')$m$ WHERE src = 'public.intake_consents';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.profiles (user_id, company_name) VALUES ({u}, 'Probe')$m$ WHERE src = 'public.profiles';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES ({intake}, 'Probe PEO', 'sent')$m$ WHERE src = 'public.quote_requests';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address)
+  VALUES ('x-{tag}', {qr}, {intake}, 'received', 'probe@example.test')$m$ WHERE src = 'public.quote_request_messages';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.submission_workflow (session_id) VALUES ({intake})$m$ WHERE src = 'public.submission_workflow';
+UPDATE registry SET foreign_insert = $m$INSERT INTO public.firms (name, address) VALUES ('Probe {tag}', 'probe-{tag}')$m$ WHERE src = 'public.firms';
+UPDATE registry SET foreign_insert = $m$INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', {intake} || '/' || {msg} || '/x-{tag}.pdf')$m$
+  WHERE src = 'storage.objects WHERE bucket_id = ''peo-mail''';
+INSERT INTO registry (src, scope, why, names_intakes) VALUES
+  ('public.allowed_organisations', 'platform', 'who may claim the advisor role: a platform admin''s', false),
+  ('public.advisor_role_events', 'platform', 'the log of those grants: a platform admin''s', false),
+  ('public.ops_alerts', 'platform', 'monitoring: a platform admin''s', false),
+  -- A failure report can name the intake it happened in, for a platform admin investigating it; it holds no answer, name or file.
+  ('public.ops_events', 'platform', 'monitoring: a platform admin''s', true),
+  ('public.peo_census_templates', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
+  ('public.peo_contacts', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
+  ('public.peo_profile_versions', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
+  ('public.peos', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
+  ('storage.objects WHERE bucket_id = ''peo-templates''', 'platform', 'PEO template workbooks: the same for every firm', false),
+  ('public.user_roles', 'own', 'a person reads their own roles', false),
+  ('public.ai_global_usage', 'closed', 'rate limits', false), ('public.ai_ip_log', 'closed', 'rate limits', false), ('public.ai_request_log', 'closed', 'rate limits', false),
+  ('public.broker_mailboxes', 'closed', 'encrypted tokens', false), ('public.email_delivery_events', 'closed', 'delivery log', false),
+  ('public.email_suppressions', 'closed', 'do-not-send list', false), ('public.intake_milestones', 'closed', 'read as counts through a function', false),
+  ('public.outbox_events', 'closed', 'queued email', false), ('public.submission_reference_counters', 'closed', 'File ID sequence', false),
+  ('storage.objects WHERE bucket_id = ''quarantine''', 'closed', 'uploads whose malware scan has not passed: the service role''s', false);
+
+-- ---------- 5b. the probe: two firms, one row each, from every caller ----------
+-- Makes a row of the registry's make_row for one firm ('a' or 'b') as the superuser and returns its ctid. Each row hangs off a
+-- new intake of that firm owned by a new person, so no caller owns anything the probe makes.
+CREATE FUNCTION pg_temp.store_peo_mail(msg bigint, intake uuid, tag text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE path text := intake || '/' || msg || '/probe-' || tag || '.pdf'; r text;
+BEGIN
+  INSERT INTO public.quote_request_message_attachments (message_id, provider_attachment_id, file_name, size_bytes, status, scan_verdict, storage_bucket, storage_path)
+  VALUES (msg, 'probe-' || tag, 'probe.pdf', 1, 'stored', 'clean', 'peo-mail', path);
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('peo-mail', path) RETURNING ctid::text INTO r;
+  RETURN r;
+END $$;
+
+-- A certification as certifying leaves it, with the triggers that guard how one is made switched off for this one row.
+CREATE FUNCTION pg_temp.make_certification(intake uuid, u uuid, tag text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE r text;
+BEGIN
+  PERFORM set_config('session_replication_role', 'replica', true);
+  INSERT INTO public.chamber_certifications (session_id, user_id, signer_name, signer_title, consent_version, consent_text, signed_at, data_sha256, superseded_at, file_id)
+  VALUES (intake, u, 'Probe', 'CEO', 'v1', 'I certify.', now(), 'h' || tag, now(), 'EAA-9999-' || upper(tag)) RETURNING ctid::text INTO r;
+  PERFORM set_config('session_replication_role', 'origin', true);
+  RETURN r;
+END $$;
+
+-- What a firm's probe row hangs off, as one firm's context: a new person {u}, a new intake of the firm owned by them, and what the
+-- statements in `need` ask for: a quote request on it ({qr}), a message on that ({msg}). Made as the superuser.
+CREATE FUNCTION pg_temp.make_ctx(need text, firm text) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  tag text := substr(md5(random()::text), 1, 10);
+  fid uuid := pg_temp.id('firm_' || firm);
+  u uuid;
+  s uuid;
+  q bigint;
+  m bigint;
+BEGIN
+  RESET ROLE;
+  u := pg_temp.new_user('probe_' || tag || '@example.test', false);
+  IF need LIKE '%{intake}%' OR need LIKE '%{qr}%' OR need LIKE '%{msg}%' OR need LIKE '%intake_consents%' OR need LIKE '%chamber_sessions%' OR need LIKE '%profiles%' THEN
+    INSERT INTO public.intake_consents (user_id, consent_version, consent_text) VALUES (u, 'v1', 'I agree.');
+    INSERT INTO public.chamber_sessions (user_id, chamber_data) VALUES (u, '{"company_name":"Probe"}') RETURNING id INTO s;
+    UPDATE public.chamber_sessions SET firm_id = fid WHERE id = s;
+  END IF;
+  IF need LIKE '%{qr}%' OR need LIKE '%{msg}%' THEN
+    INSERT INTO public.quote_requests (session_id, peo_name, status) VALUES (s, 'Probe PEO', 'sent') RETURNING id INTO q;
+  END IF;
+  IF need LIKE '%{msg}%' THEN
+    INSERT INTO public.quote_request_messages (provider_message_id, quote_request_id, session_id, direction, from_address)
+    VALUES ('probe-' || tag, q, s, 'received', 'probe@example.test') RETURNING id INTO m;
+  END IF;
+  RETURN jsonb_build_object('firm', fid, 'u', u, 'intake', s, 'qr', q, 'msg', m, 'tag', tag);
+END $$;
+
+-- A statement with a firm's context filled in. A fresh tag keeps what a caller tries from colliding with the probe's own rows.
+CREATE FUNCTION pg_temp.fill(stmt text, ctx jsonb, fresh_tag boolean DEFAULT false) RETURNS text LANGUAGE sql AS $$
+  SELECT replace(replace(replace(replace(replace(replace(stmt,
+    '{firm}', quote_literal(ctx ->> 'firm')), '{u}', quote_literal(ctx ->> 'u')),
+    '{intake}', COALESCE(quote_literal(ctx ->> 'intake'), 'NULL')), '{qr}', COALESCE(ctx ->> 'qr', 'NULL')),
+    '{msg}', COALESCE(ctx ->> 'msg', 'NULL')),
+    '{tag}', CASE WHEN fresh_tag THEN 'x' || substr(md5(random()::text), 1, 9) ELSE ctx ->> 'tag' END)
+$$;
+
+-- Makes the row of the registry's make_row for one firm as the superuser and returns its ctid. A maker that returns no row is a
+-- failure: the probe would have nothing to test.
+CREATE FUNCTION pg_temp.make_row(make text, ctx jsonb) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE r text;
+BEGIN
+  RESET ROLE;
+  EXECUTE pg_temp.fill(make, ctx) INTO r;
+  IF r IS NULL THEN RAISE EXCEPTION 'the statement that makes a row returned none'; END IF;
+  RETURN r;
+END $$;
+
+-- Which firm's members a caller is, as the matrix has it: the first firm's, the second's, or neither (a non-member, a former
+-- member, a platform admin, a guest, a prospect, an advisor behind a guest token or with no second factor, signed out).
+CREATE FUNCTION pg_temp.member_of(who text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE WHEN who IN ('advisor', 'admin', 'agent_2', 'lead_1', 'advisor_pw_mfa') THEN 'a'
+              WHEN who IN ('agent_b', 'owner_b') THEN 'b' END
+$$;
+
+-- Runs a statement that names no row (so row security applies only the write rule, not the read rule a WHERE would also invoke)
+-- as the caller, then, as the superuser, whether any of the rows at ids was touched: a deleted or updated row is no longer at its
+-- ctid. Rolls it back. 'touched', 'untouched', or the SQLSTATE the statement raised.
+CREATE FUNCTION pg_temp.touches(stmt text, tbl text, ids text[]) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  n bigint;
+  s text;
+  m text;
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+    RESET ROLE;
+    EXECUTE format('SELECT count(*) FROM %s WHERE ctid::text = ANY (%L)', tbl, ids) INTO n;
+    RAISE EXCEPTION USING ERRCODE = 'ZZ999', MESSAGE = CASE WHEN n < cardinality(ids) THEN 'touched' ELSE 'untouched' END;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS s = RETURNED_SQLSTATE, m = MESSAGE_TEXT;
+    IF s = 'ZZ999' THEN RETURN m; END IF;
+    RETURN s;
+  END;
+END $$;
+
+CREATE FUNCTION pg_temp.count_ids(tbl text, ids text[]) RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE n bigint;
+BEGIN
+  EXECUTE format('SELECT count(*) FROM %s WHERE ctid::text = ANY (%L)', tbl, ids) INTO n;
+  RETURN n;
+EXCEPTION WHEN insufficient_privilege THEN RETURN 0;
+END $$;
+
+-- Makes a row for each firm in one registered table or bucket, then as every caller: reads it, counts it, tries to change it,
+-- to delete it, to insert into the firm's records and (for a member) to move the firm's own row to the other firm. Only a current
+-- member of the row's own firm may read it. Only an explicit refusal counts as safe: no row matched, or insufficient privilege;
+-- any other error (a foreign key, a unique index) was raised after row security let the statement through, so it is a problem.
+-- Nothing is left behind. Returns what is wrong, or NULL; sets ran when the probe reached its end.
+CREATE FUNCTION pg_temp.probe_firm(p_src text, p_make text, p_member_reads boolean, p_firm_a_only boolean, p_foreign_insert text, p_move_to text,
+  OUT problems text, OUT ran boolean)
+LANGUAGE plpgsql AS $$
+DECLARE
+  tbl text := pg_temp.src_table(p_src);
+  need text := p_make || COALESCE(p_foreign_insert, '') || COALESCE(p_move_to, '');
+  ctx_of jsonb := '{}';
+  rows_of jsonb := '{}';
+  f text;
+  o text;
+  who text;
+  side text;
+  ids text[];
+  one text[];
+  res text;
+  firm_name text;
+  other_name text;
+BEGIN
+  problems := '';
+  ran := false;
+  BEGIN
+    FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
+      IF f = 'b' AND p_firm_a_only THEN CONTINUE; END IF;
+      ctx_of := ctx_of || jsonb_build_object(f, pg_temp.make_ctx(need, f));
+      rows_of := rows_of || jsonb_build_object(f, pg_temp.make_row(p_make, ctx_of -> f));
+    END LOOP;
+    FOREACH who IN ARRAY pg_temp.matrix_callers() LOOP
+      CONTINUE WHEN who = 'service';
+      side := pg_temp.member_of(who);
+      PERFORM pg_temp.become(who);
+      ids := pg_temp.row_ids(p_src);
+      FOREACH f IN ARRAY ARRAY['a', 'b'] LOOP
+        CONTINUE WHEN f = 'b' AND p_firm_a_only;
+        firm_name := CASE f WHEN 'a' THEN 'first' ELSE 'second' END;
+        one := ARRAY[rows_of ->> f];
+        IF f IS DISTINCT FROM side THEN
+          IF (rows_of ->> f) = ANY (ids) THEN problems := problems || format(E'\n    %s reads a row of the %s firm', who, firm_name); END IF;
+          IF pg_temp.count_ids(tbl, one) <> 0 THEN problems := problems || format(E'\n    %s counts a row of the %s firm', who, firm_name); END IF;
+          -- Changing and deleting name no row: a WHERE on a column would also invoke the read rule, which hides rows from a
+          -- caller whose write rule is open. The statements run over the whole table and the row must come out untouched.
+          res := pg_temp.touches(format('UPDATE %s SET %s', tbl, pg_temp.fill(p_move_to, ctx_of -> f, true)), tbl, one);
+          IF res = 'untouched' OR res = '42501' THEN NULL;
+          ELSIF res = 'touched' THEN problems := problems || format(E'\n    %s changes a row of the %s firm', who, firm_name);
+          ELSE problems := problems || format(E'\n    %s''s change of a row of the %s firm raised %s rather than being refused', who, firm_name, res); END IF;
+          res := pg_temp.touches(format('DELETE FROM %s', tbl), tbl, one);
+          IF res = 'untouched' OR res = '42501' THEN NULL;
+          ELSIF res = 'touched' THEN problems := problems || format(E'\n    %s deletes a row of the %s firm', who, firm_name);
+          ELSE problems := problems || format(E'\n    %s''s delete of a row of the %s firm raised %s rather than being refused', who, firm_name, res); END IF;
+          -- A member taking another firm's row for their own firm: the same write, with their firm's context.
+          IF side IS NOT NULL AND ctx_of ? side THEN
+            res := pg_temp.touches(format('UPDATE %s SET %s', tbl, pg_temp.fill(p_move_to, ctx_of -> side, true)), tbl, one);
+            IF res = 'untouched' OR res = '42501' THEN NULL;
+            ELSIF res = 'touched' THEN problems := problems || format(E'\n    %s takes a row of the %s firm for their own', who, firm_name);
+            ELSE problems := problems || format(E'\n    %s''s taking of a row of the %s firm for their own raised %s rather than being refused', who, firm_name, res); END IF;
+          END IF;
+          -- A row put into the firm's records: the insert must be refused by privilege or row security, never run.
+          res := pg_temp.attempt(pg_temp.fill(p_foreign_insert, ctx_of -> f, true));
+          IF res = '42501' THEN NULL;
+          ELSIF res LIKE 'rows:%' THEN problems := problems || format(E'\n    %s inserts into the %s firm''s records', who, firm_name);
+          ELSE problems := problems || format(E'\n    %s''s insert into the %s firm''s records raised %s rather than being refused', who, firm_name, res); END IF;
+        ELSE
+          IF p_member_reads AND NOT (rows_of ->> f) = ANY (ids) THEN
+            -- A positive control: a rule that shows a firm's rows to nobody would pass every check above.
+            problems := problems || format(E'\n    %s, a member of the %s firm, cannot read its row', who, firm_name);
+          END IF;
+          -- A member moving their firm's own row onto the other firm: the new row must be refused too.
+          o := CASE f WHEN 'a' THEN 'b' ELSE 'a' END;
+          IF ctx_of ? o THEN
+            other_name := CASE o WHEN 'a' THEN 'first' ELSE 'second' END;
+            res := pg_temp.touches(format('UPDATE %s SET %s', tbl, pg_temp.fill(p_move_to, ctx_of -> o, true)), tbl, one);
+            IF res = 'untouched' OR res = '42501' THEN NULL;
+            ELSIF res = 'touched' THEN problems := problems || format(E'\n    %s moves a row of the %s firm to the %s firm', who, firm_name, other_name);
+            ELSE problems := problems || format(E'\n    %s''s move of a row of the %s firm to the %s firm raised %s rather than being refused', who, firm_name, other_name, res); END IF;
+          END IF;
+        END IF;
+      END LOOP;
+      RESET ROLE;
+    END LOOP;
+    RAISE EXCEPTION USING ERRCODE = 'ZZ998', MESSAGE = 'probe finished; roll its rows back';
+  EXCEPTION
+    WHEN SQLSTATE 'ZZ998' THEN ran := true;
+    WHEN OTHERS THEN problems := problems || format(E'\n    the probe could not run: %s', SQLERRM);
+  END;
+  RESET ROLE;
+  problems := NULLIF(problems, '');
+END $$;
+
+-- Everything wrong with how the database separates firms, one per line, or NULL. It registers nothing itself: it checks
+-- the registry against the catalogue, then runs the probe of every firm table and bucket.
+CREATE FUNCTION pg_temp.isolation_gaps() RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  gaps text := '';
+  c record;
+  r record;
+  pr record;
+  holds_firm_data boolean;
+BEGIN
+  DELETE FROM probe_ran;
+  -- Every public table and every bucket is registered, and nothing registered is gone.
+  FOR c IN SELECT cl.oid, cl.relname FROM pg_class cl WHERE cl.relnamespace = 'public'::regnamespace AND cl.relkind IN ('r', 'p') ORDER BY cl.relname LOOP
+    IF NOT EXISTS (SELECT 1 FROM registry WHERE src = 'public.' || c.relname) THEN
+      gaps := gaps || format(E'\n  public.%s is not in the registry: say whether it holds a firm''s data, and if so how to make a row of it', c.relname);
+    END IF;
+  END LOOP;
+  FOR c IN SELECT b.id FROM storage.buckets b ORDER BY b.id LOOP
+    IF NOT EXISTS (SELECT 1 FROM registry WHERE src = format('storage.objects WHERE bucket_id = %L', c.id)) THEN
+      gaps := gaps || format(E'\n  bucket %s is not in the registry: say whether it holds a firm''s files, and if so how to make one', c.id);
+    END IF;
+  END LOOP;
+  FOR r IN SELECT * FROM registry ORDER BY src LOOP
+    IF r.src LIKE 'public.%' AND NOT EXISTS (SELECT 1 FROM pg_class cl WHERE cl.relnamespace = 'public'::regnamespace AND cl.relkind IN ('r', 'p') AND 'public.' || cl.relname = r.src) THEN
+      gaps := gaps || format(E'\n  %s is in the registry but there is no such table', r.src);
+      CONTINUE;
+    END IF;
+    IF r.src LIKE 'storage.objects%' AND NOT EXISTS (SELECT 1 FROM storage.buckets b WHERE format('storage.objects WHERE bucket_id = %L', b.id) = r.src) THEN
+      gaps := gaps || format(E'\n  %s is in the registry but there is no such bucket', r.src);
+      CONTINUE;
+    END IF;
+    IF r.scope = 'firm' THEN
+      IF r.make_row IS NULL THEN
+        gaps := gaps || format(E'\n  %s holds a firm''s data and has no way to make a row, so no probe', r.src);
+        CONTINUE;
+      END IF;
+      IF COALESCE(r.foreign_insert, CASE WHEN r.make_row ~* '^\s*INSERT' THEN r.make_row END) IS NULL THEN
+        gaps := gaps || format(E'\n  %s has no way to insert into a firm''s records as someone else, so its writes are not probed', r.src);
+        CONTINUE;
+      END IF;
+      IF r.move_to IS NULL THEN
+        gaps := gaps || format(E'\n  %s has no way to move a row to another firm, so its updates are not probed', r.src);
+        CONTINUE;
+      END IF;
+      SELECT * INTO pr FROM pg_temp.probe_firm(r.src, r.make_row, r.member_reads, r.firm_a_only,
+        COALESCE(r.foreign_insert, regexp_replace(r.make_row, '\s+RETURNING\s+ctid::text\s*$', '', 'i')), r.move_to);
+      INSERT INTO probe_ran VALUES (r.src, pr.ran, pr.problems);
+      IF pr.ran AND pr.problems IS NOT NULL THEN gaps := gaps || format(E'\n  %s is open across firms:%s', r.src, pr.problems); END IF;
+    ELSIF r.scope = 'closed' AND r.src LIKE 'public.%' THEN
+      IF EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = substr(r.src, 8)) THEN
+        gaps := gaps || format(E'\n  %s is declared closed but has a policy', r.src);
+      END IF;
+    ELSIF r.scope IN ('platform', 'own') AND r.src LIKE 'public.%' THEN
+      holds_firm_data := EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = r.src::regclass AND a.attnum > 0 AND NOT a.attisdropped
+                                   AND a.attname IN ('firm_id', 'session_id', 'quote_request_id'));
+      IF holds_firm_data AND NOT r.names_intakes THEN
+        gaps := gaps || format(E'\n  %s has a firm_id, session_id or quote_request_id column but is declared %s', r.src, r.scope);
+      END IF;
+    END IF;
+  END LOOP;
+  -- A firm table whose probe did not run fails, whatever else is true.
+  FOR r IN SELECT g.src, p.detail FROM registry g LEFT JOIN probe_ran p ON p.src = g.src
+           WHERE g.scope = 'firm' AND g.make_row IS NOT NULL AND p.ran IS NOT TRUE LOOP
+    gaps := gaps || format(E'\n  %s: no probe ran%s', r.src, COALESCE(E'\n  ' || r.detail, ''));
+  END LOOP;
+  RETURN NULLIF(gaps, '');
+END $$;
+
+DO $$
+DECLARE gaps text := pg_temp.isolation_gaps();
+BEGIN
+  IF gaps IS NOT NULL THEN RAISE EXCEPTION E'FAIL: the firms are not kept apart:%', gaps; END IF;
+  RAISE NOTICE 'data_isolation: % firm tables and buckets probed with two firms', (SELECT count(*) FROM probe_ran WHERE ran);
+END $$;
+
+-- ---------- 5c. the gate can fail ----------
+-- Each of these is a table (or bucket) the gate must refuse, and one the gate must accept. The first two are the shapes
+-- reviewers used to fool a check that read policy text: the policy mentions a firm helper, never ties it to the row read.
+DO $$
+DECLARE
+  g text;
+BEGIN
+  IF pg_temp.isolation_gaps() IS NOT NULL THEN RAISE EXCEPTION E'FAIL: before the negative cases, the gate is not clean:%', pg_temp.isolation_gaps(); END IF;
+
+  CREATE TABLE public.probe_exists_firms (id int, firm_id uuid);
+  CREATE TABLE public.probe_exists_session (id int, session_id uuid);
+  CREATE TABLE public.probe_second_policy (id int, session_id uuid);
+  CREATE TABLE public.probe_no_maker (id int, session_id uuid);
+  CREATE TABLE public.probe_shows_nobody (id int, session_id uuid);
+  CREATE TABLE public.probe_unregistered (id int, session_id uuid);
+  CREATE TABLE public.probe_bad_maker (id int, session_id uuid);
+  CREATE TABLE public.probe_fine (id int, session_id uuid);
+  CREATE TABLE public.probe_empty_maker (id int, session_id uuid);
+  CREATE TABLE public.probe_platform (id int, firm_id uuid);
+  CREATE TABLE public.probe_closed (id int);
+  CREATE TABLE public.probe_insert_open (id int, session_id uuid);
+  CREATE TABLE public.probe_update_open (id int, session_id uuid);
+  CREATE TABLE public.probe_takeover (id int, session_id uuid);
+  CREATE TABLE public.probe_delete_fk (id int PRIMARY KEY, session_id uuid);
+  CREATE TABLE public.probe_delete_fk_child (id int, parent_id int REFERENCES public.probe_delete_fk (id));
+  ALTER TABLE public.probe_exists_firms ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_exists_session ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_second_policy ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_no_maker ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_shows_nobody ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_unregistered ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_bad_maker ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_fine ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_empty_maker ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_platform ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_closed ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_insert_open ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_update_open ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_takeover ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_delete_fk ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE public.probe_delete_fk_child ENABLE ROW LEVEL SECURITY;
+  GRANT ALL ON public.probe_takeover, public.probe_empty_maker, public.probe_insert_open, public.probe_update_open, public.probe_delete_fk, public.probe_delete_fk_child TO anon, authenticated;
+  GRANT ALL ON public.probe_exists_firms, public.probe_exists_session, public.probe_second_policy, public.probe_no_maker,
+    public.probe_shows_nobody, public.probe_bad_maker, public.probe_unregistered, public.probe_fine TO anon, authenticated;
+  -- Any member of any firm reads every firm's rows: the helper is asked about firms the caller can see, not about the row.
+  CREATE POLICY p ON public.probe_exists_firms FOR ALL TO authenticated
+    USING (EXISTS (SELECT 1 FROM firms f WHERE is_firm_member(f.id)));
+  -- The same through the intakes the caller can see.
+  CREATE POLICY p ON public.probe_exists_session FOR ALL TO authenticated
+    USING (EXISTS (SELECT 1 FROM chamber_sessions s WHERE intake_in_my_firm(s.id)));
+  -- One policy is tied to the row; a second, permissive one opens the table to anyone with a session on it.
+  CREATE POLICY p_read ON public.probe_second_policy FOR ALL TO authenticated USING (intake_in_my_firm(session_id));
+  CREATE POLICY p_extra ON public.probe_second_policy FOR ALL TO authenticated USING (session_id IS NOT NULL);
+  CREATE POLICY p ON public.probe_no_maker FOR ALL TO authenticated USING (intake_in_my_firm(session_id));
+  -- A rule that shows a firm's rows to no one passes every check that the other firm sees nothing; the positive control catches it.
+  CREATE POLICY p ON public.probe_shows_nobody FOR ALL TO authenticated USING (false);
+  CREATE POLICY p ON public.probe_unregistered FOR ALL TO authenticated USING (true);
+  CREATE POLICY p ON public.probe_bad_maker FOR ALL TO authenticated USING (intake_in_my_firm(session_id));
+  -- What the real schema does: the helper is given the row's own column.
+  CREATE POLICY p ON public.probe_fine FOR ALL TO authenticated USING (intake_in_my_firm(session_id));
+  -- A maker that finds no row: the probe never had a row to test, so it did not run.
+  CREATE POLICY p ON public.probe_empty_maker FOR ALL TO authenticated USING (true);
+  CREATE POLICY p ON public.probe_platform FOR ALL TO authenticated USING (true);
+  CREATE POLICY p ON public.probe_closed FOR ALL TO authenticated USING (true);
+  -- Reads are tied to the row; a caller can still put a row into another firm's records.
+  CREATE POLICY p_read ON public.probe_insert_open FOR SELECT TO authenticated USING (intake_in_my_firm(session_id));
+  CREATE POLICY p_ins ON public.probe_insert_open FOR INSERT TO authenticated WITH CHECK (true);
+  -- The new row of an update must pass the read policy too, so a rule that lets a member move a row to another firm is one whose
+  -- read policy shows it there: both are open here, and the probe must name the move as well as the read.
+  CREATE POLICY p_read ON public.probe_update_open FOR SELECT TO authenticated USING (true);
+  CREATE POLICY p_upd ON public.probe_update_open FOR UPDATE TO authenticated USING (intake_in_my_firm(session_id)) WITH CHECK (true);
+  -- Reads are tied to the row, and so is the new row of an update; but any member may update any firm's row, so a member can
+  -- take another firm's row for their own firm.
+  CREATE POLICY p_read ON public.probe_takeover FOR SELECT TO authenticated USING (intake_in_my_firm(session_id));
+  CREATE POLICY p_upd ON public.probe_takeover FOR UPDATE TO authenticated USING (true) WITH CHECK (intake_in_my_firm(session_id));
+  -- Anyone may delete the row, but another table's foreign key stops it: that error is not a refusal by row security, and
+  -- must not be read as one.
+  CREATE POLICY p ON public.probe_delete_fk FOR ALL TO authenticated USING (true);
+  INSERT INTO registry (src, scope, why, make_row) VALUES
+    ('public.probe_empty_maker', 'firm', 'probe', $m$SELECT ctid::text FROM public.probe_empty_maker WHERE session_id = {intake}$m$),
+    ('public.probe_takeover', 'firm', 'probe', $m$INSERT INTO public.probe_takeover (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_insert_open', 'firm', 'probe', $m$INSERT INTO public.probe_insert_open (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_update_open', 'firm', 'probe', $m$INSERT INTO public.probe_update_open (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_delete_fk', 'firm', 'probe',
+     $m$WITH p AS (INSERT INTO public.probe_delete_fk (id, session_id) VALUES (abs(hashtext('{tag}')), {intake}) RETURNING id, ctid::text AS c),
+        k AS (INSERT INTO public.probe_delete_fk_child (id, parent_id) SELECT 1, id FROM p) SELECT c FROM p$m$),
+    ('public.probe_exists_firms', 'firm', 'probe', $m$INSERT INTO public.probe_exists_firms (id, firm_id) VALUES (1, {firm}) RETURNING ctid::text$m$),
+    ('public.probe_exists_session', 'firm', 'probe', $m$INSERT INTO public.probe_exists_session (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_second_policy', 'firm', 'probe', $m$INSERT INTO public.probe_second_policy (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_no_maker', 'firm', 'probe', NULL),
+    -- Its way to make a row fails (no such column), so the probe never ran: that fails the gate, not passes it.
+    ('public.probe_bad_maker', 'firm', 'probe', $m$INSERT INTO public.probe_bad_maker (id, nothing) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_shows_nobody', 'firm', 'probe', $m$INSERT INTO public.probe_shows_nobody (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$),
+    ('public.probe_fine', 'firm', 'probe', $m$INSERT INTO public.probe_fine (id, session_id) VALUES (1, {intake}) RETURNING ctid::text$m$);
+  -- A firm_id column on a table registered as platform-wide, and a policy on one registered as closed.
+  INSERT INTO registry (src, scope, why) VALUES ('public.probe_platform', 'platform', 'probe'), ('public.probe_closed', 'closed', 'probe'),
+    ('public.probe_delete_fk_child', 'closed', 'probe');
+  -- How the probe writes into each, and moves a row of each to the other firm.
+  UPDATE registry SET move_to = 'session_id = {intake}' WHERE src LIKE 'public.probe\_%' AND src NOT IN ('public.probe_exists_firms', 'public.probe_platform', 'public.probe_closed', 'public.probe_delete_fk_child');
+  UPDATE registry SET move_to = 'firm_id = {firm}' WHERE src = 'public.probe_exists_firms';
+  UPDATE registry SET foreign_insert = $m$INSERT INTO public.probe_delete_fk (id, session_id) VALUES (abs(hashtext('{tag}')), {intake})$m$ WHERE src = 'public.probe_delete_fk';
+  UPDATE registry SET foreign_insert = $m$INSERT INTO public.probe_empty_maker (id, session_id) VALUES (1, {intake})$m$ WHERE src = 'public.probe_empty_maker';
+  g := pg_temp.isolation_gaps();
+  IF g IS NULL
+     -- Each case is matched on its own table's whole gap, so a probe that did not run cannot satisfy it.
+     OR g NOT LIKE '%public.probe_exists_firms is open across firms:%agent_b reads a row of the first firm%'
+     OR g NOT LIKE '%public.probe_exists_session is open across firms:%agent_b reads a row of the first firm%'
+     OR g NOT LIKE '%public.probe_second_policy is open across firms:%agent_b reads a row of the first firm%'
+     OR g NOT LIKE '%probe_no_maker holds a firm''s data and has no way to make a row%'
+     OR g NOT LIKE '%probe_bad_maker: no probe ran%'
+     OR g NOT LIKE '%probe_empty_maker: no probe ran%'
+     OR g NOT LIKE '%public.probe_insert_open is open across firms:%agent_b inserts into the first firm''s records%'
+     OR g NOT LIKE '%public.probe_update_open is open across firms:%agent_b moves a row of the second firm to the first firm%'
+     OR g NOT LIKE '%public.probe_takeover is open across firms:%agent_b takes a row of the first firm for their own%'
+     OR g NOT LIKE '%public.probe_delete_fk is open across firms:%advisor''s delete of a row of the second firm raised 23503 rather than being refused%'
+     OR g NOT LIKE '%public.probe_platform has a firm_id, session_id or quote_request_id column but is declared platform%'
+     OR g NOT LIKE '%public.probe_closed is declared closed but has a policy%'
+     OR g NOT LIKE '%public.probe_shows_nobody is open across firms:%advisor, a member of the first firm, cannot read its row%'
+     OR g NOT LIKE '%public.probe_exists_firms is open across firms:%advisor reads a row of the second firm%advisor counts a row of the second firm%advisor changes a row of the second firm%advisor deletes a row of the second firm%'
+     OR g NOT LIKE '%platform_admin reads a row of the first firm%'
+     OR g NOT LIKE '%former_agent reads a row of the first firm%'
+     OR g NOT LIKE '%prospect_a reads a row of the first firm%'
+     OR g NOT LIKE '%probe_unregistered%'
+     OR g LIKE '%probe_fine%' THEN
+    RAISE EXCEPTION E'FAIL: the gate did not name exactly the open, unprobed and unregistered tables:%', g;
+  END IF;
+  -- Each alone makes it fail.
+  DELETE FROM registry WHERE src IN ('public.probe_exists_session', 'public.probe_second_policy', 'public.probe_no_maker', 'public.probe_shows_nobody', 'public.probe_bad_maker',
+    'public.probe_empty_maker', 'public.probe_insert_open', 'public.probe_update_open', 'public.probe_takeover', 'public.probe_delete_fk', 'public.probe_delete_fk_child', 'public.probe_platform', 'public.probe_closed');
+  DROP TABLE public.probe_exists_session, public.probe_second_policy, public.probe_no_maker, public.probe_shows_nobody, public.probe_bad_maker, public.probe_unregistered,
+    public.probe_empty_maker, public.probe_insert_open, public.probe_update_open, public.probe_takeover, public.probe_delete_fk_child, public.probe_delete_fk, public.probe_platform, public.probe_closed;
+  g := pg_temp.isolation_gaps();
+  IF g IS NULL OR g NOT LIKE '%probe_exists_firms%' OR g LIKE '%probe_fine%' THEN RAISE EXCEPTION E'FAIL: the gate passed a policy that asks is_firm_member about the firms the caller can see:%', g; END IF;
+  DELETE FROM registry WHERE src = 'public.probe_exists_firms';
+  DROP TABLE public.probe_exists_firms;
+  IF pg_temp.isolation_gaps() IS NOT NULL THEN RAISE EXCEPTION E'FAIL: the gate flags a table that ties the helper to its row:%', pg_temp.isolation_gaps(); END IF;
+  -- A bucket that isn't registered, and a registered one that is gone.
+  INSERT INTO storage.buckets (id, name, public) VALUES ('probe-bucket', 'probe-bucket', false);
+  g := pg_temp.isolation_gaps();
+  IF g IS NULL OR g NOT LIKE '%probe-bucket%' THEN RAISE EXCEPTION E'FAIL: the gate passed a bucket that is not registered:%', g; END IF;
+  DELETE FROM storage.buckets WHERE id = 'probe-bucket';
+  INSERT INTO registry (src, scope, why) VALUES ('public.probe_gone', 'platform', 'probe');
+  g := pg_temp.isolation_gaps();
+  IF g IS NULL OR g NOT LIKE '%probe_gone%' THEN RAISE EXCEPTION E'FAIL: the gate passed a registered table that does not exist:%', g; END IF;
+  DELETE FROM registry WHERE src = 'public.probe_gone';
+  -- A probe that did not run is a failure too.
+  DELETE FROM registry WHERE src = 'public.probe_fine';
+  DROP TABLE public.probe_fine;
+  IF pg_temp.isolation_gaps() IS NOT NULL THEN RAISE EXCEPTION E'FAIL: the probes were left behind:%', pg_temp.isolation_gaps(); END IF;
+  RAISE NOTICE 'data_isolation: the gate fails on the open, unprobed and unregistered tables it should';
 END $$;
 
 -- ---------- 5. catalogue checks ----------

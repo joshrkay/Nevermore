@@ -7,7 +7,8 @@
 -- the firm at an address. Neither function is the lock (D-18): row security and the membership helpers still
 -- decide who reads what; the screen only chooses what to show.
 -- The list of earlier migrations is pinned on purpose to what existed before this story (the file loads this
--- story's migration itself after them).
+-- story's migration itself after them). The firm-scoping and second-factor migrations are loaded too: the address
+-- answer has to hold with the second-factor lock on the membership helpers in place.
 \i e2e/stack/bootstrap.sql
 \i supabase/migrations/20260323215855_6110f697-3604-440a-bcc3-685413801386.sql
 \i supabase/migrations/20260323224722_847cb3a9-3573-491f-ba0c-54a2ccea0340.sql
@@ -99,7 +100,10 @@
 \i supabase/migrations/20261115130000_information_request_extra_questions.sql
 \i supabase/migrations/20261115140000_peo_census_templates.sql
 \i supabase/migrations/20261116090000_firms.sql
+\i supabase/migrations/20261116110000_firm_scoped_policies.sql
 \i supabase/migrations/20261116140000_firm_address_lookup.sql
+\i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
+\i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -257,6 +261,33 @@ BEGIN
   PERFORM pg_temp.as_user('guest_visitor', true);
   PERFORM pg_temp.is(public.is_member_of_firm_address('acme-brokers'), false, 'a guest session is no member');
   RAISE NOTICE 'firm_address: membership at an address cases passed';
+END $$;
+
+-- A password sign-in that has not completed a second factor is still told it is a member at the firm's address: that is
+-- how the screen knows to send them to add one (D-19, D-27). The same sign-in is still no member to any firm's data.
+-- Break caught: the address answer shares the data lock's second-factor rule, so a member who has only a password is
+-- told "you aren't a member of this firm" and never reaches the screen that sets up their second factor; or the answer
+-- is loosened so far that a non-member, a former member or a guest is let in.
+DO $$
+DECLARE firm uuid;
+BEGIN
+  SELECT id INTO firm FROM public.firms WHERE address = 'acme-brokers';
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM set_config('request.jwt.claims', (current_setting('request.jwt.claims')::jsonb || '{"aal":"aal1","amr":[{"method":"password","timestamp":1}]}'::jsonb)::text, false);
+  PERFORM pg_temp.is(public.is_member_of_firm_address('acme-brokers'), true, 'a member with a password and no second factor is a member at the address');
+  PERFORM pg_temp.is(public.is_member_of_firm_address('birch-benefits'), false, 'and still not at another firm''s');
+  PERFORM pg_temp.is(public.is_firm_member(firm), false, 'but opens no firm data: the lock still asks for the second factor');
+  PERFORM pg_temp.as_user('nobody');
+  PERFORM set_config('request.jwt.claims', (current_setting('request.jwt.claims')::jsonb || '{"aal":"aal1","amr":[{"method":"password","timestamp":1}]}'::jsonb)::text, false);
+  PERFORM pg_temp.is(public.is_member_of_firm_address('acme-brokers'), false, 'a non-member with a password is still no member');
+  PERFORM pg_temp.as_user('former_acme');
+  PERFORM set_config('request.jwt.claims', (current_setting('request.jwt.claims')::jsonb || '{"aal":"aal1","amr":[{"method":"password","timestamp":1}]}'::jsonb)::text, false);
+  PERFORM pg_temp.is(public.is_member_of_firm_address('acme-brokers'), false, 'a former member with a password is still no member');
+  PERFORM pg_temp.as_user('acme_owner', true);
+  PERFORM set_config('request.jwt.claims', (current_setting('request.jwt.claims')::jsonb || '{"aal":"aal1","amr":[{"method":"password","timestamp":1}]}'::jsonb)::text, false);
+  PERFORM pg_temp.is(public.is_member_of_firm_address('acme-brokers'), false, 'a guest token is no member');
+  RESET ROLE;
+  RAISE NOTICE 'firm_address: member with only a password cases passed';
 END $$;
 
 -- Break caught: a member of a firm waiting for approval is turned away from its address, an address nobody holds has
