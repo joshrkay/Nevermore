@@ -130,6 +130,7 @@ AS $$
   WHERE f.address = lower(btrim(p_address)) AND f.decision IS DISTINCT FROM 'refused'
 $$;
 
+-- Membership is answered before the second factor (20261116160000), so this keeps that body and adds the refusal.
 CREATE OR REPLACE FUNCTION public.is_member_of_firm_address(p_address text)
 RETURNS boolean
 LANGUAGE sql
@@ -137,11 +138,17 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT COALESCE((
-    SELECT public.is_firm_member(f.id)
+  SELECT EXISTS (
+    SELECT 1
     FROM public.firms f
-    WHERE f.address = lower(btrim(p_address)) AND f.decision IS DISTINCT FROM 'refused'
-  ), false)
+    JOIN public.firm_memberships m ON m.firm_id = f.id
+    WHERE f.address = lower(btrim(p_address))
+      AND f.decision IS DISTINCT FROM 'refused'
+      AND auth.uid() IS NOT NULL
+      AND COALESCE((auth.jwt() ->> 'is_anonymous')::boolean, false) = false
+      AND m.user_id = auth.uid()
+      AND public.membership_is_current(m.valid_from, m.valid_until)
+  )
 $$;
 
 CREATE FUNCTION public.admin_decide_firm(p_firm_id uuid, p_approve boolean, p_note text DEFAULT NULL)

@@ -99,8 +99,10 @@
 \i supabase/migrations/20261115130000_information_request_extra_questions.sql
 \i supabase/migrations/20261115140000_peo_census_templates.sql
 \i supabase/migrations/20261116090000_firms.sql
+\i supabase/migrations/20261116110000_firm_scoped_policies.sql
 \i supabase/migrations/20261116140000_firm_address_lookup.sql
 \i supabase/migrations/20261116150000_second_factor_for_password_sign_ins.sql
+\i supabase/migrations/20261116160000_firm_address_member_before_second_factor.sql
 \i supabase/migrations/20261116170000_firm_signup.sql
 SET client_min_messages = notice;
 
@@ -513,6 +515,11 @@ BEGIN
   PERFORM pg_temp.is(pg_temp.attempt('SELECT signed_up_by FROM public.firms'), '42501', 'nor who signed the firm up');
   PERFORM pg_temp.is(pg_temp.attempt('SELECT id, name, address, visibility, approved_at, parent_firm_id, created_at, decision FROM public.firms'), 'rows:2', 'but reads the firm and whether it was decided');
   PERFORM pg_temp.is(public.is_member_of_firm_address('fresh-benefits'), true, 'and is a member of an approved firm');
+  -- A member who signed in with a password and has no second factor yet is still told they are a member, so they reach
+  -- the screen that sets one up (20261116160000 answers membership before the second factor).
+  PERFORM set_config('request.jwt.claims', (current_setting('request.jwt.claims')::jsonb || '{"aal":"aal1","amr":[{"method":"password","timestamp":1}]}'::jsonb)::text, false);
+  PERFORM pg_temp.is(public.is_member_of_firm_address('fresh-benefits'), true, 'and is told so on a password sign-in with no second factor yet');
+  PERFORM pg_temp.as_user('founder');
   -- One firm waiting per person.
   RESET ROLE;
   PERFORM pg_temp.new_user('squatter');
