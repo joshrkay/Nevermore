@@ -4,7 +4,7 @@ import { firmBaseUrl, handleInviteRequest, type InviteClient, type InviteDeps } 
 const SERVICE = "service-key-abc";
 const USER_JWT = "user-jwt-xyz";
 const TOKEN = "TOKEN-made-by-the-function-0123456789abcdefg";
-const HASH = "a".repeat(64);
+const HASH = "c0ffee".padEnd(64, "0");
 const FIRM = "11111111-1111-4111-8111-111111111111";
 const INVITATION = "22222222-2222-4222-8222-222222222222";
 const ENV: Record<string, string> = {

@@ -668,6 +668,14 @@ BEGIN
   PERFORM pg_temp.is(public.record_invitation_delivery(inv, h, 'failed', 'network'), false, 'a late failure of the old link does not undo the new one''s success');
   RESET ROLE;
   PERFORM pg_temp.is((SELECT email_outcome FROM public.firm_invitations WHERE id = inv), 'sent', 'it stays sent');
+  -- A withdrawn invitation takes no result: its link opens nothing, and nothing about its email is news to anyone.
+  PERFORM pg_temp.as_user('acme_owner');
+  PERFORM public.cancel_invitation(inv);
+  RESET ROLE;
+  SET LOCAL ROLE service_role;
+  PERFORM pg_temp.is(public.record_invitation_delivery(inv, h2, 'failed', 'network'), false, 'a result for a withdrawn invitation is not recorded');
+  RESET ROLE;
+  PERFORM pg_temp.is((SELECT email_outcome FROM public.firm_invitations WHERE id = inv), 'sent', 'and changes nothing');
   RAISE NOTICE 'firm_invitations: delivery record cases passed';
 END $$;
 
