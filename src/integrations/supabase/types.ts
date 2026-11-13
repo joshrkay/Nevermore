@@ -140,6 +140,8 @@ export type Database = {
           // The referral code and campaign tags of the link the intake started from (20261106100000): short codes
           // (src/data/intakeSource.ts), set when the intake is created and never changed.
           referral_code: string | null
+          // The firm the intake belongs to (20261116090000), set by the database.
+          firm_id: string
           utm_campaign: string | null
           utm_medium: string | null
           utm_source: string | null

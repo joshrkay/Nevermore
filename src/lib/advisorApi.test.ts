@@ -12,11 +12,16 @@ const tables: Record<string, unknown[]> = {};
 /** Each `.in(column, values)` filter a query asked for, by table. */
 const inFilters: { table: string; column: string; values: unknown[] }[] = [];
 const query = (table: string) => {
+  /** `.eq(column, value)` filters of a referral-partner lookup, applied as the database does (the other tables' rows are returned whole). */
+  const eqs: [string, unknown][] = [];
   let rows = () => tables[table] ?? [];
   const result = () => ({ data: rows(), error: null });
   const chain: Record<string, unknown> = {
     select: () => chain,
-    eq: () => chain,
+    eq: (column: string, value: unknown) => {
+      eqs.push([column, value]);
+      return chain;
+    },
     is: () => chain,
     in: (column: string, values: unknown[]) => {
       inFilters.push({ table, column, values });
@@ -26,7 +31,12 @@ const query = (table: string) => {
     },
     order: () => chain,
     limit: () => chain,
-    maybeSingle: async () => ({ data: (tables[table] ?? [])[0] ?? null, error: null }),
+    maybeSingle: async () => {
+      // Like PostgREST: more than one row where at most one is expected is an error.
+      const found = table === "referral_partners" ? rows().filter((r) => eqs.every(([c, v]) => (r as Record<string, unknown>)[c] === v)) : rows();
+      if (table === "referral_partners" && found.length > 1) return { data: null, error: { code: "PGRST116", message: "multiple rows" } };
+      return { data: found[0] ?? null, error: null };
+    },
     then: (ok: (v: unknown) => unknown, ko: (e: unknown) => unknown) => Promise.resolve(result()).then(ok, ko),
   };
   return chain;
@@ -401,6 +411,17 @@ describe("loadSubmission", () => {
     rpc.mockClear();
     await loadSubmission("s1");
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  // The partner key is (firm, code): two firms may use the same code, and a member of both opens either one's submissions.
+  it("names the referral partner of the submission's own firm when two of the caller's firms use the same code", async () => {
+    tables.chamber_sessions = [row({ firm_id: "firm-b", referral_code: "acme" })];
+    tables.referral_partners = [
+      { firm_id: "firm-a", code: "acme", name: "Acme of A" },
+      { firm_id: "firm-b", code: "acme", name: "Acme of B" },
+    ];
+    const d = (await loadSubmission("s1"))!;
+    expect(d.sourcePartnerName).toBe("Acme of B");
   });
 
   it("finds nothing when the database hands over no row on opening", async () => {

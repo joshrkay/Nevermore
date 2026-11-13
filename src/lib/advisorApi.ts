@@ -371,9 +371,9 @@ export async function loadSubmission(id: string, opening = false): Promise<Submi
       .order("recorded_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
-    // The partner behind the referral code, if one is listed.
+    // The partner behind the referral code, if one is listed: a code is unique within a firm, not across them, so the submission's own firm too.
     row.referral_code
-      ? supabase.from("referral_partners").select("name").eq("code", row.referral_code).maybeSingle()
+      ? supabase.from("referral_partners").select("name").eq("firm_id", row.firm_id).eq("code", row.referral_code).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     supabase.from("quote_requests").select("*").eq("session_id", id).order("id", { ascending: true }),
     supabase.from("quote_request_events").select("*").eq("session_id", id).order("id", { ascending: false }),
