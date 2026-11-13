@@ -1327,11 +1327,12 @@ describe("who an advisor alert goes to", () => {
       expect(sent[0].message.to).toEqual(["stayer@firm-a.example"]);
     });
 
-    it.each(kinds)("sends a frozen %s to no one who joined since when everyone it named has left, and tries again", async (_name, makeRow) => {
+    it.each(kinds)("sends a frozen %s to the current members when everyone it named has left (D-102)", async (_name, makeRow) => {
       const { deps, sent } = harness({ advisorRecipients: vi.fn(async () => ["joined@firm-a.example"]) });
       await dispatchEvents([makeRow({ attempts: 2, pending_send: jsonb(frozen(["gone@firm-a.example"])) })], deps);
-      expect(sent).toHaveLength(0);
-      expect(deps.fail).toHaveBeenCalledWith(makeRow().id, "no_recipients", 300, 2, false);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message.to).toEqual(["joined@firm-a.example"]);
+      expect(deps.fail).not.toHaveBeenCalled();
     });
 
     it.each(kinds)("sends nothing from a frozen %s when no one is left to tell", async (_name, makeRow) => {
